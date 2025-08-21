@@ -181,6 +181,23 @@ struct ContentView: View {
                         }
                         .buttonStyle(PlainButtonStyle())
                         .help("Check for Updates…")
+
+                        Button(action: { NSApp.terminate(nil) }) {
+                            Image(systemName: "power")
+                                .font(.system(size: 14))
+                                .foregroundColor(theme.primaryText)
+                                .frame(width: 28, height: 28)
+                                .background(
+                                    Circle()
+                                        .fill(theme.buttonBackground)
+                                        .overlay(
+                                            Circle()
+                                                .stroke(theme.buttonBorder, lineWidth: 1)
+                                        )
+                                )
+                        }
+                        .buttonStyle(PlainButtonStyle())
+                        .help("Quit")
                     }
                 }
             }

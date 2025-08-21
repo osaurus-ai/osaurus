@@ -103,14 +103,10 @@ class MLXService {
     
     /// Get list of available models that are downloaded (thread-safe)
     nonisolated static func getAvailableModels() -> [String] {
-        // Try to get from cache first
-        if let cached = Self.availableModelsCache.object(forKey: "models" as NSString) as? [String] {
-            return cached
-        }
-
-        // Lazily populate from disk if cache is empty
+        // Always rescan disk to ensure fresh and reliable results
         let pairs = Self.scanDiskForModels()
         let modelNames = pairs.map { $0.name }
+        // Keep cache in sync for other callers
         Self.availableModelsCache.setObject(modelNames as NSArray, forKey: "models" as NSString)
         let modelInfo = pairs.map { ["name": $0.name, "id": $0.id] }
         Self.availableModelsCache.setObject(modelInfo as NSArray, forKey: "modelInfo" as NSString)
@@ -119,16 +115,7 @@ class MLXService {
     
     /// Find a model by name
     nonisolated static func findModel(named name: String) -> LMModel? {
-        // Check if we have cached model info
-        if let cachedModels = Self.availableModelsCache.object(forKey: "modelInfo" as NSString) as? [[String: String]] {
-            for modelInfo in cachedModels {
-                if let modelName = modelInfo["name"], let modelId = modelInfo["id"], modelName == name {
-                    return LMModel(name: modelName, modelId: modelId)
-                }
-            }
-        }
-
-        // Fallback: populate from disk and try again
+        // Prefer scanning disk to reflect newly downloaded models immediately
         let pairs = Self.scanDiskForModels()
         // Try exact repo-name match first (lowercased)
         if let match = pairs.first(where: { $0.name == name }) {
@@ -145,6 +132,11 @@ class MLXService {
         if let match = pairs.first(where: { $0.id.lowercased() == name.lowercased() }) {
             return LMModel(name: match.name, modelId: match.id)
         }
+        // Update cache for consistency even if not found
+        let modelNames = pairs.map { $0.name }
+        Self.availableModelsCache.setObject(modelNames as NSArray, forKey: "models" as NSString)
+        let modelInfo = pairs.map { ["name": $0.name, "id": $0.id] }
+        Self.availableModelsCache.setObject(modelInfo as NSArray, forKey: "modelInfo" as NSString)
         return nil
     }
 
