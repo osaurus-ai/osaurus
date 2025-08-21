@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security vulnerabilities
+    url: https://github.com/dinoki-ai/osaurus/security/policy
+    about: Please report security issues privately using our security policy
+  - name: Questions and support
+    url: https://github.com/dinoki-ai/osaurus/blob/main/SUPPORT.md
+    about: How to get help and ask questions

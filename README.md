@@ -1,5 +1,13 @@
 # Osaurus 🦕
 
+[![Release](https://img.shields.io/github/v/release/dinoki-ai/osaurus?sort=semver)](https://github.com/dinoki-ai/osaurus/releases)
+[![Downloads](https://img.shields.io/github/downloads/dinoki-ai/osaurus/total)](https://github.com/dinoki-ai/osaurus/releases)
+[![License](https://img.shields.io/github/license/dinoki-ai/osaurus)](LICENSE)
+[![Stars](https://img.shields.io/github/stars/dinoki-ai/osaurus?style=social)](https://github.com/dinoki-ai/osaurus/stargazers)
+![Platform](<https://img.shields.io/badge/Platform-macOS%20(Apple%20Silicon)-black?logo=apple>)
+![OpenAI API](https://img.shields.io/badge/OpenAI%20API-compatible-0A7CFF)
+![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen)
+
 Native, Apple Silicon–only local LLM server. Similar to Ollama, but built on Apple's MLX for maximum performance on M‑series chips. SwiftUI app + SwiftNIO server with OpenAI‑compatible endpoints.
 
 Created by Dinoki Labs ([dinoki.ai](https://dinoki.ai)), a fully native desktop AI assistant and companion.
@@ -64,6 +72,10 @@ osaurus/
 - `POST /chat/completions` and `POST /v1/chat/completions` → OpenAI‑compatible chat completions
 
 ## Getting Started
+
+### Download
+
+Download the latest signed build from the [Releases page](https://github.com/dinoki-ai/osaurus/releases/latest).
 
 ### Build and run
 
@@ -147,3 +159,12 @@ print(resp.choices[0].message.content)
 - SwiftNIO (HTTP server)
 - SwiftUI/AppKit (UI)
 - MLX‑Swift, MLXLLM (runtime and chat session)
+
+## Community
+
+- Read the [Contributing Guide](CONTRIBUTING.md) and our [Code of Conduct](CODE_OF_CONDUCT.md)
+- See our [Security Policy](SECURITY.md) for reporting vulnerabilities
+- Get help in [Support](SUPPORT.md)
+- Pick up a [good first issue](https://github.com/dinoki-ai/osaurus/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22) or [help wanted](https://github.com/dinoki-ai/osaurus/issues?q=is%3Aissue+is%3Aopen+label%3A%22help+wanted%22)
+
+If you find Osaurus useful, please ⭐ the repo and share it!

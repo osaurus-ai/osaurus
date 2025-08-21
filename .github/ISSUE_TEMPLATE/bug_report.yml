@@ -1,0 +1,65 @@
+name: Bug report
+description: Create a bug report to help us improve
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to fill out a bug report!
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Checks
+      options:
+        - label: I have searched existing issues and discussions
+          required: true
+        - label: I can reproduce this with the latest `main` or release
+          required: true
+  - type: textarea
+    id: description
+    attributes:
+      label: Describe the bug
+      description: A clear and concise description of what the bug is.
+      placeholder: What happened? What did you expect to happen?
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      description: Minimal, reproducible steps; include commands or sample input.
+      placeholder: |
+        1. ...
+        2. ...
+        3. ...
+  - type: input
+    id: version
+    attributes:
+      label: Osaurus version / commit
+      placeholder: e.g., v0.1.0 or commit SHA
+  - type: input
+    id: macos
+    attributes:
+      label: macOS version
+      placeholder: e.g., 15.5 (Sequoia)
+  - type: input
+    id: chip
+    attributes:
+      label: Apple Silicon chip
+      placeholder: e.g., M2 Pro 16GB
+  - type: input
+    id: xcode
+    attributes:
+      label: Xcode version
+      placeholder: e.g., 16.4
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: Relevant logs and stack traces
+      render: shell
+  - type: textarea
+    id: screenshots
+    attributes:
+      label: Screenshots
+      description: If applicable, add screenshots to help explain your problem
