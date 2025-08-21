@@ -54,6 +54,8 @@ class AsyncHTTPHandler {
                     temperature: temperature,
                     maxTokens: maxTokens,
                     requestModel: request.model,
+                    tools: request.tools,
+                    toolChoice: request.tool_choice,
                     context: context
                 )
             } else {
@@ -63,6 +65,8 @@ class AsyncHTTPHandler {
                     temperature: temperature,
                     maxTokens: maxTokens,
                     requestModel: request.model,
+                    tools: request.tools,
+                    toolChoice: request.tool_choice,
                     context: context
                 )
             }
@@ -85,6 +89,8 @@ class AsyncHTTPHandler {
         temperature: Float,
         maxTokens: Int,
         requestModel: String,
+        tools: [Tool]?,
+        toolChoice: ToolChoiceOption?,
         context: ChannelHandlerContext
     ) async throws {
         let loop = context.eventLoop
@@ -116,53 +122,177 @@ class AsyncHTTPHandler {
         let responseId = "chatcmpl-\(UUID().uuidString.prefix(8))"
         let created = Int(Date().timeIntervalSince1970)
         
-        // Stream tokens
+        // Generate
         let stream = try await MLXService.shared.generate(
             messages: messages,
             model: model,
             temperature: temperature,
-            maxTokens: maxTokens
+            maxTokens: maxTokens,
+            tools: tools,
+            toolChoice: toolChoice
         )
         
         var fullResponse = ""
         var tokenCount = 0
         
-        for await token in stream {
-            // Stop streaming if the client disconnected
-            fullResponse += token
-            tokenCount += 1
-            
-            // Create streaming chunk
-            let chunk = ChatCompletionChunk(
-                id: responseId,
-                created: created,
-                model: requestModel,
-                choices: [
-                    StreamChoice(
-                        index: 0,
-                        delta: DeltaContent(role: nil, content: token),
-                        finish_reason: nil
-                    )
-                ],
-                system_fingerprint: nil
-            )
-            
-            // Send as SSE on the event loop
-            if let jsonData = try? JSONEncoder().encode(chunk),
-               let jsonString = String(data: jsonData, encoding: .utf8) {
-                let sseData = "data: \(jsonString)\n\n"
+        // If tools are provided (and tool_choice is not "none"), buffer the stream to detect tool_calls and then emit appropriate deltas
+        let shouldBufferForTools: Bool = {
+            guard tools?.isEmpty == false else { return false }
+            if let toolChoice, case .none = toolChoice { return false }
+            return true
+        }()
+        if shouldBufferForTools {
+            for await token in stream {
+                fullResponse += token
+                tokenCount += 1
+            }
+            if let toolCalls = ToolCallParser.parse(from: fullResponse) {
+                // Emit OpenAI-style incremental tool_call deltas
+                func sendChunk(_ chunk: ChatCompletionChunk) {
+                    if let jsonData = try? JSONEncoder().encode(chunk), let jsonString = String(data: jsonData, encoding: .utf8) {
+                        let sseData = "data: \(jsonString)\n\n"
+                        loop.execute {
+                            let context = ctxBox.value
+                            guard context.channel.isActive else { return }
+                            var buffer = context.channel.allocator.buffer(capacity: sseData.utf8.count)
+                            buffer.writeString(sseData)
+                            context.write(NIOAny(HTTPServerResponsePart.body(.byteBuffer(buffer))), promise: nil)
+                            context.flush()
+                        }
+                    }
+                }
+
+                // Initial role chunk
+                sendChunk(ChatCompletionChunk(
+                    id: responseId,
+                    created: created,
+                    model: requestModel,
+                    choices: [StreamChoice(index: 0, delta: DeltaContent(role: "assistant", content: nil, tool_calls: nil), finish_reason: nil)],
+                    system_fingerprint: nil
+                ))
+
+                let argChunkSize = 500
+                for (idx, call) in toolCalls.enumerated() {
+                    // Emit id/type for this tool call
+                    sendChunk(ChatCompletionChunk(
+                        id: responseId,
+                        created: created,
+                        model: requestModel,
+                        choices: [StreamChoice(index: 0, delta: DeltaContent(role: nil, content: nil, tool_calls: [
+                            DeltaToolCall(index: idx, id: call.id, type: call.type, function: nil)
+                        ]), finish_reason: nil)],
+                        system_fingerprint: nil
+                    ))
+
+                    // Emit function name
+                    sendChunk(ChatCompletionChunk(
+                        id: responseId,
+                        created: created,
+                        model: requestModel,
+                        choices: [StreamChoice(index: 0, delta: DeltaContent(role: nil, content: nil, tool_calls: [
+                            DeltaToolCall(index: idx, id: nil, type: nil, function: DeltaToolCallFunction(name: call.function.name, arguments: nil))
+                        ]), finish_reason: nil)],
+                        system_fingerprint: nil
+                    ))
+
+                    // Emit arguments in chunks
+                    let args = call.function.arguments
+                    var start = args.startIndex
+                    while start < args.endIndex {
+                        let end = args.index(start, offsetBy: argChunkSize, limitedBy: args.endIndex) ?? args.endIndex
+                        let slice = String(args[start..<end])
+                        sendChunk(ChatCompletionChunk(
+                            id: responseId,
+                            created: created,
+                            model: requestModel,
+                            choices: [StreamChoice(index: 0, delta: DeltaContent(role: nil, content: nil, tool_calls: [
+                                DeltaToolCall(index: idx, id: nil, type: nil, function: DeltaToolCallFunction(name: nil, arguments: slice))
+                            ]), finish_reason: nil)],
+                            system_fingerprint: nil
+                        ))
+                        start = end
+                    }
+                }
+
+                // Final chunk indicating end of tool_calls
+                sendChunk(ChatCompletionChunk(
+                    id: responseId,
+                    created: created,
+                    model: requestModel,
+                    choices: [StreamChoice(index: 0, delta: DeltaContent(role: nil, content: nil, tool_calls: nil), finish_reason: "tool_calls")],
+                    system_fingerprint: nil
+                ))
+
+                // Send [DONE] and close
+                let done = "data: [DONE]\n\n"
                 loop.execute {
                     let context = ctxBox.value
                     guard context.channel.isActive else { return }
-                    var buffer = context.channel.allocator.buffer(capacity: sseData.utf8.count)
-                    buffer.writeString(sseData)
+                    var buffer = context.channel.allocator.buffer(capacity: done.utf8.count)
+                    buffer.writeString(done)
                     context.write(NIOAny(HTTPServerResponsePart.body(.byteBuffer(buffer))), promise: nil)
                     context.flush()
+                    context.writeAndFlush(NIOAny(HTTPServerResponsePart.end(nil as HTTPHeaders?))).whenComplete { _ in
+                        let context = ctxBox.value
+                        context.close(promise: nil)
+                    }
+                }
+                return
+            } else {
+                // Fallback: emit full content in one delta
+                let chunk = ChatCompletionChunk(
+                    id: responseId,
+                    created: created,
+                    model: requestModel,
+                    choices: [StreamChoice(index: 0, delta: DeltaContent(role: "assistant", content: fullResponse, tool_calls: nil), finish_reason: nil)],
+                    system_fingerprint: nil
+                )
+                if let jsonData = try? JSONEncoder().encode(chunk), let jsonString = String(data: jsonData, encoding: .utf8) {
+                    let sseData = "data: \(jsonString)\n\n"
+                    loop.execute {
+                        let context = ctxBox.value
+                        guard context.channel.isActive else { return }
+                        var buffer = context.channel.allocator.buffer(capacity: sseData.utf8.count)
+                        buffer.writeString(sseData)
+                        context.write(NIOAny(HTTPServerResponsePart.body(.byteBuffer(buffer))), promise: nil)
+                        context.flush()
+                    }
+                }
+            }
+        } else {
+            // Stream tokens as content
+            for await token in stream {
+                fullResponse += token
+                tokenCount += 1
+                let chunk = ChatCompletionChunk(
+                    id: responseId,
+                    created: created,
+                    model: requestModel,
+                    choices: [
+                        StreamChoice(
+                            index: 0,
+                            delta: DeltaContent(role: nil, content: token, tool_calls: nil),
+                            finish_reason: nil
+                        )
+                    ],
+                    system_fingerprint: nil
+                )
+                if let jsonData = try? JSONEncoder().encode(chunk),
+                   let jsonString = String(data: jsonData, encoding: .utf8) {
+                    let sseData = "data: \(jsonString)\n\n"
+                    loop.execute {
+                        let context = ctxBox.value
+                        guard context.channel.isActive else { return }
+                        var buffer = context.channel.allocator.buffer(capacity: sseData.utf8.count)
+                        buffer.writeString(sseData)
+                        context.write(NIOAny(HTTPServerResponsePart.body(.byteBuffer(buffer))), promise: nil)
+                        context.flush()
+                    }
                 }
             }
         }
         
-        // Send final chunk
+        // Send final chunk (non-tool path). For tool_calls path we already returned above
         let finalChunk = ChatCompletionChunk(
             id: responseId,
             created: created,
@@ -170,7 +300,7 @@ class AsyncHTTPHandler {
             choices: [
                 StreamChoice(
                     index: 0,
-                    delta: DeltaContent(role: nil, content: nil),
+                    delta: DeltaContent(role: nil, content: nil, tool_calls: nil),
                     finish_reason: "stop"
                 )
             ],
@@ -179,7 +309,7 @@ class AsyncHTTPHandler {
         
         if let jsonData = try? JSONEncoder().encode(finalChunk),
            let jsonString = String(data: jsonData, encoding: .utf8) {
-            let sseData = "data: \(jsonString)\n\ndata: [DONE]\n\n"
+            let sseData = "data: \(jsonString)\n\n\ndata: [DONE]\n\n"
             loop.execute {
                 let context = ctxBox.value
                 guard context.channel.isActive else { return }
@@ -201,6 +331,8 @@ class AsyncHTTPHandler {
         temperature: Float,
         maxTokens: Int,
         requestModel: String,
+        tools: [Tool]?,
+        toolChoice: ToolChoiceOption?,
         context: ChannelHandlerContext
     ) async throws {
         // Generate complete response
@@ -208,7 +340,9 @@ class AsyncHTTPHandler {
             messages: messages,
             model: model,
             temperature: temperature,
-            maxTokens: maxTokens
+            maxTokens: maxTokens,
+            tools: tools,
+            toolChoice: toolChoice
         )
         
         var fullResponse = ""
@@ -219,6 +353,10 @@ class AsyncHTTPHandler {
             tokenCount += 1
         }
         
+        // Detect tool calls in model output
+        let toolCalls = ToolCallParser.parse(from: fullResponse)
+        let finishReason = (toolCalls != nil) ? "tool_calls" : "stop"
+
         // Create response
         let response = ChatCompletionResponse(
             id: "chatcmpl-\(UUID().uuidString.prefix(8))",
@@ -227,8 +365,8 @@ class AsyncHTTPHandler {
             choices: [
                 ChatChoice(
                     index: 0,
-                    message: ChatMessage(role: "assistant", content: fullResponse),
-                    finish_reason: "stop"
+                    message: ChatMessage(role: "assistant", content: toolCalls == nil ? fullResponse : "", tool_calls: toolCalls, tool_call_id: nil),
+                    finish_reason: finishReason
                 )
             ],
             usage: Usage(
@@ -241,6 +379,8 @@ class AsyncHTTPHandler {
         
         try await sendJSONResponse(response, status: .ok, context: context)
     }
+
+    // Tool Call Parsing moved to ToolCallParser
     
     private func sendJSONResponse<T: Encodable>(
         _ response: T,

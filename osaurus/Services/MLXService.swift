@@ -260,13 +260,15 @@ class MLXService {
         messages: [Message],
         model: LMModel,
         temperature: Float = 0.7,
-        maxTokens: Int = 2048
+        maxTokens: Int = 2048,
+        tools: [Tool]? = nil,
+        toolChoice: ToolChoiceOption? = nil
     ) async throws -> AsyncStream<String> {
         // Load or retrieve chat session from cache
         let holder = try await load(model: model)
 
-        // Build a simple prompt from chat messages
-        let prompt = buildPrompt(from: messages)
+        // Build a prompt from chat messages and optional tool specs
+        let prompt = buildPrompt(from: messages, tools: tools, toolChoice: toolChoice)
 
         // Run generation using MLXLMCommon's ChatSession
         return AsyncStream<String> { continuation in
@@ -307,7 +309,7 @@ class MLXService {
 }
 
 // MARK: - Prompt Formatting
-private func buildPrompt(from messages: [Message]) -> String {
+func buildPrompt(from messages: [Message], tools: [Tool]?, toolChoice: ToolChoiceOption?) -> String {
     var systemPrompt = ""
     var conversation = ""
     for message in messages {
@@ -321,11 +323,25 @@ private func buildPrompt(from messages: [Message]) -> String {
             conversation += "Assistant: \(message.content)\n"
         }
     }
+    // Tool specifications block
+    var toolsBlock = ""
+    if let tools, !tools.isEmpty {
+        if let data = try? JSONEncoder().encode(tools), let json = String(data: data, encoding: .utf8) {
+            toolsBlock += "\n\nYou may call functions (tools) defined by the client.\nWhen you want to call a function, respond with ONLY a single JSON object using EXACTLY these fields: {\"tool_calls\":[{\"id\":\"call_auto\",\"type\":\"function\",\"function\":{\"name\":\"<name>\",\"arguments\":\"<stringified JSON args>\"}}]}.\nRules:\n- Do NOT include a top-level role, code fence, or any text before/after the JSON.\n- Do NOT include schema or \"parameters\" fields.\n- Use field name \"arguments\" only, and its value must be a JSON-escaped string representing an object of arguments.\n- Use only tool names from the available tools list below.\n- If not calling a tool, answer normally with text.\n"
+            toolsBlock += "Available tools (OpenAI format):\n"
+            toolsBlock += json
+            if let toolChoice {
+                if let dataChoice = try? JSONEncoder().encode(toolChoice), let jsonChoice = String(data: dataChoice, encoding: .utf8) {
+                    toolsBlock += "\nTool choice: \(jsonChoice)"
+                }
+            }
+        }
+    }
     let fullPrompt: String
     if systemPrompt.isEmpty {
-        fullPrompt = conversation
+        fullPrompt = conversation + toolsBlock
     } else {
-        fullPrompt = "\(systemPrompt)\n\n\(conversation)Assistant:"
+        fullPrompt = "\(systemPrompt)\n\n\(conversation)Assistant:\(toolsBlock)"
     }
     return fullPrompt.trimmingCharacters(in: .whitespacesAndNewlines)
 }
