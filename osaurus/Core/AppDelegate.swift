@@ -48,6 +48,21 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        // Ask for confirmation before quitting
+        let alert = NSAlert()
+        alert.messageText = "Quit Osaurus?"
+        alert.informativeText = serverController.isRunning
+            ? "The local server will stop and any active requests will be cancelled."
+            : "Are you sure you want to quit?"
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: "Quit")
+        alert.addButton(withTitle: "Cancel")
+
+        let response = alert.runModal()
+        guard response == .alertFirstButtonReturn else {
+            return .terminateCancel
+        }
+
         guard serverController.isRunning else {
             return .terminateNow
         }
