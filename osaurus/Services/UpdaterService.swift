@@ -24,6 +24,10 @@ final class UpdaterViewModel: NSObject, ObservableObject, SPUUpdaterDelegate {
 	func allowedChannels(for updater: SPUUpdater) -> Set<String> {
 		return Set(["release"])
 	}
+
+	func feedURLString(for updater: SPUUpdater) -> String? {
+		return "https://dinoki-ai.github.io/osaurus/appcast.xml"
+	}
 }
 
 
