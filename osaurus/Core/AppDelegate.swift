@@ -31,7 +31,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // Create status bar item and attach click handler
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         if let button = item.button {
-            if let image = NSImage(systemSymbolName: "bird", accessibilityDescription: "Osaurus") {
+            if let image = NSImage(systemSymbolName: "brain", accessibilityDescription: "Osaurus") {
                 image.isTemplate = true
                 button.image = image
             } else {
@@ -85,16 +85,19 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private func setupObservers() {
         cancellables.removeAll()
         serverController.$serverHealth
+            .receive(on: RunLoop.main)
             .sink { [weak self] _ in
                 self?.updateStatusItemAndMenu()
             }
             .store(in: &cancellables)
         serverController.$isRunning
+            .receive(on: RunLoop.main)
             .sink { [weak self] _ in
                 self?.updateStatusItemAndMenu()
             }
             .store(in: &cancellables)
         serverController.$configuration
+            .receive(on: RunLoop.main)
             .sink { [weak self] _ in
                 self?.updateStatusItemAndMenu()
             }
@@ -106,6 +109,18 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // Ensure no NSMenu is attached so button action is triggered
         statusItem.menu = nil
         if let button = statusItem.button {
+            // Update symbol based on server activity
+            let isActive = (serverController.serverHealth == .running)
+            let desiredName = isActive ? "brain.fill" : "brain"
+            var image = NSImage(systemSymbolName: desiredName, accessibilityDescription: "Osaurus")
+            if image == nil && isActive {
+                // Fallback if brain.fill is unavailable on this macOS version
+                image = NSImage(systemSymbolName: "brain", accessibilityDescription: "Osaurus")
+            }
+            if let image {
+                image.isTemplate = true
+                button.image = image
+            }
             switch serverController.serverHealth {
                 case .stopped:
                     button.toolTip = "Osaurus — Ready to start"
