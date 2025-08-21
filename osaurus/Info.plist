@@ -5,7 +5,7 @@
 	<key>ITSAppUsesNonExemptEncryption</key>
 	<false/>
 	<key>SUFeedURL</key>
-	<string>https://osaurus.github.io/appcast.xml</string>
+	<string>https://dinoki-ai.github.io/osaurus/appcast.xml</string>
 	<key>SUPublicEDKey</key>
 	<string>HBRBQ8QQOhmvMKnSxQxqb3upTjyirdx0xkHSSRqn7aI=</string>
 	<key>SUEnableAutomaticChecks</key>
