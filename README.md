@@ -17,6 +17,7 @@ Created by Dinoki Labs ([dinoki.ai](https://dinoki.ai)), a fully native desktop 
 - **Native MLX runtime**: Optimized for Apple Silicon using MLX/MLXLLM
 - **Apple Silicon only**: Designed and tested for M‑series Macs
 - **OpenAI API compatible**: `/v1/models` and `/v1/chat/completions` (stream and non‑stream)
+- **Function/Tool calling**: OpenAI‑style `tools` + `tool_choice`, with `tool_calls` parsing and streaming deltas
 - **Fast token streaming**: Server‑Sent Events for low‑latency output
 - **Model manager UI**: Browse, download, and manage MLX models from `mlx-community`
 - **Self‑contained**: SwiftUI app with an embedded SwiftNIO HTTP server
@@ -62,6 +63,7 @@ osaurus/
 - Model manager with curated suggestions (Llama, Qwen, Gemma, Mistral, etc.)
 - Download sizes estimated via Hugging Face metadata
 - Streaming and non‑streaming chat completions
+- OpenAI‑compatible function calling with robust parser for model outputs (handles code fences/formatting noise)
 - Health endpoint and simple status UI
 
 ## API Endpoints
@@ -122,6 +124,62 @@ curl -N http://127.0.0.1:8080/v1/chat/completions \
 
 Tip: Model names are lower‑cased with hyphens (derived from the friendly name), for example: `Llama 3.2 3B Instruct 4bit` → `llama-3.2-3b-instruct-4bit`.
 
+### Function/Tool Calling (OpenAI‑compatible)
+
+Osaurus supports OpenAI‑style function calling. Send `tools` and optional `tool_choice` in your request. The model is instructed to reply with an exact JSON object containing `tool_calls`, and the server parses it, including common formatting like code fences.
+
+Define tools and let the model decide (`tool_choice: "auto"`):
+
+```bash
+curl -s http://127.0.0.1:8080/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{
+        "model": "llama-3.2-3b-instruct-4bit",
+        "messages": [
+          {"role":"system","content":"You can call functions to answer queries succinctly."},
+          {"role":"user","content":"What\'s the weather in SF?"}
+        ],
+        "tools": [
+          {
+            "type": "function",
+            "function": {
+              "name": "get_weather",
+              "description": "Get weather by city name",
+              "parameters": {
+                "type": "object",
+                "properties": {"city": {"type": "string"}},
+                "required": ["city"]
+              }
+            }
+          }
+        ],
+        "tool_choice": "auto"
+      }'
+```
+
+Non‑stream response will include `message.tool_calls` and `finish_reason: "tool_calls"`. Streaming responses emit OpenAI‑style deltas for `tool_calls` (id, type, function name, and chunked `arguments`), finishing with `finish_reason: "tool_calls"` and `[DONE]`.
+
+After you execute a tool, continue the conversation by sending a `tool` role message with `tool_call_id`:
+
+```bash
+curl -s http://127.0.0.1:8080/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{
+        "model": "llama-3.2-3b-instruct-4bit",
+        "messages": [
+          {"role":"user","content":"What\'s the weather in SF?"},
+          {"role":"assistant","content":"","tool_calls":[{"id":"call_1","type":"function","function":{"name":"get_weather","arguments":"{\"city\":\"SF\"}"}}]},
+          {"role":"tool","tool_call_id":"call_1","content":"{\"tempC\":18,\"conditions\":\"Foggy\"}"}
+        ]
+      }'
+```
+
+Notes:
+
+- Only `type: "function"` tools are supported.
+- Arguments must be a JSON‑escaped string in the assistant response; Osaurus also tolerates a nested `parameters` object and will normalize.
+- Parser accepts minor formatting noise like code fences and `assistant:` prefixes.
+
 ### Use with OpenAI SDKs
 
 Point your client at Osaurus and use any placeholder API key.
@@ -139,6 +197,51 @@ resp = client.chat.completions.create(
 )
 
 print(resp.choices[0].message.content)
+```
+
+Python with tools (non‑stream):
+
+```python
+import json
+from openai import OpenAI
+
+client = OpenAI(base_url="http://127.0.0.1:8080/v1", api_key="osaurus")
+
+tools = [
+    {
+        "type": "function",
+        "function": {
+            "name": "get_weather",
+            "description": "Get weather by city",
+            "parameters": {
+                "type": "object",
+                "properties": {"city": {"type": "string"}},
+                "required": ["city"],
+            },
+        },
+    }
+]
+
+resp = client.chat.completions.create(
+    model="llama-3.2-3b-instruct-4bit",
+    messages=[{"role": "user", "content": "Weather in SF?"}],
+    tools=tools,
+    tool_choice="auto",
+)
+
+tool_calls = resp.choices[0].message.tool_calls or []
+for call in tool_calls:
+    args = json.loads(call.function.arguments)
+    result = {"tempC": 18, "conditions": "Foggy"}  # your tool result
+    followup = client.chat.completions.create(
+        model="llama-3.2-3b-instruct-4bit",
+        messages=[
+            {"role": "user", "content": "Weather in SF?"},
+            {"role": "assistant", "content": "", "tool_calls": tool_calls},
+            {"role": "tool", "tool_call_id": call.id, "content": json.dumps(result)},
+        ],
+    )
+    print(followup.choices[0].message.content)
 ```
 
 ## Models

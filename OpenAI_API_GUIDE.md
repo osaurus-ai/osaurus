@@ -108,6 +108,137 @@ data: {"id":"chatcmpl-abc123","object":"chat.completion.chunk","created":1738193
 data: [DONE]
 ```
 
+### Function/Tool Calling
+
+Osaurus implements OpenAI‑compatible function calling via the `tools` array and optional `tool_choice` in the request. The server injects tool‑calling instructions into the prompt and parses assistant outputs for a top‑level `tool_calls` object, tolerating minor formatting (e.g., code fences).
+
+Supported tool type: `function`.
+
+Request with tools (non‑stream):
+
+```bash
+curl http://localhost:8080/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "llama-3.2-3b-instruct",
+    "messages": [
+      {"role": "user", "content": "Weather in SF?"}
+    ],
+    "tools": [
+      {
+        "type": "function",
+        "function": {
+          "name": "get_weather",
+          "description": "Get weather by city name",
+          "parameters": {
+            "type": "object",
+            "properties": {"city": {"type": "string"}},
+            "required": ["city"]
+          }
+        }
+      }
+    ],
+    "tool_choice": "auto"
+  }'
+```
+
+Example non‑streaming response (simplified):
+
+```json
+{
+  "id": "chatcmpl-abc123",
+  "object": "chat.completion",
+  "created": 1738193123,
+  "model": "llama-3.2-3b-instruct",
+  "choices": [
+    {
+      "index": 0,
+      "message": {
+        "role": "assistant",
+        "content": "",
+        "tool_calls": [
+          {
+            "id": "call_1",
+            "type": "function",
+            "function": {
+              "name": "get_weather",
+              "arguments": "{\"city\":\"SF\"}"
+            }
+          }
+        ]
+      },
+      "finish_reason": "tool_calls"
+    }
+  ]
+}
+```
+
+Streaming with tool calls: Osaurus emits OpenAI‑style deltas. First a role delta, then for each tool call: an id/type delta, a function name delta, and one or more argument deltas (chunked). The final chunk has `finish_reason: "tool_calls"`, followed by `[DONE]`.
+
+```
+data: {"id":"chatcmpl-xyz","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"role":"assistant"}}]}
+
+data: {"id":"chatcmpl-xyz","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function"}]}}]}
+
+data: {"id":"chatcmpl-xyz","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"name":"get_weather"}}]}}]}
+
+data: {"id":"chatcmpl-xyz","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"{\"city\":\"SF\"}"}}]}}]}
+
+data: {"id":"chatcmpl-xyz","object":"chat.completion.chunk","choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}
+
+data: [DONE]
+```
+
+Tool execution loop: After receiving tool calls, execute them client‑side and continue the conversation by sending the tool results as `role: tool` messages with the corresponding `tool_call_id`.
+
+```python
+import json
+from openai import OpenAI
+
+client = OpenAI(base_url="http://localhost:8080/v1", api_key="osaurus")
+
+tools = [{
+    "type": "function",
+    "function": {
+        "name": "get_weather",
+        "parameters": {
+            "type": "object",
+            "properties": {"city": {"type": "string"}},
+            "required": ["city"],
+        }
+    }
+}]
+
+resp = client.chat.completions.create(
+    model="llama-3.2-3b-instruct",
+    messages=[{"role": "user", "content": "Weather in SF?"}],
+    tools=tools,
+    tool_choice="auto",
+)
+
+tool_calls = resp.choices[0].message.tool_calls or []
+for call in tool_calls:
+    args = json.loads(call.function.arguments)
+    # Execute your function
+    result = {"tempC": 18, "conditions": "Foggy"}
+    followup = client.chat.completions.create(
+        model="llama-3.2-3b-instruct",
+        messages=[
+            {"role": "user", "content": "Weather in SF?"},
+            {"role": "assistant", "content": "", "tool_calls": tool_calls},
+            {"role": "tool", "tool_call_id": call.id, "content": json.dumps(result)}
+        ]
+    )
+    print(f"Answer: {followup.choices[0].message.content}")
+```
+
+Notes and limitations:
+
+1. Only `function` tools are supported.
+2. Assistant must return arguments as a JSON‑escaped string. The server also tolerates a nested `parameters` object and normalizes it.
+3. The parser accepts common wrappers like code fences and an `assistant:` prefix.
+4. `tool_choice` supports `"auto"`, `"none"`, and a specific function target object.
+
 ## Model Naming
 
 Models are automatically named based on their display names in ModelManager. The API converts the model names to lowercase and replaces spaces with hyphens. For example:
