@@ -81,6 +81,19 @@ class MLXService {
         }
     }
     private let modelCache = NSCache<NSString, SessionHolder>()
+
+    /// LRU cache for reusable ChatSession keyed by (modelName, sessionId)
+    private struct SessionKey: Hashable { let model: String; let session: String }
+    private var reusableSessions: [SessionKey: (session: ChatSession, lastUsed: Date)] = [:]
+    private var reusableOrder: [SessionKey] = []
+    private let reusableMaxCount: Int = {
+        let env = ProcessInfo.processInfo.environment
+        return Int(env["OSU_SESSION_CACHE_MAX"] ?? "") ?? 8
+    }()
+    private let reusableTTLSeconds: TimeInterval = {
+        let env = ProcessInfo.processInfo.environment
+        return TimeInterval(Int(env["OSU_SESSION_CACHE_TTL"] ?? "") ?? 120)
+    }()
     
     /// Currently loaded model name
     private(set) var currentModelName: String?
@@ -118,7 +131,7 @@ class MLXService {
         }()
         guard let model = chosen else { return }
 
-        let warmupContent: String = prefillChars > 0 ? String(repeating: "A", count: max(1, prefillChars)) : "Hello"
+        let warmupContent: String = prefillChars > 0 ? String(repeating: "A", count: max(1, prefillChars)) : String(repeating: "A", count: 1024)
         let messages = [Message(role: .user, content: warmupContent)]        
         do {
             let stream = try await generate(messages: messages, model: model, temperature: 0.0, maxTokens: maxTokens)
@@ -336,7 +349,8 @@ class MLXService {
         temperature: Float = 0.7,
         maxTokens: Int = 2048,
         tools: [Tool]? = nil,
-        toolChoice: ToolChoiceOption? = nil
+        toolChoice: ToolChoiceOption? = nil,
+        sessionId: String? = nil
     ) async throws -> AsyncStream<String> {
         // Load or retrieve the model container from cache
         let holder = try await load(model: model)
@@ -344,8 +358,26 @@ class MLXService {
         // Build a prompt from chat messages and optional tool specs
         let prompt = buildPrompt(from: messages, tools: tools, toolChoice: toolChoice)
 
-        // Create an ephemeral chat session per request to avoid retaining KV cache
-        let session = ChatSession(holder.container)
+        // Optionally reuse a ChatSession (KV cache) for the same sessionId
+        let session: ChatSession = {
+            guard let sessionId, !sessionId.isEmpty else { return ChatSession(holder.container) }
+            let key = SessionKey(model: model.name, session: sessionId)
+            // Evict stale entries
+            evictExpiredReusableSessions()
+            if let existing = reusableSessions[key], Date().timeIntervalSince(existing.lastUsed) < reusableTTLSeconds {
+                reusableSessions[key] = (existing.session, Date())
+                // Move key to MRU
+                if let idx = reusableOrder.firstIndex(of: key) { reusableOrder.remove(at: idx) }
+                reusableOrder.append(key)
+                return existing.session
+            }
+            let newSession = ChatSession(holder.container)
+            // Insert into LRU structures
+            reusableSessions[key] = (newSession, Date())
+            reusableOrder.append(key)
+            while reusableOrder.count > reusableMaxCount { let lru = reusableOrder.removeFirst(); reusableSessions.removeValue(forKey: lru) }
+            return newSession
+        }()
         let sessionStream = session.streamResponse(to: prompt)
         
         // Return a stream that enforces maxTokens
@@ -366,6 +398,20 @@ class MLXService {
                 }
                 continuation.finish()
             }
+        }
+    }
+
+    private func evictExpiredReusableSessions() {
+        if reusableSessions.isEmpty { return }
+        let now = Date()
+        reusableOrder.removeAll { key in
+            if let entry = reusableSessions[key] {
+                if now.timeIntervalSince(entry.lastUsed) >= reusableTTLSeconds {
+                    reusableSessions.removeValue(forKey: key)
+                    return true
+                }
+            }
+            return false
         }
     }
     
@@ -431,14 +477,16 @@ func buildPrompt(from messages: [Message], tools: [Tool]?, toolChoice: ToolChoic
         }
         
         if !json.isEmpty {
-            toolsBlock += "\n\nYou may call functions (tools) defined by the client.\nWhen you want to call a function, respond with ONLY a single JSON object using EXACTLY these fields: {\"tool_calls\":[{\"id\":\"call_auto\",\"type\":\"function\",\"function\":{\"name\":\"<name>\",\"arguments\":\"<stringified JSON args>\"}}]}.\nRules:\n- Do NOT include a top-level role, code fence, or any text before/after the JSON.\n- Do NOT include schema or \"parameters\" fields.\n- Use field name \"arguments\" only, and its value must be a JSON-escaped string representing an object of arguments.\n- Use only tool names from the available tools list below.\n- If not calling a tool, answer normally with text.\n"
-            toolsBlock += "Available tools (OpenAI format):\n"
+            // Compact tool-call guidance to reduce prefill tokens.
+            // Expect OpenAI-style tool_calls. If invoking a tool, reply with only:
+            // {"tool_calls":[{"id":"call_auto","type":"function","function":{"name":"<name>","arguments":"<json-string>"}}]}
+            toolsBlock += "\n\nTools:\n"
             toolsBlock += json
             if let toolChoice {
                 let encoder = IkigaJSONEncoder()
-                var buffer = ByteBufferAllocator().buffer(capacity: 256)
+                var buffer = ByteBufferAllocator().buffer(capacity: 128)
                 if let _ = try? encoder.encodeAndWrite(toolChoice, into: &buffer), let jsonChoice = buffer.readString(length: buffer.readableBytes) {
-                    toolsBlock += "\nTool choice: \(jsonChoice)"
+                    toolsBlock += "\ntool_choice: \(jsonChoice)"
                 }
             }
         }

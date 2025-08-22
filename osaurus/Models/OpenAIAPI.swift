@@ -61,6 +61,8 @@ struct ChatCompletionRequest: Codable {
     let tools: [Tool]? 
     /// OpenAI tool_choice ("none" | "auto" | {"type":"function","function":{"name":...}})
     let tool_choice: ToolChoiceOption?
+    /// Optional session identifier for KV cache reuse across turns
+    let session_id: String?
 }
 
 /// Chat completion choice

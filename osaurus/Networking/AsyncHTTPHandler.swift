@@ -75,6 +75,7 @@ class AsyncHTTPHandler {
                     requestModel: request.model,
                     tools: request.tools,
                     toolChoice: request.tool_choice,
+                    sessionId: request.session_id,
                     stopSequences: request.stop ?? [],
                     context: context
                 )
@@ -87,6 +88,7 @@ class AsyncHTTPHandler {
                     requestModel: request.model,
                     tools: request.tools,
                     toolChoice: request.tool_choice,
+                    sessionId: request.session_id,
                     stopSequences: request.stop ?? [],
                     context: context
                 )
@@ -112,6 +114,7 @@ class AsyncHTTPHandler {
         requestModel: String,
         tools: [Tool]?,
         toolChoice: ToolChoiceOption?,
+        sessionId: String?,
         stopSequences: [String],
         context: ChannelHandlerContext
     ) async throws {
@@ -147,7 +150,8 @@ class AsyncHTTPHandler {
             temperature: temperature,
             maxTokens: maxTokens,
             tools: tools,
-            toolChoice: toolChoice
+            toolChoice: toolChoice,
+            sessionId: sessionId
         )
         
         var fullResponse = ""
@@ -201,20 +205,28 @@ class AsyncHTTPHandler {
             }
             writeSSE(roleChunk)
             
-            // Stream tokens while collecting them for tool detection
+            // Stream tokens while collecting them for tool detection (bounded window)
+            // Detection window: cap accumulation to reduce joins and scans
+            let detectWindowBytesLimit: Int = {
+                let env = ProcessInfo.processInfo.environment
+                return Int(env["OSU_TOOL_DETECT_WINDOW_BYTES"] ?? "") ?? 4096
+            }()
+            var accumulatedBytes: Int = 0
             for await token in stream {
                 responseBuffer.append(token)
+                accumulatedBytes += token.utf8.count
                 tokenCount += 1
-                
-                // Check if we're likely dealing with a tool call by looking for patterns
-                let trimmed = responseBuffer.joined().trimmingCharacters(in: .whitespacesAndNewlines)
-                let looksLikeToolCall = trimmed.hasPrefix("{") || 
+
+                // Quick heuristics only on a bounded prefix
+                let joined = responseBuffer.joined()
+                let slice: Substring = joined.prefix(detectWindowBytesLimit)
+                let trimmed = slice.trimmingCharacters(in: .whitespacesAndNewlines)
+                let looksLikeToolCall = trimmed.hasPrefix("{") ||
                                       trimmed.contains("\"tool_calls\"") ||
                                       trimmed.contains("```json") ||
                                       (trimmed.hasPrefix("assistant:") && trimmed.contains("{"))
-                
-                // If it doesn't look like a tool call yet, stream the content
-                if !looksLikeToolCall && !trimmed.isEmpty {
+
+                if !looksLikeToolCall && !token.isEmpty {
                     let contentChunk = ChatCompletionChunk(
                         id: responseId,
                         created: created,
@@ -223,6 +235,14 @@ class AsyncHTTPHandler {
                         system_fingerprint: nil
                     )
                     writeSSE(contentChunk)
+                }
+
+                // If window grows too large, trim head to keep join size small
+                if accumulatedBytes > detectWindowBytesLimit * 2 {
+                    let keep = String(joined.suffix(detectWindowBytesLimit))
+                    responseBuffer.removeAll(keepingCapacity: true)
+                    responseBuffer.append(keep)
+                    accumulatedBytes = keep.utf8.count
                 }
             }
             
@@ -312,13 +332,16 @@ class AsyncHTTPHandler {
         } else {
             // Stream tokens as JSON-encoded SSE chunks with batching and stop detection
             // Cache env thresholds once per process to avoid per-request overhead
-            struct StreamTuning { static var batchChars: Int = {
-                let env = ProcessInfo.processInfo.environment
-                return Int(env["OSU_STREAM_BATCH_CHARS"] ?? "") ?? 512
-            }(); static var batchMs: Int = {
-                let env = ProcessInfo.processInfo.environment
-                return Int(env["OSU_STREAM_BATCH_MS"] ?? "") ?? 25
-            }() }
+            struct StreamTuning {
+                static let batchChars: Int = {
+                    let env = ProcessInfo.processInfo.environment
+                    return Int(env["OSU_STREAM_BATCH_CHARS"] ?? "") ?? 256
+                }()
+                static let batchMs: Int = {
+                    let env = ProcessInfo.processInfo.environment
+                    return Int(env["OSU_STREAM_BATCH_MS"] ?? "") ?? 16
+                }()
+            }
             let batchCharThreshold: Int = StreamTuning.batchChars
             let batchIntervalMs: Int = StreamTuning.batchMs
             let flushIntervalNs: UInt64 = UInt64(batchIntervalMs) * 1_000_000
@@ -332,6 +355,22 @@ class AsyncHTTPHandler {
             var firstTokenSent = false
             var pendingContent = ""
             var lastFlushNs: UInt64 = DispatchTime.now().uptimeNanoseconds
+
+            // Queue writes on the event loop at a fixed cadence to reduce cross-thread hops
+            var scheduledFlush: Bool = false
+            @inline(__always)
+            func scheduleFlushIfNeeded() {
+                if scheduledFlush { return }
+                scheduledFlush = true
+                let deadline = NIODeadline.now() + .milliseconds(Int64(batchIntervalMs))
+                loop.scheduleTask(deadline: deadline) {
+                    scheduledFlush = false
+                    guard !pendingContent.isEmpty else { return }
+                    sendContentDelta(pendingContent, flushNow: true)
+                    pendingContent.removeAll(keepingCapacity: true)
+                    lastFlushNs = DispatchTime.now().uptimeNanoseconds
+                }
+            }
 
             @inline(__always)
             func sendChunk(_ delta: DeltaContent, finishReason: String? = nil, flushNow: Bool) {
@@ -398,6 +437,8 @@ class AsyncHTTPHandler {
                     sendContentDelta(pendingContent, flushNow: true)
                     pendingContent.removeAll(keepingCapacity: true)
                     lastFlushNs = nowNs
+                } else {
+                    scheduleFlushIfNeeded()
                 }
             }
 
@@ -464,6 +505,7 @@ class AsyncHTTPHandler {
         requestModel: String,
         tools: [Tool]?,
         toolChoice: ToolChoiceOption?,
+        sessionId: String?,
         stopSequences: [String],
         context: ChannelHandlerContext
     ) async throws {
@@ -474,7 +516,8 @@ class AsyncHTTPHandler {
             temperature: temperature,
             maxTokens: maxTokens,
             tools: tools,
-            toolChoice: toolChoice
+            toolChoice: toolChoice,
+            sessionId: sessionId
         )
         
         var fullResponse = ""

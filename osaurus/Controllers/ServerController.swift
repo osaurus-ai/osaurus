@@ -50,8 +50,10 @@ final class ServerController: ObservableObject {
             // Ensure any previous instance is shut down
             try await stopServerIfNeeded()
 
-            // Create event loop group
-            let group = MultiThreadedEventLoopGroup(numberOfThreads: configuration.numberOfThreads)
+            // Create event loop group (allow env-based override to reduce contention)
+            let env = ProcessInfo.processInfo.environment
+            let nioThreads = Int(env["OSU_NIO_THREADS"] ?? "") ?? configuration.numberOfThreads
+            let group = MultiThreadedEventLoopGroup(numberOfThreads: nioThreads)
             self.eventLoopGroup = group
 
             // Bootstrap server using a nonisolated creator to avoid MainActor hops
@@ -79,8 +81,9 @@ final class ServerController: ObservableObject {
             Task {
                 let env = ProcessInfo.processInfo.environment
                 let envModel = env["OSU_WARMUP_MODEL"]
-                let warmTokens = Int(env["OSU_WARMUP_TOKENS"] ?? "") ?? 16
-                let prefillChars = Int(env["OSU_WARMUP_PREFILL"] ?? "") ?? 1024
+                // More aggressive defaults compile prefill/decoding paths better
+                let warmTokens = Int(env["OSU_WARMUP_TOKENS"] ?? "") ?? 24
+                let prefillChars = Int(env["OSU_WARMUP_PREFILL"] ?? "") ?? 3072
                 await MLXService.shared.warmUp(modelName: envModel, prefillChars: max(0, prefillChars), maxTokens: max(1, warmTokens))
             }
         } catch {
@@ -147,7 +150,10 @@ final class ServerController: ObservableObject {
     
     /// Creates configured server bootstrap outside of MainActor to ensure pipeline ops run on the channel's EventLoop
     nonisolated static func createServerBootstrap(group: EventLoopGroup, configuration: ServerConfiguration) -> ServerBootstrap {
-        ServerBootstrap(group: group)
+        let env = ProcessInfo.processInfo.environment
+        let maxMessagesPerReadEnv = Int(env["OSU_NIO_MAX_MESSAGES_PER_READ"] ?? "") ?? 8
+        let maxMessagesPerRead: ChannelOptions.Types.MaxMessagesPerReadOption.Value = numericCast(maxMessagesPerReadEnv)
+        return ServerBootstrap(group: group)
             // Server options
             .serverChannelOption(ChannelOptions.backlog, value: configuration.backlog)
             .serverChannelOption(ChannelOptions.socketOption(.so_reuseaddr), value: 1)
@@ -159,7 +165,7 @@ final class ServerController: ObservableObject {
             }
             .childChannelOption(ChannelOptions.socketOption(.so_reuseaddr), value: 1)
             .childChannelOption(ChannelOptions.socketOption(.tcp_nodelay), value: 1)
-            .childChannelOption(ChannelOptions.maxMessagesPerRead, value: 1)
+            .childChannelOption(ChannelOptions.maxMessagesPerRead, value: maxMessagesPerRead)
             .childChannelOption(ChannelOptions.recvAllocator, value: AdaptiveRecvByteBufferAllocator())
     }
     
