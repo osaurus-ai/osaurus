@@ -555,13 +555,14 @@ private extension ModelManager {
         request.httpMethod = "GET"
         request.setValue("application/json", forHTTPHeaderField: "Accept")
 
+        // Fetch full data; response size is modest for up to ~200 repos
         let (data, response) = try await URLSession.shared.data(for: request)
         guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
             throw NSError(domain: "HFAPI", code: (response as? HTTPURLResponse)?.statusCode ?? -1, userInfo: [NSLocalizedDescriptionKey: "Unexpected status"])
         }
 
         let decoder = IkigaJSONDecoder()
-        let listRepos = try decoder.decode([HFRepo].self, from: data)
+        let listRepos: [HFRepo] = try decoder.decode([HFRepo].self, from: data)
 
         // Fetch detailed info (including siblings with sizes) for a subset to avoid rate limits
         let maxDetailCount = 60

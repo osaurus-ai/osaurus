@@ -162,8 +162,8 @@ class AsyncHTTPHandler {
         }()
         
         // For tool detection, we'll stream content while building the full response
-        var responseBuffer = ""
-        var hasStreamedContent = false
+        var responseBuffer: [String] = []
+        responseBuffer.reserveCapacity(1024)
         
         if shouldCheckForTools {
             // Send initial role chunk
@@ -174,25 +174,40 @@ class AsyncHTTPHandler {
                 choices: [StreamChoice(index: 0, delta: DeltaContent(role: "assistant", content: nil, tool_calls: nil), finish_reason: nil)],
                 system_fingerprint: nil
             )
-            if let jsonString = encodeJSONString(roleChunk) {
-                let sseData = "data: \(jsonString)\n\n"
+            @inline(__always)
+            func writeSSE<T: Encodable>(_ value: T, flush: Bool = true) {
                 loop.execute {
                     let context = ctxBox.value
                     guard context.channel.isActive else { return }
-                    var buffer = context.channel.allocator.buffer(capacity: sseData.utf8.count)
-                    buffer.writeString(sseData)
+                    let encoder = self.jsonEncoder
+                    var buffer = context.channel.allocator.buffer(capacity: 256)
+                    buffer.writeString("data: ")
+                    do { try encoder.encodeAndWrite(value, into: &buffer) } catch {}
+                    buffer.writeString("\n\n")
                     context.write(NIOAny(HTTPServerResponsePart.body(.byteBuffer(buffer))), promise: nil)
-                    context.flush()
+                    if flush { context.flush() }
                 }
             }
+            @inline(__always)
+            func writeSSEString(_ s: String, flush: Bool = true) {
+                loop.execute {
+                    let context = ctxBox.value
+                    guard context.channel.isActive else { return }
+                    var buffer = context.channel.allocator.buffer(capacity: s.utf8.count)
+                    buffer.writeString(s)
+                    context.write(NIOAny(HTTPServerResponsePart.body(.byteBuffer(buffer))), promise: nil)
+                    if flush { context.flush() }
+                }
+            }
+            writeSSE(roleChunk)
             
             // Stream tokens while collecting them for tool detection
             for await token in stream {
-                responseBuffer += token
+                responseBuffer.append(token)
                 tokenCount += 1
                 
                 // Check if we're likely dealing with a tool call by looking for patterns
-                let trimmed = responseBuffer.trimmingCharacters(in: .whitespacesAndNewlines)
+                let trimmed = responseBuffer.joined().trimmingCharacters(in: .whitespacesAndNewlines)
                 let looksLikeToolCall = trimmed.hasPrefix("{") || 
                                       trimmed.contains("\"tool_calls\"") ||
                                       trimmed.contains("```json") ||
@@ -200,7 +215,6 @@ class AsyncHTTPHandler {
                 
                 // If it doesn't look like a tool call yet, stream the content
                 if !looksLikeToolCall && !trimmed.isEmpty {
-                    hasStreamedContent = true
                     let contentChunk = ChatCompletionChunk(
                         id: responseId,
                         created: created,
@@ -208,70 +222,18 @@ class AsyncHTTPHandler {
                         choices: [StreamChoice(index: 0, delta: DeltaContent(role: nil, content: token, tool_calls: nil), finish_reason: nil)],
                         system_fingerprint: nil
                     )
-                    if let jsonString = encodeJSONString(contentChunk) {
-                        let sseData = "data: \(jsonString)\n\n"
-                        loop.execute {
-                            let context = ctxBox.value
-                            guard context.channel.isActive else { return }
-                            var buffer = context.channel.allocator.buffer(capacity: sseData.utf8.count)
-                            buffer.writeString(sseData)
-                            context.write(NIOAny(HTTPServerResponsePart.body(.byteBuffer(buffer))), promise: nil)
-                            context.flush()
-                        }
-                    }
+                    writeSSE(contentChunk)
                 }
             }
             
-            fullResponse = responseBuffer
+            fullResponse = responseBuffer.joined()
             
             // Now check if we have tool calls
             if let toolCalls = ToolCallParser.parse(from: fullResponse) {
-                // If we already streamed content, send a finish chunk before tool calls
-                if hasStreamedContent {
-                    let finishChunk = ChatCompletionChunk(
-                        id: responseId,
-                        created: created,
-                        model: requestModel,
-                        choices: [StreamChoice(index: 0, delta: DeltaContent(role: nil, content: nil, tool_calls: nil), finish_reason: "stop")],
-                        system_fingerprint: nil
-                    )
-                    if let jsonString = encodeJSONString(finishChunk) {
-                        let sseData = "data: \(jsonString)\n\n"
-                        loop.execute {
-                            let context = ctxBox.value
-                            guard context.channel.isActive else { return }
-                            var buffer = context.channel.allocator.buffer(capacity: sseData.utf8.count)
-                            buffer.writeString(sseData)
-                            context.write(NIOAny(HTTPServerResponsePart.body(.byteBuffer(buffer))), promise: nil)
-                            context.flush()
-                        }
-                    }
-                }
-                
                 // Need to emit tool calls - use existing tool call emission code
                 // Emit OpenAI-style incremental tool_call deltas
-                func sendChunk(_ chunk: ChatCompletionChunk) {
-                    if let jsonString = encodeJSONString(chunk) {
-                        let sseData = "data: \(jsonString)\n\n"
-                        loop.execute {
-                            let context = ctxBox.value
-                            guard context.channel.isActive else { return }
-                            var buffer = context.channel.allocator.buffer(capacity: sseData.utf8.count)
-                            buffer.writeString(sseData)
-                            context.write(NIOAny(HTTPServerResponsePart.body(.byteBuffer(buffer))), promise: nil)
-                            context.flush()
-                        }
-                    }
-                }
+                func sendChunk(_ chunk: ChatCompletionChunk) { writeSSE(chunk) }
 
-                // Initial role chunk
-                sendChunk(ChatCompletionChunk(
-                    id: responseId,
-                    created: created,
-                    model: requestModel,
-                    choices: [StreamChoice(index: 0, delta: DeltaContent(role: "assistant", content: nil, tool_calls: nil), finish_reason: nil)],
-                    system_fingerprint: nil
-                ))
 
                 let argChunkSize = 500
                 for (idx, call) in toolCalls.enumerated() {
@@ -326,14 +288,10 @@ class AsyncHTTPHandler {
                 ))
 
                 // Send [DONE] and close
-                let done = "data: [DONE]\n\n"
+                writeSSEString("data: [DONE]\n\n")
                 loop.execute {
                     let context = ctxBox.value
                     guard context.channel.isActive else { return }
-                    var buffer = context.channel.allocator.buffer(capacity: done.utf8.count)
-                    buffer.writeString(done)
-                    context.write(NIOAny(HTTPServerResponsePart.body(.byteBuffer(buffer))), promise: nil)
-                    context.flush()
                     context.writeAndFlush(NIOAny(HTTPServerResponsePart.end(nil as HTTPHeaders?))).whenComplete { _ in
                         let context = ctxBox.value
                         context.close(promise: nil)
@@ -349,17 +307,7 @@ class AsyncHTTPHandler {
                     choices: [StreamChoice(index: 0, delta: DeltaContent(role: "assistant", content: fullResponse, tool_calls: nil), finish_reason: nil)],
                     system_fingerprint: nil
                 )
-                if let jsonString = encodeJSONString(chunk) {
-                    let sseData = "data: \(jsonString)\n\n"
-                    loop.execute {
-                        let context = ctxBox.value
-                        guard context.channel.isActive else { return }
-                        var buffer = context.channel.allocator.buffer(capacity: sseData.utf8.count)
-                        buffer.writeString(sseData)
-                        context.write(NIOAny(HTTPServerResponsePart.body(.byteBuffer(buffer))), promise: nil)
-                        context.flush()
-                    }
-                }
+                writeSSE(chunk)
             }
         } else {
             // Stream tokens as JSON-encoded SSE chunks with batching and stop detection
@@ -394,13 +342,14 @@ class AsyncHTTPHandler {
                     choices: [StreamChoice(index: 0, delta: delta, finish_reason: finishReason)],
                     system_fingerprint: nil
                 )
-                guard let json = encodeJSONString(chunk) else { return }
-                let sse = "data: \(json)\n\n"
+                let encoder = self.jsonEncoder
                 loop.execute {
                     let context = ctxBox.value
                     guard context.channel.isActive else { return }
-                    var buffer = context.channel.allocator.buffer(capacity: sse.utf8.count)
-                    buffer.writeString(sse)
+                    var buffer = context.channel.allocator.buffer(capacity: 256)
+                    buffer.writeString("data: ")
+                    do { try encoder.encodeAndWrite(chunk, into: &buffer) } catch {}
+                    buffer.writeString("\n\n")
                     context.write(NIOAny(HTTPServerResponsePart.body(.byteBuffer(buffer))), promise: nil)
                     if flushNow { context.flush() }
                 }
@@ -483,14 +432,20 @@ class AsyncHTTPHandler {
             system_fingerprint: nil
         )
         
-        if let jsonString = encodeJSONString(finalChunk) {
-            let sseData = "data: \(jsonString)\n\n\ndata: [DONE]\n\n"
+        @inline(__always)
+        func writeSSEFinal<T: Encodable>(_ value: T) {
             loop.execute {
                 let context = ctxBox.value
                 guard context.channel.isActive else { return }
-                var buffer = context.channel.allocator.buffer(capacity: sseData.utf8.count)
-                buffer.writeString(sseData)
+                let encoder = self.jsonEncoder
+                var buffer = context.channel.allocator.buffer(capacity: 256)
+                buffer.writeString("data: ")
+                do { try encoder.encodeAndWrite(value, into: &buffer) } catch {}
+                buffer.writeString("\n\n")
                 context.write(NIOAny(HTTPServerResponsePart.body(.byteBuffer(buffer))), promise: nil)
+                var tail = context.channel.allocator.buffer(capacity: 16)
+                tail.writeString("data: [DONE]\n\n")
+                context.write(NIOAny(HTTPServerResponsePart.body(.byteBuffer(tail))), promise: nil)
                 context.flush()
                 context.writeAndFlush(NIOAny(HTTPServerResponsePart.end(nil as HTTPHeaders?))).whenComplete { _ in
                     let context = ctxBox.value
@@ -498,6 +453,7 @@ class AsyncHTTPHandler {
                 }
             }
         }
+        writeSSEFinal(finalChunk)
     }
     
     private func handleNonStreamingResponse(
@@ -591,21 +547,22 @@ class AsyncHTTPHandler {
     ) async throws {
         let loop = context.eventLoop
         let ctxBox = UncheckedSendableBox(value: context)
-        let jsonString = encodeJSONString(response) ?? "{}"
         // Send response on the event loop
         loop.execute {
             let context = ctxBox.value
             guard context.channel.isActive else { return }
+            let encoder = self.jsonEncoder
             var responseHead = HTTPResponseHead(version: .http1_1, status: status)
-            var buffer = context.channel.allocator.buffer(capacity: jsonString.utf8.count)
-            buffer.writeString(jsonString)
-            
+            var buffer = context.channel.allocator.buffer(capacity: 1024)
+            do { try encoder.encodeAndWrite(response, into: &buffer) } catch {
+                buffer.clear()
+                buffer.writeString("{}")
+            }
             var headers = HTTPHeaders()
             headers.add(name: "Content-Type", value: "application/json; charset=utf-8")
             headers.add(name: "Content-Length", value: String(buffer.readableBytes))
             headers.add(name: "Connection", value: "close")
             responseHead.headers = headers
-            
             context.write(NIOAny(HTTPServerResponsePart.head(responseHead)), promise: nil)
             context.write(NIOAny(HTTPServerResponsePart.body(.byteBuffer(buffer))), promise: nil)
             context.writeAndFlush(NIOAny(HTTPServerResponsePart.end(nil as HTTPHeaders?))).whenComplete { _ in

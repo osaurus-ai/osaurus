@@ -73,13 +73,11 @@ class MLXService {
         }
     }
     
-    /// Cache to store loaded chat sessions to avoid reloading.
+    /// Cache to store loaded model containers to avoid reloading weights from disk.
     private final class SessionHolder: NSObject {
         let container: ModelContainer
-        let session: ChatSession
-        init(container: ModelContainer, session: ChatSession) {
+        init(container: ModelContainer) {
             self.container = container
-            self.session = session
         }
     }
     private let modelCache = NSCache<NSString, SessionHolder>()
@@ -314,8 +312,7 @@ class MLXService {
 
         // Load the model container
         let container = try await loadModelContainer(directory: localURL)
-        let session = ChatSession(container)
-        let holder = SessionHolder(container: container, session: session)
+        let holder = SessionHolder(container: container)
         
         // Cache for future requests
         modelCache.setObject(holder, forKey: model.name as NSString)
@@ -341,15 +338,15 @@ class MLXService {
         tools: [Tool]? = nil,
         toolChoice: ToolChoiceOption? = nil
     ) async throws -> AsyncStream<String> {
-        // Load or retrieve chat session from cache
+        // Load or retrieve the model container from cache
         let holder = try await load(model: model)
 
         // Build a prompt from chat messages and optional tool specs
         let prompt = buildPrompt(from: messages, tools: tools, toolChoice: toolChoice)
 
-        // Run generation using MLXLMCommon's ChatSession
-        // Get the stream directly from the session
-        let sessionStream = holder.session.streamResponse(to: prompt)
+        // Create an ephemeral chat session per request to avoid retaining KV cache
+        let session = ChatSession(holder.container)
+        let sessionStream = session.streamResponse(to: prompt)
         
         // Return a stream that enforces maxTokens
         return AsyncStream<String> { continuation in

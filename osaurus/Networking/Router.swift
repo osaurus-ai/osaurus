@@ -59,6 +59,32 @@ public struct Router {
             return notFoundEndpoint()
         }
     }
+
+    /// Overload that accepts a ByteBuffer body to enable zero-copy decoding
+    public func route(method: String, path: String, bodyBuffer: ByteBuffer) -> (status: HTTPResponseStatus, headers: [(String, String)], body: String) {
+        switch (method, path) {
+        case ("GET", "/health"):
+            return healthEndpoint()
+        
+        case ("GET", "/"):
+            return rootEndpoint()
+        
+        case ("GET", "/models"):
+            return modelsEndpoint()
+
+        case ("GET", "/v1/models"):
+            return modelsEndpoint()
+            
+        case ("POST", "/chat/completions"):
+            return chatCompletionsEndpoint(bodyBuffer: bodyBuffer, context: context, handler: handler)
+
+        case ("POST", "/v1/chat/completions"):
+            return chatCompletionsEndpoint(bodyBuffer: bodyBuffer, context: context, handler: handler)
+            
+        default:
+            return notFoundEndpoint()
+        }
+    }
     
     // MARK: - Private Endpoints
     
@@ -91,7 +117,6 @@ public struct Router {
     }
     
     private func chatCompletionsEndpoint(body: Data, context: ChannelHandlerContext?, handler: HTTPHandler?) -> (HTTPResponseStatus, [(String, String)], String) {
-        // Decode the request using shared decoder
         guard let request = try? Self.jsonDecoder.decode(ChatCompletionRequest.self, from: body) else {
             return errorResponse(message: "Invalid request format", statusCode: .badRequest)
         }
@@ -111,6 +136,26 @@ public struct Router {
         }
         
         // Return empty response - actual response will be sent asynchronously
+        return (.ok, [], "")
+    }
+
+    private func chatCompletionsEndpoint(bodyBuffer: ByteBuffer, context: ChannelHandlerContext?, handler: HTTPHandler?) -> (HTTPResponseStatus, [(String, String)], String) {
+        // Decode directly from ByteBuffer to avoid extra Data copies
+        guard let request = try? Self.jsonDecoder.decode(ChatCompletionRequest.self, from: bodyBuffer) else {
+            return errorResponse(message: "Invalid request format", statusCode: .badRequest)
+        }
+
+        guard let context = context, let handler = handler else {
+            return errorResponse(message: "Server configuration error", statusCode: .internalServerError)
+        }
+
+        Task.detached(priority: .userInitiated) {
+            await AsyncHTTPHandler.shared.handleChatCompletion(
+                request: request,
+                context: context
+            )
+        }
+
         return (.ok, [], "")
     }
     
