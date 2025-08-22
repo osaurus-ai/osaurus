@@ -10,9 +10,14 @@ import MLXLMCommon
 import MLXLLM
 
 /// Represents a language model configuration
-struct LMModel {
+class LMModel {
     let name: String
     let modelId: String  // The model ID from ModelManager (e.g., "mlx-community/Llama-3.2-3B-Instruct-4bit")
+    
+    init(name: String, modelId: String) {
+        self.name = name
+        self.modelId = modelId
+    }
 }
 
 /// Message role for chat interactions
@@ -41,6 +46,15 @@ class MLXService {
     
     /// Thread-safe cache of available model names
     nonisolated(unsafe) private static let availableModelsCache = NSCache<NSString, NSArray>()
+    
+    /// Cache for model lookups to avoid repeated disk scanning
+    nonisolated(unsafe) private static let modelLookupCache = NSCache<NSString, LMModel>()
+    
+    /// Concurrent queue for thread-safe model lookup operations
+    private static let modelLookupQueue = DispatchQueue(label: "com.osaurus.model.lookup", attributes: .concurrent)
+    
+    /// Timestamp for cached models list
+    nonisolated(unsafe) private static var modelsListCacheTimestamp: Date?
     
     /// List of available models that can be used for generation.
     /// Dynamically generated from downloaded models
@@ -128,41 +142,84 @@ class MLXService {
     
     /// Get list of available models that are downloaded (thread-safe)
     nonisolated static func getAvailableModels() -> [String] {
-        // Always rescan disk to ensure fresh and reliable results
-        let pairs = Self.scanDiskForModels()
-        let modelNames = pairs.map { $0.name }
-        // Keep cache in sync for other callers
-        Self.availableModelsCache.setObject(modelNames as NSArray, forKey: "models" as NSString)
-        let modelInfo = pairs.map { ["name": $0.name, "id": $0.id] }
-        Self.availableModelsCache.setObject(modelInfo as NSArray, forKey: "modelInfo" as NSString)
-        return modelNames
+        // Return cached list if fresh (< 5 seconds old)
+        if let cached = availableModelsCache.object(forKey: "models" as NSString) as? [String],
+           let timestamp = modelsListCacheTimestamp,
+           Date().timeIntervalSince(timestamp) < 5.0 {
+            return cached
+        }
+        
+        // Otherwise scan disk and cache the results
+        return modelLookupQueue.sync(flags: .barrier) {
+            // Double-check after acquiring barrier
+            if let cached = availableModelsCache.object(forKey: "models" as NSString) as? [String],
+               let timestamp = modelsListCacheTimestamp,
+               Date().timeIntervalSince(timestamp) < 5.0 {
+                return cached
+            }
+            
+            let pairs = Self.scanDiskForModels()
+            let modelNames = pairs.map { $0.name }
+            
+            // Update cache with timestamp
+            Self.availableModelsCache.setObject(modelNames as NSArray, forKey: "models" as NSString)
+            let modelInfo = pairs.map { ["name": $0.name, "id": $0.id] }
+            Self.availableModelsCache.setObject(modelInfo as NSArray, forKey: "modelInfo" as NSString)
+            Self.modelsListCacheTimestamp = Date()
+            
+            return modelNames
+        }
     }
     
     /// Find a model by name
     nonisolated static func findModel(named name: String) -> LMModel? {
-        // Prefer scanning disk to reflect newly downloaded models immediately
-        let pairs = Self.scanDiskForModels()
-        // Try exact repo-name match first (lowercased)
-        if let match = pairs.first(where: { $0.name == name }) {
-            return LMModel(name: match.name, modelId: match.id)
+        // Check cache first for fast lookups
+        if let cached = modelLookupCache.object(forKey: name as NSString) {
+            return cached
         }
-        // Try matching against full id's repo component (case-insensitive)
-        if let match = pairs.first(where: { pair in
-            let repo = pair.id.split(separator: "/").last.map(String.init)?.lowercased()
-            return repo == name.lowercased()
-        }) {
-            return LMModel(name: match.name, modelId: match.id)
+        
+        // Use concurrent queue for thread-safe disk scanning
+        return modelLookupQueue.sync(flags: .barrier) {
+            // Double-check cache after acquiring barrier (in case another thread just populated it)
+            if let cached = modelLookupCache.object(forKey: name as NSString) {
+                return cached
+            }
+            
+            // Only scan disk if not in cache
+            let pairs = Self.scanDiskForModels()
+            
+            // Try exact repo-name match first (lowercased)
+            if let match = pairs.first(where: { $0.name == name }) {
+                let model = LMModel(name: match.name, modelId: match.id)
+                modelLookupCache.setObject(model, forKey: name as NSString)
+                return model
+            }
+            
+            // Try matching against full id's repo component (case-insensitive)
+            if let match = pairs.first(where: { pair in
+                let repo = pair.id.split(separator: "/").last.map(String.init)?.lowercased()
+                return repo == name.lowercased()
+            }) {
+                let model = LMModel(name: match.name, modelId: match.id)
+                modelLookupCache.setObject(model, forKey: name as NSString)
+                return model
+            }
+            
+            // Try full id match (case-insensitive)
+            if let match = pairs.first(where: { $0.id.lowercased() == name.lowercased() }) {
+                let model = LMModel(name: match.name, modelId: match.id)
+                modelLookupCache.setObject(model, forKey: name as NSString)
+                return model
+            }
+            
+            // Update available models cache for consistency
+            let modelNames = pairs.map { $0.name }
+            Self.availableModelsCache.setObject(modelNames as NSArray, forKey: "models" as NSString)
+            let modelInfo = pairs.map { ["name": $0.name, "id": $0.id] }
+            Self.availableModelsCache.setObject(modelInfo as NSArray, forKey: "modelInfo" as NSString)
+            
+            return nil
         }
-        // Try full id match (case-insensitive)
-        if let match = pairs.first(where: { $0.id.lowercased() == name.lowercased() }) {
-            return LMModel(name: match.name, modelId: match.id)
-        }
-        // Update cache for consistency even if not found
-        let modelNames = pairs.map { $0.name }
-        Self.availableModelsCache.setObject(modelNames as NSArray, forKey: "models" as NSString)
-        let modelInfo = pairs.map { ["name": $0.name, "id": $0.id] }
-        Self.availableModelsCache.setObject(modelInfo as NSArray, forKey: "modelInfo" as NSString)
-        return nil
     }
 
     // MARK: - Disk Scanning for Downloaded Models
@@ -239,34 +296,28 @@ class MLXService {
     
     /// Loads a model container from local storage or retrieves it from cache.
     private func load(model: LMModel) async throws -> SessionHolder {
+        // Return cached model immediately without any disk I/O
         if let holder = modelCache.object(forKey: model.name as NSString) {
             return holder
         }
 
-        // Prefer nonisolated disk lookup to avoid MainActor hops; fallback to ModelManager knowledge if needed
-        let localURL: URL = {
-            if let url = Self.findLocalDirectory(forModelId: model.modelId) {
-                return url
-            }
-            return ModelManager.modelsDirectory // placeholder; will fail validation below
-        }()
-        
-        // Validate the directory has required files
-        let fm = FileManager.default
-        let hasConfig = fm.fileExists(atPath: localURL.appendingPathComponent("config.json").path)
-        let hasWeights: Bool = (try? fm.contentsOfDirectory(at: localURL, includingPropertiesForKeys: nil))?.contains(where: { $0.pathExtension == "safetensors" }) ?? false
-        guard hasConfig && hasWeights else {
+        // Find the local directory - findLocalDirectory already validates files exist
+        guard let localURL = Self.findLocalDirectory(forModelId: model.modelId) else {
             throw NSError(domain: "MLXService", code: 1, userInfo: [
                 NSLocalizedDescriptionKey: "Model not downloaded: \(model.name)"
             ])
         }
 
+        // Load the model container
         let container = try await loadModelContainer(directory: localURL)
         let session = ChatSession(container)
         let holder = SessionHolder(container: container, session: session)
+        
+        // Cache for future requests
         modelCache.setObject(holder, forKey: model.name as NSString)
         currentModelName = model.name
         updateAvailableModelsCache()
+        
         return holder
     }
     
@@ -293,13 +344,15 @@ class MLXService {
         let prompt = buildPrompt(from: messages, tools: tools, toolChoice: toolChoice)
 
         // Run generation using MLXLMCommon's ChatSession
+        // Get the stream directly from the session
+        let sessionStream = holder.session.streamResponse(to: prompt)
+        
+        // Return a stream that enforces maxTokens
         return AsyncStream<String> { continuation in
             Task {
-                // Stream if possible for responsiveness; if not, fall back to single response
-                let stream = holder.session.streamResponse(to: prompt)
                 var emittedTokenCount = 0
                 do {
-                    for try await token in stream {
+                    for try await token in sessionStream {
                         // Enforce maxTokens by counting tokens emitted
                         if emittedTokenCount >= maxTokens {
                             break
@@ -337,6 +390,10 @@ class MLXService {
 }
 
 // MARK: - Prompt Formatting
+
+/// Cache for encoded tool specifications to avoid repeated JSON encoding
+private let toolsJSONCache = NSCache<NSNumber, NSString>()
+
 func buildPrompt(from messages: [Message], tools: [Tool]?, toolChoice: ToolChoiceOption?) -> String {
     var systemPrompt = ""
     var conversation = ""
@@ -354,7 +411,21 @@ func buildPrompt(from messages: [Message], tools: [Tool]?, toolChoice: ToolChoic
     // Tool specifications block
     var toolsBlock = ""
     if let tools, !tools.isEmpty {
-        if let data = try? JSONEncoder().encode(tools), let json = String(data: data, encoding: .utf8) {
+        // Create a cache key from tool names
+        let toolNames = tools.map { $0.function.name }.sorted().joined(separator: ",")
+        let cacheKey = NSNumber(value: toolNames.hashValue)
+        
+        let json: String
+        if let cached = toolsJSONCache.object(forKey: cacheKey) {
+            json = cached as String
+        } else if let data = try? JSONEncoder().encode(tools), let encoded = String(data: data, encoding: .utf8) {
+            json = encoded
+            toolsJSONCache.setObject(encoded as NSString, forKey: cacheKey)
+        } else {
+            json = "[]"
+        }
+        
+        if !json.isEmpty {
             toolsBlock += "\n\nYou may call functions (tools) defined by the client.\nWhen you want to call a function, respond with ONLY a single JSON object using EXACTLY these fields: {\"tool_calls\":[{\"id\":\"call_auto\",\"type\":\"function\",\"function\":{\"name\":\"<name>\",\"arguments\":\"<stringified JSON args>\"}}]}.\nRules:\n- Do NOT include a top-level role, code fence, or any text before/after the JSON.\n- Do NOT include schema or \"parameters\" fields.\n- Use field name \"arguments\" only, and its value must be a JSON-escaped string representing an object of arguments.\n- Use only tool names from the available tools list below.\n- If not calling a tool, answer normally with text.\n"
             toolsBlock += "Available tools (OpenAI format):\n"
             toolsBlock += json

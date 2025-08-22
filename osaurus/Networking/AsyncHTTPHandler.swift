@@ -18,7 +18,16 @@ private struct UncheckedSendableBox<T>: @unchecked Sendable {
 class AsyncHTTPHandler {
     static let shared = AsyncHTTPHandler()
     
-    private init() {}
+    /// Cache for frequently used models to avoid repeated lookups
+    private let modelCache = NSCache<NSString, LMModel>()
+    
+    /// Shared JSON encoder for better performance
+    private let jsonEncoder = JSONEncoder()
+    
+    private init() {
+        // Pre-cache common models
+        modelCache.countLimit = 10
+    }
     
     /// Handle chat completions with streaming support
     func handleChatCompletion(
@@ -26,18 +35,26 @@ class AsyncHTTPHandler {
         context: ChannelHandlerContext
     ) async {
         do {
-            // Find the model using nonisolated static accessor
-            guard let model = MLXService.findModel(named: request.model) else {
-                let error = OpenAIError(
-                    error: OpenAIError.ErrorDetail(
-                        message: "Model not found: \(request.model)",
-                        type: "invalid_request_error",
-                        param: "model",
-                        code: nil
+            // Try cache first for faster lookups
+            let model: LMModel
+            if let cached = modelCache.object(forKey: request.model as NSString) {
+                model = cached
+            } else {
+                // Find the model using nonisolated static accessor
+                guard let found = MLXService.findModel(named: request.model) else {
+                    let error = OpenAIError(
+                        error: OpenAIError.ErrorDetail(
+                            message: "Model not found: \(request.model)",
+                            type: "invalid_request_error",
+                            param: "model",
+                            code: nil
+                        )
                     )
-                )
-                try await sendJSONResponse(error, status: .notFound, context: context)
-                return
+                    try await sendJSONResponse(error, status: .notFound, context: context)
+                    return
+                }
+                model = found
+                modelCache.setObject(model, forKey: request.model as NSString)
             }
             
             // Convert messages
@@ -99,19 +116,13 @@ class AsyncHTTPHandler {
     ) async throws {
         let loop = context.eventLoop
         let ctxBox = UncheckedSendableBox(value: context)
-        // Send SSE headers
-        let headers: [(String, String)] = [
-            ("Content-Type", "text/event-stream"),
-            ("Cache-Control", "no-cache"),
-            ("Connection", "keep-alive")
-        ]
         
-        // Prepare response headers
+        // Use pre-built SSE headers for better performance
         var responseHead = HTTPResponseHead(version: .http1_1, status: .ok)
         var nioHeaders = HTTPHeaders()
-        for (name, value) in headers {
-            nioHeaders.add(name: name, value: value)
-        }
+        nioHeaders.add(name: "Content-Type", value: "text/event-stream")
+        nioHeaders.add(name: "Cache-Control", value: "no-cache")
+        nioHeaders.add(name: "Connection", value: "keep-alive")
         responseHead.headers = nioHeaders
         
         // Ensure header write happens on the channel's event loop
@@ -139,24 +150,105 @@ class AsyncHTTPHandler {
         var fullResponse = ""
         var tokenCount = 0
         
-        // If tools are provided (and tool_choice is not "none"), buffer the stream to detect tool_calls and then emit appropriate deltas
-        let shouldBufferForTools: Bool = {
+        // If tools are provided (and tool_choice is not "none"), we need to check for tool calls
+        // However, we'll stream content immediately for better performance
+        let shouldCheckForTools: Bool = {
             guard tools?.isEmpty == false else { return false }
             if let toolChoice, case .none = toolChoice { return false }
             return true
         }()
-        if shouldBufferForTools {
-            var tokensBuffer: [String] = []
-            tokensBuffer.reserveCapacity(256)
-            for await token in stream {
-                tokensBuffer.append(token)
-                tokenCount += 1
+        
+        // For tool detection, we'll stream content while building the full response
+        var responseBuffer = ""
+        var hasStreamedContent = false
+        
+        if shouldCheckForTools {
+            // Send initial role chunk
+            let roleChunk = ChatCompletionChunk(
+                id: responseId,
+                created: created,
+                model: requestModel,
+                choices: [StreamChoice(index: 0, delta: DeltaContent(role: "assistant", content: nil, tool_calls: nil), finish_reason: nil)],
+                system_fingerprint: nil
+            )
+            if let jsonData = try? jsonEncoder.encode(roleChunk), let jsonString = String(data: jsonData, encoding: .utf8) {
+                let sseData = "data: \(jsonString)\n\n"
+                loop.execute {
+                    let context = ctxBox.value
+                    guard context.channel.isActive else { return }
+                    var buffer = context.channel.allocator.buffer(capacity: sseData.utf8.count)
+                    buffer.writeString(sseData)
+                    context.write(NIOAny(HTTPServerResponsePart.body(.byteBuffer(buffer))), promise: nil)
+                    context.flush()
+                }
             }
-            fullResponse = tokensBuffer.joined()
+            
+            // Stream tokens while collecting them for tool detection
+            for await token in stream {
+                responseBuffer += token
+                tokenCount += 1
+                
+                // Check if we're likely dealing with a tool call by looking for patterns
+                let trimmed = responseBuffer.trimmingCharacters(in: .whitespacesAndNewlines)
+                let looksLikeToolCall = trimmed.hasPrefix("{") || 
+                                      trimmed.contains("\"tool_calls\"") ||
+                                      trimmed.contains("```json") ||
+                                      (trimmed.hasPrefix("assistant:") && trimmed.contains("{"))
+                
+                // If it doesn't look like a tool call yet, stream the content
+                if !looksLikeToolCall && !trimmed.isEmpty {
+                    hasStreamedContent = true
+                    let contentChunk = ChatCompletionChunk(
+                        id: responseId,
+                        created: created,
+                        model: requestModel,
+                        choices: [StreamChoice(index: 0, delta: DeltaContent(role: nil, content: token, tool_calls: nil), finish_reason: nil)],
+                        system_fingerprint: nil
+                    )
+                    if let jsonData = try? jsonEncoder.encode(contentChunk), let jsonString = String(data: jsonData, encoding: .utf8) {
+                        let sseData = "data: \(jsonString)\n\n"
+                        loop.execute {
+                            let context = ctxBox.value
+                            guard context.channel.isActive else { return }
+                            var buffer = context.channel.allocator.buffer(capacity: sseData.utf8.count)
+                            buffer.writeString(sseData)
+                            context.write(NIOAny(HTTPServerResponsePart.body(.byteBuffer(buffer))), promise: nil)
+                            context.flush()
+                        }
+                    }
+                }
+            }
+            
+            fullResponse = responseBuffer
+            
+            // Now check if we have tool calls
             if let toolCalls = ToolCallParser.parse(from: fullResponse) {
+                // If we already streamed content, send a finish chunk before tool calls
+                if hasStreamedContent {
+                    let finishChunk = ChatCompletionChunk(
+                        id: responseId,
+                        created: created,
+                        model: requestModel,
+                        choices: [StreamChoice(index: 0, delta: DeltaContent(role: nil, content: nil, tool_calls: nil), finish_reason: "stop")],
+                        system_fingerprint: nil
+                    )
+                    if let jsonData = try? jsonEncoder.encode(finishChunk), let jsonString = String(data: jsonData, encoding: .utf8) {
+                        let sseData = "data: \(jsonString)\n\n"
+                        loop.execute {
+                            let context = ctxBox.value
+                            guard context.channel.isActive else { return }
+                            var buffer = context.channel.allocator.buffer(capacity: sseData.utf8.count)
+                            buffer.writeString(sseData)
+                            context.write(NIOAny(HTTPServerResponsePart.body(.byteBuffer(buffer))), promise: nil)
+                            context.flush()
+                        }
+                    }
+                }
+                
+                // Need to emit tool calls - use existing tool call emission code
                 // Emit OpenAI-style incremental tool_call deltas
                 func sendChunk(_ chunk: ChatCompletionChunk) {
-                    if let jsonData = try? JSONEncoder().encode(chunk), let jsonString = String(data: jsonData, encoding: .utf8) {
+                    if let jsonData = try? jsonEncoder.encode(chunk), let jsonString = String(data: jsonData, encoding: .utf8) {
                         let sseData = "data: \(jsonString)\n\n"
                         loop.execute {
                             let context = ctxBox.value
@@ -254,7 +346,7 @@ class AsyncHTTPHandler {
                     choices: [StreamChoice(index: 0, delta: DeltaContent(role: "assistant", content: fullResponse, tool_calls: nil), finish_reason: nil)],
                     system_fingerprint: nil
                 )
-                if let jsonData = try? JSONEncoder().encode(chunk), let jsonString = String(data: jsonData, encoding: .utf8) {
+                if let jsonData = try? jsonEncoder.encode(chunk), let jsonString = String(data: jsonData, encoding: .utf8) {
                     let sseData = "data: \(jsonString)\n\n"
                     loop.execute {
                         let context = ctxBox.value
@@ -292,7 +384,7 @@ class AsyncHTTPHandler {
                     choices: [StreamChoice(index: 0, delta: delta, finish_reason: finishReason)],
                     system_fingerprint: nil
                 )
-                guard let data = try? JSONEncoder().encode(chunk), let json = String(data: data, encoding: .utf8) else { return }
+                guard let data = try? jsonEncoder.encode(chunk), let json = String(data: data, encoding: .utf8) else { return }
                 let sse = "data: \(json)\n\n"
                 loop.execute {
                     let context = ctxBox.value
@@ -380,7 +472,7 @@ class AsyncHTTPHandler {
             system_fingerprint: nil
         )
         
-        if let jsonData = try? JSONEncoder().encode(finalChunk),
+        if let jsonData = try? jsonEncoder.encode(finalChunk),
            let jsonString = String(data: jsonData, encoding: .utf8) {
             let sseData = "data: \(jsonString)\n\n\ndata: [DONE]\n\n"
             loop.execute {
@@ -489,7 +581,7 @@ class AsyncHTTPHandler {
     ) async throws {
         let loop = context.eventLoop
         let ctxBox = UncheckedSendableBox(value: context)
-        let jsonData = try JSONEncoder().encode(response)
+        let jsonData = try jsonEncoder.encode(response)
         let jsonString = String(data: jsonData, encoding: .utf8) ?? "{}"
         
         // Send response on the event loop

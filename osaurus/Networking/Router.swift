@@ -15,6 +15,12 @@ public struct Router {
     var context: ChannelHandlerContext?
     weak var handler: HTTPHandler?
     
+    /// Shared JSON decoder for better performance
+    private static let jsonDecoder: JSONDecoder = {
+        let decoder = JSONDecoder()
+        return decoder
+    }()
+    
     init(context: ChannelHandlerContext? = nil, handler: HTTPHandler? = nil) {
         self.context = context
         self.handler = handler
@@ -89,9 +95,8 @@ public struct Router {
     }
     
     private func chatCompletionsEndpoint(body: Data, context: ChannelHandlerContext?, handler: HTTPHandler?) -> (HTTPResponseStatus, [(String, String)], String) {
-        // Decode the request
-        let decoder = JSONDecoder()
-        guard let request = try? decoder.decode(ChatCompletionRequest.self, from: body) else {
+        // Decode the request using shared decoder
+        guard let request = try? Self.jsonDecoder.decode(ChatCompletionRequest.self, from: body) else {
             return errorResponse(message: "Invalid request format", statusCode: .badRequest)
         }
         
@@ -101,7 +106,8 @@ public struct Router {
         }
         
         // Handle async generation without MainActor; writes will be marshaled to the event loop
-        Task {
+        // Use detached task to avoid actor context propagation overhead
+        Task.detached(priority: .userInitiated) {
             await AsyncHTTPHandler.shared.handleChatCompletion(
                 request: request,
                 context: context
