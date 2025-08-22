@@ -146,7 +146,17 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             popover.performClose(sender)
             return
         }
-
+        showPopover()
+    }
+    
+    // Expose a method to show the popover programmatically (e.g., for Cmd+,)
+    func showPopover() {
+        guard let statusButton = statusItem?.button else { return }
+        if let popover, popover.isShown {
+            // Already visible; bring app to front
+            NSApp.activate(ignoringOtherApps: true)
+            return
+        }
         let popover = NSPopover()
         popover.behavior = .transient
         popover.animates = true
