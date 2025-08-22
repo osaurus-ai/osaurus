@@ -8,12 +8,22 @@
 import Foundation
 import NIOHTTP1
 import NIOCore
+import IkigaJSON
 
 /// Simple routing logic for HTTP requests
 public struct Router {
     /// Channel context for async operations (set by HTTPHandler)
     var context: ChannelHandlerContext?
     weak var handler: HTTPHandler?
+    
+    /// Shared JSON decoder for better performance
+    private static let jsonDecoder: IkigaJSONDecoder = {
+        let decoder = IkigaJSONDecoder()
+        return decoder
+    }()
+
+    /// Shared JSON encoder for endpoints that return bodies synchronously
+    private var jsonEncoder = IkigaJSONEncoder()
     
     init(context: ChannelHandlerContext? = nil, handler: HTTPHandler? = nil) {
         self.context = context
@@ -49,19 +59,40 @@ public struct Router {
             return notFoundEndpoint()
         }
     }
+
+    /// Overload that accepts a ByteBuffer body to enable zero-copy decoding
+    public func route(method: String, path: String, bodyBuffer: ByteBuffer) -> (status: HTTPResponseStatus, headers: [(String, String)], body: String) {
+        switch (method, path) {
+        case ("GET", "/health"):
+            return healthEndpoint()
+        
+        case ("GET", "/"):
+            return rootEndpoint()
+        
+        case ("GET", "/models"):
+            return modelsEndpoint()
+
+        case ("GET", "/v1/models"):
+            return modelsEndpoint()
+            
+        case ("POST", "/chat/completions"):
+            return chatCompletionsEndpoint(bodyBuffer: bodyBuffer, context: context, handler: handler)
+
+        case ("POST", "/v1/chat/completions"):
+            return chatCompletionsEndpoint(bodyBuffer: bodyBuffer, context: context, handler: handler)
+            
+        default:
+            return notFoundEndpoint()
+        }
+    }
     
     // MARK: - Private Endpoints
     
     private func healthEndpoint() -> (HTTPResponseStatus, [(String, String)], String) {
-        let healthResponse = [
-            "status": "healthy",
-            "timestamp": Date().ISO8601Format()
-        ]
-        
-        let jsonData = try! JSONSerialization.data(withJSONObject: healthResponse)
-        let jsonString = String(data: jsonData, encoding: .utf8)!
-        
-        return (.ok, [("Content-Type", "application/json; charset=utf-8")], jsonString)
+        var obj = JSONObject()
+        obj["status"] = "healthy"
+        obj["timestamp"] = Date().ISO8601Format()
+        return (.ok, [("Content-Type", "application/json; charset=utf-8")], obj.string)
     }
     
     private func rootEndpoint() -> (HTTPResponseStatus, [(String, String)], String) {
@@ -79,19 +110,14 @@ public struct Router {
         
         let response = ModelsResponse(data: models)
         
-        do {
-            let jsonData = try JSONEncoder().encode(response)
-            let jsonString = String(data: jsonData, encoding: .utf8) ?? "{}"
-            return (.ok, [("Content-Type", "application/json; charset=utf-8")], jsonString)
-        } catch {
-            return errorResponse(message: "Failed to encode models", statusCode: .internalServerError)
+        if let json = encodeJSONString(response) {
+            return (.ok, [("Content-Type", "application/json; charset=utf-8")], json)
         }
+        return errorResponse(message: "Failed to encode models", statusCode: .internalServerError)
     }
     
     private func chatCompletionsEndpoint(body: Data, context: ChannelHandlerContext?, handler: HTTPHandler?) -> (HTTPResponseStatus, [(String, String)], String) {
-        // Decode the request
-        let decoder = JSONDecoder()
-        guard let request = try? decoder.decode(ChatCompletionRequest.self, from: body) else {
+        guard let request = try? Self.jsonDecoder.decode(ChatCompletionRequest.self, from: body) else {
             return errorResponse(message: "Invalid request format", statusCode: .badRequest)
         }
         
@@ -101,7 +127,8 @@ public struct Router {
         }
         
         // Handle async generation without MainActor; writes will be marshaled to the event loop
-        Task {
+        // Use detached task to avoid actor context propagation overhead
+        Task.detached(priority: .userInitiated) {
             await AsyncHTTPHandler.shared.handleChatCompletion(
                 request: request,
                 context: context
@@ -109,6 +136,26 @@ public struct Router {
         }
         
         // Return empty response - actual response will be sent asynchronously
+        return (.ok, [], "")
+    }
+
+    private func chatCompletionsEndpoint(bodyBuffer: ByteBuffer, context: ChannelHandlerContext?, handler: HTTPHandler?) -> (HTTPResponseStatus, [(String, String)], String) {
+        // Decode directly from ByteBuffer to avoid extra Data copies
+        guard let request = try? Self.jsonDecoder.decode(ChatCompletionRequest.self, from: bodyBuffer) else {
+            return errorResponse(message: "Invalid request format", statusCode: .badRequest)
+        }
+
+        guard let context = context, let handler = handler else {
+            return errorResponse(message: "Server configuration error", statusCode: .internalServerError)
+        }
+
+        Task.detached(priority: .userInitiated) {
+            await AsyncHTTPHandler.shared.handleChatCompletion(
+                request: request,
+                context: context
+            )
+        }
+
         return (.ok, [], "")
     }
     
@@ -122,12 +169,21 @@ public struct Router {
             )
         )
         
+        if let json = encodeJSONString(error) {
+            return (statusCode, [("Content-Type", "application/json; charset=utf-8")], json)
+        }
+        return (statusCode, [("Content-Type", "application/json; charset=utf-8")], "{\"error\":{\"message\":\"Internal error\"}}")
+    }
+
+    // MARK: - Helpers
+    private func encodeJSONString<T: Encodable>(_ value: T) -> String? {
+        var encoder = jsonEncoder
+        var buffer = ByteBufferAllocator().buffer(capacity: 1024)
         do {
-            let jsonData = try JSONEncoder().encode(error)
-            let jsonString = String(data: jsonData, encoding: .utf8) ?? "{}"
-            return (statusCode, [("Content-Type", "application/json; charset=utf-8")], jsonString)
+            try encoder.encodeAndWrite(value, into: &buffer)
+            return buffer.readString(length: buffer.readableBytes)
         } catch {
-            return (statusCode, [("Content-Type", "application/json; charset=utf-8")], "{\"error\":{\"message\":\"Internal error\"}}")
+            return nil
         }
     }
 }

@@ -9,6 +9,7 @@ import Foundation
 import SwiftUI
 import Combine
 import Hub
+import IkigaJSON
 
 /// Download task information
 struct DownloadTaskInfo {
@@ -554,14 +555,14 @@ private extension ModelManager {
         request.httpMethod = "GET"
         request.setValue("application/json", forHTTPHeaderField: "Accept")
 
+        // Fetch full data; response size is modest for up to ~200 repos
         let (data, response) = try await URLSession.shared.data(for: request)
         guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
             throw NSError(domain: "HFAPI", code: (response as? HTTPURLResponse)?.statusCode ?? -1, userInfo: [NSLocalizedDescriptionKey: "Unexpected status"])
         }
 
-        let decoder = JSONDecoder()
-        decoder.keyDecodingStrategy = .useDefaultKeys
-        let listRepos = try decoder.decode([HFRepo].self, from: data)
+        let decoder = IkigaJSONDecoder()
+        let listRepos: [HFRepo] = try decoder.decode([HFRepo].self, from: data)
 
         // Fetch detailed info (including siblings with sizes) for a subset to avoid rate limits
         let maxDetailCount = 60
@@ -603,8 +604,7 @@ private extension ModelManager {
         guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
             throw NSError(domain: "HFAPI", code: (response as? HTTPURLResponse)?.statusCode ?? -1, userInfo: [NSLocalizedDescriptionKey: "Unexpected status for detail"])
         }
-        let decoder = JSONDecoder()
-        decoder.keyDecodingStrategy = .useDefaultKeys
+        let decoder = IkigaJSONDecoder()
         return try decoder.decode(HFRepo.self, from: data)
     }
 

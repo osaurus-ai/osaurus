@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import IkigaJSON
 
 /// Parses assistant outputs to extract OpenAI-compatible tool calls.
 /// Accepts minor formatting noise such as code fences or role prefixes.
@@ -47,7 +48,7 @@ struct ToolCallParser {
         }
 
         func decodeEnvelope(from json: String) -> [ToolCall]? {
-            guard let data = json.data(using: .utf8), let envelope = try? JSONDecoder().decode(ToolCallsEnvelope.self, from: data) else {
+            guard let data = json.data(using: .utf8), let envelope = try? IkigaJSONDecoder().decode(ToolCallsEnvelope.self, from: data) else {
                 return nil
             }
             let normalized: [ToolCall] = envelope.tool_calls.compactMap { raw in

@@ -17,6 +17,7 @@
 		F0C60D742E5491A10028ED4F /* MLXLMCommon in Frameworks */ = {isa = PBXBuildFile; productRef = F0C60D732E5491A10028ED4F /* MLXLMCommon */; };
 		F0C60D762E5491A10028ED4F /* MLXVLM in Frameworks */ = {isa = PBXBuildFile; productRef = F0C60D752E5491A10028ED4F /* MLXVLM */; };
 		F0C60E872E54A26A0028ED4F /* Transformers in Frameworks */ = {isa = PBXBuildFile; productRef = F0C60E862E54A26A0028ED4F /* Transformers */; };
+		F0C87F542E5881BA00567D31 /* IkigaJSON in Frameworks */ = {isa = PBXBuildFile; productRef = F0C87F532E5881BA00567D31 /* IkigaJSON */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -75,6 +76,7 @@
 				F0C60E872E54A26A0028ED4F /* Transformers in Frameworks */,
 				F0C60D762E5491A10028ED4F /* MLXVLM in Frameworks */,
 				F0C60D742E5491A10028ED4F /* MLXLMCommon in Frameworks */,
+				F0C87F542E5881BA00567D31 /* IkigaJSON in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -153,6 +155,7 @@
 				F0C60D752E5491A10028ED4F /* MLXVLM */,
 				F0C60E862E54A26A0028ED4F /* Transformers */,
 				F06F83452E56B319007CD59B /* Sparkle */,
+				F0C87F532E5881BA00567D31 /* IkigaJSON */,
 			);
 			productName = osaurus;
 			productReference = F0BB3C262E51FBCC00895593 /* osaurus.app */;
@@ -242,6 +245,7 @@
 				F0C60D702E5491A10028ED4F /* XCRemoteSwiftPackageReference "mlx-swift-examples" */,
 				F0D0T1002E55AAAA0028ED4F /* XCRemoteSwiftPackageReference "swift-transformers" */,
 				F06F83442E56B319007CD59B /* XCRemoteSwiftPackageReference "Sparkle" */,
+				F0C87F522E5881BA00567D31 /* XCRemoteSwiftPackageReference "IkigaJSON" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = F0BB3C272E51FBCC00895593 /* Products */;
@@ -649,6 +653,14 @@
 				minimumVersion = 2.25.5;
 			};
 		};
+		F0C87F522E5881BA00567D31 /* XCRemoteSwiftPackageReference "IkigaJSON" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/orlandos-nl/IkigaJSON";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 2.3.2;
+			};
+		};
 		F0D0T1002E55AAAA0028ED4F /* XCRemoteSwiftPackageReference "swift-transformers" */ = {
 			isa = XCRemoteSwiftPackageReference;
 			repositoryURL = "https://github.com/huggingface/swift-transformers";
@@ -709,6 +721,11 @@
 			isa = XCSwiftPackageProductDependency;
 			package = F0D0T1002E55AAAA0028ED4F /* XCRemoteSwiftPackageReference "swift-transformers" */;
 			productName = Transformers;
+		};
+		F0C87F532E5881BA00567D31 /* IkigaJSON */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = F0C87F522E5881BA00567D31 /* XCRemoteSwiftPackageReference "IkigaJSON" */;
+			productName = IkigaJSON;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

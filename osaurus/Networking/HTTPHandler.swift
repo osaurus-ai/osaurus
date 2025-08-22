@@ -16,7 +16,7 @@ final class HTTPHandler: ChannelInboundHandler {
     typealias OutboundOut = HTTPServerResponsePart
 
     private var requestHead: HTTPRequestHead?
-    private var requestBody = Data()
+    private var requestBodyBuffer: ByteBuffer?
     private var context: ChannelHandlerContext?
 
     func channelRead(context: ChannelHandlerContext, data: NIOAny) {
@@ -26,12 +26,19 @@ final class HTTPHandler: ChannelInboundHandler {
         switch part {
         case .head(let head):
             requestHead = head
+            // Pre-size body buffer if Content-Length is available
+            if let lengthStr = head.headers.first(name: "Content-Length"), let length = Int(lengthStr), length > 0 {
+                requestBodyBuffer = context.channel.allocator.buffer(capacity: length)
+            } else {
+                requestBodyBuffer = context.channel.allocator.buffer(capacity: 0)
+            }
             
         case .body(var buffer):
-            // Collect body data
-            if let bytes = buffer.readBytes(length: buffer.readableBytes) {
-                requestBody.append(Data(bytes))
+            // Collect body data directly into a ByteBuffer
+            if requestBodyBuffer == nil {
+                requestBodyBuffer = context.channel.allocator.buffer(capacity: buffer.readableBytes)
             }
+            requestBodyBuffer!.writeBuffer(&buffer)
             
         case .end:
             guard let head = requestHead else {
@@ -44,7 +51,7 @@ final class HTTPHandler: ChannelInboundHandler {
             
             // Create router with context
             let router = Router(context: context, handler: self)
-            let response = router.route(method: head.method.rawValue, path: pathOnly, body: requestBody)
+            let response = router.route(method: head.method.rawValue, path: pathOnly, bodyBuffer: requestBodyBuffer ?? context.channel.allocator.buffer(capacity: 0))
             // Only send response if not handled asynchronously
             if !response.body.isEmpty || response.status != .ok {
                 sendResponse(
@@ -57,7 +64,7 @@ final class HTTPHandler: ChannelInboundHandler {
             }
             
             requestHead = nil
-            requestBody = Data()
+            requestBodyBuffer = nil
         }
     }
     
