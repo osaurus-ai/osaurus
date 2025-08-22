@@ -8,6 +8,8 @@
 import Foundation
 import MLXLMCommon
 import MLXLLM
+import IkigaJSON
+import NIOCore
 
 /// Represents a language model configuration
 class LMModel {
@@ -418,11 +420,15 @@ func buildPrompt(from messages: [Message], tools: [Tool]?, toolChoice: ToolChoic
         let json: String
         if let cached = toolsJSONCache.object(forKey: cacheKey) {
             json = cached as String
-        } else if let data = try? JSONEncoder().encode(tools), let encoded = String(data: data, encoding: .utf8) {
-            json = encoded
-            toolsJSONCache.setObject(encoded as NSString, forKey: cacheKey)
         } else {
-            json = "[]"
+            var encoder = IkigaJSONEncoder()
+            var buffer = ByteBufferAllocator().buffer(capacity: 1024)
+            if let _ = try? encoder.encodeAndWrite(tools, into: &buffer), let encoded = buffer.readString(length: buffer.readableBytes) {
+                json = encoded
+                toolsJSONCache.setObject(encoded as NSString, forKey: cacheKey)
+            } else {
+                json = "[]"
+            }
         }
         
         if !json.isEmpty {
@@ -430,7 +436,9 @@ func buildPrompt(from messages: [Message], tools: [Tool]?, toolChoice: ToolChoic
             toolsBlock += "Available tools (OpenAI format):\n"
             toolsBlock += json
             if let toolChoice {
-                if let dataChoice = try? JSONEncoder().encode(toolChoice), let jsonChoice = String(data: dataChoice, encoding: .utf8) {
+                var encoder = IkigaJSONEncoder()
+                var buffer = ByteBufferAllocator().buffer(capacity: 256)
+                if let _ = try? encoder.encodeAndWrite(toolChoice, into: &buffer), let jsonChoice = buffer.readString(length: buffer.readableBytes) {
                     toolsBlock += "\nTool choice: \(jsonChoice)"
                 }
             }

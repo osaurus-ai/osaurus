@@ -9,6 +9,7 @@ import Foundation
 import Dispatch
 import NIOCore
 import NIOHTTP1
+import IkigaJSON
 
 private struct UncheckedSendableBox<T>: @unchecked Sendable {
     let value: T
@@ -22,7 +23,7 @@ class AsyncHTTPHandler {
     private let modelCache = NSCache<NSString, LMModel>()
     
     /// Shared JSON encoder for better performance
-    private let jsonEncoder = JSONEncoder()
+    private var jsonEncoder = IkigaJSONEncoder()
     
     private init() {
         // Pre-cache common models
@@ -171,7 +172,7 @@ class AsyncHTTPHandler {
                 choices: [StreamChoice(index: 0, delta: DeltaContent(role: "assistant", content: nil, tool_calls: nil), finish_reason: nil)],
                 system_fingerprint: nil
             )
-            if let jsonData = try? jsonEncoder.encode(roleChunk), let jsonString = String(data: jsonData, encoding: .utf8) {
+            if let jsonString = encodeJSONString(roleChunk) {
                 let sseData = "data: \(jsonString)\n\n"
                 loop.execute {
                     let context = ctxBox.value
@@ -205,7 +206,7 @@ class AsyncHTTPHandler {
                         choices: [StreamChoice(index: 0, delta: DeltaContent(role: nil, content: token, tool_calls: nil), finish_reason: nil)],
                         system_fingerprint: nil
                     )
-                    if let jsonData = try? jsonEncoder.encode(contentChunk), let jsonString = String(data: jsonData, encoding: .utf8) {
+                    if let jsonString = encodeJSONString(contentChunk) {
                         let sseData = "data: \(jsonString)\n\n"
                         loop.execute {
                             let context = ctxBox.value
@@ -232,7 +233,7 @@ class AsyncHTTPHandler {
                         choices: [StreamChoice(index: 0, delta: DeltaContent(role: nil, content: nil, tool_calls: nil), finish_reason: "stop")],
                         system_fingerprint: nil
                     )
-                    if let jsonData = try? jsonEncoder.encode(finishChunk), let jsonString = String(data: jsonData, encoding: .utf8) {
+                    if let jsonString = encodeJSONString(finishChunk) {
                         let sseData = "data: \(jsonString)\n\n"
                         loop.execute {
                             let context = ctxBox.value
@@ -248,7 +249,7 @@ class AsyncHTTPHandler {
                 // Need to emit tool calls - use existing tool call emission code
                 // Emit OpenAI-style incremental tool_call deltas
                 func sendChunk(_ chunk: ChatCompletionChunk) {
-                    if let jsonData = try? jsonEncoder.encode(chunk), let jsonString = String(data: jsonData, encoding: .utf8) {
+                    if let jsonString = encodeJSONString(chunk) {
                         let sseData = "data: \(jsonString)\n\n"
                         loop.execute {
                             let context = ctxBox.value
@@ -346,7 +347,7 @@ class AsyncHTTPHandler {
                     choices: [StreamChoice(index: 0, delta: DeltaContent(role: "assistant", content: fullResponse, tool_calls: nil), finish_reason: nil)],
                     system_fingerprint: nil
                 )
-                if let jsonData = try? jsonEncoder.encode(chunk), let jsonString = String(data: jsonData, encoding: .utf8) {
+                if let jsonString = encodeJSONString(chunk) {
                     let sseData = "data: \(jsonString)\n\n"
                     loop.execute {
                         let context = ctxBox.value
@@ -384,7 +385,7 @@ class AsyncHTTPHandler {
                     choices: [StreamChoice(index: 0, delta: delta, finish_reason: finishReason)],
                     system_fingerprint: nil
                 )
-                guard let data = try? jsonEncoder.encode(chunk), let json = String(data: data, encoding: .utf8) else { return }
+                guard let json = encodeJSONString(chunk) else { return }
                 let sse = "data: \(json)\n\n"
                 loop.execute {
                     let context = ctxBox.value
@@ -472,8 +473,7 @@ class AsyncHTTPHandler {
             system_fingerprint: nil
         )
         
-        if let jsonData = try? jsonEncoder.encode(finalChunk),
-           let jsonString = String(data: jsonData, encoding: .utf8) {
+        if let jsonString = encodeJSONString(finalChunk) {
             let sseData = "data: \(jsonString)\n\n\ndata: [DONE]\n\n"
             loop.execute {
                 let context = ctxBox.value
@@ -581,9 +581,7 @@ class AsyncHTTPHandler {
     ) async throws {
         let loop = context.eventLoop
         let ctxBox = UncheckedSendableBox(value: context)
-        let jsonData = try jsonEncoder.encode(response)
-        let jsonString = String(data: jsonData, encoding: .utf8) ?? "{}"
-        
+        let jsonString = encodeJSONString(response) ?? "{}"
         // Send response on the event loop
         loop.execute {
             let context = ctxBox.value
@@ -604,6 +602,18 @@ class AsyncHTTPHandler {
                 let context = ctxBox.value
                 context.close(promise: nil)
             }
+        }
+    }
+
+    // MARK: - Helpers
+    private func encodeJSONString<T: Encodable>(_ value: T) -> String? {
+        var encoder = jsonEncoder
+        var buffer = ByteBufferAllocator().buffer(capacity: 1024)
+        do {
+            try encoder.encodeAndWrite(value, into: &buffer)
+            return buffer.readString(length: buffer.readableBytes)
+        } catch {
+            return nil
         }
     }
 }

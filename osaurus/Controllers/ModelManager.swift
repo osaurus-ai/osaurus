@@ -9,6 +9,7 @@ import Foundation
 import SwiftUI
 import Combine
 import Hub
+import IkigaJSON
 
 /// Download task information
 struct DownloadTaskInfo {
@@ -559,8 +560,7 @@ private extension ModelManager {
             throw NSError(domain: "HFAPI", code: (response as? HTTPURLResponse)?.statusCode ?? -1, userInfo: [NSLocalizedDescriptionKey: "Unexpected status"])
         }
 
-        let decoder = JSONDecoder()
-        decoder.keyDecodingStrategy = .useDefaultKeys
+        let decoder = IkigaJSONDecoder()
         let listRepos = try decoder.decode([HFRepo].self, from: data)
 
         // Fetch detailed info (including siblings with sizes) for a subset to avoid rate limits
@@ -603,8 +603,7 @@ private extension ModelManager {
         guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
             throw NSError(domain: "HFAPI", code: (response as? HTTPURLResponse)?.statusCode ?? -1, userInfo: [NSLocalizedDescriptionKey: "Unexpected status for detail"])
         }
-        let decoder = JSONDecoder()
-        decoder.keyDecodingStrategy = .useDefaultKeys
+        let decoder = IkigaJSONDecoder()
         return try decoder.decode(HFRepo.self, from: data)
     }
 

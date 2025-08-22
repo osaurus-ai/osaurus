@@ -8,6 +8,7 @@
 import Foundation
 import NIOHTTP1
 import NIOCore
+import IkigaJSON
 
 /// Simple routing logic for HTTP requests
 public struct Router {
@@ -16,10 +17,13 @@ public struct Router {
     weak var handler: HTTPHandler?
     
     /// Shared JSON decoder for better performance
-    private static let jsonDecoder: JSONDecoder = {
-        let decoder = JSONDecoder()
+    private static let jsonDecoder: IkigaJSONDecoder = {
+        let decoder = IkigaJSONDecoder()
         return decoder
     }()
+
+    /// Shared JSON encoder for endpoints that return bodies synchronously
+    private var jsonEncoder = IkigaJSONEncoder()
     
     init(context: ChannelHandlerContext? = nil, handler: HTTPHandler? = nil) {
         self.context = context
@@ -59,15 +63,10 @@ public struct Router {
     // MARK: - Private Endpoints
     
     private func healthEndpoint() -> (HTTPResponseStatus, [(String, String)], String) {
-        let healthResponse = [
-            "status": "healthy",
-            "timestamp": Date().ISO8601Format()
-        ]
-        
-        let jsonData = try! JSONSerialization.data(withJSONObject: healthResponse)
-        let jsonString = String(data: jsonData, encoding: .utf8)!
-        
-        return (.ok, [("Content-Type", "application/json; charset=utf-8")], jsonString)
+        var obj = JSONObject()
+        obj["status"] = "healthy"
+        obj["timestamp"] = Date().ISO8601Format()
+        return (.ok, [("Content-Type", "application/json; charset=utf-8")], obj.string)
     }
     
     private func rootEndpoint() -> (HTTPResponseStatus, [(String, String)], String) {
@@ -85,13 +84,10 @@ public struct Router {
         
         let response = ModelsResponse(data: models)
         
-        do {
-            let jsonData = try JSONEncoder().encode(response)
-            let jsonString = String(data: jsonData, encoding: .utf8) ?? "{}"
-            return (.ok, [("Content-Type", "application/json; charset=utf-8")], jsonString)
-        } catch {
-            return errorResponse(message: "Failed to encode models", statusCode: .internalServerError)
+        if let json = encodeJSONString(response) {
+            return (.ok, [("Content-Type", "application/json; charset=utf-8")], json)
         }
+        return errorResponse(message: "Failed to encode models", statusCode: .internalServerError)
     }
     
     private func chatCompletionsEndpoint(body: Data, context: ChannelHandlerContext?, handler: HTTPHandler?) -> (HTTPResponseStatus, [(String, String)], String) {
@@ -128,12 +124,21 @@ public struct Router {
             )
         )
         
+        if let json = encodeJSONString(error) {
+            return (statusCode, [("Content-Type", "application/json; charset=utf-8")], json)
+        }
+        return (statusCode, [("Content-Type", "application/json; charset=utf-8")], "{\"error\":{\"message\":\"Internal error\"}}")
+    }
+
+    // MARK: - Helpers
+    private func encodeJSONString<T: Encodable>(_ value: T) -> String? {
+        var encoder = jsonEncoder
+        var buffer = ByteBufferAllocator().buffer(capacity: 1024)
         do {
-            let jsonData = try JSONEncoder().encode(error)
-            let jsonString = String(data: jsonData, encoding: .utf8) ?? "{}"
-            return (statusCode, [("Content-Type", "application/json; charset=utf-8")], jsonString)
+            try encoder.encodeAndWrite(value, into: &buffer)
+            return buffer.readString(length: buffer.readableBytes)
         } catch {
-            return (statusCode, [("Content-Type", "application/json; charset=utf-8")], "{\"error\":{\"message\":\"Internal error\"}}")
+            return nil
         }
     }
 }
