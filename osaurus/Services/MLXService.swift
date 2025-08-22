@@ -36,7 +36,6 @@ struct Message: Codable {
 /// A service class that manages machine learning models for text generation tasks.
 /// This class handles model loading, caching, and text generation using various LLM models.
 @Observable
-@MainActor
 class MLXService {
     static let shared = MLXService()
     
@@ -45,7 +44,7 @@ class MLXService {
     
     /// List of available models that can be used for generation.
     /// Dynamically generated from downloaded models
-    var availableModels: [LMModel] {
+    @MainActor var availableModels: [LMModel] {
         // Get downloaded models from ModelManager
         let downloadedModels = ModelManager.shared.availableModels.filter { $0.isDownloaded }
         
@@ -85,6 +84,32 @@ class MLXService {
             // Observe changes and update cache
             // This ensures the cache stays in sync
             updateAvailableModelsCache()
+        }
+    }
+    
+    /// Warm up a model by loading it and generating a tiny response to compile kernels and populate caches.
+    /// - Parameters:
+    ///   - modelName: Optional model name to warm up. If nil, attempts a best-effort default.
+    ///   - maxTokens: Number of tokens to emit during warm-up (default 1)
+    func warmUp(modelName: String? = nil, maxTokens: Int = 1) async {
+        // Choose a model: explicit name -> find; otherwise pick first available
+        let chosen: LMModel? = {
+            if let name = modelName, let m = Self.findModel(named: name) { return m }
+            // Fallback to curated common default if present
+            if let m = Self.findModel(named: "llama-3.2-3b-instruct-4bit") { return m }
+            // As last resort, take first available discovered on disk
+            if let first = Self.getAvailableModels().first, let m = Self.findModel(named: first) { return m }
+            return nil
+        }()
+        guard let model = chosen else { return }
+
+        let messages = [Message(role: .user, content: "Hello")]        
+        do {
+            let stream = try await generate(messages: messages, model: model, temperature: 0.0, maxTokens: maxTokens)
+            // Consume the small warm-up stream
+            for await _ in stream { /* no-op */ }
+        } catch {
+            // Non-fatal: warm-up is best effort
         }
     }
     
@@ -218,11 +243,8 @@ class MLXService {
             return holder
         }
 
-        // Prefer ModelManager knowledge when available; otherwise derive the directory from the id
+        // Prefer nonisolated disk lookup to avoid MainActor hops; fallback to ModelManager knowledge if needed
         let localURL: URL = {
-            if let downloadedModel = ModelManager.shared.availableModels.first(where: { $0.id == model.modelId && $0.isDownloaded }) {
-                return downloadedModel.localDirectory
-            }
             if let url = Self.findLocalDirectory(forModelId: model.modelId) {
                 return url
             }
@@ -275,9 +297,15 @@ class MLXService {
             Task {
                 // Stream if possible for responsiveness; if not, fall back to single response
                 let stream = holder.session.streamResponse(to: prompt)
+                var emittedTokenCount = 0
                 do {
                     for try await token in stream {
+                        // Enforce maxTokens by counting tokens emitted
+                        if emittedTokenCount >= maxTokens {
+                            break
+                        }
                         continuation.yield(token)
+                        emittedTokenCount += 1
                     }
                 } catch {
                     // On error, finish the stream; upstream will send error JSON

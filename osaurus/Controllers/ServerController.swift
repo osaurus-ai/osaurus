@@ -70,6 +70,17 @@ final class ServerController: ObservableObject {
 
             // Handle channel closure
             setupChannelClosureHandler(channel)
+
+            // Best-effort warm-up to reduce TTFT on first request.
+            // Environment variables:
+            //   OSU_WARMUP_MODEL  - optional model name to warm up
+            //   OSU_WARMUP_TOKENS - number of tokens to generate during warm-up (default 16)
+            Task {
+                let env = ProcessInfo.processInfo.environment
+                let envModel = env["OSU_WARMUP_MODEL"]
+                let warmTokens = Int(env["OSU_WARMUP_TOKENS"] ?? "") ?? 16
+                await MLXService.shared.warmUp(modelName: envModel, maxTokens: max(1, warmTokens))
+            }
         } catch {
             handleServerError(error)
             await cleanupRuntime()

@@ -6,8 +6,9 @@
 //
 
 import Foundation
-@preconcurrency import NIOCore
-@preconcurrency import NIOHTTP1
+import Dispatch
+import NIOCore
+import NIOHTTP1
 
 private struct UncheckedSendableBox<T>: @unchecked Sendable {
     let value: T
@@ -56,6 +57,7 @@ class AsyncHTTPHandler {
                     requestModel: request.model,
                     tools: request.tools,
                     toolChoice: request.tool_choice,
+                    stopSequences: request.stop ?? [],
                     context: context
                 )
             } else {
@@ -67,6 +69,7 @@ class AsyncHTTPHandler {
                     requestModel: request.model,
                     tools: request.tools,
                     toolChoice: request.tool_choice,
+                    stopSequences: request.stop ?? [],
                     context: context
                 )
             }
@@ -91,6 +94,7 @@ class AsyncHTTPHandler {
         requestModel: String,
         tools: [Tool]?,
         toolChoice: ToolChoiceOption?,
+        stopSequences: [String],
         context: ChannelHandlerContext
     ) async throws {
         let loop = context.eventLoop
@@ -142,10 +146,13 @@ class AsyncHTTPHandler {
             return true
         }()
         if shouldBufferForTools {
+            var tokensBuffer: [String] = []
+            tokensBuffer.reserveCapacity(256)
             for await token in stream {
-                fullResponse += token
+                tokensBuffer.append(token)
                 tokenCount += 1
             }
+            fullResponse = tokensBuffer.joined()
             if let toolCalls = ToolCallParser.parse(from: fullResponse) {
                 // Emit OpenAI-style incremental tool_call deltas
                 func sendChunk(_ chunk: ChatCompletionChunk) {
@@ -260,39 +267,105 @@ class AsyncHTTPHandler {
                 }
             }
         } else {
-            // Stream tokens as content
-            for await token in stream {
-                fullResponse += token
-                tokenCount += 1
+            // Stream tokens as JSON-encoded SSE chunks with batching and stop detection
+            let env = ProcessInfo.processInfo.environment
+            let batchCharThreshold: Int = Int(env["OSU_STREAM_BATCH_CHARS"] ?? "") ?? 512
+            let batchIntervalMs: Int = Int(env["OSU_STREAM_BATCH_MS"] ?? "") ?? 25
+            let flushIntervalNs: UInt64 = UInt64(batchIntervalMs) * 1_000_000
+
+            // Stop sequence rolling window
+            let shouldCheckStop = !(stopSequences.isEmpty)
+            let maxStopLen: Int = shouldCheckStop ? (stopSequences.map { $0.count }.max() ?? 0) : 0
+            var stopTail = ""
+
+            // Batching state
+            var firstTokenSent = false
+            var pendingContent = ""
+            var lastFlushNs: UInt64 = DispatchTime.now().uptimeNanoseconds
+
+            @inline(__always)
+            func sendChunk(_ delta: DeltaContent, finishReason: String? = nil, flushNow: Bool) {
                 let chunk = ChatCompletionChunk(
                     id: responseId,
                     created: created,
                     model: requestModel,
-                    choices: [
-                        StreamChoice(
-                            index: 0,
-                            delta: DeltaContent(role: nil, content: token, tool_calls: nil),
-                            finish_reason: nil
-                        )
-                    ],
+                    choices: [StreamChoice(index: 0, delta: delta, finish_reason: finishReason)],
                     system_fingerprint: nil
                 )
-                if let jsonData = try? JSONEncoder().encode(chunk),
-                   let jsonString = String(data: jsonData, encoding: .utf8) {
-                    let sseData = "data: \(jsonString)\n\n"
-                    loop.execute {
-                        let context = ctxBox.value
-                        guard context.channel.isActive else { return }
-                        var buffer = context.channel.allocator.buffer(capacity: sseData.utf8.count)
-                        buffer.writeString(sseData)
-                        context.write(NIOAny(HTTPServerResponsePart.body(.byteBuffer(buffer))), promise: nil)
-                        context.flush()
+                guard let data = try? JSONEncoder().encode(chunk), let json = String(data: data, encoding: .utf8) else { return }
+                let sse = "data: \(json)\n\n"
+                loop.execute {
+                    let context = ctxBox.value
+                    guard context.channel.isActive else { return }
+                    var buffer = context.channel.allocator.buffer(capacity: sse.utf8.count)
+                    buffer.writeString(sse)
+                    context.write(NIOAny(HTTPServerResponsePart.body(.byteBuffer(buffer))), promise: nil)
+                    if flushNow { context.flush() }
+                }
+            }
+
+            // Send role prelude on first token
+            @inline(__always)
+            func sendRolePrelude() {
+                sendChunk(DeltaContent(role: "assistant", content: nil, tool_calls: nil), flushNow: true)
+            }
+
+            @inline(__always)
+            func sendContentDelta(_ content: String, flushNow: Bool) {
+                guard !content.isEmpty else { return }
+                sendChunk(DeltaContent(role: nil, content: content, tool_calls: nil), flushNow: flushNow)
+            }
+
+            for await token in stream {
+                if shouldCheckStop {
+                    stopTail += token
+                    if stopTail.count > maxStopLen {
+                        let overflow = stopTail.count - maxStopLen
+                        stopTail.removeFirst(overflow)
+                    }
+                    if stopSequences.first(where: { stopTail.contains($0) }) != nil {
+                        if !pendingContent.isEmpty {
+                            sendContentDelta(pendingContent, flushNow: true)
+                            pendingContent.removeAll(keepingCapacity: true)
+                        }
+                        break
                     }
                 }
+
+                if !firstTokenSent {
+                    sendRolePrelude()
+                    sendContentDelta(token, flushNow: true)
+                    firstTokenSent = true
+                    lastFlushNs = DispatchTime.now().uptimeNanoseconds
+                    continue
+                }
+
+                pendingContent += token
+                let nowNs = DispatchTime.now().uptimeNanoseconds
+                if pendingContent.count >= batchCharThreshold || nowNs - lastFlushNs >= flushIntervalNs {
+                    sendContentDelta(pendingContent, flushNow: true)
+                    pendingContent.removeAll(keepingCapacity: true)
+                    lastFlushNs = nowNs
+                }
+            }
+
+            if !pendingContent.isEmpty {
+                sendContentDelta(pendingContent, flushNow: true)
+                pendingContent.removeAll(keepingCapacity: true)
             }
         }
         
         // Send final chunk (non-tool path). For tool_calls path we already returned above
+        // Trim to first stop sequence if present (non-tool path)
+        if !stopSequences.isEmpty {
+            for s in stopSequences {
+                if let range = fullResponse.range(of: s) {
+                    fullResponse = String(fullResponse[..<range.lowerBound])
+                    break
+                }
+            }
+        }
+
         let finalChunk = ChatCompletionChunk(
             id: responseId,
             created: created,
@@ -333,6 +406,7 @@ class AsyncHTTPHandler {
         requestModel: String,
         tools: [Tool]?,
         toolChoice: ToolChoiceOption?,
+        stopSequences: [String],
         context: ChannelHandlerContext
     ) async throws {
         // Generate complete response
@@ -347,13 +421,39 @@ class AsyncHTTPHandler {
         
         var fullResponse = ""
         var tokenCount = 0
+        var segments: [String] = []
+        segments.reserveCapacity(512)
         
+        let stopSequences: [String] = stopSequences
+        let shouldCheckStop = !stopSequences.isEmpty
+        let maxStopLen: Int = shouldCheckStop ? (stopSequences.map { $0.count }.max() ?? 0) : 0
+        var stopTail = ""
         for await token in stream {
-            fullResponse += token
+            if shouldCheckStop {
+                stopTail += token
+                if stopTail.count > maxStopLen {
+                    let overflow = stopTail.count - maxStopLen
+                    stopTail.removeFirst(overflow)
+                }
+                if stopSequences.first(where: { stopTail.contains($0) }) != nil {
+                    break
+                }
+            }
+            segments.append(token)
             tokenCount += 1
         }
+        fullResponse = segments.joined()
         
         // Detect tool calls in model output
+        // Trim at stop if present
+        if !stopSequences.isEmpty {
+            for s in stopSequences {
+                if let range = fullResponse.range(of: s) {
+                    fullResponse = String(fullResponse[..<range.lowerBound])
+                    break
+                }
+            }
+        }
         let toolCalls = ToolCallParser.parse(from: fullResponse)
         let finishReason = (toolCalls != nil) ? "tool_calls" : "stop"
 
