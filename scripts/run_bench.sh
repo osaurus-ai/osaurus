@@ -13,6 +13,7 @@ set -euo pipefail
 #   OUT_PREFIX (default ./results/osaurus-vs-ollama-batch)
 #   PROMPTS_FILE (optional) or PROMPTS (comma-separated)
 #   NOSTREAM (set to 1 to disable streaming)
+#   WARMUP (default 1) warm-up iterations per prompt per server
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
@@ -30,7 +31,8 @@ MAXTOK=${MAXTOK:-512}
 OUT_PREFIX=${OUT_PREFIX:-"${ROOT_DIR}/results/osaurus-vs-ollama-batch"}
 PROMPTS_FILE=${PROMPTS_FILE:-""}
 PROMPTS=${PROMPTS:-"Write a one-sentence summary of the theory of evolution.,List three uses of fossil records in paleontology."}
-NOSTREAM=${NOSTREAM:-0}
+NOSTREAM=${NOSTREAM:-1}
+WARMUP=${WARMUP:-1}
 
 ARGS=(
   --server "osaurus|${OSA_BASE}|${OSA_MODEL}"
@@ -38,6 +40,7 @@ ARGS=(
   --iterations "${ITER}"
   --concurrency "${CONC}"
   --max-tokens "${MAXTOK}"
+  --warmup-iterations "${WARMUP}"
   --output-prefix "${OUT_PREFIX}"
   --export json csv
 )

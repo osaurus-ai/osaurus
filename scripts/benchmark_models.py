@@ -361,6 +361,12 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     parser.add_argument("--timeout", type=float, default=60.0, help="Request timeout in seconds")
     parser.add_argument("--no-stream", action="store_true", help="Disable streaming; TTFT ~= total")
     parser.add_argument(
+        "--warmup-iterations",
+        type=int,
+        default=0,
+        help="Warm-up iterations per prompt per server (excluded from results)",
+    )
+    parser.add_argument(
         "--output-prefix",
         default="./llm-bench",
         help="Prefix path for outputs (without extension). Files: .results.json/.summary.json/.results.csv",
@@ -422,6 +428,16 @@ def main(argv: Optional[List[str]] = None) -> int:
         timeout_seconds=args.timeout,
         extra_json=extra_json,
     )
+
+    # Optional warm-up to avoid counting cold starts/connection setup
+    if getattr(args, "warmup_iterations", 0) > 0:
+        print(
+            f"Running warm-up: {len(servers)} server(s), {len(prompts)} prompt(s), "
+            f"{args.warmup_iterations} iteration(s) each, concurrency={args.concurrency} (excluded from results)..."
+        )
+        _ = asyncio.run(
+            run_benchmark(servers, prompts, args.warmup_iterations, args.concurrency, cfg)
+        )
 
     print(f"Running benchmark against {len(servers)} server(s), {len(prompts)} prompt(s), {args.iterations} iteration(s) each, concurrency={args.concurrency}...")
 

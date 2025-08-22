@@ -106,8 +106,9 @@ class MLXService {
     /// Warm up a model by loading it and generating a tiny response to compile kernels and populate caches.
     /// - Parameters:
     ///   - modelName: Optional model name to warm up. If nil, attempts a best-effort default.
+    ///   - prefillChars: If > 0, use a long user message with this many characters to exercise prefill compilation.
     ///   - maxTokens: Number of tokens to emit during warm-up (default 1)
-    func warmUp(modelName: String? = nil, maxTokens: Int = 1) async {
+    func warmUp(modelName: String? = nil, prefillChars: Int = 0, maxTokens: Int = 1) async {
         // Choose a model: explicit name -> find; otherwise pick first available
         let chosen: LMModel? = {
             if let name = modelName, let m = Self.findModel(named: name) { return m }
@@ -119,7 +120,8 @@ class MLXService {
         }()
         guard let model = chosen else { return }
 
-        let messages = [Message(role: .user, content: "Hello")]        
+        let warmupContent: String = prefillChars > 0 ? String(repeating: "A", count: max(1, prefillChars)) : "Hello"
+        let messages = [Message(role: .user, content: warmupContent)]        
         do {
             let stream = try await generate(messages: messages, model: model, temperature: 0.0, maxTokens: maxTokens)
             // Consume the small warm-up stream
@@ -436,7 +438,7 @@ func buildPrompt(from messages: [Message], tools: [Tool]?, toolChoice: ToolChoic
             toolsBlock += "Available tools (OpenAI format):\n"
             toolsBlock += json
             if let toolChoice {
-                var encoder = IkigaJSONEncoder()
+                let encoder = IkigaJSONEncoder()
                 var buffer = ByteBufferAllocator().buffer(capacity: 256)
                 if let _ = try? encoder.encodeAndWrite(toolChoice, into: &buffer), let jsonChoice = buffer.readString(length: buffer.readableBytes) {
                     toolsBlock += "\nTool choice: \(jsonChoice)"

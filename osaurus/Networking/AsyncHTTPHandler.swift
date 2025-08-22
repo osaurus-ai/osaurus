@@ -122,8 +122,10 @@ class AsyncHTTPHandler {
         var responseHead = HTTPResponseHead(version: .http1_1, status: .ok)
         var nioHeaders = HTTPHeaders()
         nioHeaders.add(name: "Content-Type", value: "text/event-stream")
-        nioHeaders.add(name: "Cache-Control", value: "no-cache")
+        nioHeaders.add(name: "Cache-Control", value: "no-cache, no-transform")
         nioHeaders.add(name: "Connection", value: "keep-alive")
+        nioHeaders.add(name: "X-Accel-Buffering", value: "no")
+        nioHeaders.add(name: "Transfer-Encoding", value: "chunked")
         responseHead.headers = nioHeaders
         
         // Ensure header write happens on the channel's event loop
@@ -361,9 +363,16 @@ class AsyncHTTPHandler {
             }
         } else {
             // Stream tokens as JSON-encoded SSE chunks with batching and stop detection
-            let env = ProcessInfo.processInfo.environment
-            let batchCharThreshold: Int = Int(env["OSU_STREAM_BATCH_CHARS"] ?? "") ?? 512
-            let batchIntervalMs: Int = Int(env["OSU_STREAM_BATCH_MS"] ?? "") ?? 25
+            // Cache env thresholds once per process to avoid per-request overhead
+            struct StreamTuning { static var batchChars: Int = {
+                let env = ProcessInfo.processInfo.environment
+                return Int(env["OSU_STREAM_BATCH_CHARS"] ?? "") ?? 512
+            }(); static var batchMs: Int = {
+                let env = ProcessInfo.processInfo.environment
+                return Int(env["OSU_STREAM_BATCH_MS"] ?? "") ?? 25
+            }() }
+            let batchCharThreshold: Int = StreamTuning.batchChars
+            let batchIntervalMs: Int = StreamTuning.batchMs
             let flushIntervalNs: UInt64 = UInt64(batchIntervalMs) * 1_000_000
 
             // Stop sequence rolling window
@@ -397,7 +406,7 @@ class AsyncHTTPHandler {
                 }
             }
 
-            // Send role prelude on first token
+            // Send role prelude as soon as headers are written to decrease TTFT
             @inline(__always)
             func sendRolePrelude() {
                 sendChunk(DeltaContent(role: "assistant", content: nil, tool_calls: nil), flushNow: true)
@@ -409,6 +418,8 @@ class AsyncHTTPHandler {
                 sendChunk(DeltaContent(role: nil, content: content, tool_calls: nil), flushNow: flushNow)
             }
 
+            // Immediately send role prelude before first model token (helps TTFT)
+            sendRolePrelude()
             for await token in stream {
                 if shouldCheckStop {
                     stopTail += token
@@ -426,7 +437,6 @@ class AsyncHTTPHandler {
                 }
 
                 if !firstTokenSent {
-                    sendRolePrelude()
                     sendContentDelta(token, flushNow: true)
                     firstTokenSent = true
                     lastFlushNs = DispatchTime.now().uptimeNanoseconds
@@ -607,7 +617,7 @@ class AsyncHTTPHandler {
 
     // MARK: - Helpers
     private func encodeJSONString<T: Encodable>(_ value: T) -> String? {
-        var encoder = jsonEncoder
+        let encoder = jsonEncoder
         var buffer = ByteBufferAllocator().buffer(capacity: 1024)
         do {
             try encoder.encodeAndWrite(value, into: &buffer)
