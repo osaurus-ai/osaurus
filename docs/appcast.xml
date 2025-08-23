@@ -3,14 +3,14 @@
   <channel>
     <title>Osaurus</title>
         <item>
-            <title>0.0.8</title>
-            <pubDate>Fri, 22 Aug 2025 17:08:51 +0000</pubDate>
+            <title>0.0.9</title>
+            <pubDate>Sat, 23 Aug 2025 13:06:48 +0000</pubDate>
             <sparkle:channel>release</sparkle:channel>
-            <sparkle:version>0.0.8</sparkle:version>
-            <sparkle:shortVersionString>0.0.8</sparkle:shortVersionString>
+            <sparkle:version>0.0.9</sparkle:version>
+            <sparkle:shortVersionString>0.0.9</sparkle:shortVersionString>
             <sparkle:minimumSystemVersion>15.5</sparkle:minimumSystemVersion>
             <sparkle:releaseNotesLink>https://dinoki-ai.github.io/osaurus/Osaurus-latest.html</sparkle:releaseNotesLink>
-            <enclosure url="https://github.com/dinoki-ai/osaurus/releases/download/0.0.8/Osaurus-0.0.8.dmg" length="7492989" type="application/octet-stream"/>
+            <enclosure url="https://github.com/dinoki-ai/osaurus/releases/download/0.0.9/Osaurus-0.0.9.dmg" length="7520848" type="application/octet-stream" sparkle:edSignature="KD36sBWPm/O/huEhC5eUtVKJQaAGhIWFy39uX8vQywbooEmX29MBVxxAjfNyRxna8qLSvDxGwLUhmU17LaKZBA=="/>
         </item>
   </channel>
 </rss>
