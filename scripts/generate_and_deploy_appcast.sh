@@ -62,15 +62,18 @@ pathlib.Path(f'updates/arm64/Osaurus-{version}.html').write_text(template, encod
 PY
 fi
 
-echo "$SPARKLE_PRIVATE_KEY" > private_key.txt
-chmod 600 private_key.txt
-
-./sparkle_tools/bin/generate_appcast \
-  --ed-key-file private_key.txt \
+printf "%s" "$SPARKLE_PRIVATE_KEY" | ./sparkle_tools/bin/generate_appcast \
+  --ed-key-file - \
   --download-url-prefix "https://github.com/${PUBLIC_REPO}/releases/download/${VERSION}/" \
   --channel "release" \
   -o updates/appcast-arm64.xml \
   updates/arm64/
+
+# Ensure signatures were generated
+if ! grep -q 'edSignature' updates/appcast-arm64.xml; then
+  echo "❌ No edSignature found in appcast; check SPARKLE_PRIVATE_KEY format (base64 32-byte seed)." >&2
+  exit 1
+fi
 
 {
   echo '<?xml version="1.0" encoding="utf-8"?>'
@@ -100,7 +103,7 @@ if command -v xmllint >/dev/null 2>&1; then
   xmllint --noout updates/appcast.xml || { echo "❌ Malformed appcast.xml"; exit 1; }
 fi
 
-rm -f private_key.txt
+
 
 git clone https://x-access-token:${GH_TOKEN}@github.com/${PUBLIC_REPO}.git public-repo
 mkdir -p public-repo/docs
