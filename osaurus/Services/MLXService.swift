@@ -86,6 +86,17 @@ class MLXService {
     private struct SessionKey: Hashable { let model: String; let session: String }
     private var reusableSessions: [SessionKey: (session: ChatSession, lastUsed: Date)] = [:]
     private var reusableOrder: [SessionKey] = []
+    private let sessionCacheQueue = DispatchQueue(label: "com.osaurus.sessioncache", attributes: .concurrent)
+    private var activeReuseKeys: Set<SessionKey> = []
+
+    /// Per-model concurrency gates to protect underlying MLX containers
+    private final class ConcurrencyGate {
+        private let semaphore: DispatchSemaphore
+        init(limit: Int) { self.semaphore = DispatchSemaphore(value: max(1, limit)) }
+        func wait() { semaphore.wait() }
+        func signal() { semaphore.signal() }
+    }
+    private var modelGates: [String: ConcurrencyGate] = [:]
     private let reusableMaxCount: Int = {
         let env = ProcessInfo.processInfo.environment
         return Int(env["OSU_SESSION_CACHE_MAX"] ?? "") ?? 8
@@ -157,31 +168,18 @@ class MLXService {
     
     /// Get list of available models that are downloaded (thread-safe)
     nonisolated static func getAvailableModels() -> [String] {
-        // Return cached list if fresh (< 5 seconds old)
-        if let cached = availableModelsCache.object(forKey: "models" as NSString) as? [String],
-           let timestamp = modelsListCacheTimestamp,
-           Date().timeIntervalSince(timestamp) < 5.0 {
-            return cached
-        }
-        
-        // Otherwise scan disk and cache the results
         return modelLookupQueue.sync(flags: .barrier) {
-            // Double-check after acquiring barrier
             if let cached = availableModelsCache.object(forKey: "models" as NSString) as? [String],
                let timestamp = modelsListCacheTimestamp,
                Date().timeIntervalSince(timestamp) < 5.0 {
                 return cached
             }
-            
             let pairs = Self.scanDiskForModels()
             let modelNames = pairs.map { $0.name }
-            
-            // Update cache with timestamp
             Self.availableModelsCache.setObject(modelNames as NSArray, forKey: "models" as NSString)
             let modelInfo = pairs.map { ["name": $0.name, "id": $0.id] }
             Self.availableModelsCache.setObject(modelInfo as NSArray, forKey: "modelInfo" as NSString)
             Self.modelsListCacheTimestamp = Date()
-            
             return modelNames
         }
     }
@@ -355,34 +353,55 @@ class MLXService {
         // Load or retrieve the model container from cache
         let holder = try await load(model: model)
 
+        // Acquire a per-model gate to avoid concurrent use of the same container
+        let gate: ConcurrencyGate = sessionCacheQueue.sync(flags: .barrier) {
+            if let g = modelGates[model.name] { return g }
+            let env = ProcessInfo.processInfo.environment
+            let limit = Int(env["OSU_MODEL_MAX_CONCURRENCY"] ?? "") ?? 1
+            let g = ConcurrencyGate(limit: limit)
+            modelGates[model.name] = g
+            return g
+        }
+        gate.wait()
+
         // Build a prompt from chat messages and optional tool specs
         let prompt = buildPrompt(from: messages, tools: tools, toolChoice: toolChoice)
 
         // Optionally reuse a ChatSession (KV cache) for the same sessionId
-        let session: ChatSession = {
-            guard let sessionId, !sessionId.isEmpty else { return ChatSession(holder.container) }
+        let (session, cacheKey, reusedFromCache): (ChatSession, SessionKey?, Bool) = {
+            guard let sessionId, !sessionId.isEmpty else { return (ChatSession(holder.container), nil, false) }
             let key = SessionKey(model: model.name, session: sessionId)
-            // Evict stale entries
-            evictExpiredReusableSessions()
-            if let existing = reusableSessions[key], Date().timeIntervalSince(existing.lastUsed) < reusableTTLSeconds {
-                reusableSessions[key] = (existing.session, Date())
-                // Move key to MRU
+            return sessionCacheQueue.sync(flags: .barrier) {
+                evictExpiredReusableSessionsLocked(now: Date())
+                // If a session exists but is actively in use, avoid reusing it concurrently
+                if let existing = reusableSessions[key], !activeReuseKeys.contains(key), Date().timeIntervalSince(existing.lastUsed) < reusableTTLSeconds {
+                    // Mark this key as active to prevent concurrent reuse
+                    activeReuseKeys.insert(key)
+                    // MRU update
+                    if let idx = reusableOrder.firstIndex(of: key) { reusableOrder.remove(at: idx) }
+                    reusableOrder.append(key)
+                    return (existing.session, key, true)
+                }
+                // Either none exists, it expired, or it's currently in use — create a fresh session
+                let newSession = ChatSession(holder.container)
+                // Insert or refresh cache entry for future reuse
+                reusableSessions[key] = (newSession, Date())
                 if let idx = reusableOrder.firstIndex(of: key) { reusableOrder.remove(at: idx) }
                 reusableOrder.append(key)
-                return existing.session
+                while reusableOrder.count > reusableMaxCount {
+                    let lru = reusableOrder.removeFirst()
+                    reusableSessions.removeValue(forKey: lru)
+                    activeReuseKeys.remove(lru)
+                }
+                return (newSession, nil, false)
             }
-            let newSession = ChatSession(holder.container)
-            // Insert into LRU structures
-            reusableSessions[key] = (newSession, Date())
-            reusableOrder.append(key)
-            while reusableOrder.count > reusableMaxCount { let lru = reusableOrder.removeFirst(); reusableSessions.removeValue(forKey: lru) }
-            return newSession
         }()
         let sessionStream = session.streamResponse(to: prompt)
         
         // Return a stream that enforces maxTokens
         return AsyncStream<String> { continuation in
             Task {
+                defer { gate.signal() }
                 var emittedTokenCount = 0
                 do {
                     for try await token in sessionStream {
@@ -396,14 +415,23 @@ class MLXService {
                 } catch {
                     // On error, finish the stream; upstream will send error JSON
                 }
+                // Release active flag for reused sessions
+                if reusedFromCache, let key = cacheKey {
+                    sessionCacheQueue.async(flags: .barrier) {
+                        self.activeReuseKeys.remove(key)
+                        // refresh lastUsed
+                        if let entry = self.reusableSessions[key] {
+                            self.reusableSessions[key] = (entry.session, Date())
+                        }
+                    }
+                }
                 continuation.finish()
             }
         }
     }
 
-    private func evictExpiredReusableSessions() {
+    private func evictExpiredReusableSessionsLocked(now: Date) {
         if reusableSessions.isEmpty { return }
-        let now = Date()
         reusableOrder.removeAll { key in
             if let entry = reusableSessions[key] {
                 if now.timeIntervalSince(entry.lastUsed) >= reusableTTLSeconds {
