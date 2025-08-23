@@ -20,6 +20,7 @@ Created by Dinoki Labs ([dinoki.ai](https://dinoki.ai)), a fully native desktop 
 - **Function/Tool calling**: OpenAI‑style `tools` + `tool_choice`, with `tool_calls` parsing and streaming deltas
 - **Fast token streaming**: Server‑Sent Events for low‑latency output
 - **Model manager UI**: Browse, download, and manage MLX models from `mlx-community`
+- **System resource monitor**: Real-time CPU and RAM usage visualization
 - **Self‑contained**: SwiftUI app with an embedded SwiftNIO HTTP server
 
 ## Requirements
@@ -47,7 +48,8 @@ osaurus/
 │   └── AsyncHTTPHandler.swift      # SSE streaming for chat completions
 ├── Services/
 │   ├── MLXService.swift            # MLX loading, session caching, generation
-│   └── SearchService.swift
+│   ├── SearchService.swift
+│   └── SystemMonitorService.swift  # Real-time CPU and RAM monitoring
 ├── Theme/
 │   └── Theme.swift
 ├── Views/
@@ -65,6 +67,7 @@ osaurus/
 - Streaming and non‑streaming chat completions
 - OpenAI‑compatible function calling with robust parser for model outputs (handles code fences/formatting noise)
 - Health endpoint and simple status UI
+- Real-time system resource monitoring
 
 ## API Endpoints
 
@@ -83,8 +86,8 @@ Download the latest signed build from the [Releases page](https://github.com/din
 
 1. Open `osaurus.xcodeproj` in Xcode 16.4+
 2. Build and run the `osaurus` target
-3. In the UI, pick a port (default `8080`) and press Start
-4. Open the model manager to download a model (e.g., “Llama 3.2 3B Instruct 4bit”)
+3. In the UI, configure the port via the gear icon (default `8080`) and press Start
+4. Open the model manager to download a model (e.g., "Llama 3.2 3B Instruct 4bit")
 
 Models are stored by default at `~/Documents/MLXModels`. Override with the environment variable `OSU_MODELS_DIR`.
 
