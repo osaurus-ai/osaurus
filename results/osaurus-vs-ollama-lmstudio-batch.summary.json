@@ -1,0 +1,44 @@
+{
+  "osaurus|llama-3.2-3b-instruct-4bit": {
+    "runs": 20,
+    "success_rate": 1.0,
+    "ttft_ms_avg": 173.00497493706644,
+    "ttft_ms_p50": 173.56568691320717,
+    "ttft_ms_p95": 186.6957235033624,
+    "total_ms_avg": 1340.086435386911,
+    "total_ms_p50": 1229.6895420877263,
+    "total_ms_p95": 2463.778527302202,
+    "output_chars_avg": 737.3,
+    "output_bytes_avg": 737.3,
+    "chars_per_sec_avg": 550.1883912339773,
+    "bytes_per_sec_avg": 550.1883912339773
+  },
+  "ollama|llama3.2": {
+    "runs": 20,
+    "success_rate": 1.0,
+    "ttft_ms_avg": 58.421604067552835,
+    "ttft_ms_p50": 51.31816607899964,
+    "ttft_ms_p95": 89.28039398742845,
+    "total_ms_avg": 1743.9184895483777,
+    "total_ms_p50": 1573.9445624640211,
+    "total_ms_p95": 3147.4711331538856,
+    "output_chars_avg": 772.3,
+    "output_bytes_avg": 772.3,
+    "chars_per_sec_avg": 442.85326672578736,
+    "bytes_per_sec_avg": 442.85326672578736
+  },
+  "lmstudio|llama-3.2-3b-instruct": {
+    "runs": 20,
+    "success_rate": 1.0,
+    "ttft_ms_avg": 55.92836660798639,
+    "ttft_ms_p50": 51.1351665481925,
+    "ttft_ms_p95": 91.34762706235051,
+    "total_ms_avg": 1220.7628041389398,
+    "total_ms_p50": 1129.8499580007046,
+    "total_ms_p95": 2203.6652566283014,
+    "output_chars_avg": 747.05,
+    "output_bytes_avg": 747.05,
+    "chars_per_sec_avg": 611.9534421159963,
+    "bytes_per_sec_avg": 611.9534421159963
+  }
+}
