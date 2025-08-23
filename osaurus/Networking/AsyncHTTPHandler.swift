@@ -22,8 +22,7 @@ class AsyncHTTPHandler {
     /// Cache for frequently used models to avoid repeated lookups
     private let modelCache = NSCache<NSString, LMModel>()
     
-    /// Shared JSON encoder for better performance
-    private var jsonEncoder = IkigaJSONEncoder()
+    // JSON encoder is created per write to avoid cross-request contention
     
     private init() {
         // Pre-cache common models
@@ -183,7 +182,7 @@ class AsyncHTTPHandler {
                 loop.execute {
                     let context = ctxBox.value
                     guard context.channel.isActive else { return }
-                    let encoder = self.jsonEncoder
+                    let encoder = IkigaJSONEncoder()
                     var buffer = context.channel.allocator.buffer(capacity: 256)
                     buffer.writeString("data: ")
                     do { try encoder.encodeAndWrite(value, into: &buffer) } catch {}
@@ -381,7 +380,7 @@ class AsyncHTTPHandler {
                     choices: [StreamChoice(index: 0, delta: delta, finish_reason: finishReason)],
                     system_fingerprint: nil
                 )
-                let encoder = self.jsonEncoder
+                let encoder = IkigaJSONEncoder()
                 loop.execute {
                     let context = ctxBox.value
                     guard context.channel.isActive else { return }
@@ -478,7 +477,7 @@ class AsyncHTTPHandler {
             loop.execute {
                 let context = ctxBox.value
                 guard context.channel.isActive else { return }
-                let encoder = self.jsonEncoder
+                let encoder = IkigaJSONEncoder()
                 var buffer = context.channel.allocator.buffer(capacity: 256)
                 buffer.writeString("data: ")
                 do { try encoder.encodeAndWrite(value, into: &buffer) } catch {}
@@ -594,7 +593,7 @@ class AsyncHTTPHandler {
         loop.execute {
             let context = ctxBox.value
             guard context.channel.isActive else { return }
-            let encoder = self.jsonEncoder
+            let encoder = IkigaJSONEncoder()
             var responseHead = HTTPResponseHead(version: .http1_1, status: status)
             var buffer = context.channel.allocator.buffer(capacity: 1024)
             do { try encoder.encodeAndWrite(response, into: &buffer) } catch {
@@ -617,7 +616,7 @@ class AsyncHTTPHandler {
 
     // MARK: - Helpers
     private func encodeJSONString<T: Encodable>(_ value: T) -> String? {
-        let encoder = jsonEncoder
+        let encoder = IkigaJSONEncoder()
         var buffer = ByteBufferAllocator().buffer(capacity: 1024)
         do {
             try encoder.encodeAndWrite(value, into: &buffer)

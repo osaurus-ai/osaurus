@@ -16,14 +16,11 @@ public struct Router {
     var context: ChannelHandlerContext?
     weak var handler: HTTPHandler?
     
-    /// Shared JSON decoder for better performance
-    private static let jsonDecoder: IkigaJSONDecoder = {
-        let decoder = IkigaJSONDecoder()
-        return decoder
-    }()
+    /// Create decoders per-request to ensure thread-safety
+    private static func makeJSONDecoder() -> IkigaJSONDecoder { IkigaJSONDecoder() }
 
-    /// Shared JSON encoder for endpoints that return bodies synchronously
-    private var jsonEncoder = IkigaJSONEncoder()
+    /// Create encoders per-response to ensure thread-safety
+    private func makeJSONEncoder() -> IkigaJSONEncoder { IkigaJSONEncoder() }
     
     init(context: ChannelHandlerContext? = nil, handler: HTTPHandler? = nil) {
         self.context = context
@@ -117,7 +114,8 @@ public struct Router {
     }
     
     private func chatCompletionsEndpoint(body: Data, context: ChannelHandlerContext?, handler: HTTPHandler?) -> (HTTPResponseStatus, [(String, String)], String) {
-        guard let request = try? Self.jsonDecoder.decode(ChatCompletionRequest.self, from: body) else {
+        let decoder = Self.makeJSONDecoder()
+        guard let request = try? decoder.decode(ChatCompletionRequest.self, from: body) else {
             return errorResponse(message: "Invalid request format", statusCode: .badRequest)
         }
         
@@ -141,7 +139,8 @@ public struct Router {
 
     private func chatCompletionsEndpoint(bodyBuffer: ByteBuffer, context: ChannelHandlerContext?, handler: HTTPHandler?) -> (HTTPResponseStatus, [(String, String)], String) {
         // Decode directly from ByteBuffer to avoid extra Data copies
-        guard let request = try? Self.jsonDecoder.decode(ChatCompletionRequest.self, from: bodyBuffer) else {
+        let decoder = Self.makeJSONDecoder()
+        guard let request = try? decoder.decode(ChatCompletionRequest.self, from: bodyBuffer) else {
             return errorResponse(message: "Invalid request format", statusCode: .badRequest)
         }
 
@@ -177,7 +176,7 @@ public struct Router {
 
     // MARK: - Helpers
     private func encodeJSONString<T: Encodable>(_ value: T) -> String? {
-        var encoder = jsonEncoder
+        let encoder = makeJSONEncoder()
         var buffer = ByteBufferAllocator().buffer(capacity: 1024)
         do {
             try encoder.encodeAndWrite(value, into: &buffer)
