@@ -62,8 +62,11 @@ pathlib.Path(f'updates/arm64/Osaurus-{version}.html').write_text(template, encod
 PY
 fi
 
-printf "%s" "$SPARKLE_PRIVATE_KEY" | ./sparkle_tools/bin/generate_appcast \
-  --ed-key-file - \
+echo "$SPARKLE_PRIVATE_KEY" > private_key.txt
+chmod 600 private_key.txt
+
+./sparkle_tools/bin/generate_appcast \
+  --ed-key-file private_key.txt \
   --download-url-prefix "https://github.com/${PUBLIC_REPO}/releases/download/${VERSION}/" \
   --channel "release" \
   -o updates/appcast-arm64.xml \
