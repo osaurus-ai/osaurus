@@ -46,6 +46,15 @@ struct Message: Codable {
 class MLXService {
     static let shared = MLXService()
     
+    struct GenerationSettings {
+        var topP: Float
+        var kvBits: Int?
+        var kvGroupSize: Int
+        var quantizedKVStart: Int
+        var maxKVSize: Int?
+        var prefillStepSize: Int
+    }
+    
     /// Thread-safe cache of available model names
     nonisolated(unsafe) private static let availableModelsCache = NSCache<NSString, NSArray>()
     
@@ -112,6 +121,25 @@ class MLXService {
     /// Tracks the current model download progress.
     /// Access this property to monitor model download status.
     private(set) var modelDownloadProgress: Progress?
+    
+    // Adjustable generation settings (can be tuned via UI)
+    private(set) var generationSettings: GenerationSettings = {
+        let env = ProcessInfo.processInfo.environment
+        let topP: Float = Float(env["OSU_TOP_P"] ?? "") ?? 1.0
+        let kvBits: Int? = Int(env["OSU_KV_BITS"] ?? "")
+        let kvGroup: Int = Int(env["OSU_KV_GROUP"] ?? "") ?? 64
+        let quantStart: Int = Int(env["OSU_QUANT_KV_START"] ?? "") ?? 0
+        let maxKV: Int? = Int(env["OSU_MAX_KV_SIZE"] ?? "")
+        let prefillStep: Int = Int(env["OSU_PREFILL_STEP"] ?? "") ?? 1024
+        return GenerationSettings(
+            topP: topP,
+            kvBits: kvBits,
+            kvGroupSize: kvGroup,
+            quantizedKVStart: quantStart,
+            maxKVSize: maxKV,
+            prefillStepSize: prefillStep
+        )
+    }()
     
     private init() {
         // Initialize the cache with current available models
@@ -367,9 +395,32 @@ class MLXService {
         // Build a prompt from chat messages and optional tool specs
         let prompt = buildPrompt(from: messages, tools: tools, toolChoice: toolChoice)
 
+        // Build MLX generation parameters (temperature, sampling, KV cache, etc.)
+        // Prefer UI configuration when available
+        let cfg = await ServerController.sharedConfiguration()
+        let topP: Float = cfg?.genTopP ?? 1.0
+        let kvBits: Int? = cfg?.genKVBits
+        let kvGroup: Int = cfg?.genKVGroupSize ?? 64
+        let quantStart: Int = cfg?.genQuantizedKVStart ?? 0
+        let maxKV: Int? = cfg?.genMaxKVSize
+        let prefillStep: Int = cfg?.genPrefillStepSize ?? 512
+
+        var genParams = MLXLMCommon.GenerateParameters(
+            maxTokens: maxTokens,
+            maxKVSize: maxKV,
+            kvBits: kvBits,
+            kvGroupSize: kvGroup,
+            quantizedKVStart: quantStart,
+            temperature: temperature,
+            topP: topP,
+            repetitionPenalty: nil,
+            repetitionContextSize: 20
+        )
+        genParams.prefillStepSize = prefillStep
+
         // Optionally reuse a ChatSession (KV cache) for the same sessionId
         let (session, cacheKey, reusedFromCache): (ChatSession, SessionKey?, Bool) = {
-            guard let sessionId, !sessionId.isEmpty else { return (ChatSession(holder.container), nil, false) }
+            guard let sessionId, !sessionId.isEmpty else { return (ChatSession(holder.container, instructions: nil, generateParameters: genParams), nil, false) }
             let key = SessionKey(model: model.name, session: sessionId)
             return sessionCacheQueue.sync(flags: .barrier) {
                 evictExpiredReusableSessionsLocked(now: Date())
@@ -383,7 +434,7 @@ class MLXService {
                     return (existing.session, key, true)
                 }
                 // Either none exists, it expired, or it's currently in use — create a fresh session
-                let newSession = ChatSession(holder.container)
+                let newSession = ChatSession(holder.container, instructions: nil, generateParameters: genParams)
                 // Insert or refresh cache entry for future reuse
                 reusableSessions[key] = (newSession, Date())
                 if let idx = reusableOrder.firstIndex(of: key) { reusableOrder.remove(at: idx) }

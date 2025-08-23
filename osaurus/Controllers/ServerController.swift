@@ -20,6 +20,13 @@ final class ServerController: ObservableObject {
     @Published var serverHealth: ServerHealth = .stopped
     @Published var configuration: ServerConfiguration = .default
     
+    // Provide shared access to configuration for non-UI callers
+    nonisolated static func sharedConfiguration() async -> ServerConfiguration? {
+        await MainActor.run { [weak shared = ServerControllerHolder.shared.controller] in
+            shared?.configuration
+        }
+    }
+    
     /// Convenience property for accessing port
     var port: Int {
         get { configuration.port }
@@ -30,6 +37,13 @@ final class ServerController: ObservableObject {
     
     private var eventLoopGroup: MultiThreadedEventLoopGroup?
     private var serverChannel: Channel?
+
+    // Singleton holder to allow async access to the current controller instance when injected as EnvironmentObject
+    private struct ServerControllerHolder {
+        static var shared = ServerControllerHolder()
+        weak var controller: ServerController?
+        private init() {}
+    }
 
     // MARK: - Public Methods
     
@@ -76,14 +90,14 @@ final class ServerController: ObservableObject {
             // Best-effort warm-up to reduce TTFT on first request.
             // Environment variables:
             //   OSU_WARMUP_MODEL   - optional model name to warm up
-            //   OSU_WARMUP_TOKENS  - number of tokens to generate during warm-up (default 16)
-            //   OSU_WARMUP_PREFILL - approximate number of characters for prefill warmup (default 1024)
+            //   OSU_WARMUP_TOKENS  - number of tokens to generate during warm-up (default 2)
+            //   OSU_WARMUP_PREFILL - approximate number of characters for prefill warmup (default 4096)
             Task {
                 let env = ProcessInfo.processInfo.environment
                 let envModel = env["OSU_WARMUP_MODEL"]
                 // More aggressive defaults compile prefill/decoding paths better
-                let warmTokens = Int(env["OSU_WARMUP_TOKENS"] ?? "") ?? 24
-                let prefillChars = Int(env["OSU_WARMUP_PREFILL"] ?? "") ?? 3072
+                let warmTokens = Int(env["OSU_WARMUP_TOKENS"] ?? "") ?? 2
+                let prefillChars = Int(env["OSU_WARMUP_PREFILL"] ?? "") ?? 4096
                 await MLXService.shared.warmUp(modelName: envModel, prefillChars: max(0, prefillChars), maxTokens: max(1, warmTokens))
             }
         } catch {
@@ -130,6 +144,11 @@ final class ServerController: ObservableObject {
         await cleanupRuntime()
 
         print("[Osaurus] Server shutdown completed")
+    }
+    
+    // Capture singleton pointer on init attach to UI
+    init() {
+        ServerControllerHolder.shared.controller = self
     }
     
     /// Checks if the server is responsive

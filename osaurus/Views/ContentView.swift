@@ -24,6 +24,7 @@ struct ContentView: View {
     @State private var selectedModelId: String?
     @State private var showModelManager = false
     @State private var showPortConfig = false
+    @State private var showGenConfig = false
     
     var body: some View {
         ZStack {
@@ -113,6 +114,26 @@ struct ContentView: View {
                             .help("Configure port")
                             .popover(isPresented: $showPortConfig, attachmentAnchor: .point(.bottom), arrowEdge: .top) {
                                 PortConfigurationView(portString: $portString)
+                            }
+                            
+                            Button(action: { showGenConfig = true }) {
+                                Image(systemName: "slider.horizontal.3")
+                                    .font(.system(size: 14))
+                                    .foregroundColor(theme.primaryText)
+                                    .frame(width: 28, height: 28)
+                                    .background(
+                                        Circle()
+                                            .fill(theme.buttonBackground)
+                                            .overlay(
+                                                Circle()
+                                                    .stroke(theme.buttonBorder, lineWidth: 1)
+                                            )
+                                    )
+                            }
+                            .buttonStyle(PlainButtonStyle())
+                            .help("Generation settings")
+                            .popover(isPresented: $showGenConfig, attachmentAnchor: .point(.bottom), arrowEdge: .top) {
+                                GenerationSettingsView(configuration: $server.configuration)
                             }
                         }
                         
@@ -354,6 +375,90 @@ struct PortConfigurationView: View {
         .background(theme.primaryBackground)
         .onAppear {
             tempPortString = portString
+        }
+    }
+}
+
+// MARK: - Generation Settings View
+struct GenerationSettingsView: View {
+    @Environment(\.theme) private var theme
+    @Binding var configuration: ServerConfiguration
+    @Environment(\.dismiss) private var dismiss
+    @State private var tempTopP: String = "1.0"
+    @State private var tempKVBits: String = "4"
+    @State private var tempKVGroup: String = "64"
+    @State private var tempQuantStart: String = "0"
+    @State private var tempMaxKV: String = ""
+    @State private var tempPrefillStep: String = "1024"
+    
+    var body: some View {
+        VStack(spacing: 16) {
+            Text("Generation Settings")
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundColor(theme.primaryText)
+            grid
+            HStack(spacing: 12) {
+                Button("Cancel") { dismiss() }
+                    .buttonStyle(PlainButtonStyle())
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundColor(theme.secondaryText)
+                Spacer()
+                GradientButton(title: "Save", icon: nil) {
+                    configuration.genTopP = Float(tempTopP) ?? configuration.genTopP
+                    configuration.genKVBits = Int(tempKVBits)
+                    configuration.genKVGroupSize = Int(tempKVGroup) ?? configuration.genKVGroupSize
+                    configuration.genQuantizedKVStart = Int(tempQuantStart) ?? configuration.genQuantizedKVStart
+                    configuration.genMaxKVSize = Int(tempMaxKV)
+                    configuration.genPrefillStepSize = Int(tempPrefillStep) ?? configuration.genPrefillStepSize
+                    dismiss()
+                }
+            }
+        }
+        .padding(20)
+        .frame(width: 360)
+        .background(theme.primaryBackground)
+        .onAppear {
+            tempTopP = String(configuration.genTopP)
+            tempKVBits = configuration.genKVBits.map(String.init) ?? ""
+            tempKVGroup = String(configuration.genKVGroupSize)
+            tempQuantStart = String(configuration.genQuantizedKVStart)
+            tempMaxKV = configuration.genMaxKVSize.map(String.init) ?? ""
+            tempPrefillStep = String(configuration.genPrefillStepSize)
+        }
+    }
+    
+    @ViewBuilder
+    private var grid: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            labeledField("top_p", text: $tempTopP, placeholder: "1.0")
+            labeledField("kv_bits (empty = off)", text: $tempKVBits, placeholder: "4")
+            labeledField("kv_group_size", text: $tempKVGroup, placeholder: "64")
+            labeledField("quantized_kv_start", text: $tempQuantStart, placeholder: "0")
+            labeledField("max_kv_size (empty = unlimited)", text: $tempMaxKV, placeholder: "")
+            labeledField("prefill_step_size", text: $tempPrefillStep, placeholder: "1024")
+        }
+    }
+    
+    @ViewBuilder
+    private func labeledField(_ label: String, text: Binding<String>, placeholder: String) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(label)
+                .font(.system(size: 12, weight: .medium))
+                .foregroundColor(theme.secondaryText)
+            TextField(placeholder, text: text)
+                .textFieldStyle(.plain)
+                .font(.system(size: 13, weight: .medium, design: .monospaced))
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+                .background(
+                    RoundedRectangle(cornerRadius: 6)
+                        .fill(theme.inputBackground)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 6)
+                                .stroke(theme.inputBorder, lineWidth: 1)
+                        )
+                )
+                .foregroundColor(theme.primaryText)
         }
     }
 }
