@@ -92,9 +92,10 @@ if ! grep -q 'edSignature' updates/appcast-arm64.xml; then
     /<enclosure/ && $0 ~ ("Osaurus-" ver ".dmg") {
       line=$0
       gsub(/length="[^"]*"/, "length=\"" len "\"", line)
-      sub(/\/>$/, " sparkle:edSignature=\"" ed "\"/>", line)
-      if (line !~ /sparkle:edSignature=/) {
-        sub(/\s*>$/, " sparkle:edSignature=\"" ed "\"/>", line)
+      if (line ~ /sparkle:edSignature=/) {
+        sub(/sparkle:edSignature="[^"]*"/, "sparkle:edSignature=\"" ed "\"", line)
+      } else {
+        sub(/[[:space:]]*\/>[[:space:]]*$/, " sparkle:edSignature=\"" ed "\"/>", line)
       }
       print line
       next
@@ -106,7 +107,7 @@ if ! grep -q 'edSignature' updates/appcast-arm64.xml; then
   # Fallback: if still missing, inject signature attribute with sed
   if ! grep -q 'edSignature' updates/appcast-arm64.xml; then
     tmpfile=$(mktemp)
-    sed -E "s#(<enclosure[^>]*Osaurus-${VERSION}\.dmg\"[^>]*)/>#\\1 sparkle:edSignature=\"${EDSIG}\"/>#g" updates/appcast-arm64.xml > "$tmpfile"
+    sed -E "s#(<enclosure[^>]*Osaurus-${VERSION}\.dmg\"[^>]*)[[:space:]]*/>#\\1 sparkle:edSignature=\"${EDSIG}\"/>#g" updates/appcast-arm64.xml > "$tmpfile"
     mv "$tmpfile" updates/appcast-arm64.xml
   fi
 
