@@ -96,8 +96,8 @@ final class ServerController: ObservableObject {
                 let env = ProcessInfo.processInfo.environment
                 let envModel = env["OSU_WARMUP_MODEL"]
                 // More aggressive defaults compile prefill/decoding paths better
-                let warmTokens = Int(env["OSU_WARMUP_TOKENS"] ?? "") ?? 2
-                let prefillChars = Int(env["OSU_WARMUP_PREFILL"] ?? "") ?? 4096
+                let warmTokens = Int(env["OSU_WARMUP_TOKENS"] ?? "") ?? 8
+                let prefillChars = Int(env["OSU_WARMUP_PREFILL"] ?? "") ?? 8192
                 await MLXService.shared.warmUp(modelName: envModel, prefillChars: max(0, prefillChars), maxTokens: max(1, warmTokens))
             }
         } catch {

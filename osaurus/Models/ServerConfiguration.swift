@@ -42,12 +42,12 @@ public struct ServerConfiguration {
             host: "127.0.0.1",
             numberOfThreads: ProcessInfo.processInfo.activeProcessorCount,
             backlog: 256,
-            genTopP: 1.0,
+            genTopP: 0.95,
             genKVBits: 4,
             genKVGroupSize: 64,
-            genQuantizedKVStart: 0,
+            genQuantizedKVStart: 256,
             genMaxKVSize: nil,
-            genPrefillStepSize: 1024
+            genPrefillStepSize: 2048
         )
     }
     

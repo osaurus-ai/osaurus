@@ -64,6 +64,13 @@ class AsyncHTTPHandler {
             let temperature = request.temperature ?? 0.7
             let maxTokens = request.max_tokens ?? 2048
             
+            // Compute effective stop sequences: use request-provided or fall back to model defaults
+            let defaultStops = MLXService.defaultStopSequences(for: model)
+            let effectiveStops: [String] = {
+                if let s = request.stop, !s.isEmpty { return s }
+                return defaultStops
+            }()
+
             // Check if streaming is requested
             if request.stream ?? false {
                 try await handleStreamingResponse(
@@ -75,7 +82,7 @@ class AsyncHTTPHandler {
                     tools: request.tools,
                     toolChoice: request.tool_choice,
                     sessionId: request.session_id,
-                    stopSequences: request.stop ?? [],
+                    stopSequences: effectiveStops,
                     context: context
                 )
             } else {
@@ -88,7 +95,7 @@ class AsyncHTTPHandler {
                     tools: request.tools,
                     toolChoice: request.tool_choice,
                     sessionId: request.session_id,
-                    stopSequences: request.stop ?? [],
+                    stopSequences: effectiveStops,
                     context: context
                 )
             }
