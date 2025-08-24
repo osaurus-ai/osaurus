@@ -40,7 +40,11 @@ final class UpdaterViewModel: NSObject, ObservableObject, SPUUpdaterDelegate {
 	}
 
 	func updater(_ updater: SPUUpdater, didAbortWithError error: Error) {
-		NSLog("Sparkle: didAbortWithError=%@", String(describing: error))
+		let nsErr = error as NSError
+		NSLog("Sparkle: didAbortWithError domain=%@ code=%ld desc=%@ userInfo=%@", nsErr.domain, nsErr.code, nsErr.localizedDescription, nsErr.userInfo as NSDictionary)
+		if let underlying = nsErr.userInfo[NSUnderlyingErrorKey] as? NSError {
+			NSLog("Sparkle: underlyingError domain=%@ code=%ld desc=%@ userInfo=%@", underlying.domain, underlying.code, underlying.localizedDescription, underlying.userInfo as NSDictionary)
+		}
 	}
 
 	func updater(_ updater: SPUUpdater, willDownloadUpdate item: SUAppcastItem, with request: URLRequest) {
