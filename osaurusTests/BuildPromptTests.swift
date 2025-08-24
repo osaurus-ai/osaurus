@@ -18,9 +18,9 @@ struct BuildPromptTests {
         let messages = [Message(role: .user, content: "Test")] 
         let tools = [Tool(type: "function", function: ToolFunction(name: "search", description: "", parameters: .object([:])))]
         let prompt = buildPrompt(from: messages, tools: tools, toolChoice: .auto)
-        #expect(prompt.contains("Available tools (OpenAI format):") == true)
+        #expect(prompt.contains("Tools:") == true)
         #expect(prompt.contains("\"name\":\"search\"") == true)
-        #expect(prompt.contains("Tool choice:") == true)
+        #expect(prompt.contains("tool_choice:") == true)
     }
 }
 
