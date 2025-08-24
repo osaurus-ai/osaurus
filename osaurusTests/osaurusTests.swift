@@ -50,7 +50,8 @@ struct osaurusTests {
             stop: nil,
             n: nil,
             tools: nil,
-            tool_choice: nil
+            tool_choice: nil,
+            session_id: nil
         )
 
         let internalMessages = request.toInternalMessages()
@@ -124,7 +125,8 @@ struct osaurusTests {
             stop: nil,
             n: nil,
             tools: nil,
-            tool_choice: nil
+            tool_choice: nil,
+            session_id: nil
         )
         let body = try JSONEncoder().encode(request)
         let resp = router.route(method: "POST", path: "/chat/completions", body: body)
