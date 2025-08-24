@@ -273,7 +273,7 @@ class MLXService {
     /// Returns pairs of (name, id) where id is "org/repo" and name is the repo lowercased.
     nonisolated private static func scanDiskForModels() -> [(name: String, id: String)] {
         let fm = FileManager.default
-        let root = ModelManager.modelsDirectory
+        let root = DirectoryPickerService.shared.effectiveModelsDirectory
         guard let topLevel = try? fm.contentsOfDirectory(at: root, includingPropertiesForKeys: [.isDirectoryKey], options: [.skipsHiddenFiles]) else {
             return []
         }
@@ -328,7 +328,7 @@ class MLXService {
     /// Locate local directory for a given model id ("org/repo") if files exist
     nonisolated private static func findLocalDirectory(forModelId id: String) -> URL? {
         let parts = id.split(separator: "/").map(String.init)
-        let url: URL = parts.reduce(ModelManager.modelsDirectory) { partial, component in
+        let url: URL = parts.reduce(DirectoryPickerService.shared.effectiveModelsDirectory) { partial, component in
             partial.appendingPathComponent(component, isDirectory: true)
         }
         let fm = FileManager.default

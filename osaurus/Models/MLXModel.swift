@@ -27,7 +27,7 @@ struct MLXModel: Identifiable, Codable {
         size: Int64,
         downloadURL: String,
         requiredFiles: [String],
-        rootDirectory: URL = ModelManager.modelsDirectory
+        rootDirectory: URL? = nil
     ) {
         self.id = id
         self.name = name
@@ -35,7 +35,7 @@ struct MLXModel: Identifiable, Codable {
         self.size = size
         self.downloadURL = downloadURL
         self.requiredFiles = requiredFiles
-        self.rootDirectory = rootDirectory
+        self.rootDirectory = rootDirectory ?? DirectoryPickerService.shared.effectiveModelsDirectory
     }
     
     /// Human-readable size string

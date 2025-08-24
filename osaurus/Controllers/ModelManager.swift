@@ -31,23 +31,10 @@ final class ModelManager: NSObject, ObservableObject {
     @Published var suggestedModels: [MLXModel] = ModelManager.curatedSuggestedModels
     
     // MARK: - Properties
-    nonisolated(unsafe) static var modelsDirectory: URL = {
-        // Allow override (useful for tests) via environment variable
-        if let overridePath = ProcessInfo.processInfo.environment["OSU_MODELS_DIR"], !overridePath.isEmpty {
-            let overrideURL = URL(fileURLWithPath: overridePath, isDirectory: true)
-            try? FileManager.default.createDirectory(at: overrideURL, withIntermediateDirectories: true)
-            return overrideURL
-        }
-
-        let documentsPath = FileManager.default.urls(for: .documentDirectory,
-                                                     in: .userDomainMask).first!
-        let modelsPath = documentsPath.appendingPathComponent("MLXModels")
-        
-        // Create directory if it doesn't exist
-        try? FileManager.default.createDirectory(at: modelsPath,
-                                                 withIntermediateDirectories: true)
-        return modelsPath
-    }()
+    /// Current models directory (uses DirectoryPickerService for user selection)
+    var modelsDirectory: URL {
+        return DirectoryPickerService.shared.effectiveModelsDirectory
+    }
     
     private var activeDownloadTasks: [String: Task<Void, Never>] = [:] // modelId -> Task
     private var downloadTokens: [String: UUID] = [:] // modelId -> token to gate progress/state updates

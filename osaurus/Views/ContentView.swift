@@ -336,8 +336,17 @@ struct ConfigurationView: View {
                 Text("Enter a port number between 1 and 65535")
                     .font(.system(size: 11))
                     .foregroundColor(theme.tertiaryText)
+                
+                // Models directory configuration (always visible)
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Models Directory")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundColor(theme.secondaryText)
+                    
+                    DirectoryPickerView()
+                }
             }
-            
+
             Button(action: {
                 showAdvancedSettings.toggle()
             }) {
