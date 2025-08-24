@@ -66,6 +66,8 @@ class MLXService {
     nonisolated(unsafe) private static let stopSequencesCache = NSCache<NSString, NSArray>()
     /// Cache for chat templates per model (loaded from tokenizer_config.json)
     nonisolated(unsafe) private static let chatTemplateCache = NSCache<NSString, NSString>()
+    /// Cache for BOS token per model
+    nonisolated(unsafe) private static let bosTokenCache = NSCache<NSString, NSString>()
     /// Cache for compiled Jinja templates keyed by template string
     nonisolated(unsafe) private static let compiledTemplateCache = NSCache<NSString, TemplateBox>()
     
@@ -207,6 +209,8 @@ class MLXService {
         Self.availableModelsCache.setObject(modelInfo as NSArray, forKey: "modelInfo" as NSString)
         // Model set may have changed; clear derived stop sequences cache
         Self.stopSequencesCache.removeAllObjects()
+        // Clear BOS token cache to avoid stale values
+        Self.bosTokenCache.removeAllObjects()
     }
     
     /// Get list of available models that are downloaded (thread-safe)
@@ -465,7 +469,15 @@ class MLXService {
 
     /// Retrieve BOS token from tokenizer config if available
     nonisolated static func tokenizerBOSToken(for model: LMModel) -> String? {
-        guard let dir = findLocalDirectory(forModelId: model.modelId) else { return nil }
+        // Cache lookup first
+        let cacheKey = model.modelId as NSString
+        if let cached = bosTokenCache.object(forKey: cacheKey) as String? {
+            return cached.isEmpty ? nil : cached
+        }
+        guard let dir = findLocalDirectory(forModelId: model.modelId) else {
+            bosTokenCache.setObject("" as NSString, forKey: cacheKey)
+            return nil
+        }
         let fm = FileManager.default
         let candidates = [
             dir.appendingPathComponent("special_tokens_map.json"),
@@ -475,9 +487,13 @@ class MLXService {
             if fm.fileExists(atPath: url.path),
                let data = try? Data(contentsOf: url),
                let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
-                if let s = extractString(from: obj["bos_token"]) { return s }
+                if let s = extractString(from: obj["bos_token"]) {
+                    bosTokenCache.setObject(s as NSString, forKey: cacheKey)
+                    return s
+                }
             }
         }
+        bosTokenCache.setObject("" as NSString, forKey: cacheKey)
         return nil
     }
     
