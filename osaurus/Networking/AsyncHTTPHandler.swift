@@ -65,11 +65,12 @@ class AsyncHTTPHandler {
             let maxTokens = request.max_tokens ?? 2048
             
             // Compute effective stop sequences: use request-provided or fall back to model defaults
-            let defaultStops = MLXService.defaultStopSequences(for: model)
-            let effectiveStops: [String] = {
-                if let s = request.stop, !s.isEmpty { return s }
-                return defaultStops
-            }()
+            let effectiveStops: [String]
+            if let s = request.stop, !s.isEmpty {
+                effectiveStops = s
+            } else {
+                effectiveStops = MLXService.defaultStopSequences(for: model)
+            }
 
             // Check if streaming is requested
             if request.stream ?? false {
