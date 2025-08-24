@@ -8,6 +8,8 @@
 ![OpenAI API](https://img.shields.io/badge/OpenAI%20API-compatible-0A7CFF)
 ![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen)
 
+<img width="452" height="206" alt="Screenshot 2025-08-24 at 4 47 41 PM" src="https://github.com/user-attachments/assets/375d52b2-fb68-4fbd-9055-3a25bb9d2651" />
+
 Native, Apple Silicon–only local LLM server. Similar to Ollama, but built on Apple's MLX for maximum performance on M‑series chips. SwiftUI app + SwiftNIO server with OpenAI‑compatible endpoints.
 
 Created by Dinoki Labs ([dinoki.ai](https://dinoki.ai)), a fully native desktop AI assistant and companion.
