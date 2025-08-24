@@ -66,6 +66,8 @@ class MLXService {
     nonisolated(unsafe) private static let stopSequencesCache = NSCache<NSString, NSArray>()
     /// Cache for chat templates per model (loaded from tokenizer_config.json)
     nonisolated(unsafe) private static let chatTemplateCache = NSCache<NSString, NSString>()
+    /// Cache for compiled Jinja templates keyed by template string
+    nonisolated(unsafe) private static let compiledTemplateCache = NSCache<NSString, TemplateBox>()
     
     /// Concurrent queue for thread-safe model lookup operations
     private static let modelLookupQueue = DispatchQueue(label: "com.osaurus.model.lookup", attributes: .concurrent)
@@ -94,6 +96,11 @@ class MLXService {
         init(container: ModelContainer) {
             self.container = container
         }
+    }
+    /// Box wrapper to store compiled Jinja templates in NSCache
+    private final class TemplateBox: NSObject {
+        let template: Template
+        init(template: Template) { self.template = template }
     }
     private let modelCache = NSCache<NSString, SessionHolder>()
 
@@ -429,15 +436,31 @@ class MLXService {
         // Prefer explicit chat_template
         if let s = extractString(from: obj["chat_template"]) {
             chatTemplateCache.setObject(s as NSString, forKey: key)
+            // Precompile and cache the Jinja template for faster renders
+            _ = compiledJinjaTemplate(for: s)
             return s
         }
         // Some configs put it under default_chat_template
         if let s = extractString(from: obj["default_chat_template"]) {
             chatTemplateCache.setObject(s as NSString, forKey: key)
+            // Precompile and cache the Jinja template for faster renders
+            _ = compiledJinjaTemplate(for: s)
             return s
         }
         chatTemplateCache.setObject("" as NSString, forKey: key)
         return nil
+    }
+
+    /// Get a compiled Jinja template from cache, compiling and caching on first use
+    nonisolated static func compiledJinjaTemplate(for templateString: String) -> Template? {
+        let key = templateString as NSString
+        if let box = compiledTemplateCache.object(forKey: key) {
+            return box.template
+        }
+        // Compile and cache
+        guard let compiled = try? Template(templateString) else { return nil }
+        compiledTemplateCache.setObject(TemplateBox(template: compiled), forKey: key)
+        return compiled
     }
 
     /// Retrieve BOS token from tokenizer config if available
@@ -730,7 +753,9 @@ func buildPrompt(from messages: [Message], tools: [Tool]?, toolChoice: ToolChoic
         ]
         if let bosToken { ctx["bos_token"] = bosToken }
         if let eosToken { ctx["eos_token"] = eosToken }
-        if let rendered = try? Template(template).render(ctx) {
+        // Use precompiled template cache; compile on first use
+        if let compiled = MLXService.compiledJinjaTemplate(for: template),
+           let rendered = try? compiled.render(ctx) {
             let base = rendered.trimmingCharacters(in: .whitespacesAndNewlines)
             let combined = base + toolsBlock
             return combined.trimmingCharacters(in: .whitespacesAndNewlines)
