@@ -7,7 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
-		F06F83462E56B319007CD59B /* Sparkle in Frameworks */ = {isa = PBXBuildFile; productRef = F06F83452E56B319007CD59B /* Sparkle */; };
+		F0195FE52E5B467600A3DB17 /* Sparkle in Frameworks */ = {isa = PBXBuildFile; productRef = F0195FE42E5B467600A3DB17 /* Sparkle */; };
 		F0BB3CA02E52234700895593 /* NIO in Frameworks */ = {isa = PBXBuildFile; productRef = F0BB3C9F2E52234700895593 /* NIO */; };
 		F0BB3CA22E52234700895593 /* NIOConcurrencyHelpers in Frameworks */ = {isa = PBXBuildFile; productRef = F0BB3CA12E52234700895593 /* NIOConcurrencyHelpers */; };
 		F0BB3CA42E52234700895593 /* NIOCore in Frameworks */ = {isa = PBXBuildFile; productRef = F0BB3CA32E52234700895593 /* NIOCore */; };
@@ -71,9 +71,9 @@
 				F0BB3CA02E52234700895593 /* NIO in Frameworks */,
 				F0BB3CA22E52234700895593 /* NIOConcurrencyHelpers in Frameworks */,
 				F0C60D622E53DE140028ED4F /* MLX in Frameworks */,
-				F06F83462E56B319007CD59B /* Sparkle in Frameworks */,
 				F0BB3CA62E52240500895593 /* NIOHTTP1 in Frameworks */,
 				F0C60E872E54A26A0028ED4F /* Transformers in Frameworks */,
+				F0195FE52E5B467600A3DB17 /* Sparkle in Frameworks */,
 				F0C60D762E5491A10028ED4F /* MLXVLM in Frameworks */,
 				F0C60D742E5491A10028ED4F /* MLXLMCommon in Frameworks */,
 				F0C87F542E5881BA00567D31 /* IkigaJSON in Frameworks */,
@@ -154,8 +154,8 @@
 				F0C60D732E5491A10028ED4F /* MLXLMCommon */,
 				F0C60D752E5491A10028ED4F /* MLXVLM */,
 				F0C60E862E54A26A0028ED4F /* Transformers */,
-				F06F83452E56B319007CD59B /* Sparkle */,
 				F0C87F532E5881BA00567D31 /* IkigaJSON */,
+				F0195FE42E5B467600A3DB17 /* Sparkle */,
 			);
 			productName = osaurus;
 			productReference = F0BB3C262E51FBCC00895593 /* osaurus.app */;
@@ -244,8 +244,8 @@
 				F0C60D602E53DE140028ED4F /* XCRemoteSwiftPackageReference "mlx-swift" */,
 				F0C60D702E5491A10028ED4F /* XCRemoteSwiftPackageReference "mlx-swift-examples" */,
 				F0D0T1002E55AAAA0028ED4F /* XCRemoteSwiftPackageReference "swift-transformers" */,
-				F06F83442E56B319007CD59B /* XCRemoteSwiftPackageReference "Sparkle" */,
 				F0C87F522E5881BA00567D31 /* XCRemoteSwiftPackageReference "IkigaJSON" */,
+				F0195FE32E5B467600A3DB17 /* XCRemoteSwiftPackageReference "Sparkle" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = F0BB3C272E51FBCC00895593 /* Products */;
@@ -621,12 +621,12 @@
 /* End XCConfigurationList section */
 
 /* Begin XCRemoteSwiftPackageReference section */
-		F06F83442E56B319007CD59B /* XCRemoteSwiftPackageReference "Sparkle" */ = {
+		F0195FE32E5B467600A3DB17 /* XCRemoteSwiftPackageReference "Sparkle" */ = {
 			isa = XCRemoteSwiftPackageReference;
 			repositoryURL = "https://github.com/sparkle-project/Sparkle";
 			requirement = {
-				kind = upToNextMajorVersion;
-				minimumVersion = 2.7.1;
+				kind = exactVersion;
+				version = 2.7.0;
 			};
 		};
 		F0BB3C9E2E52234700895593 /* XCRemoteSwiftPackageReference "swift-nio" */ = {
@@ -672,9 +672,9 @@
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
-		F06F83452E56B319007CD59B /* Sparkle */ = {
+		F0195FE42E5B467600A3DB17 /* Sparkle */ = {
 			isa = XCSwiftPackageProductDependency;
-			package = F06F83442E56B319007CD59B /* XCRemoteSwiftPackageReference "Sparkle" */;
+			package = F0195FE32E5B467600A3DB17 /* XCRemoteSwiftPackageReference "Sparkle" */;
 			productName = Sparkle;
 		};
 		F0BB3C9F2E52234700895593 /* NIO */ = {
