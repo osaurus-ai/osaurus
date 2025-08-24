@@ -10,6 +10,7 @@ import MLXLMCommon
 import MLXLLM
 import IkigaJSON
 import NIOCore
+import Jinja
 
 /// Represents a language model configuration
 class LMModel {
@@ -63,6 +64,8 @@ class MLXService {
     
     /// Cache for default stop sequences per model (derived from tokenizer configs)
     nonisolated(unsafe) private static let stopSequencesCache = NSCache<NSString, NSArray>()
+    /// Cache for chat templates per model (loaded from tokenizer_config.json)
+    nonisolated(unsafe) private static let chatTemplateCache = NSCache<NSString, NSString>()
     
     /// Concurrent queue for thread-safe model lookup operations
     private static let modelLookupQueue = DispatchQueue(label: "com.osaurus.model.lookup", attributes: .concurrent)
@@ -392,6 +395,68 @@ class MLXService {
         stopSequencesCache.setObject([] as NSArray, forKey: key)
         return []
     }
+
+    /// Extract a string from heterogeneous JSON values (string or {content|text})
+    nonisolated private static func extractString(from any: Any?) -> String? {
+        guard let any else { return nil }
+        if let s = any as? String, !s.isEmpty { return s }
+        if let d = any as? [String: Any] {
+            if let s = d["content"] as? String, !s.isEmpty { return s }
+            if let s = d["text"] as? String, !s.isEmpty { return s }
+            if let s = d["template"] as? String, !s.isEmpty { return s }
+        }
+        return nil
+    }
+
+    /// Load chat_template from tokenizer_config.json if present (cached)
+    nonisolated static func modelChatTemplate(for model: LMModel) -> String? {
+        let key = model.modelId as NSString
+        if let cached = chatTemplateCache.object(forKey: key) as String? {
+            return cached.isEmpty ? nil : cached
+        }
+        guard let dir = findLocalDirectory(forModelId: model.modelId) else {
+            chatTemplateCache.setObject("" as NSString, forKey: key)
+            return nil
+        }
+        let url = dir.appendingPathComponent("tokenizer_config.json")
+        let fm = FileManager.default
+        guard fm.fileExists(atPath: url.path),
+              let data = try? Data(contentsOf: url),
+              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            chatTemplateCache.setObject("" as NSString, forKey: key)
+            return nil
+        }
+        // Prefer explicit chat_template
+        if let s = extractString(from: obj["chat_template"]) {
+            chatTemplateCache.setObject(s as NSString, forKey: key)
+            return s
+        }
+        // Some configs put it under default_chat_template
+        if let s = extractString(from: obj["default_chat_template"]) {
+            chatTemplateCache.setObject(s as NSString, forKey: key)
+            return s
+        }
+        chatTemplateCache.setObject("" as NSString, forKey: key)
+        return nil
+    }
+
+    /// Retrieve BOS token from tokenizer config if available
+    nonisolated static func tokenizerBOSToken(for model: LMModel) -> String? {
+        guard let dir = findLocalDirectory(forModelId: model.modelId) else { return nil }
+        let fm = FileManager.default
+        let candidates = [
+            dir.appendingPathComponent("special_tokens_map.json"),
+            dir.appendingPathComponent("tokenizer_config.json")
+        ]
+        for url in candidates {
+            if fm.fileExists(atPath: url.path),
+               let data = try? Data(contentsOf: url),
+               let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+                if let s = extractString(from: obj["bos_token"]) { return s }
+            }
+        }
+        return nil
+    }
     
     /// Loads a model container from local storage or retrieves it from cache.
     private func load(model: LMModel) async throws -> SessionHolder {
@@ -463,7 +528,18 @@ class MLXService {
         }()
         // Build a prompt from chat messages and optional tool specs
         // Exclude the system section if we are passing instructions to ChatSession
-        let prompt = buildPrompt(from: messages, tools: tools, toolChoice: toolChoice, excludeSystem: !systemText.isEmpty)
+        let chatTemplate = Self.modelChatTemplate(for: model)
+        let bosToken = Self.tokenizerBOSToken(for: model)
+        let eosToken = Self.defaultStopSequences(for: model).first
+        let prompt = buildPrompt(
+            from: messages,
+            tools: tools,
+            toolChoice: toolChoice,
+            excludeSystem: !systemText.isEmpty,
+            chatTemplate: chatTemplate,
+            bosToken: bosToken,
+            eosToken: eosToken
+        )
 
         // Build MLX generation parameters (temperature, sampling, KV cache, etc.)
         // Prefer UI configuration when available
@@ -586,7 +662,7 @@ class MLXService {
 /// Cache for encoded tool specifications to avoid repeated JSON encoding
 private let toolsJSONCache = NSCache<NSNumber, NSString>()
 
-func buildPrompt(from messages: [Message], tools: [Tool]?, toolChoice: ToolChoiceOption?, excludeSystem: Bool = false) -> String {
+func buildPrompt(from messages: [Message], tools: [Tool]?, toolChoice: ToolChoiceOption?, excludeSystem: Bool = false, chatTemplate: String? = nil, bosToken: String? = nil, eosToken: String? = nil) -> String {
     var systemPrompt = ""
     var conversation = ""
     for message in messages {
@@ -637,6 +713,29 @@ func buildPrompt(from messages: [Message], tools: [Tool]?, toolChoice: ToolChoic
                 }
             }
         }
+    }
+    // If a chat template is available, render using Jinja; otherwise fall back
+    if let template = chatTemplate, !template.isEmpty {
+        // Build Jinja context
+        let filtered: [Message] = excludeSystem ? messages.filter { $0.role != .system } : messages
+        let jinjaMessages: [[String: Any]] = filtered.map { msg in
+            [
+                "role": msg.role.rawValue,
+                "content": msg.content
+            ]
+        }
+        var ctx: [String: Any] = [
+            "messages": jinjaMessages,
+            "add_generation_prompt": true
+        ]
+        if let bosToken { ctx["bos_token"] = bosToken }
+        if let eosToken { ctx["eos_token"] = eosToken }
+        if let rendered = try? Template(template).render(ctx) {
+            let base = rendered.trimmingCharacters(in: .whitespacesAndNewlines)
+            let combined = base + toolsBlock
+            return combined.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        // If rendering failed, proceed to fallback formatting below
     }
     let fullPrompt: String
     if systemPrompt.isEmpty {
