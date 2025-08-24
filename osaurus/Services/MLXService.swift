@@ -61,6 +61,9 @@ class MLXService {
     /// Cache for model lookups to avoid repeated disk scanning
     nonisolated(unsafe) private static let modelLookupCache = NSCache<NSString, LMModel>()
     
+    /// Cache for default stop sequences per model (derived from tokenizer configs)
+    nonisolated(unsafe) private static let stopSequencesCache = NSCache<NSString, NSArray>()
+    
     /// Concurrent queue for thread-safe model lookup operations
     private static let modelLookupQueue = DispatchQueue(label: "com.osaurus.model.lookup", attributes: .concurrent)
     
@@ -192,6 +195,8 @@ class MLXService {
             ["name": pair.name, "id": pair.id]
         }
         Self.availableModelsCache.setObject(modelInfo as NSArray, forKey: "modelInfo" as NSString)
+        // Model set may have changed; clear derived stop sequences cache
+        Self.stopSequencesCache.removeAllObjects()
     }
     
     /// Get list of available models that are downloaded (thread-safe)
@@ -337,7 +342,16 @@ class MLXService {
 
     /// Best-effort discovery of default stop sequences based on tokenizer configs
     nonisolated static func defaultStopSequences(for model: LMModel) -> [String] {
-        guard let dir = findLocalDirectory(forModelId: model.modelId) else { return [] }
+        // Check cache first
+        let key = model.modelId as NSString
+        if let cached = stopSequencesCache.object(forKey: key) as? [String] {
+            return cached
+        }
+
+        guard let dir = findLocalDirectory(forModelId: model.modelId) else {
+            stopSequencesCache.setObject([] as NSArray, forKey: key)
+            return []
+        }
         let fm = FileManager.default
         // Prefer special_tokens_map.json then tokenizer_config.json
         let candidates = [
@@ -350,18 +364,32 @@ class MLXService {
                let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
                 // eos_token may be a string or an object with 'content'/'text'
                 if let eos = obj["eos_token"] {
-                    if let s = eos as? String, !s.isEmpty { return [s] }
+                    if let s = eos as? String, !s.isEmpty {
+                        let stops = [s]
+                        stopSequencesCache.setObject(stops as NSArray, forKey: key)
+                        return stops
+                    }
                     if let d = eos as? [String: Any] {
-                        if let s = d["content"] as? String, !s.isEmpty { return [s] }
-                        if let s = d["text"] as? String, !s.isEmpty { return [s] }
+                        if let s = d["content"] as? String, !s.isEmpty {
+                            let stops = [s]
+                            stopSequencesCache.setObject(stops as NSArray, forKey: key)
+                            return stops
+                        }
+                        if let s = d["text"] as? String, !s.isEmpty {
+                            let stops = [s]
+                            stopSequencesCache.setObject(stops as NSArray, forKey: key)
+                            return stops
+                        }
                     }
                 }
                 // Some configs include additional special tokens that can act as stops
                 if let add = obj["additional_special_tokens"] as? [String], !add.isEmpty {
+                    stopSequencesCache.setObject(add as NSArray, forKey: key)
                     return add
                 }
             }
         }
+        stopSequencesCache.setObject([] as NSArray, forKey: key)
         return []
     }
     
