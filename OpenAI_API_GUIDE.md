@@ -49,6 +49,8 @@ curl http://localhost:8080/v1/chat/completions \
       {"role": "system", "content": "You are a helpful assistant."},
       {"role": "user", "content": "Hello, how are you?"}
     ],
+    "session_id": "my-session-1",
+    // Optional: reuse KV cache across turns for lower latency
     "temperature": 0.7,
     "max_tokens": 150
   }'
@@ -238,6 +240,34 @@ Notes and limitations:
 2. Assistant must return arguments as a JSON‑escaped string. The server also tolerates a nested `parameters` object and normalizes it.
 3. The parser accepts common wrappers like code fences and an `assistant:` prefix.
 4. `tool_choice` supports `"auto"`, `"none"`, and a specific function target object.
+
+### Session Reuse (KV Cache)
+
+Provide a `session_id` to reuse the same model chat session’s KV cache across requests. Reuse applies when:
+
+- The `model` matches, and
+- The session is not concurrently in use, and
+- The session has not expired from the internal LRU window.
+
+Example follow-up turn using the same `session_id`:
+
+```bash
+curl http://localhost:8080/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "llama-3.2-3b-instruct",
+    "session_id": "my-session-1",
+    "messages": [
+      {"role": "user", "content": "And one more detail, please."}
+    ]
+  }'
+```
+
+Keep `session_id` stable per conversation and per model.
+
+### Chat Templates
+
+When available, Osaurus uses a model’s Jinja `chat_template` (or `default_chat_template`) from `tokenizer_config.json` to format prompts. Rendering passes `messages`, `add_generation_prompt: true`, and includes `bos_token`/`eos_token` when defined. If system messages are present, they are combined and supplied as model instructions while the template renders the remaining turns. If no template exists or rendering fails, Osaurus falls back to a compact transcript format.
 
 ## Model Naming
 

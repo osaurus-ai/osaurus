@@ -18,6 +18,8 @@ Created by Dinoki Labs ([dinoki.ai](https://dinoki.ai)), a fully native desktop 
 - **Apple Silicon only**: Designed and tested for M‑series Macs
 - **OpenAI API compatible**: `/v1/models` and `/v1/chat/completions` (stream and non‑stream)
 - **Function/Tool calling**: OpenAI‑style `tools` + `tool_choice`, with `tool_calls` parsing and streaming deltas
+- **Chat templates**: Uses model‑provided Jinja `chat_template` with BOS/EOS, with smart fallback
+- **Session reuse (KV cache)**: Faster multi‑turn chats via `session_id`
 - **Fast token streaming**: Server‑Sent Events for low‑latency output
 - **Model manager UI**: Browse, download, and manage MLX models from `mlx-community`
 - **System resource monitor**: Real-time CPU and RAM usage visualization
@@ -66,8 +68,25 @@ osaurus/
 - Download sizes estimated via Hugging Face metadata
 - Streaming and non‑streaming chat completions
 - OpenAI‑compatible function calling with robust parser for model outputs (handles code fences/formatting noise)
+- Chat templates from model `tokenizer_config.json` (Jinja), auto‑uses BOS/EOS; falls back to friendly transcript format when missing
+- Session reuse across turns via `session_id` (reuses KV cache when possible)
+- Auto‑detects stop sequences and BOS token from tokenizer configs
 - Health endpoint and simple status UI
 - Real-time system resource monitoring
+
+## Benchmarks
+
+The following are 20-run averages from our batch benchmark suite. See raw results for details and variance.
+
+| Server    | Model                      | TTFT avg (ms) | Total avg (ms) | Chars/s avg | Success |
+| --------- | -------------------------- | ------------- | -------------- | ----------- | ------- |
+| Osaurus   | llama-3.2-3b-instruct-4bit | 191           | 1461           | 521         | 100%    |
+| Ollama    | llama3.2                   | 59            | 1667           | 439         | 100%    |
+| LM Studio | llama-3.2-3b-instruct      | 56            | 1205           | 605         | 100%    |
+
+- Metrics: TTFT = time-to-first-token, Total = time to final token, Chars/s = streaming throughput.
+- Data sources: `results/osaurus-vs-ollama-lmstudio-batch.summary.json`, `results/osaurus-vs-ollama-lmstudio-batch.results.csv`.
+- How to reproduce: `scripts/run_bench.sh` calls `scripts/benchmark_models.py` to run prompts across servers and write results.
 
 ## API Endpoints
 
@@ -182,6 +201,39 @@ Notes:
 - Only `type: "function"` tools are supported.
 - Arguments must be a JSON‑escaped string in the assistant response; Osaurus also tolerates a nested `parameters` object and will normalize.
 - Parser accepts minor formatting noise like code fences and `assistant:` prefixes.
+
+### Chat Templates
+
+Osaurus loads Jinja chat templates from a model's `tokenizer_config.json` when available:
+
+- **Sources**: `chat_template` or `default_chat_template` (string or `{text|content|template}` object).
+- **Context**: Renders with `messages`, `add_generation_prompt: true`, and includes `bos_token`/`eos_token` if defined.
+- **System handling**: If your request includes `role: system` messages, Osaurus combines them and passes as model instructions while rendering the template over the remaining turns.
+- **Fallback**: If no template is present or rendering fails, Osaurus uses a concise transcript format: `User: ... / Assistant: ...`, with the system text prepended.
+- **Tools**: When `tools`/`tool_choice` are provided, a compact tools block is appended to the rendered prompt.
+
+This keeps prompts aligned with each model’s native formatting while remaining OpenAI‑compatible at the API level.
+
+### Session reuse (KV cache)
+
+For faster multi‑turn conversations, you can reuse a chat session’s KV cache by providing `session_id` in your request. When possible (and not concurrently in use), Osaurus will reuse the session for the same `model` to reduce latency and cost.
+
+```bash
+curl -s http://127.0.0.1:8080/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{
+        "model": "llama-3.2-3b-instruct-4bit",
+        "session_id": "my-session-1",
+        "messages": [
+          {"role":"user","content":"Tell me a fact about stegosaurs"}
+        ]
+      }'
+```
+
+Notes:
+
+- Sessions are opportunistically reused for a short window and only when not actively used by another request.
+- Keep `session_id` stable per ongoing conversation and per model.
 
 ### Use with OpenAI SDKs
 
