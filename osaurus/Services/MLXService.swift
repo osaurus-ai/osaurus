@@ -123,11 +123,11 @@ class MLXService {
     private var modelGates: [String: ConcurrencyGate] = [:]
     private let reusableMaxCount: Int = {
         let env = ProcessInfo.processInfo.environment
-        return Int(env["OSU_SESSION_CACHE_MAX"] ?? "") ?? 8
+        return Int(env["OSU_SESSION_CACHE_MAX"] ?? "") ?? 32
     }()
     private let reusableTTLSeconds: TimeInterval = {
         let env = ProcessInfo.processInfo.environment
-        return TimeInterval(Int(env["OSU_SESSION_CACHE_TTL"] ?? "") ?? 120)
+        return TimeInterval(Int(env["OSU_SESSION_CACHE_TTL"] ?? "") ?? 300)
     }()
     
     /// Currently loaded model name
@@ -140,12 +140,12 @@ class MLXService {
     // Adjustable generation settings (can be tuned via UI)
     private(set) var generationSettings: GenerationSettings = {
         let env = ProcessInfo.processInfo.environment
-        let topP: Float = Float(env["OSU_TOP_P"] ?? "") ?? 1.0
-        let kvBits: Int? = Int(env["OSU_KV_BITS"] ?? "")
+        let topP: Float = Float(env["OSU_TOP_P"] ?? "") ?? 0.95
+        let kvBits: Int? = Int(env["OSU_KV_BITS"] ?? "") ?? 4
         let kvGroup: Int = Int(env["OSU_KV_GROUP"] ?? "") ?? 64
         let quantStart: Int = Int(env["OSU_QUANT_KV_START"] ?? "") ?? 0
         let maxKV: Int? = Int(env["OSU_MAX_KV_SIZE"] ?? "")
-        let prefillStep: Int = Int(env["OSU_PREFILL_STEP"] ?? "") ?? 1024
+        let prefillStep: Int = Int(env["OSU_PREFILL_STEP"] ?? "") ?? 4096
         return GenerationSettings(
             topP: topP,
             kvBits: kvBits,
@@ -583,12 +583,12 @@ class MLXService {
         // Build MLX generation parameters (temperature, sampling, KV cache, etc.)
         // Prefer UI configuration when available
         let cfg = await ServerController.sharedConfiguration()
-        let topP: Float = cfg?.genTopP ?? 1.0
+        let topP: Float = cfg?.genTopP ?? 0.95
         let kvBits: Int? = cfg?.genKVBits
         let kvGroup: Int = cfg?.genKVGroupSize ?? 64
         let quantStart: Int = cfg?.genQuantizedKVStart ?? 0
         let maxKV: Int? = cfg?.genMaxKVSize
-        let prefillStep: Int = cfg?.genPrefillStepSize ?? 512
+        let prefillStep: Int = cfg?.genPrefillStepSize ?? 4096
 
         var genParams = MLXLMCommon.GenerateParameters(
             maxTokens: maxTokens,

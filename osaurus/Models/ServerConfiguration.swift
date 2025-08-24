@@ -45,9 +45,9 @@ public struct ServerConfiguration {
             genTopP: 0.95,
             genKVBits: 4,
             genKVGroupSize: 64,
-            genQuantizedKVStart: 256,
+            genQuantizedKVStart: 0,
             genMaxKVSize: nil,
-            genPrefillStepSize: 2048
+            genPrefillStepSize: 4096
         )
     }
     
