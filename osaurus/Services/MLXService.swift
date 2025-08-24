@@ -334,6 +334,36 @@ class MLXService {
         }
         return nil
     }
+
+    /// Best-effort discovery of default stop sequences based on tokenizer configs
+    nonisolated static func defaultStopSequences(for model: LMModel) -> [String] {
+        guard let dir = findLocalDirectory(forModelId: model.modelId) else { return [] }
+        let fm = FileManager.default
+        // Prefer special_tokens_map.json then tokenizer_config.json
+        let candidates = [
+            dir.appendingPathComponent("special_tokens_map.json"),
+            dir.appendingPathComponent("tokenizer_config.json")
+        ]
+        for url in candidates {
+            if fm.fileExists(atPath: url.path),
+               let data = try? Data(contentsOf: url),
+               let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+                // eos_token may be a string or an object with 'content'/'text'
+                if let eos = obj["eos_token"] {
+                    if let s = eos as? String, !s.isEmpty { return [s] }
+                    if let d = eos as? [String: Any] {
+                        if let s = d["content"] as? String, !s.isEmpty { return [s] }
+                        if let s = d["text"] as? String, !s.isEmpty { return [s] }
+                    }
+                }
+                // Some configs include additional special tokens that can act as stops
+                if let add = obj["additional_special_tokens"] as? [String], !add.isEmpty {
+                    return add
+                }
+            }
+        }
+        return []
+    }
     
     /// Loads a model container from local storage or retrieves it from cache.
     private func load(model: LMModel) async throws -> SessionHolder {
@@ -392,8 +422,20 @@ class MLXService {
         }
         gate.wait()
 
+        // Extract a combined system prompt (if any) to pass as ChatSession instructions
+        let systemText: String = {
+            var acc = ""
+            for m in messages {
+                if m.role == .system {
+                    if !acc.isEmpty { acc += "\n" }
+                    acc += m.content
+                }
+            }
+            return acc
+        }()
         // Build a prompt from chat messages and optional tool specs
-        let prompt = buildPrompt(from: messages, tools: tools, toolChoice: toolChoice)
+        // Exclude the system section if we are passing instructions to ChatSession
+        let prompt = buildPrompt(from: messages, tools: tools, toolChoice: toolChoice, excludeSystem: !systemText.isEmpty)
 
         // Build MLX generation parameters (temperature, sampling, KV cache, etc.)
         // Prefer UI configuration when available
@@ -420,7 +462,7 @@ class MLXService {
 
         // Optionally reuse a ChatSession (KV cache) for the same sessionId
         let (session, cacheKey, reusedFromCache): (ChatSession, SessionKey?, Bool) = {
-            guard let sessionId, !sessionId.isEmpty else { return (ChatSession(holder.container, instructions: nil, generateParameters: genParams), nil, false) }
+            guard let sessionId, !sessionId.isEmpty else { return (ChatSession(holder.container, instructions: systemText.isEmpty ? nil : systemText, generateParameters: genParams), nil, false) }
             let key = SessionKey(model: model.name, session: sessionId)
             return sessionCacheQueue.sync(flags: .barrier) {
                 evictExpiredReusableSessionsLocked(now: Date())
@@ -434,7 +476,7 @@ class MLXService {
                     return (existing.session, key, true)
                 }
                 // Either none exists, it expired, or it's currently in use — create a fresh session
-                let newSession = ChatSession(holder.container, instructions: nil, generateParameters: genParams)
+                let newSession = ChatSession(holder.container, instructions: systemText.isEmpty ? nil : systemText, generateParameters: genParams)
                 // Insert or refresh cache entry for future reuse
                 reusableSessions[key] = (newSession, Date())
                 if let idx = reusableOrder.firstIndex(of: key) { reusableOrder.remove(at: idx) }
@@ -447,21 +489,17 @@ class MLXService {
                 return (newSession, nil, false)
             }
         }()
+        // If this is a freshly created session without reuse, ensure instructions are set
+        // (For reused sessions, we keep prior instructions to avoid races.)
         let sessionStream = session.streamResponse(to: prompt)
         
-        // Return a stream that enforces maxTokens
+        // Return a stream that forwards tokens; MLX enforces maxTokens internally
         return AsyncStream<String> { continuation in
             Task {
                 defer { gate.signal() }
-                var emittedTokenCount = 0
                 do {
                     for try await token in sessionStream {
-                        // Enforce maxTokens by counting tokens emitted
-                        if emittedTokenCount >= maxTokens {
-                            break
-                        }
                         continuation.yield(token)
-                        emittedTokenCount += 1
                     }
                 } catch {
                     // On error, finish the stream; upstream will send error JSON
@@ -520,14 +558,16 @@ class MLXService {
 /// Cache for encoded tool specifications to avoid repeated JSON encoding
 private let toolsJSONCache = NSCache<NSNumber, NSString>()
 
-func buildPrompt(from messages: [Message], tools: [Tool]?, toolChoice: ToolChoiceOption?) -> String {
+func buildPrompt(from messages: [Message], tools: [Tool]?, toolChoice: ToolChoiceOption?, excludeSystem: Bool = false) -> String {
     var systemPrompt = ""
     var conversation = ""
     for message in messages {
         switch message.role {
         case .system:
-            if !systemPrompt.isEmpty { systemPrompt += "\n" }
-            systemPrompt += message.content
+            if !excludeSystem {
+                if !systemPrompt.isEmpty { systemPrompt += "\n" }
+                systemPrompt += message.content
+            }
         case .user:
             conversation += "User: \(message.content)\n"
         case .assistant:
