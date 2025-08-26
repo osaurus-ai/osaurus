@@ -117,4 +117,10 @@ final class HTTPHandler: ChannelInboundHandler {
             context.close(promise: nil)
         }
     }
+    
+    func errorCaught(context: ChannelHandlerContext, error: Error) {
+        // Log and close the connection to avoid NIO debug preconditions crashing the app
+        print("[Osaurus][NIO] errorCaught: \(error)")
+        context.close(promise: nil)
+    }
 }

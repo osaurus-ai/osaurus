@@ -53,26 +53,33 @@ struct MLXModel: Identifiable, Codable {
     }
     
     /// Check if model is downloaded
+    /// A model is considered complete if:
+    /// - Core config exists: config.json
+    /// - Tokenizer assets exist in ANY of the supported variants:
+    ///   - tokenizer.json (HF consolidated JSON)
+    ///   - BPE: merges.txt + (vocab.json OR vocab.txt)
+    ///   - SentencePiece: tokenizer.model OR spiece.model
+    /// - At least one *.safetensors file exists (weights)
     var isDownloaded: Bool {
         let fileManager = FileManager.default
+        let directory = localDirectory
 
-        // Required JSON metadata files commonly used by transformers
-        let requiredJsonFiles = [
-            "config.json",
-            "tokenizer.json",
-            "tokenizer_config.json",
-            "special_tokens_map.json"
-        ]
-
-        // All JSON files must exist
-        let jsonOk = requiredJsonFiles.allSatisfy { fileName in
-            let filePath = localDirectory.appendingPathComponent(fileName).path
-            return fileManager.fileExists(atPath: filePath)
+        func exists(_ name: String) -> Bool {
+            fileManager.fileExists(atPath: directory.appendingPathComponent(name).path)
         }
-        guard jsonOk else { return false }
 
-        // At least one weights file must exist
-        if let items = try? fileManager.contentsOfDirectory(at: localDirectory, includingPropertiesForKeys: nil) {
+        // Core config
+        guard exists("config.json") else { return false }
+
+        // Tokenizer variants
+        let hasTokenizerJSON = exists("tokenizer.json")
+        let hasBPE = exists("merges.txt") && (exists("vocab.json") || exists("vocab.txt"))
+        let hasSentencePiece = exists("tokenizer.model") || exists("spiece.model")
+        let hasTokenizerAssets = hasTokenizerJSON || hasBPE || hasSentencePiece
+        guard hasTokenizerAssets else { return false }
+
+        // Weights
+        if let items = try? fileManager.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil) {
             let hasWeights = items.contains { $0.pathExtension == "safetensors" }
             return hasWeights
         }

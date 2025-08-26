@@ -137,8 +137,20 @@ final class ModelManager: NSObject, ObservableObject {
     
     /// Download a model using Hugging Face Hub snapshot API
     func downloadModel(_ model: MLXModel) {
-        // If already present on disk, mark as completed and no-op
-        if model.isDownloaded {
+        // Define patterns here so we can also check for missing optional files (top-up)
+        let patterns = [
+            "config.json",
+            "tokenizer.json",
+            "tokenizer_config.json",
+            "special_tokens_map.json",
+            "generation_config.json",
+            "chat_template.jinja",
+            "*.safetensors"
+        ]
+
+        // If core assets are present but optional files from patterns are missing, we'll top-up.
+        let needsTopUp = Self.isMissingExactPatternFiles(at: model.localDirectory, patterns: patterns)
+        if model.isDownloaded && !needsTopUp {
             downloadStates[model.id] = .completed
             return
         }
@@ -175,16 +187,6 @@ final class ModelManager: NSObject, ObservableObject {
             let repo = Hub.Repo(id: model.id)
             
             do {
-                // Prefer grabbing common necessary files, but allow weights via wildcard
-                let patterns = [
-                    "config.json",
-                    "tokenizer.json",
-                    "tokenizer_config.json",
-                    "special_tokens_map.json",
-                    "generation_config.json",
-                    "*.safetensors"
-                ]
-                
                 // Download a snapshot to a temporary location managed by Hub
                 let snapshotDirectory = try await Hub.snapshot(
                     from: repo,
@@ -320,34 +322,49 @@ final class ModelManager: NSObject, ObservableObject {
     
     private func copyContents(of sourceDirectory: URL, to destinationDirectory: URL) throws {
         let fileManager = FileManager.default
-        
-        // Ensure destination exists and is empty
-        if fileManager.fileExists(atPath: destinationDirectory.path) {
-            // Remove any existing contents
-            let existingItems = try fileManager.contentsOfDirectory(atPath: destinationDirectory.path)
-            for item in existingItems {
-                let url = destinationDirectory.appendingPathComponent(item)
-                try fileManager.removeItem(at: url)
-            }
-        } else {
+
+        // Ensure destination exists (do not wipe; we will merge/overwrite files)
+        if !fileManager.fileExists(atPath: destinationDirectory.path) {
             try fileManager.createDirectory(at: destinationDirectory, withIntermediateDirectories: true)
         }
-        
-        // Copy all items
+
+        // Copy/overwrite all items
         let items = try fileManager.contentsOfDirectory(atPath: sourceDirectory.path)
         for item in items {
             let src = sourceDirectory.appendingPathComponent(item)
             let dst = destinationDirectory.appendingPathComponent(item)
-            // If src is a directory, recursively copy
+
             var isDir: ObjCBool = false
             fileManager.fileExists(atPath: src.path, isDirectory: &isDir)
+
             if isDir.boolValue {
-                try fileManager.createDirectory(at: dst, withIntermediateDirectories: true)
+                // Ensure directory exists at destination, then recurse
+                if !fileManager.fileExists(atPath: dst.path) {
+                    try fileManager.createDirectory(at: dst, withIntermediateDirectories: true)
+                }
                 try copyContents(of: src, to: dst)
             } else {
+                // If a file exists at destination, remove it before copying to allow overwrite
+                if fileManager.fileExists(atPath: dst.path) {
+                    try fileManager.removeItem(at: dst)
+                }
                 try fileManager.copyItem(at: src, to: dst)
             }
         }
+    }
+
+    /// Check for any missing exact files from the provided patterns.
+    /// Only exact filenames are considered (globs like *.safetensors are ignored here).
+    private static func isMissingExactPatternFiles(at directory: URL, patterns: [String]) -> Bool {
+        let fileManager = FileManager.default
+        let exactNames = patterns.filter { !$0.contains("*") && !$0.contains("?") }
+        for name in exactNames {
+            let path = directory.appendingPathComponent(name).path
+            if !fileManager.fileExists(atPath: path) {
+                return true
+            }
+        }
+        return false
     }
 
     /// Compute allocated size on disk for a directory (recursively)
