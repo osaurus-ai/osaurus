@@ -320,8 +320,13 @@ for call in tool_calls:
 - SwiftUI/AppKit (UI)
 - MLX‑Swift, MLXLLM (runtime and chat session)
 
+## Contributors
+
+- [wizardeur](https://github.com/wizardeur) — first PR creator
+
 ## Community
 
+- Join us on [Discord](https://discord.gg/dinoki)
 - Read the [Contributing Guide](CONTRIBUTING.md) and our [Code of Conduct](CODE_OF_CONDUCT.md)
 - See our [Security Policy](SECURITY.md) for reporting vulnerabilities
 - Get help in [Support](SUPPORT.md)
