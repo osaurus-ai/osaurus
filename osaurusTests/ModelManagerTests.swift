@@ -12,12 +12,6 @@ import Testing
 struct ModelManagerTests {
 
     @Test func loadAvailableModels_initializesStates() async throws {
-        // Redirect models directory to a temp location for isolation
-        let previous = await MainActor.run { ModelManager.modelsDirectory }
-        let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-        try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
-        await MainActor.run { ModelManager.modelsDirectory = tempDir }
-
         let manager = await MainActor.run { ModelManager() }
         
         // Wait for models to load (async operation)
@@ -43,16 +37,9 @@ struct ModelManagerTests {
             #expect(isLoading == false || isLoading == true)
         }
 
-        await MainActor.run { ModelManager.modelsDirectory = previous }
-        try? FileManager.default.removeItem(at: tempDir)
     }
 
     @Test func cancelDownload_resetsStateWithoutTask() async throws {
-        let previous = await MainActor.run { ModelManager.modelsDirectory }
-        let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-        try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
-        await MainActor.run { ModelManager.modelsDirectory = tempDir }
-
         let manager = await MainActor.run { ModelManager() }
         
         // Use a test model ID instead of relying on fetched models
@@ -62,16 +49,9 @@ struct ModelManagerTests {
         let state = await MainActor.run { manager.downloadStates[testModelId] }
         #expect(state == .notStarted)
 
-        await MainActor.run { ModelManager.modelsDirectory = previous }
-        try? FileManager.default.removeItem(at: tempDir)
     }
 
     @Test func downloadProgress_matchesState() async throws {
-        let previous = await MainActor.run { ModelManager.modelsDirectory }
-        let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-        try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
-        await MainActor.run { ModelManager.modelsDirectory = tempDir }
-
         let manager = await MainActor.run { ModelManager() }
         let testModelId = "test-model-id"
 
@@ -87,32 +67,26 @@ struct ModelManagerTests {
         p = await MainActor.run { manager.downloadProgress(for: testModelId) }
         #expect(p == 1.0)
 
-        await MainActor.run { ModelManager.modelsDirectory = previous }
-        try? FileManager.default.removeItem(at: tempDir)
     }
 
     @Test func totalDownloadedSize_zeroWhenNoneDownloaded() async throws {
-        let previous = await MainActor.run { ModelManager.modelsDirectory }
-        let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-        try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
-        await MainActor.run { ModelManager.modelsDirectory = tempDir }
-
         let manager = await MainActor.run { ModelManager() }
+        // Ensure we don't count any pre-existing models from the default directory
+        await MainActor.run {
+            manager.availableModels = []
+            manager.suggestedModels = []
+        }
         
         // Ensure totalDownloadedSize is 0 when no models are downloaded
         // This should work regardless of whether models are loaded
         let size = await MainActor.run { manager.totalDownloadedSize }
         #expect(size == 0)
 
-        await MainActor.run { ModelManager.modelsDirectory = previous }
-        try? FileManager.default.removeItem(at: tempDir)
     }
 
     @Test func deleteModel_removesDirectoryAndResetsState() async throws {
-        let previous = await MainActor.run { ModelManager.modelsDirectory }
         let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
-        await MainActor.run { ModelManager.modelsDirectory = tempDir }
 
         let manager = await MainActor.run { ModelManager() }
         
@@ -145,7 +119,6 @@ struct ModelManagerTests {
         let state = await MainActor.run { manager.downloadStates[testModel.id] }
         #expect(state == .notStarted)
 
-        await MainActor.run { ModelManager.modelsDirectory = previous }
         try? FileManager.default.removeItem(at: tempDir)
     }
 }
