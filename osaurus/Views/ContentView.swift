@@ -49,12 +49,13 @@ struct ContentView: View {
                         
                         if server.isRunning {
                             HStack(spacing: 4) {
-                                Text("http://127.0.0.1:\(String(server.port))")
+                                Text("http://\(server.localNetworkAddress):\(String(server.port))")
                                     .font(.system(size: 11, weight: .regular, design: .monospaced))
+                                    .minimumScaleFactor(0.8)
                                     .foregroundColor(theme.secondaryText)
                                 
                                 Button(action: {
-                                    let url = "http://127.0.0.1:\(String(server.port))"
+                                    let url = "http://\(server.localNetworkAddress):\(String(server.port))"
                                     NSPasteboard.general.clearContents()
                                     NSPasteboard.general.setString(url, forType: .string)
                                 }) {
@@ -296,6 +297,7 @@ struct ConfigurationView: View {
     @Binding var configuration: ServerConfiguration
     @Environment(\.dismiss) private var dismiss
     @State private var tempPortString: String = ""
+    @State private var tempExposeToNetwork: Bool = false
     @State private var showAdvancedSettings: Bool = false
     
     // Advanced settings state
@@ -336,6 +338,17 @@ struct ConfigurationView: View {
                 Text("Enter a port number between 1 and 65535")
                     .font(.system(size: 11))
                     .foregroundColor(theme.tertiaryText)
+                
+                Toggle(isOn: $tempExposeToNetwork){
+                    VStack(alignment: .leading, spacing: 2){
+                        Text("Expose to the network")
+                            .font(.system(size: 13, weight: .medium))
+                            .foregroundStyle(theme.primaryText)
+                        Text("Allow other devices or services to access Osaurus.")
+                            .font(.system(size: 11))
+                            .foregroundStyle(theme.secondaryText)
+                    }
+                }
                 
                 // Models directory configuration (always visible)
                 VStack(alignment: .leading, spacing: 8) {
@@ -394,6 +407,7 @@ struct ConfigurationView: View {
                     action: {
                         if let port = Int(tempPortString), (1..<65536).contains(port) {
                             portString = tempPortString
+                            configuration.exposeToNetwork = tempExposeToNetwork
                             
                             // Save advanced settings if they were modified
                             configuration.genTopP = Float(tempTopP) ?? configuration.genTopP
@@ -414,6 +428,7 @@ struct ConfigurationView: View {
         .background(theme.primaryBackground)
         .onAppear {
             tempPortString = portString
+            tempExposeToNetwork = configuration.exposeToNetwork
             tempTopP = String(configuration.genTopP)
             tempKVBits = configuration.genKVBits.map(String.init) ?? ""
             tempKVGroup = String(configuration.genKVGroupSize)
