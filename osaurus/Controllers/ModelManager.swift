@@ -423,73 +423,58 @@ private extension ModelManager {
 
     /// Fully curated models with descriptions we control. Order matters.
     static let curatedSuggestedModels: [MLXModel] = [
-        // Llama family — 3 sizes
+        // GPT-OSS
         MLXModel(
-            id: "mlx-community/Llama-3.2-1B-Instruct-4bit",
-            name: friendlyName(from: "mlx-community/Llama-3.2-1B-Instruct-4bit"),
-            description: "Tiny and fast. Great for quick tests, code helpers, and lightweight tasks.",
+            id: "lmstudio-community/gpt-oss-20b-MLX-8bit",
+            name: friendlyName(from: "lmstudio-community/gpt-oss-20b-MLX-8bit"),
+            description: "GPT-OSS 20B (8-bit MLX) by OpenAI. High-quality general model in MLX format.",
             size: 0,
-            downloadURL: "https://huggingface.co/mlx-community/Llama-3.2-1B-Instruct-4bit",
+            downloadURL: "https://huggingface.co/lmstudio-community/gpt-oss-20b-MLX-8bit",
             requiredFiles: curatedRequiredFiles
         ),
+
         MLXModel(
-            id: "mlx-community/Llama-3.2-3B-Instruct-4bit",
-            name: friendlyName(from: "mlx-community/Llama-3.2-3B-Instruct-4bit"),
-            description: "Great quality/speed balance. Strong general assistant at a small memory footprint.",
+            id: "lmstudio-community/gpt-oss-120b-MLX-8bit",
+            name: friendlyName(from: "lmstudio-community/gpt-oss-120b-MLX-8bit"),
+            description: "GPT-OSS 120B (MLX 8-bit). ~117B parameters; premium general assistant with strong reasoning and coding. Optimized for Apple Silicon via MLX; requires 64GB+ unified memory; very large download.",
             size: 0,
-            downloadURL: "https://huggingface.co/mlx-community/Llama-3.2-3B-Instruct-4bit",
-            requiredFiles: curatedRequiredFiles
-        ),
-        MLXModel(
-            id: "mlx-community/Llama-3.1-8B-Instruct-4bit",
-            name: friendlyName(from: "mlx-community/Llama-3.1-8B-Instruct-4bit"),
-            description: "Popular 8B performer. Good quality for on-device use if you have the RAM.",
-            size: 0,
-            downloadURL: "https://huggingface.co/mlx-community/Llama-3.1-8B-Instruct-4bit",
+            downloadURL: "https://huggingface.co/lmstudio-community/gpt-oss-120b-MLX-8bit",
             requiredFiles: curatedRequiredFiles
         ),
 
         // Qwen family — 3 sizes
         MLXModel(
-            id: "mlx-community/Qwen2.5-1.5B-Instruct-4bit",
-            name: friendlyName(from: "mlx-community/Qwen2.5-1.5B-Instruct-4bit"),
-            description: "Small but capable. Strong instruction following with tiny memory footprint.",
+            id: "mlx-community/Qwen3-1.7B-4bit",
+            name: friendlyName(from: "mlx-community/Qwen3-1.7B-4bit"),
+            description: "Qwen3 1.7B (4-bit). Tiny and fast. Great for quick tests, code helpers, and lightweight tasks.",
             size: 0,
-            downloadURL: "https://huggingface.co/mlx-community/Qwen2.5-1.5B-Instruct-4bit",
+            downloadURL: "https://huggingface.co/mlx-community/Qwen3-1.7B-4bit",
             requiredFiles: curatedRequiredFiles
         ),
         MLXModel(
-            id: "mlx-community/Qwen2.5-3B-Instruct-4bit",
-            name: friendlyName(from: "mlx-community/Qwen2.5-3B-Instruct-4bit"),
-            description: "Well-rounded 3B assistant. Good multilingual reasoning and instruction following.",
+            id: "mlx-community/Qwen3-4B-4bit",
+            name: friendlyName(from: "mlx-community/Qwen3-4B-4bit"),
+            description: "Qwen3 4B (4-bit). Modern small model with strong instruction following.",
             size: 0,
-            downloadURL: "https://huggingface.co/mlx-community/Qwen2.5-3B-Instruct-4bit",
+            downloadURL: "https://huggingface.co/mlx-community/Qwen3-4B-4bit",
             requiredFiles: curatedRequiredFiles
         ),
         MLXModel(
-            id: "mlx-community/Qwen2.5-7B-Instruct-4bit",
-            name: friendlyName(from: "mlx-community/Qwen2.5-7B-Instruct-4bit"),
-            description: "High-quality 7B assistant. Great all-rounder with strong instruction tuning.",
+            id: "mlx-community/Qwen3-235B-A22B-4bit",
+            name: friendlyName(from: "mlx-community/Qwen3-235B-A22B-4bit"),
+            description: "Qwen3 235B MoE A22B (4-bit). High quality; heavy memory requirements.",
             size: 0,
-            downloadURL: "https://huggingface.co/mlx-community/Qwen2.5-7B-Instruct-4bit",
+            downloadURL: "https://huggingface.co/mlx-community/Qwen3-235B-A22B-4bit",
             requiredFiles: curatedRequiredFiles
         ),
 
-        // Gemma family — 2 sizes (2B, 9B)
+        // New additions — Gemma 3, Qwen3, GPT-OSS
         MLXModel(
-            id: "mlx-community/Gemma-2-2B-IT-4bit",
-            name: friendlyName(from: "mlx-community/Gemma-2-2B-IT-4bit"),
-            description: "Balanced quality and speed. A solid general-purpose assistant at 2B params.",
+            id: "lmstudio-community/gemma-3-270m-it-MLX-8bit",
+            name: friendlyName(from: "lmstudio-community/gemma-3-270m-it-MLX-8bit"),
+            description: "Gemma 3 270M IT (8-bit MLX). Extremely small and fast for experimentation.",
             size: 0,
-            downloadURL: "https://huggingface.co/mlx-community/Gemma-2-2B-IT-4bit",
-            requiredFiles: curatedRequiredFiles
-        ),
-        MLXModel(
-            id: "mlx-community/Gemma-2-9B-IT-4bit",
-            name: friendlyName(from: "mlx-community/Gemma-2-9B-IT-4bit"),
-            description: "Quality-focused 9B Gemma-2 IT. Strong general assistant if you can spare the memory.",
-            size: 0,
-            downloadURL: "https://huggingface.co/mlx-community/Gemma-2-9B-IT-4bit",
+            downloadURL: "https://huggingface.co/lmstudio-community/gemma-3-270m-it-MLX-8bit",
             requiredFiles: curatedRequiredFiles
         ),
 
@@ -528,6 +513,24 @@ private extension ModelManager {
             description: "Kimi VL A3B thinking variant (4-bit). Versatile assistant with strong reasoning.",
             size: 0,
             downloadURL: "https://huggingface.co/mlx-community/Kimi-VL-A3B-Thinking-4bit",
+            requiredFiles: curatedRequiredFiles
+        ),
+
+        // Llama family
+        MLXModel(
+            id: "mlx-community/Llama-3.2-1B-Instruct-4bit",
+            name: friendlyName(from: "mlx-community/Llama-3.2-1B-Instruct-4bit"),
+            description: "Tiny and fast. Great for quick tests, code helpers, and lightweight tasks.",
+            size: 0,
+            downloadURL: "https://huggingface.co/mlx-community/Llama-3.2-1B-Instruct-4bit",
+            requiredFiles: curatedRequiredFiles
+        ),
+        MLXModel(
+            id: "mlx-community/Llama-3.2-3B-Instruct-4bit",
+            name: friendlyName(from: "mlx-community/Llama-3.2-3B-Instruct-4bit"),
+            description: "Great quality/speed balance. Strong general assistant at a small memory footprint.",
+            size: 0,
+            downloadURL: "https://huggingface.co/mlx-community/Llama-3.2-3B-Instruct-4bit",
             requiredFiles: curatedRequiredFiles
         )
     ]
