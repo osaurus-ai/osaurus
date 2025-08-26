@@ -8,7 +8,6 @@
 import SwiftUI
 import AppKit
 import Sparkle
-import Darwin
 
 struct ContentView: View {
     @EnvironmentObject var server: ServerController
