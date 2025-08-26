@@ -419,7 +419,7 @@ class MLXService {
         return nil
     }
 
-    /// Load chat_template from tokenizer_config.json if present (cached)
+    /// Load chat_template from chat_template.jinja (preferred) or tokenizer_config.json (fallback), cached per model
     nonisolated static func modelChatTemplate(for model: LMModel) -> String? {
         let key = model.modelId as NSString
         if let cached = chatTemplateCache.object(forKey: key) as String? {
@@ -429,8 +429,22 @@ class MLXService {
             chatTemplateCache.setObject("" as NSString, forKey: key)
             return nil
         }
-        let url = dir.appendingPathComponent("tokenizer_config.json")
         let fm = FileManager.default
+
+        // 1) Prefer explicit Jinja file if present
+        let jinjaURL = dir.appendingPathComponent("chat_template.jinja")
+        if fm.fileExists(atPath: jinjaURL.path),
+           let data = try? Data(contentsOf: jinjaURL),
+           let s = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !s.isEmpty {
+            chatTemplateCache.setObject(s as NSString, forKey: key)
+            // Precompile and cache the Jinja template for faster renders
+            _ = compiledJinjaTemplate(for: s)
+            return s
+        }
+
+        // 2) Fallback to tokenizer_config.json fields
+        let url = dir.appendingPathComponent("tokenizer_config.json")
         guard fm.fileExists(atPath: url.path),
               let data = try? Data(contentsOf: url),
               let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {

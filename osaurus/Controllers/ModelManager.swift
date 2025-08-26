@@ -378,75 +378,103 @@ final class ModelManager: NSObject, ObservableObject {
 // MARK: - Dynamic model discovery (Hugging Face)
 
 private extension ModelManager {
+    /// Simple in-memory LRU cache with TTL for HF repo lists
+    nonisolated(unsafe) private static var repoCacheStore: [String: (value: [HFRepo], inserted: Date)] = [:]
+    nonisolated(unsafe) private static var repoCacheOrder: [String] = []
+    nonisolated(unsafe) private static let repoCacheQueue = DispatchQueue(label: "com.osaurus.hf.repos.cache", attributes: .concurrent)
+    nonisolated(unsafe) private static var repoCacheTTL: TimeInterval {
+        let env = ProcessInfo.processInfo.environment
+        if let s = env["OSU_HF_REPO_CACHE_TTL"], let v = TimeInterval(s), v > 0 { return v }
+        return 900 // 15 minutes default
+    }
+    nonisolated(unsafe) private static var repoCacheMaxEntries: Int {
+        let env = ProcessInfo.processInfo.environment
+        if let s = env["OSU_HF_REPO_CACHE_MAX"], let v = Int(s), v > 0 { return v }
+        return 4
+    }
+
+    static func repoCacheGet(key: String) -> [HFRepo]? {
+        return repoCacheQueue.sync(flags: .barrier) {
+            guard let entry = repoCacheStore[key] else { return nil }
+            // TTL check
+            if Date().timeIntervalSince(entry.inserted) >= repoCacheTTL {
+                repoCacheStore.removeValue(forKey: key)
+                if let idx = repoCacheOrder.firstIndex(of: key) { repoCacheOrder.remove(at: idx) }
+                return nil
+            }
+            // Promote MRU
+            if let idx = repoCacheOrder.firstIndex(of: key) { repoCacheOrder.remove(at: idx) }
+            repoCacheOrder.append(key)
+            return entry.value
+        }
+    }
+
+    static func repoCacheSet(key: String, value: [HFRepo]) {
+        repoCacheQueue.async(flags: .barrier) {
+            repoCacheStore[key] = (value, Date())
+            if let idx = repoCacheOrder.firstIndex(of: key) { repoCacheOrder.remove(at: idx) }
+            repoCacheOrder.append(key)
+            while repoCacheOrder.count > repoCacheMaxEntries {
+                let lru = repoCacheOrder.removeFirst()
+                repoCacheStore.removeValue(forKey: lru)
+            }
+        }
+    }
+
     /// Fully curated models with descriptions we control. Order matters.
     static let curatedSuggestedModels: [MLXModel] = [
-        // Llama family — 3 sizes
+        // GPT-OSS
         MLXModel(
-            id: "mlx-community/Llama-3.2-1B-Instruct-4bit",
-            name: friendlyName(from: "mlx-community/Llama-3.2-1B-Instruct-4bit"),
-            description: "Tiny and fast. Great for quick tests, code helpers, and lightweight tasks.",
+            id: "lmstudio-community/gpt-oss-20b-MLX-8bit",
+            name: friendlyName(from: "lmstudio-community/gpt-oss-20b-MLX-8bit"),
+            description: "GPT-OSS 20B (8-bit MLX) by OpenAI. High-quality general model in MLX format.",
             size: 0,
-            downloadURL: "https://huggingface.co/mlx-community/Llama-3.2-1B-Instruct-4bit",
+            downloadURL: "https://huggingface.co/lmstudio-community/gpt-oss-20b-MLX-8bit",
             requiredFiles: curatedRequiredFiles
         ),
+
         MLXModel(
-            id: "mlx-community/Llama-3.2-3B-Instruct-4bit",
-            name: friendlyName(from: "mlx-community/Llama-3.2-3B-Instruct-4bit"),
-            description: "Great quality/speed balance. Strong general assistant at a small memory footprint.",
+            id: "lmstudio-community/gpt-oss-120b-MLX-8bit",
+            name: friendlyName(from: "lmstudio-community/gpt-oss-120b-MLX-8bit"),
+            description: "GPT-OSS 120B (MLX 8-bit). ~117B parameters; premium general assistant with strong reasoning and coding. Optimized for Apple Silicon via MLX; requires 64GB+ unified memory; very large download.",
             size: 0,
-            downloadURL: "https://huggingface.co/mlx-community/Llama-3.2-3B-Instruct-4bit",
-            requiredFiles: curatedRequiredFiles
-        ),
-        MLXModel(
-            id: "mlx-community/Llama-3.1-8B-Instruct-4bit",
-            name: friendlyName(from: "mlx-community/Llama-3.1-8B-Instruct-4bit"),
-            description: "Popular 8B performer. Good quality for on-device use if you have the RAM.",
-            size: 0,
-            downloadURL: "https://huggingface.co/mlx-community/Llama-3.1-8B-Instruct-4bit",
+            downloadURL: "https://huggingface.co/lmstudio-community/gpt-oss-120b-MLX-8bit",
             requiredFiles: curatedRequiredFiles
         ),
 
         // Qwen family — 3 sizes
         MLXModel(
-            id: "mlx-community/Qwen2.5-1.5B-Instruct-4bit",
-            name: friendlyName(from: "mlx-community/Qwen2.5-1.5B-Instruct-4bit"),
-            description: "Small but capable. Strong instruction following with tiny memory footprint.",
+            id: "mlx-community/Qwen3-1.7B-4bit",
+            name: friendlyName(from: "mlx-community/Qwen3-1.7B-4bit"),
+            description: "Qwen3 1.7B (4-bit). Tiny and fast. Great for quick tests, code helpers, and lightweight tasks.",
             size: 0,
-            downloadURL: "https://huggingface.co/mlx-community/Qwen2.5-1.5B-Instruct-4bit",
+            downloadURL: "https://huggingface.co/mlx-community/Qwen3-1.7B-4bit",
             requiredFiles: curatedRequiredFiles
         ),
         MLXModel(
-            id: "mlx-community/Qwen2.5-3B-Instruct-4bit",
-            name: friendlyName(from: "mlx-community/Qwen2.5-3B-Instruct-4bit"),
-            description: "Well-rounded 3B assistant. Good multilingual reasoning and instruction following.",
+            id: "mlx-community/Qwen3-4B-4bit",
+            name: friendlyName(from: "mlx-community/Qwen3-4B-4bit"),
+            description: "Qwen3 4B (4-bit). Modern small model with strong instruction following.",
             size: 0,
-            downloadURL: "https://huggingface.co/mlx-community/Qwen2.5-3B-Instruct-4bit",
+            downloadURL: "https://huggingface.co/mlx-community/Qwen3-4B-4bit",
             requiredFiles: curatedRequiredFiles
         ),
         MLXModel(
-            id: "mlx-community/Qwen2.5-7B-Instruct-4bit",
-            name: friendlyName(from: "mlx-community/Qwen2.5-7B-Instruct-4bit"),
-            description: "High-quality 7B assistant. Great all-rounder with strong instruction tuning.",
+            id: "mlx-community/Qwen3-235B-A22B-4bit",
+            name: friendlyName(from: "mlx-community/Qwen3-235B-A22B-4bit"),
+            description: "Qwen3 235B MoE A22B (4-bit). High quality; heavy memory requirements.",
             size: 0,
-            downloadURL: "https://huggingface.co/mlx-community/Qwen2.5-7B-Instruct-4bit",
+            downloadURL: "https://huggingface.co/mlx-community/Qwen3-235B-A22B-4bit",
             requiredFiles: curatedRequiredFiles
         ),
 
-        // Gemma family — 2 sizes (2B, 9B)
+        // New additions — Gemma 3, Qwen3, GPT-OSS
         MLXModel(
-            id: "mlx-community/Gemma-2-2B-IT-4bit",
-            name: friendlyName(from: "mlx-community/Gemma-2-2B-IT-4bit"),
-            description: "Balanced quality and speed. A solid general-purpose assistant at 2B params.",
+            id: "lmstudio-community/gemma-3-270m-it-MLX-8bit",
+            name: friendlyName(from: "lmstudio-community/gemma-3-270m-it-MLX-8bit"),
+            description: "Gemma 3 270M IT (8-bit MLX). Extremely small and fast for experimentation.",
             size: 0,
-            downloadURL: "https://huggingface.co/mlx-community/Gemma-2-2B-IT-4bit",
-            requiredFiles: curatedRequiredFiles
-        ),
-        MLXModel(
-            id: "mlx-community/Gemma-2-9B-IT-4bit",
-            name: friendlyName(from: "mlx-community/Gemma-2-9B-IT-4bit"),
-            description: "Quality-focused 9B Gemma-2 IT. Strong general assistant if you can spare the memory.",
-            size: 0,
-            downloadURL: "https://huggingface.co/mlx-community/Gemma-2-9B-IT-4bit",
+            downloadURL: "https://huggingface.co/lmstudio-community/gemma-3-270m-it-MLX-8bit",
             requiredFiles: curatedRequiredFiles
         ),
 
@@ -485,6 +513,24 @@ private extension ModelManager {
             description: "Kimi VL A3B thinking variant (4-bit). Versatile assistant with strong reasoning.",
             size: 0,
             downloadURL: "https://huggingface.co/mlx-community/Kimi-VL-A3B-Thinking-4bit",
+            requiredFiles: curatedRequiredFiles
+        ),
+
+        // Llama family
+        MLXModel(
+            id: "mlx-community/Llama-3.2-1B-Instruct-4bit",
+            name: friendlyName(from: "mlx-community/Llama-3.2-1B-Instruct-4bit"),
+            description: "Tiny and fast. Great for quick tests, code helpers, and lightweight tasks.",
+            size: 0,
+            downloadURL: "https://huggingface.co/mlx-community/Llama-3.2-1B-Instruct-4bit",
+            requiredFiles: curatedRequiredFiles
+        ),
+        MLXModel(
+            id: "mlx-community/Llama-3.2-3B-Instruct-4bit",
+            name: friendlyName(from: "mlx-community/Llama-3.2-3B-Instruct-4bit"),
+            description: "Great quality/speed balance. Strong general assistant at a small memory footprint.",
+            size: 0,
+            downloadURL: "https://huggingface.co/mlx-community/Llama-3.2-3B-Instruct-4bit",
             requiredFiles: curatedRequiredFiles
         )
     ]
@@ -527,33 +573,71 @@ private extension ModelManager {
         let license: String?
     }
 
-    /// Fetch repos from HF limited to mlx-community, focusing on text-generation models
-    /// This first pulls a lightweight list, then fetches detailed metadata (including file sizes)
+    /// Fetch repos from HF including mlx-community and LM Studio MLX repos, focusing on text-generation models
+    /// Applies an in-memory LRU cache with TTL to avoid refetching and rate limits.
+    /// This first pulls lightweight lists, merges/dedupes, then fetches detailed metadata (including file sizes)
     /// for the top repositories to compute download sizes.
     static func fetchHFRepos() async throws -> [HFRepo] {
-        // Query params:
-        // - author=mlx-community restricts to that org
-        // - pipeline_tag=text-generation focuses on LLMs
-        // Sorted by downloads, large limit to cover most
-        let urlString = "https://huggingface.co/api/models?author=mlx-community&pipeline_tag=text-generation&sort=downloads&direction=-1&limit=200"
-        guard let url = URL(string: urlString) else { return [] }
-
-        var request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 30)
-        request.httpMethod = "GET"
-        request.setValue("application/json", forHTTPHeaderField: "Accept")
-
-        // Fetch full data; response size is modest for up to ~200 repos
-        let (data, response) = try await URLSession.shared.data(for: request)
-        guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
-            throw NSError(domain: "HFAPI", code: (response as? HTTPURLResponse)?.statusCode ?? -1, userInfo: [NSLocalizedDescriptionKey: "Unexpected status"])
+        let cacheKey = "hf:repos:v2:mlx+lmstudio:text-generation"
+        // Cache hit check
+        if let cached = repoCacheGet(key: cacheKey) {
+            return cached
         }
 
-        let decoder = IkigaJSONDecoder()
-        let listRepos: [HFRepo] = try decoder.decode([HFRepo].self, from: data)
+        // Build URLs
+        let urlMLX = "https://huggingface.co/api/models?author=mlx-community&pipeline_tag=text-generation&sort=downloads&direction=-1&limit=200"
+        let urlLMStudio = "https://huggingface.co/api/models?author=lmstudio-community&pipeline_tag=text-generation&sort=downloads&direction=-1&limit=200"
+
+        func fetchList(_ urlString: String) async throws -> [HFRepo] {
+            guard let url = URL(string: urlString) else { return [] }
+            var request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 30)
+            request.httpMethod = "GET"
+            request.setValue("application/json", forHTTPHeaderField: "Accept")
+            request.setValue("osaurus/1.0", forHTTPHeaderField: "User-Agent")
+            let (data, response) = try await URLSession.shared.data(for: request)
+            guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
+                throw NSError(domain: "HFAPI", code: (response as? HTTPURLResponse)?.statusCode ?? -1, userInfo: [NSLocalizedDescriptionKey: "Unexpected status"])
+            }
+            let decoder = IkigaJSONDecoder()
+            return try decoder.decode([HFRepo].self, from: data)
+        }
+
+        // Fetch org lists concurrently
+        async let listMLX = fetchList(urlMLX)
+        async let listLM = fetchList(urlLMStudio)
+        var reposMLX = try await listMLX
+        let reposLMAll = try await listLM
+
+        // Filter LM Studio to MLX variants only (exclude GGUF-only repos)
+        let reposLMXLite = reposLMAll.filter { repo in
+            let idLower = repo.id.lowercased()
+            if idLower.contains("mlx") { return true }
+            if let tags = repo.tags, tags.contains(where: { $0.lowercased().contains("mlx") }) { return true }
+            return false
+        }
+
+        // Merge and de-duplicate by id
+        reposMLX.append(contentsOf: reposLMXLite)
+        var seen: Set<String> = []
+        var mergedList: [HFRepo] = []
+        mergedList.reserveCapacity(reposMLX.count)
+        for repo in reposMLX {
+            if !seen.contains(repo.id) {
+                seen.insert(repo.id)
+                mergedList.append(repo)
+            }
+        }
+
+        // Sort by downloads desc if available
+        mergedList.sort { (a, b) -> Bool in
+            let da = a.downloads ?? 0
+            let db = b.downloads ?? 0
+            return da == db ? a.id < b.id : da > db
+        }
 
         // Fetch detailed info (including siblings with sizes) for a subset to avoid rate limits
         let maxDetailCount = 60
-        let toDetail = Array(listRepos.prefix(maxDetailCount))
+        let toDetail = Array(mergedList.prefix(maxDetailCount))
 
         var detailedRepos: [HFRepo] = []
         detailedRepos.reserveCapacity(toDetail.count)
@@ -573,7 +657,10 @@ private extension ModelManager {
 
         // Merge: use detailed entries when available; otherwise fall back to list entries
         let detailedById = Dictionary(uniqueKeysWithValues: detailedRepos.map { ($0.id, $0) })
-        let merged = listRepos.map { detailedById[$0.id] ?? $0 }
+        let merged = mergedList.map { detailedById[$0.id] ?? $0 }
+
+        // Cache and return
+        repoCacheSet(key: cacheKey, value: merged)
         return merged
     }
 
@@ -587,6 +674,7 @@ private extension ModelManager {
         var request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 30)
         request.httpMethod = "GET"
         request.setValue("application/json", forHTTPHeaderField: "Accept")
+        request.setValue("osaurus/1.0", forHTTPHeaderField: "User-Agent")
         let (data, response) = try await URLSession.shared.data(for: request)
         guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
             throw NSError(domain: "HFAPI", code: (response as? HTTPURLResponse)?.statusCode ?? -1, userInfo: [NSLocalizedDescriptionKey: "Unexpected status for detail"])
@@ -624,6 +712,7 @@ private extension ModelManager {
         var request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 30)
         request.httpMethod = "HEAD"
         request.setValue("*/*", forHTTPHeaderField: "Accept")
+        request.setValue("osaurus/1.0", forHTTPHeaderField: "User-Agent")
         do {
             let (_, response) = try await URLSession.shared.data(for: request)
             guard let http = response as? HTTPURLResponse else { return nil }
@@ -710,7 +799,7 @@ private extension ModelManager {
         if let arch { parts.append(arch) }
         if let quant { parts.append(quant.uppercased()) }
         if (tags.contains { $0 == "text-generation" }) { parts.append("text-generation") }
-        if parts.isEmpty { return "Model from mlx-community" }
+        if parts.isEmpty { return "Model from Hugging Face" }
         return parts.joined(separator: " • ")
     }
 
