@@ -12,8 +12,8 @@ public struct ServerConfiguration {
     /// Server port (1-65535)
     public var port: Int
     
-    /// Server host (default: localhost)
-    public let host: String
+    /// Expose the server to the local network (0.0.0.0) or keep it on localhost (127.0.0.1)
+    public var exposeToNetwork: Bool
     
     /// Number of threads for the event loop group
     public let numberOfThreads: Int
@@ -39,7 +39,7 @@ public struct ServerConfiguration {
     public static var `default`: ServerConfiguration {
         ServerConfiguration(
             port: 8080,
-            host: "127.0.0.1",
+            exposeToNetwork: false, // Default to false (localhost)
             numberOfThreads: ProcessInfo.processInfo.activeProcessorCount,
             backlog: 256,
             genTopP: 0.95,

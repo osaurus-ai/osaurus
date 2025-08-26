@@ -9,6 +9,7 @@ import Foundation
 import NIOCore
 import NIOPosix
 import NIOHTTP1
+import Darwin
 
 /// Main controller responsible for managing the server lifecycle
 @MainActor
@@ -18,6 +19,7 @@ final class ServerController: ObservableObject {
     @Published var isRunning: Bool = false
     @Published var lastErrorMessage: String?
     @Published var serverHealth: ServerHealth = .stopped
+    @Published var localNetworkAddress: String = "127.0.0.1"
     @Published var configuration: ServerConfiguration = .default
     
     // Provide shared access to configuration for non-UI callers
@@ -59,7 +61,10 @@ final class ServerController: ObservableObject {
         serverHealth = .starting
         
         do {
-            print("[Osaurus] Starting NIO server on port \(configuration.port)")
+            let bindHost = configuration.exposeToNetwork ? "0.0.0.0" : "127.0.0.1"
+            self.localNetworkAddress = configuration.exposeToNetwork ? self.getLocalIPAddress() : "127.0.0.1"
+
+            print("[Osaurus] Starting NIO server on \(bindHost):\(configuration.port)")
 
             // Ensure any previous instance is shut down
             try await stopServerIfNeeded()
@@ -75,7 +80,7 @@ final class ServerController: ObservableObject {
             let bootstrap = ServerController.createServerBootstrap(group: group, configuration: currentConfig)
 
             // Bind to configured host and port (async-safe)
-            let channel = try await bootstrap.bind(host: configuration.host, port: configuration.port).get()
+            let channel = try await bootstrap.bind(host: bindHost, port: configuration.port).get()
             self.serverChannel = channel
 
             // Update state
@@ -121,7 +126,8 @@ final class ServerController: ObservableObject {
             do { try await channel.close().get() } catch { print("[Osaurus] Error closing channel: \(error)") }
             serverChannel = nil
         }
-
+        
+        localNetworkAddress = "127.0.0.1"
         await cleanupRuntime()
 
         serverHealth = .stopped
@@ -141,6 +147,7 @@ final class ServerController: ObservableObject {
             serverChannel = nil
         }
 
+        localNetworkAddress = "127.0.0.1"
         await cleanupRuntime()
 
         print("[Osaurus] Server shutdown completed")
@@ -211,6 +218,38 @@ final class ServerController: ObservableObject {
         if serverChannel != nil || eventLoopGroup != nil {
             await stopServer()
         }
+    }
+    
+    private func getLocalIPAddress() -> String {
+        var address: String = "127.0.0.1"
+        var ifaddr: UnsafeMutablePointer<ifaddrs>?
+        guard getifaddrs(&ifaddr) == 0 else { return address }
+        guard let firstAddr = ifaddr else { return address }
+        
+        for ptr in sequence(first: firstAddr, next: { $0.pointee.ifa_next }) {
+            let flags = Int32(ptr.pointee.ifa_flags)
+            let addr = ptr.pointee.ifa_addr.pointee
+            
+            // Check for running IPv4 interface, and skip loopback
+            if (flags & (IFF_UP | IFF_RUNNING | IFF_LOOPBACK)) == (IFF_UP | IFF_RUNNING) {
+                if addr.sa_family == AF_INET {
+                    // Found an active IPv4 address
+                    var hostname = [CChar](repeating: 0, count: Int(NI_MAXHOST))
+                    if getnameinfo(ptr.pointee.ifa_addr, socklen_t(addr.sa_len), &hostname, socklen_t(hostname.count), nil, socklen_t(0), NI_NUMERICHOST) == 0 {
+                        let ip = String(cString: hostname)
+                        let name = String(cString: ptr.pointee.ifa_name)
+                        if name.starts(with: "en") { // en0, en1, etc. are common for Wi-Fi/Ethernet on macOS
+                            address = ip
+                            break
+                        }
+                    }
+                }
+                
+            }
+        }
+        
+        freeifaddrs(ifaddr)
+        return address
     }
 
     private func cleanupRuntime() async {
