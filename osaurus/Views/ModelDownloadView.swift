@@ -14,7 +14,7 @@ struct ModelDownloadView: View {
     @State private var showDeleteConfirmation = false
     @State private var modelToDelete: MLXModel?
     @State private var searchText: String = ""
-    @State private var selectedTab: ModelListTab = .suggested
+    @State private var selectedTab: ModelListTab = .all
     
     var body: some View {
         ZStack {
@@ -105,7 +105,7 @@ struct ModelDownloadView: View {
                     selection: $selectedTab,
                     tabs: ModelListTab.allCases.map { ($0, $0.title) }
                 )
-                .frame(maxWidth: 400)
+                .frame(maxWidth: 600)
                 Spacer()
             }
             .padding(.horizontal, 24)
@@ -117,7 +117,7 @@ struct ModelDownloadView: View {
                     .frame(height: 1),
                 alignment: .bottom
             )
-
+            
             // Search row above results
             HStack(spacing: 8) {
                 Image(systemName: "magnifyingglass")
@@ -136,7 +136,7 @@ struct ModelDownloadView: View {
                     .frame(height: 1),
                 alignment: .bottom
             )
-
+            
             if modelManager.isLoadingModels {
                 VStack(spacing: 12) {
                     ProgressView()
@@ -150,24 +150,32 @@ struct ModelDownloadView: View {
             } else {
                 ScrollView {
                     LazyVStack(spacing: 16) {
-                        ForEach(displayedModels) { model in
-                            ModelRowView(
-                                model: model,
-                                downloadState: modelManager.effectiveDownloadState(for: model),
-                                onDownload: { modelManager.downloadModel(model) },
-                                onCancel: { modelManager.cancelDownload(model.id) },
-                                onDelete: {
-                                    modelToDelete = model
-                                    showDeleteConfirmation = true
-                                }
-                            )
-                            .onAppear {
-                                modelManager.prefetchModelDetailsIfNeeded(for: model)
+                        if displayedModels.isEmpty{
+                            if selectedTab == .all || selectedTab == .suggested{
+                                EmptyModelView(title: "No models found", description: "Couldn't find any models that matches your search")
+                            }else{
+                                EmptyModelView(title: "No downloads yet", description: "You have no downloaded models")
                             }
-                            .transition(.asymmetric(
-                                insertion: .scale.combined(with: .opacity),
-                                removal: .scale.combined(with: .opacity)
-                            ))
+                        }else{
+                            ForEach(displayedModels) { model in
+                                ModelRowView(
+                                    model: model,
+                                    downloadState: modelManager.effectiveDownloadState(for: model),
+                                    onDownload: { modelManager.downloadModel(model) },
+                                    onCancel: { modelManager.cancelDownload(model.id) },
+                                    onDelete: {
+                                        modelToDelete = model
+                                        showDeleteConfirmation = true
+                                    }
+                                )
+                                .onAppear {
+                                    modelManager.prefetchModelDetailsIfNeeded(for: model)
+                                }
+                                .transition(.asymmetric(
+                                    insertion: .scale.combined(with: .opacity),
+                                    removal: .scale.combined(with: .opacity)
+                                ))
+                            }
                         }
                     }
                     .padding(24)
@@ -175,29 +183,66 @@ struct ModelDownloadView: View {
             }
         }
     }
-
+    
     private var filteredModels: [MLXModel] {
         SearchService.filterModels(modelManager.availableModels, with: searchText)
     }
-
+    
     private var filteredSuggestedModels: [MLXModel] {
         SearchService.filterModels(modelManager.suggestedModels, with: searchText)
     }
-
+    
+    private var filteredDownloadedModels: [MLXModel]{
+        let combined = modelManager.availableModels + modelManager.suggestedModels
+        let uniqueModels = Dictionary(combined.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first}).values
+        let downloaded = uniqueModels.filter { $0.isDownloaded }
+        return SearchService.filterModels(Array(downloaded), with: searchText)
+    }
+    
     private var displayedModels: [MLXModel] {
-        selectedTab == .suggested ? filteredSuggestedModels : filteredModels
+        switch selectedTab {
+        case .all:
+            return filteredModels
+        case .suggested:
+            return filteredSuggestedModels
+        case .downloaded:
+            return filteredDownloadedModels
+        }
     }
 }
 
 enum ModelListTab: CaseIterable {
-    case suggested
     case all
-
+    case suggested
+    case downloaded
+    
     var title: String {
         switch self {
-        case .suggested: return "Suggested Models"
         case .all: return "All Models"
+        case .suggested: return "Suggested"
+        case .downloaded: return "Downloaded"
         }
+    }
+}
+
+struct EmptyModelView: View {
+    @Environment(\.theme) private var theme
+    
+    var title: String
+    var description: String
+    
+    var body: some View {
+        VStack(alignment: .center, spacing: 6){
+            Text(title)
+                .font(.system(size: 16, weight: .semibold))
+                .foregroundColor(theme.primaryText)
+            
+            Text(description)
+                .foregroundColor(theme.secondaryText)
+                .font(.system(size: 13))
+        }
+        .multilineTextAlignment(.center)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }
 
@@ -236,7 +281,7 @@ struct ModelRowView: View {
                                 .lineLimit(2)
                                 .frame(maxWidth: .infinity, alignment: .leading)
                         }
-
+                        
                         // Repository URL as small link
                         if let url = URL(string: model.downloadURL) {
                             HStack(spacing: 4) {
@@ -267,11 +312,11 @@ struct ModelRowView: View {
                             .foregroundColor(theme.tertiaryText)
                             
                             if model.isDownloaded {
-                                                StatusBadge(
-                    status: "Downloaded",
-                    color: theme.successColor,
-                    isAnimating: false
-                )
+                                StatusBadge(
+                                    status: "Downloaded",
+                                    color: theme.successColor,
+                                    isAnimating: false
+                                )
                             }
                         }
                     }
