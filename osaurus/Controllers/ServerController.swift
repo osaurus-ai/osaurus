@@ -185,12 +185,13 @@ final class ServerController: ObservableObject {
             .serverChannelOption(ChannelOptions.socketOption(.so_reuseaddr), value: 1)
             // Child channels (accepted connections)
             .childChannelInitializer { channel in
-                channel.pipeline.configureHTTPServerPipeline().flatMap {
+                channel.pipeline.configureHTTPServerPipeline(withPipeliningAssistance: false, withErrorHandling: false).flatMap {
                     channel.pipeline.addHandler(HTTPHandler())
                 }
             }
             .childChannelOption(ChannelOptions.socketOption(.so_reuseaddr), value: 1)
             .childChannelOption(ChannelOptions.socketOption(.tcp_nodelay), value: 1)
+            .childChannelOption(ChannelOptions.allowRemoteHalfClosure, value: true)
             .childChannelOption(ChannelOptions.maxMessagesPerRead, value: maxMessagesPerRead)
             .childChannelOption(ChannelOptions.recvAllocator, value: AdaptiveRecvByteBufferAllocator())
     }
