@@ -82,9 +82,9 @@ The following are 20-run averages from our batch benchmark suite. See raw result
 
 | Server    | Model                      | TTFT avg (ms) | Total avg (ms) | Chars/s avg | Success |
 | --------- | -------------------------- | ------------- | -------------- | ----------- | ------- |
-| Osaurus   | llama-3.2-3b-instruct-4bit | 191           | 1461           | 521         | 100%    |
-| Ollama    | llama3.2                   | 59            | 1667           | 439         | 100%    |
-| LM Studio | llama-3.2-3b-instruct      | 56            | 1205           | 605         | 100%    |
+| Osaurus   | llama-3.2-3b-instruct-4bit | 169           | 1304           | 520         | 100%    |
+| Ollama    | llama3.2                   | 59            | 1642           | 449         | 100%    |
+| LM Studio | llama-3.2-3b-instruct      | 55            | 1181           | 619         | 100%    |
 
 - Metrics: TTFT = time-to-first-token, Total = time to final token, Chars/s = streaming throughput.
 - Data sources: `results/osaurus-vs-ollama-lmstudio-batch.summary.json`, `results/osaurus-vs-ollama-lmstudio-batch.results.csv`.
