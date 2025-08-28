@@ -311,24 +311,50 @@ class AsyncHTTPHandler {
             let maxStopLen: Int = shouldCheckStop ? (stopSequences.map { $0.count }.max() ?? 0) : 0
             var stopTail = ""
 
-            // Batching state
+            // Batching state (event-loop confined)
             var firstTokenSent = false
-            var pendingContent = ""
+            let initialCapacity = max(1024, batchCharThreshold)
+            var pendingBuffer = ByteBufferAllocator().buffer(capacity: initialCapacity)
+            var pendingCharCount: Int = 0
             var lastFlushNs: UInt64 = DispatchTime.now().uptimeNanoseconds
-
-            // Queue writes on the event loop at a fixed cadence to reduce cross-thread hops
             var scheduledFlush: Bool = false
+
             @inline(__always)
-            func scheduleFlushIfNeeded() {
+            func scheduleFlushOnLoopIfNeeded() {
                 if scheduledFlush { return }
                 scheduledFlush = true
                 let deadline = NIODeadline.now() + .milliseconds(Int64(batchIntervalMs))
                 loop.scheduleTask(deadline: deadline) {
                     scheduledFlush = false
-                    guard !pendingContent.isEmpty else { return }
-                    sendContentDelta(pendingContent, flushNow: true)
-                    pendingContent.removeAll(keepingCapacity: true)
+                    if pendingBuffer.readableBytes > 0 {
+                        let content = pendingBuffer.readString(length: pendingBuffer.readableBytes) ?? ""
+                        sendContentDelta(content, flushNow: true)
+                        pendingCharCount = 0
+                        lastFlushNs = DispatchTime.now().uptimeNanoseconds
+                    }
+                }
+            }
+
+            @inline(__always)
+            func processTokenOnLoop(_ token: String) {
+                if !firstTokenSent {
+                    sendContentDelta(token, flushNow: true)
+                    firstTokenSent = true
                     lastFlushNs = DispatchTime.now().uptimeNanoseconds
+                    return
+                }
+                pendingBuffer.writeString(token)
+                pendingCharCount &+= token.count
+                let nowNs = DispatchTime.now().uptimeNanoseconds
+                if pendingCharCount >= batchCharThreshold || nowNs - lastFlushNs >= flushIntervalNs {
+                    if pendingBuffer.readableBytes > 0 {
+                        let content = pendingBuffer.readString(length: pendingBuffer.readableBytes) ?? ""
+                        sendContentDelta(content, flushNow: true)
+                        pendingCharCount = 0
+                        lastFlushNs = nowNs
+                    }
+                } else {
+                    scheduleFlushOnLoopIfNeeded()
                 }
             }
 
@@ -378,35 +404,30 @@ class AsyncHTTPHandler {
                         stopTail.removeFirst(overflow)
                     }
                     if stopSequences.first(where: { stopTail.contains($0) }) != nil {
-                        if !pendingContent.isEmpty {
-                            sendContentDelta(pendingContent, flushNow: true)
-                            pendingContent.removeAll(keepingCapacity: true)
+                        loop.execute {
+                            if pendingBuffer.readableBytes > 0 {
+                                let content = pendingBuffer.readString(length: pendingBuffer.readableBytes) ?? ""
+                                sendContentDelta(content, flushNow: true)
+                                pendingCharCount = 0
+                                lastFlushNs = DispatchTime.now().uptimeNanoseconds
+                            }
                         }
                         break
                     }
                 }
 
-                if !firstTokenSent {
-                    sendContentDelta(token, flushNow: true)
-                    firstTokenSent = true
-                    lastFlushNs = DispatchTime.now().uptimeNanoseconds
-                    continue
-                }
-
-                pendingContent += token
-                let nowNs = DispatchTime.now().uptimeNanoseconds
-                if pendingContent.count >= batchCharThreshold || nowNs - lastFlushNs >= flushIntervalNs {
-                    sendContentDelta(pendingContent, flushNow: true)
-                    pendingContent.removeAll(keepingCapacity: true)
-                    lastFlushNs = nowNs
-                } else {
-                    scheduleFlushIfNeeded()
+                loop.execute {
+                    processTokenOnLoop(token)
                 }
             }
 
-            if !pendingContent.isEmpty {
-                sendContentDelta(pendingContent, flushNow: true)
-                pendingContent.removeAll(keepingCapacity: true)
+            loop.execute {
+                if pendingBuffer.readableBytes > 0 {
+                    let content = pendingBuffer.readString(length: pendingBuffer.readableBytes) ?? ""
+                    sendContentDelta(content, flushNow: true)
+                    pendingCharCount = 0
+                    lastFlushNs = DispatchTime.now().uptimeNanoseconds
+                }
             }
         }
         
