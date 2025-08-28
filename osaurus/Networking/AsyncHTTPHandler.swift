@@ -10,6 +10,7 @@ import Dispatch
 import NIOCore
 import NIOHTTP1
 import IkigaJSON
+import MLXLMCommon
 
 private struct UncheckedSendableBox<T>: @unchecked Sendable {
     let value: T
@@ -50,13 +51,8 @@ class AsyncHTTPHandler {
             let temperature = request.temperature ?? 0.7
             let maxTokens = request.max_tokens ?? 2048
             
-            // Compute effective stop sequences: use request-provided or fall back to model defaults
-            let effectiveStops: [String]
-            if let s = request.stop, !s.isEmpty {
-                effectiveStops = s
-            } else {
-                effectiveStops = MLXService.defaultStopSequences(for: model)
-            }
+            // Honor only request-provided stop sequences; otherwise rely on library EOS handling
+            let effectiveStops: [String] = request.stop ?? []
 
             // Check if streaming is requested
             if request.stream ?? false {
@@ -136,8 +132,8 @@ class AsyncHTTPHandler {
         let responseId = "chatcmpl-\(UUID().uuidString.prefix(8))"
         let created = Int(Date().timeIntervalSince1970)
         
-        // Generate
-        let stream = try await MLXService.shared.generate(
+        // Generate MLX event stream (chunks + tool calls)
+        let eventStream = try await MLXService.shared.generateEvents(
             messages: messages,
             model: model,
             temperature: temperature,
@@ -158,7 +154,7 @@ class AsyncHTTPHandler {
             return true
         }()
         
-        // For tool detection, we'll stream content while building the full response
+        // For final content summary (non-tool path), collect chunks
         var responseBuffer: [String] = []
         responseBuffer.reserveCapacity(1024)
         
@@ -205,123 +201,95 @@ class AsyncHTTPHandler {
                 return Int(env["OSU_TOOL_DETECT_WINDOW_BYTES"] ?? "") ?? 4096
             }()
             var accumulatedBytes: Int = 0
-            for await token in stream {
-                responseBuffer.append(token)
-                accumulatedBytes += token.utf8.count
-                tokenCount += 1
-
-                // Quick heuristics only on a bounded prefix
-                let joined = responseBuffer.joined()
-                let slice: Substring = joined.prefix(detectWindowBytesLimit)
-                let trimmed = slice.trimmingCharacters(in: .whitespacesAndNewlines)
-                let looksLikeToolCall = trimmed.hasPrefix("{") ||
-                                      trimmed.contains("\"tool_calls\"") ||
-                                      trimmed.contains("```json") ||
-                                      (trimmed.hasPrefix("assistant:") && trimmed.contains("{"))
-
-                if !looksLikeToolCall && !token.isEmpty {
-                    let contentChunk = ChatCompletionChunk(
-                        id: responseId,
-                        created: created,
-                        model: requestModel,
-                        choices: [StreamChoice(index: 0, delta: DeltaContent(role: nil, content: token, tool_calls: nil), finish_reason: nil)],
-                        system_fingerprint: nil
-                    )
-                    writeSSE(contentChunk)
+            // MLX stream already separates tool calls; emit text chunks immediately and buffer for summary
+            for await event in eventStream {
+                if let chunk = event.chunk {
+                    responseBuffer.append(chunk)
+                    accumulatedBytes += chunk.utf8.count
+                    tokenCount += 1
+                    if !chunk.isEmpty {
+                        let contentChunk = ChatCompletionChunk(
+                            id: responseId,
+                            created: created,
+                            model: requestModel,
+                            choices: [StreamChoice(index: 0, delta: DeltaContent(role: nil, content: chunk, tool_calls: nil), finish_reason: nil)],
+                            system_fingerprint: nil
+                        )
+                        writeSSE(contentChunk)
+                    }
                 }
+                if let toolCall = event.toolCall {
+                    // Emit OpenAI-style tool_call deltas based on MLX ToolCall
+                    // Here we emit a single tool call per event (index 0)
+                    let mlxName = toolCall.function.name
+                    let argsObject = toolCall.function.arguments
+                    // Encode arguments dictionary back to JSON string per OpenAI spec
+                    let argsData = try? JSONSerialization.data(withJSONObject: argsObject.mapValues { $0.anyValue })
+                    let argsString = argsData.flatMap { String(data: $0, encoding: .utf8) } ?? "{}"
 
-                // If window grows too large, trim head to keep join size small
-                if accumulatedBytes > detectWindowBytesLimit * 2 {
-                    let keep = String(joined.suffix(detectWindowBytesLimit))
-                    responseBuffer.removeAll(keepingCapacity: true)
-                    responseBuffer.append(keep)
-                    accumulatedBytes = keep.utf8.count
-                }
-            }
-            
-            fullResponse = responseBuffer.joined()
-            
-            // Now check if we have tool calls
-            if let toolCalls = ToolCallParser.parse(from: fullResponse) {
-                // Need to emit tool calls - use existing tool call emission code
-                // Emit OpenAI-style incremental tool_call deltas
-                func sendChunk(_ chunk: ChatCompletionChunk) { writeSSE(chunk) }
+                    // Construct a synthetic id to satisfy OpenAI delta contract
+                    let callId = "call_\(UUID().uuidString.prefix(8))"
 
-
-                let argChunkSize = 500
-                for (idx, call) in toolCalls.enumerated() {
-                    // Emit id/type for this tool call
-                    sendChunk(ChatCompletionChunk(
+                    // id/type
+                    writeSSE(ChatCompletionChunk(
                         id: responseId,
                         created: created,
                         model: requestModel,
                         choices: [StreamChoice(index: 0, delta: DeltaContent(role: nil, content: nil, tool_calls: [
-                            DeltaToolCall(index: idx, id: call.id, type: call.type, function: nil)
+                            DeltaToolCall(index: 0, id: callId, type: "function", function: nil)
                         ]), finish_reason: nil)],
                         system_fingerprint: nil
                     ))
-
-                    // Emit function name
-                    sendChunk(ChatCompletionChunk(
+                    // name
+                    writeSSE(ChatCompletionChunk(
                         id: responseId,
                         created: created,
                         model: requestModel,
                         choices: [StreamChoice(index: 0, delta: DeltaContent(role: nil, content: nil, tool_calls: [
-                            DeltaToolCall(index: idx, id: nil, type: nil, function: DeltaToolCallFunction(name: call.function.name, arguments: nil))
+                            DeltaToolCall(index: 0, id: nil, type: nil, function: DeltaToolCallFunction(name: mlxName, arguments: nil))
                         ]), finish_reason: nil)],
                         system_fingerprint: nil
                     ))
-
-                    // Emit arguments in chunks
-                    let args = call.function.arguments
-                    var start = args.startIndex
-                    while start < args.endIndex {
-                        let end = args.index(start, offsetBy: argChunkSize, limitedBy: args.endIndex) ?? args.endIndex
-                        let slice = String(args[start..<end])
-                        sendChunk(ChatCompletionChunk(
+                    // args
+                    let argChunkSize = 500
+                    var start = argsString.startIndex
+                    while start < argsString.endIndex {
+                        let end = argsString.index(start, offsetBy: argChunkSize, limitedBy: argsString.endIndex) ?? argsString.endIndex
+                        let slice = String(argsString[start..<end])
+                        writeSSE(ChatCompletionChunk(
                             id: responseId,
                             created: created,
                             model: requestModel,
                             choices: [StreamChoice(index: 0, delta: DeltaContent(role: nil, content: nil, tool_calls: [
-                                DeltaToolCall(index: idx, id: nil, type: nil, function: DeltaToolCallFunction(name: nil, arguments: slice))
+                                DeltaToolCall(index: 0, id: nil, type: nil, function: DeltaToolCallFunction(name: nil, arguments: slice))
                             ]), finish_reason: nil)],
                             system_fingerprint: nil
                         ))
                         start = end
                     }
-                }
 
-                // Final chunk indicating end of tool_calls
-                sendChunk(ChatCompletionChunk(
-                    id: responseId,
-                    created: created,
-                    model: requestModel,
-                    choices: [StreamChoice(index: 0, delta: DeltaContent(role: nil, content: nil, tool_calls: nil), finish_reason: "tool_calls")],
-                    system_fingerprint: nil
-                ))
-
-                // Send [DONE] and close
-                writeSSEString("data: [DONE]\n\n")
-                loop.execute {
-                    let context = ctxBox.value
-                    guard context.channel.isActive else { return }
-                    context.writeAndFlush(NIOAny(HTTPServerResponsePart.end(nil as HTTPHeaders?))).whenComplete { _ in
+                    // Terminate tool_calls stream and close
+                    writeSSE(ChatCompletionChunk(
+                        id: responseId,
+                        created: created,
+                        model: requestModel,
+                        choices: [StreamChoice(index: 0, delta: DeltaContent(role: nil, content: nil, tool_calls: nil), finish_reason: "tool_calls")],
+                        system_fingerprint: nil
+                    ))
+                    writeSSEString("data: [DONE]\n\n")
+                    loop.execute {
                         let context = ctxBox.value
-                        context.close(promise: nil)
+                        guard context.channel.isActive else { return }
+                        context.writeAndFlush(NIOAny(HTTPServerResponsePart.end(nil as HTTPHeaders?))).whenComplete { _ in
+                            let context = ctxBox.value
+                            context.close(promise: nil)
+                        }
                     }
+                    return
                 }
-                return
-            } else {
-                // Fallback: emit full content in one delta
-                let chunk = ChatCompletionChunk(
-                    id: responseId,
-                    created: created,
-                    model: requestModel,
-                    choices: [StreamChoice(index: 0, delta: DeltaContent(role: "assistant", content: fullResponse, tool_calls: nil), finish_reason: nil)],
-                    system_fingerprint: nil
-                )
-                writeSSE(chunk)
             }
+            
+            fullResponse = responseBuffer.joined()
         } else {
             // Stream tokens as JSON-encoded SSE chunks with batching and stop detection
             // Cache env thresholds once per process to avoid per-request overhead
@@ -401,7 +369,8 @@ class AsyncHTTPHandler {
 
             // Immediately send role prelude before first model token (helps TTFT)
             sendRolePrelude()
-            for await token in stream {
+            for await event in eventStream {
+                guard let token = event.chunk else { continue }
                 if shouldCheckStop {
                     stopTail += token
                     if stopTail.count > maxStopLen {
@@ -503,7 +472,7 @@ class AsyncHTTPHandler {
         context: ChannelHandlerContext
     ) async throws {
         // Generate complete response
-        let stream = try await MLXService.shared.generate(
+        let eventStream = try await MLXService.shared.generateEvents(
             messages: messages,
             model: model,
             temperature: temperature,
@@ -522,7 +491,39 @@ class AsyncHTTPHandler {
         let shouldCheckStop = !stopSequences.isEmpty
         let maxStopLen: Int = shouldCheckStop ? (stopSequences.map { $0.count }.max() ?? 0) : 0
         var stopTail = ""
-        for await token in stream {
+        for await event in eventStream {
+            if let toolCall = event.toolCall {
+                // Build OpenAI-compatible tool_calls in non-streaming response
+                let argsData = try? JSONSerialization.data(withJSONObject: toolCall.function.arguments.mapValues { $0.anyValue })
+                let argsString = argsData.flatMap { String(data: $0, encoding: .utf8) } ?? "{}"
+                let tc = ToolCall(
+                    id: "call_\(UUID().uuidString.prefix(8))",
+                    type: "function",
+                    function: ToolCallFunction(name: toolCall.function.name, arguments: argsString)
+                )
+                // Construct response with tool call and return immediately
+                let response = ChatCompletionResponse(
+                    id: "chatcmpl-\(UUID().uuidString.prefix(8))",
+                    created: Int(Date().timeIntervalSince1970),
+                    model: requestModel,
+                    choices: [
+                        ChatChoice(
+                            index: 0,
+                            message: ChatMessage(role: "assistant", content: "", tool_calls: [tc], tool_call_id: nil),
+                            finish_reason: "tool_calls"
+                        )
+                    ],
+                    usage: Usage(
+                        prompt_tokens: messages.reduce(0) { $0 + $1.content.count / 4 },
+                        completion_tokens: 0,
+                        total_tokens: messages.reduce(0) { $0 + $1.content.count / 4 }
+                    ),
+                    system_fingerprint: nil
+                )
+                try await sendJSONResponse(response, status: .ok, context: context)
+                return
+            }
+            guard let token = event.chunk else { continue }
             if shouldCheckStop {
                 stopTail += token
                 if stopTail.count > maxStopLen {
@@ -538,7 +539,6 @@ class AsyncHTTPHandler {
         }
         fullResponse = segments.joined()
         
-        // Detect tool calls in model output
         // Trim at stop if present
         if !stopSequences.isEmpty {
             for s in stopSequences {
@@ -548,8 +548,9 @@ class AsyncHTTPHandler {
                 }
             }
         }
-        let toolCalls = ToolCallParser.parse(from: fullResponse)
-        let finishReason = (toolCalls != nil) ? "tool_calls" : "stop"
+        // Since we route tool calls immediately above, remaining path is normal text completion
+        let toolCalls: [ToolCall]? = nil
+        let finishReason = "stop"
 
         // Create response
         let response = ChatCompletionResponse(
@@ -559,7 +560,7 @@ class AsyncHTTPHandler {
             choices: [
                 ChatChoice(
                     index: 0,
-                    message: ChatMessage(role: "assistant", content: toolCalls == nil ? fullResponse : "", tool_calls: toolCalls, tool_call_id: nil),
+                    message: ChatMessage(role: "assistant", content: fullResponse, tool_calls: nil, tool_call_id: nil),
                     finish_reason: finishReason
                 )
             ],
