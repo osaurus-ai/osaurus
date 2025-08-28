@@ -202,6 +202,7 @@ class AsyncHTTPHandler {
             }()
             var accumulatedBytes: Int = 0
             // MLX stream already separates tool calls; emit text chunks immediately and buffer for summary
+
             for await event in eventStream {
                 if let chunk = event.chunk {
                     responseBuffer.append(chunk)
@@ -246,27 +247,20 @@ class AsyncHTTPHandler {
                         created: created,
                         model: requestModel,
                         choices: [StreamChoice(index: 0, delta: DeltaContent(role: nil, content: nil, tool_calls: [
-                            DeltaToolCall(index: 0, id: nil, type: nil, function: DeltaToolCallFunction(name: mlxName, arguments: nil))
+                            DeltaToolCall(index: 0, id: callId, type: nil, function: DeltaToolCallFunction(name: mlxName, arguments: nil))
                         ]), finish_reason: nil)],
                         system_fingerprint: nil
                     ))
-                    // args
-                    let argChunkSize = 500
-                    var start = argsString.startIndex
-                    while start < argsString.endIndex {
-                        let end = argsString.index(start, offsetBy: argChunkSize, limitedBy: argsString.endIndex) ?? argsString.endIndex
-                        let slice = String(argsString[start..<end])
-                        writeSSE(ChatCompletionChunk(
-                            id: responseId,
-                            created: created,
-                            model: requestModel,
-                            choices: [StreamChoice(index: 0, delta: DeltaContent(role: nil, content: nil, tool_calls: [
-                                DeltaToolCall(index: 0, id: nil, type: nil, function: DeltaToolCallFunction(name: nil, arguments: slice))
-                            ]), finish_reason: nil)],
-                            system_fingerprint: nil
-                        ))
-                        start = end
-                    }
+                    // args (send as a single delta for better client compatibility)
+                    writeSSE(ChatCompletionChunk(
+                        id: responseId,
+                        created: created,
+                        model: requestModel,
+                        choices: [StreamChoice(index: 0, delta: DeltaContent(role: nil, content: nil, tool_calls: [
+                            DeltaToolCall(index: 0, id: callId, type: nil, function: DeltaToolCallFunction(name: nil, arguments: argsString))
+                        ]), finish_reason: nil)],
+                        system_fingerprint: nil
+                    ))
 
                     // Terminate tool_calls stream and close
                     writeSSE(ChatCompletionChunk(
@@ -369,6 +363,7 @@ class AsyncHTTPHandler {
 
             // Immediately send role prelude before first model token (helps TTFT)
             sendRolePrelude()
+
             for await event in eventStream {
                 guard let token = event.chunk else { continue }
                 if shouldCheckStop {
@@ -509,7 +504,7 @@ class AsyncHTTPHandler {
                     choices: [
                         ChatChoice(
                             index: 0,
-                            message: ChatMessage(role: "assistant", content: "", tool_calls: [tc], tool_call_id: nil),
+                            message: ChatMessage(role: "assistant", content: nil, tool_calls: [tc], tool_call_id: nil),
                             finish_reason: "tool_calls"
                         )
                     ],

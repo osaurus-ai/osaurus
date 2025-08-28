@@ -360,9 +360,6 @@ class MLXService {
         return nil
     }
 
-
-    
-    
     /// Loads a model container from local storage or retrieves it from cache.
     private func load(model: LMModel) async throws -> SessionHolder {
         // Return cached model immediately without any disk I/O
@@ -580,6 +577,25 @@ class MLXService {
             return MLXLMCommon.Chat.Message(role: role, content: m.content, images: [], videos: [])
         }
 
+        // Convert OpenAI-style tools to Tokenizers.ToolSpec and honor tool_choice
+        let tokenizerTools: [[String: Any]]? = {
+            guard let tools, !tools.isEmpty else { return nil }
+            if let toolChoice {
+                switch toolChoice {
+                case .none:
+                    return nil
+                case .auto:
+                    return tools.map { $0.toTokenizerToolSpec() }
+                case .function(let target):
+                    let name = target.function.name
+                    let filtered = tools.filter { $0.function.name == name }
+                    return filtered.isEmpty ? nil : filtered.map { $0.toTokenizerToolSpec() }
+                }
+            } else {
+                return tools.map { $0.toTokenizerToolSpec() }
+            }
+        }()
+
         // Build and return a wrapper stream that forwards MLX events and releases the gate on completion
         return AsyncStream<MLXLMCommon.Generation> { continuation in
             Task {
@@ -587,7 +603,7 @@ class MLXService {
                 defer { gate.signal() }
                 do {
                     let stream: AsyncStream<MLXLMCommon.Generation> = try await holder.container.perform { (context: MLXLMCommon.ModelContext) in
-                        let userInput = MLXLMCommon.UserInput(chat: chat, processing: .init())
+                        let userInput = MLXLMCommon.UserInput(chat: chat, processing: .init(), tools: tokenizerTools)
                         let lmInput = try await context.processor.prepare(input: userInput)
                         // Ask MLX to generate an event stream (chunks + tool calls)
                         return try MLXLMCommon.generate(
