@@ -19,15 +19,9 @@ private struct UncheckedSendableBox<T>: @unchecked Sendable {
 class AsyncHTTPHandler {
     static let shared = AsyncHTTPHandler()
     
-    /// Cache for frequently used models to avoid repeated lookups
-    private let modelCache = NSCache<NSString, LMModel>()
-    
     // JSON encoder is created per write to avoid cross-request contention
     
-    private init() {
-        // Pre-cache common models
-        modelCache.countLimit = 10
-    }
+    private init() {}
     
     /// Handle chat completions with streaming support
     func handleChatCompletion(
@@ -35,26 +29,18 @@ class AsyncHTTPHandler {
         context: ChannelHandlerContext
     ) async {
         do {
-            // Try cache first for faster lookups
-            let model: LMModel
-            if let cached = modelCache.object(forKey: request.model as NSString) {
-                model = cached
-            } else {
-                // Find the model using nonisolated static accessor
-                guard let found = MLXService.findModel(named: request.model) else {
-                    let error = OpenAIError(
-                        error: OpenAIError.ErrorDetail(
-                            message: "Model not found: \(request.model)",
-                            type: "invalid_request_error",
-                            param: "model",
-                            code: nil
-                        )
+            // Find the model using nonisolated static accessor
+            guard let model = MLXService.findModel(named: request.model) else {
+                let error = OpenAIError(
+                    error: OpenAIError.ErrorDetail(
+                        message: "Model not found: \(request.model)",
+                        type: "invalid_request_error",
+                        param: "model",
+                        code: nil
                     )
-                    try await sendJSONResponse(error, status: .notFound, context: context)
-                    return
-                }
-                model = found
-                modelCache.setObject(model, forKey: request.model as NSString)
+                )
+                try await sendJSONResponse(error, status: .notFound, context: context)
+                return
             }
             
             // Convert messages
