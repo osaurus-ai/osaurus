@@ -267,7 +267,7 @@ Keep `session_id` stable per conversation and per model.
 
 ### Chat Templates
 
-Osaurus defers chat templating to MLX `ChatSession`, which uses the model's configuration to format prompts. System messages are combined and passed as `instructions`; user content is supplied as the prompt to `respond/streamResponse`. This avoids double‑templating and aligns with MLX behavior.
+Osaurus defers chat templating to MLX `ChatSession`, which uses the model's configuration to format prompts. System messages are combined and passed as `instructions`; user content is supplied as the prompt to `respond/streamResponse`.
 
 ## Model Naming
 
