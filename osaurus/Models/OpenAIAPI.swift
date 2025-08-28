@@ -281,3 +281,53 @@ enum JSONValue: Codable {
         }
     }
 }
+
+// MARK: - Conversions for Tool Specs (OpenAI -> Tokenizers.ToolSpec)
+
+extension JSONValue {
+    /// Convert JSONValue to Foundation JSON-compatible Any (for Tokenizers.ToolSpec)
+    var anyValue: Any {
+        switch self {
+        case .null:
+            return NSNull()
+        case .bool(let b):
+            return b
+        case .number(let n):
+            return n
+        case .string(let s):
+            return s
+        case .array(let arr):
+            return arr.map { $0.anyValue }
+        case .object(let obj):
+            var dict: [String: Any] = [:]
+            for (k, v) in obj { dict[k] = v.anyValue }
+            return dict
+        }
+    }
+}
+
+extension ToolFunction {
+    /// Convert to Tokenizers.ToolSpec-compatible function dictionary
+    fileprivate func toFunctionSpec() -> [String: Any] {
+        var fn: [String: Any] = [
+            "name": name
+        ]
+        if let description {
+            fn["description"] = description
+        }
+        if let parameters {
+            fn["parameters"] = parameters.anyValue
+        }
+        return fn
+    }
+}
+
+extension Tool {
+    /// Convert to Tokenizers.ToolSpec (`[String: Any]`) for MLX chat templates
+    func toTokenizerToolSpec() -> [String: Any] {
+        return [
+            "type": type,
+            "function": function.toFunctionSpec()
+        ]
+    }
+}
