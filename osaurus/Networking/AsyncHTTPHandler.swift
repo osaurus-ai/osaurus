@@ -194,30 +194,17 @@ class AsyncHTTPHandler {
             }
             writeSSE(roleChunk)
             
-            // Stream tokens while collecting them for tool detection (bounded window)
-            // Detection window: cap accumulation to reduce joins and scans
-            let detectWindowBytesLimit: Int = {
-                let env = ProcessInfo.processInfo.environment
-                return Int(env["OSU_TOOL_DETECT_WINDOW_BYTES"] ?? "") ?? 4096
-            }()
             var accumulatedBytes: Int = 0
-            // MLX stream already separates tool calls; emit text chunks immediately and buffer for summary
+            // When tools are enabled, buffer content until we know whether a tool call occurs.
+            // If a tool call happens, we will discard buffered content (filters <think> for tool paths).
+            // If no tool call happens, we will flush buffered content before finalizing.
 
             for await event in eventStream {
                 if let chunk = event.chunk {
+                    // Buffer only; do not emit yet. We will flush later iff no tool call occurs.
                     responseBuffer.append(chunk)
                     accumulatedBytes += chunk.utf8.count
                     tokenCount += 1
-                    if !chunk.isEmpty {
-                        let contentChunk = ChatCompletionChunk(
-                            id: responseId,
-                            created: created,
-                            model: requestModel,
-                            choices: [StreamChoice(index: 0, delta: DeltaContent(role: nil, content: chunk, tool_calls: nil), finish_reason: nil)],
-                            system_fingerprint: nil
-                        )
-                        writeSSE(contentChunk)
-                    }
                 }
                 if let toolCall = event.toolCall {
                     // Emit OpenAI-style tool_call deltas based on MLX ToolCall
@@ -282,8 +269,26 @@ class AsyncHTTPHandler {
                     return
                 }
             }
-            
+            // Join buffered content and trim stops locally; we'll emit it below only if no tool call occurred
             fullResponse = responseBuffer.joined()
+            if !stopSequences.isEmpty {
+                for s in stopSequences {
+                    if let range = fullResponse.range(of: s) {
+                        fullResponse = String(fullResponse[..<range.lowerBound])
+                        break
+                    }
+                }
+            }
+            if !fullResponse.isEmpty {
+                let contentChunk = ChatCompletionChunk(
+                    id: responseId,
+                    created: created,
+                    model: requestModel,
+                    choices: [StreamChoice(index: 0, delta: DeltaContent(role: nil, content: fullResponse, tool_calls: nil), finish_reason: nil)],
+                    system_fingerprint: nil
+                )
+                writeSSE(contentChunk)
+            }
         } else {
             // Stream tokens as JSON-encoded SSE chunks with batching and stop detection
             // Cache env thresholds once per process to avoid per-request overhead
