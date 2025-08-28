@@ -186,13 +186,34 @@ class MLXService {
         // Choose a model: explicit name -> find; otherwise pick first available
         let chosen: LMModel? = {
             if let name = modelName, let m = Self.findModel(named: name) { return m }
-            // Fallback to curated common default if present
-            if let m = Self.findModel(named: "llama-3.2-3b-instruct-4bit") { return m }
-            // As last resort, take first available discovered on disk
             if let first = Self.getAvailableModels().first, let m = Self.findModel(named: first) { return m }
             return nil
         }()
-        guard let model = chosen else { return }
+        guard let model = chosen else {
+            if let requested = modelName {
+                print("[Osaurus] Warm-up skipped: requested model not found: \(requested)")
+                DebugLog.log("WARMUP", "Requested warm-up model not found: \(requested)")
+            } else {
+                let available = Self.getAvailableModels()
+                if available.isEmpty {
+                    print("[Osaurus] Warm-up skipped: no available models found on disk")
+                    DebugLog.log("WARMUP", "No available models found during warm-up")
+                } else {
+                    print("[Osaurus] Warm-up skipped: unable to select a model (\(available.count) available)")
+                    DebugLog.log("WARMUP", "Unable to select a warm-up model from available list: \(available)")
+                }
+            }
+            return
+        }
+
+        // Validate model files are present before attempting warm-up
+        guard Self.findLocalDirectory(forModelId: model.modelId) != nil else {
+            print("[Osaurus] Warm-up skipped: model not downloaded locally: \(model.name)")
+            DebugLog.log("WARMUP", "Model not downloaded for warm-up: \(model.name)")
+            return
+        }
+
+        DebugLog.log("WARMUP", "Starting warm-up for model=\(model.name), prefillChars=\(prefillChars), maxTokens=\(maxTokens)")
 
         let warmupContent: String = prefillChars > 0 ? String(repeating: "A", count: max(1, prefillChars)) : String(repeating: "A", count: 1024)
         let messages = [Message(role: .user, content: warmupContent)]        
@@ -201,7 +222,9 @@ class MLXService {
             // Consume the small warm-up stream
             for await _ in stream { /* no-op */ }
         } catch {
-            // Non-fatal: warm-up is best effort
+            // Non-fatal: warm-up is best effort, but log for visibility
+            print("[Osaurus] Warm-up failed for model \(model.name): \(error)")
+            DebugLog.log("WARMUP", "Warm-up failed for model=\(model.name): \(error.localizedDescription)")
         }
     }
     
@@ -416,25 +439,18 @@ class MLXService {
             return g
         }
         
-        // Extract a combined system prompt (if any) to pass as ChatSession instructions
+        // Determine system instructions and last user content efficiently.
+        // Use only the most recent system message as instructions to respect templates expecting a single system prompt.
         let systemText: String = {
-            var acc = ""
-            for m in messages {
-                if m.role == .system {
-                    if !acc.isEmpty { acc += "\n" }
-                    acc += m.content
-                }
-            }
-            return acc
+            for m in messages where m.role == .system { return m.content }
+            return ""
         }()
         // Determine the user content to send. MLX ChatSession applies chat templates internally.
-        // We send only the most recent user message text; prior turns should be managed by caller/session if needed.
+        // We send only the most recent user message text; if none, fallback to the most recent non-system message.
         let lastUserText: String = {
-            if let last = messages.last(where: { $0.role == .user }) {
-                return last.content
-            }
-            // Fallback: concatenate non-system messages
-            return messages.filter { $0.role != .system }.map { $0.content }.joined(separator: "\n")
+            for m in messages.reversed() where m.role == .user { return m.content }
+            for m in messages.reversed() where m.role != .system { return m.content }
+            return ""
         }()
         DebugLog.log("PROMPT", "Using ChatSession with instructionsLen=\(systemText.count), lastUserLen=\(lastUserText.count), msgs=\(messages.count)")
 
@@ -485,9 +501,14 @@ class MLXService {
                 // Mark as active so no one else reuses it concurrently
                 activeReuseKeys.insert(key)
                 while reusableOrder.count > reusableMaxCount {
-                    let lru = reusableOrder.removeFirst()
-                    reusableSessions.removeValue(forKey: lru)
-                    activeReuseKeys.remove(lru)
+                    if let idx = reusableOrder.firstIndex(where: { !activeReuseKeys.contains($0) }) {
+                        let lru = reusableOrder.remove(at: idx)
+                        reusableSessions.removeValue(forKey: lru)
+                        DebugLog.log("CACHE", "Evicted LRU reusable session for key=\(lru)")
+                    } else {
+                        DebugLog.log("CACHE", "Cache at capacity but all sessions are active; deferring eviction")
+                        break
+                    }
                 }
                 return (newSession, key, false)
             }
@@ -515,6 +536,8 @@ class MLXService {
                         if let entry = self.reusableSessions[key] {
                             self.reusableSessions[key] = (entry.session, Date())
                         }
+                        // Now that this session is no longer active, we can evict if it expired
+                        self.evictExpiredReusableSessionsLocked(now: Date())
                     }
                 }
                 continuation.finish()
@@ -631,8 +654,12 @@ class MLXService {
         reusableOrder.removeAll { key in
             if let entry = reusableSessions[key] {
                 if now.timeIntervalSince(entry.lastUsed) >= reusableTTLSeconds {
+                    if activeReuseKeys.contains(key) {
+                        DebugLog.log("CACHE", "Skipping eviction for in-use session key=\(key) (expired)")
+                        return false
+                    }
                     reusableSessions.removeValue(forKey: key)
-                    activeReuseKeys.remove(key)
+                    DebugLog.log("CACHE", "Evicted expired reusable session for key=\(key)")
                     return true
                 }
             }
