@@ -415,8 +415,7 @@ class MLXService {
             modelGates[model.name] = g
             return g
         }
-        gate.wait()
-
+        
         // Extract a combined system prompt (if any) to pass as ChatSession instructions
         let systemText: String = {
             var acc = ""
@@ -463,7 +462,7 @@ class MLXService {
         genParams.prefillStepSize = prefillStep
 
         // Optionally reuse a ChatSession (KV cache) for the same sessionId
-        let (session, cacheKey, reusedFromCache): (ChatSession, SessionKey?, Bool) = {
+        let (session, cacheKey, _): (ChatSession, SessionKey?, Bool) = {
             guard let sessionId, !sessionId.isEmpty else { return (ChatSession(holder.container, instructions: systemText.isEmpty ? nil : systemText, generateParameters: genParams), nil, false) }
             let key = SessionKey(model: model.name, session: sessionId)
             return sessionCacheQueue.sync(flags: .barrier) {
@@ -483,12 +482,14 @@ class MLXService {
                 reusableSessions[key] = (newSession, Date())
                 if let idx = reusableOrder.firstIndex(of: key) { reusableOrder.remove(at: idx) }
                 reusableOrder.append(key)
+                // Mark as active so no one else reuses it concurrently
+                activeReuseKeys.insert(key)
                 while reusableOrder.count > reusableMaxCount {
                     let lru = reusableOrder.removeFirst()
                     reusableSessions.removeValue(forKey: lru)
                     activeReuseKeys.remove(lru)
                 }
-                return (newSession, nil, false)
+                return (newSession, key, false)
             }
         }()
         // Stream directly via ChatSession; it performs templating/tokenization per model
@@ -497,6 +498,7 @@ class MLXService {
         // Return a stream that forwards tokens; MLX enforces maxTokens internally
         return AsyncStream<String> { continuation in
             Task {
+                gate.wait()
                 defer { gate.signal() }
                 do {
                     for try await token in sessionStream {
@@ -506,7 +508,7 @@ class MLXService {
                     DebugLog.log("GEN", "Generation error for model=\(model.name): \(error.localizedDescription)")
                 }
                 // Release active flag for reused sessions
-                if reusedFromCache, let key = cacheKey {
+                if let key = cacheKey {
                     sessionCacheQueue.async(flags: .barrier) {
                         self.activeReuseKeys.remove(key)
                         // refresh lastUsed
@@ -630,6 +632,7 @@ class MLXService {
             if let entry = reusableSessions[key] {
                 if now.timeIntervalSince(entry.lastUsed) >= reusableTTLSeconds {
                     reusableSessions.removeValue(forKey: key)
+                    activeReuseKeys.remove(key)
                     return true
                 }
             }
