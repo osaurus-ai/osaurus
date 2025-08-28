@@ -10,7 +10,6 @@ import MLXLMCommon
 import MLXLLM
 import IkigaJSON
 import NIOCore
-import Jinja
 
 // MARK: - Debug logging helpers (gated by environment variables)
 private enum DebugLog {
@@ -86,12 +85,6 @@ class MLXService {
     
     /// Cache for default stop sequences per model (derived from tokenizer configs)
     nonisolated(unsafe) private static let stopSequencesCache = NSCache<NSString, NSArray>()
-    /// Cache for chat templates per model (loaded from tokenizer_config.json)
-    nonisolated(unsafe) private static let chatTemplateCache = NSCache<NSString, NSString>()
-    /// Cache for BOS token per model
-    nonisolated(unsafe) private static let bosTokenCache = NSCache<NSString, NSString>()
-    /// Cache for compiled Jinja templates keyed by template string
-    nonisolated(unsafe) private static let compiledTemplateCache = NSCache<NSString, TemplateBox>()
     
     /// Concurrent queue for thread-safe model lookup operations
     private static let modelLookupQueue = DispatchQueue(label: "com.osaurus.model.lookup", attributes: .concurrent)
@@ -121,11 +114,7 @@ class MLXService {
             self.container = container
         }
     }
-    /// Box wrapper to store compiled Jinja templates in NSCache
-    private final class TemplateBox: NSObject {
-        let template: Template
-        init(template: Template) { self.template = template }
-    }
+    
     private let modelCache = NSCache<NSString, SessionHolder>()
 
     /// LRU cache for reusable ChatSession keyed by (modelName, sessionId)
@@ -231,8 +220,6 @@ class MLXService {
         Self.availableModelsCache.setObject(modelInfo as NSArray, forKey: "modelInfo" as NSString)
         // Model set may have changed; clear derived stop sequences cache
         Self.stopSequencesCache.removeAllObjects()
-        // Clear BOS token cache to avoid stale values
-        Self.bosTokenCache.removeAllObjects()
     }
     
     /// Get list of available models that are downloaded (thread-safe)
@@ -433,132 +420,7 @@ class MLXService {
         return []
     }
 
-    /// Extract a string from heterogeneous JSON values (string or {content|text})
-    nonisolated private static func extractString(from any: Any?) -> String? {
-        guard let any else { return nil }
-        if let s = any as? String, !s.isEmpty { return s }
-        if let d = any as? [String: Any] {
-            if let s = d["content"] as? String, !s.isEmpty { return s }
-            if let s = d["text"] as? String, !s.isEmpty { return s }
-            if let s = d["template"] as? String, !s.isEmpty { return s }
-        }
-        return nil
-    }
-
-    /// Load chat_template from chat_template.jinja (preferred) or tokenizer_config.json (fallback), cached per model
-    nonisolated static func modelChatTemplate(for model: LMModel) -> String? {
-        // Allow forcing fallback formatting to help diagnose template issues
-        if ProcessInfo.processInfo.environment["OSU_DISABLE_JINJA"] == "1" {
-            DebugLog.log("JINJA", "OSU_DISABLE_JINJA=1 set; skipping template for \(model.modelId)")
-            return nil
-        }
-        let key = model.modelId as NSString
-        if let cached = chatTemplateCache.object(forKey: key) as String? {
-            return cached.isEmpty ? nil : cached
-        }
-        guard let dir = findLocalDirectory(forModelId: model.modelId) else {
-            chatTemplateCache.setObject("" as NSString, forKey: key)
-            return nil
-        }
-        let fm = FileManager.default
-
-        // 1) Prefer explicit Jinja file if present
-        let jinjaURL = dir.appendingPathComponent("chat_template.jinja")
-        if fm.fileExists(atPath: jinjaURL.path),
-           let data = try? Data(contentsOf: jinjaURL),
-           let s = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines),
-           !s.isEmpty {
-            chatTemplateCache.setObject(s as NSString, forKey: key)
-            // Precompile and cache the Jinja template for faster renders
-            if let _ = compiledJinjaTemplate(for: s) {
-                DebugLog.log("JINJA", "Loaded chat_template.jinja for \(model.modelId) (\(s.count) chars)")
-            } else {
-                DebugLog.log("JINJA", "Failed to compile chat_template.jinja for \(model.modelId); will fall back at render time")
-            }
-            return s
-        }
-
-        // 2) Fallback to tokenizer_config.json fields
-        let url = dir.appendingPathComponent("tokenizer_config.json")
-        guard fm.fileExists(atPath: url.path),
-              let data = try? Data(contentsOf: url),
-              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-            chatTemplateCache.setObject("" as NSString, forKey: key)
-            return nil
-        }
-        // Prefer explicit chat_template
-        if let s = extractString(from: obj["chat_template"]) {
-            chatTemplateCache.setObject(s as NSString, forKey: key)
-            // Precompile and cache the Jinja template for faster renders
-            if let _ = compiledJinjaTemplate(for: s) {
-                DebugLog.log("JINJA", "Loaded chat_template from tokenizer_config.json for \(model.modelId) (\(s.count) chars)")
-            } else {
-                DebugLog.log("JINJA", "Failed to compile tokenizer_config chat_template for \(model.modelId); will fall back at render time")
-            }
-            return s
-        }
-        // Some configs put it under default_chat_template
-        if let s = extractString(from: obj["default_chat_template"]) {
-            chatTemplateCache.setObject(s as NSString, forKey: key)
-            // Precompile and cache the Jinja template for faster renders
-            if let _ = compiledJinjaTemplate(for: s) {
-                DebugLog.log("JINJA", "Loaded default_chat_template from tokenizer_config.json for \(model.modelId) (\(s.count) chars)")
-            } else {
-                DebugLog.log("JINJA", "Failed to compile default_chat_template for \(model.modelId); will fall back at render time")
-            }
-            return s
-        }
-        chatTemplateCache.setObject("" as NSString, forKey: key)
-        return nil
-    }
-
-    /// Get a compiled Jinja template from cache, compiling and caching on first use
-    nonisolated static func compiledJinjaTemplate(for templateString: String) -> Template? {
-        let key = templateString as NSString
-        if let box = compiledTemplateCache.object(forKey: key) {
-            return box.template
-        }
-        // Compile and cache
-        do {
-            let compiled = try Template(templateString)
-            compiledTemplateCache.setObject(TemplateBox(template: compiled), forKey: key)
-            return compiled
-        } catch {
-            DebugLog.log("JINJA", "Template compilation failed (len=\(templateString.count)): \(error.localizedDescription)")
-            return nil
-        }
-    }
-
-    /// Retrieve BOS token from tokenizer config if available
-    nonisolated static func tokenizerBOSToken(for model: LMModel) -> String? {
-        // Cache lookup first
-        let cacheKey = model.modelId as NSString
-        if let cached = bosTokenCache.object(forKey: cacheKey) as String? {
-            return cached.isEmpty ? nil : cached
-        }
-        guard let dir = findLocalDirectory(forModelId: model.modelId) else {
-            bosTokenCache.setObject("" as NSString, forKey: cacheKey)
-            return nil
-        }
-        let fm = FileManager.default
-        let candidates = [
-            dir.appendingPathComponent("special_tokens_map.json"),
-            dir.appendingPathComponent("tokenizer_config.json")
-        ]
-        for url in candidates {
-            if fm.fileExists(atPath: url.path),
-               let data = try? Data(contentsOf: url),
-               let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
-                if let s = extractString(from: obj["bos_token"]) {
-                    bosTokenCache.setObject(s as NSString, forKey: cacheKey)
-                    DebugLog.log("TOKENS", "BOS from \(url.lastPathComponent) for \(model.modelId): \(s.debugDescription)")
-                    return s
-                }
-            }
-        }
-        bosTokenCache.setObject("" as NSString, forKey: cacheKey)
-        return nil
-    }
+    
     
     /// Loads a model container from local storage or retrieves it from cache.
     private func load(model: LMModel) async throws -> SessionHolder {
@@ -628,29 +490,16 @@ class MLXService {
             }
             return acc
         }()
-        // Build a prompt from chat messages and optional tool specs
-        // Exclude the system section if we are passing instructions to ChatSession
-        let chatTemplate = Self.modelChatTemplate(for: model)
-        let bosToken = Self.tokenizerBOSToken(for: model)
-        let eosToken = Self.defaultStopSequences(for: model).first
-        let prompt = buildPrompt(
-            from: messages,
-            tools: tools,
-            toolChoice: toolChoice,
-            excludeSystem: !systemText.isEmpty,
-            chatTemplate: chatTemplate,
-            bosToken: bosToken,
-            eosToken: eosToken
-        )
-        DebugLog.log("PROMPT", "Built prompt for model=\(model.name), jinja=\(chatTemplate != nil), len=\(prompt.count), systemLen=\(systemText.count), msgs=\(messages.count)")
-        if let mode = DebugLog.promptMode, !mode.isEmpty {
-            if mode == "full" {
-                DebugLog.prompt(prompt)
-            } else {
-                let preview = String(prompt.prefix(800))
-                DebugLog.prompt("preview (first 800 chars)\n\(preview)")
+        // Determine the user content to send. MLX ChatSession applies chat templates internally.
+        // We send only the most recent user message text; prior turns should be managed by caller/session if needed.
+        let lastUserText: String = {
+            if let last = messages.last(where: { $0.role == .user }) {
+                return last.content
             }
-        }
+            // Fallback: concatenate non-system messages
+            return messages.filter { $0.role != .system }.map { $0.content }.joined(separator: "\n")
+        }()
+        DebugLog.log("PROMPT", "Using ChatSession with instructionsLen=\(systemText.count), lastUserLen=\(lastUserText.count), msgs=\(messages.count)")
 
         // Build MLX generation parameters (temperature, sampling, KV cache, etc.)
         // Prefer UI configuration when available
@@ -704,9 +553,8 @@ class MLXService {
                 return (newSession, nil, false)
             }
         }()
-        // If this is a freshly created session without reuse, ensure instructions are set
-        // (For reused sessions, we keep prior instructions to avoid races.)
-        let sessionStream = session.streamResponse(to: prompt)
+        // Stream directly via ChatSession; it performs templating/tokenization per model
+        let sessionStream = session.streamResponse(to: lastUserText)
         
         // Return a stream that forwards tokens; MLX enforces maxTokens internally
         return AsyncStream<String> { continuation in
@@ -766,103 +614,4 @@ class MLXService {
         // Update available models cache
         updateAvailableModelsCache()
     }
-}
-
-// MARK: - Prompt Formatting
-
-/// Cache for encoded tool specifications to avoid repeated JSON encoding
-private let toolsJSONCache = NSCache<NSNumber, NSString>()
-
-func buildPrompt(from messages: [Message], tools: [Tool]?, toolChoice: ToolChoiceOption?, excludeSystem: Bool = false, chatTemplate: String? = nil, bosToken: String? = nil, eosToken: String? = nil) -> String {
-    var systemPrompt = ""
-    var conversation = ""
-    for message in messages {
-        switch message.role {
-        case .system:
-            if !excludeSystem {
-                if !systemPrompt.isEmpty { systemPrompt += "\n" }
-                systemPrompt += message.content
-            }
-        case .user:
-            conversation += "User: \(message.content)\n"
-        case .assistant:
-            conversation += "Assistant: \(message.content)\n"
-        }
-    }
-    // Tool specifications block
-    var toolsBlock = ""
-    if let tools, !tools.isEmpty {
-        // Create a cache key from tool names
-        let toolNames = tools.map { $0.function.name }.sorted().joined(separator: ",")
-        let cacheKey = NSNumber(value: toolNames.hashValue)
-        
-        let json: String
-        if let cached = toolsJSONCache.object(forKey: cacheKey) {
-            json = cached as String
-        } else {
-            var encoder = IkigaJSONEncoder()
-            var buffer = ByteBufferAllocator().buffer(capacity: 1024)
-            if let _ = try? encoder.encodeAndWrite(tools, into: &buffer), let encoded = buffer.readString(length: buffer.readableBytes) {
-                json = encoded
-                toolsJSONCache.setObject(encoded as NSString, forKey: cacheKey)
-            } else {
-                json = "[]"
-            }
-        }
-        
-        if !json.isEmpty {
-            // Compact tool-call guidance to reduce prefill tokens.
-            // Expect OpenAI-style tool_calls. If invoking a tool, reply with only:
-            // {"tool_calls":[{"id":"call_auto","type":"function","function":{"name":"<name>","arguments":"<json-string>"}}]}
-            toolsBlock += "\n\nTools:\n"
-            toolsBlock += json
-            if let toolChoice {
-                let encoder = IkigaJSONEncoder()
-                var buffer = ByteBufferAllocator().buffer(capacity: 128)
-                if let _ = try? encoder.encodeAndWrite(toolChoice, into: &buffer), let jsonChoice = buffer.readString(length: buffer.readableBytes) {
-                    toolsBlock += "\ntool_choice: \(jsonChoice)"
-                }
-            }
-        }
-    }
-    // If a chat template is available, render using Jinja; otherwise fall back
-    if let template = chatTemplate, !template.isEmpty {
-        // Build Jinja context
-        let filtered: [Message] = excludeSystem ? messages.filter { $0.role != .system } : messages
-        let jinjaMessages: [[String: Any]] = filtered.map { msg in
-            [
-                "role": msg.role.rawValue,
-                "content": msg.content
-            ]
-        }
-        var ctx: [String: Any] = [
-            "messages": jinjaMessages,
-            "add_generation_prompt": true
-        ]
-        if let bosToken { ctx["bos_token"] = bosToken }
-        if let eosToken { ctx["eos_token"] = eosToken }
-        // Use precompiled template cache; compile on first use
-        if let compiled = MLXService.compiledJinjaTemplate(for: template) {
-            do {
-                let rendered = try compiled.render(ctx)
-                let base = rendered.trimmingCharacters(in: .whitespacesAndNewlines)
-                let combined = base + toolsBlock
-                DebugLog.log("JINJA", "Rendered template (len=\(combined.count), msgs=\(jinjaMessages.count), excludeSystem=\(excludeSystem))")
-                return combined.trimmingCharacters(in: .whitespacesAndNewlines)
-            } catch {
-                DebugLog.log("JINJA", "Render failed: \(error.localizedDescription). Falling back to transcript format.")
-            }
-        } else {
-            DebugLog.log("JINJA", "No compiled template available; falling back to transcript format.")
-        }
-        // If rendering failed or template missing, proceed to fallback formatting below
-    }
-    let fullPrompt: String
-    if systemPrompt.isEmpty {
-        fullPrompt = conversation + toolsBlock
-    } else {
-        fullPrompt = "\(systemPrompt)\n\n\(conversation)Assistant:\(toolsBlock)"
-    }
-    DebugLog.log("PROMPT", "Using fallback transcript format (len=\(fullPrompt.count), tools=\((tools?.isEmpty == false)))")
-    return fullPrompt.trimmingCharacters(in: .whitespacesAndNewlines)
 }

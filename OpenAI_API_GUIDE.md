@@ -267,7 +267,7 @@ Keep `session_id` stable per conversation and per model.
 
 ### Chat Templates
 
-When available, Osaurus uses a model’s Jinja `chat_template` (or `default_chat_template`) from `tokenizer_config.json` to format prompts. Rendering passes `messages`, `add_generation_prompt: true`, and includes `bos_token`/`eos_token` when defined. If system messages are present, they are combined and supplied as model instructions while the template renders the remaining turns. If no template exists or rendering fails, Osaurus falls back to a compact transcript format.
+Osaurus defers chat templating to MLX `ChatSession`, which uses the model's configuration to format prompts. System messages are combined and passed as `instructions`; user content is supplied as the prompt to `respond/streamResponse`. This avoids double‑templating and aligns with MLX behavior.
 
 ## Model Naming
 

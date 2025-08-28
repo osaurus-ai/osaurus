@@ -32,7 +32,7 @@ Project layout and API overview are in `README.md`.
 ### Tool calling (developer notes)
 
 - OpenAI‑compatible DTOs live in `Models/OpenAIAPI.swift` (`Tool`, `ToolFunction`, `ToolCall`, `DeltaToolCall`, etc.).
-- Prompt assembly for tools is handled in `Services/MLXService.swift` (`buildPrompt(from:tools:toolChoice:)`).
+- Prompt templating is handled internally by MLX `ChatSession`. Osaurus no longer assembles prompts manually.
 - Assistant outputs are parsed by `Models/ToolCallParser.swift`, which accepts minor formatting noise (code fences, `assistant:` prefix) and normalizes `function.arguments` strings.
 - Streaming tool calls are emitted as OpenAI‑style deltas in `Networking/AsyncHTTPHandler.swift`.
 - Add or modify tests in `osaurusTests/ToolCallParserTests.swift`.

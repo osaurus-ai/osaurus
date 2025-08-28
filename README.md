@@ -20,7 +20,7 @@ Created by Dinoki Labs ([dinoki.ai](https://dinoki.ai)), a fully native desktop 
 - **Apple Silicon only**: Designed and tested for M‑series Macs
 - **OpenAI API compatible**: `/v1/models` and `/v1/chat/completions` (stream and non‑stream)
 - **Function/Tool calling**: OpenAI‑style `tools` + `tool_choice`, with `tool_calls` parsing and streaming deltas
-- **Chat templates**: Uses model‑provided Jinja `chat_template` with BOS/EOS, with smart fallback
+- **Chat templates**: Delegates templating to MLX `ChatSession` for model‑native formatting
 - **Session reuse (KV cache)**: Faster multi‑turn chats via `session_id`
 - **Fast token streaming**: Server‑Sent Events for low‑latency output
 - **Model manager UI**: Browse, download, and manage MLX models from `mlx-community`
@@ -70,7 +70,7 @@ osaurus/
 - Download sizes estimated via Hugging Face metadata
 - Streaming and non‑streaming chat completions
 - OpenAI‑compatible function calling with robust parser for model outputs (handles code fences/formatting noise)
-- Chat templates from model `tokenizer_config.json` (Jinja), auto‑uses BOS/EOS; falls back to friendly transcript format when missing
+- Chat templating handled by MLX `ChatSession` using the model's configuration
 - Session reuse across turns via `session_id` (reuses KV cache when possible)
 - Auto‑detects stop sequences and BOS token from tokenizer configs
 - Health endpoint and simple status UI
@@ -206,15 +206,7 @@ Notes:
 
 ### Chat Templates
 
-Osaurus loads Jinja chat templates from a model's `tokenizer_config.json` when available:
-
-- **Sources**: `chat_template` or `default_chat_template` (string or `{text|content|template}` object).
-- **Context**: Renders with `messages`, `add_generation_prompt: true`, and includes `bos_token`/`eos_token` if defined.
-- **System handling**: If your request includes `role: system` messages, Osaurus combines them and passes as model instructions while rendering the template over the remaining turns.
-- **Fallback**: If no template is present or rendering fails, Osaurus uses a concise transcript format: `User: ... / Assistant: ...`, with the system text prepended.
-- **Tools**: When `tools`/`tool_choice` are provided, a compact tools block is appended to the rendered prompt.
-
-This keeps prompts aligned with each model’s native formatting while remaining OpenAI‑compatible at the API level.
+Osaurus relies on MLX `ChatSession` to apply the appropriate chat template for each model. System messages are passed as `instructions`; user content is fed via `respond/streamResponse`. This keeps prompts aligned with model‑native formatting and avoids double‑templating.
 
 ### Session reuse (KV cache)
 
