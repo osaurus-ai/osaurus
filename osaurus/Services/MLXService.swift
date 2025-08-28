@@ -582,6 +582,91 @@ class MLXService {
         }
     }
 
+    /// Generate event stream from MLX that can include both text chunks and tool call events.
+    /// This mirrors MLX Swift examples' event-based streaming and lets callers react to tool calls directly.
+    func generateEvents(
+        messages: [Message],
+        model: LMModel,
+        temperature: Float = 0.7,
+        maxTokens: Int = 2048,
+        tools: [Tool]? = nil,
+        toolChoice: ToolChoiceOption? = nil,
+        sessionId: String? = nil
+    ) async throws -> AsyncStream<MLXLMCommon.Generation> {
+        let holder = try await load(model: model)
+
+        // Acquire a per-model gate to avoid concurrent use of the same container
+        let gate: ConcurrencyGate = sessionCacheQueue.sync(flags: .barrier) {
+            if let g = modelGates[model.name] { return g }
+            let env = ProcessInfo.processInfo.environment
+            let limit = Int(env["OSU_MODEL_MAX_CONCURRENCY"] ?? "") ?? 1
+            let g = ConcurrencyGate(limit: limit)
+            modelGates[model.name] = g
+            return g
+        }
+
+        // Prepare generation parameters from server configuration
+        let cfg = await ServerController.sharedConfiguration()
+        let topP: Float = cfg?.genTopP ?? 0.95
+        let kvBits: Int? = cfg?.genKVBits
+        let kvGroup: Int = cfg?.genKVGroupSize ?? 64
+        let quantStart: Int = cfg?.genQuantizedKVStart ?? 0
+        let maxKV: Int? = cfg?.genMaxKVSize
+        let prefillStep: Int = cfg?.genPrefillStepSize ?? 4096
+
+        var genParams = MLXLMCommon.GenerateParameters(
+            maxTokens: maxTokens,
+            maxKVSize: maxKV,
+            kvBits: kvBits,
+            kvGroupSize: kvGroup,
+            quantizedKVStart: quantStart,
+            temperature: temperature,
+            topP: topP,
+            repetitionPenalty: nil,
+            repetitionContextSize: 20
+        )
+        genParams.prefillStepSize = prefillStep
+
+        // Map internal messages to MLX Chat.Message
+        let chat: [MLXLMCommon.Chat.Message] = messages.map { m in
+            let role: MLXLMCommon.Chat.Message.Role = {
+                switch m.role {
+                case .system: return .system
+                case .user: return .user
+                case .assistant: return .assistant
+                }
+            }()
+            return MLXLMCommon.Chat.Message(role: role, content: m.content, images: [], videos: [])
+        }
+
+        // Build and return a wrapper stream that forwards MLX events and releases the gate on completion
+        return AsyncStream<MLXLMCommon.Generation> { continuation in
+            Task {
+                gate.wait()
+                defer { gate.signal() }
+                do {
+                    let stream: AsyncStream<MLXLMCommon.Generation> = try await holder.container.perform { (context: MLXLMCommon.ModelContext) in
+                        let userInput = MLXLMCommon.UserInput(chat: chat, processing: .init())
+                        let lmInput = try await context.processor.prepare(input: userInput)
+                        // Ask MLX to generate an event stream (chunks + tool calls)
+                        return try MLXLMCommon.generate(
+                            input: lmInput,
+                            cache: nil,
+                            parameters: genParams,
+                            context: context
+                        )
+                    }
+                    for await event in stream {
+                        continuation.yield(event)
+                    }
+                } catch {
+                    DebugLog.log("GEN", "Event generation error for model=\(model.name): \(error.localizedDescription)")
+                }
+                continuation.finish()
+            }
+        }
+    }
+
     private func evictExpiredReusableSessionsLocked(now: Date) {
         if reusableSessions.isEmpty { return }
         reusableOrder.removeAll { key in
