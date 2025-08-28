@@ -51,13 +51,8 @@ class AsyncHTTPHandler {
             let temperature = request.temperature ?? 0.7
             let maxTokens = request.max_tokens ?? 2048
             
-            // Compute effective stop sequences: use request-provided or fall back to model defaults
-            let effectiveStops: [String]
-            if let s = request.stop, !s.isEmpty {
-                effectiveStops = s
-            } else {
-                effectiveStops = MLXService.defaultStopSequences(for: model)
-            }
+            // Honor only request-provided stop sequences; otherwise rely on library EOS handling
+            let effectiveStops: [String] = request.stop ?? []
 
             // Check if streaming is requested
             if request.stream ?? false {
@@ -544,7 +539,6 @@ class AsyncHTTPHandler {
         }
         fullResponse = segments.joined()
         
-        // Detect tool calls in model output
         // Trim at stop if present
         if !stopSequences.isEmpty {
             for s in stopSequences {
