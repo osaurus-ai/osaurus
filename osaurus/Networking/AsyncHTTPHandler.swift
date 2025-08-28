@@ -24,6 +24,17 @@ class AsyncHTTPHandler {
     
     private init() {}
     
+    @inline(__always)
+    private func executeOnLoop(_ loop: EventLoop, _ block: @escaping () -> Void) {
+        if loop.inEventLoop {
+            block()
+        } else {
+            loop.execute {
+                block()
+            }
+        }
+    }
+    
     /// Handle chat completions with streaming support
     func handleChatCompletion(
         request: ChatCompletionRequest,
@@ -121,7 +132,7 @@ class AsyncHTTPHandler {
         responseHead.headers = nioHeaders
         
         // Ensure header write happens on the channel's event loop
-        loop.execute {
+        executeOnLoop(loop) {
             let context = ctxBox.value
             guard context.channel.isActive else { return }
             context.write(NIOAny(HTTPServerResponsePart.head(responseHead)), promise: nil)
@@ -169,7 +180,7 @@ class AsyncHTTPHandler {
             )
             @inline(__always)
             func writeSSE<T: Encodable>(_ value: T, flush: Bool = true) {
-                loop.execute {
+                executeOnLoop(loop) {
                     let context = ctxBox.value
                     guard context.channel.isActive else { return }
                     let encoder = IkigaJSONEncoder()
@@ -183,7 +194,7 @@ class AsyncHTTPHandler {
             }
             @inline(__always)
             func writeSSEString(_ s: String, flush: Bool = true) {
-                loop.execute {
+                executeOnLoop(loop) {
                     let context = ctxBox.value
                     guard context.channel.isActive else { return }
                     var buffer = context.channel.allocator.buffer(capacity: s.utf8.count)
@@ -218,8 +229,8 @@ class AsyncHTTPHandler {
                     // Construct a synthetic id to satisfy OpenAI delta contract
                     let callId = "call_\(UUID().uuidString.prefix(8))"
 
-                    // id/type
-                    writeSSE(ChatCompletionChunk(
+                    // Batch tool_call deltas and finalization into a single write/flush
+                    let idTypeChunk = ChatCompletionChunk(
                         id: responseId,
                         created: created,
                         model: requestModel,
@@ -227,9 +238,8 @@ class AsyncHTTPHandler {
                             DeltaToolCall(index: 0, id: callId, type: "function", function: nil)
                         ]), finish_reason: nil)],
                         system_fingerprint: nil
-                    ))
-                    // name
-                    writeSSE(ChatCompletionChunk(
+                    )
+                    let nameChunk = ChatCompletionChunk(
                         id: responseId,
                         created: created,
                         model: requestModel,
@@ -237,9 +247,8 @@ class AsyncHTTPHandler {
                             DeltaToolCall(index: 0, id: callId, type: nil, function: DeltaToolCallFunction(name: mlxName, arguments: nil))
                         ]), finish_reason: nil)],
                         system_fingerprint: nil
-                    ))
-                    // args (send as a single delta for better client compatibility)
-                    writeSSE(ChatCompletionChunk(
+                    )
+                    let argsChunk = ChatCompletionChunk(
                         id: responseId,
                         created: created,
                         model: requestModel,
@@ -247,20 +256,31 @@ class AsyncHTTPHandler {
                             DeltaToolCall(index: 0, id: callId, type: nil, function: DeltaToolCallFunction(name: nil, arguments: argsString))
                         ]), finish_reason: nil)],
                         system_fingerprint: nil
-                    ))
-
-                    // Terminate tool_calls stream and close
-                    writeSSE(ChatCompletionChunk(
+                    )
+                    let finishChunk = ChatCompletionChunk(
                         id: responseId,
                         created: created,
                         model: requestModel,
                         choices: [StreamChoice(index: 0, delta: DeltaContent(role: nil, content: nil, tool_calls: nil), finish_reason: "tool_calls")],
                         system_fingerprint: nil
-                    ))
-                    writeSSEString("data: [DONE]\n\n")
-                    loop.execute {
+                    )
+                    executeOnLoop(loop) {
                         let context = ctxBox.value
                         guard context.channel.isActive else { return }
+                        let encoder = IkigaJSONEncoder()
+                        var buffer = context.channel.allocator.buffer(capacity: 1024)
+                        func writeData<T: Encodable>(_ v: T) {
+                            buffer.writeString("data: ")
+                            do { try encoder.encodeAndWrite(v, into: &buffer) } catch {}
+                            buffer.writeString("\n\n")
+                        }
+                        writeData(idTypeChunk)
+                        writeData(nameChunk)
+                        writeData(argsChunk)
+                        writeData(finishChunk)
+                        buffer.writeString("data: [DONE]\n\n")
+                        context.write(NIOAny(HTTPServerResponsePart.body(.byteBuffer(buffer))), promise: nil)
+                        context.flush()
                         context.writeAndFlush(NIOAny(HTTPServerResponsePart.end(nil as HTTPHeaders?))).whenComplete { _ in
                             let context = ctxBox.value
                             context.close(promise: nil)
@@ -368,7 +388,7 @@ class AsyncHTTPHandler {
                     system_fingerprint: nil
                 )
                 let encoder = IkigaJSONEncoder()
-                loop.execute {
+                executeOnLoop(loop) {
                     let context = ctxBox.value
                     guard context.channel.isActive else { return }
                     var buffer = context.channel.allocator.buffer(capacity: 256)
@@ -404,7 +424,7 @@ class AsyncHTTPHandler {
                         stopTail.removeFirst(overflow)
                     }
                     if stopSequences.first(where: { stopTail.contains($0) }) != nil {
-                        loop.execute {
+                        executeOnLoop(loop) {
                             if pendingBuffer.readableBytes > 0 {
                                 let content = pendingBuffer.readString(length: pendingBuffer.readableBytes) ?? ""
                                 sendContentDelta(content, flushNow: true)
@@ -416,12 +436,12 @@ class AsyncHTTPHandler {
                     }
                 }
 
-                loop.execute {
+                executeOnLoop(loop) {
                     processTokenOnLoop(token)
                 }
             }
 
-            loop.execute {
+            executeOnLoop(loop) {
                 if pendingBuffer.readableBytes > 0 {
                     let content = pendingBuffer.readString(length: pendingBuffer.readableBytes) ?? ""
                     sendContentDelta(content, flushNow: true)
@@ -458,7 +478,7 @@ class AsyncHTTPHandler {
         
         @inline(__always)
         func writeSSEFinal<T: Encodable>(_ value: T) {
-            loop.execute {
+            executeOnLoop(loop) {
                 let context = ctxBox.value
                 guard context.channel.isActive else { return }
                 let encoder = IkigaJSONEncoder()
