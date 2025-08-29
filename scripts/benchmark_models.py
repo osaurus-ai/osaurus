@@ -59,6 +59,7 @@ class RequestConfig:
     stream: bool = True
     timeout_seconds: float = 60.0
     extra_json: Dict[str, Any] = None  # for vendor-specific options
+    system_prompt: Optional[str] = None
 
 
 @dataclass
@@ -112,7 +113,7 @@ async def run_single_chat(
 
     payload: Dict[str, Any] = {
         "model": server.model,
-        "messages": [
+        "messages": ([{"role": "system", "content": cfg.system_prompt}] if cfg.system_prompt else []) + [
             {"role": "user", "content": prompt_text},
         ],
         "temperature": cfg.temperature,
@@ -350,6 +351,11 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
         help="Prompt text. Can be repeated. If omitted, uses built-in samples.",
     )
     parser.add_argument(
+        "--system-prompt",
+        default=None,
+        help="System prompt text to prepend as a system message.",
+    )
+    parser.add_argument(
         "--prompts-file",
         default=None,
         help="Path to a text file with one prompt per line.",
@@ -427,6 +433,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         stream=not args.no_stream,
         timeout_seconds=args.timeout,
         extra_json=extra_json,
+        system_prompt=getattr(args, "system_prompt", None),
     )
 
     # Optional warm-up to avoid counting cold starts/connection setup
@@ -439,7 +446,8 @@ def main(argv: Optional[List[str]] = None) -> int:
             run_benchmark(servers, prompts, args.warmup_iterations, args.concurrency, cfg)
         )
 
-    print(f"Running benchmark against {len(servers)} server(s), {len(prompts)} prompt(s), {args.iterations} iteration(s) each, concurrency={args.concurrency}...")
+    sys_prompt_flag = "ON" if cfg.system_prompt else "OFF"
+    print(f"Running benchmark against {len(servers)} server(s), {len(prompts)} prompt(s), {args.iterations} iteration(s) each, concurrency={args.concurrency}, system_prompt={sys_prompt_flag}...")
 
     results: List[SingleResult] = asyncio.run(
         run_benchmark(servers, prompts, args.iterations, args.concurrency, cfg)
