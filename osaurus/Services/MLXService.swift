@@ -10,6 +10,7 @@ import MLXLMCommon
 import MLXLLM
 import IkigaJSON
 import NIOCore
+import CryptoKit
 
 // MARK: - Debug logging helpers (gated by environment variables)
 private enum DebugLog {
@@ -628,12 +629,73 @@ class MLXService {
                 defer { gate.signal() }
                 do {
                     let stream: AsyncStream<MLXLMCommon.Generation> = try await holder.container.perform { (context: MLXLMCommon.ModelContext) in
-                        let userInput = MLXLMCommon.UserInput(chat: chat, processing: .init(), tools: tokenizerTools)
-                        let lmInput = try await context.processor.prepare(input: userInput)
-                        // Ask MLX to generate an event stream (chunks + tool calls)
+                        // If there is no system prefix, fall back to normal generation
+                        let maybeSystem: String? = {
+                            for m in messages where m.role == .system { return m.content }
+                            return nil
+                        }()
+
+                        // Prepare full chat input (for tokenization and to get delta tokens later)
+                        let fullInput = MLXLMCommon.UserInput(chat: chat, processing: .init(), tools: tokenizerTools)
+                        let fullLMInput = try await context.processor.prepare(input: fullInput)
+
+                        guard let systemText = maybeSystem, !systemText.isEmpty else {
+                            // No static system prefix -> no prefix cache
+                            return try MLXLMCommon.generate(
+                                input: fullLMInput,
+                                cache: nil,
+                                parameters: genParams,
+                                context: context
+                            )
+                        }
+
+                        // 1) Compute prefix tokens for the system prompt only (stable template)
+                        let prefixChat: [MLXLMCommon.Chat.Message] = [.system(systemText)]
+                        let prefixInput = MLXLMCommon.UserInput(chat: prefixChat, processing: .init(), tools: tokenizerTools)
+                        let prefixLMInput = try await context.processor.prepare(input: prefixInput)
+
+                        // Hash the prefix token ids to form a cache key per model+prefix
+                        let prefixIds: [Int] = prefixLMInput.text.tokens.asArray(Int.self)
+                        let prefixHash = Self.hashTokenIds(prefixIds)
+
+                        // Determine on-disk cache location
+                        let cacheURL = Self.prefixCacheURL(modelId: model.modelId, hash: prefixHash)
+
+                        // 2) Load or build the immutable base prefix cache
+                        var workingCache: [KVCache]
+                        if FileManager.default.fileExists(atPath: cacheURL.path),
+                           let loaded = try? loadPromptCache(url: cacheURL).0 {
+                            workingCache = loaded
+                        } else {
+                            // Build a fresh cache by pre-filling with prefix tokens only
+                            workingCache = context.model.newCache(parameters: genParams)
+                            var prefillParams = genParams
+                            prefillParams.maxTokens = 0  // do not generate any tokens during warmup
+                            _ = try MLXLMCommon.TokenIterator(
+                                input: prefixLMInput,
+                                model: context.model,
+                                cache: workingCache,
+                                parameters: prefillParams
+                            )
+                            // Persist immutable prefix cache for reuse across sessions
+                            try Self.ensureParentDirectoryExists(for: cacheURL)
+                            try savePromptCache(url: cacheURL, cache: workingCache, metadata: [
+                                "modelId": model.modelId,
+                                "prefixTokenCount": String(prefixIds.count)
+                            ])
+                        }
+
+                        // 3) Extend session cache with the delta tokens (full chat minus prefix)
+                        let fullCount = fullLMInput.text.tokens.size
+                        let prefixCount = prefixLMInput.text.tokens.size
+                        let startIndex = min(prefixCount, fullCount)
+                        let deltaTokens = fullLMInput.text.tokens[startIndex...]
+                        let deltaLMInput = MLXLMCommon.LMInput(tokens: deltaTokens)
+
+                        // 4) Generate with the combined cache; new tokens append to workingCache (session-specific)
                         return try MLXLMCommon.generate(
-                            input: lmInput,
-                            cache: nil,
+                            input: deltaLMInput,
+                            cache: workingCache,
                             parameters: genParams,
                             context: context
                         )
@@ -685,5 +747,42 @@ class MLXService {
         
         // Update available models cache
         updateAvailableModelsCache()
+    }
+}
+
+// MARK: - Prompt Cache Utilities
+
+extension MLXService {
+    /// Compute a stable SHA-256 hash for a list of token ids
+    private static func hashTokenIds(_ tokens: [Int]) -> String {
+        var data = Data(capacity: tokens.count * 4)
+        for t in tokens { var v = Int32(t); withUnsafeBytes(of: &v) { data.append(contentsOf: $0) } }
+        let digest = SHA256.hash(data: data)
+        return digest.compactMap { String(format: "%02x", $0) }.joined()
+    }
+
+    /// Directory to store prompt caches for a given model id (org/repo)
+    private static func promptCacheDirectory(modelId: String) -> URL {
+        let base = DirectoryPickerService.shared.effectiveModelsDirectory
+        let parts = modelId.split(separator: "/").map(String.init)
+        let dir = parts.reduce(base) { partial, comp in
+            partial.appendingPathComponent(comp, isDirectory: true)
+        }.appendingPathComponent("_prompt_caches", isDirectory: true)
+        return dir
+    }
+
+    /// Full URL for a given prefix cache file
+    private static func prefixCacheURL(modelId: String, hash: String) -> URL {
+        let dir = promptCacheDirectory(modelId: modelId)
+        return dir.appendingPathComponent("prefix-\(hash).safetensors", isDirectory: false)
+    }
+
+    /// Ensure the parent directory exists for a file URL
+    private static func ensureParentDirectoryExists(for url: URL) throws {
+        let dir = url.deletingLastPathComponent()
+        var isDir: ObjCBool = false
+        if !FileManager.default.fileExists(atPath: dir.path, isDirectory: &isDir) || !isDir.boolValue {
+            try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        }
     }
 }
