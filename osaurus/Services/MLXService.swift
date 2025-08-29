@@ -569,7 +569,6 @@ final class MLXService: @unchecked Sendable {
     }
 
     /// Generate event stream from MLX that can include both text chunks and tool call events.
-    /// This mirrors MLX Swift examples' event-based streaming and lets callers react to tool calls directly.
     func generateEvents(
         messages: [Message],
         model: LMModel,
@@ -898,8 +897,6 @@ extension MLXService {
         let dir = promptCacheDirectory(modelId: modelId)
         return dir.appendingPathComponent("prefix-\(hash).safetensors", isDirectory: false)
     }
-
-    // Legacy migration helpers removed (all caches already migrated outside model dir)
 
     /// Ensure the parent directory exists for a file URL
     private static func ensureParentDirectoryExists(for url: URL) throws {
