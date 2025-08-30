@@ -35,6 +35,7 @@ MAXTOK=${MAXTOK:-512}
 OUT_PREFIX=${OUT_PREFIX:-"${ROOT_DIR}/results/osaurus-vs-ollama-lmstudio-batch"}
 PROMPTS_FILE=${PROMPTS_FILE:-""}
 PROMPTS=${PROMPTS:-"Write a one-sentence summary of the theory of evolution.,List three uses of fossil records in paleontology."}
+SYSTEM_PROMPT=${SYSTEM_PROMPT:-"You are a helpful assistant."}
 NOSTREAM=${NOSTREAM:-0}
 WARMUP=${WARMUP:-1}
 
@@ -47,6 +48,7 @@ ARGS=(
   --max-tokens "${MAXTOK}"
   --warmup-iterations "${WARMUP}"
   --output-prefix "${OUT_PREFIX}"
+  --system-prompt "${SYSTEM_PROMPT}"
   --export json csv
 )
 
