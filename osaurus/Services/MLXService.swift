@@ -116,12 +116,7 @@ final class MLXService: @unchecked Sendable {
     
     private let modelCache = NSCache<NSString, SessionHolder>()
 
-    /// LRU cache for reusable ChatSession keyed by (modelName, sessionId)
-    private struct SessionKey: Hashable, Sendable { let model: String; let session: String }
-    private var reusableSessions: [SessionKey: (session: ChatSession, lastUsed: Date)] = [:]
-    private var reusableOrder: [SessionKey] = []
     private let sessionCacheQueue = DispatchQueue(label: "com.osaurus.sessioncache", attributes: .concurrent)
-    private var activeReuseKeys: Set<SessionKey> = []
 
     /// Per-model concurrency gates to protect underlying MLX containers
     private final class ConcurrencyGate {
@@ -131,14 +126,6 @@ final class MLXService: @unchecked Sendable {
         func signal() { semaphore.signal() }
     }
     private var modelGates: [String: ConcurrencyGate] = [:]
-    private let reusableMaxCount: Int = {
-        let env = ProcessInfo.processInfo.environment
-        return Int(env["OSU_SESSION_CACHE_MAX"] ?? "") ?? 32
-    }()
-    private let reusableTTLSeconds: TimeInterval = {
-        let env = ProcessInfo.processInfo.environment
-        return TimeInterval(Int(env["OSU_SESSION_CACHE_TTL"] ?? "") ?? 300)
-    }()
     
     /// Currently loaded model name
     private(set) var currentModelName: String?
@@ -219,7 +206,7 @@ final class MLXService: @unchecked Sendable {
         let warmupContent: String = prefillChars > 0 ? String(repeating: "A", count: max(1, prefillChars)) : String(repeating: "A", count: 1024)
         let messages = [Message(role: .user, content: warmupContent)]        
         do {
-            let stream = try await generate(messages: messages, model: model, temperature: 0.0, maxTokens: maxTokens)
+            let stream = try await generateEvents(messages: messages, model: model, temperature: 0.0, maxTokens: maxTokens)
             // Consume the small warm-up stream
             for await _ in stream { /* no-op */ }
         } catch {
@@ -410,142 +397,6 @@ final class MLXService: @unchecked Sendable {
         return holder
     }
     
-    /// Generates text based on the provided messages using the specified model.
-    /// - Parameters:
-    ///   - messages: Array of chat messages including user, assistant, and system messages
-    ///   - model: The language model to use for generation
-    ///   - temperature: Controls randomness in generation (0.0 to 1.0)
-    ///   - maxTokens: Maximum number of tokens to generate
-    /// - Returns: An AsyncStream of generated text tokens
-    /// - Throws: Errors that might occur during generation
-    func generate(
-        messages: [Message],
-        model: LMModel,
-        temperature: Float = 0.7,
-        maxTokens: Int = 2048,
-        tools: [Tool]? = nil,
-        toolChoice: ToolChoiceOption? = nil,
-        sessionId: String? = nil
-    ) async throws -> AsyncStream<String> {
-        // Load or retrieve the model container from cache
-        let holder = try await load(model: model)
-
-        // Acquire a per-model gate to avoid concurrent use of the same container
-        let gate: ConcurrencyGate = sessionCacheQueue.sync(flags: .barrier) {
-            if let g = modelGates[model.name] { return g }
-            let env = ProcessInfo.processInfo.environment
-            let limit = Int(env["OSU_MODEL_MAX_CONCURRENCY"] ?? "") ?? 1
-            let g = ConcurrencyGate(limit: limit)
-            modelGates[model.name] = g
-            return g
-        }
-        
-        // Determine system instructions and last user content efficiently.
-        // Use only the most recent system message as instructions to respect templates expecting a single system prompt.
-        let systemText: String = {
-            for m in messages where m.role == .system { return m.content }
-            return ""
-        }()
-        // Determine the user content to send. MLX ChatSession applies chat templates internally.
-        // We send only the most recent user message text; if none, fallback to the most recent non-system message.
-        let lastUserText: String = {
-            for m in messages.reversed() where m.role == .user { return m.content }
-            for m in messages.reversed() where m.role != .system { return m.content }
-            return ""
-        }()
-        DebugLog.log("PROMPT", "Using ChatSession with instructionsLen=\(systemText.count), lastUserLen=\(lastUserText.count), msgs=\(messages.count)")
-
-        // Build MLX generation parameters (temperature, sampling, KV cache, etc.)
-        // Prefer UI configuration when available
-        let cfg = await ServerController.sharedConfiguration()
-        let topP: Float = cfg?.genTopP ?? 0.95
-        let kvBits: Int? = cfg?.genKVBits
-        let kvGroup: Int = cfg?.genKVGroupSize ?? 64
-        let quantStart: Int = cfg?.genQuantizedKVStart ?? 0
-        let maxKV: Int? = cfg?.genMaxKVSize
-        let prefillStep: Int = cfg?.genPrefillStepSize ?? 4096
-
-        let genParamsLocal = MLXLMCommon.GenerateParameters(
-            maxTokens: maxTokens,
-            maxKVSize: maxKV,
-            kvBits: kvBits,
-            kvGroupSize: kvGroup,
-            quantizedKVStart: quantStart,
-            temperature: temperature,
-            topP: topP,
-            repetitionPenalty: nil,
-            repetitionContextSize: 20
-        )
-        var genParams = genParamsLocal
-        genParams.prefillStepSize = prefillStep
-
-        // Optionally reuse a ChatSession (KV cache) for the same sessionId
-        let (session, cacheKey, _): (ChatSession, SessionKey?, Bool) = {
-            guard let sessionId, !sessionId.isEmpty else { return (ChatSession(holder.container, instructions: systemText.isEmpty ? nil : systemText, generateParameters: genParams), nil, false) }
-            let key = SessionKey(model: model.name, session: sessionId)
-            return sessionCacheQueue.sync(flags: .barrier) {
-                evictExpiredReusableSessionsLocked(now: Date())
-                // If a session exists but is actively in use, avoid reusing it concurrently
-                if let existing = reusableSessions[key], !activeReuseKeys.contains(key), Date().timeIntervalSince(existing.lastUsed) < reusableTTLSeconds {
-                    // Mark this key as active to prevent concurrent reuse
-                    activeReuseKeys.insert(key)
-                    // MRU update
-                    if let idx = reusableOrder.firstIndex(of: key) { reusableOrder.remove(at: idx) }
-                    reusableOrder.append(key)
-                    return (existing.session, key, true)
-                }
-                // Either none exists, it expired, or it's currently in use — create a fresh session
-                let newSession = ChatSession(holder.container, instructions: systemText.isEmpty ? nil : systemText, generateParameters: genParams)
-                // Insert or refresh cache entry for future reuse
-                reusableSessions[key] = (newSession, Date())
-                if let idx = reusableOrder.firstIndex(of: key) { reusableOrder.remove(at: idx) }
-                reusableOrder.append(key)
-                // Mark as active so no one else reuses it concurrently
-                activeReuseKeys.insert(key)
-                while reusableOrder.count > reusableMaxCount {
-                    if let idx = reusableOrder.firstIndex(where: { !activeReuseKeys.contains($0) }) {
-                        let lru = reusableOrder.remove(at: idx)
-                        reusableSessions.removeValue(forKey: lru)
-                        DebugLog.log("CACHE", "Evicted LRU reusable session for key=\(lru)")
-                    } else {
-                        DebugLog.log("CACHE", "Cache at capacity but all sessions are active; deferring eviction")
-                        break
-                    }
-                }
-                return (newSession, key, false)
-            }
-        }()
-        // Stream directly via ChatSession; it performs templating/tokenization per model
-        let sessionStream = session.streamResponse(to: lastUserText)
-        
-        // Return a stream that forwards tokens; MLX enforces maxTokens internally
-        return AsyncStream<String> { continuation in
-            Task {
-                gate.wait()
-                defer { gate.signal() }
-                do {
-                    for try await token in sessionStream {
-                        continuation.yield(token)
-                    }
-                } catch {
-                    DebugLog.log("GEN", "Generation error for model=\(model.name): \(error.localizedDescription)")
-                }
-                // Release active flag for reused sessions
-                if let key = cacheKey {
-                    sessionCacheQueue.async(flags: .barrier) { [weak self] in
-                        guard let self = self else { return }
-                        self.activeReuseKeys.remove(key)
-                        if let entry = self.reusableSessions[key] {
-                            self.reusableSessions[key] = (entry.session, Date())
-                        }
-                        self.evictExpiredReusableSessionsLocked(now: Date())
-                    }
-                }
-                continuation.finish()
-            }
-        }
-    }
-
     /// Generate event stream from MLX that can include both text chunks and tool call events.
     func generateEvents(
         messages: [Message],
@@ -650,24 +501,6 @@ final class MLXService: @unchecked Sendable {
                 }
                 continuation.finish()
             }
-        }
-    }
-
-    private func evictExpiredReusableSessionsLocked(now: Date) {
-        if reusableSessions.isEmpty { return }
-        reusableOrder.removeAll { key in
-            if let entry = reusableSessions[key] {
-                if now.timeIntervalSince(entry.lastUsed) >= reusableTTLSeconds {
-                    if activeReuseKeys.contains(key) {
-                        DebugLog.log("CACHE", "Skipping eviction for in-use session key=\(key) (expired)")
-                        return false
-                    }
-                    reusableSessions.removeValue(forKey: key)
-                    DebugLog.log("CACHE", "Evicted expired reusable session for key=\(key)")
-                    return true
-                }
-            }
-            return false
         }
     }
     
