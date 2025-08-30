@@ -116,26 +116,6 @@ final class MLXService: @unchecked Sendable {
     
     private let modelCache = NSCache<NSString, SessionHolder>()
 
-    // MARK: - In-memory prefix cache (LRU with TTL)
-    private final class PrefixCacheBox: NSObject {
-        let caches: [KVCache]
-        let inserted: Date
-        init(caches: [KVCache], inserted: Date) {
-            self.caches = caches
-            self.inserted = inserted
-        }
-    }
-    nonisolated(unsafe) private static let prefixCacheLRU = NSCache<NSString, PrefixCacheBox>()
-    private static let prefixCacheQueue = DispatchQueue(label: "com.osaurus.prefixcache", attributes: .concurrent)
-    private static let prefixLRUMaxEntries: Int = {
-        let env = ProcessInfo.processInfo.environment
-        return Int(env["OSU_PREFIX_LRU_MAX"] ?? "") ?? 8
-    }()
-    private static let prefixLRUTTLSeconds: TimeInterval = {
-        let env = ProcessInfo.processInfo.environment
-        return TimeInterval(Int(env["OSU_PREFIX_LRU_TTL"] ?? "") ?? 900)
-    }()
-
     /// LRU cache for reusable ChatSession keyed by (modelName, sessionId)
     private struct SessionKey: Hashable, Sendable { let model: String; let session: String }
     private var reusableSessions: [SessionKey: (session: ChatSession, lastUsed: Date)] = [:]
@@ -189,9 +169,7 @@ final class MLXService: @unchecked Sendable {
     private init() {
         // Initialize the cache with current available models
         updateAvailableModelsCache()
-        // Configure in-memory prefix cache
-        Self.prefixCacheLRU.countLimit = Self.prefixLRUMaxEntries
-        
+  
         // Update cache whenever ModelManager changes
         Task { @MainActor in
             // Observe changes and update cache
@@ -653,59 +631,13 @@ final class MLXService: @unchecked Sendable {
                 defer { gate.signal() }
                 do {
                     let stream: AsyncStream<MLXLMCommon.Generation> = try await holder.container.perform { (context: MLXLMCommon.ModelContext) in
-                        // If there is no system prefix, fall back to normal generation
-                        let maybeSystem: String? = {
-                            for m in messages where m.role == .system { return m.content }
-                            return nil
-                        }()
-
                         // Prepare full chat input (for tokenization and to get delta tokens later)
                         let fullInput = MLXLMCommon.UserInput(chat: chat, processing: .init(), tools: tokenizerTools)
                         let fullLMInput = try await context.processor.prepare(input: fullInput)
 
-                        guard let systemText = maybeSystem, !systemText.isEmpty else {
-                            // No static system prefix -> no prefix cache
-                            return try MLXLMCommon.generate(
-                                input: fullLMInput,
-                                cache: nil,
-                                parameters: genParams,
-                                context: context
-                            )
-                        }
-
-                        // 1) Compute prefix tokens for the system prompt only (stable template)
-                        let prefixChat: [MLXLMCommon.Chat.Message] = [.system(systemText)]
-                        let prefixInput = MLXLMCommon.UserInput(chat: prefixChat, processing: .init(), tools: tokenizerTools)
-                        let prefixLMInput = try await context.processor.prepare(input: prefixInput)
-
-                        // Hash the prefix token ids to form a cache key per model+prefix
-                        let prefixIds: [Int] = prefixLMInput.text.tokens.asArray(Int.self)
-                        let prefixHash = Self.hashTokenIds(prefixIds)
-
-                        // Determine on-disk cache location
-                        let cacheURL = Self.prefixCacheURL(modelId: model.modelId, hash: prefixHash)
-
-                        // 2) Load/build immutable base prefix cache and return a working clone
-                        let workingCache: [KVCache] = try Self.getOrCreatePrefixWorkingCache(
-                            modelId: model.modelId,
-                            context: context,
-                            prefixLMInput: prefixLMInput,
-                            genParams: genParams,
-                            prefixHash: prefixHash,
-                            prefixTokenCount: prefixIds.count
-                        )
-
-                        // 3) Extend session cache with the delta tokens (full chat minus prefix)
-                        let fullCount = fullLMInput.text.tokens.size
-                        let prefixCount = prefixLMInput.text.tokens.size
-                        let startIndex = min(prefixCount, fullCount)
-                        let deltaTokens = fullLMInput.text.tokens[startIndex...]
-                        let deltaLMInput = MLXLMCommon.LMInput(tokens: deltaTokens)
-
-                        // 4) Generate with the combined cache; new tokens append to workingCache (session-specific)
                         return try MLXLMCommon.generate(
-                            input: deltaLMInput,
-                            cache: workingCache,
+                            input: fullLMInput,
+                            cache: nil,
                             parameters: genParams,
                             context: context
                         )
@@ -757,153 +689,5 @@ final class MLXService: @unchecked Sendable {
         
         // Update available models cache
         updateAvailableModelsCache()
-    }
-}
-
-// MARK: - Prompt Cache Utilities
-
-extension MLXService {
-    // MARK: - In-memory Prefix LRU helpers
-    private static func prefixKey(modelId: String, hash: String) -> NSString {
-        "\(modelId)::\(hash)" as NSString
-    }
-
-    private static func cloneCaches(_ caches: [KVCache]) -> [KVCache] {
-        // Deep copy by round-tripping through state/metaState into new instances
-        return caches.map { cache in
-            switch cache {
-            case let simple as KVCacheSimple:
-                let copy = KVCacheSimple()
-                copy.state = simple.state
-                copy.metaState = simple.metaState
-                return copy
-            case let rot as RotatingKVCache:
-                let initialMax = rot.maxSize ?? (rot.state.first?.dim(2) ?? 0)
-                let copy = RotatingKVCache(maxSize: max(1, initialMax))
-                copy.state = rot.state
-                copy.metaState = rot.metaState
-                return copy
-            case let q as QuantizedKVCache:
-                let copy = QuantizedKVCache(groupSize: q.groupSize, bits: q.bits)
-                copy.state = q.state
-                copy.metaState = q.metaState
-                return copy
-            case let chunked as ChunkedKVCache:
-                let copy = ChunkedKVCache()
-                copy.state = chunked.state
-                copy.metaState = chunked.metaState
-                return copy
-            case let mamba as MambaCache:
-                let copy = MambaCache()
-                copy.state = mamba.state
-                copy.metaState = mamba.metaState
-                return copy
-            default:
-                let copy = KVCacheSimple()
-                copy.state = cache.state
-                copy.metaState = cache.metaState
-                return copy
-            }
-        }
-    }
-
-    private static func getPrefixFromLRU(modelId: String, hash: String) -> [KVCache]? {
-        let key = prefixKey(modelId: modelId, hash: hash)
-        return prefixCacheQueue.sync {
-            guard let box = prefixCacheLRU.object(forKey: key) else { return nil }
-            if Date().timeIntervalSince(box.inserted) >= prefixLRUTTLSeconds {
-                prefixCacheLRU.removeObject(forKey: key)
-                return nil
-            }
-            return cloneCaches(box.caches)
-        }
-    }
-
-    private static func putPrefixIntoLRU(modelId: String, hash: String, caches: [KVCache]) {
-        let key = prefixKey(modelId: modelId, hash: hash)
-        let cloned = cloneCaches(caches)
-        let box = PrefixCacheBox(caches: cloned, inserted: Date())
-        prefixCacheQueue.async(flags: .barrier) {
-            prefixCacheLRU.setObject(box, forKey: key)
-        }
-    }
-
-    /// Get a working (mutable) prefix cache for this request.
-    /// Prefers in-memory LRU; falls back to on-disk; otherwise builds and persists.
-    private static func getOrCreatePrefixWorkingCache(
-        modelId: String,
-        context: MLXLMCommon.ModelContext,
-        prefixLMInput: MLXLMCommon.LMInput,
-        genParams: MLXLMCommon.GenerateParameters,
-        prefixHash: String,
-        prefixTokenCount: Int
-    ) throws -> [KVCache] {
-        // Preferred: in-memory LRU
-        if let mem = getPrefixFromLRU(modelId: modelId, hash: prefixHash) {
-            return mem
-        }
-
-        // Next: on-disk cache
-        let cacheURL = prefixCacheURL(modelId: modelId, hash: prefixHash)
-        if FileManager.default.fileExists(atPath: cacheURL.path),
-           let loaded = try? loadPromptCache(url: cacheURL).0 {
-            // Store immutable base into LRU and return a working clone
-            putPrefixIntoLRU(modelId: modelId, hash: prefixHash, caches: loaded)
-            return cloneCaches(loaded)
-        }
-
-        // Build fresh: prefill with prefix tokens only
-        var working = context.model.newCache(parameters: genParams)
-        var prefillParams = genParams
-        prefillParams.maxTokens = 0
-        _ = try MLXLMCommon.TokenIterator(
-            input: prefixLMInput,
-            model: context.model,
-            cache: working,
-            parameters: prefillParams
-        )
-        // Persist immutable base and place into LRU. Then return a working clone
-        try ensureParentDirectoryExists(for: cacheURL)
-        try savePromptCache(url: cacheURL, cache: working, metadata: [
-            "modelId": modelId,
-            "prefixTokenCount": String(prefixTokenCount)
-        ])
-        putPrefixIntoLRU(modelId: modelId, hash: prefixHash, caches: working)
-        return cloneCaches(working)
-    }
-
-    /// Compute a stable SHA-256 hash for a list of token ids
-    private static func hashTokenIds(_ tokens: [Int]) -> String {
-        var data = Data(capacity: tokens.count * 4)
-        for t in tokens { var v = Int32(t); withUnsafeBytes(of: &v) { data.append(contentsOf: $0) } }
-        let digest = SHA256.hash(data: data)
-        return digest.compactMap { String(format: "%02x", $0) }.joined()
-    }
-
-    /// Directory to store prompt caches for a given model id (org/repo).
-    /// IMPORTANT: Store outside the model weights directory to avoid model loaders picking them up.
-    private static func promptCacheDirectory(modelId: String) -> URL {
-        let base = DirectoryPickerService.shared.effectiveModelsDirectory
-        let cachesRoot = base.appendingPathComponent("_osaurus_prompt_caches", isDirectory: true)
-        let parts = modelId.split(separator: "/").map(String.init)
-        let dir = parts.reduce(cachesRoot) { partial, comp in
-            partial.appendingPathComponent(comp, isDirectory: true)
-        }
-        return dir
-    }
-
-    /// Full URL for a given prefix cache file
-    private static func prefixCacheURL(modelId: String, hash: String) -> URL {
-        let dir = promptCacheDirectory(modelId: modelId)
-        return dir.appendingPathComponent("prefix-\(hash).safetensors", isDirectory: false)
-    }
-
-    /// Ensure the parent directory exists for a file URL
-    private static func ensureParentDirectoryExists(for url: URL) throws {
-        let dir = url.deletingLastPathComponent()
-        var isDir: ObjCBool = false
-        if !FileManager.default.fileExists(atPath: dir.path, isDirectory: &isDir) || !isDir.boolValue {
-            try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        }
     }
 }
