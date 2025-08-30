@@ -20,8 +20,6 @@ Created by Dinoki Labs ([dinoki.ai](https://dinoki.ai)), a fully native desktop 
 - **Apple Silicon only**: Designed and tested for M‑series Macs
 - **OpenAI API compatible**: `/v1/models` and `/v1/chat/completions` (stream and non‑stream)
 - **Function/Tool calling**: OpenAI‑style `tools` + `tool_choice`, with `tool_calls` parsing and streaming deltas
-- **Chat templates**: Delegates templating to MLX `ChatSession` for model‑native formatting
-- **Session reuse (KV cache)**: Faster multi‑turn chats via `session_id`
 - **Fast token streaming**: Server‑Sent Events for low‑latency output
 - **Model manager UI**: Browse, download, and manage MLX models from `mlx-community`
 - **System resource monitor**: Real-time CPU and RAM usage visualization
@@ -65,13 +63,11 @@ osaurus/
 
 ## Features
 
-- Native MLX text generation with model session caching
+- Native MLX text generation with model
 - Model manager with curated suggestions (Llama, Qwen, Gemma, Mistral, etc.)
 - Download sizes estimated via Hugging Face metadata
 - Streaming and non‑streaming chat completions
 - OpenAI‑compatible function calling with robust parser for model outputs (handles code fences/formatting noise)
-- Chat templating handled by MLX `ChatSession` using the model's configuration
-- Session reuse across turns via `session_id` (reuses KV cache when possible)
 - Auto‑detects stop sequences and BOS token from tokenizer configs
 - Health endpoint and simple status UI
 - Real-time system resource monitoring
@@ -80,13 +76,14 @@ osaurus/
 
 The following are 20-run averages from our batch benchmark suite. See raw results for details and variance.
 
-| Server    | Model                      | TTFT avg (ms) | Total avg (ms) | Chars/s avg | Success |
-| --------- | -------------------------- | ------------- | -------------- | ----------- | ------- |
-| Osaurus   | llama-3.2-3b-instruct-4bit | 169           | 1304           | 520         | 100%    |
-| Ollama    | llama3.2                   | 59            | 1642           | 449         | 100%    |
-| LM Studio | llama-3.2-3b-instruct      | 55            | 1181           | 619         | 100%    |
+| Server    | Model                      | TTFT avg (ms) | Total avg (ms) | Chars/s avg | TTFT rel | Total rel | Chars/s rel | Success |
+| --------- | -------------------------- | ------------- | -------------- | ----------- | -------- | --------- | ----------- | ------- |
+| Osaurus   | llama-3.2-3b-instruct-4bit | 162           | 1360           | 530         | 0%       | 0%        | 0%          | 100%    |
+| Ollama    | llama3.2                   | 61            | 1665           | 446         | +62%     | -23%      | -16%        | 100%    |
+| LM Studio | llama-3.2-3b-instruct      | 56            | 1197           | 617         | +66%     | +12%      | +17%        | 100%    |
 
 - Metrics: TTFT = time-to-first-token, Total = time to final token, Chars/s = streaming throughput.
+- Relative % vs Osaurus baseline: TTFT/Total computed as 1 - other/osaurus; Chars/s as other/osaurus - 1. Positive = better.
 - Data sources: `results/osaurus-vs-ollama-lmstudio-batch.summary.json`, `results/osaurus-vs-ollama-lmstudio-batch.results.csv`.
 - How to reproduce: `scripts/run_bench.sh` calls `scripts/benchmark_models.py` to run prompts across servers and write results.
 
@@ -204,31 +201,6 @@ Notes:
 - Arguments must be a JSON‑escaped string in the assistant response; Osaurus also tolerates a nested `parameters` object and will normalize.
 - Parser accepts minor formatting noise like code fences and `assistant:` prefixes.
 
-### Chat Templates
-
-Osaurus relies on MLX `ChatSession` to apply the appropriate chat template for each model. System messages are passed as `instructions`; user content is fed via `respond/streamResponse`. This keeps prompts aligned with model‑native formatting and avoids double‑templating.
-
-### Session reuse (KV cache)
-
-For faster multi‑turn conversations, you can reuse a chat session’s KV cache by providing `session_id` in your request. When possible (and not concurrently in use), Osaurus will reuse the session for the same `model` to reduce latency and cost.
-
-```bash
-curl -s http://127.0.0.1:8080/v1/chat/completions \
-  -H "Content-Type: application/json" \
-  -d '{
-        "model": "llama-3.2-3b-instruct-4bit",
-        "session_id": "my-session-1",
-        "messages": [
-          {"role":"user","content":"Tell me a fact about stegosaurs"}
-        ]
-      }'
-```
-
-Notes:
-
-- Sessions are opportunistically reused for a short window and only when not actively used by another request.
-- Keep `session_id` stable per ongoing conversation and per model.
-
 ### Use with OpenAI SDKs
 
 Point your client at Osaurus and use any placeholder API key.
@@ -310,7 +282,7 @@ for call in tool_calls:
 
 - SwiftNIO (HTTP server)
 - SwiftUI/AppKit (UI)
-- MLX‑Swift, MLXLLM (runtime and chat session)
+- MLX‑Swift, MLXLLM (runtime and generation)
 
 ## Contributors
 
