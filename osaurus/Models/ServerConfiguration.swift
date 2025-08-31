@@ -15,6 +15,9 @@ public struct ServerConfiguration: Codable, Equatable {
     /// Expose the server to the local network (0.0.0.0) or keep it on localhost (127.0.0.1)
     public var exposeToNetwork: Bool
     
+    /// Start Osaurus automatically at login
+    public var startAtLogin: Bool
+    
     /// Number of threads for the event loop group
     public let numberOfThreads: Int
     
@@ -38,6 +41,7 @@ public struct ServerConfiguration: Codable, Equatable {
     private enum CodingKeys: String, CodingKey {
         case port
         case exposeToNetwork
+        case startAtLogin
         case numberOfThreads
         case backlog
         case genTopP
@@ -53,6 +57,7 @@ public struct ServerConfiguration: Codable, Equatable {
         let defaults = ServerConfiguration.default
         self.port = try container.decodeIfPresent(Int.self, forKey: .port) ?? defaults.port
         self.exposeToNetwork = try container.decodeIfPresent(Bool.self, forKey: .exposeToNetwork) ?? defaults.exposeToNetwork
+        self.startAtLogin = try container.decodeIfPresent(Bool.self, forKey: .startAtLogin) ?? defaults.startAtLogin
         self.numberOfThreads = try container.decodeIfPresent(Int.self, forKey: .numberOfThreads) ?? defaults.numberOfThreads
         self.backlog = try container.decodeIfPresent(Int32.self, forKey: .backlog) ?? defaults.backlog
         self.genTopP = try container.decodeIfPresent(Float.self, forKey: .genTopP) ?? defaults.genTopP
@@ -66,6 +71,7 @@ public struct ServerConfiguration: Codable, Equatable {
     public init(
         port: Int,
         exposeToNetwork: Bool,
+        startAtLogin: Bool,
         numberOfThreads: Int,
         backlog: Int32,
         genTopP: Float,
@@ -77,6 +83,7 @@ public struct ServerConfiguration: Codable, Equatable {
     ) {
         self.port = port
         self.exposeToNetwork = exposeToNetwork
+        self.startAtLogin = startAtLogin
         self.numberOfThreads = numberOfThreads
         self.backlog = backlog
         self.genTopP = genTopP
@@ -92,6 +99,7 @@ public struct ServerConfiguration: Codable, Equatable {
         ServerConfiguration(
             port: 8080,
             exposeToNetwork: false, // Default to false (localhost)
+            startAtLogin: false,
             numberOfThreads: ProcessInfo.processInfo.activeProcessorCount,
             backlog: 256,
             genTopP: 0.95,

@@ -298,6 +298,7 @@ struct ConfigurationView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var tempPortString: String = ""
     @State private var tempExposeToNetwork: Bool = false
+    @State private var tempStartAtLogin: Bool = false
     @State private var showAdvancedSettings: Bool = false
     
     // Advanced settings state
@@ -345,6 +346,17 @@ struct ConfigurationView: View {
                             .font(.system(size: 13, weight: .medium))
                             .foregroundStyle(theme.primaryText)
                         Text("Allow other devices or services to access Osaurus.")
+                            .font(.system(size: 11))
+                            .foregroundStyle(theme.secondaryText)
+                    }
+                }
+                
+                Toggle(isOn: $tempStartAtLogin){
+                    VStack(alignment: .leading, spacing: 2){
+                        Text("Start at Login")
+                            .font(.system(size: 13, weight: .medium))
+                            .foregroundStyle(theme.primaryText)
+                        Text("Launch Osaurus automatically when you sign in.")
                             .font(.system(size: 11))
                             .foregroundStyle(theme.secondaryText)
                     }
@@ -409,6 +421,7 @@ struct ConfigurationView: View {
                             portString = tempPortString
                             configuration.port = port
                             configuration.exposeToNetwork = tempExposeToNetwork
+                            configuration.startAtLogin = tempStartAtLogin
                             
                             // Save advanced settings if they were modified
                             configuration.genTopP = Float(tempTopP) ?? configuration.genTopP
@@ -420,6 +433,8 @@ struct ConfigurationView: View {
 
                             // Persist to disk
                             ServerConfigurationStore.save(configuration)
+                            // Apply login item state
+                            LoginItemService.shared.applyStartAtLogin(configuration.startAtLogin)
                             
                             dismiss()
                         }
@@ -433,6 +448,7 @@ struct ConfigurationView: View {
         .onAppear {
             tempPortString = portString
             tempExposeToNetwork = configuration.exposeToNetwork
+            tempStartAtLogin = configuration.startAtLogin
             tempTopP = String(configuration.genTopP)
             tempKVBits = configuration.genKVBits.map(String.init) ?? ""
             tempKVGroup = String(configuration.genKVGroupSize)
