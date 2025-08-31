@@ -138,10 +138,34 @@ final class DirectoryPickerService: ObservableObject {
                 }
             }
             
-            // Fall back to default sandbox-safe location
-            let documentsPath = FileManager.default.urls(for: .documentDirectory,
-                                                         in: .userDomainMask).first!
-            return documentsPath.appendingPathComponent("MLXModels")
+            // Fall back to default location
+            // Precedence:
+            // 1) OSU_MODELS_DIR env var
+            // 2) Existing old default at ~/Documents/MLXModels (if present)
+            // 3) New default at ~/MLXModels
+            let fileManager = FileManager.default
+
+            if let override = ProcessInfo.processInfo.environment["OSU_MODELS_DIR"], !override.isEmpty {
+                let expanded = (override as NSString).expandingTildeInPath
+                return URL(fileURLWithPath: expanded, isDirectory: true)
+            }
+
+            let homeURL = fileManager.homeDirectoryForCurrentUser
+            let newDefault = homeURL.appendingPathComponent("MLXModels")
+
+            let documentsPath = fileManager.urls(for: .documentDirectory,
+                                                 in: .userDomainMask).first!
+            let oldDefault = documentsPath.appendingPathComponent("MLXModels")
+
+            if fileManager.fileExists(atPath: newDefault.path) {
+                return newDefault
+            }
+
+            if fileManager.fileExists(atPath: oldDefault.path) {
+                return oldDefault
+            }
+
+            return newDefault
         }
     }
     

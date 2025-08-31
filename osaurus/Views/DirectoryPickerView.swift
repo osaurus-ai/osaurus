@@ -117,7 +117,9 @@ struct DirectoryPickerView: View {
            let selectedDirectory = directoryPicker.selectedDirectory {
             return selectedDirectory.path
         } else {
-            return "~/Documents/MLXModels"
+            // Show effective default (env override, old default if exists, else new default)
+            let defaultURL = DirectoryPickerService.shared.effectiveModelsDirectory
+            return defaultURL.path.replacingOccurrences(of: NSHomeDirectory(), with: "~")
         }
     }
 }
