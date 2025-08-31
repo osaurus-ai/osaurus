@@ -28,6 +28,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // Set up observers for server state changes
         setupObservers()
 
+        // Apply saved Start at Login preference on launch
+        LoginItemService.shared.applyStartAtLogin(serverController.configuration.startAtLogin)
+
         // Create status bar item and attach click handler
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         if let button = item.button {
