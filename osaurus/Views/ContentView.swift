@@ -407,6 +407,7 @@ struct ConfigurationView: View {
                     action: {
                         if let port = Int(tempPortString), (1..<65536).contains(port) {
                             portString = tempPortString
+                            configuration.port = port
                             configuration.exposeToNetwork = tempExposeToNetwork
                             
                             // Save advanced settings if they were modified
@@ -416,6 +417,9 @@ struct ConfigurationView: View {
                             configuration.genQuantizedKVStart = Int(tempQuantStart) ?? configuration.genQuantizedKVStart
                             configuration.genMaxKVSize = Int(tempMaxKV)
                             configuration.genPrefillStepSize = Int(tempPrefillStep) ?? configuration.genPrefillStepSize
+
+                            // Persist to disk
+                            ServerConfigurationStore.save(configuration)
                             
                             dismiss()
                         }

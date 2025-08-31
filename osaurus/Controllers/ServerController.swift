@@ -156,6 +156,10 @@ final class ServerController: ObservableObject {
     // Capture singleton pointer on init attach to UI
     init() {
         ServerControllerHolder.shared.controller = self
+        // Load persisted configuration if available
+        if let saved = ServerConfigurationStore.load() {
+            self.configuration = saved
+        }
     }
     
     /// Checks if the server is responsive
@@ -170,6 +174,11 @@ final class ServerController: ObservableObject {
             print("[Osaurus] Health check failed: \(error)")
             return false
         }
+    }
+
+    /// Saves the current configuration to disk
+    func saveConfiguration() {
+        ServerConfigurationStore.save(configuration)
     }
 
     // MARK: - Private Helpers
