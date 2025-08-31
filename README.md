@@ -107,7 +107,7 @@ Download the latest signed build from the [Releases page](https://github.com/din
 3. In the UI, configure the port via the gear icon (default `8080`) and press Start
 4. Open the model manager to download a model (e.g., "Llama 3.2 3B Instruct 4bit")
 
-Models are stored by default at `~/Documents/MLXModels`. Override with the environment variable `OSU_MODELS_DIR`.
+Models are stored by default at `~/MLXModels`. Override with the environment variable `OSU_MODELS_DIR`.
 
 ### Use the API
 
