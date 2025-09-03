@@ -52,7 +52,7 @@ public struct Router {
             
         case ("POST", "/chat/completions"):
             return chatCompletionsEndpoint(body: body, context: context, handler: handler)
-            
+
         case ("POST", "/chat"):
             return chatEndpoint(body: body, context: context, handler: handler)
             
@@ -82,7 +82,7 @@ public struct Router {
             
         case ("POST", "/chat/completions"):
             return chatCompletionsEndpoint(bodyBuffer: bodyBuffer, context: context, handler: handler)
-            
+
         case ("POST", "/chat"):
             return chatEndpoint(bodyBuffer: bodyBuffer, context: context, handler: handler)
             
