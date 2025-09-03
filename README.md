@@ -6,11 +6,12 @@
 [![Stars](https://img.shields.io/github/stars/dinoki-ai/osaurus?style=social)](https://github.com/dinoki-ai/osaurus/stargazers)
 ![Platform](<https://img.shields.io/badge/Platform-macOS%20(Apple%20Silicon)-black?logo=apple>)
 ![OpenAI API](https://img.shields.io/badge/OpenAI%20API-compatible-0A7CFF)
+![Ollama API](https://img.shields.io/badge/Ollama%20API-compatible-0A7CFF)
 ![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen)
 
 <img width="452" height="206" alt="Screenshot 2025-08-24 at 4 47 41 PM" src="https://github.com/user-attachments/assets/375d52b2-fb68-4fbd-9055-3a25bb9d2651" />
 
-Native, Apple Silicon–only local LLM server. Similar to Ollama, but built on Apple's MLX for maximum performance on M‑series chips. SwiftUI app + SwiftNIO server with OpenAI‑compatible endpoints.
+Native, Apple Silicon–only local LLM server. Built on Apple's MLX for maximum performance on M‑series chips. SwiftUI app + SwiftNIO server with OpenAI‑compatible and Ollama‑compatible endpoints.
 
 Created by Dinoki Labs ([dinoki.ai](https://dinoki.ai)), a fully native desktop AI assistant and companion.
 
@@ -19,6 +20,7 @@ Created by Dinoki Labs ([dinoki.ai](https://dinoki.ai)), a fully native desktop 
 - **Native MLX runtime**: Optimized for Apple Silicon using MLX/MLXLLM
 - **Apple Silicon only**: Designed and tested for M‑series Macs
 - **OpenAI API compatible**: `/v1/models` and `/v1/chat/completions` (stream and non‑stream)
+- **Ollama‑compatible**: `/chat` endpoint with NDJSON streaming for OllamaKit and other Ollama clients
 - **Function/Tool calling**: OpenAI‑style `tools` + `tool_choice`, with `tool_calls` parsing and streaming deltas
 - **Fast token streaming**: Server‑Sent Events for low‑latency output
 - **Model manager UI**: Browse, download, and manage MLX models from `mlx-community`
@@ -42,12 +44,13 @@ osaurus/
 ├── Models/
 │   ├── MLXModel.swift
 │   ├── OpenAIAPI.swift             # OpenAI‑compatible DTOs
+│   ├── ResponseWriters.swift       # SSE and NDJSON response writers
 │   ├── ServerConfiguration.swift
 │   └── ServerHealth.swift
 ├── Networking/
 │   ├── HTTPHandler.swift           # Request parsing & routing entry
-│   ├── Router.swift                # Routes → handlers
-│   └── AsyncHTTPHandler.swift      # SSE streaming for chat completions
+│   ├── Router.swift                # Routes → handlers with path normalization
+│   └── AsyncHTTPHandler.swift      # Unified streaming handler
 ├── Services/
 │   ├── MLXService.swift            # MLX loading, session caching, generation
 │   ├── SearchService.swift
@@ -67,10 +70,13 @@ osaurus/
 - Model manager with curated suggestions (Llama, Qwen, Gemma, Mistral, etc.)
 - Download sizes estimated via Hugging Face metadata
 - Streaming and non‑streaming chat completions
+- Multiple response formats: SSE (OpenAI‑style) and NDJSON (Ollama‑style)
+- Compatible with OllamaKit and other Ollama client libraries
 - OpenAI‑compatible function calling with robust parser for model outputs (handles code fences/formatting noise)
 - Auto‑detects stop sequences and BOS token from tokenizer configs
 - Health endpoint and simple status UI
 - Real-time system resource monitoring
+- Path normalization for API compatibility
 
 ## Benchmarks
 
@@ -91,8 +97,15 @@ The following are 20-run averages from our batch benchmark suite. See raw result
 
 - `GET /` → Plain text status
 - `GET /health` → JSON health info
-- `GET /models` and `GET /v1/models` → OpenAI‑compatible models list
-- `POST /chat/completions` and `POST /v1/chat/completions` → OpenAI‑compatible chat completions
+- `GET /models` → OpenAI‑compatible models list
+- `GET /tags` → Ollama‑compatible models list
+- `POST /chat/completions` → OpenAI‑compatible chat completions
+- `POST /chat` → Ollama‑compatible chat endpoint
+
+**Path normalization**: All endpoints support common API prefixes (`/v1`, `/api`, `/v1/api`). For example:
+- `/v1/models` → `/models`
+- `/api/chat/completions` → `/chat/completions`
+- `/api/chat` → `/chat` (Ollama‑style)
 
 ## Getting Started
 
@@ -119,6 +132,12 @@ List models:
 curl -s http://127.0.0.1:8080/v1/models | jq
 ```
 
+Ollama‑compatible models list:
+
+```bash
+curl -s http://127.0.0.1:8080/v1/tags | jq
+```
+
 Non‑streaming chat completion:
 
 ```bash
@@ -131,7 +150,7 @@ curl -s http://127.0.0.1:8080/v1/chat/completions \
       }'
 ```
 
-Streaming chat completion (SSE):
+Streaming chat completion (SSE format for `/chat/completions`):
 
 ```bash
 curl -N http://127.0.0.1:8080/v1/chat/completions \
@@ -142,6 +161,20 @@ curl -N http://127.0.0.1:8080/v1/chat/completions \
         "stream": true
       }'
 ```
+
+Ollama‑compatible streaming (NDJSON format for `/chat`):
+
+```bash
+curl -N http://127.0.0.1:8080/v1/api/chat \
+  -H "Content-Type: application/json" \
+  -d '{
+        "model": "llama-3.2-3b-instruct-4bit",
+        "messages": [{"role":"user","content":"Tell me about dinosaurs"}],
+        "stream": true
+      }'
+```
+
+This endpoint is compatible with OllamaKit and other Ollama client libraries.
 
 Tip: Model names are lower‑cased with hyphens (derived from the friendly name), for example: `Llama 3.2 3B Instruct 4bit` → `llama-3.2-3b-instruct-4bit`.
 
