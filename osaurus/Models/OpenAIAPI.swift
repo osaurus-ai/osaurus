@@ -18,6 +18,21 @@ struct OpenAIModel: Codable {
     var permission: [String] = []
     let root: String
     var parent: String? = nil
+    var name: String? = nil
+    var model: String? = nil
+    var modified_at: String? = nil
+    var size: Int? = nil
+    var digest: String? = nil
+    var details: ModelDetails? = nil
+}
+
+struct ModelDetails: Codable {
+    let parent_model: String?
+    let format: String?
+    let family: String?
+    let families: [String]?
+    let parameter_size: String?
+    let quantization_level: String?
 }
 
 /// Response for /models endpoint
@@ -96,8 +111,16 @@ struct ChatCompletionResponse: Codable {
 struct DeltaContent: Codable {
     let role: String?
     let content: String?
+    let refusal: String?
     /// Incremental tool_calls information (OpenAI-compatible)
     let tool_calls: [DeltaToolCall]?
+
+    init(role: String? = nil, content: String? = nil, refusal: String? = nil, tool_calls: [DeltaToolCall]? = nil) {
+        self.role = role
+        self.content = content
+        self.refusal = refusal
+        self.tool_calls = tool_calls
+    }
 }
 
 /// Streaming choice
@@ -120,7 +143,7 @@ struct ChatCompletionChunk: Codable {
 // MARK: - Error Response
 
 /// OpenAI-compatible error response
-struct OpenAIError: Codable {
+struct OpenAIError: Codable, Error {
     let error: ErrorDetail
     
     struct ErrorDetail: Codable {
