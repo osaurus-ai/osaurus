@@ -35,10 +35,27 @@ class AsyncHTTPHandler {
         }
     }
     
-    /// Handle chat completions with streaming support
+    /// Handle chat completions with streaming support (OpenAI-compatible SSE)
     func handleChatCompletion(
         request: ChatCompletionRequest,
         context: ChannelHandlerContext
+    ) async {
+        await handleChat(request: request, context: context, writer: SSEResponseWriter())
+    }
+    
+    /// Handle chat endpoint with NDJSON streaming
+    func handleChat(
+        request: ChatCompletionRequest,
+        context: ChannelHandlerContext
+    ) async {
+        await handleChat(request: request, context: context, writer: NDJSONResponseWriter())
+    }
+    
+    /// Unified chat handler with pluggable response writer
+    private func handleChat(
+        request: ChatCompletionRequest,
+        context: ChannelHandlerContext,
+        writer: ResponseWriter
     ) async {
         do {
             // Find the model using nonisolated static accessor
@@ -77,7 +94,8 @@ class AsyncHTTPHandler {
                     toolChoice: request.tool_choice,
                     sessionId: request.session_id,
                     stopSequences: effectiveStops,
-                    context: context
+                    context: context,
+                    writer: writer
                 )
             } else {
                 try await handleNonStreamingResponse(
@@ -116,27 +134,15 @@ class AsyncHTTPHandler {
         toolChoice: ToolChoiceOption?,
         sessionId: String?,
         stopSequences: [String],
-        context: ChannelHandlerContext
+        context: ChannelHandlerContext,
+        writer: ResponseWriter
     ) async throws {
         let loop = context.eventLoop
         let ctxBox = UncheckedSendableBox(value: context)
         
-        // Use pre-built SSE headers for better performance
-        var responseHead = HTTPResponseHead(version: .http1_1, status: .ok)
-        var nioHeaders = HTTPHeaders()
-        nioHeaders.add(name: "Content-Type", value: "text/event-stream")
-        nioHeaders.add(name: "Cache-Control", value: "no-cache, no-transform")
-        nioHeaders.add(name: "Connection", value: "keep-alive")
-        nioHeaders.add(name: "X-Accel-Buffering", value: "no")
-        nioHeaders.add(name: "Transfer-Encoding", value: "chunked")
-        responseHead.headers = nioHeaders
-        
-        // Ensure header write happens on the channel's event loop
+        // Write headers using the response writer
         executeOnLoop(loop) {
-            let context = ctxBox.value
-            guard context.channel.isActive else { return }
-            context.write(NIOAny(HTTPServerResponsePart.head(responseHead)), promise: nil)
-            context.flush()
+            writer.writeHeaders(ctxBox.value)
         }
         
         // Generate response ID
@@ -171,39 +177,9 @@ class AsyncHTTPHandler {
         
         if shouldCheckForTools {
             // Send initial role chunk
-            let roleChunk = ChatCompletionChunk(
-                id: responseId,
-                created: created,
-                model: requestModel,
-                choices: [StreamChoice(index: 0, delta: DeltaContent(role: "assistant", content: nil, tool_calls: nil), finish_reason: nil)],
-                system_fingerprint: nil
-            )
-            @inline(__always)
-            func writeSSE<T: Encodable>(_ value: T, flush: Bool = true) {
-                executeOnLoop(loop) {
-                    let context = ctxBox.value
-                    guard context.channel.isActive else { return }
-                    let encoder = IkigaJSONEncoder()
-                    var buffer = context.channel.allocator.buffer(capacity: 256)
-                    buffer.writeString("data: ")
-                    do { try encoder.encodeAndWrite(value, into: &buffer) } catch {}
-                    buffer.writeString("\n\n")
-                    context.write(NIOAny(HTTPServerResponsePart.body(.byteBuffer(buffer))), promise: nil)
-                    if flush { context.flush() }
-                }
+            executeOnLoop(loop) {
+                writer.writeRole("assistant", model: requestModel, responseId: responseId, created: created, context: ctxBox.value)
             }
-            @inline(__always)
-            func writeSSEString(_ s: String, flush: Bool = true) {
-                executeOnLoop(loop) {
-                    let context = ctxBox.value
-                    guard context.channel.isActive else { return }
-                    var buffer = context.channel.allocator.buffer(capacity: s.utf8.count)
-                    buffer.writeString(s)
-                    context.write(NIOAny(HTTPServerResponsePart.body(.byteBuffer(buffer))), promise: nil)
-                    if flush { context.flush() }
-                }
-            }
-            writeSSE(roleChunk)
             
             var accumulatedBytes: Int = 0
             // When tools are enabled, buffer content until we know whether a tool call occurs.
@@ -218,72 +194,72 @@ class AsyncHTTPHandler {
                     tokenCount += 1
                 }
                 if let toolCall = event.toolCall {
-                    // Emit OpenAI-style tool_call deltas based on MLX ToolCall
-                    // Here we emit a single tool call per event (index 0)
-                    let mlxName = toolCall.function.name
-                    let argsObject = toolCall.function.arguments
-                    // Encode arguments dictionary back to JSON string per OpenAI spec
-                    let argsData = try? JSONSerialization.data(withJSONObject: argsObject.mapValues { $0.anyValue })
-                    let argsString = argsData.flatMap { String(data: $0, encoding: .utf8) } ?? "{}"
-
-                    // Construct a synthetic id to satisfy OpenAI delta contract
-                    let callId = "call_\(UUID().uuidString.prefix(8))"
-
-                    // Batch tool_call deltas and finalization into a single write/flush
-                    let idTypeChunk = ChatCompletionChunk(
-                        id: responseId,
-                        created: created,
-                        model: requestModel,
-                        choices: [StreamChoice(index: 0, delta: DeltaContent(role: nil, content: nil, tool_calls: [
-                            DeltaToolCall(index: 0, id: callId, type: "function", function: nil)
-                        ]), finish_reason: nil)],
-                        system_fingerprint: nil
-                    )
-                    let nameChunk = ChatCompletionChunk(
-                        id: responseId,
-                        created: created,
-                        model: requestModel,
-                        choices: [StreamChoice(index: 0, delta: DeltaContent(role: nil, content: nil, tool_calls: [
-                            DeltaToolCall(index: 0, id: callId, type: nil, function: DeltaToolCallFunction(name: mlxName, arguments: nil))
-                        ]), finish_reason: nil)],
-                        system_fingerprint: nil
-                    )
-                    let argsChunk = ChatCompletionChunk(
-                        id: responseId,
-                        created: created,
-                        model: requestModel,
-                        choices: [StreamChoice(index: 0, delta: DeltaContent(role: nil, content: nil, tool_calls: [
-                            DeltaToolCall(index: 0, id: callId, type: nil, function: DeltaToolCallFunction(name: nil, arguments: argsString))
-                        ]), finish_reason: nil)],
-                        system_fingerprint: nil
-                    )
-                    let finishChunk = ChatCompletionChunk(
-                        id: responseId,
-                        created: created,
-                        model: requestModel,
-                        choices: [StreamChoice(index: 0, delta: DeltaContent(role: nil, content: nil, tool_calls: nil), finish_reason: "tool_calls")],
-                        system_fingerprint: nil
-                    )
-                    executeOnLoop(loop) {
-                        let context = ctxBox.value
-                        guard context.channel.isActive else { return }
-                        let encoder = IkigaJSONEncoder()
-                        var buffer = context.channel.allocator.buffer(capacity: 1024)
-                        func writeData<T: Encodable>(_ v: T) {
-                            buffer.writeString("data: ")
-                            do { try encoder.encodeAndWrite(v, into: &buffer) } catch {}
-                            buffer.writeString("\n\n")
-                        }
-                        writeData(idTypeChunk)
-                        writeData(nameChunk)
-                        writeData(argsChunk)
-                        writeData(finishChunk)
-                        buffer.writeString("data: [DONE]\n\n")
-                        context.write(NIOAny(HTTPServerResponsePart.body(.byteBuffer(buffer))), promise: nil)
-                        context.flush()
-                        context.writeAndFlush(NIOAny(HTTPServerResponsePart.end(nil as HTTPHeaders?))).whenComplete { _ in
+                    // For SSE writer, we need to handle tool calls specially
+                    // NDJSON writer doesn't support tool calls in the same way
+                    if writer is SSEResponseWriter {
+                        // Emit OpenAI-style tool_call deltas based on MLX ToolCall
+                        let mlxName = toolCall.function.name
+                        let argsObject = toolCall.function.arguments
+                        let argsData = try? JSONSerialization.data(withJSONObject: argsObject.mapValues { $0.anyValue })
+                        let argsString = argsData.flatMap { String(data: $0, encoding: .utf8) } ?? "{}"
+                        let callId = "call_\(UUID().uuidString.prefix(8))"
+                        
+                        // Batch tool_call deltas
+                        let idTypeChunk = ChatCompletionChunk(
+                            id: responseId,
+                            created: created,
+                            model: requestModel,
+                            choices: [StreamChoice(index: 0, delta: DeltaContent(tool_calls: [
+                                DeltaToolCall(index: 0, id: callId, type: "function", function: nil)
+                            ]), finish_reason: nil)],
+                            system_fingerprint: nil
+                        )
+                        let nameChunk = ChatCompletionChunk(
+                            id: responseId,
+                            created: created,
+                            model: requestModel,
+                            choices: [StreamChoice(index: 0, delta: DeltaContent(tool_calls: [
+                                DeltaToolCall(index: 0, id: callId, type: nil, function: DeltaToolCallFunction(name: mlxName, arguments: nil))
+                            ]), finish_reason: nil)],
+                            system_fingerprint: nil
+                        )
+                        let argsChunk = ChatCompletionChunk(
+                            id: responseId,
+                            created: created,
+                            model: requestModel,
+                            choices: [StreamChoice(index: 0, delta: DeltaContent(tool_calls: [
+                                DeltaToolCall(index: 0, id: callId, type: nil, function: DeltaToolCallFunction(name: nil, arguments: argsString))
+                            ]), finish_reason: nil)],
+                            system_fingerprint: nil
+                        )
+                        executeOnLoop(loop) {
                             let context = ctxBox.value
-                            context.close(promise: nil)
+                            guard context.channel.isActive else { return }
+                            let encoder = IkigaJSONEncoder()
+                            var buffer = context.channel.allocator.buffer(capacity: 1024)
+                            func writeData<T: Encodable>(_ v: T) {
+                                buffer.writeString("data: ")
+                                do { try encoder.encodeAndWrite(v, into: &buffer) } catch {}
+                                buffer.writeString("\n\n")
+                            }
+                            writeData(idTypeChunk)
+                            writeData(nameChunk)
+                            writeData(argsChunk)
+                            // Write finish with tool_calls reason
+                            let finishChunk = ChatCompletionChunk(
+                                id: responseId,
+                                created: created,
+                                model: requestModel,
+                                choices: [StreamChoice(index: 0, delta: DeltaContent(), finish_reason: "tool_calls")],
+                                system_fingerprint: nil
+                            )
+                            writeData(finishChunk)
+                            buffer.writeString("data: [DONE]\n\n")
+                            context.write(NIOAny(HTTPServerResponsePart.body(.byteBuffer(buffer))), promise: nil)
+                            context.flush()
+                            context.writeAndFlush(NIOAny(HTTPServerResponsePart.end(nil as HTTPHeaders?))).whenComplete { _ in
+                                context.close(promise: nil)
+                            }
                         }
                     }
                     return
@@ -300,17 +276,12 @@ class AsyncHTTPHandler {
                 }
             }
             if !fullResponse.isEmpty {
-                let contentChunk = ChatCompletionChunk(
-                    id: responseId,
-                    created: created,
-                    model: requestModel,
-                    choices: [StreamChoice(index: 0, delta: DeltaContent(role: nil, content: fullResponse, tool_calls: nil), finish_reason: nil)],
-                    system_fingerprint: nil
-                )
-                writeSSE(contentChunk)
+                executeOnLoop(loop) {
+                    writer.writeContent(fullResponse, model: requestModel, responseId: responseId, created: created, context: ctxBox.value)
+                }
             }
         } else {
-            // Stream tokens as JSON-encoded SSE chunks with batching and stop detection
+            // Stream tokens with batching and stop detection
             // Cache env thresholds once per process to avoid per-request overhead
             struct StreamTuning {
                 static let batchChars: Int = {
@@ -348,7 +319,7 @@ class AsyncHTTPHandler {
                     scheduledFlush = false
                     if pendingBuffer.readableBytes > 0 {
                         let content = pendingBuffer.readString(length: pendingBuffer.readableBytes) ?? ""
-                        sendContentDelta(content, flushNow: true)
+                        writer.writeContent(content, model: requestModel, responseId: responseId, created: created, context: ctxBox.value)
                         pendingCharCount = 0
                         lastFlushNs = DispatchTime.now().uptimeNanoseconds
                     }
@@ -358,7 +329,7 @@ class AsyncHTTPHandler {
             @inline(__always)
             func processTokenOnLoop(_ token: String) {
                 if !firstTokenSent {
-                    sendContentDelta(token, flushNow: true)
+                    writer.writeContent(token, model: requestModel, responseId: responseId, created: created, context: ctxBox.value)
                     firstTokenSent = true
                     lastFlushNs = DispatchTime.now().uptimeNanoseconds
                     return
@@ -369,7 +340,7 @@ class AsyncHTTPHandler {
                 if pendingCharCount >= batchCharThreshold || nowNs - lastFlushNs >= flushIntervalNs {
                     if pendingBuffer.readableBytes > 0 {
                         let content = pendingBuffer.readString(length: pendingBuffer.readableBytes) ?? ""
-                        sendContentDelta(content, flushNow: true)
+                        writer.writeContent(content, model: requestModel, responseId: responseId, created: created, context: ctxBox.value)
                         pendingCharCount = 0
                         lastFlushNs = nowNs
                     }
@@ -378,42 +349,10 @@ class AsyncHTTPHandler {
                 }
             }
 
-            @inline(__always)
-            func sendChunk(_ delta: DeltaContent, finishReason: String? = nil, flushNow: Bool) {
-                let chunk = ChatCompletionChunk(
-                    id: responseId,
-                    created: created,
-                    model: requestModel,
-                    choices: [StreamChoice(index: 0, delta: delta, finish_reason: finishReason)],
-                    system_fingerprint: nil
-                )
-                let encoder = IkigaJSONEncoder()
-                executeOnLoop(loop) {
-                    let context = ctxBox.value
-                    guard context.channel.isActive else { return }
-                    var buffer = context.channel.allocator.buffer(capacity: 256)
-                    buffer.writeString("data: ")
-                    do { try encoder.encodeAndWrite(chunk, into: &buffer) } catch {}
-                    buffer.writeString("\n\n")
-                    context.write(NIOAny(HTTPServerResponsePart.body(.byteBuffer(buffer))), promise: nil)
-                    if flushNow { context.flush() }
-                }
-            }
-
-            // Send role prelude as soon as headers are written to decrease TTFT
-            @inline(__always)
-            func sendRolePrelude() {
-                sendChunk(DeltaContent(role: "assistant", content: nil, tool_calls: nil), flushNow: true)
-            }
-
-            @inline(__always)
-            func sendContentDelta(_ content: String, flushNow: Bool) {
-                guard !content.isEmpty else { return }
-                sendChunk(DeltaContent(role: nil, content: content, tool_calls: nil), flushNow: flushNow)
-            }
-
             // Immediately send role prelude before first model token (helps TTFT)
-            sendRolePrelude()
+            executeOnLoop(loop) {
+                writer.writeRole("assistant", model: requestModel, responseId: responseId, created: created, context: ctxBox.value)
+            }
 
             for await event in eventStream {
                 guard let token = event.chunk else { continue }
@@ -427,7 +366,7 @@ class AsyncHTTPHandler {
                         executeOnLoop(loop) {
                             if pendingBuffer.readableBytes > 0 {
                                 let content = pendingBuffer.readString(length: pendingBuffer.readableBytes) ?? ""
-                                sendContentDelta(content, flushNow: true)
+                                writer.writeContent(content, model: requestModel, responseId: responseId, created: created, context: ctxBox.value)
                                 pendingCharCount = 0
                                 lastFlushNs = DispatchTime.now().uptimeNanoseconds
                             }
@@ -444,7 +383,7 @@ class AsyncHTTPHandler {
             executeOnLoop(loop) {
                 if pendingBuffer.readableBytes > 0 {
                     let content = pendingBuffer.readString(length: pendingBuffer.readableBytes) ?? ""
-                    sendContentDelta(content, flushNow: true)
+                    writer.writeContent(content, model: requestModel, responseId: responseId, created: created, context: ctxBox.value)
                     pendingCharCount = 0
                     lastFlushNs = DispatchTime.now().uptimeNanoseconds
                 }
@@ -462,42 +401,11 @@ class AsyncHTTPHandler {
             }
         }
 
-        let finalChunk = ChatCompletionChunk(
-            id: responseId,
-            created: created,
-            model: requestModel,
-            choices: [
-                StreamChoice(
-                    index: 0,
-                    delta: DeltaContent(role: nil, content: nil, tool_calls: nil),
-                    finish_reason: "stop"
-                )
-            ],
-            system_fingerprint: nil
-        )
-        
-        @inline(__always)
-        func writeSSEFinal<T: Encodable>(_ value: T) {
-            executeOnLoop(loop) {
-                let context = ctxBox.value
-                guard context.channel.isActive else { return }
-                let encoder = IkigaJSONEncoder()
-                var buffer = context.channel.allocator.buffer(capacity: 256)
-                buffer.writeString("data: ")
-                do { try encoder.encodeAndWrite(value, into: &buffer) } catch {}
-                buffer.writeString("\n\n")
-                context.write(NIOAny(HTTPServerResponsePart.body(.byteBuffer(buffer))), promise: nil)
-                var tail = context.channel.allocator.buffer(capacity: 16)
-                tail.writeString("data: [DONE]\n\n")
-                context.write(NIOAny(HTTPServerResponsePart.body(.byteBuffer(tail))), promise: nil)
-                context.flush()
-                context.writeAndFlush(NIOAny(HTTPServerResponsePart.end(nil as HTTPHeaders?))).whenComplete { _ in
-                    let context = ctxBox.value
-                    context.close(promise: nil)
-                }
-            }
+        // Send finish and end
+        executeOnLoop(loop) {
+            writer.writeFinish(requestModel, responseId: responseId, created: created, context: ctxBox.value)
+            writer.writeEnd(ctxBox.value)
         }
-        writeSSEFinal(finalChunk)
     }
     
     private func handleNonStreamingResponse(
