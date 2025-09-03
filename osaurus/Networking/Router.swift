@@ -33,7 +33,11 @@ public struct Router {
     ///   - body: Request body data
     /// - Returns: Tuple containing status, headers, and response body
     public func route(method: String, path: String, body: Data = Data()) -> (status: HTTPResponseStatus, headers: [(String, String)], body: String) {
-        switch (method, path) {
+
+        let p = normalize(path)
+        if method == "HEAD" { return headOkEndpoint() }
+
+        switch (method, p) {
         case ("GET", "/health"):
             return healthEndpoint()
             
@@ -43,14 +47,14 @@ public struct Router {
         case ("GET", "/models"):
             return modelsEndpoint()
 
-        case ("GET", "/v1/models"):
-            return modelsEndpoint()
+        case ("GET", "/tags"):
+            return tagsEndpoint()
             
         case ("POST", "/chat/completions"):
             return chatCompletionsEndpoint(body: body, context: context, handler: handler)
 
-        case ("POST", "/v1/chat/completions"):
-            return chatCompletionsEndpoint(body: body, context: context, handler: handler)
+        case ("POST", "/chat"):
+            return chatEndpoint(body: body, context: context, handler: handler)
             
         default:
             return notFoundEndpoint()
@@ -59,7 +63,11 @@ public struct Router {
 
     /// Overload that accepts a ByteBuffer body to enable zero-copy decoding
     public func route(method: String, path: String, bodyBuffer: ByteBuffer) -> (status: HTTPResponseStatus, headers: [(String, String)], body: String) {
-        switch (method, path) {
+
+        let p = normalize(path)
+        if method == "HEAD" { return headOkEndpoint() }
+
+        switch (method, p) {
         case ("GET", "/health"):
             return healthEndpoint()
         
@@ -69,14 +77,14 @@ public struct Router {
         case ("GET", "/models"):
             return modelsEndpoint()
 
-        case ("GET", "/v1/models"):
-            return modelsEndpoint()
+        case ("GET", "/tags"):
+            return tagsEndpoint()
             
         case ("POST", "/chat/completions"):
             return chatCompletionsEndpoint(bodyBuffer: bodyBuffer, context: context, handler: handler)
 
-        case ("POST", "/v1/chat/completions"):
-            return chatCompletionsEndpoint(bodyBuffer: bodyBuffer, context: context, handler: handler)
+        case ("POST", "/chat"):
+            return chatEndpoint(bodyBuffer: bodyBuffer, context: context, handler: handler)
             
         default:
             return notFoundEndpoint()
@@ -100,12 +108,45 @@ public struct Router {
         return (.notFound, [("Content-Type", "text/plain; charset=utf-8")], "Not Found")
     }
     
+    private func headOkEndpoint() -> (HTTPResponseStatus, [(String, String)], String) {
+        return (.noContent, [("Content-Type", "text/plain; charset=utf-8")], "")
+    }
+
     private func modelsEndpoint() -> (HTTPResponseStatus, [(String, String)], String) {
         let models = MLXService.getAvailableModels().map { modelName in
             OpenAIModel(from: modelName)
         }
         
         let response = ModelsResponse(data: models)
+        
+        if let json = encodeJSONString(response) {
+            return (.ok, [("Content-Type", "application/json; charset=utf-8")], json)
+        }
+        return errorResponse(message: "Failed to encode models", statusCode: .internalServerError)
+    }
+    
+    private func tagsEndpoint() -> (HTTPResponseStatus, [(String, String)], String) {
+        let now = Date().ISO8601Format()
+        let models = MLXService.getAvailableModels().map { modelName in
+            var model = OpenAIModel(from: modelName)
+            // Fields for "/tags" compatibility
+            model.name = modelName
+            model.model = modelName
+            model.modified_at = now
+            model.size = 0
+            model.digest = ""
+            model.details = ModelDetails(
+              parent_model: "",
+              format: "safetensors",
+              family: "unknown",
+              families: ["unknown"],
+              parameter_size: "",
+              quantization_level: ""
+            )
+            return model
+        }
+        
+        let response: [String: [OpenAIModel]] = ["models": models]
         
         if let json = encodeJSONString(response) {
             return (.ok, [("Content-Type", "application/json; charset=utf-8")], json)
@@ -158,6 +199,46 @@ public struct Router {
         return (.ok, [], "")
     }
     
+    private func chatEndpoint(body: Data, context: ChannelHandlerContext?, handler: HTTPHandler?) -> (HTTPResponseStatus, [(String, String)], String) {
+        let decoder = Self.makeJSONDecoder()
+        guard let request = try? decoder.decode(ChatCompletionRequest.self, from: body) else {
+            return errorResponse(message: "Invalid request format", statusCode: .badRequest)
+        }
+        
+        guard let context = context, let handler = handler else {
+            return errorResponse(message: "Server configuration error", statusCode: .internalServerError)
+        }
+        
+        Task.detached(priority: .userInitiated) {
+            await AsyncHTTPHandler.shared.handleChat(
+                request: request,
+                context: context
+            )
+        }
+        
+        return (.ok, [], "")
+    }
+
+    private func chatEndpoint(bodyBuffer: ByteBuffer, context: ChannelHandlerContext?, handler: HTTPHandler?) -> (HTTPResponseStatus, [(String, String)], String) {
+        let decoder = Self.makeJSONDecoder()
+        guard let request = try? decoder.decode(ChatCompletionRequest.self, from: bodyBuffer) else {
+            return errorResponse(message: "Invalid request format", statusCode: .badRequest)
+        }
+
+        guard let context = context, let handler = handler else {
+            return errorResponse(message: "Server configuration error", statusCode: .internalServerError)
+        }
+
+        Task.detached(priority: .userInitiated) {
+            await AsyncHTTPHandler.shared.handleChat(
+                request: request,
+                context: context
+            )
+        }
+
+        return (.ok, [], "")
+    }
+    
     private func errorResponse(message: String, statusCode: HTTPResponseStatus) -> (HTTPResponseStatus, [(String, String)], String) {
         let error = OpenAIError(
             error: OpenAIError.ErrorDetail(
@@ -184,5 +265,23 @@ public struct Router {
         } catch {
             return nil
         }
+    }
+
+    // Normalize common provider prefixes so we cover /, /v1, /api, /v1/api
+    private func normalize(_ path: String) -> String {
+        func stripPrefix(_ prefix: String, from s: String) -> String? {
+            if s == prefix { return "/" }
+            if s.hasPrefix(prefix + "/") {
+                let idx = s.index(s.startIndex, offsetBy: prefix.count)
+                let rest = String(s[idx...])
+                return rest.isEmpty ? "/" : rest
+            }
+            return nil
+        }
+        // Try in most-specific order
+        if let r = stripPrefix("/v1/api", from: path) { return r }
+        if let r = stripPrefix("/api", from: path) { return r }
+        if let r = stripPrefix("/v1", from: path) { return r }
+        return path
     }
 }
