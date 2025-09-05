@@ -17,6 +17,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private var popover: NSPopover?
     private var cancellables: Set<AnyCancellable> = []
     let updater = UpdaterViewModel()
+    private var pendingDeepLink: (modelId: String, file: String?)?
     
     func applicationDidFinishLaunching(_ notification: Notification) {
         // Configure as menu bar app (hide Dock icon)
@@ -46,6 +47,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
         statusItem = item
         updateStatusItemAndMenu()
+    }
+
+    func application(_ application: NSApplication, open urls: [URL]) {
+        for url in urls {
+            handleDeepLink(url)
+        }
     }
 
 
@@ -167,7 +174,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         let themeManager = ThemeManager.shared
         let contentView = ContentView(isPopover: true, onClose: { [weak self] in
             self?.popover?.performClose(nil)
-        })
+        }, deeplinkModelId: pendingDeepLink?.modelId, deeplinkFile: pendingDeepLink?.file)
             .environmentObject(serverController)
             .environment(\.theme, themeManager.currentTheme)
             .environmentObject(updater)
@@ -177,7 +184,39 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         popover.show(relativeTo: statusButton.bounds, of: statusButton, preferredEdge: .minY)
         NSApp.activate(ignoringOtherApps: true)
+
+        // Clear pending deeplink after presenting
+        pendingDeepLink = nil
     }
     
 
+}
+
+private extension AppDelegate {
+    func handleDeepLink(_ url: URL) {
+        guard let scheme = url.scheme?.lowercased(), scheme == "huggingface" else { return }
+        guard let components = URLComponents(url: url, resolvingAgainstBaseURL: false) else { return }
+        let items = components.queryItems ?? []
+        let modelId = items.first(where: { $0.name.lowercased() == "model" })?.value?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let file = items.first(where: { $0.name.lowercased() == "file" })?.value?.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        guard let modelId, !modelId.isEmpty else {
+            // No model id provided; ignore silently
+            return
+        }
+
+        // Resolve to ensure it appears in the UI; enforce MLX-only
+        if ModelManager.shared.resolveModel(byRepoId: modelId) == nil {
+            let alert = NSAlert()
+            alert.messageText = "Unsupported model"
+            alert.informativeText = "Osaurus only supports MLX-compatible Hugging Face repositories."
+            alert.alertStyle = .warning
+            alert.addButton(withTitle: "OK")
+            alert.runModal()
+            return
+        }
+
+        pendingDeepLink = (modelId: modelId, file: file)
+        showPopover()
+    }
 }

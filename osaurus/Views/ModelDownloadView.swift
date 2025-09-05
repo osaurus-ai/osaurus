@@ -15,6 +15,8 @@ struct ModelDownloadView: View {
     @State private var modelToDelete: MLXModel?
     @State private var searchText: String = ""
     @State private var selectedTab: ModelListTab = .all
+    var deeplinkModelId: String? = nil
+    var deeplinkFile: String? = nil
     
     var body: some View {
         ZStack {
@@ -41,6 +43,13 @@ struct ModelDownloadView: View {
             }
         } message: {
             Text("Are you sure you want to delete \(modelToDelete?.name ?? "this model")? This action cannot be undone.")
+        }
+        .onAppear {
+            // If invoked via deeplink, prefill search and ensure the model is visible
+            if let modelId = deeplinkModelId, !modelId.isEmpty {
+                searchText = modelId.split(separator: "/").last.map(String.init) ?? modelId
+                _ = modelManager.resolveModel(byRepoId: modelId)
+            }
         }
     }
     
@@ -196,7 +205,13 @@ struct ModelDownloadView: View {
         let combined = modelManager.availableModels + modelManager.suggestedModels
         let uniqueModels = Dictionary(combined.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first}).values
         let downloaded = uniqueModels.filter { $0.isDownloaded }
-        return SearchService.filterModels(Array(downloaded), with: searchText)
+        let filtered = SearchService.filterModels(Array(downloaded), with: searchText)
+        return filtered.sorted { lhs, rhs in
+            let la = lhs.downloadedAt ?? .distantPast
+            let ra = rhs.downloadedAt ?? .distantPast
+            if la == ra { return lhs.name < rhs.name }
+            return la > ra // Newest first
+        }
     }
     
     private var displayedModels: [MLXModel] {
