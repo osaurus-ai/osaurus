@@ -205,7 +205,13 @@ struct ModelDownloadView: View {
         let combined = modelManager.availableModels + modelManager.suggestedModels
         let uniqueModels = Dictionary(combined.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first}).values
         let downloaded = uniqueModels.filter { $0.isDownloaded }
-        return SearchService.filterModels(Array(downloaded), with: searchText)
+        let filtered = SearchService.filterModels(Array(downloaded), with: searchText)
+        return filtered.sorted { lhs, rhs in
+            let la = lhs.downloadedAt ?? .distantPast
+            let ra = rhs.downloadedAt ?? .distantPast
+            if la == ra { return lhs.name < rhs.name }
+            return la > ra // Newest first
+        }
     }
     
     private var displayedModels: [MLXModel] {

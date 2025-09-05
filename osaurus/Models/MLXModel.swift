@@ -85,6 +85,14 @@ struct MLXModel: Identifiable, Codable {
         }
         return false
     }
+
+    /// Approximate download timestamp based on directory creation/modification time
+    /// Newer downloads should have more recent dates.
+    var downloadedAt: Date? {
+        let directory = localDirectory
+        let values = try? directory.resourceValues(forKeys: [.creationDateKey, .contentModificationDateKey])
+        return values?.creationDate ?? values?.contentModificationDate
+    }
 }
 
 /// Download state for tracking progress
