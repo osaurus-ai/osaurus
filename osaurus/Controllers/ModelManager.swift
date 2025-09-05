@@ -10,6 +10,7 @@ import SwiftUI
 import Combine
 import Hub
 import IkigaJSON
+import CryptoKit
 
 /// Download task information
 struct DownloadTaskInfo {
@@ -83,6 +84,48 @@ final class ModelManager: NSObject, ObservableObject {
                 }
             }
         }
+    }
+
+    /// Resolve or construct an MLXModel by Hugging Face repo id (e.g., "mlx-community/Qwen3-1.7B-4bit").
+    /// Returns nil if the repo id does not appear MLX-compatible.
+    func resolveModel(byRepoId repoId: String) -> MLXModel? {
+        let trimmed = repoId.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        // Validate MLX compatibility heuristically: org contains "mlx" or id contains "mlx"
+        let lower = trimmed.lowercased()
+        guard lower.contains("mlx") || lower.hasPrefix("mlx-community/") || lower.contains("-mlx") else {
+            return nil
+        }
+
+        // If already present in available or suggested, return that instance
+        if let existing = availableModels.first(where: { $0.id == trimmed }) {
+            return existing
+        }
+        if let existing = suggestedModels.first(where: { $0.id == trimmed }) {
+            return existing
+        }
+
+        // Construct a minimal MLXModel entry
+        let name = Self.friendlyName(from: trimmed)
+        let model = MLXModel(
+            id: trimmed,
+            name: name,
+            description: "Imported from deeplink",
+            size: 0,
+            downloadURL: "https://huggingface.co/\(trimmed)",
+            requiredFiles: Self.curatedRequiredFiles
+        )
+        // Add to available list for UI visibility
+        availableModels.insert(model, at: 0)
+        // Initialize download state entry
+        downloadStates[model.id] = model.isDownloaded ? .completed : .notStarted
+        return model
+    }
+
+    /// Kick off a download for a given Hugging Face repo id if resolvable to MLX.
+    func downloadModel(withRepoId repoId: String) {
+        guard let model = resolveModel(byRepoId: repoId) else { return }
+        downloadModel(model)
     }
 
     /// Windowed: prefetch model detail (e.g., sizes) when an item becomes visible
@@ -395,6 +438,131 @@ final class ModelManager: NSObject, ObservableObject {
 // MARK: - Dynamic model discovery (Hugging Face)
 
 private extension ModelManager {
+    /// Simple persistent cache for HF lists and computed sizes
+    final class PersistentCache {
+        static let shared = PersistentCache()
+
+        private let ioQueue = DispatchQueue(label: "com.osaurus.cache", attributes: .concurrent)
+        private let baseDirectory: URL
+
+        private var listTTL: TimeInterval {
+            let env = ProcessInfo.processInfo.environment
+            if let s = env["OSU_HF_LIST_TTL"], let v = TimeInterval(s), v > 0 { return v }
+            return 21600 // 6 hours
+        }
+        private var sizeTTL: TimeInterval {
+            let env = ProcessInfo.processInfo.environment
+            if let s = env["OSU_HF_SIZE_TTL"], let v = TimeInterval(s), v > 0 { return v }
+            return 2592000 // 30 days
+        }
+
+        private init() {
+            let fm = FileManager.default
+            let appSupport = fm.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+            let dir = appSupport.appendingPathComponent("osaurus", isDirectory: true).appendingPathComponent("cache", isDirectory: true)
+            if !fm.fileExists(atPath: dir.path) {
+                try? fm.createDirectory(at: dir, withIntermediateDirectories: true)
+            }
+            baseDirectory = dir
+        }
+
+        // MARK: - Repo List Cache
+        private struct CachedRepoList: Codable {
+            let inserted: Date
+            let repos: [ModelManager.HFRepo]
+        }
+
+        func loadRepoList(forKey key: String) -> [ModelManager.HFRepo]? {
+            let url = listURL(forKey: key)
+            let fm = FileManager.default
+            guard fm.fileExists(atPath: url.path), let data = try? Data(contentsOf: url) else { return nil }
+            guard let cached = try? JSONDecoder().decode(CachedRepoList.self, from: data) else { return nil }
+            if Date().timeIntervalSince(cached.inserted) > listTTL { return nil }
+            return cached.repos
+        }
+
+        func saveRepoList(_ repos: [ModelManager.HFRepo], forKey key: String) {
+            let url = listURL(forKey: key)
+            let wrapper = CachedRepoList(inserted: Date(), repos: repos)
+            if let data = try? JSONEncoder().encode(wrapper) {
+                ioQueue.async(flags: .barrier) {
+                    do {
+                        try data.write(to: url, options: [.atomic])
+                    } catch {
+                        // Ignore write errors
+                    }
+                }
+            }
+        }
+
+        private func listURL(forKey key: String) -> URL {
+            let name = "hf_list_" + sha256Hex(key) + ".json"
+            return baseDirectory.appendingPathComponent(name)
+        }
+
+        // MARK: - Size Cache
+        private struct SizeEntry: Codable { let value: Int64; let inserted: Date }
+
+        private var sizesURL: URL { baseDirectory.appendingPathComponent("hf_sizes.json") }
+
+        func cachedSize(forRepoId id: String) -> Int64? {
+            guard let map = readSizes(), let entry = map[id] else { return nil }
+            if Date().timeIntervalSince(entry.inserted) > sizeTTL { return nil }
+            return entry.value
+        }
+
+        func storeSize(_ size: Int64, forRepoId id: String) {
+            ioQueue.async(flags: .barrier) {
+                var map = self.readSizes() ?? [:]
+                map[id] = SizeEntry(value: size, inserted: Date())
+                self.writeSizes(map)
+            }
+        }
+
+        private func readSizes() -> [String: SizeEntry]? {
+            let fm = FileManager.default
+            let url = sizesURL
+            guard fm.fileExists(atPath: url.path), let data = try? Data(contentsOf: url) else { return [:] }
+            return (try? JSONDecoder().decode([String: SizeEntry].self, from: data)) ?? [:]
+        }
+
+        private func writeSizes(_ map: [String: SizeEntry]) {
+            if let data = try? JSONEncoder().encode(map) {
+                do { try data.write(to: sizesURL, options: [.atomic]) } catch { /* ignore */ }
+            }
+        }
+
+        // MARK: - Utilities
+        private func sha256Hex(_ s: String) -> String {
+            let digest = SHA256.hash(data: Data(s.utf8))
+            return digest.map { String(format: "%02x", $0) }.joined()
+        }
+
+        // MARK: - HTTP Response Cache (ETag-aware)
+        private struct HTTPCache: Codable {
+            let inserted: Date
+            let eTag: String?
+            let data: Data
+        }
+
+        func loadHTTP(forKey key: String) -> (data: Data, eTag: String?, inserted: Date)? {
+            let url = baseDirectory.appendingPathComponent("hf_http_" + sha256Hex(key) + ".json")
+            let fm = FileManager.default
+            guard fm.fileExists(atPath: url.path), let data = try? Data(contentsOf: url) else { return nil }
+            guard let cached = try? JSONDecoder().decode(HTTPCache.self, from: data) else { return nil }
+            return (cached.data, cached.eTag, cached.inserted)
+        }
+
+        func saveHTTP(data: Data, eTag: String?, forKey key: String) {
+            let url = baseDirectory.appendingPathComponent("hf_http_" + sha256Hex(key) + ".json")
+            let wrapper = HTTPCache(inserted: Date(), eTag: eTag, data: data)
+            if let payload = try? JSONEncoder().encode(wrapper) {
+                ioQueue.async(flags: .barrier) {
+                    do { try payload.write(to: url, options: [.atomic]) } catch { /* ignore */ }
+                }
+            }
+        }
+    }
     /// Simple in-memory LRU cache with TTL for HF repo lists
     nonisolated(unsafe) private static var repoCacheStore: [String: (value: [HFRepo], inserted: Date)] = [:]
     nonisolated(unsafe) private static var repoCacheOrder: [String] = []
@@ -560,7 +728,7 @@ private extension ModelManager {
         "special_tokens_map.json"
     ]
     /// Minimal HF API response structures we care about
-    struct HFRepo: Decodable {
+    struct HFRepo: Codable {
         let id: String
         let private_: Bool? // "private" is reserved in Swift, map manually
         let likes: Int?
@@ -580,12 +748,12 @@ private extension ModelManager {
         }
     }
 
-    struct HFSibling: Decodable {
+    struct HFSibling: Codable {
         let rfilename: String
         let size: Int64?
     }
 
-    struct HFCardData: Decodable {
+    struct HFCardData: Codable {
         let short_description: String?
         let license: String?
     }
@@ -595,15 +763,17 @@ private extension ModelManager {
     /// This first pulls lightweight lists, merges/dedupes, then fetches detailed metadata (including file sizes)
     /// for the top repositories to compute download sizes.
     static func fetchHFRepos() async throws -> [HFRepo] {
-        let cacheKey = "hf:repos:v2:mlx+lmstudio:text-generation"
-        // Cache hit check
-        if let cached = repoCacheGet(key: cacheKey) {
+        // Persistent list cache first
+        let listCacheKey = "hf:list:v3:mlx:text-generation"
+        if let cached = PersistentCache.shared.loadRepoList(forKey: listCacheKey) {
             return cached
         }
 
-        // Build URLs
-        let urlMLX = "https://huggingface.co/api/models?author=mlx-community&pipeline_tag=text-generation&sort=downloads&direction=-1&limit=200"
-        let urlLMStudio = "https://huggingface.co/api/models?author=lmstudio-community&pipeline_tag=text-generation&sort=downloads&direction=-1&limit=200"
+        // Build discovery queries to find all MLX-tagged repos regardless of org
+        let base = "https://huggingface.co/api/models"
+        // Try both tag and library in parallel for better coverage
+        let urlTagMLX = base + "?tag=mlx&pipeline_tag=text-generation&sort=downloads&direction=-1&limit=200"
+        let urlLibMLX = base + "?library=mlx&pipeline_tag=text-generation&sort=downloads&direction=-1&limit=200"
 
         func fetchList(_ urlString: String) async throws -> [HFRepo] {
             guard let url = URL(string: urlString) else { return [] }
@@ -619,42 +789,40 @@ private extension ModelManager {
             return try decoder.decode([HFRepo].self, from: data)
         }
 
-        // Fetch org lists concurrently
-        async let listMLX = fetchList(urlMLX)
-        async let listLM = fetchList(urlLMStudio)
-        var reposMLX = try await listMLX
-        let reposLMAll = try await listLM
+        async let tagResults = fetchList(urlTagMLX)
+        async let libResults = fetchList(urlLibMLX)
+        var mergedList = try await tagResults
+        let libList = try await libResults
+        mergedList.append(contentsOf: libList)
 
-        // Filter LM Studio to MLX variants only (exclude GGUF-only repos)
-        let reposLMXLite = reposLMAll.filter { repo in
+        // Filter to repos that appear to have MLX relevance
+        mergedList = mergedList.filter { repo in
             let idLower = repo.id.lowercased()
             if idLower.contains("mlx") { return true }
             if let tags = repo.tags, tags.contains(where: { $0.lowercased().contains("mlx") }) { return true }
             return false
         }
 
-        // Merge and de-duplicate by id
-        reposMLX.append(contentsOf: reposLMXLite)
+        // De-duplicate by id and sort by downloads desc
         var seen: Set<String> = []
-        var mergedList: [HFRepo] = []
-        mergedList.reserveCapacity(reposMLX.count)
-        for repo in reposMLX {
+        var unique: [HFRepo] = []
+        unique.reserveCapacity(mergedList.count)
+        for repo in mergedList {
             if !seen.contains(repo.id) {
                 seen.insert(repo.id)
-                mergedList.append(repo)
+                unique.append(repo)
             }
         }
-
-        // Sort by downloads desc if available
-        mergedList.sort { (a, b) -> Bool in
+        unique.sort { (a, b) -> Bool in
             let da = a.downloads ?? 0
             let db = b.downloads ?? 0
             return da == db ? a.id < b.id : da > db
         }
 
-        // Fetch detailed info (including siblings with sizes) for a subset to avoid rate limits
-        let maxDetailCount = 60
-        let toDetail = Array(mergedList.prefix(maxDetailCount))
+        // Fetch detailed info (siblings with sizes) for a subset to avoid rate limits
+        let maxDetailDefault = 40
+        let maxDetailCount = Int(ProcessInfo.processInfo.environment["OSU_HF_DETAIL_COUNT"] ?? "") ?? maxDetailDefault
+        let toDetail = Array(unique.prefix(max(0, maxDetailCount)))
 
         var detailedRepos: [HFRepo] = []
         detailedRepos.reserveCapacity(toDetail.count)
@@ -672,12 +840,12 @@ private extension ModelManager {
             }
         }
 
-        // Merge: use detailed entries when available; otherwise fall back to list entries
+        // Merge: prefer detailed entries
         let detailedById = Dictionary(uniqueKeysWithValues: detailedRepos.map { ($0.id, $0) })
-        let merged = mergedList.map { detailedById[$0.id] ?? $0 }
+        let merged = unique.map { detailedById[$0.id] ?? $0 }
 
-        // Cache and return
-        repoCacheSet(key: cacheKey, value: merged)
+        // Save in persistent cache and return
+        PersistentCache.shared.saveRepoList(merged, forKey: listCacheKey)
         return merged
     }
 
@@ -703,6 +871,11 @@ private extension ModelManager {
     /// Compute the total size of all .safetensors files for a repo.
     /// If HF detail lacks sizes, this will issue HEAD requests to resolve sizes.
     static func computeTotalSafetensorsBytes(for repoId: String, siblings: [HFSibling]?) async -> Int64 {
+        // Check persistent size cache first
+        if let cached = PersistentCache.shared.cachedSize(forRepoId: repoId) {
+            return cached
+        }
+
         guard let siblings else { return 0 }
         let safetensors = siblings.filter { $0.rfilename.hasSuffix(".safetensors") }
         if safetensors.isEmpty { return 0 }
@@ -710,6 +883,7 @@ private extension ModelManager {
         // If all sizes are known, sum and return
         let knownSizes = safetensors.compactMap { $0.size }
         if knownSizes.count == safetensors.count, let total = knownSizes.reduce(0, +) as Int64? {
+            PersistentCache.shared.storeSize(total, forRepoId: repoId)
             return total
         }
 
@@ -721,6 +895,7 @@ private extension ModelManager {
                 total += length
             }
         }
+        PersistentCache.shared.storeSize(total, forRepoId: repoId)
         return total
     }
 

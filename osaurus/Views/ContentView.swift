@@ -17,6 +17,8 @@ struct ContentView: View {
     // Popover customization
     var isPopover: Bool = false
     var onClose: (() -> Void)? = nil
+    var deeplinkModelId: String? = nil
+    var deeplinkFile: String? = nil
     @State private var portString: String = "8080"
     @State private var showError: Bool = false
     @State private var isHealthy: Bool = false
@@ -134,7 +136,7 @@ struct ContentView: View {
                         .buttonStyle(PlainButtonStyle())
                         .help("Manage models")
                         .popover(isPresented: $showModelManager, attachmentAnchor: .point(.bottom), arrowEdge: .top) {
-                            ModelDownloadView()
+                            ModelDownloadView(deeplinkModelId: deeplinkModelId, deeplinkFile: deeplinkFile)
                         }
 
                         Button(action: { updater.checkForUpdates() }) {
@@ -183,6 +185,10 @@ struct ContentView: View {
         .onAppear {
             portString = String(server.port)
             startHealthCheck()
+            // If opened via deeplink, auto-open Model Manager and trigger download
+            if let modelId = deeplinkModelId, !modelId.isEmpty {
+                showModelManager = true
+            }
         }
         .alert("Server Error", isPresented: $showError) {
             Button("OK", role: .cancel) {}
