@@ -512,10 +512,17 @@ private extension ModelManager {
         }
 
         func storeSize(_ size: Int64, forRepoId id: String) {
+            let url = self.sizesURL
             ioQueue.async(flags: .barrier) {
-                var map = self.readSizes() ?? [:]
+                let fm = FileManager.default
+                var map: [String: SizeEntry] = [:]
+                if fm.fileExists(atPath: url.path), let data = try? Data(contentsOf: url) {
+                    map = (try? JSONDecoder().decode([String: SizeEntry].self, from: data)) ?? [:]
+                }
                 map[id] = SizeEntry(value: size, inserted: Date())
-                self.writeSizes(map)
+                if let data = try? JSONEncoder().encode(map) {
+                    do { try data.write(to: url, options: [.atomic]) } catch { /* ignore */ }
+                }
             }
         }
 
@@ -566,7 +573,7 @@ private extension ModelManager {
     /// Simple in-memory LRU cache with TTL for HF repo lists
     nonisolated(unsafe) private static var repoCacheStore: [String: (value: [HFRepo], inserted: Date)] = [:]
     nonisolated(unsafe) private static var repoCacheOrder: [String] = []
-    nonisolated(unsafe) private static let repoCacheQueue = DispatchQueue(label: "com.osaurus.hf.repos.cache", attributes: .concurrent)
+    private static let repoCacheQueue = DispatchQueue(label: "com.osaurus.hf.repos.cache", attributes: .concurrent)
     nonisolated(unsafe) private static var repoCacheTTL: TimeInterval {
         let env = ProcessInfo.processInfo.environment
         if let s = env["OSU_HF_REPO_CACHE_TTL"], let v = TimeInterval(s), v > 0 { return v }
@@ -775,7 +782,7 @@ private extension ModelManager {
         let urlTagMLX = base + "?tag=mlx&pipeline_tag=text-generation&sort=downloads&direction=-1&limit=200"
         let urlLibMLX = base + "?library=mlx&pipeline_tag=text-generation&sort=downloads&direction=-1&limit=200"
 
-        func fetchList(_ urlString: String) async throws -> [HFRepo] {
+        @Sendable func fetchList(_ urlString: String) async throws -> [HFRepo] {
             guard let url = URL(string: urlString) else { return [] }
             var request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 30)
             request.httpMethod = "GET"
