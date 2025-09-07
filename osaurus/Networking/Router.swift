@@ -161,7 +161,7 @@ public struct Router {
         }
         
         // Async operations require context and handler
-        guard let context = context, let handler = handler else {
+        guard let context = context, let _ = handler else {
             return errorResponse(message: "Server configuration error", statusCode: .internalServerError)
         }
         
@@ -185,7 +185,7 @@ public struct Router {
             return errorResponse(message: "Invalid request format", statusCode: .badRequest)
         }
 
-        guard let context = context, let handler = handler else {
+        guard let context = context, let _ = handler else {
             return errorResponse(message: "Server configuration error", statusCode: .internalServerError)
         }
 
@@ -205,7 +205,7 @@ public struct Router {
             return errorResponse(message: "Invalid request format", statusCode: .badRequest)
         }
         
-        guard let context = context, let handler = handler else {
+        guard let context = context, let _ = handler else {
             return errorResponse(message: "Server configuration error", statusCode: .internalServerError)
         }
         
@@ -225,7 +225,7 @@ public struct Router {
             return errorResponse(message: "Invalid request format", statusCode: .badRequest)
         }
 
-        guard let context = context, let handler = handler else {
+        guard let context = context, let _ = handler else {
             return errorResponse(message: "Server configuration error", statusCode: .internalServerError)
         }
 

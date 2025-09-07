@@ -150,8 +150,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     // MARK: - Actions
 
     @objc private func togglePopover(_ sender: Any?) {
-        guard let statusButton = statusItem?.button else { return }
-
         if let popover, popover.isShown {
             popover.performClose(sender)
             return

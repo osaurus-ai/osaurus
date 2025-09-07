@@ -497,8 +497,6 @@ class AsyncHTTPHandler {
                 }
             }
         }
-        // Since we route tool calls immediately above, remaining path is normal text completion
-        let toolCalls: [ToolCall]? = nil
         let finishReason = "stop"
 
         // Create response
