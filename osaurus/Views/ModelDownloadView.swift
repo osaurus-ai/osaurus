@@ -5,6 +5,7 @@
 //  Created by Terence on 8/17/25.
 //
 
+import AppKit
 import SwiftUI
 
 struct ModelDownloadView: View {
@@ -278,6 +279,7 @@ struct ModelRowView: View {
   let onDelete: () -> Void
 
   @State private var isHovering = false
+  @State private var showCopiedFeedback = false
 
   var body: some View {
     SimpleCard(padding: 0) {
@@ -292,9 +294,42 @@ struct ModelRowView: View {
 
           // Model info
           VStack(alignment: .leading, spacing: 6) {
-            Text(model.name)
-              .font(.system(size: 16, weight: .semibold))
-              .foregroundColor(theme.primaryText)
+            HStack(alignment: .center, spacing: 8) {
+              Text(model.name)
+                .font(.system(size: 16, weight: .semibold))
+                .foregroundColor(theme.primaryText)
+                .lineLimit(1)
+                .truncationMode(.tail)
+                .layoutPriority(1)
+
+              Button(action: copyModelID) {
+                HStack(spacing: 4) {
+                  Image(systemName: showCopiedFeedback ? "checkmark" : "doc.on.doc")
+                    .font(.system(size: 11))
+                  Text(showCopiedFeedback ? "Copied!" : "Copy ID")
+                    .font(.system(size: 11, weight: .medium))
+                }
+                .foregroundColor(showCopiedFeedback ? theme.successColor : theme.tertiaryText)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
+                .background(
+                  RoundedRectangle(cornerRadius: 6)
+                    .fill(theme.cardBackground)
+                    .overlay(
+                      RoundedRectangle(cornerRadius: 6)
+                        .stroke(
+                          showCopiedFeedback ? theme.successColor : theme.primaryBorder,
+                          lineWidth: 1)
+                    )
+                )
+                .animation(.easeInOut(duration: 0.2), value: showCopiedFeedback)
+              }
+              .buttonStyle(PlainButtonStyle())
+              .help("Copy model ID for API usage")
+              .fixedSize()
+
+              Spacer(minLength: 0)
+            }
 
             // Description if available
             if !model.description.isEmpty {
@@ -419,6 +454,34 @@ struct ModelRowView: View {
           .foregroundColor(.blue)
         }
         .buttonStyle(PlainButtonStyle())
+      }
+    }
+  }
+
+  private func copyModelID() {
+    let apiId: String = {
+      let last = model.id.split(separator: "/").last.map(String.init) ?? model.name
+      let normalized =
+        last
+        .trimmingCharacters(in: .whitespacesAndNewlines)
+        .replacingOccurrences(of: " ", with: "-")
+        .replacingOccurrences(of: "_", with: "-")
+        .lowercased()
+      return normalized
+    }()
+
+    NSPasteboard.general.clearContents()
+    NSPasteboard.general.setString(apiId, forType: .string)
+
+    // Show feedback
+    withAnimation {
+      showCopiedFeedback = true
+    }
+
+    // Reset feedback after delay
+    DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+      withAnimation {
+        showCopiedFeedback = false
       }
     }
   }
