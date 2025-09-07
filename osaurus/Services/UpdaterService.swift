@@ -47,7 +47,7 @@ final class UpdaterViewModel: NSObject, ObservableObject, SPUUpdaterDelegate {
 		}
 	}
 
-	func updater(_ updater: SPUUpdater, willDownloadUpdate item: SUAppcastItem, with request: URLRequest) {
+	func updater(_ updater: SPUUpdater, willDownloadUpdate item: SUAppcastItem, with request: NSMutableURLRequest) {
 		NSLog("Sparkle: willDownloadUpdate version=%@ url=%@", item.versionString, request.url?.absoluteString ?? "nil")
 	}
 

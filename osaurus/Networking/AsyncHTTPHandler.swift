@@ -20,8 +20,6 @@ private struct UncheckedSendableBox<T>: @unchecked Sendable {
 class AsyncHTTPHandler {
     static let shared = AsyncHTTPHandler()
     
-    // JSON encoder is created per write to avoid cross-request contention
-    
     private init() {}
     
     @inline(__always)
@@ -139,10 +137,11 @@ class AsyncHTTPHandler {
     ) async throws {
         let loop = context.eventLoop
         let ctxBox = UncheckedSendableBox(value: context)
+        let writerBox = UncheckedSendableBox(value: writer)
         
         // Write headers using the response writer
         executeOnLoop(loop) {
-            writer.writeHeaders(ctxBox.value)
+            writerBox.value.writeHeaders(ctxBox.value)
         }
         
         // Generate response ID
@@ -178,7 +177,7 @@ class AsyncHTTPHandler {
         if shouldCheckForTools {
             // Send initial role chunk
             executeOnLoop(loop) {
-                writer.writeRole("assistant", model: requestModel, responseId: responseId, created: created, context: ctxBox.value)
+                writerBox.value.writeRole("assistant", model: requestModel, responseId: responseId, created: created, context: ctxBox.value)
             }
             
             var accumulatedBytes: Int = 0
@@ -258,6 +257,7 @@ class AsyncHTTPHandler {
                             context.write(NIOAny(HTTPServerResponsePart.body(.byteBuffer(buffer))), promise: nil)
                             context.flush()
                             context.writeAndFlush(NIOAny(HTTPServerResponsePart.end(nil as HTTPHeaders?))).whenComplete { _ in
+                                let context = ctxBox.value
                                 context.close(promise: nil)
                             }
                         }
@@ -277,7 +277,7 @@ class AsyncHTTPHandler {
             }
             if !fullResponse.isEmpty {
                 executeOnLoop(loop) {
-                    writer.writeContent(fullResponse, model: requestModel, responseId: responseId, created: created, context: ctxBox.value)
+                    writerBox.value.writeContent(fullResponse, model: requestModel, responseId: responseId, created: created, context: ctxBox.value)
                 }
             }
         } else {
@@ -319,7 +319,7 @@ class AsyncHTTPHandler {
                     scheduledFlush = false
                     if pendingBuffer.readableBytes > 0 {
                         let content = pendingBuffer.readString(length: pendingBuffer.readableBytes) ?? ""
-                        writer.writeContent(content, model: requestModel, responseId: responseId, created: created, context: ctxBox.value)
+                        writerBox.value.writeContent(content, model: requestModel, responseId: responseId, created: created, context: ctxBox.value)
                         pendingCharCount = 0
                         lastFlushNs = DispatchTime.now().uptimeNanoseconds
                     }
@@ -329,7 +329,7 @@ class AsyncHTTPHandler {
             @inline(__always)
             func processTokenOnLoop(_ token: String) {
                 if !firstTokenSent {
-                    writer.writeContent(token, model: requestModel, responseId: responseId, created: created, context: ctxBox.value)
+                    writerBox.value.writeContent(token, model: requestModel, responseId: responseId, created: created, context: ctxBox.value)
                     firstTokenSent = true
                     lastFlushNs = DispatchTime.now().uptimeNanoseconds
                     return
@@ -340,7 +340,7 @@ class AsyncHTTPHandler {
                 if pendingCharCount >= batchCharThreshold || nowNs - lastFlushNs >= flushIntervalNs {
                     if pendingBuffer.readableBytes > 0 {
                         let content = pendingBuffer.readString(length: pendingBuffer.readableBytes) ?? ""
-                        writer.writeContent(content, model: requestModel, responseId: responseId, created: created, context: ctxBox.value)
+                        writerBox.value.writeContent(content, model: requestModel, responseId: responseId, created: created, context: ctxBox.value)
                         pendingCharCount = 0
                         lastFlushNs = nowNs
                     }
@@ -351,7 +351,7 @@ class AsyncHTTPHandler {
 
             // Immediately send role prelude before first model token (helps TTFT)
             executeOnLoop(loop) {
-                writer.writeRole("assistant", model: requestModel, responseId: responseId, created: created, context: ctxBox.value)
+                writerBox.value.writeRole("assistant", model: requestModel, responseId: responseId, created: created, context: ctxBox.value)
             }
 
             for await event in eventStream {
@@ -366,7 +366,7 @@ class AsyncHTTPHandler {
                         executeOnLoop(loop) {
                             if pendingBuffer.readableBytes > 0 {
                                 let content = pendingBuffer.readString(length: pendingBuffer.readableBytes) ?? ""
-                                writer.writeContent(content, model: requestModel, responseId: responseId, created: created, context: ctxBox.value)
+                                writerBox.value.writeContent(content, model: requestModel, responseId: responseId, created: created, context: ctxBox.value)
                                 pendingCharCount = 0
                                 lastFlushNs = DispatchTime.now().uptimeNanoseconds
                             }
@@ -383,7 +383,7 @@ class AsyncHTTPHandler {
             executeOnLoop(loop) {
                 if pendingBuffer.readableBytes > 0 {
                     let content = pendingBuffer.readString(length: pendingBuffer.readableBytes) ?? ""
-                    writer.writeContent(content, model: requestModel, responseId: responseId, created: created, context: ctxBox.value)
+                    writerBox.value.writeContent(content, model: requestModel, responseId: responseId, created: created, context: ctxBox.value)
                     pendingCharCount = 0
                     lastFlushNs = DispatchTime.now().uptimeNanoseconds
                 }
@@ -403,8 +403,8 @@ class AsyncHTTPHandler {
 
         // Send finish and end
         executeOnLoop(loop) {
-            writer.writeFinish(requestModel, responseId: responseId, created: created, context: ctxBox.value)
-            writer.writeEnd(ctxBox.value)
+            writerBox.value.writeFinish(requestModel, responseId: responseId, created: created, context: ctxBox.value)
+            writerBox.value.writeEnd(ctxBox.value)
         }
     }
     
@@ -497,8 +497,6 @@ class AsyncHTTPHandler {
                 }
             }
         }
-        // Since we route tool calls immediately above, remaining path is normal text completion
-        let toolCalls: [ToolCall]? = nil
         let finishReason = "stop"
 
         // Create response
