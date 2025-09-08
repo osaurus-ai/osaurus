@@ -87,6 +87,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
   func applicationWillTerminate(_ notification: Notification) {
     print("Osaurus server app terminating")
+    SharedConfigurationService.shared.remove()
   }
 
   // MARK: - Status Item / Menu
@@ -111,6 +112,22 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         self?.updateStatusItemAndMenu()
       }
       .store(in: &cancellables)
+
+    // Publish shared configuration on state/config/address changes
+    Publishers.CombineLatest3(
+      serverController.$serverHealth,
+      serverController.$configuration,
+      serverController.$localNetworkAddress
+    )
+    .receive(on: RunLoop.main)
+    .sink { health, config, address in
+      SharedConfigurationService.shared.update(
+        health: health,
+        configuration: config,
+        localAddress: address
+      )
+    }
+    .store(in: &cancellables)
   }
 
   private func updateStatusItemAndMenu() {

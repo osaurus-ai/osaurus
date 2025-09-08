@@ -103,6 +103,7 @@ The following are 20-run averages from our batch benchmark suite. See raw result
 - `POST /chat` → Ollama‑compatible chat endpoint
 
 **Path normalization**: All endpoints support common API prefixes (`/v1`, `/api`, `/v1/api`). For example:
+
 - `/v1/models` → `/models`
 - `/api/chat/completions` → `/chat/completions`
 - `/api/chat` → `/chat` (Ollama‑style)
@@ -177,6 +178,10 @@ curl -N http://127.0.0.1:8080/v1/api/chat \
 This endpoint is compatible with OllamaKit and other Ollama client libraries.
 
 Tip: Model names are lower‑cased with hyphens (derived from the friendly name), for example: `Llama 3.2 3B Instruct 4bit` → `llama-3.2-3b-instruct-4bit`.
+
+### Integrate with native or Electron apps
+
+If you're building a macOS app (Swift/Objective‑C/SwiftUI/Electron) and want to discover and connect to a running Osaurus instance, see the Shared Configuration guide: [SHARED_CONFIGURATION_GUIDE.md](SHARED_CONFIGURATION_GUIDE.md).
 
 ### Function/Tool Calling (OpenAI‑compatible)
 
