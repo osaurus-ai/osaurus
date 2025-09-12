@@ -165,7 +165,10 @@ final class HTTPHandler: ChannelInboundHandler {
     let allowsAny = configuration.allowedOrigins.contains("*")
     if allowsAny {
       headers.append(("Access-Control-Allow-Origin", "*"))
-    } else if let origin, configuration.allowedOrigins.contains(origin) {
+    } else if let origin,
+      !origin.contains("\r"), !origin.contains("\n"),
+      configuration.allowedOrigins.contains(origin)
+    {
       headers.append(("Access-Control-Allow-Origin", origin))
       headers.append(("Vary", "Origin"))
     } else {
@@ -176,15 +179,39 @@ final class HTTPHandler: ChannelInboundHandler {
     if isPreflight {
       // Methods
       let reqMethod = head.headers.first(name: "Access-Control-Request-Method")
-      let allowMethods = reqMethod ?? "GET, POST, OPTIONS, HEAD"
+      let allowMethods = sanitizeTokenList(reqMethod ?? "GET, POST, OPTIONS, HEAD")
       headers.append(("Access-Control-Allow-Methods", allowMethods))
       // Headers
       let reqHeaders = head.headers.first(name: "Access-Control-Request-Headers")
-      let allowHeaders = reqHeaders ?? "Content-Type, Authorization"
+      let allowHeaders = sanitizeTokenList(reqHeaders ?? "Content-Type, Authorization")
       headers.append(("Access-Control-Allow-Headers", allowHeaders))
       headers.append(("Access-Control-Max-Age", "600"))
     }
     return headers
+  }
+
+  /// Allow only RFC7230 token characters plus comma and space for reflected header lists
+  private func sanitizeTokenList(_ value: String) -> String {
+    let allowedPunctuation = Set("!#$%&'*+-.^_`|~ ,")
+    var result = String()
+    result.reserveCapacity(value.count)
+    for scalar in value.unicodeScalars {
+      switch scalar.value {
+      case 0x30...0x39,  // 0-9
+        0x41...0x5A,  // A-Z
+        0x61...0x7A:  // a-z
+        result.unicodeScalars.append(scalar)
+      default:
+        let ch = Character(scalar)
+        if allowedPunctuation.contains(ch) {
+          result.append(ch)
+        }
+      }
+    }
+    // Trim leading/trailing spaces and collapse runs of spaces around commas
+    let collapsed = result.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }
+      .filter { !$0.isEmpty }.joined(separator: ", ")
+    return collapsed
   }
 
   /// Expose CORS headers for use by async writers

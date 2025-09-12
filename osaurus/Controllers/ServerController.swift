@@ -277,11 +277,17 @@ final class ServerController: ObservableObject {
     let connection = NWConnection(host: NWEndpoint.Host(host), port: nwPort, using: .tcp)
 
     let stateStream = AsyncStream<NWConnection.State> { continuation in
+      let finished = AtomicFlag()
       connection.stateUpdateHandler = { state in
+        if finished.get() { return }
         continuation.yield(state)
         switch state {
         case .ready, .failed(_), .cancelled:
-          continuation.finish()
+          if !finished.testAndSetTrue() {
+            continuation.finish()
+            // Avoid further callbacks
+            connection.stateUpdateHandler = nil
+          }
         default:
           break
         }
@@ -317,7 +323,28 @@ final class ServerController: ObservableObject {
 
       let result = await group.next() ?? false
       group.cancelAll()
+      // Ensure no further callbacks are delivered after we decide
+      connection.stateUpdateHandler = nil
       return result
+    }
+  }
+
+  // MARK: - Concurrency Helpers
+  private final class AtomicFlag: @unchecked Sendable {
+    private let lock = NSLock()
+    private var value: Bool = false
+    func get() -> Bool {
+      lock.lock()
+      defer { lock.unlock() }
+      return value
+    }
+    /// Sets the flag to true and returns the previous value atomically.
+    func testAndSetTrue() -> Bool {
+      lock.lock()
+      defer { lock.unlock() }
+      let was = value
+      value = true
+      return was
     }
   }
 
