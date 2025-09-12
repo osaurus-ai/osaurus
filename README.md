@@ -303,6 +303,53 @@ for call in tool_calls:
     print(followup.choices[0].message.content)
 ```
 
+## CORS
+
+Osaurus includes built‑in CORS support for browser clients.
+
+- **Disabled by default**: No CORS headers are sent unless you configure allowed origins.
+- **Enable via UI**: gear icon → Advanced Settings → CORS Settings → Allowed Origins.
+  - Enter a comma‑separated list, for example: `http://localhost:3000, http://127.0.0.1:5173, https://app.example.com`
+  - Use `*` to allow any origin (recommended only for local development).
+- **Expose to network**: If you need to access from other devices, also enable "Expose to network" in Network Settings.
+
+Behavior when CORS is enabled:
+
+- Requests with an allowed `Origin` receive `Access-Control-Allow-Origin` (either the specific origin or `*`).
+- Preflight `OPTIONS` requests are answered with `204 No Content` and headers:
+  - `Access-Control-Allow-Methods`: echoes requested method or defaults to `GET, POST, OPTIONS, HEAD`
+  - `Access-Control-Allow-Headers`: echoes requested headers or defaults to `Content-Type, Authorization`
+  - `Access-Control-Max-Age: 600`
+- Streaming endpoints also include CORS headers on their responses.
+
+Quick examples
+
+Configure via UI (persists to app settings). The underlying config includes:
+
+```json
+{
+  "allowedOrigins": ["http://localhost:3000", "https://app.example.com"]
+}
+```
+
+Browser fetch from a web app running on `http://localhost:3000`:
+
+```javascript
+await fetch("http://127.0.0.1:8080/v1/chat/completions", {
+  method: "POST",
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify({
+    model: "llama-3.2-3b-instruct-4bit",
+    messages: [{ role: "user", content: "Hello!" }],
+  }),
+});
+```
+
+Notes
+
+- Leave the field empty to disable CORS entirely.
+- `*` cannot be combined with credentials; Osaurus does not use cookies, so this is typically fine for local use.
+
 ## Models
 
 - Curated suggestions include Llama, Qwen, Gemma, Mistral, Phi, DeepSeek, etc. (4‑bit variants for speed)
