@@ -326,7 +326,7 @@ struct ConfigurationView: View {
         Text("Server Configuration")
           .font(.system(size: 15, weight: .semibold, design: .rounded))
           .foregroundColor(theme.primaryText)
-        
+
         Text("Configure your local server settings")
           .font(.system(size: 11))
           .foregroundColor(theme.secondaryText)
@@ -344,7 +344,7 @@ struct ConfigurationView: View {
             Label("Network Settings", systemImage: "network")
               .font(.system(size: 13, weight: .semibold))
               .foregroundColor(theme.primaryText)
-            
+
             VStack(alignment: .leading, spacing: 6) {
               Text("Port")
                 .font(.system(size: 11, weight: .medium))
@@ -369,7 +369,7 @@ struct ConfigurationView: View {
                 .font(.system(size: 10))
                 .foregroundColor(theme.tertiaryText)
             }
-            
+
             // Network exposure toggle
             HStack {
               VStack(alignment: .leading, spacing: 2) {
@@ -380,9 +380,9 @@ struct ConfigurationView: View {
                   .font(.system(size: 10))
                   .foregroundStyle(theme.tertiaryText)
               }
-              
+
               Spacer()
-              
+
               Toggle("", isOn: $tempExposeToNetwork)
                 .toggleStyle(SwitchToggleStyle(tint: theme.accentColor))
                 .labelsHidden()
@@ -393,13 +393,13 @@ struct ConfigurationView: View {
             RoundedRectangle(cornerRadius: 8)
               .fill(theme.secondaryBackground)
           )
-          
+
           // System settings section
           VStack(alignment: .leading, spacing: 12) {
             Label("System", systemImage: "gear")
               .font(.system(size: 13, weight: .semibold))
               .foregroundColor(theme.primaryText)
-            
+
             HStack {
               VStack(alignment: .leading, spacing: 2) {
                 Text("Start at Login")
@@ -409,9 +409,9 @@ struct ConfigurationView: View {
                   .font(.system(size: 10))
                   .foregroundStyle(theme.tertiaryText)
               }
-              
+
               Spacer()
-              
+
               Toggle("", isOn: $tempStartAtLogin)
                 .toggleStyle(SwitchToggleStyle(tint: theme.accentColor))
                 .labelsHidden()
@@ -428,7 +428,7 @@ struct ConfigurationView: View {
             Label("Storage", systemImage: "folder")
               .font(.system(size: 13, weight: .semibold))
               .foregroundColor(theme.primaryText)
-            
+
             DirectoryPickerView()
           }
           .padding(12)
@@ -453,7 +453,7 @@ struct ConfigurationView: View {
                 .font(.system(size: 12, weight: .medium))
 
               Spacer()
-              
+
               if !showAdvancedSettings {
                 Text("Show more options")
                   .font(.system(size: 10))
@@ -486,7 +486,7 @@ struct ConfigurationView: View {
                   Text("Allowed Origins")
                     .font(.system(size: 11, weight: .medium))
                     .foregroundColor(theme.secondaryText)
-                  
+
                   TextField("https://example.com, https://app.localhost", text: $tempAllowedOrigins)
                     .textFieldStyle(.plain)
                     .font(.system(size: 12, design: .monospaced))
@@ -501,7 +501,7 @@ struct ConfigurationView: View {
                         )
                     )
                     .foregroundColor(theme.primaryText)
-                  
+
                   Text("Comma-separated list. Use * for any origin, or leave empty to disable CORS")
                     .font(.system(size: 10))
                     .foregroundColor(theme.tertiaryText)
@@ -520,18 +520,24 @@ struct ConfigurationView: View {
                   .foregroundColor(theme.primaryText)
 
                 VStack(spacing: 10) {
-                  advancedField("Top P", text: $tempTopP, placeholder: "1.0", 
-                               help: "Controls diversity of generated text")
-                  advancedField("KV Cache Bits", text: $tempKVBits, placeholder: "4", 
-                               help: "Quantization bits for KV cache (empty = off)")
-                  advancedField("KV Group Size", text: $tempKVGroup, placeholder: "64",
-                               help: "Group size for KV quantization")
-                  advancedField("Quantized KV Start", text: $tempQuantStart, placeholder: "0",
-                               help: "Starting layer for KV quantization")
-                  advancedField("Max KV Size", text: $tempMaxKV, placeholder: "",
-                               help: "Maximum KV cache size (empty = unlimited)")
-                  advancedField("Prefill Step Size", text: $tempPrefillStep, placeholder: "1024",
-                               help: "Step size for prefill operations")
+                  advancedField(
+                    "Top P", text: $tempTopP, placeholder: "1.0",
+                    help: "Controls diversity of generated text")
+                  advancedField(
+                    "KV Cache Bits", text: $tempKVBits, placeholder: "4",
+                    help: "Quantization bits for KV cache (empty = off)")
+                  advancedField(
+                    "KV Group Size", text: $tempKVGroup, placeholder: "64",
+                    help: "Group size for KV quantization")
+                  advancedField(
+                    "Quantized KV Start", text: $tempQuantStart, placeholder: "0",
+                    help: "Starting layer for KV quantization")
+                  advancedField(
+                    "Max KV Size", text: $tempMaxKV, placeholder: "",
+                    help: "Maximum KV cache size (empty = unlimited)")
+                  advancedField(
+                    "Prefill Step Size", text: $tempPrefillStep, placeholder: "1024",
+                    help: "Step size for prefill operations")
                 }
               }
               .padding(12)
@@ -551,7 +557,7 @@ struct ConfigurationView: View {
       VStack(spacing: 0) {
         Divider()
           .background(theme.primaryBorder)
-        
+
         HStack(spacing: 12) {
           Button("Cancel") {
             dismiss()
@@ -590,7 +596,8 @@ struct ConfigurationView: View {
                 Int(tempPrefillStep) ?? configuration.genPrefillStepSize
 
               // Save CORS allowed origins
-              let parsedOrigins: [String] = tempAllowedOrigins
+              let parsedOrigins: [String] =
+                tempAllowedOrigins
                 .split(separator: ",")
                 .map { String($0).trimmingCharacters(in: .whitespacesAndNewlines) }
                 .filter { !$0.isEmpty }
@@ -638,7 +645,9 @@ struct ConfigurationView: View {
   }
 
   @ViewBuilder
-  private func advancedField(_ label: String, text: Binding<String>, placeholder: String, help: String)
+  private func advancedField(
+    _ label: String, text: Binding<String>, placeholder: String, help: String
+  )
     -> some View
   {
     VStack(alignment: .leading, spacing: 4) {
@@ -646,14 +655,14 @@ struct ConfigurationView: View {
         Text(label)
           .font(.system(size: 11, weight: .medium))
           .foregroundColor(theme.primaryText)
-        
+
         Spacer()
-        
+
         Text(help)
           .font(.system(size: 9))
           .foregroundColor(theme.tertiaryText)
       }
-      
+
       TextField(placeholder, text: text)
         .textFieldStyle(.plain)
         .font(.system(size: 12, design: .monospaced))

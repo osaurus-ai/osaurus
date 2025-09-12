@@ -79,7 +79,8 @@ public struct ServerConfiguration: Codable, Equatable, Sendable {
       try container.decodeIfPresent(Int.self, forKey: .genPrefillStepSize)
       ?? defaults.genPrefillStepSize
     self.allowedOrigins =
-      try container.decodeIfPresent([String].self, forKey: .allowedOrigins) ?? defaults.allowedOrigins
+      try container.decodeIfPresent([String].self, forKey: .allowedOrigins)
+      ?? defaults.allowedOrigins
   }
 
   public init(

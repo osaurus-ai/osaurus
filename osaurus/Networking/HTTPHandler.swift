@@ -155,7 +155,9 @@ final class HTTPHandler: ChannelInboundHandler {
   }
 
   // MARK: - CORS
-  private func computeCORSHeaders(for head: HTTPRequestHead, isPreflight: Bool) -> [(String, String)] {
+  private func computeCORSHeaders(for head: HTTPRequestHead, isPreflight: Bool) -> [(
+    String, String
+  )] {
     guard !configuration.allowedOrigins.isEmpty else { return [] }
     let origin = head.headers.first(name: "Origin")
     var headers: [(String, String)] = []
