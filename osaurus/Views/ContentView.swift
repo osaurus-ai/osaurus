@@ -320,131 +320,259 @@ struct ConfigurationView: View {
   @State private var tempAllowedOrigins: String = ""
 
   var body: some View {
-    VStack(spacing: 16) {
-      Text("Server Configuration")
-        .font(.system(size: 14, weight: .semibold))
-        .foregroundColor(theme.primaryText)
-
-      // Port configuration (always visible)
-      VStack(alignment: .leading, spacing: 8) {
-        Text("Port")
-          .font(.system(size: 12, weight: .medium))
+    VStack(spacing: 0) {
+      // Fixed header
+      VStack(spacing: 2) {
+        Text("Server Configuration")
+          .font(.system(size: 15, weight: .semibold, design: .rounded))
+          .foregroundColor(theme.primaryText)
+        
+        Text("Configure your local server settings")
+          .font(.system(size: 11))
           .foregroundColor(theme.secondaryText)
+      }
+      .padding(.vertical, 12)
 
-        TextField("8080", text: $tempPortString)
-          .textFieldStyle(.plain)
-          .font(.system(size: 13, weight: .medium, design: .monospaced))
-          .padding(.horizontal, 12)
+      Divider()
+        .background(theme.primaryBorder)
+
+      // Scrollable content area
+      ScrollView {
+        VStack(alignment: .leading, spacing: 16) {
+          // Port configuration section
+          VStack(alignment: .leading, spacing: 12) {
+            Label("Network Settings", systemImage: "network")
+              .font(.system(size: 13, weight: .semibold))
+              .foregroundColor(theme.primaryText)
+            
+            VStack(alignment: .leading, spacing: 6) {
+              Text("Port")
+                .font(.system(size: 11, weight: .medium))
+                .foregroundColor(theme.secondaryText)
+
+              TextField("8080", text: $tempPortString)
+                .textFieldStyle(.plain)
+                .font(.system(size: 13, weight: .medium, design: .monospaced))
+                .padding(.horizontal, 10)
+                .padding(.vertical, 7)
+                .background(
+                  RoundedRectangle(cornerRadius: 6)
+                    .fill(theme.inputBackground)
+                    .overlay(
+                      RoundedRectangle(cornerRadius: 6)
+                        .stroke(theme.inputBorder, lineWidth: 1)
+                    )
+                )
+                .foregroundColor(theme.primaryText)
+
+              Text("Enter a port number between 1 and 65535")
+                .font(.system(size: 10))
+                .foregroundColor(theme.tertiaryText)
+            }
+            
+            // Network exposure toggle
+            HStack {
+              VStack(alignment: .leading, spacing: 2) {
+                Text("Expose to network")
+                  .font(.system(size: 12, weight: .medium))
+                  .foregroundStyle(theme.primaryText)
+                Text("Allow devices on your network to connect")
+                  .font(.system(size: 10))
+                  .foregroundStyle(theme.tertiaryText)
+              }
+              
+              Spacer()
+              
+              Toggle("", isOn: $tempExposeToNetwork)
+                .toggleStyle(SwitchToggleStyle(tint: theme.accentColor))
+                .labelsHidden()
+            }
+          }
+          .padding(12)
+          .background(
+            RoundedRectangle(cornerRadius: 8)
+              .fill(theme.secondaryBackground)
+          )
+          
+          // System settings section
+          VStack(alignment: .leading, spacing: 12) {
+            Label("System", systemImage: "gear")
+              .font(.system(size: 13, weight: .semibold))
+              .foregroundColor(theme.primaryText)
+            
+            HStack {
+              VStack(alignment: .leading, spacing: 2) {
+                Text("Start at Login")
+                  .font(.system(size: 12, weight: .medium))
+                  .foregroundStyle(theme.primaryText)
+                Text("Launch Osaurus when you sign in")
+                  .font(.system(size: 10))
+                  .foregroundStyle(theme.tertiaryText)
+              }
+              
+              Spacer()
+              
+              Toggle("", isOn: $tempStartAtLogin)
+                .toggleStyle(SwitchToggleStyle(tint: theme.accentColor))
+                .labelsHidden()
+            }
+          }
+          .padding(12)
+          .background(
+            RoundedRectangle(cornerRadius: 8)
+              .fill(theme.secondaryBackground)
+          )
+
+          // Models directory section
+          VStack(alignment: .leading, spacing: 12) {
+            Label("Storage", systemImage: "folder")
+              .font(.system(size: 13, weight: .semibold))
+              .foregroundColor(theme.primaryText)
+            
+            DirectoryPickerView()
+          }
+          .padding(12)
+          .background(
+            RoundedRectangle(cornerRadius: 8)
+              .fill(theme.secondaryBackground)
+          )
+
+          // Advanced settings toggle
+          Button(action: {
+            withAnimation(.easeInOut(duration: 0.2)) {
+              showAdvancedSettings.toggle()
+            }
+          }) {
+            HStack(spacing: 8) {
+              Image(systemName: "chevron.right")
+                .font(.system(size: 11, weight: .medium))
+                .rotationEffect(.degrees(showAdvancedSettings ? 90 : 0))
+                .animation(.easeInOut(duration: 0.2), value: showAdvancedSettings)
+
+              Text("Advanced Settings")
+                .font(.system(size: 12, weight: .medium))
+
+              Spacer()
+              
+              if !showAdvancedSettings {
+                Text("Show more options")
+                  .font(.system(size: 10))
+                  .foregroundColor(theme.tertiaryText)
+              }
+            }
+            .foregroundColor(theme.primaryText)
+            .padding(12)
+            .background(
+              RoundedRectangle(cornerRadius: 8)
+                .fill(theme.secondaryBackground)
+                .overlay(
+                  RoundedRectangle(cornerRadius: 8)
+                    .stroke(theme.primaryBorder, lineWidth: 0.5)
+                )
+            )
+            .contentShape(Rectangle())
+          }
+          .buttonStyle(PlainButtonStyle())
+
+          if showAdvancedSettings {
+            VStack(alignment: .leading, spacing: 16) {
+              // Networking Section
+              VStack(alignment: .leading, spacing: 12) {
+                Label("CORS Settings", systemImage: "lock.shield")
+                  .font(.system(size: 13, weight: .semibold))
+                  .foregroundColor(theme.primaryText)
+
+                VStack(alignment: .leading, spacing: 6) {
+                  Text("Allowed Origins")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundColor(theme.secondaryText)
+                  
+                  TextField("https://example.com, https://app.localhost", text: $tempAllowedOrigins)
+                    .textFieldStyle(.plain)
+                    .font(.system(size: 12, design: .monospaced))
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 6)
+                    .background(
+                      RoundedRectangle(cornerRadius: 6)
+                        .fill(theme.inputBackground)
+                        .overlay(
+                          RoundedRectangle(cornerRadius: 6)
+                            .stroke(theme.inputBorder, lineWidth: 1)
+                        )
+                    )
+                    .foregroundColor(theme.primaryText)
+                  
+                  Text("Comma-separated list. Use * for any origin, or leave empty to disable CORS")
+                    .font(.system(size: 10))
+                    .foregroundColor(theme.tertiaryText)
+                }
+              }
+              .padding(12)
+              .background(
+                RoundedRectangle(cornerRadius: 8)
+                  .fill(theme.secondaryBackground)
+              )
+
+              // AI Parameters Section
+              VStack(alignment: .leading, spacing: 12) {
+                Label("AI Parameters", systemImage: "cpu")
+                  .font(.system(size: 13, weight: .semibold))
+                  .foregroundColor(theme.primaryText)
+
+                VStack(spacing: 10) {
+                  advancedField("Top P", text: $tempTopP, placeholder: "1.0", 
+                               help: "Controls diversity of generated text")
+                  advancedField("KV Cache Bits", text: $tempKVBits, placeholder: "4", 
+                               help: "Quantization bits for KV cache (empty = off)")
+                  advancedField("KV Group Size", text: $tempKVGroup, placeholder: "64",
+                               help: "Group size for KV quantization")
+                  advancedField("Quantized KV Start", text: $tempQuantStart, placeholder: "0",
+                               help: "Starting layer for KV quantization")
+                  advancedField("Max KV Size", text: $tempMaxKV, placeholder: "",
+                               help: "Maximum KV cache size (empty = unlimited)")
+                  advancedField("Prefill Step Size", text: $tempPrefillStep, placeholder: "1024",
+                               help: "Step size for prefill operations")
+                }
+              }
+              .padding(12)
+              .background(
+                RoundedRectangle(cornerRadius: 8)
+                  .fill(theme.secondaryBackground)
+              )
+            }
+            .transition(.opacity.combined(with: .move(edge: .top)))
+          }
+        }
+        .padding(16)
+      }
+      .frame(maxHeight: 310)
+
+      // Fixed bottom action bar
+      VStack(spacing: 0) {
+        Divider()
+          .background(theme.primaryBorder)
+        
+        HStack(spacing: 12) {
+          Button("Cancel") {
+            dismiss()
+          }
+          .buttonStyle(PlainButtonStyle())
+          .padding(.horizontal, 16)
           .padding(.vertical, 8)
           .background(
             RoundedRectangle(cornerRadius: 6)
-              .fill(theme.inputBackground)
+              .fill(theme.secondaryBackground)
               .overlay(
                 RoundedRectangle(cornerRadius: 6)
-                  .stroke(theme.inputBorder, lineWidth: 1)
+                  .stroke(theme.secondaryBorder, lineWidth: 1)
               )
           )
+          .font(.system(size: 13, weight: .medium))
           .foregroundColor(theme.primaryText)
 
-        Text("Enter a port number between 1 and 65535")
-          .font(.system(size: 11))
-          .foregroundColor(theme.tertiaryText)
-
-        Toggle(isOn: $tempExposeToNetwork) {
-          VStack(alignment: .leading, spacing: 2) {
-            Text("Expose to the network")
-              .font(.system(size: 13, weight: .medium))
-              .foregroundStyle(theme.primaryText)
-            Text("Allow other devices or services to access Osaurus.")
-              .font(.system(size: 11))
-              .foregroundStyle(theme.secondaryText)
-          }
-        }
-
-        Toggle(isOn: $tempStartAtLogin) {
-          VStack(alignment: .leading, spacing: 2) {
-            Text("Start at Login")
-              .font(.system(size: 13, weight: .medium))
-              .foregroundStyle(theme.primaryText)
-            Text("Launch Osaurus automatically when you sign in.")
-              .font(.system(size: 11))
-              .foregroundStyle(theme.secondaryText)
-          }
-        }
-
-        // Models directory configuration (always visible)
-        VStack(alignment: .leading, spacing: 8) {
-          Text("Models Directory")
-            .font(.system(size: 12, weight: .medium))
-            .foregroundColor(theme.secondaryText)
-
-          DirectoryPickerView()
-        }
-      }
-
-      Button(action: {
-        showAdvancedSettings.toggle()
-      }) {
-        HStack(spacing: 6) {
-          Image(systemName: "chevron.right")
-            .font(.system(size: 11))
-            .rotationEffect(.degrees(showAdvancedSettings ? 90 : 0))
-
-          Text("Advanced Settings")
-            .font(.system(size: 13))
-
           Spacer()
-        }
-        .foregroundColor(theme.primaryText)
-        .contentShape(Rectangle())
-      }
-      .buttonStyle(PlainButtonStyle())
 
-      if showAdvancedSettings {
-        VStack(alignment: .leading, spacing: 12) {
-          // Networking Section
-          Text("Networking")
-            .font(.system(size: 12, weight: .semibold))
-            .foregroundColor(theme.primaryText)
-
-          labeledField(
-            "allowed_origins (comma-separated; empty disables, * = any)",
-            text: $tempAllowedOrigins,
-            placeholder: "https://example.com, https://app.localhost"
-          )
-
-          Divider()
-
-          // AI Parameters Section
-          Text("AI Parameters")
-            .font(.system(size: 12, weight: .semibold))
-            .foregroundColor(theme.primaryText)
-
-          labeledField("top_p", text: $tempTopP, placeholder: "1.0")
-          labeledField("kv_bits (empty = off)", text: $tempKVBits, placeholder: "4")
-          labeledField("kv_group_size", text: $tempKVGroup, placeholder: "64")
-          labeledField("quantized_kv_start", text: $tempQuantStart, placeholder: "0")
-          labeledField("max_kv_size (empty = unlimited)", text: $tempMaxKV, placeholder: "")
-          labeledField("prefill_step_size", text: $tempPrefillStep, placeholder: "1024")
-        }
-        .padding(.top, 8)
-      }
-
-      // Action buttons
-      HStack(spacing: 12) {
-        Button("Cancel") {
-          dismiss()
-        }
-        .buttonStyle(PlainButtonStyle())
-        .font(.system(size: 13, weight: .medium))
-        .foregroundColor(theme.secondaryText)
-
-        Spacer()
-
-        GradientButton(
-          title: "Save",
-          icon: nil,
-          action: {
+          Button(action: {
             if let port = Int(tempPortString), (1..<65536).contains(port) {
               portString = tempPortString
               configuration.port = port
@@ -475,12 +603,25 @@ struct ConfigurationView: View {
 
               dismiss()
             }
+          }) {
+            Text("Save")
+              .font(.system(size: 13, weight: .medium))
+              .foregroundColor(.white)
+              .padding(.horizontal, 20)
+              .padding(.vertical, 8)
+              .background(
+                RoundedRectangle(cornerRadius: 6)
+                  .fill(theme.accentColor)
+              )
           }
-        )
+          .buttonStyle(PlainButtonStyle())
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
       }
+      .background(theme.primaryBackground)
     }
-    .padding(20)
-    .frame(width: 360)
+    .frame(width: 380, height: 460)
     .background(theme.primaryBackground)
     .onAppear {
       tempPortString = portString
@@ -497,18 +638,27 @@ struct ConfigurationView: View {
   }
 
   @ViewBuilder
-  private func labeledField(_ label: String, text: Binding<String>, placeholder: String)
+  private func advancedField(_ label: String, text: Binding<String>, placeholder: String, help: String)
     -> some View
   {
-    VStack(alignment: .leading, spacing: 6) {
-      Text(label)
-        .font(.system(size: 12, weight: .medium))
-        .foregroundColor(theme.secondaryText)
+    VStack(alignment: .leading, spacing: 4) {
+      HStack {
+        Text(label)
+          .font(.system(size: 11, weight: .medium))
+          .foregroundColor(theme.primaryText)
+        
+        Spacer()
+        
+        Text(help)
+          .font(.system(size: 9))
+          .foregroundColor(theme.tertiaryText)
+      }
+      
       TextField(placeholder, text: text)
         .textFieldStyle(.plain)
-        .font(.system(size: 13, weight: .medium, design: .monospaced))
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
+        .font(.system(size: 12, design: .monospaced))
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
         .background(
           RoundedRectangle(cornerRadius: 6)
             .fill(theme.inputBackground)

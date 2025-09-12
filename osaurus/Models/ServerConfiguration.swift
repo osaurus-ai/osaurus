@@ -8,7 +8,7 @@
 import Foundation
 
 /// Configuration settings for the server
-public struct ServerConfiguration: Codable, Equatable {
+public struct ServerConfiguration: Codable, Equatable, Sendable {
   /// Server port (1-65535)
   public var port: Int
 
