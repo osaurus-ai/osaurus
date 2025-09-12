@@ -317,6 +317,7 @@ struct ConfigurationView: View {
   @State private var tempQuantStart: String = "0"
   @State private var tempMaxKV: String = ""
   @State private var tempPrefillStep: String = "1024"
+  @State private var tempAllowedOrigins: String = ""
 
   var body: some View {
     VStack(spacing: 16) {
@@ -400,7 +401,25 @@ struct ConfigurationView: View {
       .buttonStyle(PlainButtonStyle())
 
       if showAdvancedSettings {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 12) {
+          // Networking Section
+          Text("Networking")
+            .font(.system(size: 12, weight: .semibold))
+            .foregroundColor(theme.primaryText)
+
+          labeledField(
+            "allowed_origins (comma-separated; empty disables, * = any)",
+            text: $tempAllowedOrigins,
+            placeholder: "https://example.com, https://app.localhost"
+          )
+
+          Divider()
+
+          // AI Parameters Section
+          Text("AI Parameters")
+            .font(.system(size: 12, weight: .semibold))
+            .foregroundColor(theme.primaryText)
+
           labeledField("top_p", text: $tempTopP, placeholder: "1.0")
           labeledField("kv_bits (empty = off)", text: $tempKVBits, placeholder: "4")
           labeledField("kv_group_size", text: $tempKVGroup, placeholder: "64")
@@ -442,6 +461,13 @@ struct ConfigurationView: View {
               configuration.genPrefillStepSize =
                 Int(tempPrefillStep) ?? configuration.genPrefillStepSize
 
+              // Save CORS allowed origins
+              let parsedOrigins: [String] = tempAllowedOrigins
+                .split(separator: ",")
+                .map { String($0).trimmingCharacters(in: .whitespacesAndNewlines) }
+                .filter { !$0.isEmpty }
+              configuration.allowedOrigins = parsedOrigins
+
               // Persist to disk
               ServerConfigurationStore.save(configuration)
               // Apply login item state
@@ -466,6 +492,7 @@ struct ConfigurationView: View {
       tempQuantStart = String(configuration.genQuantizedKVStart)
       tempMaxKV = configuration.genMaxKVSize.map(String.init) ?? ""
       tempPrefillStep = String(configuration.genPrefillStepSize)
+      tempAllowedOrigins = configuration.allowedOrigins.joined(separator: ", ")
     }
   }
 

@@ -221,7 +221,7 @@ final class ServerController: ObservableObject {
         channel.pipeline.configureHTTPServerPipeline(
           withPipeliningAssistance: false, withErrorHandling: false
         ).flatMap {
-          channel.pipeline.addHandler(HTTPHandler())
+          channel.pipeline.addHandler(HTTPHandler(configuration: configuration))
         }
       }
       .childChannelOption(ChannelOptions.socketOption(.so_reuseaddr), value: 1)

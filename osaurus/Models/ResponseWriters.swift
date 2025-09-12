@@ -11,7 +11,7 @@ import NIOCore
 import NIOHTTP1
 
 protocol ResponseWriter {
-  func writeHeaders(_ context: ChannelHandlerContext)
+  func writeHeaders(_ context: ChannelHandlerContext, extraHeaders: [(String, String)]?)
   func writeRole(
     _ role: String, model: String, responseId: String, created: Int, context: ChannelHandlerContext)
   func writeContent(
@@ -24,7 +24,7 @@ protocol ResponseWriter {
 
 final class SSEResponseWriter: ResponseWriter {
 
-  func writeHeaders(_ context: ChannelHandlerContext) {
+  func writeHeaders(_ context: ChannelHandlerContext, extraHeaders: [(String, String)]? = nil) {
     var head = HTTPResponseHead(version: .http1_1, status: .ok)
     var headers = HTTPHeaders()
     headers.add(name: "Content-Type", value: "text/event-stream")
@@ -32,6 +32,9 @@ final class SSEResponseWriter: ResponseWriter {
     headers.add(name: "Connection", value: "keep-alive")
     headers.add(name: "X-Accel-Buffering", value: "no")
     headers.add(name: "Transfer-Encoding", value: "chunked")
+    if let extraHeaders {
+      for (n, v) in extraHeaders { headers.add(name: n, value: v) }
+    }
     head.headers = headers
     context.write(NIOAny(HTTPServerResponsePart.head(head)), promise: nil)
     context.flush()
@@ -128,13 +131,16 @@ final class SSEResponseWriter: ResponseWriter {
 }
 
 final class NDJSONResponseWriter: ResponseWriter {
-  func writeHeaders(_ context: ChannelHandlerContext) {
+  func writeHeaders(_ context: ChannelHandlerContext, extraHeaders: [(String, String)]? = nil) {
     var head = HTTPResponseHead(version: .http1_1, status: .ok)
     var headers = HTTPHeaders()
     headers.add(name: "Content-Type", value: "application/x-ndjson")
     headers.add(name: "Cache-Control", value: "no-cache, no-transform")
     headers.add(name: "Connection", value: "keep-alive")
     headers.add(name: "Transfer-Encoding", value: "chunked")
+    if let extraHeaders {
+      for (n, v) in extraHeaders { headers.add(name: n, value: v) }
+    }
     head.headers = headers
     context.write(NIOAny(HTTPServerResponsePart.head(head)), promise: nil)
     context.flush()

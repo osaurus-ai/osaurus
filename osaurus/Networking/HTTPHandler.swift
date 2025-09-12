@@ -15,9 +15,15 @@ final class HTTPHandler: ChannelInboundHandler {
   typealias InboundIn = HTTPServerRequestPart
   typealias OutboundOut = HTTPServerResponsePart
 
+  private let configuration: ServerConfiguration
   private var requestHead: HTTPRequestHead?
   private var requestBodyBuffer: ByteBuffer?
   private var context: ChannelHandlerContext?
+  private var corsHeadersForCurrentRequest: [(String, String)] = []
+
+  init(configuration: ServerConfiguration) {
+    self.configuration = configuration
+  }
 
   func channelRead(context: ChannelHandlerContext, data: NIOAny) {
     self.context = context
@@ -26,6 +32,8 @@ final class HTTPHandler: ChannelInboundHandler {
     switch part {
     case .head(let head):
       requestHead = head
+      // Compute CORS headers for this request
+      corsHeadersForCurrentRequest = computeCORSHeaders(for: head, isPreflight: false)
       // Pre-size body buffer if Content-Length is available
       if let lengthStr = head.headers.first(name: "Content-Length"), let length = Int(lengthStr),
         length > 0
@@ -51,6 +59,21 @@ final class HTTPHandler: ChannelInboundHandler {
       // Extract path without query parameters
       let pathOnly = extractPath(from: head.uri)
 
+      // Handle CORS preflight (OPTIONS)
+      if head.method == .OPTIONS {
+        let cors = computeCORSHeaders(for: head, isPreflight: true)
+        sendResponse(
+          context: context,
+          version: head.version,
+          status: .noContent,
+          headers: cors,
+          body: ""
+        )
+        requestHead = nil
+        requestBodyBuffer = nil
+        return
+      }
+
       // Create router with context
       let router = Router(context: context, handler: self)
       let response = router.route(
@@ -58,11 +81,14 @@ final class HTTPHandler: ChannelInboundHandler {
         bodyBuffer: requestBodyBuffer ?? context.channel.allocator.buffer(capacity: 0))
       // Only send response if not handled asynchronously
       if !response.body.isEmpty || response.status != .ok {
+        // Merge CORS headers into response
+        var headersWithCORS = response.headers
+        for (n, v) in corsHeadersForCurrentRequest { headersWithCORS.append((n, v)) }
         sendResponse(
           context: context,
           version: head.version,
           status: response.status,
-          headers: response.headers,
+          headers: headersWithCORS,
           body: response.body
         )
       }
@@ -127,4 +153,38 @@ final class HTTPHandler: ChannelInboundHandler {
     print("[Osaurus][NIO] errorCaught: \(error)")
     context.close(promise: nil)
   }
+
+  // MARK: - CORS
+  private func computeCORSHeaders(for head: HTTPRequestHead, isPreflight: Bool) -> [(String, String)] {
+    guard !configuration.allowedOrigins.isEmpty else { return [] }
+    let origin = head.headers.first(name: "Origin")
+    var headers: [(String, String)] = []
+
+    let allowsAny = configuration.allowedOrigins.contains("*")
+    if allowsAny {
+      headers.append(("Access-Control-Allow-Origin", "*"))
+    } else if let origin, configuration.allowedOrigins.contains(origin) {
+      headers.append(("Access-Control-Allow-Origin", origin))
+      headers.append(("Vary", "Origin"))
+    } else {
+      // Not allowed; for preflight return no CORS headers which will cause browser to block
+      return []
+    }
+
+    if isPreflight {
+      // Methods
+      let reqMethod = head.headers.first(name: "Access-Control-Request-Method")
+      let allowMethods = reqMethod ?? "GET, POST, OPTIONS, HEAD"
+      headers.append(("Access-Control-Allow-Methods", allowMethods))
+      // Headers
+      let reqHeaders = head.headers.first(name: "Access-Control-Request-Headers")
+      let allowHeaders = reqHeaders ?? "Content-Type, Authorization"
+      headers.append(("Access-Control-Allow-Headers", allowHeaders))
+      headers.append(("Access-Control-Max-Age", "600"))
+    }
+    return headers
+  }
+
+  /// Expose CORS headers for use by async writers
+  var currentCORSHeaders: [(String, String)] { corsHeadersForCurrentRequest }
 }
