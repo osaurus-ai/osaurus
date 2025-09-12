@@ -173,17 +173,19 @@ public struct Router {
 
     // Handle async generation without MainActor; writes will be marshaled to the event loop
     // Use detached task to avoid actor context propagation overhead
+    // Capture CORS headers on the event loop thread to avoid cross-thread access to handler
+    let corsHeaders = handler?.currentCORSHeaders
     Task.detached(priority: .userInitiated) {
       await AsyncHTTPHandler.shared.handleChatCompletion(
         request: request,
         context: context,
-        extraHeaders: handler?.currentCORSHeaders
+        extraHeaders: corsHeaders
       )
     }
 
     // Return empty response - actual response will be sent asynchronously
     // Include CORS headers so initial 200 has proper CORS for streaming
-    let cors = handler?.currentCORSHeaders ?? []
+    let cors = corsHeaders ?? []
     return (.ok, cors, "")
   }
 
@@ -200,15 +202,16 @@ public struct Router {
       return errorResponse(message: "Server configuration error", statusCode: .internalServerError)
     }
 
+    let corsHeaders = handler?.currentCORSHeaders
     Task.detached(priority: .userInitiated) {
       await AsyncHTTPHandler.shared.handleChatCompletion(
         request: request,
         context: context,
-        extraHeaders: handler?.currentCORSHeaders
+        extraHeaders: corsHeaders
       )
     }
 
-    let cors = handler?.currentCORSHeaders ?? []
+    let cors = corsHeaders ?? []
     return (.ok, cors, "")
   }
 
@@ -224,15 +227,16 @@ public struct Router {
       return errorResponse(message: "Server configuration error", statusCode: .internalServerError)
     }
 
+    let corsHeaders = handler?.currentCORSHeaders
     Task.detached(priority: .userInitiated) {
       await AsyncHTTPHandler.shared.handleChat(
         request: request,
         context: context,
-        extraHeaders: handler?.currentCORSHeaders
+        extraHeaders: corsHeaders
       )
     }
 
-    let cors = handler?.currentCORSHeaders ?? []
+    let cors = corsHeaders ?? []
     return (.ok, cors, "")
   }
 
@@ -248,15 +252,16 @@ public struct Router {
       return errorResponse(message: "Server configuration error", statusCode: .internalServerError)
     }
 
+    let corsHeaders = handler?.currentCORSHeaders
     Task.detached(priority: .userInitiated) {
       await AsyncHTTPHandler.shared.handleChat(
         request: request,
         context: context,
-        extraHeaders: handler?.currentCORSHeaders
+        extraHeaders: corsHeaders
       )
     }
 
-    let cors = handler?.currentCORSHeaders ?? []
+    let cors = corsHeaders ?? []
     return (.ok, cors, "")
   }
 
