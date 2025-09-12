@@ -176,12 +176,15 @@ public struct Router {
     Task.detached(priority: .userInitiated) {
       await AsyncHTTPHandler.shared.handleChatCompletion(
         request: request,
-        context: context
+        context: context,
+        extraHeaders: handler?.currentCORSHeaders
       )
     }
 
     // Return empty response - actual response will be sent asynchronously
-    return (.ok, [], "")
+    // Include CORS headers so initial 200 has proper CORS for streaming
+    let cors = handler?.currentCORSHeaders ?? []
+    return (.ok, cors, "")
   }
 
   private func chatCompletionsEndpoint(
@@ -200,11 +203,13 @@ public struct Router {
     Task.detached(priority: .userInitiated) {
       await AsyncHTTPHandler.shared.handleChatCompletion(
         request: request,
-        context: context
+        context: context,
+        extraHeaders: handler?.currentCORSHeaders
       )
     }
 
-    return (.ok, [], "")
+    let cors = handler?.currentCORSHeaders ?? []
+    return (.ok, cors, "")
   }
 
   private func chatEndpoint(body: Data, context: ChannelHandlerContext?, handler: HTTPHandler?) -> (
@@ -222,11 +227,13 @@ public struct Router {
     Task.detached(priority: .userInitiated) {
       await AsyncHTTPHandler.shared.handleChat(
         request: request,
-        context: context
+        context: context,
+        extraHeaders: handler?.currentCORSHeaders
       )
     }
 
-    return (.ok, [], "")
+    let cors = handler?.currentCORSHeaders ?? []
+    return (.ok, cors, "")
   }
 
   private func chatEndpoint(
@@ -244,11 +251,13 @@ public struct Router {
     Task.detached(priority: .userInitiated) {
       await AsyncHTTPHandler.shared.handleChat(
         request: request,
-        context: context
+        context: context,
+        extraHeaders: handler?.currentCORSHeaders
       )
     }
 
-    return (.ok, [], "")
+    let cors = handler?.currentCORSHeaders ?? []
+    return (.ok, cors, "")
   }
 
   private func errorResponse(message: String, statusCode: HTTPResponseStatus) -> (

@@ -36,24 +36,37 @@ class AsyncHTTPHandler {
   /// Handle chat completions with streaming support (OpenAI-compatible SSE)
   func handleChatCompletion(
     request: ChatCompletionRequest,
-    context: ChannelHandlerContext
+    context: ChannelHandlerContext,
+    extraHeaders: [(String, String)]? = nil
   ) async {
-    await handleChat(request: request, context: context, writer: SSEResponseWriter())
+    await handleChat(
+      request: request,
+      context: context,
+      writer: SSEResponseWriter(),
+      extraHeaders: extraHeaders
+    )
   }
 
   /// Handle chat endpoint with NDJSON streaming
   func handleChat(
     request: ChatCompletionRequest,
-    context: ChannelHandlerContext
+    context: ChannelHandlerContext,
+    extraHeaders: [(String, String)]? = nil
   ) async {
-    await handleChat(request: request, context: context, writer: NDJSONResponseWriter())
+    await handleChat(
+      request: request,
+      context: context,
+      writer: NDJSONResponseWriter(),
+      extraHeaders: extraHeaders
+    )
   }
 
   /// Unified chat handler with pluggable response writer
   private func handleChat(
     request: ChatCompletionRequest,
     context: ChannelHandlerContext,
-    writer: ResponseWriter
+    writer: ResponseWriter,
+    extraHeaders: [(String, String)]? = nil
   ) async {
     do {
       // Find the model using nonisolated static accessor
@@ -66,7 +79,8 @@ class AsyncHTTPHandler {
             code: nil
           )
         )
-        try await sendJSONResponse(error, status: .notFound, context: context)
+        try await sendJSONResponse(
+          error, status: .notFound, context: context, extraHeaders: extraHeaders)
         return
       }
 
@@ -93,7 +107,8 @@ class AsyncHTTPHandler {
           sessionId: request.session_id,
           stopSequences: effectiveStops,
           context: context,
-          writer: writer
+          writer: writer,
+          extraHeaders: extraHeaders
         )
       } else {
         try await handleNonStreamingResponse(
@@ -106,7 +121,8 @@ class AsyncHTTPHandler {
           toolChoice: request.tool_choice,
           sessionId: request.session_id,
           stopSequences: effectiveStops,
-          context: context
+          context: context,
+          extraHeaders: extraHeaders
         )
       }
     } catch {
@@ -118,7 +134,8 @@ class AsyncHTTPHandler {
           code: nil
         )
       )
-      try? await sendJSONResponse(errorResponse, status: .internalServerError, context: context)
+      try? await sendJSONResponse(
+        errorResponse, status: .internalServerError, context: context, extraHeaders: extraHeaders)
     }
   }
 
@@ -133,7 +150,8 @@ class AsyncHTTPHandler {
     sessionId: String?,
     stopSequences: [String],
     context: ChannelHandlerContext,
-    writer: ResponseWriter
+    writer: ResponseWriter,
+    extraHeaders: [(String, String)]? = nil
   ) async throws {
     let loop = context.eventLoop
     let ctxBox = UncheckedSendableBox(value: context)
@@ -141,7 +159,7 @@ class AsyncHTTPHandler {
 
     // Write headers using the response writer
     executeOnLoop(loop) {
-      writerBox.value.writeHeaders(ctxBox.value)
+      writerBox.value.writeHeaders(ctxBox.value, extraHeaders: extraHeaders)
     }
 
     // Generate response ID
@@ -455,7 +473,8 @@ class AsyncHTTPHandler {
     toolChoice: ToolChoiceOption?,
     sessionId: String?,
     stopSequences: [String],
-    context: ChannelHandlerContext
+    context: ChannelHandlerContext,
+    extraHeaders: [(String, String)]? = nil
   ) async throws {
     // Generate complete response
     let eventStream = try await MLXService.shared.generateEvents(
@@ -508,7 +527,8 @@ class AsyncHTTPHandler {
           ),
           system_fingerprint: nil
         )
-        try await sendJSONResponse(response, status: .ok, context: context)
+        try await sendJSONResponse(
+          response, status: .ok, context: context, extraHeaders: extraHeaders)
         return
       }
       guard let token = event.chunk else { continue }
@@ -559,7 +579,7 @@ class AsyncHTTPHandler {
       system_fingerprint: nil
     )
 
-    try await sendJSONResponse(response, status: .ok, context: context)
+    try await sendJSONResponse(response, status: .ok, context: context, extraHeaders: extraHeaders)
   }
 
   // Tool Call Parsing moved to ToolCallParser
@@ -567,7 +587,8 @@ class AsyncHTTPHandler {
   private func sendJSONResponse<T: Encodable>(
     _ response: T,
     status: HTTPResponseStatus,
-    context: ChannelHandlerContext
+    context: ChannelHandlerContext,
+    extraHeaders: [(String, String)]? = nil
   ) async throws {
     let loop = context.eventLoop
     let ctxBox = UncheckedSendableBox(value: context)
@@ -586,6 +607,9 @@ class AsyncHTTPHandler {
       headers.add(name: "Content-Type", value: "application/json; charset=utf-8")
       headers.add(name: "Content-Length", value: String(buffer.readableBytes))
       headers.add(name: "Connection", value: "close")
+      if let extraHeaders {
+        for (n, v) in extraHeaders { headers.add(name: n, value: v) }
+      }
       responseHead.headers = headers
       context.write(NIOAny(HTTPServerResponsePart.head(responseHead)), promise: nil)
       context.write(NIOAny(HTTPServerResponsePart.body(.byteBuffer(buffer))), promise: nil)

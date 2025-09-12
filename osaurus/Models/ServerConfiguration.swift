@@ -8,7 +8,7 @@
 import Foundation
 
 /// Configuration settings for the server
-public struct ServerConfiguration: Codable, Equatable {
+public struct ServerConfiguration: Codable, Equatable, Sendable {
   /// Server port (1-65535)
   public var port: Int
 
@@ -38,6 +38,9 @@ public struct ServerConfiguration: Codable, Equatable {
   /// Prefill step size (tokens per prefill chunk)
   public var genPrefillStepSize: Int
 
+  /// List of allowed origins for CORS. Empty disables CORS. Use "*" to allow any origin.
+  public var allowedOrigins: [String]
+
   private enum CodingKeys: String, CodingKey {
     case port
     case exposeToNetwork
@@ -50,6 +53,7 @@ public struct ServerConfiguration: Codable, Equatable {
     case genQuantizedKVStart
     case genMaxKVSize
     case genPrefillStepSize
+    case allowedOrigins
   }
 
   public init(from decoder: Decoder) throws {
@@ -74,6 +78,9 @@ public struct ServerConfiguration: Codable, Equatable {
     self.genPrefillStepSize =
       try container.decodeIfPresent(Int.self, forKey: .genPrefillStepSize)
       ?? defaults.genPrefillStepSize
+    self.allowedOrigins =
+      try container.decodeIfPresent([String].self, forKey: .allowedOrigins)
+      ?? defaults.allowedOrigins
   }
 
   public init(
@@ -87,7 +94,8 @@ public struct ServerConfiguration: Codable, Equatable {
     genKVGroupSize: Int,
     genQuantizedKVStart: Int,
     genMaxKVSize: Int?,
-    genPrefillStepSize: Int
+    genPrefillStepSize: Int,
+    allowedOrigins: [String] = []
   ) {
     self.port = port
     self.exposeToNetwork = exposeToNetwork
@@ -100,6 +108,7 @@ public struct ServerConfiguration: Codable, Equatable {
     self.genQuantizedKVStart = genQuantizedKVStart
     self.genMaxKVSize = genMaxKVSize
     self.genPrefillStepSize = genPrefillStepSize
+    self.allowedOrigins = allowedOrigins
   }
 
   /// Default configuration
@@ -115,7 +124,8 @@ public struct ServerConfiguration: Codable, Equatable {
       genKVGroupSize: 64,
       genQuantizedKVStart: 0,
       genMaxKVSize: nil,
-      genPrefillStepSize: 4096
+      genPrefillStepSize: 4096,
+      allowedOrigins: []
     )
   }
 
