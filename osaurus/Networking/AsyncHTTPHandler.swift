@@ -338,7 +338,8 @@ class AsyncHTTPHandler {
                 // Flush any pending content and break
                 executeOnLoop(loop) {
                   if pendingBuffer.readableBytes > 0 {
-                    let content = pendingBuffer.readString(length: pendingBuffer.readableBytes) ?? ""
+                    let content =
+                      pendingBuffer.readString(length: pendingBuffer.readableBytes) ?? ""
                     writerBox.value.writeContent(
                       content, model: requestModel, responseId: responseId, created: created,
                       context: ctxBox.value)
