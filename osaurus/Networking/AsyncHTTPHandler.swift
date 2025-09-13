@@ -200,19 +200,176 @@ class AsyncHTTPHandler {
           context: ctxBox.value)
       }
 
-      var accumulatedBytes: Int = 0
-      // When tools are enabled, buffer content until we know whether a tool call occurs.
-      // If a tool call happens, we will discard buffered content (filters <think> for tool paths).
-      // If no tool call happens, we will flush buffered content before finalizing.
+      // Probe thresholds (env tunable)
+      let probeTokenThreshold: Int = {
+        let env = ProcessInfo.processInfo.environment
+        return Int(env["OSU_TOOL_PROBE_TOKENS"] ?? "") ?? 12
+      }()
+      let probeByteThreshold: Int = {
+        let env = ProcessInfo.processInfo.environment
+        return Int(env["OSU_TOOL_PROBE_BYTES"] ?? "") ?? 2048
+      }()
 
+      // Reuse streaming batch tunables
+      let batchCharThreshold: Int = {
+        let env = ProcessInfo.processInfo.environment
+        return Int(env["OSU_STREAM_BATCH_CHARS"] ?? "") ?? 256
+      }()
+      let batchIntervalMs: Int = {
+        let env = ProcessInfo.processInfo.environment
+        return Int(env["OSU_STREAM_BATCH_MS"] ?? "") ?? 16
+      }()
+      let flushIntervalNs: UInt64 = UInt64(batchIntervalMs) * 1_000_000
+
+      var accumulatedBytes: Int = 0
+      var didSwitchToStreaming: Bool = false
+
+      // Stop sequence rolling window (used after switching to streaming)
+      let shouldCheckStop = !(stopSequences.isEmpty)
+      let maxStopLen: Int = shouldCheckStop ? (stopSequences.map { $0.count }.max() ?? 0) : 0
+      var stopTail = ""
+
+      // Batching state (event-loop confined) for post-probe streaming
+      var firstTokenSent = false
+      let initialCapacity = max(1024, batchCharThreshold)
+      var pendingBuffer = ByteBufferAllocator().buffer(capacity: initialCapacity)
+      var pendingCharCount: Int = 0
+      var lastFlushNs: UInt64 = DispatchTime.now().uptimeNanoseconds
+      var scheduledFlush: Bool = false
+
+      @inline(__always)
+      func scheduleFlushOnLoopIfNeeded() {
+        if scheduledFlush { return }
+        scheduledFlush = true
+        let deadline = NIODeadline.now() + .milliseconds(Int64(batchIntervalMs))
+        loop.scheduleTask(deadline: deadline) {
+          scheduledFlush = false
+          if pendingBuffer.readableBytes > 0 {
+            let content = pendingBuffer.readString(length: pendingBuffer.readableBytes) ?? ""
+            writerBox.value.writeContent(
+              content, model: requestModel, responseId: responseId, created: created,
+              context: ctxBox.value)
+            pendingCharCount = 0
+            lastFlushNs = DispatchTime.now().uptimeNanoseconds
+          }
+        }
+      }
+
+      @inline(__always)
+      func processTokenOnLoop(_ token: String) {
+        if !firstTokenSent {
+          writerBox.value.writeContent(
+            token, model: requestModel, responseId: responseId, created: created,
+            context: ctxBox.value)
+          firstTokenSent = true
+          lastFlushNs = DispatchTime.now().uptimeNanoseconds
+          return
+        }
+        pendingBuffer.writeString(token)
+        pendingCharCount &+= token.count
+        let nowNs = DispatchTime.now().uptimeNanoseconds
+        if pendingCharCount >= batchCharThreshold || nowNs - lastFlushNs >= flushIntervalNs {
+          if pendingBuffer.readableBytes > 0 {
+            let content = pendingBuffer.readString(length: pendingBuffer.readableBytes) ?? ""
+            writerBox.value.writeContent(
+              content, model: requestModel, responseId: responseId, created: created,
+              context: ctxBox.value)
+            pendingCharCount = 0
+            lastFlushNs = nowNs
+          }
+        } else {
+          scheduleFlushOnLoopIfNeeded()
+        }
+      }
+
+      // When tools are enabled, start with a brief probe. If a tool call happens, we discard the
+      // buffered content. If no tool call happens after the probe, switch to micro-batched streaming.
       for await event in eventStream {
         if let chunk = event.chunk {
-          // Buffer only; do not emit yet. We will flush later iff no tool call occurs.
-          responseBuffer.append(chunk)
-          accumulatedBytes += chunk.utf8.count
-          tokenCount += 1
+          if !didSwitchToStreaming {
+            responseBuffer.append(chunk)
+            accumulatedBytes &+= chunk.utf8.count
+            tokenCount &+= 1
+
+            // Check if we should switch to streaming due to probe threshold
+            if tokenCount >= probeTokenThreshold || accumulatedBytes >= probeByteThreshold {
+              // Join buffered content and trim stops locally if present
+              var buffered = responseBuffer.joined()
+              if shouldCheckStop && !stopSequences.isEmpty {
+                for s in stopSequences {
+                  if let range = buffered.range(of: s) {
+                    buffered = String(buffered[..<range.lowerBound])
+                    break
+                  }
+                }
+              }
+              if !buffered.isEmpty {
+                // Prime stopTail for subsequent detection
+                if shouldCheckStop {
+                  if buffered.count > maxStopLen {
+                    stopTail = String(buffered.suffix(maxStopLen))
+                  } else {
+                    stopTail = buffered
+                  }
+                }
+                let contentToSend = buffered
+                executeOnLoop(loop) {
+                  writerBox.value.writeContent(
+                    contentToSend, model: requestModel, responseId: responseId, created: created,
+                    context: ctxBox.value)
+                }
+                firstTokenSent = true
+              }
+              // Clear probe buffer and switch to streaming
+              responseBuffer.removeAll(keepingCapacity: true)
+              accumulatedBytes = 0
+              didSwitchToStreaming = true
+              continue
+            }
+          } else {
+            // Already in streaming mode: apply stop detection and micro-batching
+            if shouldCheckStop {
+              stopTail += chunk
+              if stopTail.count > maxStopLen {
+                let overflow = stopTail.count - maxStopLen
+                stopTail.removeFirst(overflow)
+              }
+              if stopSequences.first(where: { stopTail.contains($0) }) != nil {
+                // Flush any pending content and break
+                executeOnLoop(loop) {
+                  if pendingBuffer.readableBytes > 0 {
+                    let content = pendingBuffer.readString(length: pendingBuffer.readableBytes) ?? ""
+                    writerBox.value.writeContent(
+                      content, model: requestModel, responseId: responseId, created: created,
+                      context: ctxBox.value)
+                    pendingCharCount = 0
+                    lastFlushNs = DispatchTime.now().uptimeNanoseconds
+                  }
+                }
+                break
+              }
+            }
+            executeOnLoop(loop) {
+              processTokenOnLoop(chunk)
+            }
+          }
         }
+
         if let toolCall = event.toolCall {
+          // If we already switched to streaming, flush pending buffer before emitting tool call deltas
+          if didSwitchToStreaming {
+            executeOnLoop(loop) {
+              if pendingBuffer.readableBytes > 0 {
+                let content = pendingBuffer.readString(length: pendingBuffer.readableBytes) ?? ""
+                writerBox.value.writeContent(
+                  content, model: requestModel, responseId: responseId, created: created,
+                  context: ctxBox.value)
+                pendingCharCount = 0
+                lastFlushNs = DispatchTime.now().uptimeNanoseconds
+              }
+            }
+          }
+
           // For SSE writer, we need to handle tool calls specially
           // NDJSON writer doesn't support tool calls in the same way
           if writer is SSEResponseWriter {
@@ -305,21 +462,34 @@ class AsyncHTTPHandler {
           return
         }
       }
-      // Join buffered content and trim stops locally; we'll emit it below only if no tool call occurred
-      fullResponse = responseBuffer.joined()
-      if !stopSequences.isEmpty {
-        for s in stopSequences {
-          if let range = fullResponse.range(of: s) {
-            fullResponse = String(fullResponse[..<range.lowerBound])
-            break
+
+      if didSwitchToStreaming {
+        // Flush any remaining pending buffer after event stream completion
+        executeOnLoop(loop) {
+          if pendingBuffer.readableBytes > 0 {
+            let content = pendingBuffer.readString(length: pendingBuffer.readableBytes) ?? ""
+            writerBox.value.writeContent(
+              content, model: requestModel, responseId: responseId, created: created,
+              context: ctxBox.value)
           }
         }
-      }
-      if !fullResponse.isEmpty {
-        executeOnLoop(loop) {
-          writerBox.value.writeContent(
-            fullResponse, model: requestModel, responseId: responseId, created: created,
-            context: ctxBox.value)
+      } else {
+        // Join buffered content and trim stops locally; emit once if no tool call occurred
+        fullResponse = responseBuffer.joined()
+        if !stopSequences.isEmpty {
+          for s in stopSequences {
+            if let range = fullResponse.range(of: s) {
+              fullResponse = String(fullResponse[..<range.lowerBound])
+              break
+            }
+          }
+        }
+        if !fullResponse.isEmpty {
+          executeOnLoop(loop) {
+            writerBox.value.writeContent(
+              fullResponse, model: requestModel, responseId: responseId, created: created,
+              context: ctxBox.value)
+          }
         }
       }
     } else {
