@@ -22,6 +22,7 @@ final class ServerController: ObservableObject {
   @Published var serverHealth: ServerHealth = .stopped
   @Published var localNetworkAddress: String = "127.0.0.1"
   @Published var configuration: ServerConfiguration = .default
+  @Published var activeRequestCount: Int = 0
 
   // Provide shared access to configuration for non-UI callers
   nonisolated static func sharedConfiguration() async -> ServerConfiguration? {
@@ -46,6 +47,23 @@ final class ServerController: ObservableObject {
     static var shared = ServerControllerHolder()
     weak var controller: ServerController?
     private init() {}
+  }
+
+  // MARK: - Generation Activity Signals (nonisolated for low overhead cross-actor calls)
+  nonisolated static func signalGenerationStart() {
+    Task { @MainActor in
+      if let controller = ServerControllerHolder.shared.controller {
+        controller.activeRequestCount &+= 1
+      }
+    }
+  }
+
+  nonisolated static func signalGenerationEnd() {
+    Task { @MainActor in
+      if let controller = ServerControllerHolder.shared.controller {
+        controller.activeRequestCount = max(0, controller.activeRequestCount - 1)
+      }
+    }
   }
 
   // MARK: - Public Methods
