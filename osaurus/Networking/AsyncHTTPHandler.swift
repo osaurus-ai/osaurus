@@ -68,6 +68,9 @@ class AsyncHTTPHandler {
     writer: ResponseWriter,
     extraHeaders: [(String, String)]? = nil
   ) async {
+    // Signal generation activity for status UI
+    ServerController.signalGenerationStart()
+    defer { ServerController.signalGenerationEnd() }
     do {
       // Find the model using nonisolated static accessor
       guard let model = MLXService.findModel(named: request.model) else {

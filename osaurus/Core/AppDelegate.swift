@@ -8,6 +8,7 @@
 import AppKit
 import Combine
 import Sparkle
+import QuartzCore
 import SwiftUI
 
 @MainActor
@@ -18,6 +19,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
   private var cancellables: Set<AnyCancellable> = []
   let updater = UpdaterViewModel()
   private var pendingDeepLink: (modelId: String, file: String?)?
+  private var activityDot: NSView?
 
   func applicationDidFinishLaunching(_ notification: Notification) {
     // Configure as menu bar app (hide Dock icon)
@@ -44,6 +46,26 @@ class AppDelegate: NSObject, NSApplicationDelegate {
       button.toolTip = "Osaurus Server"
       button.target = self
       button.action = #selector(togglePopover(_:))
+
+      // Add a small green blinking dot at the bottom-right of the status bar button
+      let dot = NSView()
+      dot.wantsLayer = true
+      dot.translatesAutoresizingMaskIntoConstraints = false
+      dot.isHidden = true
+      button.addSubview(dot)
+      NSLayoutConstraint.activate([
+        dot.trailingAnchor.constraint(equalTo: button.trailingAnchor, constant: -3),
+        dot.bottomAnchor.constraint(equalTo: button.bottomAnchor, constant: -3),
+        dot.widthAnchor.constraint(equalToConstant: 7),
+        dot.heightAnchor.constraint(equalToConstant: 7),
+      ])
+      if let layer = dot.layer {
+        layer.backgroundColor = NSColor.systemGreen.cgColor
+        layer.cornerRadius = 3.5
+        layer.borderWidth = 1
+        layer.borderColor = NSColor.white.withAlphaComponent(0.9).cgColor
+      }
+      activityDot = dot
     }
     statusItem = item
     updateStatusItemAndMenu()
@@ -113,6 +135,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
       }
       .store(in: &cancellables)
 
+    serverController.$activeRequestCount
+      .receive(on: RunLoop.main)
+      .sink { [weak self] _ in
+        self?.updateStatusItemAndMenu()
+      }
+      .store(in: &cancellables)
+
     // Publish shared configuration on state/config/address changes
     Publishers.CombineLatest3(
       serverController.$serverHealth,
@@ -147,18 +176,44 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         image.isTemplate = true
         button.image = image
       }
+      // Toggle green blinking dot overlay
+      let isGenerating = serverController.activeRequestCount > 0
+      if let dot = activityDot {
+        if isGenerating {
+          dot.isHidden = false
+          if let layer = dot.layer, layer.animation(forKey: "blink") == nil {
+            let anim = CABasicAnimation(keyPath: "opacity")
+            anim.fromValue = 1.0
+            anim.toValue = 0.2
+            anim.duration = 0.8
+            anim.autoreverses = true
+            anim.repeatCount = .infinity
+            layer.add(anim, forKey: "blink")
+          }
+        } else {
+          if let layer = dot.layer {
+            layer.removeAnimation(forKey: "blink")
+          }
+          dot.isHidden = true
+        }
+      }
+      var tooltip: String
       switch serverController.serverHealth {
       case .stopped:
-        button.toolTip = "Osaurus — Ready to start"
+        tooltip = "Osaurus — Ready to start"
       case .starting:
-        button.toolTip = "Osaurus — Starting…"
+        tooltip = "Osaurus — Starting…"
       case .running:
-        button.toolTip = "Osaurus — Running on port \(serverController.port)"
+        tooltip = "Osaurus — Running on port \(serverController.port)"
       case .stopping:
-        button.toolTip = "Osaurus — Stopping…"
+        tooltip = "Osaurus — Stopping…"
       case .error(let message):
-        button.toolTip = "Osaurus — Error: \(message)"
+        tooltip = "Osaurus — Error: \(message)"
       }
+      if serverController.activeRequestCount > 0 {
+        tooltip += " — Generating…"
+      }
+      button.toolTip = tooltip
     }
   }
 
