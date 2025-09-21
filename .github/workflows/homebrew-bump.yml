@@ -15,9 +15,17 @@ jobs:
         run: |
           VERSION="${{ github.event.release.tag_name }}"
           DMG_URL="https://github.com/dinoki-ai/osaurus/releases/download/${VERSION}/Osaurus-${VERSION}.dmg"
-          SHA256=$(curl -sL "${DMG_URL}" | shasum -a 256 | cut -d' ' -f1)
+          
+          echo "Downloading DMG from: ${DMG_URL}"
+          if ! curl -fL -o "Osaurus-${VERSION}.dmg" "${DMG_URL}"; then
+            echo "Error: Failed to download DMG from ${DMG_URL}"
+            exit 1
+          fi
+          
+          SHA256=$(shasum -a 256 "Osaurus-${VERSION}.dmg" | cut -d' ' -f1)
           echo "SHA256=${SHA256}" >> $GITHUB_ENV
           echo "VERSION=${VERSION}" >> $GITHUB_ENV
+          echo "Calculated SHA256: ${SHA256}"
 
       - name: Bump cask
         env:
