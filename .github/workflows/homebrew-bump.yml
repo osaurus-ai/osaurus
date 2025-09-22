@@ -1,0 +1,39 @@
+name: Bump Homebrew Cask
+
+on:
+  release:
+    types: [published]
+
+jobs:
+  bump:
+    runs-on: macos-latest
+    steps:
+      - name: Set up Homebrew
+        uses: Homebrew/actions/setup-homebrew@master
+
+      - name: Calculate SHA256
+        run: |
+          VERSION="${{ github.event.release.tag_name }}"
+          DMG_URL="https://github.com/dinoki-ai/osaurus/releases/download/${VERSION}/Osaurus-${VERSION}.dmg"
+          
+          echo "Downloading DMG from: ${DMG_URL}"
+          if ! curl -fL -o "Osaurus-${VERSION}.dmg" "${DMG_URL}"; then
+            echo "Error: Failed to download DMG from ${DMG_URL}"
+            exit 1
+          fi
+          
+          SHA256=$(shasum -a 256 "Osaurus-${VERSION}.dmg" | cut -d' ' -f1)
+          echo "SHA256=${SHA256}" >> $GITHUB_ENV
+          echo "VERSION=${VERSION}" >> $GITHUB_ENV
+          echo "Calculated SHA256: ${SHA256}"
+
+      - name: Bump cask
+        env:
+          HOMEBREW_GITHUB_API_TOKEN: ${{ secrets.HOMEBREW_GITHUB_TOKEN }}
+        run: |
+          brew bump-cask-pr osaurus \
+            --version="${VERSION}" \
+            --sha256="${SHA256}" \
+            --url="https://github.com/dinoki-ai/osaurus/releases/download/${VERSION}/Osaurus-${VERSION}.dmg" \
+            --no-browse \
+            --fork-org="${{ github.repository_owner }}"
