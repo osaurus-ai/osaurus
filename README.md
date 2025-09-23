@@ -17,6 +17,8 @@ Native, Apple Silicon–only local LLM server. Built on Apple's MLX for maximum 
 
 Created by Dinoki Labs ([dinoki.ai](https://dinoki.ai)), a fully native desktop AI assistant and companion.
 
+📚 **[View Documentation](https://docs.dinoki.ai/)** - Guides, tutorials, and comprehensive documentation
+
 ## Highlights
 
 - **Native MLX runtime**: Optimized for Apple Silicon using MLX/MLXLLM
@@ -116,6 +118,22 @@ The following are 20-run averages from our batch benchmark suite. See raw result
 
 Download the latest signed build from the [Releases page](https://github.com/dinoki-ai/osaurus/releases/latest).
 
+### Install with Homebrew
+
+The easiest way to install Osaurus is through Homebrew:
+
+```bash
+brew install osaurus
+```
+
+Once installed, you can launch Osaurus from:
+
+- **Spotlight**: Press `⌘ Space` and type "osaurus"
+- **Applications folder**: Find Osaurus in `/Applications`
+- **Terminal**: Run `open -a osaurus`
+
+The app will appear in your menu bar, ready to serve local LLMs on your Mac.
+
 ### Build and run
 
 1. Open `osaurus.xcodeproj` in Xcode 16.4+
@@ -128,6 +146,8 @@ Models are stored by default at `~/MLXModels`. Override with the environment var
 ### Use the API
 
 Base URL: `http://127.0.0.1:8080` (or your chosen port)
+
+📚 **Need more help?** Check out our [comprehensive documentation](https://docs.dinoki.ai/) for detailed guides, tutorials, and advanced usage examples.
 
 List models:
 
@@ -377,10 +397,11 @@ Notes
 
 ## Community
 
-- Join us on [Discord](https://discord.gg/dinoki)
-- Read the [Contributing Guide](CONTRIBUTING.md) and our [Code of Conduct](CODE_OF_CONDUCT.md)
-- See our [Security Policy](SECURITY.md) for reporting vulnerabilities
-- Get help in [Support](SUPPORT.md)
-- Pick up a [good first issue](https://github.com/dinoki-ai/osaurus/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22) or [help wanted](https://github.com/dinoki-ai/osaurus/issues?q=is%3Aissue+is%3Aopen+label%3A%22help+wanted%22)
+- 📚 Browse our [Documentation](https://docs.dinoki.ai/) for guides and tutorials
+- 💬 Join us on [Discord](https://discord.gg/dinoki)
+- 📖 Read the [Contributing Guide](CONTRIBUTING.md) and our [Code of Conduct](CODE_OF_CONDUCT.md)
+- 🔒 See our [Security Policy](SECURITY.md) for reporting vulnerabilities
+- ❓ Get help in [Support](SUPPORT.md)
+- 🚀 Pick up a [good first issue](https://github.com/dinoki-ai/osaurus/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22) or [help wanted](https://github.com/dinoki-ai/osaurus/issues?q=is%3Aissue+is%3Aopen+label%3A%22help+wanted%22)
 
 If you find Osaurus useful, please ⭐ the repo and share it!
