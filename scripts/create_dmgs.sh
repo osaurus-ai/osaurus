@@ -5,7 +5,7 @@ brew install create-dmg
 
 # ARM64 DMG (no arch suffix)
 create-dmg \
-  --background "$GITHUB_WORKSPACE/dmg-bg.png" \
+  --background "$GITHUB_WORKSPACE/assets/dmg-bg.tiff" \
   --volname "Osaurus" \
   --window-pos 200 120 \
   --window-size 600 400 \
