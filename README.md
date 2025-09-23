@@ -1,4 +1,4 @@
-# Osaurus 🦕
+# Osaurus
 
 [![Release](https://img.shields.io/github/v/release/dinoki-ai/osaurus?sort=semver)](https://github.com/dinoki-ai/osaurus/releases)
 [![Downloads](https://img.shields.io/github/downloads/dinoki-ai/osaurus/total)](https://github.com/dinoki-ai/osaurus/releases)
@@ -9,7 +9,9 @@
 ![Ollama API](https://img.shields.io/badge/Ollama%20API-compatible-0A7CFF)
 ![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen)
 
-<img width="452" height="206" alt="Screenshot 2025-08-24 at 4 47 41 PM" src="https://github.com/user-attachments/assets/375d52b2-fb68-4fbd-9055-3a25bb9d2651" />
+<p align="center">
+  <img width="452" height="222" alt="Screenshot 2025-09-22 at 7 02 10 PM" src="https://github.com/user-attachments/assets/6cd07add-2768-4556-ad0c-ed721ebc6596" />
+</p>
 
 Native, Apple Silicon–only local LLM server. Built on Apple's MLX for maximum performance on M‑series chips. SwiftUI app + SwiftNIO server with OpenAI‑compatible and Ollama‑compatible endpoints.
 
