@@ -7,21 +7,24 @@
 
 import AppKit
 import Combine
-import Sparkle
 import QuartzCore
 import SwiftUI
 
 @MainActor
-class AppDelegate: NSObject, NSApplicationDelegate {
+class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSPopoverDelegate {
+  static weak var shared: AppDelegate?
   let serverController = ServerController()
   private var statusItem: NSStatusItem?
   private var popover: NSPopover?
   private var cancellables: Set<AnyCancellable> = []
   let updater = UpdaterViewModel()
-  private var pendingDeepLink: (modelId: String, file: String?)?
+
   private var activityDot: NSView?
+  private var modelManagerWindow: NSWindow?
 
   func applicationDidFinishLaunching(_ notification: Notification) {
+    AppDelegate.shared = self
+
     // Configure as menu bar app (hide Dock icon)
     NSApp.setActivationPolicy(.accessory)
 
@@ -112,7 +115,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     SharedConfigurationService.shared.remove()
   }
 
-  // MARK: - Status Item / Menu
+  // MARK: Status Item / Menu
 
   private func setupObservers() {
     cancellables.removeAll()
@@ -240,28 +243,21 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     popover.animates = true
 
     let themeManager = ThemeManager.shared
-    let contentView = ContentView(
-      isPopover: true,
-      onClose: { [weak self] in
-        self?.popover?.performClose(nil)
-      }, deeplinkModelId: pendingDeepLink?.modelId, deeplinkFile: pendingDeepLink?.file
-    )
-    .environmentObject(serverController)
-    .environment(\.theme, themeManager.currentTheme)
-    .environmentObject(updater)
+    let contentView = ContentView()
+      .environmentObject(serverController)
+      .environment(\.theme, themeManager.currentTheme)
+      .environmentObject(updater)
 
     popover.contentViewController = NSHostingController(rootView: contentView)
     self.popover = popover
 
     popover.show(relativeTo: statusButton.bounds, of: statusButton, preferredEdge: .minY)
     NSApp.activate(ignoringOtherApps: true)
-
-    // Clear pending deeplink after presenting
-    pendingDeepLink = nil
   }
 
 }
 
+// MARK: Deep Link Handling
 extension AppDelegate {
   fileprivate func handleDeepLink(_ url: URL) {
     guard let scheme = url.scheme?.lowercased(), scheme == "huggingface" else { return }
@@ -288,7 +284,73 @@ extension AppDelegate {
       return
     }
 
-    pendingDeepLink = (modelId: modelId, file: file)
-    showPopover()
+    // Open Model Manager in its own window for deeplinks
+    showModelManagerWindow(deeplinkModelId: modelId, file: file)
+  }
+}
+
+// MARK: Model Manager Window
+extension AppDelegate {
+  func showModelManagerWindow(deeplinkModelId: String? = nil, file: String? = nil) {
+    NSLog(
+      "[ModelManager] showModelManagerWindow called (modelId=%@, file=%@)",
+      deeplinkModelId ?? "nil", file ?? "nil")
+    let presentWindow: () -> Void = { [weak self] in
+      guard let self = self else { return }
+
+      let themeManager = ThemeManager.shared
+      let root = ModelDownloadView(deeplinkModelId: deeplinkModelId, deeplinkFile: file)
+        .environment(\.theme, themeManager.currentTheme)
+
+      let hostingController = NSHostingController(rootView: root)
+
+      if let window = self.modelManagerWindow {
+        // Reuse existing window; just replace content and ensure visible/focused
+        window.contentViewController = hostingController
+        if window.isMiniaturized { window.deminiaturize(nil) }
+        NSApp.activate(ignoringOtherApps: true)
+        window.center()
+        window.makeKeyAndOrderFront(nil)
+        window.orderFrontRegardless()
+        NSLog("[ModelManager] Reused existing window and brought to front")
+        return
+      }
+
+      let window = NSWindow(
+        contentRect: NSRect(x: 0, y: 0, width: 820, height: 640),
+        styleMask: [.titled, .closable, .fullSizeContentView],
+        backing: .buffered,
+        defer: false
+      )
+      // Minimalistic appearance: hidden titlebar, still closable
+      window.titleVisibility = .hidden
+      window.titlebarAppearsTransparent = true
+      window.isMovableByWindowBackground = true
+      window.contentViewController = hostingController
+      window.center()
+      window.delegate = self
+      window.isReleasedWhenClosed = false
+      self.modelManagerWindow = window
+
+      NSApp.activate(ignoringOtherApps: true)
+      window.makeKeyAndOrderFront(nil)
+      window.orderFrontRegardless()
+      NSLog("[ModelManager] Created new window and presented")
+    }
+
+    // If popover is open, close first, then present shortly after to avoid layout recursion
+    if let pop = popover, pop.isShown {
+      pop.performClose(nil)
+      DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+        presentWindow()
+      }
+    } else {
+      presentWindow()
+    }
+  }
+
+  func windowWillClose(_ notification: Notification) {
+    guard let win = notification.object as? NSWindow, win == modelManagerWindow else { return }
+    modelManagerWindow = nil
   }
 }

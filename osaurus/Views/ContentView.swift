@@ -6,7 +6,6 @@
 //
 
 import AppKit
-import Sparkle
 import SwiftUI
 
 struct ContentView: View {
@@ -14,17 +13,12 @@ struct ContentView: View {
   @EnvironmentObject private var updater: UpdaterViewModel
   @StateObject private var themeManager = ThemeManager.shared
   @Environment(\.theme) private var theme
-  // Popover customization
-  var isPopover: Bool = false
-  var onClose: (() -> Void)? = nil
-  var deeplinkModelId: String? = nil
-  var deeplinkFile: String? = nil
+
   @State private var portString: String = "8080"
   @State private var showError: Bool = false
   @State private var isHealthy: Bool = false
   @State private var lastHealthCheck: Date?
   @State private var selectedModelId: String?
-  @State private var showModelManager = false
   @State private var showConfiguration = false
 
   var body: some View {
@@ -121,7 +115,9 @@ struct ContentView: View {
               }
             }
 
-            Button(action: { showModelManager = true }) {
+            Button(action: {
+              AppDelegate.shared?.showModelManagerWindow()
+            }) {
               Image(systemName: "cube.box")
                 .font(.system(size: 14))
                 .foregroundColor(theme.primaryText)
@@ -137,11 +133,6 @@ struct ContentView: View {
             }
             .buttonStyle(PlainButtonStyle())
             .help("Manage models")
-            .popover(
-              isPresented: $showModelManager, attachmentAnchor: .point(.bottom), arrowEdge: .top
-            ) {
-              ModelDownloadView(deeplinkModelId: deeplinkModelId, deeplinkFile: deeplinkFile)
-            }
 
             Button(action: { updater.checkForUpdates() }) {
               Image(systemName: "arrow.down.circle")
@@ -182,17 +173,13 @@ struct ContentView: View {
       .padding(16)
     }
     .frame(
-      width: isPopover ? 380 : 420,
-      height: isPopover ? 130 : 150
+      width: 380,
+      height: 150
     )
     .environment(\.theme, themeManager.currentTheme)
     .onAppear {
       portString = String(server.port)
       startHealthCheck()
-      // If opened via deeplink, auto-open Model Manager and trigger download
-      if let modelId = deeplinkModelId, !modelId.isEmpty {
-        showModelManager = true
-      }
     }
     .alert("Server Error", isPresented: $showError) {
       Button("OK", role: .cancel) {}
