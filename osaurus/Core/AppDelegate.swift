@@ -239,7 +239,6 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSPopoverD
       return
     }
     let popover = NSPopover()
-    popover.delegate = self
     popover.behavior = .transient
     popover.animates = true
 
