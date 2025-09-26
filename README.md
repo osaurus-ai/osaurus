@@ -138,7 +138,7 @@ The app will appear in your menu bar, ready to serve local LLMs on your Mac.
 
 1. Open `osaurus.xcodeproj` in Xcode 16.4+
 2. Build and run the `osaurus` target
-3. In the UI, configure the port via the gear icon (default `8080`) and press Start
+3. In the UI, configure the port via the gear icon (default `1337`) and press Start
 4. Open the model manager to download a model (e.g., "Llama 3.2 3B Instruct 4bit")
 
 Models are stored by default at `~/MLXModels`. Override with the environment variable `OSU_MODELS_DIR`.
@@ -149,13 +149,13 @@ The CLI lets you start/stop the server programmatically. If `osaurus` isn’t fo
 
 ```bash
 # Start on localhost (default)
-osaurus serve --port 8080
+osaurus serve --port 1337
 
 # Start exposed on your LAN (will prompt for confirmation)
-osaurus serve --port 8080 --expose
+osaurus serve --port 1337 --expose
 
 # Start exposed without prompt (non-interactive)
-osaurus serve --port 8080 --expose --yes
+osaurus serve --port 1337 --expose --yes
 
 # Check status
 osaurus status
@@ -172,26 +172,26 @@ Notes:
 
 ### Use the API
 
-Base URL: `http://127.0.0.1:8080` (or your chosen port)
+Base URL: `http://127.0.0.1:1337` (or your chosen port)
 
 📚 **Need more help?** Check out our [comprehensive documentation](https://docs.dinoki.ai/) for detailed guides, tutorials, and advanced usage examples.
 
 List models:
 
 ```bash
-curl -s http://127.0.0.1:8080/v1/models | jq
+curl -s http://127.0.0.1:1337/v1/models | jq
 ```
 
 Ollama‑compatible models list:
 
 ```bash
-curl -s http://127.0.0.1:8080/v1/tags | jq
+curl -s http://127.0.0.1:1337/v1/tags | jq
 ```
 
 Non‑streaming chat completion:
 
 ```bash
-curl -s http://127.0.0.1:8080/v1/chat/completions \
+curl -s http://127.0.0.1:1337/v1/chat/completions \
   -H "Content-Type: application/json" \
   -d '{
         "model": "llama-3.2-3b-instruct-4bit",
@@ -203,7 +203,7 @@ curl -s http://127.0.0.1:8080/v1/chat/completions \
 Streaming chat completion (SSE format for `/chat/completions`):
 
 ```bash
-curl -N http://127.0.0.1:8080/v1/chat/completions \
+curl -N http://127.0.0.1:1337/v1/chat/completions \
   -H "Content-Type: application/json" \
   -d '{
         "model": "llama-3.2-3b-instruct-4bit",
@@ -215,7 +215,7 @@ curl -N http://127.0.0.1:8080/v1/chat/completions \
 Ollama‑compatible streaming (NDJSON format for `/chat`):
 
 ```bash
-curl -N http://127.0.0.1:8080/v1/api/chat \
+curl -N http://127.0.0.1:1337/v1/api/chat \
   -H "Content-Type: application/json" \
   -d '{
         "model": "llama-3.2-3b-instruct-4bit",
@@ -239,7 +239,7 @@ Osaurus supports OpenAI‑style function calling. Send `tools` and optional `too
 Define tools and let the model decide (`tool_choice: "auto"`):
 
 ```bash
-curl -s http://127.0.0.1:8080/v1/chat/completions \
+curl -s http://127.0.0.1:1337/v1/chat/completions \
   -H "Content-Type: application/json" \
   -d '{
         "model": "llama-3.2-3b-instruct-4bit",
@@ -270,7 +270,7 @@ Non‑stream response will include `message.tool_calls` and `finish_reason: "too
 After you execute a tool, continue the conversation by sending a `tool` role message with `tool_call_id`:
 
 ```bash
-curl -s http://127.0.0.1:8080/v1/chat/completions \
+curl -s http://127.0.0.1:1337/v1/chat/completions \
   -H "Content-Type: application/json" \
   -d '{
         "model": "llama-3.2-3b-instruct-4bit",
@@ -297,7 +297,7 @@ Python example:
 ```python
 from openai import OpenAI
 
-client = OpenAI(base_url="http://127.0.0.1:8080/v1", api_key="osaurus")
+client = OpenAI(base_url="http://127.0.0.1:1337/v1", api_key="osaurus")
 
 resp = client.chat.completions.create(
     model="llama-3.2-3b-instruct-4bit",
@@ -313,7 +313,7 @@ Python with tools (non‑stream):
 import json
 from openai import OpenAI
 
-client = OpenAI(base_url="http://127.0.0.1:8080/v1", api_key="osaurus")
+client = OpenAI(base_url="http://127.0.0.1:1337/v1", api_key="osaurus")
 
 tools = [
     {
@@ -384,7 +384,7 @@ Configure via UI (persists to app settings). The underlying config includes:
 Browser fetch from a web app running on `http://localhost:3000`:
 
 ```javascript
-await fetch("http://127.0.0.1:8080/v1/chat/completions", {
+await fetch("http://127.0.0.1:1337/v1/chat/completions", {
   method: "POST",
   headers: { "Content-Type": "application/json" },
   body: JSON.stringify({

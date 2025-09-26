@@ -82,7 +82,7 @@ struct OsaurusCLI {
   }
 
   private static func runStatus() async {
-    let port = resolveConfiguredPort() ?? 8080
+    let port = resolveConfiguredPort() ?? 1337
 
     guard let url = URL(string: "http://127.0.0.1:\(port)/health") else {
       fputs("Invalid URL for health check\n", stderr)
@@ -164,7 +164,7 @@ struct OsaurusCLI {
     }())
 
     // Poll health until running or timeout
-    let portToCheck = desiredPort ?? (resolveConfiguredPort() ?? 8080)
+    let portToCheck = desiredPort ?? (resolveConfiguredPort() ?? 1337)
     let deadline = Date().addingTimeInterval(5.0)
     while Date() < deadline {
       if await checkHealth(port: portToCheck) {
@@ -181,7 +181,7 @@ struct OsaurusCLI {
   private static func runStop() async {
     postDistributedNotification(name: "com.dinoki.osaurus.control.stop", userInfo: [:])
     // Verify stopped within a short timeout
-    let port = resolveConfiguredPort() ?? 8080
+    let port = resolveConfiguredPort() ?? 1337
     let deadline = Date().addingTimeInterval(3.0)
     while Date() < deadline {
       if !(await checkHealth(port: port)) {
@@ -220,7 +220,7 @@ struct OsaurusCLI {
 
   private static func launchAppIfNeeded() async {
     // Try to detect if server responds; if yes, nothing to do
-    let port = resolveConfiguredPort() ?? 8080
+    let port = resolveConfiguredPort() ?? 1337
     if await checkHealth(port: port) { return }
 
     // Launch the app via `open -b` by bundle id

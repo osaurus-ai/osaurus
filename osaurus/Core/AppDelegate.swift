@@ -295,7 +295,7 @@ extension AppDelegate {
     }
 
     // Apply defaults if not provided
-    let targetPort = desiredPort ?? (ServerConfigurationStore.load()?.port ?? 8080)
+    let targetPort = desiredPort ?? (ServerConfigurationStore.load()?.port ?? 1337)
     guard (1..<65536).contains(targetPort) else { return }
 
     // Apply exposure policy based on request (default localhost-only)

@@ -37,9 +37,9 @@ When the server is running:
 {
   "instanceId": "f26f8b59-2b64-4c57-8c5a-5a1ce9f9b4a8",
   "updatedAt": "2025-09-08T12:35:12Z",
-  "port": 8080,
+  "port": 1337,
   "address": "127.0.0.1",
-  "url": "http://127.0.0.1:8080",
+  "url": "http://127.0.0.1:1337",
   "exposeToNetwork": false,
   "health": "running"
 }

@@ -9,7 +9,7 @@ This guide explains how to use the OpenAI-compatible API endpoints in Osaurus.
 Returns a list of available models that are currently downloaded and ready to use.
 
 ```bash
-curl http://127.0.0.1:8080/models
+curl http://127.0.0.1:1337/models
 ```
 
 Example response:
@@ -41,7 +41,7 @@ Generate chat completions using the specified model.
 #### Non-streaming Request
 
 ```bash
-curl http://127.0.0.1:8080/v1/chat/completions \
+curl http://127.0.0.1:1337/v1/chat/completions \
   -H "Content-Type: application/json" \
   -d '{
     "model": "llama-3.2-3b-instruct",
@@ -85,7 +85,7 @@ Example response:
 #### Streaming Request
 
 ```bash
-curl http://127.0.0.1:8080/v1/chat/completions \
+curl http://127.0.0.1:1337/v1/chat/completions \
   -H "Content-Type: application/json" \
   -d '{
     "model": "llama-3.2-3b-instruct",
@@ -119,7 +119,7 @@ Supported tool type: `function`.
 Request with tools (non‑stream):
 
 ```bash
-curl http://localhost:8080/v1/chat/completions \
+curl http://localhost:1337/v1/chat/completions \
   -H "Content-Type: application/json" \
   -d '{
     "model": "llama-3.2-3b-instruct",
@@ -197,7 +197,7 @@ Tool execution loop: After receiving tool calls, execute them client‑side and 
 import json
 from openai import OpenAI
 
-client = OpenAI(base_url="http://127.0.0.1:8080/v1", api_key="osaurus")
+client = OpenAI(base_url="http://127.0.0.1:1337/v1", api_key="osaurus")
 
 tools = [{
     "type": "function",
@@ -252,7 +252,7 @@ Provide a `session_id` to reuse the same model chat session’s KV cache across 
 Example follow-up turn using the same `session_id`:
 
 ```bash
-curl http://127.0.0.1:8080/v1/chat/completions \
+curl http://127.0.0.1:1337/v1/chat/completions \
   -H "Content-Type: application/json" \
   -d '{
     "model": "llama-3.2-3b-instruct",
@@ -293,7 +293,7 @@ from openai import OpenAI
 
 # Point to your local Osaurus server
 client = OpenAI(
-    base_url="http://127.0.0.1:8080/v1",  # Use /v1 for OpenAI client compatibility
+    base_url="http://127.0.0.1:1337/v1",  # Use /v1 for OpenAI client compatibility
     api_key="not-needed"  # Osaurus doesn't require authentication
 )
 
