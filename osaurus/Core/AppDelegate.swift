@@ -34,6 +34,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSPopoverD
     // Set up observers for server state changes
     setupObservers()
 
+    // Set up distributed control listeners (local-only management)
+    setupControlNotifications()
+
     // Apply saved Start at Login preference on launch
     LoginItemService.shared.applyStartAtLogin(serverController.configuration.startAtLogin)
 
@@ -255,6 +258,61 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSPopoverD
     NSApp.activate(ignoringOtherApps: true)
   }
 
+}
+
+// MARK: - Distributed Control (Local Only)
+extension AppDelegate {
+  fileprivate static let controlServeNotification = Notification.Name("com.dinoki.osaurus.control.serve")
+  fileprivate static let controlStopNotification = Notification.Name("com.dinoki.osaurus.control.stop")
+
+  private func setupControlNotifications() {
+    let center = DistributedNotificationCenter.default()
+    center.addObserver(
+      self,
+      selector: #selector(handleServeCommand(_:)),
+      name: Self.controlServeNotification,
+      object: nil
+    )
+    center.addObserver(
+      self,
+      selector: #selector(handleStopCommand(_:)),
+      name: Self.controlStopNotification,
+      object: nil
+    )
+  }
+
+  @objc private func handleServeCommand(_ note: Notification) {
+    var desiredPort: Int? = nil
+    var exposeFlag: Bool = false
+    if let ui = note.userInfo {
+      if let p = ui["port"] as? Int { desiredPort = p }
+      else if let s = ui["port"] as? String, let p = Int(s) { desiredPort = p }
+      if let e = ui["expose"] as? Bool { exposeFlag = e }
+      else if let es = ui["expose"] as? String {
+        let v = es.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        exposeFlag = (v == "1" || v == "true" || v == "yes" || v == "y")
+      }
+    }
+
+    // Apply defaults if not provided
+    let targetPort = desiredPort ?? (ServerConfigurationStore.load()?.port ?? 8080)
+    guard (1..<65536).contains(targetPort) else { return }
+
+    // Apply exposure policy based on request (default localhost-only)
+    serverController.configuration.exposeToNetwork = exposeFlag
+    serverController.port = targetPort
+    serverController.saveConfiguration()
+
+    Task { @MainActor in
+      await serverController.startServer()
+    }
+  }
+
+  @objc private func handleStopCommand(_ note: Notification) {
+    Task { @MainActor in
+      await serverController.stopServer()
+    }
+  }
 }
 
 // MARK: Deep Link Handling
