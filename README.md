@@ -143,6 +143,33 @@ The app will appear in your menu bar, ready to serve local LLMs on your Mac.
 
 Models are stored by default at `~/MLXModels`. Override with the environment variable `OSU_MODELS_DIR`.
 
+### Command-line server management
+
+The CLI lets you start/stop the server programmatically. If `osaurus` isn’t found in your `PATH`, run `make install-cli` once to install a development symlink.
+
+```bash
+# Start on localhost (default)
+osaurus serve --port 8080
+
+# Start exposed on your LAN (will prompt for confirmation)
+osaurus serve --port 8080 --expose
+
+# Start exposed without prompt (non-interactive)
+osaurus serve --port 8080 --expose --yes
+
+# Check status
+osaurus status
+
+# Stop the server
+osaurus stop
+```
+
+Notes:
+
+- When started via CLI without `--expose`, Osaurus binds to `127.0.0.1` only.
+- `--expose` binds to `0.0.0.0` (LAN). There is no authentication; use only on trusted networks.
+- Management is local-only via macOS Distributed Notifications; there are no HTTP start/stop endpoints.
+
 ### Use the API
 
 Base URL: `http://127.0.0.1:8080` (or your chosen port)
@@ -382,7 +409,7 @@ Notes
 ## Notes & Limitations
 
 - Apple Silicon only (requires MLX); Intel Macs are not supported
-- Localhost only, no authentication; put behind a proxy if exposing externally
+- Localhost by default; `--expose` enables LAN access. No authentication; use only on trusted networks or behind a reverse proxy.
 - `/transcribe` endpoints are placeholders pending Whisper integration
 
 ## Dependencies

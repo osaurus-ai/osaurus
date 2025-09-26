@@ -51,7 +51,7 @@ When the server is running:
 - **port (int)**: HTTP port when `health == "running"`.
 - **address (string)**: Bind address (e.g., `127.0.0.1` or LAN IP) when running.
 - **url (string)**: Convenience URL when running.
-- **exposeToNetwork (bool)**: If true, server is reachable on the LAN; if false it is only on localhost.
+- **exposeToNetwork (bool)**: If true, server is reachable on the LAN; if false it is only on localhost. This may be toggled by the user in the UI or via `osaurus serve --expose` (with confirmation).
 
 When the server is stopping, stopped, or errored, Osaurus removes the instance directory/file.
 
