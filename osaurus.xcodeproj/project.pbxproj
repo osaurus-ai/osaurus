@@ -18,6 +18,8 @@
 		F0C60D762E5491A10028ED4F /* MLXVLM in Frameworks */ = {isa = PBXBuildFile; productRef = F0C60D752E5491A10028ED4F /* MLXVLM */; };
 		F0C60E872E54A26A0028ED4F /* Transformers in Frameworks */ = {isa = PBXBuildFile; productRef = F0C60E862E54A26A0028ED4F /* Transformers */; };
 		F0C87F542E5881BA00567D31 /* IkigaJSON in Frameworks */ = {isa = PBXBuildFile; productRef = F0C87F532E5881BA00567D31 /* IkigaJSON */; };
+		F0EEC1062E60000100895593 /* OsaurusCLI.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0EEC1052E60000100895593 /* OsaurusCLI.swift */; };
+		F0EEC1212E60000100895593 /* osaurus in Embed CLI */ = {isa = PBXBuildFile; fileRef = F0EEC10A2E60000100895593 /* osaurus */; settings = {ATTRIBUTES = (CodeSignOnCopy, ); }; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -35,17 +37,53 @@
 			remoteGlobalIDString = F0BB3C252E51FBCC00895593;
 			remoteInfo = osaurus;
 		};
+		F0EEC1222E60000100895593 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = F0BB3C1E2E51FBCC00895593 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = F0EEC1012E60000100895593;
+			remoteInfo = "osaurus-cli";
+		};
 /* End PBXContainerItemProxy section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		F0EEC1202E60000100895593 /* Embed CLI */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = Contents/Helpers;
+			dstSubfolderSpec = 6;
+			files = (
+				F0EEC1212E60000100895593 /* osaurus in Embed CLI */,
+			);
+			name = "Embed CLI";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
 		F0BB3C262E51FBCC00895593 /* osaurus.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = osaurus.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		F0BB3C342E51FBCD00895593 /* osaurusTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = osaurusTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		F0BB3C3E2E51FBCD00895593 /* osaurusUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = osaurusUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		F0EEC1052E60000100895593 /* OsaurusCLI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OsaurusCLI.swift; sourceTree = "<group>"; };
+		F0EEC10A2E60000100895593 /* osaurus */ = {isa = PBXFileReference; explicitFileType = "compiled.mach-o.executable"; includeInIndex = 0; path = osaurus; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
+
+/* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
+		F025D88A2E86B24100A507DE /* Exceptions for "osaurus" folder in "osaurus" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+			);
+			target = F0BB3C252E51FBCC00895593 /* osaurus */;
+		};
+/* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		F0BB3C282E51FBCC00895593 /* osaurus */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				F025D88A2E86B24100A507DE /* Exceptions for "osaurus" folder in "osaurus" target */,
+			);
 			path = osaurus;
 			sourceTree = "<group>";
 		};
@@ -94,6 +132,13 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		F0EEC1032E60000100895593 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
@@ -105,6 +150,7 @@
 				F0BB3C412E51FBCD00895593 /* osaurusUITests */,
 				F0C60E852E54A26A0028ED4F /* Frameworks */,
 				F0BB3C272E51FBCC00895593 /* Products */,
+				F0EEC1042E60000100895593 /* osaurusCLI */,
 			);
 			sourceTree = "<group>";
 		};
@@ -114,6 +160,7 @@
 				F0BB3C262E51FBCC00895593 /* osaurus.app */,
 				F0BB3C342E51FBCD00895593 /* osaurusTests.xctest */,
 				F0BB3C3E2E51FBCD00895593 /* osaurusUITests.xctest */,
+				F0EEC10A2E60000100895593 /* osaurus */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -123,6 +170,14 @@
 			children = (
 			);
 			name = Frameworks;
+			sourceTree = "<group>";
+		};
+		F0EEC1042E60000100895593 /* osaurusCLI */ = {
+			isa = PBXGroup;
+			children = (
+				F0EEC1052E60000100895593 /* OsaurusCLI.swift */,
+			);
+			path = osaurusCLI;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -135,10 +190,12 @@
 				F0BB3C222E51FBCC00895593 /* Sources */,
 				F0BB3C232E51FBCC00895593 /* Frameworks */,
 				F0BB3C242E51FBCC00895593 /* Resources */,
+				F0EEC1202E60000100895593 /* Embed CLI */,
 			);
 			buildRules = (
 			);
 			dependencies = (
+				F0EEC1232E60000100895593 /* PBXTargetDependency */,
 			);
 			fileSystemSynchronizedGroups = (
 				F0BB3C282E51FBCC00895593 /* osaurus */,
@@ -207,6 +264,22 @@
 			productReference = F0BB3C3E2E51FBCD00895593 /* osaurusUITests.xctest */;
 			productType = "com.apple.product-type.bundle.ui-testing";
 		};
+		F0EEC1012E60000100895593 /* osaurus-cli */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = F0EEC10B2E60000100895593 /* Build configuration list for PBXNativeTarget "osaurus-cli" */;
+			buildPhases = (
+				F0EEC1022E60000100895593 /* Sources */,
+				F0EEC1032E60000100895593 /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = "osaurus-cli";
+			productName = osaurus;
+			productReference = F0EEC10A2E60000100895593 /* osaurus */;
+			productType = "com.apple.product-type.tool";
+		};
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
@@ -215,7 +288,7 @@
 			attributes = {
 				BuildIndependentTargetsInParallel = 1;
 				LastSwiftUpdateCheck = 1640;
-				LastUpgradeCheck = 1640;
+				LastUpgradeCheck = 2600;
 				TargetAttributes = {
 					F0BB3C252E51FBCC00895593 = {
 						CreatedOnToolsVersion = 16.4;
@@ -227,6 +300,9 @@
 					F0BB3C3D2E51FBCD00895593 = {
 						CreatedOnToolsVersion = 16.4;
 						TestTargetID = F0BB3C252E51FBCC00895593;
+					};
+					F0EEC1012E60000100895593 = {
+						CreatedOnToolsVersion = 16.4;
 					};
 				};
 			};
@@ -255,6 +331,7 @@
 				F0BB3C252E51FBCC00895593 /* osaurus */,
 				F0BB3C332E51FBCD00895593 /* osaurusTests */,
 				F0BB3C3D2E51FBCD00895593 /* osaurusUITests */,
+				F0EEC1012E60000100895593 /* osaurus-cli */,
 			);
 		};
 /* End PBXProject section */
@@ -305,6 +382,14 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		F0EEC1022E60000100895593 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				F0EEC1062E60000100895593 /* OsaurusCLI.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */
@@ -317,6 +402,11 @@
 			isa = PBXTargetDependency;
 			target = F0BB3C252E51FBCC00895593 /* osaurus */;
 			targetProxy = F0BB3C3F2E51FBCD00895593 /* PBXContainerItemProxy */;
+		};
+		F0EEC1232E60000100895593 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = F0EEC1012E60000100895593 /* osaurus-cli */;
+			targetProxy = F0EEC1222E60000100895593 /* PBXContainerItemProxy */;
 		};
 /* End PBXTargetDependency section */
 
@@ -355,6 +445,7 @@
 				CLANG_WARN_UNREACHABLE_CODE = YES;
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				COPY_PHASE_STRIP = NO;
+				DEAD_CODE_STRIPPING = YES;
 				DEBUG_INFORMATION_FORMAT = dwarf;
 				DEVELOPMENT_TEAM = 4W8QF9VR2F;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
@@ -380,6 +471,7 @@
 				MTL_FAST_MATH = YES;
 				ONLY_ACTIVE_ARCH = YES;
 				SDKROOT = macosx;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
 				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
 			};
@@ -419,6 +511,7 @@
 				CLANG_WARN_UNREACHABLE_CODE = YES;
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				COPY_PHASE_STRIP = NO;
+				DEAD_CODE_STRIPPING = YES;
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
 				DEVELOPMENT_TEAM = 4W8QF9VR2F;
 				ENABLE_NS_ASSERTIONS = NO;
@@ -437,6 +530,7 @@
 				MTL_ENABLE_DEBUG_INFO = NO;
 				MTL_FAST_MATH = YES;
 				SDKROOT = macosx;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
 				SWIFT_COMPILATION_MODE = wholemodule;
 			};
 			name = Release;
@@ -451,6 +545,7 @@
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
 				CURRENT_PROJECT_VERSION = 1;
+				DEAD_CODE_STRIPPING = YES;
 				DEVELOPMENT_TEAM = 4W8QF9VR2F;
 				ENABLE_APP_SANDBOX = NO;
 				ENABLE_HARDENED_RUNTIME = YES;
@@ -491,6 +586,7 @@
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
 				CURRENT_PROJECT_VERSION = 1;
+				DEAD_CODE_STRIPPING = YES;
 				DEVELOPMENT_TEAM = 4W8QF9VR2F;
 				ENABLE_APP_SANDBOX = NO;
 				ENABLE_HARDENED_RUNTIME = YES;
@@ -527,6 +623,7 @@
 				BUNDLE_LOADER = "$(TEST_HOST)";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
+				DEAD_CODE_STRIPPING = YES;
 				DEVELOPMENT_TEAM = 4W8QF9VR2F;
 				GENERATE_INFOPLIST_FILE = YES;
 				MACOSX_DEPLOYMENT_TARGET = 15.5;
@@ -545,6 +642,7 @@
 				BUNDLE_LOADER = "$(TEST_HOST)";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
+				DEAD_CODE_STRIPPING = YES;
 				DEVELOPMENT_TEAM = 4W8QF9VR2F;
 				GENERATE_INFOPLIST_FILE = YES;
 				MACOSX_DEPLOYMENT_TARGET = 15.5;
@@ -562,6 +660,7 @@
 			buildSettings = {
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
+				DEAD_CODE_STRIPPING = YES;
 				DEVELOPMENT_TEAM = 4W8QF9VR2F;
 				GENERATE_INFOPLIST_FILE = YES;
 				MARKETING_VERSION = 1.0;
@@ -578,6 +677,7 @@
 			buildSettings = {
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
+				DEAD_CODE_STRIPPING = YES;
 				DEVELOPMENT_TEAM = 4W8QF9VR2F;
 				GENERATE_INFOPLIST_FILE = YES;
 				MARKETING_VERSION = 1.0;
@@ -586,6 +686,42 @@
 				SWIFT_EMIT_LOC_STRINGS = NO;
 				SWIFT_VERSION = 5.0;
 				TEST_TARGET_NAME = osaurus;
+			};
+			name = Release;
+		};
+		F0EEC10C2E60000100895593 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEAD_CODE_STRIPPING = YES;
+				DEVELOPMENT_TEAM = 4W8QF9VR2F;
+				GENERATE_INFOPLIST_FILE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 15.5;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.dinoki.osaurus.cli;
+				PRODUCT_MODULE_NAME = OsaurusCLI;
+				PRODUCT_NAME = osaurus;
+				SKIP_INSTALL = YES;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Debug;
+		};
+		F0EEC10D2E60000100895593 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEAD_CODE_STRIPPING = YES;
+				DEVELOPMENT_TEAM = 4W8QF9VR2F;
+				GENERATE_INFOPLIST_FILE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 15.5;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.dinoki.osaurus.cli;
+				PRODUCT_MODULE_NAME = OsaurusCLI;
+				PRODUCT_NAME = osaurus;
+				SKIP_INSTALL = YES;
+				SWIFT_VERSION = 5.0;
 			};
 			name = Release;
 		};
@@ -624,6 +760,15 @@
 			buildConfigurations = (
 				F0BB3C4F2E51FBCD00895593 /* Debug */,
 				F0BB3C502E51FBCD00895593 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		F0EEC10B2E60000100895593 /* Build configuration list for PBXNativeTarget "osaurus-cli" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				F0EEC10C2E60000100895593 /* Debug */,
+				F0EEC10D2E60000100895593 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
