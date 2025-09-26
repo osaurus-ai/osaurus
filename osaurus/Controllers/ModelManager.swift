@@ -643,23 +643,34 @@ extension ModelManager {
 
   /// Fully curated models with descriptions we control. Order matters.
   fileprivate static let curatedSuggestedModels: [MLXModel] = [
-    // GPT-OSS
-    MLXModel(
-      id: "lmstudio-community/gpt-oss-20b-MLX-8bit",
-      name: friendlyName(from: "lmstudio-community/gpt-oss-20b-MLX-8bit"),
-      description: "GPT-OSS 20B (8-bit MLX) by OpenAI. High-quality general model in MLX format.",
-      size: 0,
-      downloadURL: "https://huggingface.co/lmstudio-community/gpt-oss-20b-MLX-8bit",
-      requiredFiles: curatedRequiredFiles
-    ),
+    // GPT-OSS - currently does not work.
+    // MLXModel(
+    //   id: "lmstudio-community/gpt-oss-20b-MLX-8bit",
+    //   name: friendlyName(from: "lmstudio-community/gpt-oss-20b-MLX-8bit"),
+    //   description: "GPT-OSS 20B (8-bit MLX) by OpenAI. High-quality general model in MLX format.",
+    //   size: 0,
+    //   downloadURL: "https://huggingface.co/lmstudio-community/gpt-oss-20b-MLX-8bit",
+    //   requiredFiles: curatedRequiredFiles
+    // ),
 
+    // MLXModel(
+    //   id: "lmstudio-community/gpt-oss-120b-MLX-8bit",
+    //   name: friendlyName(from: "lmstudio-community/gpt-oss-120b-MLX-8bit"),
+    //   description:
+    //     "GPT-OSS 120B (MLX 8-bit). ~117B parameters; premium general assistant with strong reasoning and coding. Optimized for Apple Silicon via MLX; requires 64GB+ unified memory; very large download.",
+    //   size: 0,
+    //   downloadURL: "https://huggingface.co/lmstudio-community/gpt-oss-120b-MLX-8bit",
+    //   requiredFiles: curatedRequiredFiles
+    // ),
+
+    // Qwen3 Coder — top pick for coding
     MLXModel(
-      id: "lmstudio-community/gpt-oss-120b-MLX-8bit",
-      name: friendlyName(from: "lmstudio-community/gpt-oss-120b-MLX-8bit"),
+      id: "lmstudio-community/qwen3-coder-30b-a3b-instruct-mlx-4bit",
+      name: friendlyName(from: "lmstudio-community/qwen3-coder-30b-a3b-instruct-mlx-4bit"),
       description:
-        "GPT-OSS 120B (MLX 8-bit). ~117B parameters; premium general assistant with strong reasoning and coding. Optimized for Apple Silicon via MLX; requires 64GB+ unified memory; very large download.",
+        "Qwen3 Coder 30B A3B Instruct (MLX 4-bit). Exceptional coding model; very large download and memory usage.",
       size: 0,
-      downloadURL: "https://huggingface.co/lmstudio-community/gpt-oss-120b-MLX-8bit",
+      downloadURL: "https://huggingface.co/lmstudio-community/qwen3-coder-30b-a3b-instruct-mlx-4bit",
       requiredFiles: curatedRequiredFiles
     ),
 
@@ -708,6 +719,16 @@ extension ModelManager {
         "Reasoning-focused distilled model. Good for structured steps and chain-of-thought style prompts.",
       size: 0,
       downloadURL: "https://huggingface.co/mlx-community/DeepSeek-R1-Distill-Qwen-1.5B-4bit",
+      requiredFiles: curatedRequiredFiles
+    ),
+
+    MLXModel(
+      id: "mlx-community/Qwen3-Next-80B-A3B-Thinking-4bit",
+      name: friendlyName(from: "mlx-community/Qwen3-Next-80B-A3B-Thinking-4bit"),
+      description:
+        "Qwen3-Next 80B A3B Thinking (4-bit). Reasoning-focused assistant; heavy memory requirements.",
+      size: 0,
+      downloadURL: "https://huggingface.co/mlx-community/Qwen3-Next-80B-A3B-Thinking-4bit",
       requiredFiles: curatedRequiredFiles
     ),
 
