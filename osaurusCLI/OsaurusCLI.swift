@@ -1,3 +1,10 @@
+//
+//  OsaurusCLI.swift
+//  osaurus
+//
+//  Created by Terence on 9/26/25.
+//
+
 import Foundation
 
 @main
