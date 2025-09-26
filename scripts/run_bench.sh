@@ -3,7 +3,7 @@ set -euo pipefail
 
 # Wrapper for scripts/benchmark_models.py with sensible defaults.
 # Override via env vars:
-#   OSA_BASE (default http://127.0.0.1:8080)
+#   OSA_BASE (default http://127.0.0.1:1337)
 #   OSA_MODEL (default llama-3.2-3b-instruct-4bit)
 #   OLLAMA_BASE (default http://127.0.0.1:11434)
 #   OLLAMA_MODEL (default llama3.2)
@@ -23,7 +23,7 @@ ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 PY="${ROOT_DIR}/.bench-venv/bin/python"
 BENCH="${ROOT_DIR}/scripts/benchmark_models.py"
 
-OSA_BASE=${OSA_BASE:-"http://127.0.0.1:8080"}
+OSA_BASE=${OSA_BASE:-"http://127.0.0.1:1337"}
 OSA_MODEL=${OSA_MODEL:-"llama-3.2-3b-instruct-4bit"}
 OLLAMA_BASE=${OLLAMA_BASE:-"http://127.0.0.1:11434"}
 OLLAMA_MODEL=${OLLAMA_MODEL:-"llama3.2"}

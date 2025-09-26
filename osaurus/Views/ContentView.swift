@@ -14,7 +14,7 @@ struct ContentView: View {
   @StateObject private var themeManager = ThemeManager.shared
   @Environment(\.theme) private var theme
 
-  @State private var portString: String = "8080"
+  @State private var portString: String = "1337"
   @State private var showError: Bool = false
   @State private var isHealthy: Bool = false
   @State private var lastHealthCheck: Date?
@@ -337,7 +337,7 @@ struct ConfigurationView: View {
                 .font(.system(size: 11, weight: .medium))
                 .foregroundColor(theme.secondaryText)
 
-              TextField("8080", text: $tempPortString)
+              TextField("1337", text: $tempPortString)
                 .textFieldStyle(.plain)
                 .font(.system(size: 13, weight: .medium, design: .monospaced))
                 .padding(.horizontal, 10)

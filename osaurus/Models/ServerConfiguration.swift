@@ -114,7 +114,7 @@ public struct ServerConfiguration: Codable, Equatable, Sendable {
   /// Default configuration
   public static var `default`: ServerConfiguration {
     ServerConfiguration(
-      port: 8080,
+      port: 1337,
       exposeToNetwork: false,  // Default to false (localhost)
       startAtLogin: false,
       numberOfThreads: ProcessInfo.processInfo.activeProcessorCount,
