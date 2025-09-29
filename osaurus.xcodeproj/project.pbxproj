@@ -805,7 +805,7 @@
 			repositoryURL = "https://github.com/ml-explore/mlx-swift-examples";
 			requirement = {
 				kind = upToNextMajorVersion;
-				minimumVersion = 2.25.5;
+				minimumVersion = 2.25.8;
 			};
 		};
 		F0C87F522E5881BA00567D31 /* XCRemoteSwiftPackageReference "IkigaJSON" */ = {
@@ -821,7 +821,7 @@
 			repositoryURL = "https://github.com/huggingface/swift-transformers";
 			requirement = {
 				kind = upToNextMajorVersion;
-				minimumVersion = 0.1.22;
+				minimumVersion = 1.0.0;
 			};
 		};
 /* End XCRemoteSwiftPackageReference section */
