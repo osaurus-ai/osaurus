@@ -262,8 +262,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSPopoverD
 
 // MARK: - Distributed Control (Local Only)
 extension AppDelegate {
-  fileprivate static let controlServeNotification = Notification.Name("com.dinoki.osaurus.control.serve")
-  fileprivate static let controlStopNotification = Notification.Name("com.dinoki.osaurus.control.stop")
+  fileprivate static let controlServeNotification = Notification.Name(
+    "com.dinoki.osaurus.control.serve")
+  fileprivate static let controlStopNotification = Notification.Name(
+    "com.dinoki.osaurus.control.stop")
 
   private func setupControlNotifications() {
     let center = DistributedNotificationCenter.default()
@@ -285,10 +287,14 @@ extension AppDelegate {
     var desiredPort: Int? = nil
     var exposeFlag: Bool = false
     if let ui = note.userInfo {
-      if let p = ui["port"] as? Int { desiredPort = p }
-      else if let s = ui["port"] as? String, let p = Int(s) { desiredPort = p }
-      if let e = ui["expose"] as? Bool { exposeFlag = e }
-      else if let es = ui["expose"] as? String {
+      if let p = ui["port"] as? Int {
+        desiredPort = p
+      } else if let s = ui["port"] as? String, let p = Int(s) {
+        desiredPort = p
+      }
+      if let e = ui["expose"] as? Bool {
+        exposeFlag = e
+      } else if let es = ui["expose"] as? String {
         let v = es.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         exposeFlag = (v == "1" || v == "true" || v == "yes" || v == "y")
       }
