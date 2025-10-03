@@ -296,6 +296,8 @@ struct ConfigurationView: View {
   @State private var tempExposeToNetwork: Bool = false
   @State private var tempStartAtLogin: Bool = false
   @State private var showAdvancedSettings: Bool = false
+  @State private var cliInstallMessage: String? = nil
+  @State private var cliInstallSuccess: Bool = false
 
   // Advanced settings state
   @State private var tempTopP: String = "1.0"
@@ -402,6 +404,54 @@ struct ConfigurationView: View {
               Toggle("", isOn: $tempStartAtLogin)
                 .toggleStyle(SwitchToggleStyle(tint: theme.accentColor))
                 .labelsHidden()
+            }
+          }
+          .padding(12)
+          .background(
+            RoundedRectangle(cornerRadius: 8)
+              .fill(theme.secondaryBackground)
+          )
+
+          // Command Line Tool section
+          VStack(alignment: .leading, spacing: 12) {
+            Label("Command Line Tool", systemImage: "terminal")
+              .font(.system(size: 13, weight: .semibold))
+              .foregroundColor(theme.primaryText)
+
+            VStack(alignment: .leading, spacing: 6) {
+              Text("Install the `osaurus` CLI into your PATH.")
+                .font(.system(size: 11))
+                .foregroundColor(theme.secondaryText)
+
+              HStack(spacing: 8) {
+                Button(action: { installCLI() }) {
+                  Text("Install CLI")
+                    .font(.system(size: 12, weight: .medium))
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 6)
+                    .background(
+                      RoundedRectangle(cornerRadius: 6)
+                        .fill(theme.buttonBackground)
+                        .overlay(
+                          RoundedRectangle(cornerRadius: 6)
+                            .stroke(theme.buttonBorder, lineWidth: 1)
+                        )
+                    )
+                }
+                .buttonStyle(PlainButtonStyle())
+                .help("Create a symlink to the embedded CLI")
+
+                if let message = cliInstallMessage {
+                  Text(message)
+                    .font(.system(size: 10))
+                    .foregroundColor(cliInstallSuccess ? .green : .red)
+                    .lineLimit(2)
+                }
+              }
+
+              Text("If installed to ~/.local/bin, ensure it's in your PATH.")
+                .font(.system(size: 10))
+                .foregroundColor(theme.tertiaryText)
             }
           }
           .padding(12)
@@ -665,6 +715,130 @@ struct ConfigurationView: View {
         )
         .foregroundColor(theme.primaryText)
     }
+  }
+}
+
+// MARK: - CLI Install Helper
+extension ConfigurationView {
+  private func installCLI() {
+    let fm = FileManager.default
+
+    guard let cliURL = resolveCLIExecutableURL() else {
+      cliInstallSuccess = false
+      cliInstallMessage = "CLI not found. Build once (Run) in Xcode, then retry."
+      return
+    }
+
+    // Candidate target directories
+    let brewBin = URL(fileURLWithPath: "/opt/homebrew/bin", isDirectory: true)
+    let usrLocalBin = URL(fileURLWithPath: "/usr/local/bin", isDirectory: true)
+    let userLocalBin = fm.homeDirectoryForCurrentUser
+      .appendingPathComponent(".local", isDirectory: true)
+      .appendingPathComponent("bin", isDirectory: true)
+
+    if tryInstall(cliURL: cliURL, into: brewBin) {
+      cliInstallSuccess = true
+      cliInstallMessage = "Installed to \(brewBin.appendingPathComponent("osaurus").path)"
+      return
+    }
+
+    if tryInstall(cliURL: cliURL, into: usrLocalBin) {
+      cliInstallSuccess = true
+      cliInstallMessage = "Installed to \(usrLocalBin.appendingPathComponent("osaurus").path)"
+      return
+    }
+
+    // Fallback to user-local bin
+    do {
+      try fm.createDirectory(at: userLocalBin, withIntermediateDirectories: true)
+    } catch {
+      // If we can't create ~/.local/bin, abort
+      cliInstallSuccess = false
+      cliInstallMessage = "Failed to prepare ~/.local/bin (\(error.localizedDescription))"
+      return
+    }
+
+    if tryInstall(cliURL: cliURL, into: userLocalBin) {
+      let linkPath = userLocalBin.appendingPathComponent("osaurus").path
+      let inPath = isDirInPATH(userLocalBin.path)
+      cliInstallSuccess = true
+      cliInstallMessage =
+        inPath
+        ? "Installed to \(linkPath)"
+        : "Installed to \(linkPath). Add to PATH."
+      return
+    }
+
+    cliInstallSuccess = false
+    cliInstallMessage = "Installation failed. Try manual setup from README."
+  }
+
+  private func resolveCLIExecutableURL() -> URL? {
+    let fm = FileManager.default
+    let appURL = Bundle.main.bundleURL
+    let embedded = appURL.appendingPathComponent("Contents/Helpers/osaurus", isDirectory: false)
+    if fm.fileExists(atPath: embedded.path), fm.isExecutableFile(atPath: embedded.path) {
+      return embedded
+    }
+
+    // Fallback for development when running from Xcode: try the build Products directory
+    // Example: .../DerivedData/.../Build/Products/Debug/osaurus.app
+    // CLI may be at: .../DerivedData/.../Build/Products/Debug/osaurus
+    let productsDir = appURL.deletingLastPathComponent()
+    let debugCLI = productsDir.appendingPathComponent("osaurus", isDirectory: false)
+    if fm.fileExists(atPath: debugCLI.path), fm.isExecutableFile(atPath: debugCLI.path) {
+      return debugCLI
+    }
+    let releaseCLI = productsDir.deletingLastPathComponent()
+      .appendingPathComponent("Release/osaurus", isDirectory: false)
+    if fm.fileExists(atPath: releaseCLI.path), fm.isExecutableFile(atPath: releaseCLI.path) {
+      return releaseCLI
+    }
+
+    // Also try if the app got embedded but we ran before copy phase: check inside the app that lives in Products/Release
+    let releaseEmbedded = productsDir.deletingLastPathComponent()
+      .appendingPathComponent("Release/osaurus.app/Contents/Helpers/osaurus", isDirectory: false)
+    if fm.fileExists(atPath: releaseEmbedded.path),
+      fm.isExecutableFile(atPath: releaseEmbedded.path)
+    {
+      return releaseEmbedded
+    }
+
+    return nil
+  }
+
+  private func tryInstall(cliURL: URL, into dir: URL) -> Bool {
+    let fm = FileManager.default
+    var isDir: ObjCBool = false
+    guard fm.fileExists(atPath: dir.path, isDirectory: &isDir), isDir.boolValue else {
+      return false
+    }
+
+    let linkURL = dir.appendingPathComponent("osaurus")
+
+    // If an entry exists, replace only if it's a symlink
+    if fm.fileExists(atPath: linkURL.path) {
+      do {
+        _ = try fm.destinationOfSymbolicLink(atPath: linkURL.path)
+        // It's a symlink – remove and replace
+        try? fm.removeItem(at: linkURL)
+      } catch {
+        // Not a symlink (likely a real file); do not overwrite
+        return false
+      }
+    }
+
+    do {
+      try fm.createSymbolicLink(atPath: linkURL.path, withDestinationPath: cliURL.path)
+      return true
+    } catch {
+      return false
+    }
+  }
+
+  private func isDirInPATH(_ dir: String) -> Bool {
+    let path = ProcessInfo.processInfo.environment["PATH"] ?? ""
+    return path.split(separator: ":").map(String.init).contains { $0 == dir }
   }
 }
 

@@ -670,7 +670,8 @@ extension ModelManager {
       description:
         "Qwen3 Coder 30B A3B Instruct (MLX 4-bit). Exceptional coding model; very large download and memory usage.",
       size: 0,
-      downloadURL: "https://huggingface.co/lmstudio-community/qwen3-coder-30b-a3b-instruct-mlx-4bit",
+      downloadURL:
+        "https://huggingface.co/lmstudio-community/qwen3-coder-30b-a3b-instruct-mlx-4bit",
       requiredFiles: curatedRequiredFiles
     ),
 
