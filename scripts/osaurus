@@ -1,0 +1,118 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# osaurus shim
+# Finds the installed Osaurus.app and execs its embedded CLI helper.
+# Useful for packaging or environments where the cask does not expose the CLI binary.
+
+REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+
+log_debug() {
+  if [[ "${OSU_DEBUG_SHIM:-}" == "1" ]]; then
+    echo "[osaurus-shim] $*" >&2
+  fi
+}
+
+find_app_by_bundle_id() {
+  local bundle_id="com.dinoki.osaurus"
+  if command -v mdfind >/dev/null 2>&1; then
+    # Search in common locations first to avoid noise
+    local result
+    result=$(mdfind "kMDItemCFBundleIdentifier == '$bundle_id'" -onlyin \
+      "/Applications" -onlyin "$HOME/Applications" | head -n1 || true)
+    if [[ -n "$result" && -d "$result" ]]; then
+      echo "$result"
+      return 0
+    fi
+  fi
+  return 1
+}
+
+resolve_app_path() {
+  if [[ -n "${OSU_APP_PATH:-}" && -d "${OSU_APP_PATH}" ]]; then
+    echo "${OSU_APP_PATH}"
+    return 0
+  fi
+  local candidates=(
+    "/Applications/Osaurus.app"
+    "$HOME/Applications/Osaurus.app"
+    "/Applications/osaurus.app"
+    "$HOME/Applications/osaurus.app"
+  )
+  for c in "${candidates[@]}"; do
+    if [[ -d "$c" ]]; then
+      echo "$c"
+      return 0
+    fi
+  done
+  if app="$(find_app_by_bundle_id)"; then
+    echo "$app"
+    return 0
+  fi
+  return 1
+}
+
+resolve_cli_from_app() {
+  local app_path="$1"
+  local cli="$app_path/Contents/Helpers/osaurus"
+  if [[ -x "$cli" ]]; then
+    echo "$cli"
+    return 0
+  fi
+  return 1
+}
+
+resolve_cli_from_dev() {
+  local base="$REPO_ROOT/build/DerivedData/Build/Products"
+  local candidates=(
+    "$base/Release/osaurus"
+    "$base/Release/osaurus-cli"
+    "$base/Release/osaurus.app/Contents/Helpers/osaurus"
+    "$base/Debug/osaurus"
+    "$base/Debug/osaurus-cli"
+  )
+  for c in "${candidates[@]}"; do
+    if [[ -x "$c" ]]; then
+      echo "$c"
+      return 0
+    fi
+  done
+  return 1
+}
+
+main() {
+  local cli_path=""
+
+  if [[ "${OSU_DEV:-}" == "1" ]]; then
+    log_debug "Trying dev CLI in DerivedData"
+    if cli_path="$(resolve_cli_from_dev)"; then
+      exec "$cli_path" "$@"
+    fi
+  fi
+
+  if app_path="$(resolve_app_path)"; then
+    log_debug "Found app at: $app_path"
+    if cli_path="$(resolve_cli_from_app "$app_path")"; then
+      exec "$cli_path" "$@"
+    fi
+  fi
+
+  # Last resort: try dev even if OSU_DEV != 1
+  if cli_path="$(resolve_cli_from_dev)"; then
+    exec "$cli_path" "$@"
+  fi
+
+  cat >&2 <<'EOF'
+Osaurus CLI not found.
+
+Try one of the following:
+  1) Install the app:  brew install --cask osaurus
+  2) Create a CLI symlink:  scripts/install_cli_symlink.sh
+  3) For development, build the CLI:  make cli && OSU_DEV=1 scripts/osaurus --help
+EOF
+  exit 127
+}
+
+main "$@"
+
+

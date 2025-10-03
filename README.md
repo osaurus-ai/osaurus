@@ -120,10 +120,21 @@ Download the latest signed build from the [Releases page](https://github.com/din
 
 ### Install with Homebrew
 
-The easiest way to install Osaurus is through Homebrew:
+The easiest way to install Osaurus is through Homebrew cask (app bundle):
 
 ```bash
-brew install osaurus
+brew install --cask osaurus
+```
+
+This installs `Osaurus.app`. The CLI (`osaurus`) is embedded inside the app and will be auto-linked by the cask if available. If the `osaurus` command isn't found on your PATH, run one of the following:
+
+```bash
+# One-liner: symlink the embedded CLI into your Homebrew bin
+ln -sf "/Applications/Osaurus.app/Contents/Helpers/osaurus" "$(brew --prefix)/bin/osaurus" || \
+ln -sf "$HOME/Applications/Osaurus.app/Contents/Helpers/osaurus" "$(brew --prefix)/bin/osaurus"
+
+# Or use the helper script (auto-detects paths and Homebrew prefix)
+curl -fsSL https://raw.githubusercontent.com/dinoki-ai/osaurus/main/scripts/install_cli_symlink.sh | bash
 ```
 
 Once installed, you can launch Osaurus from:
@@ -145,7 +156,11 @@ Models are stored by default at `~/MLXModels`. Override with the environment var
 
 ### Command-line server management
 
-The CLI lets you start/stop the server programmatically. If `osaurus` isn’t found in your `PATH`, run `make install-cli` once to install a development symlink.
+The CLI lets you start/stop the server programmatically. If `osaurus` isn’t found in your `PATH` after installing the app:
+
+- Run the one-liner above to create the symlink, or
+- From a cloned repo, run: `scripts/install_cli_symlink.sh`, or
+- For development builds: `make install-cli` (uses DerivedData output)
 
 ```bash
 # Start on localhost (default)
