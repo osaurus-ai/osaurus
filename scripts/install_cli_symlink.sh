@@ -3,7 +3,7 @@ set -euo pipefail
 
 # install_cli_symlink.sh
 # Creates/updates a convenient `osaurus` symlink to either:
-#   1) the app's embedded CLI at Osaurus.app/Contents/Helpers/osaurus, or
+#   1) the app's embedded CLI at Osaurus.app/Contents/MacOS/osaurus, or
 #   2) a locally built CLI binary in DerivedData (dev mode).
 #
 # Usage:
@@ -44,7 +44,7 @@ done
 resolve_cli_from_app() {
   local app_path="$1"
   local cli_path
-  cli_path="$app_path/Contents/Helpers/osaurus"
+  cli_path="$app_path/Contents/MacOS/osaurus"
   if [[ -x "$cli_path" ]]; then
     echo "$cli_path"
     return 0
@@ -58,7 +58,7 @@ resolve_cli_from_dev() {
   for candidate in \
     "$base/osaurus" \
     "$base/osaurus-cli" \
-    "$base/osaurus.app/Contents/Helpers/osaurus" \
+    "$base/osaurus.app/Contents/MacOS/osaurus" \
     "$REPO_ROOT/build/DerivedData/Build/Products/Debug/osaurus" \
     "$REPO_ROOT/build/DerivedData/Build/Products/Debug/osaurus-cli"
   do
@@ -118,7 +118,7 @@ else
   else
     if CLI_SRC="$(resolve_cli_from_app "$APP_PATH")"; then :; else
       echo "CLI binary not found in: $APP_PATH" >&2
-      echo "Expected at: $APP_PATH/Contents/Helpers/osaurus" >&2
+      echo "Expected at: $APP_PATH/Contents/MacOS/osaurus" >&2
       exit 1
     fi
   fi

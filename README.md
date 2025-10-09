@@ -130,8 +130,8 @@ This installs `Osaurus.app`. The CLI (`osaurus`) is embedded inside the app and 
 
 ```bash
 # One-liner: symlink the embedded CLI into your Homebrew bin
-ln -sf "/Applications/Osaurus.app/Contents/Helpers/osaurus" "$(brew --prefix)/bin/osaurus" || \
-ln -sf "$HOME/Applications/Osaurus.app/Contents/Helpers/osaurus" "$(brew --prefix)/bin/osaurus"
+ln -sf "/Applications/Osaurus.app/Contents/MacOS/osaurus" "$(brew --prefix)/bin/osaurus" || \
+ln -sf "$HOME/Applications/Osaurus.app/Contents/MacOS/osaurus" "$(brew --prefix)/bin/osaurus"
 
 # Or use the helper script (auto-detects paths and Homebrew prefix)
 curl -fsSL https://raw.githubusercontent.com/dinoki-ai/osaurus/main/scripts/install_cli_symlink.sh | bash
