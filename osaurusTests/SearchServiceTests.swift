@@ -144,25 +144,19 @@ struct SearchServiceTests {
         id: "mlx-community/Llama-3-8B",
         name: "Llama-3-8B",
         description: "Meta's Llama 3 language model with 8 billion parameters",
-        size: 16_000_000_000,
-        downloadURL: "https://huggingface.co/mlx-community/Llama-3-8B",
-        requiredFiles: ["config.json", "model.safetensors"]
+        downloadURL: "https://huggingface.co/mlx-community/Llama-3-8B"
       ),
       MLXModel(
         id: "mlx-community/Llama-3-70B",
         name: "Llama-3-70B",
         description: "Meta's Llama 3 language model with 70 billion parameters",
-        size: 140_000_000_000,
-        downloadURL: "https://huggingface.co/mlx-community/Llama-3-70B",
-        requiredFiles: ["config.json", "model.safetensors"]
+        downloadURL: "https://huggingface.co/mlx-community/Llama-3-70B"
       ),
       MLXModel(
         id: "mlx-community/Mistral-7B",
         name: "Mistral-7B",
         description: "Mistral AI's 7B parameter language model",
-        size: 14_000_000_000,
-        downloadURL: "https://huggingface.co/mlx-community/Mistral-7B",
-        requiredFiles: ["config.json", "model.safetensors"]
+        downloadURL: "https://huggingface.co/mlx-community/Mistral-7B"
       ),
     ]
   }
