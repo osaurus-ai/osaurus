@@ -79,6 +79,10 @@ final class ModelManager: NSObject, ObservableObject {
     for sm in suggestedModels {
       downloadStates[sm.id] = sm.isDownloaded ? .completed : .notStarted
     }
+    // Also surface any locally-downloaded models even if not on the SDK allowlist
+    let localModels = Self.discoverLocalModels()
+    mergeAvailable(with: localModels)
+
     isLoadingModels = false
   }
 
@@ -92,6 +96,33 @@ final class ModelManager: NSObject, ObservableObject {
     isLoadingModels = true
 
     let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+
+    // If user pasted a direct HF URL or "org/repo", immediately surface it without requiring SDK allowlist
+    if let directId = Self.parseHuggingFaceRepoId(from: query), !directId.isEmpty {
+      let exists = (availableModels + suggestedModels)
+        .contains { $0.id.caseInsensitiveCompare(directId) == .orderedSame }
+      if !exists {
+        let friendly = Self.friendlyName(from: directId)
+        var desc = "Imported from input"
+        var model = MLXModel(
+          id: directId,
+          name: friendly,
+          description: desc,
+          downloadURL: "https://huggingface.co/\(directId)"
+        )
+        if model.isDownloaded {
+          desc = "Local model (detected)"
+          model = MLXModel(
+            id: directId,
+            name: friendly,
+            description: desc,
+            downloadURL: "https://huggingface.co/\(directId)"
+          )
+        }
+        availableModels.insert(model, at: 0)
+        downloadStates[model.id] = model.isDownloaded ? .completed : .notStarted
+      }
+    }
 
     remoteSearchTask = Task { [weak self] in
       guard let self else { return }
@@ -161,6 +192,25 @@ final class ModelManager: NSObject, ObservableObject {
   func resolveModel(byRepoId repoId: String) -> MLXModel? {
     let trimmed = repoId.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !trimmed.isEmpty else { return nil }
+
+    // If the model exists locally, allow it regardless of allowlist membership
+    var localModel = MLXModel(
+      id: trimmed,
+      name: Self.friendlyName(from: trimmed),
+      description: "Local model (detected)",
+      downloadURL: "https://huggingface.co/\(trimmed)"
+    )
+    if localModel.isDownloaded {
+      if let existing = availableModels.first(where: { $0.id.caseInsensitiveCompare(trimmed) == .orderedSame }) {
+        return existing
+      }
+      if let existing = suggestedModels.first(where: { $0.id.caseInsensitiveCompare(trimmed) == .orderedSame }) {
+        return existing
+      }
+      availableModels.insert(localModel, at: 0)
+      downloadStates[localModel.id] = .completed
+      return localModel
+    }
     // Validate MLX compatibility heuristically: org contains "mlx" or id contains "mlx"
     let lower = trimmed.lowercased()
     guard lower.contains("mlx") || lower.hasPrefix("mlx-community/") || lower.contains("-mlx")
@@ -834,5 +884,97 @@ extension ModelManager {
     for m in appended {
       downloadStates[m.id] = m.isDownloaded ? .completed : .notStarted
     }
+  }
+}
+
+// MARK: - Local discovery and input parsing helpers
+
+extension ModelManager {
+  /// Parse a user-provided text into a Hugging Face repo id ("org/repo") if possible.
+  fileprivate static func parseHuggingFaceRepoId(from input: String) -> String? {
+    let trimmed = input.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmed.isEmpty else { return nil }
+    if let url = URL(string: trimmed), let host = url.host?.lowercased(), host == "huggingface.co" {
+      let components = url.pathComponents.filter { $0 != "/" }
+      if components.count >= 2 {
+        return "\(components[0])/\(components[1])"
+      }
+      return nil
+    }
+    // Raw org/repo
+    if trimmed.contains("/") {
+      let parts = trimmed.split(separator: "/").map(String.init)
+      if parts.count >= 2, !parts[0].isEmpty, !parts[1].isEmpty {
+        return "\(parts[0])/\(parts[1])"
+      }
+    }
+    return nil
+  }
+
+  /// Discover locally downloaded models regardless of SDK allowlist.
+  fileprivate static func discoverLocalModels() -> [MLXModel] {
+    let fm = FileManager.default
+    let root = DirectoryPickerService.shared.effectiveModelsDirectory
+    guard
+      let orgDirs = try? fm.contentsOfDirectory(
+        at: root, includingPropertiesForKeys: [.isDirectoryKey], options: [.skipsHiddenFiles])
+    else {
+      return []
+    }
+
+    var models: [MLXModel] = []
+
+    func exists(_ base: URL, _ name: String) -> Bool {
+      fm.fileExists(atPath: base.appendingPathComponent(name).path)
+    }
+
+    for orgURL in orgDirs {
+      var isOrg: ObjCBool = false
+      guard fm.fileExists(atPath: orgURL.path, isDirectory: &isOrg), isOrg.boolValue else { continue }
+      guard
+        let repos = try? fm.contentsOfDirectory(
+          at: orgURL, includingPropertiesForKeys: [.isDirectoryKey], options: [.skipsHiddenFiles])
+      else { continue }
+      for repoURL in repos {
+        var isRepo: ObjCBool = false
+        guard fm.fileExists(atPath: repoURL.path, isDirectory: &isRepo), isRepo.boolValue else {
+          continue
+        }
+
+        // Validate minimal required files (aligned with MLXModel.isDownloaded)
+        guard exists(repoURL, "config.json") else { continue }
+        let hasTokenizerJSON = exists(repoURL, "tokenizer.json")
+        let hasBPE = exists(repoURL, "merges.txt") && (exists(repoURL, "vocab.json") || exists(repoURL, "vocab.txt"))
+        let hasSentencePiece = exists(repoURL, "tokenizer.model") || exists(repoURL, "spiece.model")
+        let hasTokenizer = hasTokenizerJSON || hasBPE || hasSentencePiece
+        guard hasTokenizer else { continue }
+        guard let items = try? fm.contentsOfDirectory(at: repoURL, includingPropertiesForKeys: nil),
+          items.contains(where: { $0.pathExtension == "safetensors" })
+        else { continue }
+
+        let org = orgURL.lastPathComponent
+        let repo = repoURL.lastPathComponent
+        let id = "\(org)/\(repo)"
+        let model = MLXModel(
+          id: id,
+          name: friendlyName(from: id),
+          description: "Local model (detected)",
+          downloadURL: "https://huggingface.co/\(id)"
+        )
+        models.append(model)
+      }
+    }
+
+    // De-duplicate by lowercase id
+    var seen: Set<String> = []
+    var unique: [MLXModel] = []
+    for m in models {
+      let key = m.id.lowercased()
+      if !seen.contains(key) {
+        seen.insert(key)
+        unique.append(m)
+      }
+    }
+    return unique
   }
 }
