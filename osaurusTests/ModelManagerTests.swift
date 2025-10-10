@@ -96,9 +96,7 @@ struct ModelManagerTests {
       id: "test/model",
       name: "Test Model",
       description: "Test model for unit tests",
-      size: 1000,
       downloadURL: "https://example.com/test",
-      requiredFiles: ["config.json"],
       rootDirectory: tempDir
     )
 

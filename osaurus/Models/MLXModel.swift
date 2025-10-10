@@ -12,9 +12,7 @@ struct MLXModel: Identifiable, Codable {
   let id: String
   let name: String
   let description: String
-  let size: Int64  // Size in bytes
   let downloadURL: String
-  let requiredFiles: [String]  // Files needed for the model
 
   // Capture the models root directory at initialization time to avoid
   // relying on a mutable global during tests or concurrent execution.
@@ -24,23 +22,14 @@ struct MLXModel: Identifiable, Codable {
     id: String,
     name: String,
     description: String,
-    size: Int64,
     downloadURL: String,
-    requiredFiles: [String],
     rootDirectory: URL? = nil
   ) {
     self.id = id
     self.name = name
     self.description = description
-    self.size = size
     self.downloadURL = downloadURL
-    self.requiredFiles = requiredFiles
     self.rootDirectory = rootDirectory ?? DirectoryPickerService.shared.effectiveModelsDirectory
-  }
-
-  /// Human-readable size string
-  var sizeString: String {
-    ByteCountFormatter.string(fromByteCount: size, countStyle: .file)
   }
 
   /// Local directory where this model should be stored

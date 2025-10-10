@@ -337,19 +337,21 @@ extension AppDelegate {
       return
     }
 
-    // Resolve to ensure it appears in the UI; enforce MLX-only
-    if ModelManager.shared.resolveModel(byRepoId: modelId) == nil {
-      let alert = NSAlert()
-      alert.messageText = "Unsupported model"
-      alert.informativeText = "Osaurus only supports MLX-compatible Hugging Face repositories."
-      alert.alertStyle = .warning
-      alert.addButton(withTitle: "OK")
-      alert.runModal()
-      return
-    }
+    // Resolve to ensure it appears in the UI; enforce MLX-only via metadata
+    Task { @MainActor in
+      if await ModelManager.shared.resolveModelIfMLXCompatible(byRepoId: modelId) == nil {
+        let alert = NSAlert()
+        alert.messageText = "Unsupported model"
+        alert.informativeText = "Osaurus only supports MLX-compatible Hugging Face repositories."
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: "OK")
+        alert.runModal()
+        return
+      }
 
-    // Open Model Manager in its own window for deeplinks
-    showModelManagerWindow(deeplinkModelId: modelId, file: file)
+      // Open Model Manager in its own window for deeplinks
+      showModelManagerWindow(deeplinkModelId: modelId, file: file)
+    }
   }
 }
 

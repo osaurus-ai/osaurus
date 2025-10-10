@@ -375,6 +375,28 @@ struct IconBadge: View {
   }
 }
 
+// MARK: - Tag Badge
+struct TagBadge: View {
+  @Environment(\.theme) private var theme
+  let text: String
+
+  var body: some View {
+    Text(text)
+      .font(.system(size: 11, weight: .medium))
+      .foregroundColor(theme.secondaryText)
+      .padding(.horizontal, 10)
+      .padding(.vertical, 5)
+      .background(
+        Capsule()
+          .fill(theme.cardBackground)
+          .overlay(
+            Capsule()
+              .stroke(theme.cardBorder, lineWidth: 1)
+          )
+      )
+  }
+}
+
 // MARK: - Custom Tab Picker
 struct ThemedTabPicker<SelectionValue: Hashable>: View {
   @Environment(\.theme) private var theme
