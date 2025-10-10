@@ -19,8 +19,6 @@ struct ModelDownloadView: View {
   @State private var selectedTab: ModelListTab = .all
   @State private var searchDebounceTask: Task<Void, Never>? = nil
   @State private var modelToShowDetails: MLXModel? = nil
-  @State private var sortOption: ModelSortOption = .relevance
-  @State private var showOnlyQuantized: Bool = false
   var deeplinkModelId: String? = nil
   var deeplinkFile: String? = nil
 
@@ -143,36 +141,6 @@ struct ModelDownloadView: View {
             .fill(theme.tertiaryBackground)
         )
         
-        // Sort button
-        Menu {
-          ForEach(ModelSortOption.allCases, id: \.self) { option in
-            Button(action: { sortOption = option }) {
-              HStack {
-                Text(option.title)
-                if sortOption == option {
-                  Spacer()
-                  Image(systemName: "checkmark")
-                    .font(.system(size: 11))
-                }
-              }
-            }
-          }
-        } label: {
-          HStack(spacing: 4) {
-            Text(sortOption == .relevance ? "Sort" : sortOption.title)
-              .font(.system(size: 14))
-            Image(systemName: "chevron.down")
-              .font(.system(size: 11))
-          }
-          .foregroundColor(theme.secondaryText)
-          .padding(.horizontal, 12)
-          .padding(.vertical, 8)
-          .background(
-            RoundedRectangle(cornerRadius: 6)
-              .stroke(theme.secondaryBorder, lineWidth: 1)
-          )
-        }
-        .menuStyle(BorderlessButtonMenuStyle())
       }
       .padding(.horizontal, 24)
       .padding(.vertical, 16)
@@ -256,39 +224,7 @@ struct ModelDownloadView: View {
       baseModels = filteredDownloadedModels
     }
     
-    // Apply quantized filter
-    let filtered = showOnlyQuantized ? baseModels.filter { model in
-      model.name.lowercased().contains("4bit") || 
-      model.name.lowercased().contains("8bit") ||
-      model.name.lowercased().contains("quantized")
-    } : baseModels
-    
-    // Apply sorting
-    return sortModels(filtered)
-  }
-  
-  private func sortModels(_ models: [MLXModel]) -> [MLXModel] {
-    switch sortOption {
-    case .relevance:
-      // Default relevance based on search text
-      return models
-    case .nameAscending:
-      return models.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
-    case .nameDescending:
-      return models.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedDescending }
-    case .sizeAscending:
-      return models.sorted { (lhs: MLXModel, rhs: MLXModel) in lhs.size < rhs.size }
-    case .sizeDescending:
-      return models.sorted { (lhs: MLXModel, rhs: MLXModel) in lhs.size > rhs.size }
-    case .dateNewest:
-      return models.sorted { 
-        ($0.downloadedAt ?? .distantPast) > ($1.downloadedAt ?? .distantPast)
-      }
-    case .dateOldest:
-      return models.sorted { 
-        ($0.downloadedAt ?? .distantPast) < ($1.downloadedAt ?? .distantPast)
-      }
-    }
+    return baseModels
   }
 }
 
@@ -303,20 +239,6 @@ enum ModelListTab: CaseIterable {
     case .suggested: return "Suggested"
     case .downloaded: return "Downloaded"
     }
-  }
-}
-
-enum ModelSortOption: String, CaseIterable {
-  case relevance = "Relevance"
-  case nameAscending = "Name (A-Z)"
-  case nameDescending = "Name (Z-A)"
-  case sizeAscending = "Size (Small to Large)"
-  case sizeDescending = "Size (Large to Small)"
-  case dateNewest = "Date (Newest First)"
-  case dateOldest = "Date (Oldest First)"
-  
-  var title: String {
-    self.rawValue
   }
 }
 
@@ -422,10 +344,6 @@ struct ModelRowView: View {
             }
             
             Spacer(minLength: 0)
-            
-            Text(model.sizeString)
-              .font(.system(size: 13))
-              .foregroundColor(theme.secondaryText)
           }
           
           if !model.description.isEmpty {
