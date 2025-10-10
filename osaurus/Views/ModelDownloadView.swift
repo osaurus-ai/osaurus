@@ -12,37 +12,37 @@ import SwiftUI
 /// Deep linking is supported via `deeplinkModelId` to open the view with a specific model pre-selected.
 struct ModelDownloadView: View {
   // MARK: - State Management
-  
+
   /// Shared model manager for handling downloads and model state
   @StateObject private var modelManager = ModelManager.shared
-  
+
   /// Theme manager for consistent UI styling
   @StateObject private var themeManager = ThemeManager.shared
   @Environment(\.theme) private var theme
-  
+
   /// Controls the delete confirmation alert
   @State private var showDeleteConfirmation = false
-  
+
   /// Model pending deletion (set when user taps delete)
   @State private var modelToDelete: MLXModel?
-  
+
   /// Current search query text
   @State private var searchText: String = ""
-  
+
   /// Currently selected tab (All, Suggested, or Downloaded)
   @State private var selectedTab: ModelListTab = .all
-  
+
   /// Debounce task to prevent excessive API calls during typing
   @State private var searchDebounceTask: Task<Void, Never>? = nil
-  
+
   /// Model to show in the detail sheet
   @State private var modelToShowDetails: MLXModel? = nil
-  
+
   // MARK: - Deep Link Support
-  
+
   /// Optional model ID for deep linking (e.g., from URL schemes)
   var deeplinkModelId: String? = nil
-  
+
   /// Optional file path for deep linking
   var deeplinkFile: String? = nil
 
@@ -50,9 +50,9 @@ struct ModelDownloadView: View {
     VStack(spacing: 0) {
       // Header
       headerView
-      
+
       Divider()
-      
+
       // Model list
       modelListView
     }
@@ -96,7 +96,7 @@ struct ModelDownloadView: View {
   }
 
   // MARK: - Header View
-  
+
   /// Header section displaying the page title and download statistics
   private var headerView: some View {
     HStack(spacing: 24) {
@@ -104,13 +104,15 @@ struct ModelDownloadView: View {
         Text("Models")
           .font(.system(size: 24, weight: .semibold))
           .foregroundColor(theme.primaryText)
-        
+
         // Show count of downloaded models and total size
-        Text("\(filteredDownloadedModels.count) downloaded • \(modelManager.totalDownloadedSizeString)")
-          .font(.system(size: 13))
-          .foregroundColor(theme.secondaryText)
+        Text(
+          "\(filteredDownloadedModels.count) downloaded • \(modelManager.totalDownloadedSizeString)"
+        )
+        .font(.system(size: 13))
+        .foregroundColor(theme.secondaryText)
       }
-      
+
       Spacer()
     }
     .padding(.horizontal, 24)
@@ -118,7 +120,7 @@ struct ModelDownloadView: View {
   }
 
   // MARK: - Model List View
-  
+
   /// Main content area with tabs, search, and scrollable model list
   private var modelListView: some View {
     VStack(spacing: 0) {
@@ -141,20 +143,20 @@ struct ModelDownloadView: View {
             .buttonStyle(PlainButtonStyle())
           }
         }
-        
+
         Spacer()
-        
+
         // Search field
         HStack(spacing: 8) {
           Image(systemName: "magnifyingglass")
             .font(.system(size: 14))
             .foregroundColor(theme.tertiaryText)
-          
+
           TextField("Search models", text: $searchText)
             .textFieldStyle(PlainTextFieldStyle())
             .font(.system(size: 14))
             .foregroundColor(theme.primaryText)
-          
+
           if !searchText.isEmpty {
             Button(action: { searchText = "" }) {
               Image(systemName: "xmark.circle.fill")
@@ -171,7 +173,7 @@ struct ModelDownloadView: View {
           RoundedRectangle(cornerRadius: 6)
             .fill(theme.tertiaryBackground)
         )
-        
+
       }
       .padding(.horizontal, 24)
       .padding(.vertical, 16)
@@ -209,7 +211,7 @@ struct ModelDownloadView: View {
                     showDeleteConfirmation = true
                   }
                 )
-                .onAppear { /* no-op */ }
+                .onAppear { /* no-op */  }
               }
             }
           }
@@ -220,7 +222,7 @@ struct ModelDownloadView: View {
   }
 
   // MARK: - Model Filtering
-  
+
   /// All available models filtered by current search text
   private var filteredModels: [MLXModel] {
     SearchService.filterModels(modelManager.availableModels, with: searchText)
@@ -277,7 +279,7 @@ struct ModelDownloadView: View {
     case .downloaded:
       baseModels = filteredDownloadedModels
     }
-    
+
     return baseModels
   }
 }

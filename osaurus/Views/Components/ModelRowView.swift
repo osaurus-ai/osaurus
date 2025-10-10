@@ -14,31 +14,31 @@ import SwiftUI
 /// Users can copy the normalized model ID to their clipboard for use in API calls.
 struct ModelRowView: View {
   // MARK: - Dependencies
-  
+
   @Environment(\.theme) private var theme
-  
+
   // MARK: - Properties
-  
+
   /// The model to display
   let model: MLXModel
-  
+
   /// Current download state (not started, downloading, completed, or failed)
   let downloadState: DownloadState
-  
+
   /// Optional download metrics (speed, ETA, bytes transferred)
   let metrics: ModelManager.DownloadMetrics?
-  
+
   /// Callback when user taps the Details button
   let onViewDetails: () -> Void
-  
+
   /// Callback when user taps the Delete button
   let onDelete: () -> Void
 
   // MARK: - State
-  
+
   /// Whether the user is currently hovering over this row
   @State private var isHovering = false
-  
+
   /// Shows temporary "Copied!" feedback when user copies model ID
   @State private var showCopiedFeedback = false
 
@@ -53,16 +53,16 @@ struct ModelRowView: View {
               .foregroundColor(theme.primaryText)
               .lineLimit(1)
               .truncationMode(.tail)
-            
+
             if model.isDownloaded {
               Image(systemName: "checkmark.circle.fill")
                 .font(.system(size: 12))
                 .foregroundColor(theme.successColor)
             }
-            
+
             Spacer(minLength: 0)
           }
-          
+
           if !model.description.isEmpty {
             Text(model.description)
               .font(.system(size: 13))
@@ -70,7 +70,7 @@ struct ModelRowView: View {
               .lineLimit(2)
               .truncationMode(.tail)
           }
-          
+
           // Repository link
           if let url = URL(string: model.downloadURL) {
             Link(repositoryName(from: model.downloadURL), destination: url)
@@ -79,13 +79,13 @@ struct ModelRowView: View {
               .lineLimit(1)
               .truncationMode(.middle)
           }
-          
+
           // Download progress
           if case .downloading(let progress) = downloadState {
             VStack(alignment: .leading, spacing: 6) {
               SimpleProgressBar(progress: progress)
                 .frame(height: 4)
-              
+
               if let line = formattedMetricsLine() {
                 Text(line)
                   .font(.system(size: 11))
@@ -95,7 +95,7 @@ struct ModelRowView: View {
             .padding(.top, 4)
           }
         }
-        
+
         // Actions
         HStack(spacing: 8) {
           Button(action: onViewDetails) {
@@ -104,7 +104,7 @@ struct ModelRowView: View {
               .foregroundColor(theme.accentColor)
           }
           .buttonStyle(PlainButtonStyle())
-          
+
           if model.isDownloaded {
             Button(action: onDelete) {
               Image(systemName: "trash")
@@ -113,7 +113,7 @@ struct ModelRowView: View {
             }
             .buttonStyle(PlainButtonStyle())
           }
-          
+
           Button(action: copyModelID) {
             Image(systemName: showCopiedFeedback ? "checkmark" : "doc.on.doc")
               .font(.system(size: 13))
@@ -125,7 +125,7 @@ struct ModelRowView: View {
       }
       .padding(.vertical, 16)
       .padding(.horizontal, 20)
-      
+
       Divider()
         .padding(.leading, 20)
     }
@@ -138,7 +138,7 @@ struct ModelRowView: View {
   }
 
   // MARK: - Actions
-  
+
   /// Copies the normalized model ID to the system clipboard
   ///
   /// The ID is normalized for API use:
@@ -176,7 +176,7 @@ struct ModelRowView: View {
   }
 
   // MARK: - Metrics Formatting
-  
+
   /// Formats download metrics into a single human-readable line
   ///
   /// Example output: "150 MB / 2 GB • 5.2 MB/s • ETA 3:45"
@@ -249,4 +249,3 @@ func repositoryName(from urlString: String) -> String {
   // Fallback to showing the full URL if parsing fails
   return urlString
 }
-
