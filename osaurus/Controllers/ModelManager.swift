@@ -8,16 +8,16 @@
 import Combine
 import Foundation
 import Hub
-import SwiftUI
 import MLXLLM
+import SwiftUI
 
 enum ModelListTab: CaseIterable {
   /// All available models from Hugging Face
   case all
-  
+
   /// Curated list of recommended models
   case suggested
-  
+
   /// Only models downloaded locally
   case downloaded
 
@@ -30,7 +30,6 @@ enum ModelListTab: CaseIterable {
     }
   }
 }
-
 
 /// Manages MLX model downloads and storage
 @MainActor
@@ -87,9 +86,8 @@ final class ModelManager: NSObject, ObservableObject {
 
   /// Load popular MLX models
   func loadAvailableModels() {
-    // Filter curated suggestions to only SDK-supported models
-    let allow = Self.sdkSupportedModelIds()
-    let curated = Self.curatedSuggestedModels.filter { allow.contains($0.id.lowercased()) }
+    // Use full curated suggestions regardless of SDK allowlist so they are visible in All & Suggested
+    let curated = Self.curatedSuggestedModels
 
     suggestedModels = curated
     availableModels = curated
@@ -215,17 +213,21 @@ final class ModelManager: NSObject, ObservableObject {
     guard !trimmed.isEmpty else { return nil }
 
     // If the model exists locally, allow it regardless of allowlist membership
-    var localModel = MLXModel(
+    let localModel = MLXModel(
       id: trimmed,
       name: Self.friendlyName(from: trimmed),
       description: "Local model (detected)",
       downloadURL: "https://huggingface.co/\(trimmed)"
     )
     if localModel.isDownloaded {
-      if let existing = availableModels.first(where: { $0.id.caseInsensitiveCompare(trimmed) == .orderedSame }) {
+      if let existing = availableModels.first(where: {
+        $0.id.caseInsensitiveCompare(trimmed) == .orderedSame
+      }) {
         return existing
       }
-      if let existing = suggestedModels.first(where: { $0.id.caseInsensitiveCompare(trimmed) == .orderedSame }) {
+      if let existing = suggestedModels.first(where: {
+        $0.id.caseInsensitiveCompare(trimmed) == .orderedSame
+      }) {
         return existing
       }
       availableModels.insert(localModel, at: 0)
@@ -278,10 +280,14 @@ final class ModelManager: NSObject, ObservableObject {
     guard allow.contains(trimmed.lowercased()) else { return nil }
 
     // If already present, return immediately
-    if let existing = availableModels.first(where: { $0.id.caseInsensitiveCompare(trimmed) == .orderedSame }) {
+    if let existing = availableModels.first(where: {
+      $0.id.caseInsensitiveCompare(trimmed) == .orderedSame
+    }) {
       return existing
     }
-    if let existing = suggestedModels.first(where: { $0.id.caseInsensitiveCompare(trimmed) == .orderedSame }) {
+    if let existing = suggestedModels.first(where: {
+      $0.id.caseInsensitiveCompare(trimmed) == .orderedSame
+    }) {
       return existing
     }
 
@@ -434,7 +440,9 @@ final class ModelManager: NSObject, ObservableObject {
               self.progressSamples[model.id] = samples
 
               var speed: Double? = nil
-              if let first = samples.first, let last = samples.last, last.timestamp > first.timestamp {
+              if let first = samples.first, let last = samples.last,
+                last.timestamp > first.timestamp
+              {
                 let bytesDelta = Double(last.completed - first.completed)
                 let timeDelta = last.timestamp - first.timestamp
                 if timeDelta > 0 {
@@ -443,7 +451,9 @@ final class ModelManager: NSObject, ObservableObject {
               }
 
               var eta: Double? = nil
-              if let speed, speed > 0, let totalBytesForDisplay, let bytesCompleted = bytesCompleted, totalBytesForDisplay > 0 {
+              if let speed, speed > 0, let totalBytesForDisplay,
+                let bytesCompleted = bytesCompleted, totalBytesForDisplay > 0
+              {
                 let remaining = Double(totalBytesForDisplay - bytesCompleted)
                 if remaining > 0 { eta = remaining / speed }
               }
@@ -687,25 +697,21 @@ final class ModelManager: NSObject, ObservableObject {
 extension ModelManager {
   /// Fully curated models with descriptions we control. Order matters.
   fileprivate static let curatedSuggestedModels: [MLXModel] = [
-    // GPT-OSS - currently does not work.
-    // MLXModel(
-    //   id: "lmstudio-community/gpt-oss-20b-MLX-8bit",
-    //   name: friendlyName(from: "lmstudio-community/gpt-oss-20b-MLX-8bit"),
-    //   description: "GPT-OSS 20B (8-bit MLX) by OpenAI. High-quality general model in MLX format.",
-    //   size: 0,
-    //   downloadURL: "https://huggingface.co/lmstudio-community/gpt-oss-20b-MLX-8bit",
-    //   requiredFiles: curatedRequiredFiles
-    // ),
+    // GPT-OSS
+    MLXModel(
+      id: "lmstudio-community/gpt-oss-20b-MLX-8bit",
+      name: friendlyName(from: "lmstudio-community/gpt-oss-20b-MLX-8bit"),
+      description: "GPT-OSS 20B (8-bit MLX) by OpenAI. High-quality general model in MLX format.",
+      downloadURL: "https://huggingface.co/lmstudio-community/gpt-oss-20b-MLX-8bit"
+    ),
 
-    // MLXModel(
-    //   id: "lmstudio-community/gpt-oss-120b-MLX-8bit",
-    //   name: friendlyName(from: "lmstudio-community/gpt-oss-120b-MLX-8bit"),
-    //   description:
-    //     "GPT-OSS 120B (MLX 8-bit). ~117B parameters; premium general assistant with strong reasoning and coding. Optimized for Apple Silicon via MLX; requires 64GB+ unified memory; very large download.",
-    //   size: 0,
-    //   downloadURL: "https://huggingface.co/lmstudio-community/gpt-oss-120b-MLX-8bit",
-    //   requiredFiles: curatedRequiredFiles
-    // ),
+    MLXModel(
+      id: "lmstudio-community/gpt-oss-120b-MLX-8bit",
+      name: friendlyName(from: "lmstudio-community/gpt-oss-120b-MLX-8bit"),
+      description:
+        "GPT-OSS 120B (MLX 8-bit). ~117B parameters; premium general assistant with strong reasoning and coding. Optimized for Apple Silicon via MLX; requires 64GB+ unified memory; very large download.",
+      downloadURL: "https://huggingface.co/lmstudio-community/gpt-oss-120b-MLX-8bit"
+    ),
 
     // Qwen3 Coder — top pick for coding
     MLXModel(
@@ -838,7 +844,7 @@ extension ModelManager {
     var items: [URLQueryItem] = [
       URLQueryItem(name: "limit", value: String(limit)),
       URLQueryItem(name: "full", value: "1"),
-      URLQueryItem(name: "sort", value: "downloads")
+      URLQueryItem(name: "sort", value: "downloads"),
     ]
     if let author, !author.isEmpty { items.append(URLQueryItem(name: "author", value: author)) }
     if !search.isEmpty { items.append(URLQueryItem(name: "search", value: search)) }
@@ -881,7 +887,11 @@ extension ModelManager {
         let f = s.rfilename.lowercased()
         if f == "config.json" { hasConfig = true }
         if f.hasSuffix(".safetensors") { hasWeights = true }
-        if f == "tokenizer.json" || f == "tokenizer.model" || f == "spiece.model" || f == "vocab.json" || f == "vocab.txt" { hasTokenizer = true }
+        if f == "tokenizer.json" || f == "tokenizer.model" || f == "spiece.model"
+          || f == "vocab.json" || f == "vocab.txt"
+        {
+          hasTokenizer = true
+        }
       }
       if hasConfig && hasWeights && hasTokenizer { return true }
     }
@@ -891,7 +901,8 @@ extension ModelManager {
   /// Merge new models into availableModels without duplicates; initialize downloadStates
   fileprivate func mergeAvailable(with newModels: [MLXModel]) {
     // Build a case-insensitive set of existing ids across available and suggested
-    var existingLower: Set<String> = Set((availableModels + suggestedModels).map { $0.id.lowercased() })
+    var existingLower: Set<String> = Set(
+      (availableModels + suggestedModels).map { $0.id.lowercased() })
     var appended: [MLXModel] = []
     for m in newModels {
       let key = m.id.lowercased()
@@ -951,7 +962,9 @@ extension ModelManager {
 
     for orgURL in orgDirs {
       var isOrg: ObjCBool = false
-      guard fm.fileExists(atPath: orgURL.path, isDirectory: &isOrg), isOrg.boolValue else { continue }
+      guard fm.fileExists(atPath: orgURL.path, isDirectory: &isOrg), isOrg.boolValue else {
+        continue
+      }
       guard
         let repos = try? fm.contentsOfDirectory(
           at: orgURL, includingPropertiesForKeys: [.isDirectoryKey], options: [.skipsHiddenFiles])
@@ -965,7 +978,9 @@ extension ModelManager {
         // Validate minimal required files (aligned with MLXModel.isDownloaded)
         guard exists(repoURL, "config.json") else { continue }
         let hasTokenizerJSON = exists(repoURL, "tokenizer.json")
-        let hasBPE = exists(repoURL, "merges.txt") && (exists(repoURL, "vocab.json") || exists(repoURL, "vocab.txt"))
+        let hasBPE =
+          exists(repoURL, "merges.txt")
+          && (exists(repoURL, "vocab.json") || exists(repoURL, "vocab.txt"))
         let hasSentencePiece = exists(repoURL, "tokenizer.model") || exists(repoURL, "spiece.model")
         let hasTokenizer = hasTokenizerJSON || hasBPE || hasSentencePiece
         guard hasTokenizer else { continue }

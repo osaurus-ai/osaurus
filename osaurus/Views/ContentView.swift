@@ -300,12 +300,12 @@ struct ConfigurationView: View {
   @State private var cliInstallSuccess: Bool = false
 
   // Advanced settings state
-  @State private var tempTopP: String = "1.0"
-  @State private var tempKVBits: String = "4"
-  @State private var tempKVGroup: String = "64"
-  @State private var tempQuantStart: String = "0"
+  @State private var tempTopP: String = ""
+  @State private var tempKVBits: String = ""
+  @State private var tempKVGroup: String = ""
+  @State private var tempQuantStart: String = ""
   @State private var tempMaxKV: String = ""
-  @State private var tempPrefillStep: String = "1024"
+  @State private var tempPrefillStep: String = ""
   @State private var tempAllowedOrigins: String = ""
 
   var body: some View {
@@ -573,7 +573,7 @@ struct ConfigurationView: View {
                     "Max KV Size", text: $tempMaxKV, placeholder: "",
                     help: "Maximum KV cache size (empty = unlimited)")
                   advancedField(
-                    "Prefill Step Size", text: $tempPrefillStep, placeholder: "1024",
+                    "Prefill Step Size", text: $tempPrefillStep, placeholder: "512",
                     help: "Step size for prefill operations")
                 }
               }
@@ -623,14 +623,40 @@ struct ConfigurationView: View {
               configuration.startAtLogin = tempStartAtLogin
 
               // Save advanced settings if they were modified
-              configuration.genTopP = Float(tempTopP) ?? configuration.genTopP
+              let defaults = ServerConfiguration.default
+              let trimmedTopP = tempTopP.trimmingCharacters(in: .whitespacesAndNewlines)
+              if trimmedTopP.isEmpty {
+                configuration.genTopP = defaults.genTopP
+              } else {
+                configuration.genTopP = Float(trimmedTopP) ?? defaults.genTopP
+              }
+
               configuration.genKVBits = Int(tempKVBits)
-              configuration.genKVGroupSize = Int(tempKVGroup) ?? configuration.genKVGroupSize
-              configuration.genQuantizedKVStart =
-                Int(tempQuantStart) ?? configuration.genQuantizedKVStart
+
+              let trimmedKVGroup = tempKVGroup.trimmingCharacters(in: .whitespacesAndNewlines)
+              if trimmedKVGroup.isEmpty {
+                configuration.genKVGroupSize = defaults.genKVGroupSize
+              } else {
+                configuration.genKVGroupSize = Int(trimmedKVGroup) ?? defaults.genKVGroupSize
+              }
+
+              let trimmedQuantStart = tempQuantStart.trimmingCharacters(in: .whitespacesAndNewlines)
+              if trimmedQuantStart.isEmpty {
+                configuration.genQuantizedKVStart = defaults.genQuantizedKVStart
+              } else {
+                configuration.genQuantizedKVStart =
+                  Int(trimmedQuantStart) ?? defaults.genQuantizedKVStart
+              }
+
               configuration.genMaxKVSize = Int(tempMaxKV)
-              configuration.genPrefillStepSize =
-                Int(tempPrefillStep) ?? configuration.genPrefillStepSize
+
+              let trimmedPrefill = tempPrefillStep.trimmingCharacters(in: .whitespacesAndNewlines)
+              if trimmedPrefill.isEmpty {
+                configuration.genPrefillStepSize = defaults.genPrefillStepSize
+              } else {
+                configuration.genPrefillStepSize =
+                  Int(trimmedPrefill) ?? defaults.genPrefillStepSize
+              }
 
               // Save CORS allowed origins
               let parsedOrigins: [String] =
@@ -671,12 +697,19 @@ struct ConfigurationView: View {
       tempPortString = portString
       tempExposeToNetwork = configuration.exposeToNetwork
       tempStartAtLogin = configuration.startAtLogin
-      tempTopP = String(configuration.genTopP)
+      let defaults = ServerConfiguration.default
+      tempTopP = configuration.genTopP == defaults.genTopP ? "" : String(configuration.genTopP)
       tempKVBits = configuration.genKVBits.map(String.init) ?? ""
-      tempKVGroup = String(configuration.genKVGroupSize)
-      tempQuantStart = String(configuration.genQuantizedKVStart)
+      tempKVGroup =
+        configuration.genKVGroupSize == defaults.genKVGroupSize
+        ? "" : String(configuration.genKVGroupSize)
+      tempQuantStart =
+        configuration.genQuantizedKVStart == defaults.genQuantizedKVStart
+        ? "" : String(configuration.genQuantizedKVStart)
       tempMaxKV = configuration.genMaxKVSize.map(String.init) ?? ""
-      tempPrefillStep = String(configuration.genPrefillStepSize)
+      tempPrefillStep =
+        configuration.genPrefillStepSize == defaults.genPrefillStepSize
+        ? "" : String(configuration.genPrefillStepSize)
       tempAllowedOrigins = configuration.allowedOrigins.joined(separator: ", ")
     }
   }

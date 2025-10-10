@@ -119,12 +119,12 @@ public struct ServerConfiguration: Codable, Equatable, Sendable {
       startAtLogin: false,
       numberOfThreads: ProcessInfo.processInfo.activeProcessorCount,
       backlog: 256,
-      genTopP: 0.95,
-      genKVBits: 4,
+      genTopP: 1.0,
+      genKVBits: nil,
       genKVGroupSize: 64,
       genQuantizedKVStart: 0,
       genMaxKVSize: nil,
-      genPrefillStepSize: 4096,
+      genPrefillStepSize: 512,
       allowedOrigins: []
     )
   }

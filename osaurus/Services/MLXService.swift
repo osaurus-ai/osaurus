@@ -137,12 +137,12 @@ final class MLXService: @unchecked Sendable {
   // Adjustable generation settings (can be tuned via UI)
   private(set) var generationSettings: GenerationSettings = {
     let env = ProcessInfo.processInfo.environment
-    let topP: Float = Float(env["OSU_TOP_P"] ?? "") ?? 0.95
-    let kvBits: Int? = Int(env["OSU_KV_BITS"] ?? "") ?? 4
+    let topP: Float = Float(env["OSU_TOP_P"] ?? "") ?? 1.0
+    let kvBits: Int? = Int(env["OSU_KV_BITS"] ?? "")  // nil by default
     let kvGroup: Int = Int(env["OSU_KV_GROUP"] ?? "") ?? 64
     let quantStart: Int = Int(env["OSU_QUANT_KV_START"] ?? "") ?? 0
     let maxKV: Int? = Int(env["OSU_MAX_KV_SIZE"] ?? "")
-    let prefillStep: Int = Int(env["OSU_PREFILL_STEP"] ?? "") ?? 4096
+    let prefillStep: Int = Int(env["OSU_PREFILL_STEP"] ?? "") ?? 512
     return GenerationSettings(
       topP: topP,
       kvBits: kvBits,
@@ -450,12 +450,12 @@ final class MLXService: @unchecked Sendable {
 
     // Prepare generation parameters from server configuration
     let cfg = await ServerController.sharedConfiguration()
-    let topP: Float = cfg?.genTopP ?? 0.95
+    let topP: Float = cfg?.genTopP ?? 1.0
     let kvBits: Int? = cfg?.genKVBits
     let kvGroup: Int = cfg?.genKVGroupSize ?? 64
     let quantStart: Int = cfg?.genQuantizedKVStart ?? 0
     let maxKV: Int? = cfg?.genMaxKVSize
-    let prefillStep: Int = cfg?.genPrefillStepSize ?? 4096
+    let prefillStep: Int = cfg?.genPrefillStepSize ?? 512
 
     let genParams: MLXLMCommon.GenerateParameters = {
       var p = MLXLMCommon.GenerateParameters(
@@ -517,11 +517,23 @@ final class MLXService: @unchecked Sendable {
               chat: chat, processing: .init(), tools: tokenizerTools)
             let fullLMInput = try await context.processor.prepare(input: fullInput)
 
+            // Ensure common EOS tokens are recognized to avoid infinite generation loops
+            var contextWithEOS = context
+            // Merge existing extra EOS tokens with common variants
+            let existing = context.configuration.extraEOSTokens
+            let extra: Set<String> = Set([
+              "</end_of_turn>",  // some models emit this HTML-style tag
+              "<end_of_turn>",
+              "<|end|>",
+              "<eot>",
+            ])
+            contextWithEOS.configuration.extraEOSTokens = existing.union(extra)
+
             return try MLXLMCommon.generate(
               input: fullLMInput,
               cache: nil,
               parameters: genParams,
-              context: context
+              context: contextWithEOS
             )
           }
           for await event in stream {
@@ -685,7 +697,9 @@ actor HuggingFaceService {
       let f = s.rfilename.lowercased()
       if f == "config.json" { hasConfig = true }
       if f.hasSuffix(".safetensors") { hasWeights = true }
-      if f == "tokenizer.json" || f == "tokenizer.model" || f == "spiece.model" || f == "vocab.json" || f == "vocab.txt" {
+      if f == "tokenizer.json" || f == "tokenizer.model" || f == "spiece.model" || f == "vocab.json"
+        || f == "vocab.txt"
+      {
         hasTokenizer = true
       }
     }
