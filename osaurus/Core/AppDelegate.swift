@@ -84,27 +84,12 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSPopoverD
   }
 
   func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
-    // Ask for confirmation before quitting
-    let alert = NSAlert()
-    alert.messageText = "Quit Osaurus?"
-    alert.informativeText =
-      serverController.isRunning
-      ? "The local server will stop and any active requests will be cancelled."
-      : "Are you sure you want to quit?"
-    alert.alertStyle = .warning
-    alert.addButton(withTitle: "Quit")
-    alert.addButton(withTitle: "Cancel")
-
-    let response = alert.runModal()
-    guard response == .alertFirstButtonReturn else {
-      return .terminateCancel
-    }
-
+    // Quit immediately without confirmation; still shut down server gracefully if running
     guard serverController.isRunning else {
       return .terminateNow
     }
 
-    // Delay termination to allow async shutdown
+    // Delay termination briefly to allow async shutdown
     Task { @MainActor in
       await serverController.ensureShutdown()
       NSApp.reply(toApplicationShouldTerminate: true)
