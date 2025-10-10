@@ -240,6 +240,7 @@ final class MLXService: @unchecked Sendable {
     }
     Self.availableModelsCache.setObject(modelInfo as NSArray, forKey: "modelInfo" as NSString)
     // Model set may have changed; clear any derived caches
+    Self.modelsListCacheTimestamp = Date()
   }
 
   /// Get list of available models that are downloaded (thread-safe)
@@ -327,17 +328,18 @@ final class MLXService: @unchecked Sendable {
     var results: [(String, String)] = []
 
     func validateAndAppend(org: String, repo: String, repoURL: URL) {
-      // Required JSON metadata files
-      let jsonFiles = [
-        "config.json",
-        "tokenizer.json",
-        "tokenizer_config.json",
-        "special_tokens_map.json",
-      ]
-      let jsonOk = jsonFiles.allSatisfy { name in
+      // Core config
+      func exists(_ name: String) -> Bool {
         fm.fileExists(atPath: repoURL.appendingPathComponent(name).path)
       }
-      guard jsonOk else { return }
+      guard exists("config.json") else { return }
+
+      // Tokenizer variants (match MLXModel.isDownloaded)
+      let hasTokenizerJSON = exists("tokenizer.json")
+      let hasBPE = exists("merges.txt") && (exists("vocab.json") || exists("vocab.txt"))
+      let hasSentencePiece = exists("tokenizer.model") || exists("spiece.model")
+      let hasTokenizerAssets = hasTokenizerJSON || hasBPE || hasSentencePiece
+      guard hasTokenizerAssets else { return }
 
       // At least one weights file
       guard let items = try? fm.contentsOfDirectory(at: repoURL, includingPropertiesForKeys: nil),
