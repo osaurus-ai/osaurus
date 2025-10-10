@@ -102,7 +102,6 @@ struct ModelDetailView: View, Identifiable {
         // Basic info
         VStack(alignment: .leading, spacing: 12) {
           InfoRow(label: "Repository", value: repositoryName(from: model.downloadURL))
-          InfoRow(label: "Size", value: model.sizeString)
           
           if model.isDownloaded, let downloadedAt = model.downloadedAt {
             InfoRow(label: "Downloaded", value: RelativeDateTimeFormatter().localizedString(for: downloadedAt, relativeTo: Date()))
