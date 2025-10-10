@@ -517,11 +517,23 @@ final class MLXService: @unchecked Sendable {
               chat: chat, processing: .init(), tools: tokenizerTools)
             let fullLMInput = try await context.processor.prepare(input: fullInput)
 
+            // Ensure common EOS tokens are recognized to avoid infinite generation loops
+            var contextWithEOS = context
+            // Merge existing extra EOS tokens with common variants
+            let existing = context.configuration.extraEOSTokens
+            let extra: Set<String> = Set([
+              "</end_of_turn>",  // some models emit this HTML-style tag
+              "<end_of_turn>",
+              "<|end|>",
+              "<eot>",
+            ])
+            contextWithEOS.configuration.extraEOSTokens = existing.union(extra)
+
             return try MLXLMCommon.generate(
               input: fullLMInput,
               cache: nil,
               parameters: genParams,
-              context: context
+              context: contextWithEOS
             )
           }
           for await event in stream {

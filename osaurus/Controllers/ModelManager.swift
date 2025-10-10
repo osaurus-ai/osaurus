@@ -86,9 +86,8 @@ final class ModelManager: NSObject, ObservableObject {
 
   /// Load popular MLX models
   func loadAvailableModels() {
-    // Filter curated suggestions to only SDK-supported models
-    let allow = Self.sdkSupportedModelIds()
-    let curated = Self.curatedSuggestedModels.filter { allow.contains($0.id.lowercased()) }
+    // Use full curated suggestions regardless of SDK allowlist so they are visible in All & Suggested
+    let curated = Self.curatedSuggestedModels
 
     suggestedModels = curated
     availableModels = curated
@@ -698,25 +697,21 @@ final class ModelManager: NSObject, ObservableObject {
 extension ModelManager {
   /// Fully curated models with descriptions we control. Order matters.
   fileprivate static let curatedSuggestedModels: [MLXModel] = [
-    // GPT-OSS - currently does not work.
-    // MLXModel(
-    //   id: "lmstudio-community/gpt-oss-20b-MLX-8bit",
-    //   name: friendlyName(from: "lmstudio-community/gpt-oss-20b-MLX-8bit"),
-    //   description: "GPT-OSS 20B (8-bit MLX) by OpenAI. High-quality general model in MLX format.",
-    //   size: 0,
-    //   downloadURL: "https://huggingface.co/lmstudio-community/gpt-oss-20b-MLX-8bit",
-    //   requiredFiles: curatedRequiredFiles
-    // ),
+    // GPT-OSS
+    MLXModel(
+      id: "lmstudio-community/gpt-oss-20b-MLX-8bit",
+      name: friendlyName(from: "lmstudio-community/gpt-oss-20b-MLX-8bit"),
+      description: "GPT-OSS 20B (8-bit MLX) by OpenAI. High-quality general model in MLX format.",
+      downloadURL: "https://huggingface.co/lmstudio-community/gpt-oss-20b-MLX-8bit"
+    ),
 
-    // MLXModel(
-    //   id: "lmstudio-community/gpt-oss-120b-MLX-8bit",
-    //   name: friendlyName(from: "lmstudio-community/gpt-oss-120b-MLX-8bit"),
-    //   description:
-    //     "GPT-OSS 120B (MLX 8-bit). ~117B parameters; premium general assistant with strong reasoning and coding. Optimized for Apple Silicon via MLX; requires 64GB+ unified memory; very large download.",
-    //   size: 0,
-    //   downloadURL: "https://huggingface.co/lmstudio-community/gpt-oss-120b-MLX-8bit",
-    //   requiredFiles: curatedRequiredFiles
-    // ),
+    MLXModel(
+      id: "lmstudio-community/gpt-oss-120b-MLX-8bit",
+      name: friendlyName(from: "lmstudio-community/gpt-oss-120b-MLX-8bit"),
+      description:
+        "GPT-OSS 120B (MLX 8-bit). ~117B parameters; premium general assistant with strong reasoning and coding. Optimized for Apple Silicon via MLX; requires 64GB+ unified memory; very large download.",
+      downloadURL: "https://huggingface.co/lmstudio-community/gpt-oss-120b-MLX-8bit"
+    ),
 
     // Qwen3 Coder — top pick for coding
     MLXModel(
