@@ -19,24 +19,23 @@ struct ModelDownloadView: View {
   @State private var selectedTab: ModelListTab = .all
   @State private var searchDebounceTask: Task<Void, Never>? = nil
   @State private var modelToShowDetails: MLXModel? = nil
+  @State private var sortOption: ModelSortOption = .relevance
+  @State private var showOnlyQuantized: Bool = false
   var deeplinkModelId: String? = nil
   var deeplinkFile: String? = nil
 
   var body: some View {
-    ZStack {
-      // Themed background
-      theme.primaryBackground
-        .ignoresSafeArea()
-
-      VStack(spacing: 0) {
-        // Header
-        headerView
-
-        // Model list
-        modelListView
-      }
+    VStack(spacing: 0) {
+      // Header
+      headerView
+      
+      Divider()
+      
+      // Model list
+      modelListView
     }
-    .frame(minWidth: 700, minHeight: 600)
+    .frame(minWidth: 720, minHeight: 600)
+    .background(theme.primaryBackground)
     .environment(\.theme, themeManager.currentTheme)
     .alert("Delete Model", isPresented: $showDeleteConfirmation) {
       Button("Cancel", role: .cancel) {}
@@ -75,120 +74,130 @@ struct ModelDownloadView: View {
   }
 
   private var headerView: some View {
-    HStack {
-      // Logo with minimalistic outline
-      ZStack {
-        Circle()
-          .fill(theme.cardBackground)
-          .overlay(
-            Circle()
-              .stroke(theme.accentColor, lineWidth: 2)
-          )
-          .frame(width: 50, height: 50)
-
-        Image(systemName: "cube.box")
-          .font(.system(size: 26))
-          .foregroundColor(theme.accentColor)
-      }
-      .shadow(color: theme.shadowColor.opacity(theme.shadowOpacity), radius: 6, x: 0, y: 2)
-
+    HStack(spacing: 24) {
       VStack(alignment: .leading, spacing: 4) {
-        Text("Manage Models")
-          .font(.system(size: 24, weight: .bold, design: .rounded))
+        Text("Models")
+          .font(.system(size: 24, weight: .semibold))
           .foregroundColor(theme.primaryText)
-
-        Text("Download and manage Large Language Models for MLX")
-          .font(.system(size: 13, weight: .medium))
+        
+        Text("\(filteredDownloadedModels.count) downloaded • \(modelManager.totalDownloadedSizeString)")
+          .font(.system(size: 13))
           .foregroundColor(theme.secondaryText)
       }
-
+      
       Spacer()
-
-      VStack(alignment: .trailing, spacing: 4) {
-        Text("Total Downloaded")
-          .font(.system(size: 12, weight: .medium))
-          .foregroundColor(theme.secondaryText)
-        Text(modelManager.totalDownloadedSizeString)
-          .font(.system(size: 18, weight: .bold))
-          .foregroundColor(theme.accentColor)
-      }
     }
     .padding(.horizontal, 24)
     .padding(.vertical, 20)
-    .background(
-      theme.secondaryBackground
-        .overlay(
-          Rectangle()
-            .fill(theme.primaryBorder)
-            .frame(height: 1),
-          alignment: .bottom
-        )
-    )
   }
 
   private var modelListView: some View {
     VStack(spacing: 0) {
-      // Tabs
-      HStack {
+      // Search and filter bar
+      HStack(spacing: 12) {
+        // Tabs
+        HStack(spacing: 4) {
+          ForEach(ModelListTab.allCases, id: \.self) { tab in
+            Button(action: { selectedTab = tab }) {
+              Text(tab.title)
+                .font(.system(size: 14, weight: selectedTab == tab ? .medium : .regular))
+                .foregroundColor(selectedTab == tab ? theme.primaryText : theme.secondaryText)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 6)
+                .background(
+                  RoundedRectangle(cornerRadius: 6)
+                    .fill(selectedTab == tab ? theme.tertiaryBackground : Color.clear)
+                )
+            }
+            .buttonStyle(PlainButtonStyle())
+          }
+        }
+        
         Spacer()
-        ThemedTabPicker(
-          selection: $selectedTab,
-          tabs: ModelListTab.allCases.map { ($0, $0.title) }
+        
+        // Search field
+        HStack(spacing: 8) {
+          Image(systemName: "magnifyingglass")
+            .font(.system(size: 14))
+            .foregroundColor(theme.tertiaryText)
+          
+          TextField("Search models", text: $searchText)
+            .textFieldStyle(PlainTextFieldStyle())
+            .font(.system(size: 14))
+            .foregroundColor(theme.primaryText)
+          
+          if !searchText.isEmpty {
+            Button(action: { searchText = "" }) {
+              Image(systemName: "xmark.circle.fill")
+                .font(.system(size: 12))
+                .foregroundColor(theme.tertiaryText)
+            }
+            .buttonStyle(PlainButtonStyle())
+          }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .frame(width: 240)
+        .background(
+          RoundedRectangle(cornerRadius: 6)
+            .fill(theme.tertiaryBackground)
         )
-        .frame(maxWidth: 600)
-        Spacer()
+        
+        // Sort button
+        Menu {
+          ForEach(ModelSortOption.allCases, id: \.self) { option in
+            Button(action: { sortOption = option }) {
+              HStack {
+                Text(option.title)
+                if sortOption == option {
+                  Spacer()
+                  Image(systemName: "checkmark")
+                    .font(.system(size: 11))
+                }
+              }
+            }
+          }
+        } label: {
+          HStack(spacing: 4) {
+            Text(sortOption == .relevance ? "Sort" : sortOption.title)
+              .font(.system(size: 14))
+            Image(systemName: "chevron.down")
+              .font(.system(size: 11))
+          }
+          .foregroundColor(theme.secondaryText)
+          .padding(.horizontal, 12)
+          .padding(.vertical, 8)
+          .background(
+            RoundedRectangle(cornerRadius: 6)
+              .stroke(theme.secondaryBorder, lineWidth: 1)
+          )
+        }
+        .menuStyle(BorderlessButtonMenuStyle())
       }
       .padding(.horizontal, 24)
-      .padding(.vertical, 12)
+      .padding(.vertical, 16)
       .background(theme.secondaryBackground)
-      .overlay(
-        Rectangle()
-          .fill(theme.primaryBorder)
-          .frame(height: 1),
-        alignment: .bottom
-      )
-
-      // Search row above results
-      HStack(spacing: 8) {
-        Image(systemName: "magnifyingglass")
-          .foregroundColor(theme.tertiaryText)
-        TextField("Search models", text: $searchText)
-          .textFieldStyle(PlainTextFieldStyle())
-          .foregroundColor(theme.primaryText)
-          .accessibilityIdentifier("model_search_field")
-      }
-      .padding(.horizontal, 24)
-      .padding(.vertical, 10)
-      .background(theme.secondaryBackground)
-      .overlay(
-        Rectangle()
-          .fill(theme.primaryBorder)
-          .frame(height: 1),
-        alignment: .bottom
-      )
 
       if modelManager.isLoadingModels {
         VStack(spacing: 12) {
           ProgressView()
             .progressViewStyle(CircularProgressViewStyle())
           Text("Loading models…")
-            .foregroundColor(theme.secondaryText)
             .font(.system(size: 13))
+            .foregroundColor(theme.secondaryText)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .padding(40)
       } else {
         ScrollView {
-          LazyVStack(spacing: 16) {
+          LazyVStack(spacing: 12) {
             if displayedModels.isEmpty {
-              if selectedTab == .all || selectedTab == .suggested {
-                EmptyModelView(
-                  title: "No models found",
-                  description: "Couldn't find any models that matches your search")
-              } else {
-                EmptyModelView(
-                  title: "No downloads yet", description: "You have no downloaded models")
-              }
+              EmptyStateView(
+                selectedTab: selectedTab,
+                searchText: searchText,
+                onClearSearch: { searchText = "" }
+              )
+              .padding(.vertical, 40)
             } else {
               ForEach(displayedModels) { model in
                 ModelRowView(
@@ -204,11 +213,6 @@ struct ModelDownloadView: View {
                 .onAppear {
                   modelManager.prefetchModelDetailsIfNeeded(for: model)
                 }
-                .transition(
-                  .asymmetric(
-                    insertion: .scale.combined(with: .opacity),
-                    removal: .scale.combined(with: .opacity)
-                  ))
               }
             }
           }
@@ -242,13 +246,48 @@ struct ModelDownloadView: View {
   }
 
   private var displayedModels: [MLXModel] {
+    let baseModels: [MLXModel]
     switch selectedTab {
     case .all:
-      return filteredModels
+      baseModels = filteredModels
     case .suggested:
-      return filteredSuggestedModels
+      baseModels = filteredSuggestedModels
     case .downloaded:
-      return filteredDownloadedModels
+      baseModels = filteredDownloadedModels
+    }
+    
+    // Apply quantized filter
+    let filtered = showOnlyQuantized ? baseModels.filter { model in
+      model.name.lowercased().contains("4bit") || 
+      model.name.lowercased().contains("8bit") ||
+      model.name.lowercased().contains("quantized")
+    } : baseModels
+    
+    // Apply sorting
+    return sortModels(filtered)
+  }
+  
+  private func sortModels(_ models: [MLXModel]) -> [MLXModel] {
+    switch sortOption {
+    case .relevance:
+      // Default relevance based on search text
+      return models
+    case .nameAscending:
+      return models.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+    case .nameDescending:
+      return models.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedDescending }
+    case .sizeAscending:
+      return models.sorted { (lhs: MLXModel, rhs: MLXModel) in lhs.size < rhs.size }
+    case .sizeDescending:
+      return models.sorted { (lhs: MLXModel, rhs: MLXModel) in lhs.size > rhs.size }
+    case .dateNewest:
+      return models.sorted { 
+        ($0.downloadedAt ?? .distantPast) > ($1.downloadedAt ?? .distantPast)
+      }
+    case .dateOldest:
+      return models.sorted { 
+        ($0.downloadedAt ?? .distantPast) < ($1.downloadedAt ?? .distantPast)
+      }
     }
   }
 }
@@ -267,24 +306,89 @@ enum ModelListTab: CaseIterable {
   }
 }
 
-struct EmptyModelView: View {
-  @Environment(\.theme) private var theme
+enum ModelSortOption: String, CaseIterable {
+  case relevance = "Relevance"
+  case nameAscending = "Name (A-Z)"
+  case nameDescending = "Name (Z-A)"
+  case sizeAscending = "Size (Small to Large)"
+  case sizeDescending = "Size (Large to Small)"
+  case dateNewest = "Date (Newest First)"
+  case dateOldest = "Date (Oldest First)"
+  
+  var title: String {
+    self.rawValue
+  }
+}
 
-  var title: String
-  var description: String
+struct EmptyStateView: View {
+  @Environment(\.theme) private var theme
+  let selectedTab: ModelListTab
+  let searchText: String
+  let onClearSearch: () -> Void
 
   var body: some View {
-    VStack(alignment: .center, spacing: 6) {
-      Text(title)
-        .font(.system(size: 16, weight: .semibold))
-        .foregroundColor(theme.primaryText)
-
-      Text(description)
-        .foregroundColor(theme.secondaryText)
-        .font(.system(size: 13))
+    VStack(spacing: 16) {
+      Image(systemName: iconName)
+        .font(.system(size: 36, weight: .light))
+        .foregroundColor(theme.tertiaryText)
+      
+      VStack(spacing: 8) {
+        Text(title)
+          .font(.system(size: 16, weight: .medium))
+          .foregroundColor(theme.primaryText)
+        
+        Text(description)
+          .font(.system(size: 14))
+          .foregroundColor(theme.secondaryText)
+          .multilineTextAlignment(.center)
+          .frame(maxWidth: 360)
+        
+        if !searchText.isEmpty {
+          Button(action: onClearSearch) {
+            Text("Clear search")
+              .font(.system(size: 13))
+              .foregroundColor(theme.accentColor)
+          }
+          .buttonStyle(PlainButtonStyle())
+          .padding(.top, 4)
+        }
+      }
     }
-    .multilineTextAlignment(.center)
     .frame(maxWidth: .infinity, maxHeight: .infinity)
+  }
+  
+  private var iconName: String {
+    searchText.isEmpty ? "cube.box" : "magnifyingglass"
+  }
+  
+  private var title: String {
+    if !searchText.isEmpty {
+      return "No models found"
+    }
+    
+    switch selectedTab {
+    case .all:
+      return "No models available"
+    case .suggested:
+      return "No suggested models"
+    case .downloaded:
+      return "No downloaded models"
+    }
+  }
+  
+  private var description: String {
+    if !searchText.isEmpty {
+      return "Try adjusting your search terms"
+    }
+    
+    switch selectedTab {
+    case .all:
+      return "Language models will appear here"
+    case .suggested:
+      return "Suggested models will appear here"
+    case .downloaded:
+      return "Downloaded models will appear here"
+    }
   }
 }
 
@@ -300,117 +404,101 @@ struct ModelRowView: View {
   @State private var showCopiedFeedback = false
 
   var body: some View {
-    SimpleCard(padding: 0) {
-      VStack(spacing: 0) {
-        HStack(spacing: 16) {
-          // Model icon with gradient
-          IconBadge(
-            icon: "text.bubble.fill",
-            color: model.isDownloaded ? .green : .blue,
-            size: 50
-          )
-
-          // Model info
-          VStack(alignment: .leading, spacing: 6) {
-            HStack(alignment: .center, spacing: 8) {
-              Text(model.name)
-                .font(.system(size: 16, weight: .semibold))
-                .foregroundColor(theme.primaryText)
-                .lineLimit(1)
-                .truncationMode(.tail)
-                .layoutPriority(1)
-
-              Button(action: copyModelID) {
-                HStack(spacing: 4) {
-                  Image(systemName: showCopiedFeedback ? "checkmark" : "doc.on.doc")
-                    .font(.system(size: 11))
-                  Text(showCopiedFeedback ? "Copied!" : "Copy ID")
-                    .font(.system(size: 11, weight: .medium))
-                }
-                .foregroundColor(showCopiedFeedback ? theme.successColor : theme.tertiaryText)
-                .padding(.horizontal, 8)
-                .padding(.vertical, 4)
-                .background(
-                  RoundedRectangle(cornerRadius: 6)
-                    .fill(theme.cardBackground)
-                    .overlay(
-                      RoundedRectangle(cornerRadius: 6)
-                        .stroke(
-                          showCopiedFeedback ? theme.successColor : theme.primaryBorder,
-                          lineWidth: 1)
-                    )
-                )
-                .animation(.easeInOut(duration: 0.2), value: showCopiedFeedback)
-              }
-              .buttonStyle(PlainButtonStyle())
-              .help("Copy model ID for API usage")
-              .fixedSize()
-
-              Spacer(minLength: 0)
-            }
-
-            // Description if available
-            if !model.description.isEmpty {
-              Text(model.description)
-                .font(.system(size: 13))
-                .foregroundColor(theme.secondaryText)
-                .lineLimit(2)
-                .frame(maxWidth: .infinity, alignment: .leading)
-            }
-
-            // Repository URL as small link
-            if let url = URL(string: model.downloadURL) {
-              HStack(spacing: 4) {
-                Image(systemName: "link")
-                  .font(.system(size: 10))
-                Link(repositoryName(from: model.downloadURL), destination: url)
-                  .font(.system(size: 11))
-                  .underline(false)
-                  .lineLimit(1)
-                  .truncationMode(.middle)
-              }
-              .foregroundColor(theme.tertiaryText)
-              .opacity(0.8)
-            }
-
+    VStack(spacing: 0) {
+      HStack(spacing: 16) {
+        // Model info
+        VStack(alignment: .leading, spacing: 6) {
+          HStack(alignment: .center, spacing: 8) {
+            Text(model.name)
+              .font(.system(size: 15, weight: .medium))
+              .foregroundColor(theme.primaryText)
+              .lineLimit(1)
+              .truncationMode(.tail)
+            
             if model.isDownloaded {
-              StatusBadge(
-                status: "Downloaded",
-                color: theme.successColor,
-                isAnimating: false
-              )
+              Image(systemName: "checkmark.circle.fill")
+                .font(.system(size: 12))
+                .foregroundColor(theme.successColor)
             }
-            if case .downloading(let progress) = downloadState {
-              VStack(alignment: .leading, spacing: 6) {
-                SimpleProgressBar(progress: progress)
-                  .frame(height: 8)
-                if let line = formattedMetricsLine() {
-                  Text(line)
-                    .font(.system(size: 11))
-                    .foregroundColor(theme.tertiaryText)
-                }
+            
+            Spacer(minLength: 0)
+            
+            Text(model.sizeString)
+              .font(.system(size: 13))
+              .foregroundColor(theme.secondaryText)
+          }
+          
+          if !model.description.isEmpty {
+            Text(model.description)
+              .font(.system(size: 13))
+              .foregroundColor(theme.secondaryText)
+              .lineLimit(2)
+              .truncationMode(.tail)
+          }
+          
+          // Repository link
+          if let url = URL(string: model.downloadURL) {
+            Link(repositoryName(from: model.downloadURL), destination: url)
+              .font(.system(size: 12))
+              .foregroundColor(theme.tertiaryText)
+              .lineLimit(1)
+              .truncationMode(.middle)
+          }
+          
+          // Download progress
+          if case .downloading(let progress) = downloadState {
+            VStack(alignment: .leading, spacing: 6) {
+              SimpleProgressBar(progress: progress)
+                .frame(height: 4)
+              
+              if let line = formattedMetricsLine() {
+                Text(line)
+                  .font(.system(size: 11))
+                  .foregroundColor(theme.tertiaryText)
               }
             }
+            .padding(.top, 4)
           }
-
-          Spacer()
-
-          // Action buttons
-          GradientButton(
-            title: "View Details",
-            icon: "info.circle",
-            action: onViewDetails,
-            isDestructive: false,
-            isPrimary: true
-          )
         }
-        .padding(20)
+        
+        // Actions
+        HStack(spacing: 8) {
+          Button(action: onViewDetails) {
+            Text("Details")
+              .font(.system(size: 13))
+              .foregroundColor(theme.accentColor)
+          }
+          .buttonStyle(PlainButtonStyle())
+          
+          if model.isDownloaded {
+            Button(action: onDelete) {
+              Image(systemName: "trash")
+                .font(.system(size: 13))
+                .foregroundColor(theme.errorColor)
+            }
+            .buttonStyle(PlainButtonStyle())
+          }
+          
+          Button(action: copyModelID) {
+            Image(systemName: showCopiedFeedback ? "checkmark" : "doc.on.doc")
+              .font(.system(size: 13))
+              .foregroundColor(showCopiedFeedback ? theme.successColor : theme.tertiaryText)
+          }
+          .buttonStyle(PlainButtonStyle())
+          .help(showCopiedFeedback ? "Copied!" : "Copy model ID")
+        }
       }
+      .padding(.vertical, 16)
+      .padding(.horizontal, 20)
+      
+      Divider()
+        .padding(.leading, 20)
     }
-    .scaleEffect(isHovering ? 1.02 : 1.0)
-    .animation(.spring(response: 0.3, dampingFraction: 0.8), value: isHovering)
+    .background(isHovering ? theme.secondaryBackground : Color.clear)
     .onHover { hovering in
-      isHovering = hovering
+      withAnimation(.easeInOut(duration: 0.15)) {
+        isHovering = hovering
+      }
     }
   }
 
@@ -511,6 +599,7 @@ struct ModelDetailView: View, Identifiable {
   @StateObject private var modelManager = ModelManager.shared
   @StateObject private var themeManager = ThemeManager.shared
   @Environment(\.theme) private var theme
+  @Environment(\.dismiss) private var dismiss
 
   let id = UUID()
   let model: MLXModel
@@ -522,131 +611,228 @@ struct ModelDetailView: View, Identifiable {
   var body: some View {
     VStack(spacing: 0) {
       header
-      Divider().overlay(theme.primaryBorder).frame(height: 1)
+      
+      Divider()
+      
       content
+      
+      Divider()
+      
       footer
     }
-    .frame(minWidth: 560, minHeight: 360)
+    .frame(width: 560, height: 480)
+    .background(theme.primaryBackground)
     .environment(\.theme, themeManager.currentTheme)
     .onAppear { Task { await estimateIfNeeded() } }
   }
 
   private var header: some View {
-    HStack(spacing: 12) {
-      IconBadge(icon: "text.bubble.fill", color: model.isDownloaded ? .green : .blue, size: 44)
-      VStack(alignment: .leading, spacing: 4) {
-        Text(model.name)
-          .font(.system(size: 18, weight: .semibold))
-          .foregroundColor(theme.primaryText)
-          .lineLimit(1)
+    HStack {
+      VStack(alignment: .leading, spacing: 6) {
+        HStack(spacing: 8) {
+          Text(model.name)
+            .font(.system(size: 18, weight: .semibold))
+            .foregroundColor(theme.primaryText)
+          
+          if model.isDownloaded {
+            Image(systemName: "checkmark.circle.fill")
+              .font(.system(size: 14))
+              .foregroundColor(theme.successColor)
+          }
+        }
+        
         if !model.description.isEmpty {
           Text(model.description)
-            .font(.system(size: 13))
+            .font(.system(size: 14))
             .foregroundColor(theme.secondaryText)
             .lineLimit(2)
         }
       }
+      
       Spacer()
-      if model.isDownloaded {
-        StatusBadge(status: "Downloaded", color: theme.successColor, isAnimating: false)
+      
+      Button(action: { dismiss() }) {
+        Image(systemName: "xmark")
+          .font(.system(size: 14, weight: .medium))
+          .foregroundColor(theme.secondaryText)
       }
+      .buttonStyle(PlainButtonStyle())
     }
-    .padding(16)
-    .background(theme.secondaryBackground)
+    .padding(20)
   }
-
+  
   private var content: some View {
     ScrollView {
-      VStack(alignment: .leading, spacing: 16) {
-        CopyableURLField(label: "Hugging Face Repository", url: model.downloadURL)
-
+      VStack(alignment: .leading, spacing: 20) {
+        // Basic info
+        VStack(alignment: .leading, spacing: 12) {
+          InfoRow(label: "Repository", value: repositoryName(from: model.downloadURL))
+          InfoRow(label: "Size", value: model.sizeString)
+          
+          if model.isDownloaded, let downloadedAt = model.downloadedAt {
+            InfoRow(label: "Downloaded", value: RelativeDateTimeFormatter().localizedString(for: downloadedAt, relativeTo: Date()))
+          }
+        }
+        
+        // Estimated download size
         VStack(alignment: .leading, spacing: 8) {
           Text("Estimated download size")
-            .font(.system(size: 12, weight: .medium))
+            .font(.system(size: 13, weight: .medium))
             .foregroundColor(theme.secondaryText)
+          
           HStack(spacing: 8) {
             if isEstimating {
-              ProgressView().progressViewStyle(CircularProgressViewStyle())
+              ProgressView()
+                .progressViewStyle(CircularProgressViewStyle())
+                .scaleEffect(0.7)
             }
+            
             Text(estimatedSizeString)
+              .font(.system(size: 14, weight: .medium))
               .foregroundColor(theme.primaryText)
-              .font(.system(size: 14, weight: .semibold))
+            
+            if !isEstimating {
+              Button(action: { Task { await estimateIfNeeded(force: true) } }) {
+                Text("Recalculate")
+                  .font(.system(size: 12))
+                  .foregroundColor(theme.accentColor)
+              }
+              .buttonStyle(PlainButtonStyle())
+            }
           }
+          
           if let err = estimateError {
             Text(err)
-              .foregroundColor(theme.errorColor)
               .font(.system(size: 12))
+              .foregroundColor(theme.errorColor)
           }
-          Button("Recalculate size") { Task { await estimateIfNeeded(force: true) } }
-            .buttonStyle(PlainButtonStyle())
-            .foregroundColor(theme.accentColor)
         }
-
+        
+        // Repository URL
+        CopyableURLField(label: "Repository URL", url: model.downloadURL)
+        
+        // Required files
         VStack(alignment: .leading, spacing: 8) {
           Text("Required files")
-            .font(.system(size: 12, weight: .medium))
+            .font(.system(size: 13, weight: .medium))
             .foregroundColor(theme.secondaryText)
-          ForEach(ModelManager.snapshotDownloadPatterns, id: \.self) { pattern in
-            HStack(spacing: 6) {
-              Image(systemName: "doc.text")
-                .font(.system(size: 11))
-                .foregroundColor(theme.tertiaryText)
+          
+          VStack(alignment: .leading, spacing: 4) {
+            ForEach(ModelManager.snapshotDownloadPatterns, id: \.self) { pattern in
               Text(pattern)
                 .font(.system(size: 12, design: .monospaced))
-                .foregroundColor(theme.primaryText)
+                .foregroundColor(theme.tertiaryText)
             }
           }
         }
       }
-      .padding(16)
+      .padding(20)
     }
+  }
+
+  private var apiModelId: String {
+    let last = model.id.split(separator: "/").last.map(String.init) ?? model.name
+    return last
+      .trimmingCharacters(in: .whitespacesAndNewlines)
+      .replacingOccurrences(of: " ", with: "-")
+      .replacingOccurrences(of: "_", with: "-")
+      .lowercased()
+  }
+  
+  private func copyAPIId() {
+    NSPasteboard.general.clearContents()
+    NSPasteboard.general.setString(apiModelId, forType: .string)
   }
 
   private var footer: some View {
     HStack(spacing: 12) {
-      Spacer()
       switch modelManager.effectiveDownloadState(for: model) {
       case .notStarted, .failed(_):
-        GradientButton(
-          title: "Download",
-          icon: "arrow.down.circle.fill",
-          action: { modelManager.downloadModel(model) }
-        )
-      case .downloading(let progress):
-        VStack(alignment: .trailing, spacing: 8) {
-          SimpleProgressBar(progress: progress)
-            .frame(width: 320)
-
-          Text("\(Int(progress * 100))% downloaded")
-            .font(.system(size: 11, weight: .medium))
+        Button(action: { dismiss() }) {
+          Text("Cancel")
+            .font(.system(size: 14))
             .foregroundColor(theme.secondaryText)
-
-          if let line = formattedMetricsLine() {
-            Text(line)
-              .font(.system(size: 11))
-              .foregroundColor(theme.tertiaryText)
+        }
+        .buttonStyle(PlainButtonStyle())
+        
+        Spacer()
+        
+        Button(action: { 
+          modelManager.downloadModel(model)
+          dismiss()
+        }) {
+          HStack(spacing: 6) {
+            Image(systemName: "arrow.down.circle")
+              .font(.system(size: 14))
+            Text("Download")
+              .font(.system(size: 14, weight: .medium))
           }
-
-          GradientButton(
-            title: "Cancel",
-            icon: "xmark.circle",
-            action: { modelManager.cancelDownload(model.id) },
-            isDestructive: true,
-            isPrimary: false
+          .foregroundColor(.white)
+          .padding(.horizontal, 16)
+          .padding(.vertical, 8)
+          .background(
+            RoundedRectangle(cornerRadius: 6)
+              .fill(theme.accentColor)
           )
         }
+        .buttonStyle(PlainButtonStyle())
+        
+      case .downloading(let progress):
+        VStack(alignment: .leading, spacing: 8) {
+          HStack {
+            Text("\(Int(progress * 100))% downloaded")
+              .font(.system(size: 13))
+              .foregroundColor(theme.primaryText)
+            
+            Spacer()
+            
+            if let line = formattedMetricsLine() {
+              Text(line)
+                .font(.system(size: 12))
+                .foregroundColor(theme.secondaryText)
+            }
+          }
+          
+          SimpleProgressBar(progress: progress)
+            .frame(height: 6)
+        }
+        .frame(maxWidth: .infinity)
+        
+        Button(action: { modelManager.cancelDownload(model.id) }) {
+          Text("Cancel")
+            .font(.system(size: 13))
+            .foregroundColor(theme.errorColor)
+        }
+        .buttonStyle(PlainButtonStyle())
+        
       case .completed:
-        GradientButton(
-          title: "Delete",
-          icon: "trash",
-          action: { modelManager.deleteModel(model) },
-          isDestructive: true,
-          isPrimary: false
-        )
+        Button(action: { 
+          modelManager.deleteModel(model)
+          dismiss()
+        }) {
+          Text("Delete Model")
+            .font(.system(size: 14))
+            .foregroundColor(theme.errorColor)
+        }
+        .buttonStyle(PlainButtonStyle())
+        
+        Spacer()
+        
+        Button(action: { dismiss() }) {
+          Text("Done")
+            .font(.system(size: 14, weight: .medium))
+            .foregroundColor(.white)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 8)
+            .background(
+              RoundedRectangle(cornerRadius: 6)
+                .fill(theme.accentColor)
+            )
+        }
+        .buttonStyle(PlainButtonStyle())
       }
     }
-    .padding(16)
-    .background(theme.secondaryBackground)
+    .padding(20)
   }
 
   private var estimatedSizeString: String {
@@ -706,6 +892,29 @@ struct ModelDetailView: View, Identifiable {
       return String(format: "%d:%02d:%02d", hours, minutes, secs)
     } else {
       return String(format: "%d:%02d", minutes, secs)
+    }
+  }
+}
+
+// MARK: - Supporting Types
+
+struct InfoRow: View {
+  @Environment(\.theme) private var theme
+  let label: String
+  let value: String
+  
+  var body: some View {
+    HStack {
+      Text(label)
+        .font(.system(size: 13, weight: .medium))
+        .foregroundColor(theme.secondaryText)
+      
+      Spacer()
+      
+      Text(value)
+        .font(.system(size: 13, weight: .medium))
+        .foregroundColor(theme.primaryText)
+        .multilineTextAlignment(.trailing)
     }
   }
 }
