@@ -9,6 +9,7 @@ import Combine
 import Foundation
 import Hub
 import SwiftUI
+import MLXLLM
 
 /// Manages MLX model downloads and storage
 @MainActor
@@ -65,8 +66,12 @@ final class ModelManager: NSObject, ObservableObject {
 
   /// Load popular MLX models
   func loadAvailableModels() {
-    // Simplified: rely solely on curated suggestions for reliability
-    availableModels = Self.curatedSuggestedModels
+    // Filter curated suggestions to only SDK-supported models
+    let allow = Self.sdkSupportedModelIds()
+    let curated = Self.curatedSuggestedModels.filter { allow.contains($0.id.lowercased()) }
+
+    suggestedModels = curated
+    availableModels = curated
     downloadStates = [:]
     for model in availableModels {
       downloadStates[model.id] = model.isDownloaded ? .completed : .notStarted
@@ -134,16 +139,18 @@ final class ModelManager: NSObject, ObservableObject {
           id: hf.id,
           name: Self.friendlyName(from: hf.id),
           description: "Discovered on Hugging Face",
-          size: 0,
           downloadURL: "https://huggingface.co/\(hf.id)",
-          requiredFiles: Self.curatedRequiredFiles,
-          tags: hf.tags
+          rootDirectory: nil
         )
       }
 
+      // Keep only SDK-supported models
+      let allow = Self.sdkSupportedModelIds()
+      let allowedMapped = mapped.filter { allow.contains($0.id.lowercased()) }
+
       // Publish to UI on main actor (we already are, but be explicit about ordering)
       await MainActor.run {
-        self.mergeAvailable(with: mapped)
+        self.mergeAvailable(with: allowedMapped)
         self.isLoadingModels = false
       }
     }
@@ -161,6 +168,10 @@ final class ModelManager: NSObject, ObservableObject {
       return nil
     }
 
+    // Only allow models supported by the SDK
+    let allow = Self.sdkSupportedModelIds()
+    guard allow.contains(lower) else { return nil }
+
     // If already present in available or suggested (case-insensitive), return that instance
     if let existing = availableModels.first(where: { $0.id.lowercased() == trimmed.lowercased() }) {
       return existing
@@ -175,9 +186,7 @@ final class ModelManager: NSObject, ObservableObject {
       id: trimmed,
       name: name,
       description: "Imported from deeplink",
-      size: 0,
-      downloadURL: "https://huggingface.co/\(trimmed)",
-      requiredFiles: Self.curatedRequiredFiles
+      downloadURL: "https://huggingface.co/\(trimmed)"
     )
     // Add to available list for UI visibility
     availableModels.insert(model, at: 0)
@@ -192,6 +201,10 @@ final class ModelManager: NSObject, ObservableObject {
   func resolveModelIfMLXCompatible(byRepoId repoId: String) async -> MLXModel? {
     let trimmed = repoId.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !trimmed.isEmpty else { return nil }
+
+    // Only allow models supported by the SDK
+    let allow = Self.sdkSupportedModelIds()
+    guard allow.contains(trimmed.lowercased()) else { return nil }
 
     // If already present, return immediately
     if let existing = availableModels.first(where: { $0.id.caseInsensitiveCompare(trimmed) == .orderedSame }) {
@@ -210,9 +223,7 @@ final class ModelManager: NSObject, ObservableObject {
       id: trimmed,
       name: Self.friendlyName(from: trimmed),
       description: "Imported from deeplink",
-      size: 0,
-      downloadURL: "https://huggingface.co/\(trimmed)",
-      requiredFiles: Self.curatedRequiredFiles
+      downloadURL: "https://huggingface.co/\(trimmed)"
     )
     availableModels.insert(model, at: 0)
     downloadStates[model.id] = model.isDownloaded ? .completed : .notStarted
@@ -223,12 +234,6 @@ final class ModelManager: NSObject, ObservableObject {
   func downloadModel(withRepoId repoId: String) {
     guard let model = resolveModel(byRepoId: repoId) else { return }
     downloadModel(model)
-  }
-
-  /// Windowed: prefetch model detail (e.g., sizes) when an item becomes visible
-  func prefetchModelDetailsIfNeeded(for model: MLXModel) {
-    // Simplified: no-op to avoid network detail fetches
-    _ = model.id
   }
 
   /// Estimate total download size for a model using the Hugging Face API.
@@ -514,6 +519,17 @@ final class ModelManager: NSObject, ObservableObject {
 
   // MARK: - Private Methods
 
+  /// Compute the set of SDK-supported model ids from MLXLLM's registry
+  static func sdkSupportedModelIds() -> Set<String> {
+    // The registry contains Apple-curated supported configurations.
+    // We normalize to lowercase for comparison.
+    var allowed: Set<String> = []
+    for config in LLMRegistry.shared.models {
+      allowed.insert(config.name.lowercased())
+    }
+    return allowed
+  }
+
   private func copyContents(of sourceDirectory: URL, to destinationDirectory: URL) throws {
     let fileManager = FileManager.default
 
@@ -626,10 +642,8 @@ extension ModelManager {
       name: friendlyName(from: "lmstudio-community/qwen3-coder-30b-a3b-instruct-mlx-4bit"),
       description:
         "Qwen3 Coder 30B A3B Instruct (MLX 4-bit). Exceptional coding model; very large download and memory usage.",
-      size: 0,
       downloadURL:
-        "https://huggingface.co/lmstudio-community/qwen3-coder-30b-a3b-instruct-mlx-4bit",
-      requiredFiles: curatedRequiredFiles
+        "https://huggingface.co/lmstudio-community/qwen3-coder-30b-a3b-instruct-mlx-4bit"
     ),
 
     // Qwen family — 3 sizes
@@ -638,25 +652,19 @@ extension ModelManager {
       name: friendlyName(from: "mlx-community/Qwen3-1.7B-4bit"),
       description:
         "Qwen3 1.7B (4-bit). Tiny and fast. Great for quick tests, code helpers, and lightweight tasks.",
-      size: 0,
-      downloadURL: "https://huggingface.co/mlx-community/Qwen3-1.7B-4bit",
-      requiredFiles: curatedRequiredFiles
+      downloadURL: "https://huggingface.co/mlx-community/Qwen3-1.7B-4bit"
     ),
     MLXModel(
       id: "mlx-community/Qwen3-4B-4bit",
       name: friendlyName(from: "mlx-community/Qwen3-4B-4bit"),
       description: "Qwen3 4B (4-bit). Modern small model with strong instruction following.",
-      size: 0,
-      downloadURL: "https://huggingface.co/mlx-community/Qwen3-4B-4bit",
-      requiredFiles: curatedRequiredFiles
+      downloadURL: "https://huggingface.co/mlx-community/Qwen3-4B-4bit"
     ),
     MLXModel(
       id: "mlx-community/Qwen3-235B-A22B-4bit",
       name: friendlyName(from: "mlx-community/Qwen3-235B-A22B-4bit"),
       description: "Qwen3 235B MoE A22B (4-bit). High quality; heavy memory requirements.",
-      size: 0,
-      downloadURL: "https://huggingface.co/mlx-community/Qwen3-235B-A22B-4bit",
-      requiredFiles: curatedRequiredFiles
+      downloadURL: "https://huggingface.co/mlx-community/Qwen3-235B-A22B-4bit"
     ),
 
     // New additions — Gemma 3, Qwen3, GPT-OSS
@@ -664,9 +672,7 @@ extension ModelManager {
       id: "lmstudio-community/gemma-3-270m-it-MLX-8bit",
       name: friendlyName(from: "lmstudio-community/gemma-3-270m-it-MLX-8bit"),
       description: "Gemma 3 270M IT (8-bit MLX). Extremely small and fast for experimentation.",
-      size: 0,
-      downloadURL: "https://huggingface.co/lmstudio-community/gemma-3-270m-it-MLX-8bit",
-      requiredFiles: curatedRequiredFiles
+      downloadURL: "https://huggingface.co/lmstudio-community/gemma-3-270m-it-MLX-8bit"
     ),
 
     // Reasoning-focused choices
@@ -675,9 +681,7 @@ extension ModelManager {
       name: friendlyName(from: "mlx-community/DeepSeek-R1-Distill-Qwen-1.5B-4bit"),
       description:
         "Reasoning-focused distilled model. Good for structured steps and chain-of-thought style prompts.",
-      size: 0,
-      downloadURL: "https://huggingface.co/mlx-community/DeepSeek-R1-Distill-Qwen-1.5B-4bit",
-      requiredFiles: curatedRequiredFiles
+      downloadURL: "https://huggingface.co/mlx-community/DeepSeek-R1-Distill-Qwen-1.5B-4bit"
     ),
 
     MLXModel(
@@ -685,9 +689,7 @@ extension ModelManager {
       name: friendlyName(from: "mlx-community/Qwen3-Next-80B-A3B-Thinking-4bit"),
       description:
         "Qwen3-Next 80B A3B Thinking (4-bit). Reasoning-focused assistant; heavy memory requirements.",
-      size: 0,
-      downloadURL: "https://huggingface.co/mlx-community/Qwen3-Next-80B-A3B-Thinking-4bit",
-      requiredFiles: curatedRequiredFiles
+      downloadURL: "https://huggingface.co/mlx-community/Qwen3-Next-80B-A3B-Thinking-4bit"
     ),
 
     // Popular general models (extra variety)
@@ -695,17 +697,13 @@ extension ModelManager {
       id: "mlx-community/Mistral-7B-Instruct-4bit",
       name: friendlyName(from: "mlx-community/Mistral-7B-Instruct-4bit"),
       description: "Popular 7B instruct model. Good general assistant with efficient runtime.",
-      size: 0,
-      downloadURL: "https://huggingface.co/mlx-community/Mistral-7B-Instruct-4bit",
-      requiredFiles: curatedRequiredFiles
+      downloadURL: "https://huggingface.co/mlx-community/Mistral-7B-Instruct-4bit"
     ),
     MLXModel(
       id: "mlx-community/Phi-3-mini-4k-instruct-4bit",
       name: friendlyName(from: "mlx-community/Phi-3-mini-4k-instruct-4bit"),
       description: "Very small and speedy. Great for lightweight tasks and constrained devices.",
-      size: 0,
-      downloadURL: "https://huggingface.co/mlx-community/Phi-3-mini-4k-instruct-4bit",
-      requiredFiles: curatedRequiredFiles
+      downloadURL: "https://huggingface.co/mlx-community/Phi-3-mini-4k-instruct-4bit"
     ),
 
     // Kimi
@@ -714,9 +712,7 @@ extension ModelManager {
       name: friendlyName(from: "mlx-community/Kimi-VL-A3B-Thinking-4bit"),
       description:
         "Kimi VL A3B thinking variant (4-bit). Versatile assistant with strong reasoning.",
-      size: 0,
-      downloadURL: "https://huggingface.co/mlx-community/Kimi-VL-A3B-Thinking-4bit",
-      requiredFiles: curatedRequiredFiles
+      downloadURL: "https://huggingface.co/mlx-community/Kimi-VL-A3B-Thinking-4bit"
     ),
 
     // Llama family
@@ -724,28 +720,17 @@ extension ModelManager {
       id: "mlx-community/Llama-3.2-1B-Instruct-4bit",
       name: friendlyName(from: "mlx-community/Llama-3.2-1B-Instruct-4bit"),
       description: "Tiny and fast. Great for quick tests, code helpers, and lightweight tasks.",
-      size: 0,
-      downloadURL: "https://huggingface.co/mlx-community/Llama-3.2-1B-Instruct-4bit",
-      requiredFiles: curatedRequiredFiles
+      downloadURL: "https://huggingface.co/mlx-community/Llama-3.2-1B-Instruct-4bit"
     ),
     MLXModel(
       id: "mlx-community/Llama-3.2-3B-Instruct-4bit",
       name: friendlyName(from: "mlx-community/Llama-3.2-3B-Instruct-4bit"),
       description:
         "Great quality/speed balance. Strong general assistant at a small memory footprint.",
-      size: 0,
-      downloadURL: "https://huggingface.co/mlx-community/Llama-3.2-3B-Instruct-4bit",
-      requiredFiles: curatedRequiredFiles
+      downloadURL: "https://huggingface.co/mlx-community/Llama-3.2-3B-Instruct-4bit"
     ),
   ]
 
-  fileprivate static let curatedRequiredFiles: [String] = [
-    "model.safetensors",
-    "config.json",
-    "tokenizer_config.json",
-    "tokenizer.json",
-    "special_tokens_map.json",
-  ]
   fileprivate static func friendlyName(from repoId: String) -> String {
     // Take the last path component and title-case-ish
     let last = repoId.split(separator: "/").last.map(String.init) ?? repoId

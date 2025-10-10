@@ -75,9 +75,7 @@ struct ModelDownloadView: View {
       // If invoked via deeplink, prefill search and ensure the model is visible
       if let modelId = deeplinkModelId, !modelId.isEmpty {
         searchText = modelId.split(separator: "/").last.map(String.init) ?? modelId
-        Task { @MainActor in
-          _ = await modelManager.resolveModelIfMLXCompatible(byRepoId: modelId)
-        }
+        _ = modelManager.resolveModel(byRepoId: modelId)
       }
       // Kick off initial remote fetch to augment curated list
       modelManager.fetchRemoteMLXModels(searchText: searchText)
@@ -211,9 +209,7 @@ struct ModelDownloadView: View {
                     showDeleteConfirmation = true
                   }
                 )
-                .onAppear {
-                  modelManager.prefetchModelDetailsIfNeeded(for: model)
-                }
+                .onAppear { /* no-op */ }
               }
             }
           }
