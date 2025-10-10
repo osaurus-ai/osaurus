@@ -697,20 +697,13 @@ final class ModelManager: NSObject, ObservableObject {
 extension ModelManager {
   /// Fully curated models with descriptions we control. Order matters.
   fileprivate static let curatedSuggestedModels: [MLXModel] = [
-    // GPT-OSS
+    // Top suggestion — Gemma 3n E4B IT LM (4-bit)
     MLXModel(
-      id: "lmstudio-community/gpt-oss-20b-MLX-8bit",
-      name: friendlyName(from: "lmstudio-community/gpt-oss-20b-MLX-8bit"),
-      description: "GPT-OSS 20B (8-bit MLX) by OpenAI. High-quality general model in MLX format.",
-      downloadURL: "https://huggingface.co/lmstudio-community/gpt-oss-20b-MLX-8bit"
-    ),
-
-    MLXModel(
-      id: "lmstudio-community/gpt-oss-120b-MLX-8bit",
-      name: friendlyName(from: "lmstudio-community/gpt-oss-120b-MLX-8bit"),
+      id: "mlx-community/gemma-3n-E4B-it-lm-4bit",
+      name: friendlyName(from: "mlx-community/gemma-3n-E4B-it-lm-4bit"),
       description:
-        "GPT-OSS 120B (MLX 8-bit). ~117B parameters; premium general assistant with strong reasoning and coding. Optimized for Apple Silicon via MLX; requires 64GB+ unified memory; very large download.",
-      downloadURL: "https://huggingface.co/lmstudio-community/gpt-oss-120b-MLX-8bit"
+        "Gemma 3n E4B IT LM (4-bit). Excellent quality/speed balance on Apple Silicon; great general assistant.",
+      downloadURL: "https://huggingface.co/mlx-community/gemma-3n-E4B-it-lm-4bit"
     ),
 
     // Qwen3 Coder — top pick for coding
@@ -721,6 +714,20 @@ extension ModelManager {
         "Qwen3 Coder 30B A3B Instruct (MLX 4-bit). Exceptional coding model; very large download and memory usage.",
       downloadURL:
         "https://huggingface.co/lmstudio-community/qwen3-coder-30b-a3b-instruct-mlx-4bit"
+    ),
+
+    // Popular general models (extra variety)
+    MLXModel(
+      id: "mlx-community/Mistral-7B-Instruct-4bit",
+      name: friendlyName(from: "mlx-community/Mistral-7B-Instruct-4bit"),
+      description: "Popular 7B instruct model. Good general assistant with efficient runtime.",
+      downloadURL: "https://huggingface.co/mlx-community/Mistral-7B-Instruct-4bit"
+    ),
+    MLXModel(
+      id: "mlx-community/Phi-3-mini-4k-instruct-4bit",
+      name: friendlyName(from: "mlx-community/Phi-3-mini-4k-instruct-4bit"),
+      description: "Very small and speedy. Great for lightweight tasks and constrained devices.",
+      downloadURL: "https://huggingface.co/mlx-community/Phi-3-mini-4k-instruct-4bit"
     ),
 
     // Qwen family — 3 sizes
@@ -768,19 +775,20 @@ extension ModelManager {
         "Qwen3-Next 80B A3B Thinking (4-bit). Reasoning-focused assistant; heavy memory requirements.",
       downloadURL: "https://huggingface.co/mlx-community/Qwen3-Next-80B-A3B-Thinking-4bit"
     ),
-
-    // Popular general models (extra variety)
+    
     MLXModel(
-      id: "mlx-community/Mistral-7B-Instruct-4bit",
-      name: friendlyName(from: "mlx-community/Mistral-7B-Instruct-4bit"),
-      description: "Popular 7B instruct model. Good general assistant with efficient runtime.",
-      downloadURL: "https://huggingface.co/mlx-community/Mistral-7B-Instruct-4bit"
+      id: "lmstudio-community/gpt-oss-20b-MLX-8bit",
+      name: friendlyName(from: "lmstudio-community/gpt-oss-20b-MLX-8bit"),
+      description: "GPT-OSS 20B (8-bit MLX) by OpenAI. High-quality general model in MLX format.",
+      downloadURL: "https://huggingface.co/lmstudio-community/gpt-oss-20b-MLX-8bit"
     ),
+
     MLXModel(
-      id: "mlx-community/Phi-3-mini-4k-instruct-4bit",
-      name: friendlyName(from: "mlx-community/Phi-3-mini-4k-instruct-4bit"),
-      description: "Very small and speedy. Great for lightweight tasks and constrained devices.",
-      downloadURL: "https://huggingface.co/mlx-community/Phi-3-mini-4k-instruct-4bit"
+      id: "lmstudio-community/gpt-oss-120b-MLX-8bit",
+      name: friendlyName(from: "lmstudio-community/gpt-oss-120b-MLX-8bit"),
+      description:
+        "GPT-OSS 120B (MLX 8-bit). ~117B parameters; premium general assistant with strong reasoning and coding. Optimized for Apple Silicon via MLX; requires 64GB+ unified memory; very large download.",
+      downloadURL: "https://huggingface.co/lmstudio-community/gpt-oss-120b-MLX-8bit"
     ),
 
     // Kimi
