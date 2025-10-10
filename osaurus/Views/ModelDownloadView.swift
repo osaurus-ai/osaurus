@@ -6,6 +6,7 @@
 //
 
 import AppKit
+import Foundation
 import SwiftUI
 
 struct ModelDownloadView: View {
@@ -176,6 +177,7 @@ struct ModelDownloadView: View {
                 ModelRowView(
                   model: model,
                   downloadState: modelManager.effectiveDownloadState(for: model),
+                  metrics: modelManager.downloadMetrics[model.id],
                   onDownload: { modelManager.downloadModel(model) },
                   onCancel: { modelManager.cancelDownload(model.id) },
                   onDelete: {
@@ -274,6 +276,7 @@ struct ModelRowView: View {
   @Environment(\.theme) private var theme
   let model: MLXModel
   let downloadState: DownloadState
+  let metrics: ModelManager.DownloadMetrics?
   let onDownload: () -> Void
   let onCancel: () -> Void
   let onDelete: () -> Void
@@ -395,6 +398,12 @@ struct ModelRowView: View {
             Text("\(Int(progress * 100))% downloaded")
               .font(.system(size: 11, weight: .medium))
               .foregroundColor(theme.secondaryText)
+
+            if let line = formattedMetricsLine() {
+              Text(line)
+                .font(.system(size: 11))
+                .foregroundColor(theme.tertiaryText)
+            }
           }
           .padding(.bottom, 16)
           .transition(.move(edge: .bottom).combined(with: .opacity))
@@ -483,6 +492,46 @@ struct ModelRowView: View {
       withAnimation {
         showCopiedFeedback = false
       }
+    }
+  }
+
+  private func formattedMetricsLine() -> String? {
+    guard let metrics = metrics else { return nil }
+
+    var parts: [String] = []
+
+    if let received = metrics.bytesReceived {
+      let receivedStr = ByteCountFormatter.string(fromByteCount: received, countStyle: .file)
+      if let total = metrics.totalBytes, total > 0 {
+        let totalStr = ByteCountFormatter.string(fromByteCount: total, countStyle: .file)
+        parts.append("\(receivedStr) / \(totalStr)")
+      } else {
+        parts.append(receivedStr)
+      }
+    }
+
+    if let bps = metrics.bytesPerSecond {
+      let speedStr = ByteCountFormatter.string(fromByteCount: Int64(bps), countStyle: .file)
+      parts.append("\(speedStr)/s")
+    }
+
+    if let eta = metrics.etaSeconds, eta.isFinite, eta > 0 {
+      parts.append("ETA \(formatETA(seconds: eta))")
+    }
+
+    guard !parts.isEmpty else { return nil }
+    return parts.joined(separator: " • ")
+  }
+
+  private func formatETA(seconds: Double) -> String {
+    let total = Int(seconds.rounded())
+    let hours = total / 3600
+    let minutes = (total % 3600) / 60
+    let secs = total % 60
+    if hours > 0 {
+      return String(format: "%d:%02d:%02d", hours, minutes, secs)
+    } else {
+      return String(format: "%d:%02d", minutes, secs)
     }
   }
 }

@@ -15,11 +15,20 @@ import SwiftUI
 final class ModelManager: NSObject, ObservableObject {
   static let shared = ModelManager()
 
+  /// Detailed metrics for an in-flight download
+  struct DownloadMetrics: Equatable {
+    let bytesReceived: Int64?
+    let totalBytes: Int64?
+    let bytesPerSecond: Double?
+    let etaSeconds: Double?
+  }
+
   // MARK: - Published Properties
   @Published var availableModels: [MLXModel] = []
   @Published var downloadStates: [String: DownloadState] = [:]
   @Published var isLoadingModels: Bool = false
   @Published var suggestedModels: [MLXModel] = ModelManager.curatedSuggestedModels
+  @Published var downloadMetrics: [String: DownloadMetrics] = [:]
 
   // MARK: - Properties
   /// Current models directory (uses DirectoryPickerService for user selection)
@@ -30,6 +39,7 @@ final class ModelManager: NSObject, ObservableObject {
   private var activeDownloadTasks: [String: Task<Void, Never>] = [:]  // modelId -> Task
   private var downloadTokens: [String: UUID] = [:]  // modelId -> token to gate progress/state updates
   private var cancellables = Set<AnyCancellable>()
+  private var progressSamples: [String: [(timestamp: TimeInterval, completed: Int64)]] = [:]
 
   // MARK: - Initialization
   override init() {
@@ -137,6 +147,13 @@ final class ModelManager: NSObject, ObservableObject {
     downloadTokens[model.id] = token
 
     downloadStates[model.id] = .downloading(progress: 0.0)
+    downloadMetrics[model.id] = DownloadMetrics(
+      bytesReceived: 0,
+      totalBytes: nil,
+      bytesPerSecond: nil,
+      etaSeconds: nil
+    )
+    progressSamples[model.id] = []
 
     // Ensure local directory exists
     do {
@@ -168,6 +185,40 @@ final class ModelManager: NSObject, ObservableObject {
               // Clamp to [0, 1]
               let fraction = max(0.0, min(1.0, progress.fractionCompleted))
               self.downloadStates[model.id] = .downloading(progress: fraction)
+
+              // Derive bytes, speed, and ETA if available
+              let completed = progress.completedUnitCount
+              let total = progress.totalUnitCount
+              let now = Date().timeIntervalSince1970
+
+              var samples = self.progressSamples[model.id] ?? []
+              samples.append((timestamp: now, completed: completed))
+              // Keep only the last 5s of samples
+              let window: TimeInterval = 5.0
+              samples = samples.filter { now - $0.timestamp <= window }
+              self.progressSamples[model.id] = samples
+
+              var speed: Double? = nil
+              if let first = samples.first, let last = samples.last, last.timestamp > first.timestamp {
+                let bytesDelta = Double(last.completed - first.completed)
+                let timeDelta = last.timestamp - first.timestamp
+                if timeDelta > 0 {
+                  speed = max(0, bytesDelta / timeDelta)
+                }
+              }
+
+              var eta: Double? = nil
+              if let speed, speed > 0, total > 0 {
+                let remaining = Double(total - completed)
+                if remaining > 0 { eta = remaining / speed }
+              }
+
+              self.downloadMetrics[model.id] = DownloadMetrics(
+                bytesReceived: completed > 0 ? completed : nil,
+                totalBytes: total > 0 ? total : nil,
+                bytesPerSecond: speed,
+                etaSeconds: eta
+              )
             }
           }
         )
@@ -194,6 +245,8 @@ final class ModelManager: NSObject, ObservableObject {
             self.downloadStates[model.id] =
               completed ? .completed : .failed(error: "Downloaded snapshot incomplete")
             self.downloadTokens[model.id] = nil
+            self.downloadMetrics[model.id] = nil
+            self.progressSamples[model.id] = nil
           }
         }
       } catch is CancellationError {
@@ -201,6 +254,8 @@ final class ModelManager: NSObject, ObservableObject {
           if self.downloadTokens[model.id] == token {
             self.downloadStates[model.id] = .notStarted
             self.downloadTokens[model.id] = nil
+            self.downloadMetrics[model.id] = nil
+            self.progressSamples[model.id] = nil
           }
         }
       } catch {
@@ -208,6 +263,8 @@ final class ModelManager: NSObject, ObservableObject {
           if self.downloadTokens[model.id] == token {
             self.downloadStates[model.id] = .failed(error: error.localizedDescription)
             self.downloadTokens[model.id] = nil
+            self.downloadMetrics[model.id] = nil
+            self.progressSamples[model.id] = nil
           }
         }
       }
@@ -227,6 +284,8 @@ final class ModelManager: NSObject, ObservableObject {
     activeDownloadTasks[modelId] = nil
     downloadTokens[modelId] = nil
     downloadStates[modelId] = .notStarted
+    downloadMetrics[modelId] = nil
+    progressSamples[modelId] = nil
   }
 
   /// Delete a downloaded model
@@ -236,6 +295,8 @@ final class ModelManager: NSObject, ObservableObject {
     activeDownloadTasks[model.id] = nil
     downloadTokens[model.id] = nil
     downloadStates[model.id] = .notStarted
+    downloadMetrics[model.id] = nil
+    progressSamples[model.id] = nil
 
     // Remove local files if present
     let fm = FileManager.default
