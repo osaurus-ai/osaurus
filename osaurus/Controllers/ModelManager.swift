@@ -11,6 +11,27 @@ import Hub
 import SwiftUI
 import MLXLLM
 
+enum ModelListTab: CaseIterable {
+  /// All available models from Hugging Face
+  case all
+  
+  /// Curated list of recommended models
+  case suggested
+  
+  /// Only models downloaded locally
+  case downloaded
+
+  /// Display name for the tab
+  var title: String {
+    switch self {
+    case .all: return "All Models"
+    case .suggested: return "Suggested"
+    case .downloaded: return "Downloaded"
+    }
+  }
+}
+
+
 /// Manages MLX model downloads and storage
 @MainActor
 final class ModelManager: NSObject, ObservableObject {
