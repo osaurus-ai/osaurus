@@ -7,7 +7,6 @@
 
 import CryptoKit
 import Foundation
-import IkigaJSON
 import MLXLLM
 import MLXLMCommon
 import NIOCore
@@ -555,5 +554,91 @@ final class MLXService: @unchecked Sendable {
 
     // Update available models cache
     updateAvailableModelsCache()
+  }
+}
+
+// MARK: - Hugging Face lightweight metadata fetcher
+actor HuggingFaceService {
+  static let shared = HuggingFaceService()
+
+  struct RepoFile: Decodable {
+    let rfilename: String
+    let size: Int64?
+  }
+
+  private init() {}
+
+  /// Estimate the total size for files matching provided patterns.
+  /// Uses Hugging Face REST API endpoints that return directory listings with sizes.
+  func estimateTotalSize(repoId: String, patterns: [String]) async -> Int64? {
+    // Use tree endpoint: /api/models/{repo}/tree/main?recursive=1
+    var comps = URLComponents()
+    comps.scheme = "https"
+    comps.host = "huggingface.co"
+    comps.path = "/api/models/\(repoId)/tree/main"
+    comps.queryItems = [URLQueryItem(name: "recursive", value: "1")]
+    guard let url = comps.url else { return nil }
+
+    struct TreeNode: Decodable {
+      let path: String
+      let type: String?
+      let size: Int64?
+      let lfs: LFS?
+      struct LFS: Decodable { let size: Int64? }
+    }
+
+    var req = URLRequest(url: url)
+    req.setValue("application/json", forHTTPHeaderField: "Accept")
+    do {
+      let (data, response) = try await URLSession.shared.data(for: req)
+      guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
+        return nil
+      }
+      let nodes = try JSONDecoder().decode([TreeNode].self, from: data)
+      if nodes.isEmpty { return nil }
+      let matchers = patterns.compactMap { Glob($0) }
+      let total = nodes.reduce(Int64(0)) { acc, node in
+        // Only sum files, not directories
+        if node.type == "directory" { return acc }
+        let filename = (node.path as NSString).lastPathComponent
+        let matched = matchers.contains { $0.matches(filename) }
+        guard matched else { return acc }
+        let sz = node.size ?? node.lfs?.size ?? 0
+        return acc + sz
+      }
+      return total > 0 ? total : nil
+    } catch {
+      return nil
+    }
+  }
+}
+
+// MARK: - Simple glob matcher
+private struct Glob {
+  private let regex: NSRegularExpression
+
+  init?(_ pattern: String) {
+    // Escape regex metacharacters except * and ? which we will translate
+    var escaped = ""
+    for ch in pattern {
+      switch ch {
+      case "*": escaped += ".*"
+      case "?": escaped += "."
+      case ".", "+", "(", ")", "[", "]", "{", "}", "^", "$", "|", "\\":
+        escaped += "\\\(ch)"
+      default:
+        escaped += String(ch)
+      }
+    }
+    do {
+      regex = try NSRegularExpression(pattern: "^\(escaped)$")
+    } catch {
+      return nil
+    }
+  }
+
+  func matches(_ text: String) -> Bool {
+    let range = NSRange(location: 0, length: (text as NSString).length)
+    return regex.firstMatch(in: text, options: [], range: range) != nil
   }
 }

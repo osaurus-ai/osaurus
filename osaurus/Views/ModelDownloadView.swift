@@ -18,6 +18,7 @@ struct ModelDownloadView: View {
   @State private var searchText: String = ""
   @State private var selectedTab: ModelListTab = .all
   @State private var searchDebounceTask: Task<Void, Never>? = nil
+  @State private var modelToShowDetails: MLXModel? = nil
   var deeplinkModelId: String? = nil
   var deeplinkFile: String? = nil
 
@@ -66,6 +67,10 @@ struct ModelDownloadView: View {
         if Task.isCancelled { return }
         modelManager.fetchRemoteMLXModels(searchText: newValue)
       }
+    }
+    .sheet(item: $modelToShowDetails) { model in
+      ModelDetailView(model: model)
+        .environment(\.theme, themeManager.currentTheme)
     }
   }
 
@@ -190,8 +195,7 @@ struct ModelDownloadView: View {
                   model: model,
                   downloadState: modelManager.effectiveDownloadState(for: model),
                   metrics: modelManager.downloadMetrics[model.id],
-                  onDownload: { modelManager.downloadModel(model) },
-                  onCancel: { modelManager.cancelDownload(model.id) },
+                  onViewDetails: { modelToShowDetails = model },
                   onDelete: {
                     modelToDelete = model
                     showDeleteConfirmation = true
@@ -289,8 +293,7 @@ struct ModelRowView: View {
   let model: MLXModel
   let downloadState: DownloadState
   let metrics: ModelManager.DownloadMetrics?
-  let onDownload: () -> Void
-  let onCancel: () -> Void
+  let onViewDetails: () -> Void
   let onDelete: () -> Void
 
   @State private var isHovering = false
@@ -370,26 +373,22 @@ struct ModelRowView: View {
               .opacity(0.8)
             }
 
-            HStack(spacing: 12) {
-              HStack(spacing: 4) {
-                Image(systemName: "internaldrive")
-                  .font(.system(size: 11))
-                if model.size > 0 {
-                  Text(model.sizeString)
-                    .font(.system(size: 11, weight: .medium))
-                } else {
-                  Text("estimating…")
-                    .font(.system(size: 11, weight: .medium))
+            if model.isDownloaded {
+              StatusBadge(
+                status: "Downloaded",
+                color: theme.successColor,
+                isAnimating: false
+              )
+            }
+            if case .downloading(let progress) = downloadState {
+              VStack(alignment: .leading, spacing: 6) {
+                SimpleProgressBar(progress: progress)
+                  .frame(height: 8)
+                if let line = formattedMetricsLine() {
+                  Text(line)
+                    .font(.system(size: 11))
+                    .foregroundColor(theme.tertiaryText)
                 }
-              }
-              .foregroundColor(theme.tertiaryText)
-
-              if model.isDownloaded {
-                StatusBadge(
-                  status: "Downloaded",
-                  color: theme.successColor,
-                  isAnimating: false
-                )
               }
             }
           }
@@ -397,85 +396,21 @@ struct ModelRowView: View {
           Spacer()
 
           // Action buttons
-          actionButton
+          GradientButton(
+            title: "View Details",
+            icon: "info.circle",
+            action: onViewDetails,
+            isDestructive: false,
+            isPrimary: true
+          )
         }
         .padding(20)
-
-        // Progress bar
-        if case .downloading(let progress) = downloadState {
-          VStack(spacing: 8) {
-            SimpleProgressBar(progress: progress)
-              .padding(.horizontal, 20)
-
-            Text("\(Int(progress * 100))% downloaded")
-              .font(.system(size: 11, weight: .medium))
-              .foregroundColor(theme.secondaryText)
-
-            if let line = formattedMetricsLine() {
-              Text(line)
-                .font(.system(size: 11))
-                .foregroundColor(theme.tertiaryText)
-            }
-          }
-          .padding(.bottom, 16)
-          .transition(.move(edge: .bottom).combined(with: .opacity))
-        }
       }
     }
     .scaleEffect(isHovering ? 1.02 : 1.0)
     .animation(.spring(response: 0.3, dampingFraction: 0.8), value: isHovering)
     .onHover { hovering in
       isHovering = hovering
-    }
-  }
-
-  @ViewBuilder
-  private var actionButton: some View {
-    switch downloadState {
-    case .notStarted:
-      GradientButton(
-        title: "Download",
-        icon: "arrow.down.circle.fill",
-        action: onDownload
-      )
-
-    case .downloading:
-      GradientButton(
-        title: "Cancel",
-        icon: "xmark.circle",
-        action: onCancel,
-        isDestructive: true,
-        isPrimary: false
-      )
-
-    case .completed:
-      GradientButton(
-        title: "Delete",
-        icon: "trash",
-        action: onDelete,
-        isDestructive: true,
-        isPrimary: false
-      )
-
-    case .failed(_):
-      VStack(alignment: .trailing, spacing: 8) {
-        StatusBadge(
-          status: "Failed",
-          color: theme.errorColor,
-          isAnimating: false
-        )
-
-        Button(action: onDownload) {
-          HStack(spacing: 4) {
-            Image(systemName: "arrow.clockwise")
-              .font(.system(size: 12))
-            Text("Retry")
-              .font(.system(size: 12, weight: .medium))
-          }
-          .foregroundColor(.blue)
-        }
-        .buttonStyle(PlainButtonStyle())
-      }
     }
   }
 
@@ -546,6 +481,8 @@ struct ModelRowView: View {
       return String(format: "%d:%02d", minutes, secs)
     }
   }
+
+  
 }
 
 // Helper function to extract repository name from URL
@@ -566,4 +503,209 @@ private func repositoryName(from urlString: String) -> String {
 
 #Preview {
   ModelDownloadView()
+}
+
+// MARK: - Model Detail View (embedded to avoid project file updates)
+
+struct ModelDetailView: View, Identifiable {
+  @StateObject private var modelManager = ModelManager.shared
+  @StateObject private var themeManager = ThemeManager.shared
+  @Environment(\.theme) private var theme
+
+  let id = UUID()
+  let model: MLXModel
+
+  @State private var estimatedSize: Int64? = nil
+  @State private var isEstimating = false
+  @State private var estimateError: String? = nil
+
+  var body: some View {
+    VStack(spacing: 0) {
+      header
+      Divider().overlay(theme.primaryBorder).frame(height: 1)
+      content
+      footer
+    }
+    .frame(minWidth: 560, minHeight: 360)
+    .environment(\.theme, themeManager.currentTheme)
+    .onAppear { Task { await estimateIfNeeded() } }
+  }
+
+  private var header: some View {
+    HStack(spacing: 12) {
+      IconBadge(icon: "text.bubble.fill", color: model.isDownloaded ? .green : .blue, size: 44)
+      VStack(alignment: .leading, spacing: 4) {
+        Text(model.name)
+          .font(.system(size: 18, weight: .semibold))
+          .foregroundColor(theme.primaryText)
+          .lineLimit(1)
+        if !model.description.isEmpty {
+          Text(model.description)
+            .font(.system(size: 13))
+            .foregroundColor(theme.secondaryText)
+            .lineLimit(2)
+        }
+      }
+      Spacer()
+      if model.isDownloaded {
+        StatusBadge(status: "Downloaded", color: theme.successColor, isAnimating: false)
+      }
+    }
+    .padding(16)
+    .background(theme.secondaryBackground)
+  }
+
+  private var content: some View {
+    ScrollView {
+      VStack(alignment: .leading, spacing: 16) {
+        CopyableURLField(label: "Hugging Face Repository", url: model.downloadURL)
+
+        VStack(alignment: .leading, spacing: 8) {
+          Text("Estimated download size")
+            .font(.system(size: 12, weight: .medium))
+            .foregroundColor(theme.secondaryText)
+          HStack(spacing: 8) {
+            if isEstimating {
+              ProgressView().progressViewStyle(CircularProgressViewStyle())
+            }
+            Text(estimatedSizeString)
+              .foregroundColor(theme.primaryText)
+              .font(.system(size: 14, weight: .semibold))
+          }
+          if let err = estimateError {
+            Text(err)
+              .foregroundColor(theme.errorColor)
+              .font(.system(size: 12))
+          }
+          Button("Recalculate size") { Task { await estimateIfNeeded(force: true) } }
+            .buttonStyle(PlainButtonStyle())
+            .foregroundColor(theme.accentColor)
+        }
+
+        VStack(alignment: .leading, spacing: 8) {
+          Text("Required files")
+            .font(.system(size: 12, weight: .medium))
+            .foregroundColor(theme.secondaryText)
+          ForEach(ModelManager.snapshotDownloadPatterns, id: \.self) { pattern in
+            HStack(spacing: 6) {
+              Image(systemName: "doc.text")
+                .font(.system(size: 11))
+                .foregroundColor(theme.tertiaryText)
+              Text(pattern)
+                .font(.system(size: 12, design: .monospaced))
+                .foregroundColor(theme.primaryText)
+            }
+          }
+        }
+      }
+      .padding(16)
+    }
+  }
+
+  private var footer: some View {
+    HStack(spacing: 12) {
+      Spacer()
+      switch modelManager.effectiveDownloadState(for: model) {
+      case .notStarted, .failed(_):
+        GradientButton(
+          title: "Download",
+          icon: "arrow.down.circle.fill",
+          action: { modelManager.downloadModel(model) }
+        )
+      case .downloading(let progress):
+        VStack(alignment: .trailing, spacing: 8) {
+          SimpleProgressBar(progress: progress)
+            .frame(width: 320)
+
+          Text("\(Int(progress * 100))% downloaded")
+            .font(.system(size: 11, weight: .medium))
+            .foregroundColor(theme.secondaryText)
+
+          if let line = formattedMetricsLine() {
+            Text(line)
+              .font(.system(size: 11))
+              .foregroundColor(theme.tertiaryText)
+          }
+
+          GradientButton(
+            title: "Cancel",
+            icon: "xmark.circle",
+            action: { modelManager.cancelDownload(model.id) },
+            isDestructive: true,
+            isPrimary: false
+          )
+        }
+      case .completed:
+        GradientButton(
+          title: "Delete",
+          icon: "trash",
+          action: { modelManager.deleteModel(model) },
+          isDestructive: true,
+          isPrimary: false
+        )
+      }
+    }
+    .padding(16)
+    .background(theme.secondaryBackground)
+  }
+
+  private var estimatedSizeString: String {
+    if let s = estimatedSize, s > 0 {
+      return ByteCountFormatter.string(fromByteCount: s, countStyle: .file)
+    }
+    return "Not available"
+  }
+
+  private func estimateIfNeeded(force: Bool = false) async {
+    if isEstimating { return }
+    if !force, let est = estimatedSize, est > 0 { return }
+    isEstimating = true
+    estimateError = nil
+    let size = await modelManager.estimateDownloadSize(for: model)
+    await MainActor.run {
+      self.estimatedSize = size
+      if size == nil { self.estimateError = "Could not estimate size right now." }
+      self.isEstimating = false
+    }
+  }
+
+  private func formattedMetricsLine() -> String? {
+    guard let metrics = modelManager.downloadMetrics[model.id] else { return nil }
+
+    var parts: [String] = []
+
+    if let received = metrics.bytesReceived {
+      let receivedStr = ByteCountFormatter.string(fromByteCount: received, countStyle: .file)
+      if let total = metrics.totalBytes, total > 0 {
+        let totalStr = ByteCountFormatter.string(fromByteCount: total, countStyle: .file)
+        parts.append("\(receivedStr) / \(totalStr)")
+      } else {
+        parts.append(receivedStr)
+      }
+    }
+
+    if let bps = metrics.bytesPerSecond {
+      let speedStr = ByteCountFormatter.string(fromByteCount: Int64(bps), countStyle: .file)
+      parts.append("\(speedStr)/s")
+    }
+
+    if let eta = metrics.etaSeconds, eta.isFinite, eta > 0 {
+      parts.append("ETA \(formatETA(seconds: eta))")
+    }
+
+    guard !parts.isEmpty else { return nil }
+    return parts.joined(separator: " • ")
+  }
+
+  private func formatETA(seconds: Double) -> String {
+    let total = Int(seconds.rounded())
+    let hours = total / 3600
+    let minutes = (total % 3600) / 60
+    let secs = total % 60
+    if hours > 0 {
+      return String(format: "%d:%02d:%02d", hours, minutes, secs)
+    } else {
+      return String(format: "%d:%02d", minutes, secs)
+    }
+  }
 }

@@ -31,6 +31,16 @@ final class ModelManager: NSObject, ObservableObject {
   @Published var downloadMetrics: [String: DownloadMetrics] = [:]
 
   // MARK: - Properties
+  /// Globs for files to download from Hugging Face snapshots
+  static let snapshotDownloadPatterns: [String] = [
+    "config.json",
+    "tokenizer.json",
+    "tokenizer_config.json",
+    "special_tokens_map.json",
+    "generation_config.json",
+    "chat_template.jinja",
+    "*.safetensors",
+  ]
   /// Current models directory (uses DirectoryPickerService for user selection)
   var modelsDirectory: URL {
     return DirectoryPickerService.shared.effectiveModelsDirectory
@@ -40,6 +50,8 @@ final class ModelManager: NSObject, ObservableObject {
   private var downloadTokens: [String: UUID] = [:]  // modelId -> token to gate progress/state updates
   private var cancellables = Set<AnyCancellable>()
   private var progressSamples: [String: [(timestamp: TimeInterval, completed: Int64)]] = [:]
+  /// Cached estimated total bytes for active downloads
+  private var downloadSizeEstimates: [String: Int64] = [:]
   private var remoteSearchTask: Task<Void, Never>? = nil
 
   // MARK: - Initialization
@@ -185,18 +197,19 @@ final class ModelManager: NSObject, ObservableObject {
     _ = model.id
   }
 
+  /// Estimate total download size for a model using the Hugging Face API.
+  /// This is only called from the detail view to avoid spamming the API from the list.
+  func estimateDownloadSize(for model: MLXModel) async -> Int64? {
+    return await HuggingFaceService.shared.estimateTotalSize(
+      repoId: model.id,
+      patterns: Self.snapshotDownloadPatterns
+    )
+  }
+
   /// Download a model using Hugging Face Hub snapshot API
   func downloadModel(_ model: MLXModel) {
-    // Define patterns here so we can also check for missing optional files (top-up)
-    let patterns = [
-      "config.json",
-      "tokenizer.json",
-      "tokenizer_config.json",
-      "special_tokens_map.json",
-      "generation_config.json",
-      "chat_template.jinja",
-      "*.safetensors",
-    ]
+    // Patterns for files to download (shared with estimator)
+    let patterns = Self.snapshotDownloadPatterns
 
     // If core assets are present but optional files from patterns are missing, we'll top-up.
     let needsTopUp = Self.isMissingExactPatternFiles(at: model.localDirectory, patterns: patterns)
@@ -226,6 +239,31 @@ final class ModelManager: NSObject, ObservableObject {
       etaSeconds: nil
     )
     progressSamples[model.id] = []
+
+    // Kick off an asynchronous size estimate (used to compute byte progress & speed)
+    Task { [weak self] in
+      guard let self = self else { return }
+      let est = await self.estimateDownloadSize(for: model)
+      await MainActor.run {
+        if let est {
+          self.downloadSizeEstimates[model.id] = est
+          // Seed metrics immediately using current UI fraction so bytes show up ASAP
+          let currentFraction: Double = {
+            if case .downloading(let p) = (self.downloadStates[model.id] ?? .notStarted) {
+              return max(0.0, min(1.0, p))
+            }
+            return 0.0
+          }()
+          let received = Int64((Double(est) * currentFraction).rounded())
+          self.downloadMetrics[model.id] = DownloadMetrics(
+            bytesReceived: received > 0 ? received : nil,
+            totalBytes: est,
+            bytesPerSecond: self.downloadMetrics[model.id]?.bytesPerSecond,
+            etaSeconds: self.downloadMetrics[model.id]?.etaSeconds
+          )
+        }
+      }
+    }
 
     // Ensure local directory exists
     do {
@@ -258,13 +296,28 @@ final class ModelManager: NSObject, ObservableObject {
               let fraction = max(0.0, min(1.0, progress.fractionCompleted))
               self.downloadStates[model.id] = .downloading(progress: fraction)
 
-              // Derive bytes, speed, and ETA if available
-              let completed = progress.completedUnitCount
-              let total = progress.totalUnitCount
+              // Derive bytes, speed, and ETA using estimated total size if available
+              let estTotalBytes = self.downloadSizeEstimates[model.id]
+              let completedUnits = progress.completedUnitCount
+              let totalUnits = progress.totalUnitCount
+              let bytesCompleted: Int64? = {
+                if let est = estTotalBytes, est > 0 {
+                  return Int64((Double(est) * fraction).rounded())
+                } else {
+                  return completedUnits > 0 ? completedUnits : nil
+                }
+              }()
+              let totalBytesForDisplay: Int64? = {
+                if let est = estTotalBytes, est > 0 {
+                  return est
+                } else {
+                  return totalUnits > 0 ? totalUnits : nil
+                }
+              }()
               let now = Date().timeIntervalSince1970
 
               var samples = self.progressSamples[model.id] ?? []
-              samples.append((timestamp: now, completed: completed))
+              samples.append((timestamp: now, completed: bytesCompleted ?? completedUnits))
               // Keep only the last 5s of samples
               let window: TimeInterval = 5.0
               samples = samples.filter { now - $0.timestamp <= window }
@@ -280,14 +333,14 @@ final class ModelManager: NSObject, ObservableObject {
               }
 
               var eta: Double? = nil
-              if let speed, speed > 0, total > 0 {
-                let remaining = Double(total - completed)
+              if let speed, speed > 0, let totalBytesForDisplay, let bytesCompleted = bytesCompleted, totalBytesForDisplay > 0 {
+                let remaining = Double(totalBytesForDisplay - bytesCompleted)
                 if remaining > 0 { eta = remaining / speed }
               }
 
               self.downloadMetrics[model.id] = DownloadMetrics(
-                bytesReceived: completed > 0 ? completed : nil,
-                totalBytes: total > 0 ? total : nil,
+                bytesReceived: bytesCompleted,
+                totalBytes: totalBytesForDisplay,
                 bytesPerSecond: speed,
                 etaSeconds: eta
               )
@@ -319,6 +372,7 @@ final class ModelManager: NSObject, ObservableObject {
             self.downloadTokens[model.id] = nil
             self.downloadMetrics[model.id] = nil
             self.progressSamples[model.id] = nil
+            self.downloadSizeEstimates[model.id] = nil
           }
         }
       } catch is CancellationError {
@@ -328,6 +382,7 @@ final class ModelManager: NSObject, ObservableObject {
             self.downloadTokens[model.id] = nil
             self.downloadMetrics[model.id] = nil
             self.progressSamples[model.id] = nil
+            self.downloadSizeEstimates[model.id] = nil
           }
         }
       } catch {
@@ -337,6 +392,7 @@ final class ModelManager: NSObject, ObservableObject {
             self.downloadTokens[model.id] = nil
             self.downloadMetrics[model.id] = nil
             self.progressSamples[model.id] = nil
+            self.downloadSizeEstimates[model.id] = nil
           }
         }
       }
