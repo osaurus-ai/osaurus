@@ -40,6 +40,7 @@ final class ModelManager: NSObject, ObservableObject {
   private var downloadTokens: [String: UUID] = [:]  // modelId -> token to gate progress/state updates
   private var cancellables = Set<AnyCancellable>()
   private var progressSamples: [String: [(timestamp: TimeInterval, completed: Int64)]] = [:]
+  private var remoteSearchTask: Task<Void, Never>? = nil
 
   // MARK: - Initialization
   override init() {
@@ -62,6 +63,77 @@ final class ModelManager: NSObject, ObservableObject {
       downloadStates[sm.id] = sm.isDownloaded ? .completed : .notStarted
     }
     isLoadingModels = false
+  }
+
+  /// Fetch MLX-compatible models from Hugging Face and merge into availableModels.
+  /// If searchText is empty, fetches top repos from `mlx-community`. Otherwise performs a broader query.
+  func fetchRemoteMLXModels(searchText: String) {
+    // Cancel any in-flight search
+    remoteSearchTask?.cancel()
+
+    // Mark loading to show spinner if needed
+    isLoadingModels = true
+
+    let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+
+    remoteSearchTask = Task { [weak self] in
+      guard let self else { return }
+
+      // Build candidate URLs
+      let limit = 100
+      var urls: [URL] = []
+      // Always query mlx-community
+      if let url = Self.makeHFModelsURL(author: "mlx-community", search: query, limit: limit) {
+        urls.append(url)
+      }
+      // Additional default seeds to find MLX repos outside mlx-community when query is empty
+      let defaultSeeds = ["mlx", "mlx 4bit", "MLX"]
+      if query.isEmpty {
+        for seed in defaultSeeds {
+          if let url = Self.makeHFModelsURL(author: nil, search: seed, limit: limit) {
+            urls.append(url)
+          }
+        }
+      } else {
+        // Broader search across all repos when query present
+        if let url = Self.makeHFModelsURL(author: nil, search: query, limit: limit) {
+          urls.append(url)
+        }
+      }
+
+      // Fetch in parallel
+      let results: [[HFModel]] = await withTaskGroup(of: [HFModel].self) { group in
+        for u in urls { group.addTask { (try? await Self.requestHFModels(at: u)) ?? [] } }
+        var collected: [[HFModel]] = []
+        for await arr in group { collected.append(arr) }
+        return collected
+      }
+
+      // Merge and unique by id
+      var byId: [String: HFModel] = [:]
+      for arr in results { for m in arr { byId[m.id] = m } }
+
+      // Filter to likely MLX-compatible
+      let filtered = byId.values.filter { Self.isLikelyMLXCompatible($0) }
+
+      // Map to MLXModel
+      let mapped: [MLXModel] = filtered.map { hf in
+        MLXModel(
+          id: hf.id,
+          name: Self.friendlyName(from: hf.id),
+          description: "Discovered on Hugging Face",
+          size: 0,
+          downloadURL: "https://huggingface.co/\(hf.id)",
+          requiredFiles: Self.curatedRequiredFiles
+        )
+      }
+
+      // Publish to UI on main actor (we already are, but be explicit about ordering)
+      await MainActor.run {
+        self.mergeAvailable(with: mapped)
+        self.isLoadingModels = false
+      }
+    }
   }
 
   /// Resolve or construct an MLXModel by Hugging Face repo id (e.g., "mlx-community/Qwen3-1.7B-4bit").
@@ -595,5 +667,96 @@ extension ModelManager {
       .replacingOccurrences(of: "qwen", with: "Qwen", options: .caseInsensitive)
       .replacingOccurrences(of: "gemma", with: "Gemma", options: .caseInsensitive)
       .replacingOccurrences(of: "deepseek", with: "DeepSeek", options: .caseInsensitive)
+  }
+}
+
+// MARK: - Hugging Face discovery helpers
+
+extension ModelManager {
+  fileprivate struct HFModel: Decodable {
+    let id: String
+    let tags: [String]?
+    let siblings: [HFSibling]?
+  }
+
+  fileprivate struct HFSibling: Decodable {
+    let rfilename: String
+  }
+
+  /// Build the HF models API URL
+  fileprivate static func makeHFModelsURL(author: String?, search: String, limit: Int) -> URL? {
+    var comps = URLComponents()
+    comps.scheme = "https"
+    comps.host = "huggingface.co"
+    comps.path = "/api/models"
+    var items: [URLQueryItem] = [
+      URLQueryItem(name: "limit", value: String(limit)),
+      URLQueryItem(name: "full", value: "1"),
+      URLQueryItem(name: "sort", value: "downloads")
+    ]
+    if let author, !author.isEmpty { items.append(URLQueryItem(name: "author", value: author)) }
+    if !search.isEmpty { items.append(URLQueryItem(name: "search", value: search)) }
+    comps.queryItems = items
+    return comps.url
+  }
+
+  /// Request HF models at URL
+  fileprivate static func requestHFModels(at url: URL) async throws -> [HFModel] {
+    var request = URLRequest(url: url)
+    request.setValue("application/json", forHTTPHeaderField: "Accept")
+    let (data, response) = try await URLSession.shared.data(for: request)
+    guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
+      return []
+    }
+    do {
+      return try JSONDecoder().decode([HFModel].self, from: data)
+    } catch {
+      return []
+    }
+  }
+
+  /// Heuristic to decide if an HF model is likely MLX-compatible
+  fileprivate static func isLikelyMLXCompatible(_ model: HFModel) -> Bool {
+    let lowerId = model.id.lowercased()
+    // Strong signals: org or id contains "mlx"
+    if lowerId.contains("mlx") { return true }
+    // Tags sometimes include library identifiers
+    if let tags = model.tags?.map({ $0.lowercased() }) {
+      if tags.contains("mlx") || tags.contains("apple-mlx") || tags.contains("library:mlx") {
+        return true
+      }
+    }
+    // File-based heuristic: config + safetensors + some tokenizer asset present
+    if let siblings = model.siblings {
+      var hasConfig = false
+      var hasWeights = false
+      var hasTokenizer = false
+      for s in siblings {
+        let f = s.rfilename.lowercased()
+        if f == "config.json" { hasConfig = true }
+        if f.hasSuffix(".safetensors") { hasWeights = true }
+        if f == "tokenizer.json" || f == "tokenizer.model" || f == "spiece.model" || f == "vocab.json" || f == "vocab.txt" { hasTokenizer = true }
+      }
+      if hasConfig && hasWeights && hasTokenizer { return true }
+    }
+    return false
+  }
+
+  /// Merge new models into availableModels without duplicates; initialize downloadStates
+  fileprivate func mergeAvailable(with newModels: [MLXModel]) {
+    var existing = Dictionary(uniqueKeysWithValues: availableModels.map { ($0.id, $0) })
+    var appended: [MLXModel] = []
+    for m in newModels {
+      if existing[m.id] == nil {
+        existing[m.id] = m
+        appended.append(m)
+      }
+    }
+    if !appended.isEmpty {
+      availableModels.append(contentsOf: appended)
+      for m in appended {
+        downloadStates[m.id] = m.isDownloaded ? .completed : .notStarted
+      }
+    }
   }
 }

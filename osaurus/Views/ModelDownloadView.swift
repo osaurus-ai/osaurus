@@ -17,6 +17,7 @@ struct ModelDownloadView: View {
   @State private var modelToDelete: MLXModel?
   @State private var searchText: String = ""
   @State private var selectedTab: ModelListTab = .all
+  @State private var searchDebounceTask: Task<Void, Never>? = nil
   var deeplinkModelId: String? = nil
   var deeplinkFile: String? = nil
 
@@ -53,6 +54,17 @@ struct ModelDownloadView: View {
       if let modelId = deeplinkModelId, !modelId.isEmpty {
         searchText = modelId.split(separator: "/").last.map(String.init) ?? modelId
         _ = modelManager.resolveModel(byRepoId: modelId)
+      }
+      // Kick off initial remote fetch to augment curated list
+      modelManager.fetchRemoteMLXModels(searchText: searchText)
+    }
+    .onChange(of: searchText) { _, newValue in
+      // Debounce remote search to avoid spamming the API
+      searchDebounceTask?.cancel()
+      searchDebounceTask = Task { @MainActor in
+        do { try await Task.sleep(nanoseconds: 300_000_000) } catch { return }
+        if Task.isCancelled { return }
+        modelManager.fetchRemoteMLXModels(searchText: newValue)
       }
     }
   }
