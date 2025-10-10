@@ -9,17 +9,41 @@ import AppKit
 import Foundation
 import SwiftUI
 
+/// Deep linking is supported via `deeplinkModelId` to open the view with a specific model pre-selected.
 struct ModelDownloadView: View {
+  // MARK: - State Management
+  
+  /// Shared model manager for handling downloads and model state
   @StateObject private var modelManager = ModelManager.shared
+  
+  /// Theme manager for consistent UI styling
   @StateObject private var themeManager = ThemeManager.shared
   @Environment(\.theme) private var theme
+  
+  /// Controls the delete confirmation alert
   @State private var showDeleteConfirmation = false
+  
+  /// Model pending deletion (set when user taps delete)
   @State private var modelToDelete: MLXModel?
+  
+  /// Current search query text
   @State private var searchText: String = ""
+  
+  /// Currently selected tab (All, Suggested, or Downloaded)
   @State private var selectedTab: ModelListTab = .all
+  
+  /// Debounce task to prevent excessive API calls during typing
   @State private var searchDebounceTask: Task<Void, Never>? = nil
+  
+  /// Model to show in the detail sheet
   @State private var modelToShowDetails: MLXModel? = nil
+  
+  // MARK: - Deep Link Support
+  
+  /// Optional model ID for deep linking (e.g., from URL schemes)
   var deeplinkModelId: String? = nil
+  
+  /// Optional file path for deep linking
   var deeplinkFile: String? = nil
 
   var body: some View {
@@ -71,6 +95,9 @@ struct ModelDownloadView: View {
     }
   }
 
+  // MARK: - Header View
+  
+  /// Header section displaying the page title and download statistics
   private var headerView: some View {
     HStack(spacing: 24) {
       VStack(alignment: .leading, spacing: 4) {
@@ -78,6 +105,7 @@ struct ModelDownloadView: View {
           .font(.system(size: 24, weight: .semibold))
           .foregroundColor(theme.primaryText)
         
+        // Show count of downloaded models and total size
         Text("\(filteredDownloadedModels.count) downloaded • \(modelManager.totalDownloadedSizeString)")
           .font(.system(size: 13))
           .foregroundColor(theme.secondaryText)
@@ -89,6 +117,9 @@ struct ModelDownloadView: View {
     .padding(.vertical, 20)
   }
 
+  // MARK: - Model List View
+  
+  /// Main content area with tabs, search, and scrollable model list
   private var modelListView: some View {
     VStack(spacing: 0) {
       // Search and filter bar
@@ -190,14 +221,26 @@ struct ModelDownloadView: View {
     }
   }
 
+  // MARK: - Model Filtering
+  
+  /// All available models filtered by current search text
   private var filteredModels: [MLXModel] {
     SearchService.filterModels(modelManager.availableModels, with: searchText)
   }
 
+  /// Suggested (curated) models filtered by current search text
   private var filteredSuggestedModels: [MLXModel] {
     SearchService.filterModels(modelManager.suggestedModels, with: searchText)
   }
 
+  /// Downloaded models filtered by current search text and sorted by download date
+  ///
+  /// This computed property:
+  /// 1. Combines available and suggested models
+  /// 2. Removes duplicates by model ID
+  /// 3. Filters to only downloaded models
+  /// 4. Applies search filter
+  /// 5. Sorts by download date (newest first), with name as secondary sort
   private var filteredDownloadedModels: [MLXModel] {
     let combined = modelManager.availableModels + modelManager.suggestedModels
     let uniqueModels = Dictionary(
@@ -213,6 +256,7 @@ struct ModelDownloadView: View {
     }
   }
 
+  /// Models to display based on the currently selected tab
   private var displayedModels: [MLXModel] {
     let baseModels: [MLXModel]
     switch selectedTab {
@@ -228,611 +272,6 @@ struct ModelDownloadView: View {
   }
 }
 
-enum ModelListTab: CaseIterable {
-  case all
-  case suggested
-  case downloaded
-
-  var title: String {
-    switch self {
-    case .all: return "All Models"
-    case .suggested: return "Suggested"
-    case .downloaded: return "Downloaded"
-    }
-  }
-}
-
-struct EmptyStateView: View {
-  @Environment(\.theme) private var theme
-  let selectedTab: ModelListTab
-  let searchText: String
-  let onClearSearch: () -> Void
-
-  var body: some View {
-    VStack(spacing: 16) {
-      Image(systemName: iconName)
-        .font(.system(size: 36, weight: .light))
-        .foregroundColor(theme.tertiaryText)
-      
-      VStack(spacing: 8) {
-        Text(title)
-          .font(.system(size: 16, weight: .medium))
-          .foregroundColor(theme.primaryText)
-        
-        Text(description)
-          .font(.system(size: 14))
-          .foregroundColor(theme.secondaryText)
-          .multilineTextAlignment(.center)
-          .frame(maxWidth: 360)
-        
-        if !searchText.isEmpty {
-          Button(action: onClearSearch) {
-            Text("Clear search")
-              .font(.system(size: 13))
-              .foregroundColor(theme.accentColor)
-          }
-          .buttonStyle(PlainButtonStyle())
-          .padding(.top, 4)
-        }
-      }
-    }
-    .frame(maxWidth: .infinity, maxHeight: .infinity)
-  }
-  
-  private var iconName: String {
-    searchText.isEmpty ? "cube.box" : "magnifyingglass"
-  }
-  
-  private var title: String {
-    if !searchText.isEmpty {
-      return "No models found"
-    }
-    
-    switch selectedTab {
-    case .all:
-      return "No models available"
-    case .suggested:
-      return "No suggested models"
-    case .downloaded:
-      return "No downloaded models"
-    }
-  }
-  
-  private var description: String {
-    if !searchText.isEmpty {
-      return "Try adjusting your search terms"
-    }
-    
-    switch selectedTab {
-    case .all:
-      return "Language models will appear here"
-    case .suggested:
-      return "Suggested models will appear here"
-    case .downloaded:
-      return "Downloaded models will appear here"
-    }
-  }
-}
-
-struct ModelRowView: View {
-  @Environment(\.theme) private var theme
-  let model: MLXModel
-  let downloadState: DownloadState
-  let metrics: ModelManager.DownloadMetrics?
-  let onViewDetails: () -> Void
-  let onDelete: () -> Void
-
-  @State private var isHovering = false
-  @State private var showCopiedFeedback = false
-
-  var body: some View {
-    VStack(spacing: 0) {
-      HStack(spacing: 16) {
-        // Model info
-        VStack(alignment: .leading, spacing: 6) {
-          HStack(alignment: .center, spacing: 8) {
-            Text(model.name)
-              .font(.system(size: 15, weight: .medium))
-              .foregroundColor(theme.primaryText)
-              .lineLimit(1)
-              .truncationMode(.tail)
-            
-            if model.isDownloaded {
-              Image(systemName: "checkmark.circle.fill")
-                .font(.system(size: 12))
-                .foregroundColor(theme.successColor)
-            }
-            
-            Spacer(minLength: 0)
-          }
-          
-          if !model.description.isEmpty {
-            Text(model.description)
-              .font(.system(size: 13))
-              .foregroundColor(theme.secondaryText)
-              .lineLimit(2)
-              .truncationMode(.tail)
-          }
-          
-          // Repository link
-          if let url = URL(string: model.downloadURL) {
-            Link(repositoryName(from: model.downloadURL), destination: url)
-              .font(.system(size: 12))
-              .foregroundColor(theme.tertiaryText)
-              .lineLimit(1)
-              .truncationMode(.middle)
-          }
-          
-          // Download progress
-          if case .downloading(let progress) = downloadState {
-            VStack(alignment: .leading, spacing: 6) {
-              SimpleProgressBar(progress: progress)
-                .frame(height: 4)
-              
-              if let line = formattedMetricsLine() {
-                Text(line)
-                  .font(.system(size: 11))
-                  .foregroundColor(theme.tertiaryText)
-              }
-            }
-            .padding(.top, 4)
-          }
-        }
-        
-        // Actions
-        HStack(spacing: 8) {
-          Button(action: onViewDetails) {
-            Text("Details")
-              .font(.system(size: 13))
-              .foregroundColor(theme.accentColor)
-          }
-          .buttonStyle(PlainButtonStyle())
-          
-          if model.isDownloaded {
-            Button(action: onDelete) {
-              Image(systemName: "trash")
-                .font(.system(size: 13))
-                .foregroundColor(theme.errorColor)
-            }
-            .buttonStyle(PlainButtonStyle())
-          }
-          
-          Button(action: copyModelID) {
-            Image(systemName: showCopiedFeedback ? "checkmark" : "doc.on.doc")
-              .font(.system(size: 13))
-              .foregroundColor(showCopiedFeedback ? theme.successColor : theme.tertiaryText)
-          }
-          .buttonStyle(PlainButtonStyle())
-          .help(showCopiedFeedback ? "Copied!" : "Copy model ID")
-        }
-      }
-      .padding(.vertical, 16)
-      .padding(.horizontal, 20)
-      
-      Divider()
-        .padding(.leading, 20)
-    }
-    .background(isHovering ? theme.secondaryBackground : Color.clear)
-    .onHover { hovering in
-      withAnimation(.easeInOut(duration: 0.15)) {
-        isHovering = hovering
-      }
-    }
-  }
-
-  private func copyModelID() {
-    let apiId: String = {
-      let last = model.id.split(separator: "/").last.map(String.init) ?? model.name
-      let normalized =
-        last
-        .trimmingCharacters(in: .whitespacesAndNewlines)
-        .replacingOccurrences(of: " ", with: "-")
-        .replacingOccurrences(of: "_", with: "-")
-        .lowercased()
-      return normalized
-    }()
-
-    NSPasteboard.general.clearContents()
-    NSPasteboard.general.setString(apiId, forType: .string)
-
-    // Show feedback
-    withAnimation {
-      showCopiedFeedback = true
-    }
-
-    // Reset feedback after delay
-    DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
-      withAnimation {
-        showCopiedFeedback = false
-      }
-    }
-  }
-
-  private func formattedMetricsLine() -> String? {
-    guard let metrics = metrics else { return nil }
-
-    var parts: [String] = []
-
-    if let received = metrics.bytesReceived {
-      let receivedStr = ByteCountFormatter.string(fromByteCount: received, countStyle: .file)
-      if let total = metrics.totalBytes, total > 0 {
-        let totalStr = ByteCountFormatter.string(fromByteCount: total, countStyle: .file)
-        parts.append("\(receivedStr) / \(totalStr)")
-      } else {
-        parts.append(receivedStr)
-      }
-    }
-
-    if let bps = metrics.bytesPerSecond {
-      let speedStr = ByteCountFormatter.string(fromByteCount: Int64(bps), countStyle: .file)
-      parts.append("\(speedStr)/s")
-    }
-
-    if let eta = metrics.etaSeconds, eta.isFinite, eta > 0 {
-      parts.append("ETA \(formatETA(seconds: eta))")
-    }
-
-    guard !parts.isEmpty else { return nil }
-    return parts.joined(separator: " • ")
-  }
-
-  private func formatETA(seconds: Double) -> String {
-    let total = Int(seconds.rounded())
-    let hours = total / 3600
-    let minutes = (total % 3600) / 60
-    let secs = total % 60
-    if hours > 0 {
-      return String(format: "%d:%02d:%02d", hours, minutes, secs)
-    } else {
-      return String(format: "%d:%02d", minutes, secs)
-    }
-  }
-
-  
-}
-
-// Helper function to extract repository name from URL
-private func repositoryName(from urlString: String) -> String {
-  // Extract the repository part from Hugging Face URL
-  // Example: https://huggingface.co/mlx-community/Llama-3.2-1B-Instruct-4bit -> mlx-community/Llama-3.2-1B-Instruct-4bit
-  if let url = URL(string: urlString),
-    url.host == "huggingface.co"
-  {
-    let pathComponents = url.pathComponents.filter { $0 != "/" }
-    if pathComponents.count >= 2 {
-      return "\(pathComponents[0])/\(pathComponents[1])"
-    }
-  }
-  // Fallback to showing the full URL
-  return urlString
-}
-
 #Preview {
   ModelDownloadView()
-}
-
-// MARK: - Model Detail View (embedded to avoid project file updates)
-
-struct ModelDetailView: View, Identifiable {
-  @StateObject private var modelManager = ModelManager.shared
-  @StateObject private var themeManager = ThemeManager.shared
-  @Environment(\.theme) private var theme
-  @Environment(\.dismiss) private var dismiss
-
-  let id = UUID()
-  let model: MLXModel
-
-  @State private var estimatedSize: Int64? = nil
-  @State private var isEstimating = false
-  @State private var estimateError: String? = nil
-
-  var body: some View {
-    VStack(spacing: 0) {
-      header
-      
-      Divider()
-      
-      content
-      
-      Divider()
-      
-      footer
-    }
-    .frame(width: 560, height: 480)
-    .background(theme.primaryBackground)
-    .environment(\.theme, themeManager.currentTheme)
-    .onAppear { Task { await estimateIfNeeded() } }
-  }
-
-  private var header: some View {
-    HStack {
-      VStack(alignment: .leading, spacing: 6) {
-        HStack(spacing: 8) {
-          Text(model.name)
-            .font(.system(size: 18, weight: .semibold))
-            .foregroundColor(theme.primaryText)
-          
-          if model.isDownloaded {
-            Image(systemName: "checkmark.circle.fill")
-              .font(.system(size: 14))
-              .foregroundColor(theme.successColor)
-          }
-        }
-        
-        if !model.description.isEmpty {
-          Text(model.description)
-            .font(.system(size: 14))
-            .foregroundColor(theme.secondaryText)
-            .lineLimit(2)
-        }
-      }
-      
-      Spacer()
-      
-      Button(action: { dismiss() }) {
-        Image(systemName: "xmark")
-          .font(.system(size: 14, weight: .medium))
-          .foregroundColor(theme.secondaryText)
-      }
-      .buttonStyle(PlainButtonStyle())
-    }
-    .padding(20)
-  }
-  
-  private var content: some View {
-    ScrollView {
-      VStack(alignment: .leading, spacing: 20) {
-        // Basic info
-        VStack(alignment: .leading, spacing: 12) {
-          InfoRow(label: "Repository", value: repositoryName(from: model.downloadURL))
-          InfoRow(label: "Size", value: model.sizeString)
-          
-          if model.isDownloaded, let downloadedAt = model.downloadedAt {
-            InfoRow(label: "Downloaded", value: RelativeDateTimeFormatter().localizedString(for: downloadedAt, relativeTo: Date()))
-          }
-        }
-        
-        // Estimated download size
-        VStack(alignment: .leading, spacing: 8) {
-          Text("Estimated download size")
-            .font(.system(size: 13, weight: .medium))
-            .foregroundColor(theme.secondaryText)
-          
-          HStack(spacing: 8) {
-            if isEstimating {
-              ProgressView()
-                .progressViewStyle(CircularProgressViewStyle())
-                .scaleEffect(0.7)
-            }
-            
-            Text(estimatedSizeString)
-              .font(.system(size: 14, weight: .medium))
-              .foregroundColor(theme.primaryText)
-            
-            if !isEstimating {
-              Button(action: { Task { await estimateIfNeeded(force: true) } }) {
-                Text("Recalculate")
-                  .font(.system(size: 12))
-                  .foregroundColor(theme.accentColor)
-              }
-              .buttonStyle(PlainButtonStyle())
-            }
-          }
-          
-          if let err = estimateError {
-            Text(err)
-              .font(.system(size: 12))
-              .foregroundColor(theme.errorColor)
-          }
-        }
-        
-        // Repository URL
-        CopyableURLField(label: "Repository URL", url: model.downloadURL)
-        
-        // Required files
-        VStack(alignment: .leading, spacing: 8) {
-          Text("Required files")
-            .font(.system(size: 13, weight: .medium))
-            .foregroundColor(theme.secondaryText)
-          
-          VStack(alignment: .leading, spacing: 4) {
-            ForEach(ModelManager.snapshotDownloadPatterns, id: \.self) { pattern in
-              Text(pattern)
-                .font(.system(size: 12, design: .monospaced))
-                .foregroundColor(theme.tertiaryText)
-            }
-          }
-        }
-      }
-      .padding(20)
-    }
-  }
-
-  private var apiModelId: String {
-    let last = model.id.split(separator: "/").last.map(String.init) ?? model.name
-    return last
-      .trimmingCharacters(in: .whitespacesAndNewlines)
-      .replacingOccurrences(of: " ", with: "-")
-      .replacingOccurrences(of: "_", with: "-")
-      .lowercased()
-  }
-  
-  private func copyAPIId() {
-    NSPasteboard.general.clearContents()
-    NSPasteboard.general.setString(apiModelId, forType: .string)
-  }
-
-  private var footer: some View {
-    HStack(spacing: 12) {
-      switch modelManager.effectiveDownloadState(for: model) {
-      case .notStarted, .failed(_):
-        Button(action: { dismiss() }) {
-          Text("Cancel")
-            .font(.system(size: 14))
-            .foregroundColor(theme.secondaryText)
-        }
-        .buttonStyle(PlainButtonStyle())
-        
-        Spacer()
-        
-        Button(action: { 
-          modelManager.downloadModel(model)
-          dismiss()
-        }) {
-          HStack(spacing: 6) {
-            Image(systemName: "arrow.down.circle")
-              .font(.system(size: 14))
-            Text("Download")
-              .font(.system(size: 14, weight: .medium))
-          }
-          .foregroundColor(.white)
-          .padding(.horizontal, 16)
-          .padding(.vertical, 8)
-          .background(
-            RoundedRectangle(cornerRadius: 6)
-              .fill(theme.accentColor)
-          )
-        }
-        .buttonStyle(PlainButtonStyle())
-        
-      case .downloading(let progress):
-        VStack(alignment: .leading, spacing: 8) {
-          HStack {
-            Text("\(Int(progress * 100))% downloaded")
-              .font(.system(size: 13))
-              .foregroundColor(theme.primaryText)
-            
-            Spacer()
-            
-            if let line = formattedMetricsLine() {
-              Text(line)
-                .font(.system(size: 12))
-                .foregroundColor(theme.secondaryText)
-            }
-          }
-          
-          SimpleProgressBar(progress: progress)
-            .frame(height: 6)
-        }
-        .frame(maxWidth: .infinity)
-        
-        Button(action: { modelManager.cancelDownload(model.id) }) {
-          Text("Cancel")
-            .font(.system(size: 13))
-            .foregroundColor(theme.errorColor)
-        }
-        .buttonStyle(PlainButtonStyle())
-        
-      case .completed:
-        Button(action: { 
-          modelManager.deleteModel(model)
-          dismiss()
-        }) {
-          Text("Delete Model")
-            .font(.system(size: 14))
-            .foregroundColor(theme.errorColor)
-        }
-        .buttonStyle(PlainButtonStyle())
-        
-        Spacer()
-        
-        Button(action: { dismiss() }) {
-          Text("Done")
-            .font(.system(size: 14, weight: .medium))
-            .foregroundColor(.white)
-            .padding(.horizontal, 16)
-            .padding(.vertical, 8)
-            .background(
-              RoundedRectangle(cornerRadius: 6)
-                .fill(theme.accentColor)
-            )
-        }
-        .buttonStyle(PlainButtonStyle())
-      }
-    }
-    .padding(20)
-  }
-
-  private var estimatedSizeString: String {
-    if let s = estimatedSize, s > 0 {
-      return ByteCountFormatter.string(fromByteCount: s, countStyle: .file)
-    }
-    return "Not available"
-  }
-
-  private func estimateIfNeeded(force: Bool = false) async {
-    if isEstimating { return }
-    if !force, let est = estimatedSize, est > 0 { return }
-    isEstimating = true
-    estimateError = nil
-    let size = await modelManager.estimateDownloadSize(for: model)
-    await MainActor.run {
-      self.estimatedSize = size
-      if size == nil { self.estimateError = "Could not estimate size right now." }
-      self.isEstimating = false
-    }
-  }
-
-  private func formattedMetricsLine() -> String? {
-    guard let metrics = modelManager.downloadMetrics[model.id] else { return nil }
-
-    var parts: [String] = []
-
-    if let received = metrics.bytesReceived {
-      let receivedStr = ByteCountFormatter.string(fromByteCount: received, countStyle: .file)
-      if let total = metrics.totalBytes, total > 0 {
-        let totalStr = ByteCountFormatter.string(fromByteCount: total, countStyle: .file)
-        parts.append("\(receivedStr) / \(totalStr)")
-      } else {
-        parts.append(receivedStr)
-      }
-    }
-
-    if let bps = metrics.bytesPerSecond {
-      let speedStr = ByteCountFormatter.string(fromByteCount: Int64(bps), countStyle: .file)
-      parts.append("\(speedStr)/s")
-    }
-
-    if let eta = metrics.etaSeconds, eta.isFinite, eta > 0 {
-      parts.append("ETA \(formatETA(seconds: eta))")
-    }
-
-    guard !parts.isEmpty else { return nil }
-    return parts.joined(separator: " • ")
-  }
-
-  private func formatETA(seconds: Double) -> String {
-    let total = Int(seconds.rounded())
-    let hours = total / 3600
-    let minutes = (total % 3600) / 60
-    let secs = total % 60
-    if hours > 0 {
-      return String(format: "%d:%02d:%02d", hours, minutes, secs)
-    } else {
-      return String(format: "%d:%02d", minutes, secs)
-    }
-  }
-}
-
-// MARK: - Supporting Types
-
-struct InfoRow: View {
-  @Environment(\.theme) private var theme
-  let label: String
-  let value: String
-  
-  var body: some View {
-    HStack {
-      Text(label)
-        .font(.system(size: 13, weight: .medium))
-        .foregroundColor(theme.secondaryText)
-      
-      Spacer()
-      
-      Text(value)
-        .font(.system(size: 13, weight: .medium))
-        .foregroundColor(theme.primaryText)
-        .multilineTextAlignment(.trailing)
-    }
-  }
 }
