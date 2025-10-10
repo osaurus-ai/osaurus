@@ -136,7 +136,8 @@ final class ModelManager: NSObject, ObservableObject {
           description: "Discovered on Hugging Face",
           size: 0,
           downloadURL: "https://huggingface.co/\(hf.id)",
-          requiredFiles: Self.curatedRequiredFiles
+          requiredFiles: Self.curatedRequiredFiles,
+          tags: hf.tags
         )
       }
 
@@ -160,11 +161,11 @@ final class ModelManager: NSObject, ObservableObject {
       return nil
     }
 
-    // If already present in available or suggested, return that instance
-    if let existing = availableModels.first(where: { $0.id == trimmed }) {
+    // If already present in available or suggested (case-insensitive), return that instance
+    if let existing = availableModels.first(where: { $0.id.lowercased() == trimmed.lowercased() }) {
       return existing
     }
-    if let existing = suggestedModels.first(where: { $0.id == trimmed }) {
+    if let existing = suggestedModels.first(where: { $0.id.lowercased() == trimmed.lowercased() }) {
       return existing
     }
 
@@ -181,6 +182,39 @@ final class ModelManager: NSObject, ObservableObject {
     // Add to available list for UI visibility
     availableModels.insert(model, at: 0)
     // Initialize download state entry
+    downloadStates[model.id] = model.isDownloaded ? .completed : .notStarted
+    return model
+  }
+
+  /// Resolve a model only if the Hugging Face repository is MLX-compatible.
+  /// Uses network metadata from Hugging Face for a reliable determination.
+  /// Returns the existing or newly inserted `MLXModel` when compatible; otherwise nil.
+  func resolveModelIfMLXCompatible(byRepoId repoId: String) async -> MLXModel? {
+    let trimmed = repoId.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmed.isEmpty else { return nil }
+
+    // If already present, return immediately
+    if let existing = availableModels.first(where: { $0.id.caseInsensitiveCompare(trimmed) == .orderedSame }) {
+      return existing
+    }
+    if let existing = suggestedModels.first(where: { $0.id.caseInsensitiveCompare(trimmed) == .orderedSame }) {
+      return existing
+    }
+
+    // Ask HF for definitive compatibility
+    let isCompatible = await HuggingFaceService.shared.isMLXCompatible(repoId: trimmed)
+    guard isCompatible else { return nil }
+
+    // Insert minimal entry so it appears in UI and can be downloaded
+    let model = MLXModel(
+      id: trimmed,
+      name: Self.friendlyName(from: trimmed),
+      description: "Imported from deeplink",
+      size: 0,
+      downloadURL: "https://huggingface.co/\(trimmed)",
+      requiredFiles: Self.curatedRequiredFiles
+    )
+    availableModels.insert(model, at: 0)
     downloadStates[model.id] = model.isDownloaded ? .completed : .notStarted
     return model
   }
@@ -800,19 +834,20 @@ extension ModelManager {
 
   /// Merge new models into availableModels without duplicates; initialize downloadStates
   fileprivate func mergeAvailable(with newModels: [MLXModel]) {
-    var existing = Dictionary(uniqueKeysWithValues: availableModels.map { ($0.id, $0) })
+    // Build a case-insensitive set of existing ids across available and suggested
+    var existingLower: Set<String> = Set((availableModels + suggestedModels).map { $0.id.lowercased() })
     var appended: [MLXModel] = []
     for m in newModels {
-      if existing[m.id] == nil {
-        existing[m.id] = m
+      let key = m.id.lowercased()
+      if !existingLower.contains(key) {
+        existingLower.insert(key)
         appended.append(m)
       }
     }
-    if !appended.isEmpty {
-      availableModels.append(contentsOf: appended)
-      for m in appended {
-        downloadStates[m.id] = m.isDownloaded ? .completed : .notStarted
-      }
+    guard !appended.isEmpty else { return }
+    availableModels.append(contentsOf: appended)
+    for m in appended {
+      downloadStates[m.id] = m.isDownloaded ? .completed : .notStarted
     }
   }
 }

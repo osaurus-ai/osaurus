@@ -75,7 +75,9 @@ struct ModelDownloadView: View {
       // If invoked via deeplink, prefill search and ensure the model is visible
       if let modelId = deeplinkModelId, !modelId.isEmpty {
         searchText = modelId.split(separator: "/").last.map(String.init) ?? modelId
-        _ = modelManager.resolveModel(byRepoId: modelId)
+        Task { @MainActor in
+          _ = await modelManager.resolveModelIfMLXCompatible(byRepoId: modelId)
+        }
       }
       // Kick off initial remote fetch to augment curated list
       modelManager.fetchRemoteMLXModels(searchText: searchText)
@@ -242,11 +244,23 @@ struct ModelDownloadView: View {
   /// 4. Applies search filter
   /// 5. Sorts by download date (newest first), with name as secondary sort
   private var filteredDownloadedModels: [MLXModel] {
-    let combined = modelManager.availableModels + modelManager.suggestedModels
-    let uniqueModels = Dictionary(
-      combined.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first }
-    ).values
-    let downloaded = uniqueModels.filter { $0.isDownloaded }
+    // Prefer curated (suggested) variants over auto-discovered ones when deduplicating
+    let combined = modelManager.suggestedModels + modelManager.availableModels
+    var byLowerId: [String: MLXModel] = [:]
+    for m in combined {
+      let key = m.id.lowercased()
+      if let existing = byLowerId[key] {
+        // Prefer entries that are not the generic discovery description
+        let existingIsDiscovered = existing.description == "Discovered on Hugging Face"
+        let currentIsDiscovered = m.description == "Discovered on Hugging Face"
+        if existingIsDiscovered && !currentIsDiscovered {
+          byLowerId[key] = m
+        }
+      } else {
+        byLowerId[key] = m
+      }
+    }
+    let downloaded = byLowerId.values.filter { $0.isDownloaded }
     let filtered = SearchService.filterModels(Array(downloaded), with: searchText)
     return filtered.sorted { lhs, rhs in
       let la = lhs.downloadedAt ?? .distantPast

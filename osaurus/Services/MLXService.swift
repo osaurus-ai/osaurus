@@ -566,6 +566,13 @@ actor HuggingFaceService {
     let size: Int64?
   }
 
+  // Minimal model metadata from HF
+  struct ModelMeta: Decodable {
+    let id: String
+    let tags: [String]?
+    let siblings: [RepoFile]?
+  }
+
   private init() {}
 
   /// Estimate the total size for files matching provided patterns.
@@ -610,6 +617,79 @@ actor HuggingFaceService {
     } catch {
       return nil
     }
+  }
+
+  /// Determine if a Hugging Face repo is MLX-compatible using repository metadata.
+  /// Prefers explicit tags (e.g., "mlx", "apple-mlx", "library:mlx").
+  /// Falls back to id hints and required file presence when tags are unavailable.
+  func isMLXCompatible(repoId: String) async -> Bool {
+    let trimmed = repoId.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmed.isEmpty else { return false }
+    let lower = trimmed.lowercased()
+
+    // Fetch model metadata with tags and top-level file listing
+    guard let meta = await fetchModelMeta(repoId: trimmed) else {
+      // Network failure: conservative allowance for mlx-community repos
+      if lower.hasPrefix("mlx-community/") { return true }
+      return false
+    }
+
+    // Strong signal: tags explicitly indicate MLX
+    if let tags = meta.tags?.map({ $0.lowercased() }) {
+      if tags.contains("mlx") || tags.contains("apple-mlx") || tags.contains("library:mlx") {
+        return true
+      }
+    }
+
+    // Heuristic fallback: repository naming suggests MLX and core files exist
+    if lower.contains("mlx") && hasRequiredFiles(meta: meta) {
+      return true
+    }
+
+    // As a last resort, trust curated org with required files
+    if lower.hasPrefix("mlx-community/") && hasRequiredFiles(meta: meta) {
+      return true
+    }
+
+    return false
+  }
+
+  // MARK: - Private helpers
+  private func fetchModelMeta(repoId: String) async -> ModelMeta? {
+    var comps = URLComponents()
+    comps.scheme = "https"
+    comps.host = "huggingface.co"
+    comps.path = "/api/models/\(repoId)"
+    comps.queryItems = [URLQueryItem(name: "full", value: "1")]
+    guard let url = comps.url else { return nil }
+
+    var req = URLRequest(url: url)
+    req.setValue("application/json", forHTTPHeaderField: "Accept")
+    do {
+      let (data, response) = try await URLSession.shared.data(for: req)
+      guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
+        return nil
+      }
+      return try JSONDecoder().decode(ModelMeta.self, from: data)
+    } catch {
+      return nil
+    }
+  }
+
+  private func hasRequiredFiles(meta: ModelMeta) -> Bool {
+    guard let siblings = meta.siblings else { return false }
+    var hasConfig = false
+    var hasWeights = false
+    var hasTokenizer = false
+    for s in siblings {
+      let f = s.rfilename.lowercased()
+      if f == "config.json" { hasConfig = true }
+      if f.hasSuffix(".safetensors") { hasWeights = true }
+      if f == "tokenizer.json" || f == "tokenizer.model" || f == "spiece.model" || f == "vocab.json" || f == "vocab.txt" {
+        hasTokenizer = true
+      }
+    }
+    return hasConfig && hasWeights && hasTokenizer
   }
 }
 

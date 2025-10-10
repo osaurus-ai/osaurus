@@ -15,6 +15,7 @@ struct MLXModel: Identifiable, Codable {
   let size: Int64  // Size in bytes
   let downloadURL: String
   let requiredFiles: [String]  // Files needed for the model
+  let tags: [String]?  // Optional tags from Hugging Face metadata
 
   // Capture the models root directory at initialization time to avoid
   // relying on a mutable global during tests or concurrent execution.
@@ -27,6 +28,7 @@ struct MLXModel: Identifiable, Codable {
     size: Int64,
     downloadURL: String,
     requiredFiles: [String],
+    tags: [String]? = nil,
     rootDirectory: URL? = nil
   ) {
     self.id = id
@@ -35,6 +37,7 @@ struct MLXModel: Identifiable, Codable {
     self.size = size
     self.downloadURL = downloadURL
     self.requiredFiles = requiredFiles
+    self.tags = tags
     self.rootDirectory = rootDirectory ?? DirectoryPickerService.shared.effectiveModelsDirectory
   }
 
