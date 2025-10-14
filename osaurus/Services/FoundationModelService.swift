@@ -10,24 +10,15 @@ import Foundation
 #if canImport(FoundationModels)
   import FoundationModels
 #endif
-// Tool and related OpenAI-compatible types live in Models/OpenAIAPI.swift
-// We need them here for bridging; import is not required since they are in the same module.
 
 enum FoundationModelServiceError: Error {
   case notAvailable
   case generationFailed
 }
 
-/// Thin wrapper around Apple's FoundationModels LanguageModelSession so we can
-/// optionally use the system default model when no MLX models are present or
-/// when the request asks for the "default" model.
-final class FoundationModelService: ModelService {
+final class FoundationModelService: ToolCapableService {
   let id: String = "foundation"
-  /// Error thrown when the model requests a tool invocation during generation.
-  struct ToolInvocation: Error {
-    let toolName: String
-    let jsonArguments: String
-  }
+
   /// Returns true if the system default language model is available on this device/OS.
   static func isDefaultModelAvailable() -> Bool {
     #if canImport(FoundationModels)
@@ -58,10 +49,8 @@ final class FoundationModelService: ModelService {
   ) async throws -> String {
     #if canImport(FoundationModels)
       if #available(macOS 26.0, *) {
-        // Start a session with the system default model.
         let session = LanguageModelSession()
 
-        // Use the LanguageModelSession.respond APIs (current SDK naming).
         let options = GenerationOptions(
           sampling: nil,
           temperature: Double(temperature),
@@ -85,7 +74,6 @@ final class FoundationModelService: ModelService {
       if #available(macOS 26.0, *) {
         let session = LanguageModelSession()
 
-        // Stream using LanguageModelSession.streamResponse (current SDK naming).
         let options = GenerationOptions(
           sampling: nil,
           temperature: Double(parameters.temperature),
@@ -134,8 +122,6 @@ final class FoundationModelService: ModelService {
 
   // MARK: - Tool calling bridge (OpenAI tools -> FoundationModels)
 
-  /// Respond using Apple's FoundationModels with OpenAI-style tools (non-streaming).
-  /// - Throws: `ToolInvocation` if the model asks to call a tool.
   func respondWithTools(
     prompt: String,
     parameters: GenerationParameters,
@@ -171,7 +157,8 @@ final class FoundationModelService: ModelService {
           return reply
         } catch let error as LanguageModelSession.ToolCallError {
           if let inv = error.underlyingError as? ToolInvocationError {
-            throw ToolInvocation(toolName: inv.toolName, jsonArguments: inv.jsonArguments)
+            // Re-throw using shared ServiceToolInvocation so callers don't need Foundation type
+            throw ServiceToolInvocation(toolName: inv.toolName, jsonArguments: inv.jsonArguments)
           }
           throw error
         }
@@ -183,9 +170,6 @@ final class FoundationModelService: ModelService {
     #endif
   }
 
-  /// Stream using Apple's FoundationModels with OpenAI-style tools.
-  /// - Returns: A throwing stream of incremental text deltas.
-  /// - Throws: If the stream encounters a tool invocation, the stream finishes with `ToolInvocation` error.
   func streamWithTools(
     prompt: String,
     parameters: GenerationParameters,
@@ -235,8 +219,10 @@ final class FoundationModelService: ModelService {
               continuation.finish()
             } catch let error as LanguageModelSession.ToolCallError {
               if let inv = error.underlyingError as? ToolInvocationError {
+                // Surface as shared ServiceToolInvocation
                 continuation.finish(
-                  throwing: ToolInvocation(toolName: inv.toolName, jsonArguments: inv.jsonArguments)
+                  throwing: ServiceToolInvocation(
+                    toolName: inv.toolName, jsonArguments: inv.jsonArguments)
                 )
               } else {
                 continuation.finish(throwing: error)
@@ -254,7 +240,7 @@ final class FoundationModelService: ModelService {
     #endif
   }
 
-  // MARK: - Private helpers (available only when FoundationModels is present)
+  // MARK: - Private helpers
 
   #if canImport(FoundationModels)
     @available(macOS 26.0, *)

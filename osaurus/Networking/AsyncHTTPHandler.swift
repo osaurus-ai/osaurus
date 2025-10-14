@@ -96,45 +96,6 @@ class AsyncHTTPHandler {
       case .service(let service, let effectiveModel):
         // Build a generic chat-style prompt for services
         let prompt = PromptBuilder.buildPrompt(from: messages)
-        // If OpenAI-style tools are present and allowed, delegate to FoundationModelService
-        if let tools = request.tools, !tools.isEmpty,
-          request.tool_choice == nil
-            || {
-              if let c = request.tool_choice { if case .none = c { return false } }
-              return true
-            }()
-        {
-          if let fmService = service as? FoundationModelService {
-            let params = GenerationParameters(temperature: temperature, maxTokens: maxTokens)
-            if request.stream ?? false {
-              try await handleFoundationServiceStreamingWithTools(
-                fmService: fmService,
-                prompt: prompt,
-                effectiveModel: effectiveModel,
-                parameters: params,
-                stopSequences: effectiveStops,
-                tools: tools,
-                toolChoice: request.tool_choice,
-                context: context,
-                writer: writer,
-                extraHeaders: extraHeaders
-              )
-            } else {
-              try await handleFoundationServiceNonStreamingWithTools(
-                fmService: fmService,
-                prompt: prompt,
-                effectiveModel: effectiveModel,
-                parameters: params,
-                stopSequences: effectiveStops,
-                tools: tools,
-                toolChoice: request.tool_choice,
-                context: context,
-                extraHeaders: extraHeaders
-              )
-            }
-            return
-          }
-        }
         do {
           if request.stream ?? false {
             try await handleServiceStreamingResponse(
@@ -143,6 +104,8 @@ class AsyncHTTPHandler {
               effectiveModel: effectiveModel,
               parameters: GenerationParameters(temperature: temperature, maxTokens: maxTokens),
               stopSequences: effectiveStops,
+              tools: request.tools,
+              toolChoice: request.tool_choice,
               context: context,
               writer: writer,
               extraHeaders: extraHeaders
@@ -154,6 +117,8 @@ class AsyncHTTPHandler {
               effectiveModel: effectiveModel,
               parameters: GenerationParameters(temperature: temperature, maxTokens: maxTokens),
               stopSequences: effectiveStops,
+              tools: request.tools,
+              toolChoice: request.tool_choice,
               context: context,
               extraHeaders: extraHeaders
             )
@@ -247,6 +212,8 @@ class AsyncHTTPHandler {
     effectiveModel: String,
     parameters: GenerationParameters,
     stopSequences: [String],
+    tools: [Tool]?,
+    toolChoice: ToolChoiceOption?,
     context: ChannelHandlerContext,
     writer: ResponseWriter,
     extraHeaders: [(String, String)]? = nil
@@ -268,6 +235,127 @@ class AsyncHTTPHandler {
       writerBox.value.writeRole(
         "assistant", model: effectiveModel, responseId: responseId, created: created,
         context: ctxBox.value)
+    }
+
+    // If the service is tool-capable and tools are provided (and not disabled),
+    // delegate to the tool-aware streaming path to align with MLX tool handling.
+    if let toolService = service as? ToolCapableService {
+      let shouldUseTools: Bool = {
+        guard let tools = tools, !tools.isEmpty else { return false }
+        if let c = toolChoice { if case .none = c { return false } }
+        return true
+      }()
+      if shouldUseTools {
+        // Only SSE writer supports OpenAI-style tool_call deltas
+        let isSSE = writer is SSEResponseWriter
+        do {
+          let stream = try await toolService.streamWithTools(
+            prompt: prompt,
+            parameters: parameters,
+            stopSequences: stopSequences,
+            tools: tools!,
+            toolChoice: toolChoice
+          )
+          for try await delta in stream {
+            executeOnLoop(loop) {
+              writerBox.value.writeContent(
+                delta, model: effectiveModel, responseId: responseId, created: created,
+                context: ctxBox.value)
+            }
+          }
+          executeOnLoop(loop) {
+            writerBox.value.writeFinish(
+              effectiveModel, responseId: responseId, created: created, context: ctxBox.value)
+            writerBox.value.writeEnd(ctxBox.value)
+          }
+        } catch let inv as ServiceToolInvocation {
+          if isSSE {
+            let callId = "call_\(UUID().uuidString.prefix(8))"
+            let idTypeChunk = ChatCompletionChunk(
+              id: responseId,
+              created: created,
+              model: effectiveModel,
+              choices: [
+                StreamChoice(
+                  index: 0,
+                  delta: DeltaContent(tool_calls: [
+                    DeltaToolCall(index: 0, id: callId, type: "function", function: nil)
+                  ]), finish_reason: nil)
+              ],
+              system_fingerprint: nil
+            )
+            let nameChunk = ChatCompletionChunk(
+              id: responseId,
+              created: created,
+              model: effectiveModel,
+              choices: [
+                StreamChoice(
+                  index: 0,
+                  delta: DeltaContent(tool_calls: [
+                    DeltaToolCall(
+                      index: 0, id: callId, type: nil,
+                      function: DeltaToolCallFunction(name: inv.toolName, arguments: nil))
+                  ]), finish_reason: nil)
+              ],
+              system_fingerprint: nil
+            )
+            let argsChunk = ChatCompletionChunk(
+              id: responseId,
+              created: created,
+              model: effectiveModel,
+              choices: [
+                StreamChoice(
+                  index: 0,
+                  delta: DeltaContent(tool_calls: [
+                    DeltaToolCall(
+                      index: 0, id: callId, type: nil,
+                      function: DeltaToolCallFunction(name: nil, arguments: inv.jsonArguments))
+                  ]), finish_reason: nil)
+              ],
+              system_fingerprint: nil
+            )
+            executeOnLoop(loop) {
+              let context = ctxBox.value
+              guard context.channel.isActive else { return }
+              let encoder = IkigaJSONEncoder()
+              var buffer = context.channel.allocator.buffer(capacity: 1024)
+              func writeData<T: Encodable>(_ v: T) {
+                buffer.writeString("data: ")
+                do { try encoder.encodeAndWrite(v, into: &buffer) } catch {}
+                buffer.writeString("\n\n")
+              }
+              writeData(idTypeChunk)
+              writeData(nameChunk)
+              writeData(argsChunk)
+              let finishChunk = ChatCompletionChunk(
+                id: responseId,
+                created: created,
+                model: effectiveModel,
+                choices: [
+                  StreamChoice(index: 0, delta: DeltaContent(), finish_reason: "tool_calls")
+                ],
+                system_fingerprint: nil
+              )
+              writeData(finishChunk)
+              buffer.writeString("data: [DONE]\n\n")
+              context.write(NIOAny(HTTPServerResponsePart.body(.byteBuffer(buffer))), promise: nil)
+              context.flush()
+              context.writeAndFlush(NIOAny(HTTPServerResponsePart.end(nil as HTTPHeaders?)))
+                .whenComplete { _ in
+                  let context = ctxBox.value
+                  context.close(promise: nil)
+                }
+            }
+          } else {
+            executeOnLoop(loop) {
+              writerBox.value.writeFinish(
+                effectiveModel, responseId: responseId, created: created, context: ctxBox.value)
+              writerBox.value.writeEnd(ctxBox.value)
+            }
+          }
+        }
+        return
+      }
     }
 
     // Use the service stream
@@ -330,9 +418,79 @@ class AsyncHTTPHandler {
     effectiveModel: String,
     parameters: GenerationParameters,
     stopSequences: [String],
+    tools: [Tool]?,
+    toolChoice: ToolChoiceOption?,
     context: ChannelHandlerContext,
     extraHeaders: [(String, String)]? = nil
   ) async throws {
+    // If the service is tool-capable and tools are provided (and not disabled), delegate
+    if let toolService = service as? ToolCapableService {
+      let shouldUseTools: Bool = {
+        guard let tools = tools, !tools.isEmpty else { return false }
+        if let c = toolChoice { if case .none = c { return false } }
+        return true
+      }()
+      if shouldUseTools {
+        do {
+          let reply = try await toolService.respondWithTools(
+            prompt: prompt,
+            parameters: parameters,
+            stopSequences: stopSequences,
+            tools: tools!,
+            toolChoice: toolChoice
+          )
+          let tokenCount = max(1, reply.count / 4)
+          let res = ChatCompletionResponse(
+            id: "chatcmpl-\(UUID().uuidString.prefix(8))",
+            created: Int(Date().timeIntervalSince1970),
+            model: effectiveModel,
+            choices: [
+              ChatChoice(
+                index: 0,
+                message: ChatMessage(
+                  role: "assistant", content: reply, tool_calls: nil, tool_call_id: nil),
+                finish_reason: "stop")
+            ],
+            usage: Usage(
+              prompt_tokens: prompt.count / 4,
+              completion_tokens: tokenCount,
+              total_tokens: prompt.count / 4 + tokenCount
+            ),
+            system_fingerprint: nil
+          )
+          try await sendJSONResponse(res, status: .ok, context: context, extraHeaders: extraHeaders)
+          return
+        } catch let inv as ServiceToolInvocation {
+          // Map tool invocation to OpenAI-compatible tool_calls and return
+          let tc = ToolCall(
+            id: "call_\(UUID().uuidString.prefix(8))",
+            type: "function",
+            function: ToolCallFunction(name: inv.toolName, arguments: inv.jsonArguments)
+          )
+          let res = ChatCompletionResponse(
+            id: "chatcmpl-\(UUID().uuidString.prefix(8))",
+            created: Int(Date().timeIntervalSince1970),
+            model: effectiveModel,
+            choices: [
+              ChatChoice(
+                index: 0,
+                message: ChatMessage(
+                  role: "assistant", content: nil, tool_calls: [tc], tool_call_id: nil),
+                finish_reason: "tool_calls")
+            ],
+            usage: Usage(
+              prompt_tokens: prompt.count / 4,
+              completion_tokens: 0,
+              total_tokens: prompt.count / 4
+            ),
+            system_fingerprint: nil
+          )
+          try await sendJSONResponse(res, status: .ok, context: context, extraHeaders: extraHeaders)
+          return
+        }
+      }
+    }
+
     var reply = try await service.generateOneShot(prompt: prompt, parameters: parameters)
 
     if !stopSequences.isEmpty {
@@ -366,218 +524,6 @@ class AsyncHTTPHandler {
     )
 
     try await sendJSONResponse(response, status: .ok, context: context, extraHeaders: extraHeaders)
-  }
-
-  // MARK: - FoundationModelService tool flows (delegate to service)
-
-  private func handleFoundationServiceNonStreamingWithTools(
-    fmService: FoundationModelService,
-    prompt: String,
-    effectiveModel: String,
-    parameters: GenerationParameters,
-    stopSequences: [String],
-    tools: [Tool],
-    toolChoice: ToolChoiceOption?,
-    context: ChannelHandlerContext,
-    extraHeaders: [(String, String)]? = nil
-  ) async throws {
-    do {
-      let reply = try await fmService.respondWithTools(
-        prompt: prompt,
-        parameters: parameters,
-        stopSequences: stopSequences,
-        tools: tools,
-        toolChoice: toolChoice
-      )
-      let tokenCount = max(1, reply.count / 4)
-      let res = ChatCompletionResponse(
-        id: "chatcmpl-\(UUID().uuidString.prefix(8))",
-        created: Int(Date().timeIntervalSince1970),
-        model: effectiveModel,
-        choices: [
-          ChatChoice(
-            index: 0,
-            message: ChatMessage(
-              role: "assistant", content: reply, tool_calls: nil, tool_call_id: nil),
-            finish_reason: "stop")
-        ],
-        usage: Usage(
-          prompt_tokens: prompt.count / 4,
-          completion_tokens: tokenCount,
-          total_tokens: prompt.count / 4 + tokenCount
-        ),
-        system_fingerprint: nil
-      )
-      try await sendJSONResponse(res, status: .ok, context: context, extraHeaders: extraHeaders)
-    } catch let inv as FoundationModelService.ToolInvocation {
-      // Map tool invocation to OpenAI-compatible tool_calls and return
-      let tc = ToolCall(
-        id: "call_\(UUID().uuidString.prefix(8))",
-        type: "function",
-        function: ToolCallFunction(name: inv.toolName, arguments: inv.jsonArguments)
-      )
-      let res = ChatCompletionResponse(
-        id: "chatcmpl-\(UUID().uuidString.prefix(8))",
-        created: Int(Date().timeIntervalSince1970),
-        model: effectiveModel,
-        choices: [
-          ChatChoice(
-            index: 0,
-            message: ChatMessage(
-              role: "assistant", content: nil, tool_calls: [tc], tool_call_id: nil),
-            finish_reason: "tool_calls")
-        ],
-        usage: Usage(
-          prompt_tokens: prompt.count / 4,
-          completion_tokens: 0,
-          total_tokens: prompt.count / 4
-        ),
-        system_fingerprint: nil
-      )
-      try await sendJSONResponse(res, status: .ok, context: context, extraHeaders: extraHeaders)
-    }
-  }
-
-  private func handleFoundationServiceStreamingWithTools(
-    fmService: FoundationModelService,
-    prompt: String,
-    effectiveModel: String,
-    parameters: GenerationParameters,
-    stopSequences: [String],
-    tools: [Tool],
-    toolChoice: ToolChoiceOption?,
-    context: ChannelHandlerContext,
-    writer: ResponseWriter,
-    extraHeaders: [(String, String)]? = nil
-  ) async throws {
-    let loop = context.eventLoop
-    let ctxBox = UncheckedSendableBox(value: context)
-    let writerBox = UncheckedSendableBox(value: writer)
-
-    // Only SSE writer supports OpenAI-style tool_call deltas
-    let isSSE = writer is SSEResponseWriter
-
-    executeOnLoop(loop) {
-      writerBox.value.writeHeaders(ctxBox.value, extraHeaders: extraHeaders)
-    }
-
-    let responseId = "chatcmpl-\(UUID().uuidString.prefix(8))"
-    let created = Int(Date().timeIntervalSince1970)
-
-    // Send role prelude
-    executeOnLoop(loop) {
-      writerBox.value.writeRole(
-        "assistant", model: effectiveModel, responseId: responseId, created: created,
-        context: ctxBox.value)
-    }
-
-    do {
-      let stream = try await fmService.streamWithTools(
-        prompt: prompt,
-        parameters: parameters,
-        stopSequences: stopSequences,
-        tools: tools,
-        toolChoice: toolChoice
-      )
-
-      for try await delta in stream {
-        executeOnLoop(loop) {
-          writerBox.value.writeContent(
-            delta, model: effectiveModel, responseId: responseId, created: created,
-            context: ctxBox.value)
-        }
-      }
-
-      executeOnLoop(loop) {
-        writerBox.value.writeFinish(
-          effectiveModel, responseId: responseId, created: created, context: ctxBox.value)
-        writerBox.value.writeEnd(ctxBox.value)
-      }
-    } catch let inv as FoundationModelService.ToolInvocation {
-      if isSSE {
-        let callId = "call_\(UUID().uuidString.prefix(8))"
-        let idTypeChunk = ChatCompletionChunk(
-          id: responseId,
-          created: created,
-          model: effectiveModel,
-          choices: [
-            StreamChoice(
-              index: 0,
-              delta: DeltaContent(tool_calls: [
-                DeltaToolCall(index: 0, id: callId, type: "function", function: nil)
-              ]), finish_reason: nil)
-          ],
-          system_fingerprint: nil
-        )
-        let nameChunk = ChatCompletionChunk(
-          id: responseId,
-          created: created,
-          model: effectiveModel,
-          choices: [
-            StreamChoice(
-              index: 0,
-              delta: DeltaContent(tool_calls: [
-                DeltaToolCall(
-                  index: 0, id: callId, type: nil,
-                  function: DeltaToolCallFunction(name: inv.toolName, arguments: nil))
-              ]), finish_reason: nil)
-          ],
-          system_fingerprint: nil
-        )
-        let argsChunk = ChatCompletionChunk(
-          id: responseId,
-          created: created,
-          model: effectiveModel,
-          choices: [
-            StreamChoice(
-              index: 0,
-              delta: DeltaContent(tool_calls: [
-                DeltaToolCall(
-                  index: 0, id: callId, type: nil,
-                  function: DeltaToolCallFunction(name: nil, arguments: inv.jsonArguments))
-              ]), finish_reason: nil)
-          ],
-          system_fingerprint: nil
-        )
-
-        executeOnLoop(loop) {
-          let context = ctxBox.value
-          guard context.channel.isActive else { return }
-          let encoder = IkigaJSONEncoder()
-          var buffer = context.channel.allocator.buffer(capacity: 1024)
-          func writeData<T: Encodable>(_ v: T) {
-            buffer.writeString("data: ")
-            do { try encoder.encodeAndWrite(v, into: &buffer) } catch {}
-            buffer.writeString("\n\n")
-          }
-          writeData(idTypeChunk)
-          writeData(nameChunk)
-          writeData(argsChunk)
-          let finishChunk = ChatCompletionChunk(
-            id: responseId,
-            created: created,
-            model: effectiveModel,
-            choices: [StreamChoice(index: 0, delta: DeltaContent(), finish_reason: "tool_calls")],
-            system_fingerprint: nil
-          )
-          writeData(finishChunk)
-          buffer.writeString("data: [DONE]\n\n")
-          context.write(NIOAny(HTTPServerResponsePart.body(.byteBuffer(buffer))), promise: nil)
-          context.flush()
-          context.writeAndFlush(NIOAny(HTTPServerResponsePart.end(nil as HTTPHeaders?)))
-            .whenComplete { _ in
-              let context = ctxBox.value
-              context.close(promise: nil)
-            }
-        }
-      } else {
-        executeOnLoop(loop) {
-          writerBox.value.writeFinish(
-            effectiveModel, responseId: responseId, created: created, context: ctxBox.value)
-          writerBox.value.writeEnd(ctxBox.value)
-        }
-      }
-    }
   }
 
   private func handleStreamingResponse(

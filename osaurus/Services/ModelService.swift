@@ -7,9 +7,19 @@
 
 import Foundation
 
+// Tool and tool choice definitions live in OpenAIAPI.swift
+// Importing Foundation is sufficient; types are in the same module.
+
 struct GenerationParameters {
   let temperature: Float
   let maxTokens: Int
+}
+
+/// Error indicating the model requested a tool function call.
+/// Carries the tool name and JSON-encoded arguments as a string to be forwarded to clients.
+struct ServiceToolInvocation: Error {
+  let toolName: String
+  let jsonArguments: String
 }
 
 /// Minimal text-only streaming interface for language models.
@@ -36,6 +46,25 @@ protocol ModelService {
     prompt: String,
     parameters: GenerationParameters
   ) async throws -> String
+}
+
+/// Optional capability for services that can natively handle OpenAI-style tools.
+protocol ToolCapableService: ModelService {
+  func respondWithTools(
+    prompt: String,
+    parameters: GenerationParameters,
+    stopSequences: [String],
+    tools: [Tool],
+    toolChoice: ToolChoiceOption?
+  ) async throws -> String
+
+  func streamWithTools(
+    prompt: String,
+    parameters: GenerationParameters,
+    stopSequences: [String],
+    tools: [Tool],
+    toolChoice: ToolChoiceOption?
+  ) async throws -> AsyncThrowingStream<String, Error>
 }
 
 /// Simple router that selects a service based on the request and environment.
