@@ -7,23 +7,16 @@
 
 import Foundation
 
-// Tool and tool choice definitions live in OpenAIAPI.swift
-// Importing Foundation is sufficient; types are in the same module.
-
 struct GenerationParameters {
   let temperature: Float
   let maxTokens: Int
 }
 
-/// Error indicating the model requested a tool function call.
-/// Carries the tool name and JSON-encoded arguments as a string to be forwarded to clients.
 struct ServiceToolInvocation: Error {
   let toolName: String
   let jsonArguments: String
 }
 
-/// Minimal text-only streaming interface for language models.
-/// Implementations can ignore tools; MLX continues to use its specialized path for tool-calls.
 protocol ModelService {
   /// Stable identifier for the service (e.g., "foundation").
   var id: String { get }

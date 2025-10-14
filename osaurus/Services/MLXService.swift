@@ -5,11 +5,9 @@
 //  Created by Terence on 8/17/25.
 //
 
-import CryptoKit
 import Foundation
 import MLXLLM
 import MLXLMCommon
-import NIOCore
 
 // MARK: - Debug logging helpers (gated by environment variables)
 private enum DebugLog {
@@ -33,33 +31,10 @@ private enum DebugLog {
   }
 }
 
-/// Represents a language model configuration
-class LMModel {
+/// Lightweight reference to a local MLX model (name + repo id)
+private struct LocalModelRef {
   let name: String
-  let modelId: String  // The model ID from ModelManager (e.g., "mlx-community/Llama-3.2-3B-Instruct-4bit")
-
-  init(name: String, modelId: String) {
-    self.name = name
-    self.modelId = modelId
-  }
-}
-
-/// Message role for chat interactions
-enum MessageRole: String, Codable {
-  case system
-  case user
-  case assistant
-}
-
-/// Chat message structure
-struct Message: Codable {
-  let role: MessageRole
-  let content: String
-
-  init(role: MessageRole, content: String) {
-    self.role = role
-    self.content = content
-  }
+  let modelId: String
 }
 
 /// A service class that manages machine learning models for text generation tasks.
@@ -68,20 +43,17 @@ struct Message: Codable {
 final class MLXService: @unchecked Sendable {
   static let shared = MLXService()
 
-  struct GenerationSettings {
-    var topP: Float
-    var kvBits: Int?
-    var kvGroupSize: Int
-    var quantizedKVStart: Int
-    var maxKVSize: Int?
-    var prefillStepSize: Int
-  }
-
   /// Thread-safe cache of available model names
   nonisolated(unsafe) private static let availableModelsCache = NSCache<NSString, NSArray>()
 
   /// Cache for model lookups to avoid repeated disk scanning
-  nonisolated(unsafe) private static let modelLookupCache = NSCache<NSString, LMModel>()
+  nonisolated(unsafe) private static let modelLookupCache = NSCache<NSString, LocalModelRefBox>()
+
+  // NSCache requires @objc reference types; wrap LocalModelRef
+  private final class LocalModelRefBox: NSObject {
+    let value: LocalModelRef
+    init(_ value: LocalModelRef) { self.value = value }
+  }
 
   /// Concurrent queue for thread-safe model lookup operations
   private static let modelLookupQueue = DispatchQueue(
@@ -89,21 +61,6 @@ final class MLXService: @unchecked Sendable {
 
   /// Timestamp for cached models list
   nonisolated(unsafe) private static var modelsListCacheTimestamp: Date?
-
-  /// List of available models that can be used for generation.
-  /// Dynamically generated from downloaded models
-  @MainActor var availableModels: [LMModel] {
-    // Get downloaded models from ModelManager
-    let downloadedModels = ModelManager.shared.availableModels.filter { $0.isDownloaded }
-
-    // Map downloaded models to LMModel
-    return downloadedModels.map { downloadedModel in
-      LMModel(
-        name: downloadedModel.name.lowercased().replacingOccurrences(of: " ", with: "-"),
-        modelId: downloadedModel.id
-      )
-    }
-  }
 
   /// Cache to store loaded model containers to avoid reloading weights from disk.
   private final class SessionHolder: NSObject {
@@ -130,29 +87,6 @@ final class MLXService: @unchecked Sendable {
   /// Currently loaded model name
   private(set) var currentModelName: String?
 
-  /// Tracks the current model download progress.
-  /// Access this property to monitor model download status.
-  private(set) var modelDownloadProgress: Progress?
-
-  // Adjustable generation settings (can be tuned via UI)
-  private(set) var generationSettings: GenerationSettings = {
-    let env = ProcessInfo.processInfo.environment
-    let topP: Float = Float(env["OSU_TOP_P"] ?? "") ?? 1.0
-    let kvBits: Int? = Int(env["OSU_KV_BITS"] ?? "")  // nil by default
-    let kvGroup: Int = Int(env["OSU_KV_GROUP"] ?? "") ?? 64
-    let quantStart: Int = Int(env["OSU_QUANT_KV_START"] ?? "") ?? 0
-    let maxKV: Int? = Int(env["OSU_MAX_KV_SIZE"] ?? "")
-    let prefillStep: Int = Int(env["OSU_PREFILL_STEP"] ?? "") ?? 512
-    return GenerationSettings(
-      topP: topP,
-      kvBits: kvBits,
-      kvGroupSize: kvGroup,
-      quantizedKVStart: quantStart,
-      maxKVSize: maxKV,
-      prefillStepSize: prefillStep
-    )
-  }()
-
   private init() {
     // Initialize the cache with current available models
     updateAvailableModelsCache()
@@ -165,6 +99,66 @@ final class MLXService: @unchecked Sendable {
     }
   }
 
+  // MARK: - Small helpers
+  private func makeGenerateParameters(
+    temperature: Float,
+    maxTokens: Int,
+    topP: Float,
+    kvBits: Int?,
+    kvGroup: Int,
+    quantStart: Int,
+    maxKV: Int?,
+    prefillStep: Int
+  ) -> MLXLMCommon.GenerateParameters {
+    var p = MLXLMCommon.GenerateParameters(
+      maxTokens: maxTokens,
+      maxKVSize: maxKV,
+      kvBits: kvBits,
+      kvGroupSize: kvGroup,
+      quantizedKVStart: quantStart,
+      temperature: temperature,
+      topP: topP,
+      repetitionPenalty: nil,
+      repetitionContextSize: 20
+    )
+    p.prefillStepSize = prefillStep
+    return p
+  }
+
+  private func mapMessagesToMLX(_ messages: [Message]) -> [MLXLMCommon.Chat.Message] {
+    return messages.map { m in
+      let role: MLXLMCommon.Chat.Message.Role = {
+        switch m.role {
+        case .system: return .system
+        case .user: return .user
+        case .assistant: return .assistant
+        }
+      }()
+      return MLXLMCommon.Chat.Message(role: role, content: m.content, images: [], videos: [])
+    }
+  }
+
+  private func makeTokenizerTools(
+    tools: [Tool]?,
+    toolChoice: ToolChoiceOption?
+  ) -> [[String: Any]]? {
+    guard let tools, !tools.isEmpty else { return nil }
+    if let toolChoice {
+      switch toolChoice {
+      case .none:
+        return nil
+      case .auto:
+        return tools.map { $0.toTokenizerToolSpec() }
+      case .function(let target):
+        let name = target.function.name
+        let filtered = tools.filter { $0.function.name == name }
+        return filtered.isEmpty ? nil : filtered.map { $0.toTokenizerToolSpec() }
+      }
+    } else {
+      return tools.map { $0.toTokenizerToolSpec() }
+    }
+  }
+
   /// Warm up a model by loading it and generating a tiny response to compile kernels and populate caches.
   /// - Parameters:
   ///   - modelName: Optional model name to warm up. If nil, attempts a best-effort default.
@@ -172,7 +166,7 @@ final class MLXService: @unchecked Sendable {
   ///   - maxTokens: Number of tokens to emit during warm-up (default 1)
   func warmUp(modelName: String? = nil, prefillChars: Int = 0, maxTokens: Int = 1) async {
     // Choose a model: explicit name -> find; otherwise pick first available
-    let chosen: LMModel? = {
+    let chosen: LocalModelRef? = {
       if let name = modelName, let m = Self.findModel(named: name) { return m }
       if let first = Self.getAvailableModels().first, let m = Self.findModel(named: first) {
         return m
@@ -262,16 +256,16 @@ final class MLXService: @unchecked Sendable {
   }
 
   /// Find a model by name
-  nonisolated static func findModel(named name: String) -> LMModel? {
+  fileprivate nonisolated static func findModel(named name: String) -> LocalModelRef? {
     // Check cache first for fast lookups
-    if let cached = modelLookupCache.object(forKey: name as NSString) {
+    if let cached = modelLookupCache.object(forKey: name as NSString)?.value {
       return cached
     }
 
     // Use concurrent queue for thread-safe disk scanning
     return modelLookupQueue.sync(flags: .barrier) {
       // Double-check cache after acquiring barrier (in case another thread just populated it)
-      if let cached = modelLookupCache.object(forKey: name as NSString) {
+      if let cached = modelLookupCache.object(forKey: name as NSString)?.value {
         return cached
       }
 
@@ -280,8 +274,8 @@ final class MLXService: @unchecked Sendable {
 
       // Try exact repo-name match first (lowercased)
       if let match = pairs.first(where: { $0.name == name }) {
-        let model = LMModel(name: match.name, modelId: match.id)
-        modelLookupCache.setObject(model, forKey: name as NSString)
+        let model = LocalModelRef(name: match.name, modelId: match.id)
+        modelLookupCache.setObject(LocalModelRefBox(model), forKey: name as NSString)
         return model
       }
 
@@ -290,15 +284,15 @@ final class MLXService: @unchecked Sendable {
         let repo = pair.id.split(separator: "/").last.map(String.init)?.lowercased()
         return repo == name.lowercased()
       }) {
-        let model = LMModel(name: match.name, modelId: match.id)
-        modelLookupCache.setObject(model, forKey: name as NSString)
+        let model = LocalModelRef(name: match.name, modelId: match.id)
+        modelLookupCache.setObject(LocalModelRefBox(model), forKey: name as NSString)
         return model
       }
 
       // Try full id match (case-insensitive)
       if let match = pairs.first(where: { $0.id.lowercased() == name.lowercased() }) {
-        let model = LMModel(name: match.name, modelId: match.id)
-        modelLookupCache.setObject(model, forKey: name as NSString)
+        let model = LocalModelRef(name: match.name, modelId: match.id)
+        modelLookupCache.setObject(LocalModelRefBox(model), forKey: name as NSString)
         return model
       }
 
@@ -399,7 +393,7 @@ final class MLXService: @unchecked Sendable {
   }
 
   /// Loads a model container from local storage or retrieves it from cache.
-  private func load(model: LMModel) async throws -> SessionHolder {
+  private func load(model: LocalModelRef) async throws -> SessionHolder {
     // Return cached model immediately without any disk I/O
     if let holder = modelCache.object(forKey: model.name as NSString) {
       return holder
@@ -427,9 +421,9 @@ final class MLXService: @unchecked Sendable {
   }
 
   /// Generate event stream from MLX that can include both text chunks and tool call events.
-  func generateEvents(
+  fileprivate func generateEvents(
     messages: [Message],
-    model: LMModel,
+    model: LocalModelRef,
     temperature: Float = 0.7,
     maxTokens: Int = 2048,
     tools: [Tool]? = nil,
@@ -457,52 +451,22 @@ final class MLXService: @unchecked Sendable {
     let maxKV: Int? = cfg?.genMaxKVSize
     let prefillStep: Int = cfg?.genPrefillStepSize ?? 512
 
-    let genParams: MLXLMCommon.GenerateParameters = {
-      var p = MLXLMCommon.GenerateParameters(
-        maxTokens: maxTokens,
-        maxKVSize: maxKV,
-        kvBits: kvBits,
-        kvGroupSize: kvGroup,
-        quantizedKVStart: quantStart,
-        temperature: temperature,
-        topP: topP,
-        repetitionPenalty: nil,
-        repetitionContextSize: 20
-      )
-      p.prefillStepSize = prefillStep
-      return p
-    }()
+    let genParams: MLXLMCommon.GenerateParameters = makeGenerateParameters(
+      temperature: temperature,
+      maxTokens: maxTokens,
+      topP: topP,
+      kvBits: kvBits,
+      kvGroup: kvGroup,
+      quantStart: quantStart,
+      maxKV: maxKV,
+      prefillStep: prefillStep
+    )
 
     // Map internal messages to MLX Chat.Message
-    let chat: [MLXLMCommon.Chat.Message] = messages.map { m in
-      let role: MLXLMCommon.Chat.Message.Role = {
-        switch m.role {
-        case .system: return .system
-        case .user: return .user
-        case .assistant: return .assistant
-        }
-      }()
-      return MLXLMCommon.Chat.Message(role: role, content: m.content, images: [], videos: [])
-    }
+    let chat: [MLXLMCommon.Chat.Message] = mapMessagesToMLX(messages)
 
     // Convert OpenAI-style tools to Tokenizers.ToolSpec and honor tool_choice
-    let tokenizerTools: [[String: Any]]? = {
-      guard let tools, !tools.isEmpty else { return nil }
-      if let toolChoice {
-        switch toolChoice {
-        case .none:
-          return nil
-        case .auto:
-          return tools.map { $0.toTokenizerToolSpec() }
-        case .function(let target):
-          let name = target.function.name
-          let filtered = tools.filter { $0.function.name == name }
-          return filtered.isEmpty ? nil : filtered.map { $0.toTokenizerToolSpec() }
-        }
-      } else {
-        return tools.map { $0.toTokenizerToolSpec() }
-      }
-    }()
+    let tokenizerTools: [[String: Any]]? = makeTokenizerTools(tools: tools, toolChoice: toolChoice)
 
     // Build and return a wrapper stream that forwards MLX events and releases the gate on completion
     return AsyncStream<MLXLMCommon.Generation> { continuation in
@@ -569,175 +533,7 @@ final class MLXService: @unchecked Sendable {
   }
 }
 
-// MARK: - Hugging Face lightweight metadata fetcher
-actor HuggingFaceService {
-  static let shared = HuggingFaceService()
-
-  struct RepoFile: Decodable {
-    let rfilename: String
-    let size: Int64?
-  }
-
-  // Minimal model metadata from HF
-  struct ModelMeta: Decodable {
-    let id: String
-    let tags: [String]?
-    let siblings: [RepoFile]?
-  }
-
-  private init() {}
-
-  /// Estimate the total size for files matching provided patterns.
-  /// Uses Hugging Face REST API endpoints that return directory listings with sizes.
-  func estimateTotalSize(repoId: String, patterns: [String]) async -> Int64? {
-    // Use tree endpoint: /api/models/{repo}/tree/main?recursive=1
-    var comps = URLComponents()
-    comps.scheme = "https"
-    comps.host = "huggingface.co"
-    comps.path = "/api/models/\(repoId)/tree/main"
-    comps.queryItems = [URLQueryItem(name: "recursive", value: "1")]
-    guard let url = comps.url else { return nil }
-
-    struct TreeNode: Decodable {
-      let path: String
-      let type: String?
-      let size: Int64?
-      let lfs: LFS?
-      struct LFS: Decodable { let size: Int64? }
-    }
-
-    var req = URLRequest(url: url)
-    req.setValue("application/json", forHTTPHeaderField: "Accept")
-    do {
-      let (data, response) = try await URLSession.shared.data(for: req)
-      guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
-        return nil
-      }
-      let nodes = try JSONDecoder().decode([TreeNode].self, from: data)
-      if nodes.isEmpty { return nil }
-      let matchers = patterns.compactMap { Glob($0) }
-      let total = nodes.reduce(Int64(0)) { acc, node in
-        // Only sum files, not directories
-        if node.type == "directory" { return acc }
-        let filename = (node.path as NSString).lastPathComponent
-        let matched = matchers.contains { $0.matches(filename) }
-        guard matched else { return acc }
-        let sz = node.size ?? node.lfs?.size ?? 0
-        return acc + sz
-      }
-      return total > 0 ? total : nil
-    } catch {
-      return nil
-    }
-  }
-
-  /// Determine if a Hugging Face repo is MLX-compatible using repository metadata.
-  /// Prefers explicit tags (e.g., "mlx", "apple-mlx", "library:mlx").
-  /// Falls back to id hints and required file presence when tags are unavailable.
-  func isMLXCompatible(repoId: String) async -> Bool {
-    let trimmed = repoId.trimmingCharacters(in: .whitespacesAndNewlines)
-    guard !trimmed.isEmpty else { return false }
-    let lower = trimmed.lowercased()
-
-    // Fetch model metadata with tags and top-level file listing
-    guard let meta = await fetchModelMeta(repoId: trimmed) else {
-      // Network failure: conservative allowance for mlx-community repos
-      if lower.hasPrefix("mlx-community/") { return true }
-      return false
-    }
-
-    // Strong signal: tags explicitly indicate MLX
-    if let tags = meta.tags?.map({ $0.lowercased() }) {
-      if tags.contains("mlx") || tags.contains("apple-mlx") || tags.contains("library:mlx") {
-        return true
-      }
-    }
-
-    // Heuristic fallback: repository naming suggests MLX and core files exist
-    if lower.contains("mlx") && hasRequiredFiles(meta: meta) {
-      return true
-    }
-
-    // As a last resort, trust curated org with required files
-    if lower.hasPrefix("mlx-community/") && hasRequiredFiles(meta: meta) {
-      return true
-    }
-
-    return false
-  }
-
-  // MARK: - Private helpers
-  private func fetchModelMeta(repoId: String) async -> ModelMeta? {
-    var comps = URLComponents()
-    comps.scheme = "https"
-    comps.host = "huggingface.co"
-    comps.path = "/api/models/\(repoId)"
-    comps.queryItems = [URLQueryItem(name: "full", value: "1")]
-    guard let url = comps.url else { return nil }
-
-    var req = URLRequest(url: url)
-    req.setValue("application/json", forHTTPHeaderField: "Accept")
-    do {
-      let (data, response) = try await URLSession.shared.data(for: req)
-      guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
-        return nil
-      }
-      return try JSONDecoder().decode(ModelMeta.self, from: data)
-    } catch {
-      return nil
-    }
-  }
-
-  private func hasRequiredFiles(meta: ModelMeta) -> Bool {
-    guard let siblings = meta.siblings else { return false }
-    var hasConfig = false
-    var hasWeights = false
-    var hasTokenizer = false
-    for s in siblings {
-      let f = s.rfilename.lowercased()
-      if f == "config.json" { hasConfig = true }
-      if f.hasSuffix(".safetensors") { hasWeights = true }
-      if f == "tokenizer.json" || f == "tokenizer.model" || f == "spiece.model" || f == "vocab.json"
-        || f == "vocab.txt"
-      {
-        hasTokenizer = true
-      }
-    }
-    return hasConfig && hasWeights && hasTokenizer
-  }
-}
-
-// MARK: - Simple glob matcher
-private struct Glob {
-  private let regex: NSRegularExpression
-
-  init?(_ pattern: String) {
-    // Escape regex metacharacters except * and ? which we will translate
-    var escaped = ""
-    for ch in pattern {
-      switch ch {
-      case "*": escaped += ".*"
-      case "?": escaped += "."
-      case ".", "+", "(", ")", "[", "]", "{", "}", "^", "$", "|", "\\":
-        escaped += "\\\(ch)"
-      default:
-        escaped += String(ch)
-      }
-    }
-    do {
-      regex = try NSRegularExpression(pattern: "^\(escaped)$")
-    } catch {
-      return nil
-    }
-  }
-
-  func matches(_ text: String) -> Bool {
-    let range = NSRange(location: 0, length: (text as NSString).length)
-    return regex.firstMatch(in: text, options: [], range: range) != nil
-  }
-}
-
-// MARK: - ModelService + ToolCapableService Conformance
+// MARK: - ToolCapableService Conformance
 
 extension MLXService: ToolCapableService {
   var id: String { "mlx" }
@@ -913,7 +709,7 @@ extension MLXService: ToolCapableService {
 
   // MARK: - Private helpers
 
-  private func selectDefaultModel() throws -> LMModel {
+  private func selectDefaultModel() throws -> LocalModelRef {
     if let current = currentModelName, let m = Self.findModel(named: current) { return m }
     if let firstName = Self.getAvailableModels().first, let m = Self.findModel(named: firstName) {
       return m
