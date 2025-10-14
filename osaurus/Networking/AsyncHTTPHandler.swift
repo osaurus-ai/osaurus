@@ -100,27 +100,67 @@ class AsyncHTTPHandler {
       case .service(let service, let effectiveModel):
         // Build a generic chat-style prompt for services
         let prompt = PromptBuilder.buildPrompt(from: messages)
-        if request.stream ?? false {
-          try await handleServiceStreamingResponse(
-            service: service,
-            prompt: prompt,
-            effectiveModel: effectiveModel,
-            parameters: GenerationParameters(temperature: temperature, maxTokens: maxTokens),
-            stopSequences: effectiveStops,
-            context: context,
-            writer: writer,
-            extraHeaders: extraHeaders
-          )
-        } else {
-          try await handleServiceNonStreamingResponse(
-            service: service,
-            prompt: prompt,
-            effectiveModel: effectiveModel,
-            parameters: GenerationParameters(temperature: temperature, maxTokens: maxTokens),
-            stopSequences: effectiveStops,
-            context: context,
-            extraHeaders: extraHeaders
-          )
+        // If OpenAI-style tools are present and allowed, use FoundationModels tool-calling bridge
+        #if canImport(FoundationModels)
+          if let tools = request.tools, !tools.isEmpty,
+            request.tool_choice == nil
+              || {
+                if let c = request.tool_choice { if case .none = c { return false } }
+                return true
+              }()
+          {
+            if #available(macOS 26.0, *) {
+              if request.stream ?? false {
+                try await handleFoundationStreamingWithTools(
+                  prompt: prompt,
+                  effectiveModel: effectiveModel,
+                  parameters: GenerationParameters(temperature: temperature, maxTokens: maxTokens),
+                  stopSequences: effectiveStops,
+                  tools: tools,
+                  toolChoice: request.tool_choice,
+                  context: context,
+                  writer: writer,
+                  extraHeaders: extraHeaders
+                )
+              } else {
+                try await handleFoundationNonStreamingWithTools(
+                  prompt: prompt,
+                  effectiveModel: effectiveModel,
+                  parameters: GenerationParameters(temperature: temperature, maxTokens: maxTokens),
+                  stopSequences: effectiveStops,
+                  tools: tools,
+                  toolChoice: request.tool_choice,
+                  context: context,
+                  extraHeaders: extraHeaders
+                )
+              }
+              return
+            }
+          }
+        #endif
+        do {
+          if request.stream ?? false {
+            try await handleServiceStreamingResponse(
+              service: service,
+              prompt: prompt,
+              effectiveModel: effectiveModel,
+              parameters: GenerationParameters(temperature: temperature, maxTokens: maxTokens),
+              stopSequences: effectiveStops,
+              context: context,
+              writer: writer,
+              extraHeaders: extraHeaders
+            )
+          } else {
+            try await handleServiceNonStreamingResponse(
+              service: service,
+              prompt: prompt,
+              effectiveModel: effectiveModel,
+              parameters: GenerationParameters(temperature: temperature, maxTokens: maxTokens),
+              stopSequences: effectiveStops,
+              context: context,
+              extraHeaders: extraHeaders
+            )
+          }
         }
         return
       case .none:
@@ -330,6 +370,452 @@ class AsyncHTTPHandler {
 
     try await sendJSONResponse(response, status: .ok, context: context, extraHeaders: extraHeaders)
   }
+
+  // MARK: - FoundationModels tool-calling bridge (OpenAI-compatible)
+
+  #if canImport(FoundationModels)
+    @available(macOS 26.0, *)
+    private struct ToolInvocationError: Error {
+      let toolName: String
+      let jsonArguments: String
+    }
+
+    @available(macOS 26.0, *)
+    private struct OpenAIToolAdapter: FoundationModels.Tool {
+      typealias Output = String
+      typealias Arguments = GeneratedContent
+
+      let name: String
+      let description: String
+      let parameters: GenerationSchema
+      var includesSchemaInInstructions: Bool { true }
+
+      func call(arguments: GeneratedContent) async throws -> String {
+        // Serialize arguments as JSON and throw to signal a tool call back to the server
+        let json = arguments.jsonString
+        throw ToolInvocationError(toolName: name, jsonArguments: json)
+      }
+    }
+
+    @available(macOS 26.0, *)
+    private func toAppleTool(_ tool: Tool) -> any FoundationModels.Tool {
+      let desc = tool.function.description ?? ""
+      let schema: GenerationSchema = makeGenerationSchema(
+        from: tool.function.parameters, toolName: tool.function.name, description: desc)
+      return OpenAIToolAdapter(name: tool.function.name, description: desc, parameters: schema)
+    }
+
+    // Convert OpenAI JSON Schema (as JSONValue) to FoundationModels GenerationSchema
+    @available(macOS 26.0, *)
+    private func makeGenerationSchema(
+      from parameters: JSONValue?,
+      toolName: String,
+      description: String?
+    ) -> GenerationSchema {
+      guard let parameters else {
+        return GenerationSchema(
+          type: GeneratedContent.self, description: description, properties: [])
+      }
+      if let root = dynamicSchema(from: parameters, name: toolName) {
+        if let schema = try? GenerationSchema(root: root, dependencies: []) {
+          return schema
+        }
+      }
+      return GenerationSchema(type: GeneratedContent.self, description: description, properties: [])
+    }
+
+    // Build a DynamicGenerationSchema recursively from a minimal subset of JSON Schema
+    @available(macOS 26.0, *)
+    private func dynamicSchema(from json: JSONValue, name: String) -> DynamicGenerationSchema? {
+      switch json {
+      case .object(let dict):
+        // enum of strings
+        if case let .array(enumVals)? = dict["enum"],
+          case .string = enumVals.first
+        {
+          let choices: [String] = enumVals.compactMap { v in
+            if case let .string(s) = v { return s } else { return nil }
+          }
+          return DynamicGenerationSchema(
+            name: name, description: jsonStringOrNil(dict["description"]), anyOf: choices)
+        }
+
+        // type can be string or array
+        var typeString: String? = nil
+        if let t = dict["type"] {
+          switch t {
+          case .string(let s): typeString = s
+          case .array(let arr):
+            // Prefer first non-null type
+            typeString =
+              arr.compactMap { v in
+                if case let .string(s) = v, s != "null" { return s } else { return nil }
+              }.first
+          default: break
+          }
+        }
+
+        let desc = jsonStringOrNil(dict["description"])
+
+        switch typeString ?? "object" {
+        case "string":
+          return DynamicGenerationSchema(type: String.self)
+        case "integer":
+          return DynamicGenerationSchema(type: Int.self)
+        case "number":
+          return DynamicGenerationSchema(type: Double.self)
+        case "boolean":
+          return DynamicGenerationSchema(type: Bool.self)
+        case "array":
+          if let items = dict["items"],
+            let itemSchema = dynamicSchema(from: items, name: name + "Item")
+          {
+            let minItems = jsonIntOrNil(dict["minItems"])
+            let maxItems = jsonIntOrNil(dict["maxItems"])
+            return DynamicGenerationSchema(
+              arrayOf: itemSchema, minimumElements: minItems, maximumElements: maxItems)
+          }
+          // Fallback to array of strings
+          return DynamicGenerationSchema(
+            arrayOf: DynamicGenerationSchema(type: String.self), minimumElements: nil,
+            maximumElements: nil)
+        case "object": fallthrough
+        default:
+          // Build object properties
+          var required: Set<String> = []
+          if case .array(let reqArr)? = dict["required"] {
+            required = Set(
+              reqArr.compactMap { v in if case let .string(s) = v { return s } else { return nil } }
+            )
+          }
+          var properties: [DynamicGenerationSchema.Property] = []
+          if case .object(let propsDict)? = dict["properties"] {
+            for (propName, propSchemaJSON) in propsDict {
+              let propSchema =
+                dynamicSchema(from: propSchemaJSON, name: name + "." + propName)
+                ?? DynamicGenerationSchema(type: String.self)
+              let isOptional = !required.contains(propName)
+              let prop = DynamicGenerationSchema.Property(
+                name: propName,
+                description: nil,
+                schema: propSchema,
+                isOptional: isOptional
+              )
+              properties.append(prop)
+            }
+          }
+          return DynamicGenerationSchema(name: name, description: desc, properties: properties)
+        }
+
+      case .string:
+        return DynamicGenerationSchema(type: String.self)
+      case .number:
+        return DynamicGenerationSchema(type: Double.self)
+      case .bool:
+        return DynamicGenerationSchema(type: Bool.self)
+      case .array(let arr):
+        // Attempt array of first element type
+        if let first = arr.first, let item = dynamicSchema(from: first, name: name + "Item") {
+          return DynamicGenerationSchema(arrayOf: item, minimumElements: nil, maximumElements: nil)
+        }
+        return DynamicGenerationSchema(
+          arrayOf: DynamicGenerationSchema(type: String.self), minimumElements: nil,
+          maximumElements: nil)
+      case .null:
+        // Default to string when null only
+        return DynamicGenerationSchema(type: String.self)
+      }
+    }
+
+    @available(macOS 26.0, *)
+    private func buildOpenAIToolCall(toolName: String, jsonArguments: String) -> ToolCall {
+      return ToolCall(
+        id: "call_\(UUID().uuidString.prefix(8))",
+        type: "function",
+        function: ToolCallFunction(name: toolName, arguments: jsonArguments)
+      )
+    }
+
+    // Helpers to extract primitive values from JSONValue
+    private func jsonStringOrNil(_ value: JSONValue?) -> String? {
+      guard let value else { return nil }
+      if case let .string(s) = value { return s }
+      return nil
+    }
+    private func jsonIntOrNil(_ value: JSONValue?) -> Int? {
+      guard let value else { return nil }
+      switch value {
+      case let .number(d): return Int(d)
+      case let .string(s): return Int(s)
+      default: return nil
+      }
+    }
+
+    @available(macOS 26.0, *)
+    private func shouldEnableTool(_ tool: Tool, choice: ToolChoiceOption?) -> Bool {
+      guard let choice else { return true }
+      switch choice {
+      case .auto: return true
+      case .none: return false
+      case .function(let n):
+        return n.function.name == tool.function.name
+      }
+    }
+
+    @available(macOS 26.0, *)
+    private func handleFoundationNonStreamingWithTools(
+      prompt: String,
+      effectiveModel: String,
+      parameters: GenerationParameters,
+      stopSequences: [String],
+      tools: [Tool],
+      toolChoice: ToolChoiceOption?,
+      context: ChannelHandlerContext,
+      extraHeaders: [(String, String)]? = nil
+    ) async throws {
+      // Build Apple tools from OpenAI definitions honoring tool_choice
+      let appleTools: [any FoundationModels.Tool] = tools.filter {
+        shouldEnableTool($0, choice: toolChoice)
+      }
+      .map { toAppleTool($0) }
+
+      let options = GenerationOptions(
+        sampling: nil,
+        temperature: Double(parameters.temperature),
+        maximumResponseTokens: parameters.maxTokens
+      )
+
+      do {
+        let session = LanguageModelSession(model: .default, tools: appleTools, instructions: nil)
+        let response = try await session.respond(to: prompt, options: options)
+        var reply = response.content
+        if !stopSequences.isEmpty {
+          for s in stopSequences {
+            if let r = reply.range(of: s) {
+              reply = String(reply[..<r.lowerBound])
+              break
+            }
+          }
+        }
+        let tokenCount = max(1, reply.count / 4)
+        let res = ChatCompletionResponse(
+          id: "chatcmpl-\(UUID().uuidString.prefix(8))",
+          created: Int(Date().timeIntervalSince1970),
+          model: effectiveModel,
+          choices: [
+            ChatChoice(
+              index: 0,
+              message: ChatMessage(
+                role: "assistant", content: reply, tool_calls: nil, tool_call_id: nil),
+              finish_reason: "stop")
+          ],
+          usage: Usage(
+            prompt_tokens: prompt.count / 4,
+            completion_tokens: tokenCount,
+            total_tokens: prompt.count / 4 + tokenCount
+          ),
+          system_fingerprint: nil
+        )
+        try await sendJSONResponse(res, status: .ok, context: context, extraHeaders: extraHeaders)
+      } catch let error as LanguageModelSession.ToolCallError {
+        // Map tool invocation to OpenAI-compatible tool_calls and return immediately
+        if let inv = error.underlyingError as? ToolInvocationError {
+          let tc = buildOpenAIToolCall(toolName: inv.toolName, jsonArguments: inv.jsonArguments)
+          let res = ChatCompletionResponse(
+            id: "chatcmpl-\(UUID().uuidString.prefix(8))",
+            created: Int(Date().timeIntervalSince1970),
+            model: effectiveModel,
+            choices: [
+              ChatChoice(
+                index: 0,
+                message: ChatMessage(
+                  role: "assistant", content: nil, tool_calls: [tc], tool_call_id: nil),
+                finish_reason: "tool_calls")
+            ],
+            usage: Usage(
+              prompt_tokens: prompt.count / 4,
+              completion_tokens: 0,
+              total_tokens: prompt.count / 4
+            ),
+            system_fingerprint: nil
+          )
+          try await sendJSONResponse(res, status: .ok, context: context, extraHeaders: extraHeaders)
+          return
+        }
+        throw error
+      }
+    }
+
+    @available(macOS 26.0, *)
+    private func handleFoundationStreamingWithTools(
+      prompt: String,
+      effectiveModel: String,
+      parameters: GenerationParameters,
+      stopSequences: [String],
+      tools: [Tool],
+      toolChoice: ToolChoiceOption?,
+      context: ChannelHandlerContext,
+      writer: ResponseWriter,
+      extraHeaders: [(String, String)]? = nil
+    ) async throws {
+      let loop = context.eventLoop
+      let ctxBox = UncheckedSendableBox(value: context)
+      let writerBox = UncheckedSendableBox(value: writer)
+
+      // Only SSE writer supports OpenAI-style tool_call deltas
+      let isSSE = writer is SSEResponseWriter
+
+      executeOnLoop(loop) {
+        writerBox.value.writeHeaders(ctxBox.value, extraHeaders: extraHeaders)
+      }
+
+      let responseId = "chatcmpl-\(UUID().uuidString.prefix(8))"
+      let created = Int(Date().timeIntervalSince1970)
+
+      // Send role prelude
+      executeOnLoop(loop) {
+        writerBox.value.writeRole(
+          "assistant", model: effectiveModel, responseId: responseId, created: created,
+          context: ctxBox.value)
+      }
+
+      let appleTools: [any FoundationModels.Tool] = tools.filter {
+        shouldEnableTool($0, choice: toolChoice)
+      }
+      .map { toAppleTool($0) }
+
+      let options = GenerationOptions(
+        sampling: nil,
+        temperature: Double(parameters.temperature),
+        maximumResponseTokens: parameters.maxTokens
+      )
+
+      let session = LanguageModelSession(model: .default, tools: appleTools, instructions: nil)
+      let stream = session.streamResponse(to: prompt, options: options)
+
+      var previous = ""
+
+      do {
+        var iterator = stream.makeAsyncIterator()
+        while let snapshot = try await iterator.next() {
+          var current = snapshot.content
+          if !stopSequences.isEmpty,
+            let r = stopSequences.compactMap({ current.range(of: $0)?.lowerBound }).first
+          {
+            current = String(current[..<r])
+          }
+          let delta: String
+          if current.hasPrefix(previous) {
+            delta = String(current.dropFirst(previous.count))
+          } else {
+            delta = current
+          }
+          if !delta.isEmpty {
+            executeOnLoop(loop) {
+              writerBox.value.writeContent(
+                delta, model: effectiveModel, responseId: responseId, created: created,
+                context: ctxBox.value)
+            }
+          }
+          previous = current
+        }
+
+        // Finish
+        executeOnLoop(loop) {
+          writerBox.value.writeFinish(
+            effectiveModel, responseId: responseId, created: created, context: ctxBox.value)
+          writerBox.value.writeEnd(ctxBox.value)
+        }
+      } catch let error as LanguageModelSession.ToolCallError {
+        // Flush any streamed content and emit tool_calls if SSE
+        if isSSE, let inv = error.underlyingError as? ToolInvocationError {
+          let callId = "call_\(UUID().uuidString.prefix(8))"
+          let idTypeChunk = ChatCompletionChunk(
+            id: responseId,
+            created: created,
+            model: effectiveModel,
+            choices: [
+              StreamChoice(
+                index: 0,
+                delta: DeltaContent(tool_calls: [
+                  DeltaToolCall(index: 0, id: callId, type: "function", function: nil)
+                ]), finish_reason: nil)
+            ],
+            system_fingerprint: nil
+          )
+          let nameChunk = ChatCompletionChunk(
+            id: responseId,
+            created: created,
+            model: effectiveModel,
+            choices: [
+              StreamChoice(
+                index: 0,
+                delta: DeltaContent(tool_calls: [
+                  DeltaToolCall(
+                    index: 0, id: callId, type: nil,
+                    function: DeltaToolCallFunction(name: inv.toolName, arguments: nil))
+                ]), finish_reason: nil)
+            ],
+            system_fingerprint: nil
+          )
+          let argsChunk = ChatCompletionChunk(
+            id: responseId,
+            created: created,
+            model: effectiveModel,
+            choices: [
+              StreamChoice(
+                index: 0,
+                delta: DeltaContent(tool_calls: [
+                  DeltaToolCall(
+                    index: 0, id: callId, type: nil,
+                    function: DeltaToolCallFunction(name: nil, arguments: inv.jsonArguments))
+                ]), finish_reason: nil)
+            ],
+            system_fingerprint: nil
+          )
+
+          executeOnLoop(loop) {
+            let context = ctxBox.value
+            guard context.channel.isActive else { return }
+            let encoder = IkigaJSONEncoder()
+            var buffer = context.channel.allocator.buffer(capacity: 1024)
+            func writeData<T: Encodable>(_ v: T) {
+              buffer.writeString("data: ")
+              do { try encoder.encodeAndWrite(v, into: &buffer) } catch {}
+              buffer.writeString("\n\n")
+            }
+            writeData(idTypeChunk)
+            writeData(nameChunk)
+            writeData(argsChunk)
+            let finishChunk = ChatCompletionChunk(
+              id: responseId,
+              created: created,
+              model: effectiveModel,
+              choices: [StreamChoice(index: 0, delta: DeltaContent(), finish_reason: "tool_calls")],
+              system_fingerprint: nil
+            )
+            writeData(finishChunk)
+            buffer.writeString("data: [DONE]\n\n")
+            context.write(NIOAny(HTTPServerResponsePart.body(.byteBuffer(buffer))), promise: nil)
+            context.flush()
+            context.writeAndFlush(NIOAny(HTTPServerResponsePart.end(nil as HTTPHeaders?)))
+              .whenComplete { _ in
+                let context = ctxBox.value
+                context.close(promise: nil)
+              }
+          }
+          return
+        } else {
+          // Fallback: end normally
+          executeOnLoop(loop) {
+            writerBox.value.writeFinish(
+              effectiveModel, responseId: responseId, created: created, context: ctxBox.value)
+            writerBox.value.writeEnd(ctxBox.value)
+          }
+        }
+      }
+    }
+  #endif
 
   private func handleStreamingResponse(
     messages: [Message],
