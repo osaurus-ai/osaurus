@@ -92,15 +92,6 @@ struct ModelServiceRouter {
       }
     }
 
-    // If no local models installed, try any available service as a fallback
-    if installedModels.isEmpty {
-      for svc in services {
-        if svc.isAvailable() {
-          return .service(service: svc, effectiveModel: "foundation")
-        }
-      }
-    }
-
     return .none
   }
 }
