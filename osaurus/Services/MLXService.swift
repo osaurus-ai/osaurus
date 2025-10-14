@@ -736,3 +736,190 @@ private struct Glob {
     return regex.firstMatch(in: text, options: [], range: range) != nil
   }
 }
+
+// MARK: - ModelService + ToolCapableService Conformance
+
+extension MLXService: ToolCapableService {
+  var id: String { "mlx" }
+
+  func isAvailable() -> Bool {
+    return !Self.getAvailableModels().isEmpty
+  }
+
+  func handles(requestedModel: String?) -> Bool {
+    let trimmed = (requestedModel ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmed.isEmpty else { return false }
+    return Self.findModel(named: trimmed) != nil
+  }
+
+  func streamDeltas(
+    prompt: String,
+    parameters: GenerationParameters
+  ) async throws -> AsyncStream<String> {
+    let model = try selectDefaultModel()
+    let messages = [Message(role: .user, content: prompt)]
+    let eventStream = try await generateEvents(
+      messages: messages,
+      model: model,
+      temperature: parameters.temperature,
+      maxTokens: parameters.maxTokens,
+      tools: nil,
+      toolChoice: nil,
+      sessionId: nil
+    )
+
+    return AsyncStream<String> { continuation in
+      Task {
+        for await event in eventStream {
+          if let chunk = event.chunk, !chunk.isEmpty {
+            continuation.yield(chunk)
+          }
+        }
+        continuation.finish()
+      }
+    }
+  }
+
+  func generateOneShot(
+    prompt: String,
+    parameters: GenerationParameters
+  ) async throws -> String {
+    let model = try selectDefaultModel()
+    let messages = [Message(role: .user, content: prompt)]
+    let eventStream = try await generateEvents(
+      messages: messages,
+      model: model,
+      temperature: parameters.temperature,
+      maxTokens: parameters.maxTokens,
+      tools: nil,
+      toolChoice: nil,
+      sessionId: nil
+    )
+
+    var segments: [String] = []
+    segments.reserveCapacity(512)
+    for await event in eventStream {
+      if let chunk = event.chunk, !chunk.isEmpty { segments.append(chunk) }
+    }
+    return segments.joined()
+  }
+
+  // MARK: - Tool-capable bridge
+
+  func respondWithTools(
+    prompt: String,
+    parameters: GenerationParameters,
+    stopSequences: [String],
+    tools: [Tool],
+    toolChoice: ToolChoiceOption?
+  ) async throws -> String {
+    let model = try selectDefaultModel()
+    let messages = [Message(role: .user, content: prompt)]
+    let eventStream = try await generateEvents(
+      messages: messages,
+      model: model,
+      temperature: parameters.temperature,
+      maxTokens: parameters.maxTokens,
+      tools: tools,
+      toolChoice: toolChoice,
+      sessionId: nil
+    )
+
+    var accumulated = ""
+    for await event in eventStream {
+      if let toolCall = event.toolCall {
+        // Serialize arguments as JSON string
+        let argsData = try? JSONSerialization.data(
+          withJSONObject: toolCall.function.arguments.mapValues { $0.anyValue })
+        let argsString = argsData.flatMap { String(data: $0, encoding: .utf8) } ?? "{}"
+        throw ServiceToolInvocation(toolName: toolCall.function.name, jsonArguments: argsString)
+      }
+      if let token = event.chunk, !token.isEmpty {
+        accumulated += token
+        if !stopSequences.isEmpty,
+          let stopIndex = stopSequences.compactMap({ s in accumulated.range(of: s)?.lowerBound })
+            .first
+        {
+          accumulated = String(accumulated[..<stopIndex])
+          break
+        }
+      }
+    }
+    return accumulated
+  }
+
+  func streamWithTools(
+    prompt: String,
+    parameters: GenerationParameters,
+    stopSequences: [String],
+    tools: [Tool],
+    toolChoice: ToolChoiceOption?
+  ) async throws -> AsyncThrowingStream<String, Error> {
+    let model = try selectDefaultModel()
+    let messages = [Message(role: .user, content: prompt)]
+    let eventStream = try await generateEvents(
+      messages: messages,
+      model: model,
+      temperature: parameters.temperature,
+      maxTokens: parameters.maxTokens,
+      tools: tools,
+      toolChoice: toolChoice,
+      sessionId: nil
+    )
+
+    return AsyncThrowingStream<String, Error> { continuation in
+      Task {
+        var accumulated = ""
+        var alreadyEmitted = 0
+        let shouldCheckStop = !stopSequences.isEmpty
+        do {
+          for await event in eventStream {
+            if let toolCall = event.toolCall {
+              let argsData = try? JSONSerialization.data(
+                withJSONObject: toolCall.function.arguments.mapValues { $0.anyValue })
+              let argsString = argsData.flatMap { String(data: $0, encoding: .utf8) } ?? "{}"
+              continuation.finish(
+                throwing: ServiceToolInvocation(
+                  toolName: toolCall.function.name, jsonArguments: argsString))
+              return
+            }
+            guard let token = event.chunk, !token.isEmpty else { continue }
+            accumulated += token
+
+            // Emit only the new slice
+            let newSlice = String(accumulated.dropFirst(alreadyEmitted))
+            if shouldCheckStop {
+              if let stopIndex = stopSequences.compactMap({ s in
+                accumulated.range(of: s)?.lowerBound
+              }).first {
+                let finalRange =
+                  accumulated.index(accumulated.startIndex, offsetBy: alreadyEmitted)..<stopIndex
+                let finalContent = String(accumulated[finalRange])
+                if !finalContent.isEmpty { continuation.yield(finalContent) }
+                continuation.finish()
+                return
+              }
+            }
+            if !newSlice.isEmpty {
+              continuation.yield(newSlice)
+              alreadyEmitted += newSlice.count
+            }
+          }
+          continuation.finish()
+        }
+      }
+    }
+  }
+
+  // MARK: - Private helpers
+
+  private func selectDefaultModel() throws -> LMModel {
+    if let current = currentModelName, let m = Self.findModel(named: current) { return m }
+    if let firstName = Self.getAvailableModels().first, let m = Self.findModel(named: firstName) {
+      return m
+    }
+    throw NSError(
+      domain: "MLXService", code: 2,
+      userInfo: [NSLocalizedDescriptionKey: "No local MLX models available"])
+  }
+}
