@@ -8,7 +8,6 @@
 import Dispatch
 import Foundation
 import IkigaJSON
-import MLXLMCommon
 import NIOCore
 import NIOHTTP1
 
@@ -72,20 +71,13 @@ class AsyncHTTPHandler {
     ServerController.signalGenerationStart()
     defer { ServerController.signalGenerationEnd() }
     do {
-      // Find the model using nonisolated static accessor
-      guard let model = MLXService.findModel(named: request.model) else {
-        let error = OpenAIError(
-          error: OpenAIError.ErrorDetail(
-            message: "Model not found: \(request.model)",
-            type: "invalid_request_error",
-            param: "model",
-            code: nil
-          )
-        )
-        try await sendJSONResponse(
-          error, status: .notFound, context: context, extraHeaders: extraHeaders)
-        return
-      }
+      // Prepare model services (prefer Foundation for default, MLX for explicit local models)
+      let services: [ModelService] = [FoundationModelService(), MLXService.shared]
+      let route = ModelServiceRouter.resolve(
+        requestedModel: request.model,
+        installedModels: MLXService.getAvailableModels(),
+        services: services
+      )
 
       // Convert messages
       let messages = request.toInternalMessages()
@@ -97,36 +89,51 @@ class AsyncHTTPHandler {
       // Honor only request-provided stop sequences; otherwise rely on library EOS handling
       let effectiveStops: [String] = request.stop ?? []
 
-      // Check if streaming is requested
-      if request.stream ?? false {
-        try await handleStreamingResponse(
-          messages: messages,
-          model: model,
-          temperature: temperature,
-          maxTokens: maxTokens,
-          requestModel: request.model,
-          tools: request.tools,
-          toolChoice: request.tool_choice,
-          sessionId: request.session_id,
-          stopSequences: effectiveStops,
-          context: context,
-          writer: writer,
-          extraHeaders: extraHeaders
+      switch route {
+      case .service(let service, let effectiveModel):
+        // Build a generic chat-style prompt for services
+        let prompt = PromptBuilder.buildPrompt(from: messages)
+        do {
+          if request.stream ?? false {
+            try await handleServiceStreamingResponse(
+              service: service,
+              prompt: prompt,
+              effectiveModel: effectiveModel,
+              parameters: GenerationParameters(temperature: temperature, maxTokens: maxTokens),
+              stopSequences: effectiveStops,
+              tools: request.tools,
+              toolChoice: request.tool_choice,
+              context: context,
+              writer: writer,
+              extraHeaders: extraHeaders
+            )
+          } else {
+            try await handleServiceNonStreamingResponse(
+              service: service,
+              prompt: prompt,
+              effectiveModel: effectiveModel,
+              parameters: GenerationParameters(temperature: temperature, maxTokens: maxTokens),
+              stopSequences: effectiveStops,
+              tools: request.tools,
+              toolChoice: request.tool_choice,
+              context: context,
+              extraHeaders: extraHeaders
+            )
+          }
+        }
+        return
+      case .none:
+        let error = OpenAIError(
+          error: OpenAIError.ErrorDetail(
+            message: "No compatible model service available for this request.",
+            type: "invalid_request_error",
+            param: "model",
+            code: nil
+          )
         )
-      } else {
-        try await handleNonStreamingResponse(
-          messages: messages,
-          model: model,
-          temperature: temperature,
-          maxTokens: maxTokens,
-          requestModel: request.model,
-          tools: request.tools,
-          toolChoice: request.tool_choice,
-          sessionId: request.session_id,
-          stopSequences: effectiveStops,
-          context: context,
-          extraHeaders: extraHeaders
-        )
+        try await sendJSONResponse(
+          error, status: .notFound, context: context, extraHeaders: extraHeaders)
+        return
       }
     } catch {
       let errorResponse = OpenAIError(
@@ -142,16 +149,16 @@ class AsyncHTTPHandler {
     }
   }
 
-  private func handleStreamingResponse(
-    messages: [Message],
-    model: LMModel,
-    temperature: Float,
-    maxTokens: Int,
-    requestModel: String,
+  // MARK: - Generic ModelService handlers
+
+  private func handleServiceStreamingResponse(
+    service: ModelService,
+    prompt: String,
+    effectiveModel: String,
+    parameters: GenerationParameters,
+    stopSequences: [String],
     tools: [Tool]?,
     toolChoice: ToolChoiceOption?,
-    sessionId: String?,
-    stopSequences: [String],
     context: ChannelHandlerContext,
     writer: ResponseWriter,
     extraHeaders: [(String, String)]? = nil
@@ -160,236 +167,59 @@ class AsyncHTTPHandler {
     let ctxBox = UncheckedSendableBox(value: context)
     let writerBox = UncheckedSendableBox(value: writer)
 
-    // Write headers using the response writer
+    // Write headers
     executeOnLoop(loop) {
       writerBox.value.writeHeaders(ctxBox.value, extraHeaders: extraHeaders)
     }
 
-    // Generate response ID
     let responseId = "chatcmpl-\(UUID().uuidString.prefix(8))"
     let created = Int(Date().timeIntervalSince1970)
 
-    // Generate MLX event stream (chunks + tool calls)
-    let eventStream = try await MLXService.shared.generateEvents(
-      messages: messages,
-      model: model,
-      temperature: temperature,
-      maxTokens: maxTokens,
-      tools: tools,
-      toolChoice: toolChoice,
-      sessionId: sessionId
-    )
+    // Send role prelude (SSE will emit; NDJSON writer ignores)
+    executeOnLoop(loop) {
+      writerBox.value.writeRole(
+        "assistant", model: effectiveModel, responseId: responseId, created: created,
+        context: ctxBox.value)
+    }
 
-    var fullResponse = ""
-    var tokenCount = 0
-
-    // If tools are provided (and tool_choice is not "none"), we need to check for tool calls
-    // However, we'll stream content immediately for better performance
-    let shouldCheckForTools: Bool = {
-      guard tools?.isEmpty == false else { return false }
-      if let toolChoice, case .none = toolChoice { return false }
-      return true
-    }()
-
-    // For final content summary (non-tool path), collect chunks
-    var responseBuffer: [String] = []
-    responseBuffer.reserveCapacity(1024)
-
-    if shouldCheckForTools {
-      // Send initial role chunk
-      executeOnLoop(loop) {
-        writerBox.value.writeRole(
-          "assistant", model: requestModel, responseId: responseId, created: created,
-          context: ctxBox.value)
-      }
-
-      // Probe thresholds (env tunable)
-      let probeTokenThreshold: Int = {
-        let env = ProcessInfo.processInfo.environment
-        return Int(env["OSU_TOOL_PROBE_TOKENS"] ?? "") ?? 12
+    // If the service is tool-capable and tools are provided (and not disabled),
+    // delegate to the tool-aware streaming path to align with MLX tool handling.
+    if let toolService = service as? ToolCapableService {
+      let shouldUseTools: Bool = {
+        guard let tools = tools, !tools.isEmpty else { return false }
+        if let c = toolChoice { if case .none = c { return false } }
+        return true
       }()
-      let probeByteThreshold: Int = {
-        let env = ProcessInfo.processInfo.environment
-        return Int(env["OSU_TOOL_PROBE_BYTES"] ?? "") ?? 2048
-      }()
-
-      // Reuse streaming batch tunables
-      let batchCharThreshold: Int = {
-        let env = ProcessInfo.processInfo.environment
-        return Int(env["OSU_STREAM_BATCH_CHARS"] ?? "") ?? 256
-      }()
-      let batchIntervalMs: Int = {
-        let env = ProcessInfo.processInfo.environment
-        return Int(env["OSU_STREAM_BATCH_MS"] ?? "") ?? 16
-      }()
-      let flushIntervalNs: UInt64 = UInt64(batchIntervalMs) * 1_000_000
-
-      var accumulatedBytes: Int = 0
-      var didSwitchToStreaming: Bool = false
-
-      // Stop sequence rolling window (used after switching to streaming)
-      let shouldCheckStop = !(stopSequences.isEmpty)
-      let maxStopLen: Int = shouldCheckStop ? (stopSequences.map { $0.count }.max() ?? 0) : 0
-      var stopTail = ""
-
-      // Batching state (event-loop confined) for post-probe streaming
-      var firstTokenSent = false
-      let initialCapacity = max(1024, batchCharThreshold)
-      var pendingBuffer = ByteBufferAllocator().buffer(capacity: initialCapacity)
-      var pendingCharCount: Int = 0
-      var lastFlushNs: UInt64 = DispatchTime.now().uptimeNanoseconds
-      var scheduledFlush: Bool = false
-
-      @inline(__always)
-      func scheduleFlushOnLoopIfNeeded() {
-        if scheduledFlush { return }
-        scheduledFlush = true
-        let deadline = NIODeadline.now() + .milliseconds(Int64(batchIntervalMs))
-        loop.scheduleTask(deadline: deadline) {
-          scheduledFlush = false
-          if pendingBuffer.readableBytes > 0 {
-            let content = pendingBuffer.readString(length: pendingBuffer.readableBytes) ?? ""
-            writerBox.value.writeContent(
-              content, model: requestModel, responseId: responseId, created: created,
-              context: ctxBox.value)
-            pendingCharCount = 0
-            lastFlushNs = DispatchTime.now().uptimeNanoseconds
-          }
-        }
-      }
-
-      @inline(__always)
-      func processTokenOnLoop(_ token: String) {
-        if !firstTokenSent {
-          writerBox.value.writeContent(
-            token, model: requestModel, responseId: responseId, created: created,
-            context: ctxBox.value)
-          firstTokenSent = true
-          lastFlushNs = DispatchTime.now().uptimeNanoseconds
-          return
-        }
-        pendingBuffer.writeString(token)
-        pendingCharCount &+= token.count
-        let nowNs = DispatchTime.now().uptimeNanoseconds
-        if pendingCharCount >= batchCharThreshold || nowNs - lastFlushNs >= flushIntervalNs {
-          if pendingBuffer.readableBytes > 0 {
-            let content = pendingBuffer.readString(length: pendingBuffer.readableBytes) ?? ""
-            writerBox.value.writeContent(
-              content, model: requestModel, responseId: responseId, created: created,
-              context: ctxBox.value)
-            pendingCharCount = 0
-            lastFlushNs = nowNs
-          }
-        } else {
-          scheduleFlushOnLoopIfNeeded()
-        }
-      }
-
-      // When tools are enabled, start with a brief probe. If a tool call happens, we discard the
-      // buffered content. If no tool call happens after the probe, switch to micro-batched streaming.
-      for await event in eventStream {
-        if let chunk = event.chunk {
-          if !didSwitchToStreaming {
-            responseBuffer.append(chunk)
-            accumulatedBytes &+= chunk.utf8.count
-            tokenCount &+= 1
-
-            // Check if we should switch to streaming due to probe threshold
-            if tokenCount >= probeTokenThreshold || accumulatedBytes >= probeByteThreshold {
-              // Join buffered content and trim stops locally if present
-              var buffered = responseBuffer.joined()
-              if shouldCheckStop && !stopSequences.isEmpty {
-                for s in stopSequences {
-                  if let range = buffered.range(of: s) {
-                    buffered = String(buffered[..<range.lowerBound])
-                    break
-                  }
-                }
-              }
-              if !buffered.isEmpty {
-                // Prime stopTail for subsequent detection
-                if shouldCheckStop {
-                  if buffered.count > maxStopLen {
-                    stopTail = String(buffered.suffix(maxStopLen))
-                  } else {
-                    stopTail = buffered
-                  }
-                }
-                let contentToSend = buffered
-                executeOnLoop(loop) {
-                  writerBox.value.writeContent(
-                    contentToSend, model: requestModel, responseId: responseId, created: created,
-                    context: ctxBox.value)
-                }
-                firstTokenSent = true
-              }
-              // Clear probe buffer and switch to streaming
-              responseBuffer.removeAll(keepingCapacity: true)
-              accumulatedBytes = 0
-              didSwitchToStreaming = true
-              continue
-            }
-          } else {
-            // Already in streaming mode: apply stop detection and micro-batching
-            if shouldCheckStop {
-              stopTail += chunk
-              if stopTail.count > maxStopLen {
-                let overflow = stopTail.count - maxStopLen
-                stopTail.removeFirst(overflow)
-              }
-              if stopSequences.first(where: { stopTail.contains($0) }) != nil {
-                // Flush any pending content and break
-                executeOnLoop(loop) {
-                  if pendingBuffer.readableBytes > 0 {
-                    let content =
-                      pendingBuffer.readString(length: pendingBuffer.readableBytes) ?? ""
-                    writerBox.value.writeContent(
-                      content, model: requestModel, responseId: responseId, created: created,
-                      context: ctxBox.value)
-                    pendingCharCount = 0
-                    lastFlushNs = DispatchTime.now().uptimeNanoseconds
-                  }
-                }
-                break
-              }
-            }
+      if shouldUseTools {
+        // Only SSE writer supports OpenAI-style tool_call deltas
+        let isSSE = writer is SSEResponseWriter
+        do {
+          let stream = try await toolService.streamWithTools(
+            prompt: prompt,
+            parameters: parameters,
+            stopSequences: stopSequences,
+            tools: tools!,
+            toolChoice: toolChoice
+          )
+          for try await delta in stream {
             executeOnLoop(loop) {
-              processTokenOnLoop(chunk)
+              writerBox.value.writeContent(
+                delta, model: effectiveModel, responseId: responseId, created: created,
+                context: ctxBox.value)
             }
           }
-        }
-
-        if let toolCall = event.toolCall {
-          // If we already switched to streaming, flush pending buffer before emitting tool call deltas
-          if didSwitchToStreaming {
-            executeOnLoop(loop) {
-              if pendingBuffer.readableBytes > 0 {
-                let content = pendingBuffer.readString(length: pendingBuffer.readableBytes) ?? ""
-                writerBox.value.writeContent(
-                  content, model: requestModel, responseId: responseId, created: created,
-                  context: ctxBox.value)
-                pendingCharCount = 0
-                lastFlushNs = DispatchTime.now().uptimeNanoseconds
-              }
-            }
+          executeOnLoop(loop) {
+            writerBox.value.writeFinish(
+              effectiveModel, responseId: responseId, created: created, context: ctxBox.value)
+            writerBox.value.writeEnd(ctxBox.value)
           }
-
-          // For SSE writer, we need to handle tool calls specially
-          // NDJSON writer doesn't support tool calls in the same way
-          if writer is SSEResponseWriter {
-            // Emit OpenAI-style tool_call deltas based on MLX ToolCall
-            let mlxName = toolCall.function.name
-            let argsObject = toolCall.function.arguments
-            let argsData = try? JSONSerialization.data(
-              withJSONObject: argsObject.mapValues { $0.anyValue })
-            let argsString = argsData.flatMap { String(data: $0, encoding: .utf8) } ?? "{}"
+        } catch let inv as ServiceToolInvocation {
+          if isSSE {
             let callId = "call_\(UUID().uuidString.prefix(8))"
-
-            // Batch tool_call deltas
             let idTypeChunk = ChatCompletionChunk(
               id: responseId,
               created: created,
-              model: requestModel,
+              model: effectiveModel,
               choices: [
                 StreamChoice(
                   index: 0,
@@ -402,14 +232,14 @@ class AsyncHTTPHandler {
             let nameChunk = ChatCompletionChunk(
               id: responseId,
               created: created,
-              model: requestModel,
+              model: effectiveModel,
               choices: [
                 StreamChoice(
                   index: 0,
                   delta: DeltaContent(tool_calls: [
                     DeltaToolCall(
                       index: 0, id: callId, type: nil,
-                      function: DeltaToolCallFunction(name: mlxName, arguments: nil))
+                      function: DeltaToolCallFunction(name: inv.toolName, arguments: nil))
                   ]), finish_reason: nil)
               ],
               system_fingerprint: nil
@@ -417,14 +247,14 @@ class AsyncHTTPHandler {
             let argsChunk = ChatCompletionChunk(
               id: responseId,
               created: created,
-              model: requestModel,
+              model: effectiveModel,
               choices: [
                 StreamChoice(
                   index: 0,
                   delta: DeltaContent(tool_calls: [
                     DeltaToolCall(
                       index: 0, id: callId, type: nil,
-                      function: DeltaToolCallFunction(name: nil, arguments: argsString))
+                      function: DeltaToolCallFunction(name: nil, arguments: inv.jsonArguments))
                   ]), finish_reason: nil)
               ],
               system_fingerprint: nil
@@ -442,11 +272,10 @@ class AsyncHTTPHandler {
               writeData(idTypeChunk)
               writeData(nameChunk)
               writeData(argsChunk)
-              // Write finish with tool_calls reason
               let finishChunk = ChatCompletionChunk(
                 id: responseId,
                 created: created,
-                model: requestModel,
+                model: effectiveModel,
                 choices: [
                   StreamChoice(index: 0, delta: DeltaContent(), finish_reason: "tool_calls")
                 ],
@@ -462,301 +291,185 @@ class AsyncHTTPHandler {
                   context.close(promise: nil)
                 }
             }
-          }
-          return
-        }
-      }
-
-      if didSwitchToStreaming {
-        // Flush any remaining pending buffer after event stream completion
-        executeOnLoop(loop) {
-          if pendingBuffer.readableBytes > 0 {
-            let content = pendingBuffer.readString(length: pendingBuffer.readableBytes) ?? ""
-            writerBox.value.writeContent(
-              content, model: requestModel, responseId: responseId, created: created,
-              context: ctxBox.value)
-          }
-        }
-      } else {
-        // Join buffered content and trim stops locally; emit once if no tool call occurred
-        fullResponse = responseBuffer.joined()
-        if !stopSequences.isEmpty {
-          for s in stopSequences {
-            if let range = fullResponse.range(of: s) {
-              fullResponse = String(fullResponse[..<range.lowerBound])
-              break
-            }
-          }
-        }
-        if !fullResponse.isEmpty {
-          executeOnLoop(loop) {
-            writerBox.value.writeContent(
-              fullResponse, model: requestModel, responseId: responseId, created: created,
-              context: ctxBox.value)
-          }
-        }
-      }
-    } else {
-      // Stream tokens with batching and stop detection
-      // Cache env thresholds once per process to avoid per-request overhead
-      struct StreamTuning {
-        static let batchChars: Int = {
-          let env = ProcessInfo.processInfo.environment
-          return Int(env["OSU_STREAM_BATCH_CHARS"] ?? "") ?? 256
-        }()
-        static let batchMs: Int = {
-          let env = ProcessInfo.processInfo.environment
-          return Int(env["OSU_STREAM_BATCH_MS"] ?? "") ?? 16
-        }()
-      }
-      let batchCharThreshold: Int = StreamTuning.batchChars
-      let batchIntervalMs: Int = StreamTuning.batchMs
-      let flushIntervalNs: UInt64 = UInt64(batchIntervalMs) * 1_000_000
-
-      // Stop sequence rolling window
-      let shouldCheckStop = !(stopSequences.isEmpty)
-      let maxStopLen: Int = shouldCheckStop ? (stopSequences.map { $0.count }.max() ?? 0) : 0
-      var stopTail = ""
-
-      // Batching state (event-loop confined)
-      var firstTokenSent = false
-      let initialCapacity = max(1024, batchCharThreshold)
-      var pendingBuffer = ByteBufferAllocator().buffer(capacity: initialCapacity)
-      var pendingCharCount: Int = 0
-      var lastFlushNs: UInt64 = DispatchTime.now().uptimeNanoseconds
-      var scheduledFlush: Bool = false
-
-      @inline(__always)
-      func scheduleFlushOnLoopIfNeeded() {
-        if scheduledFlush { return }
-        scheduledFlush = true
-        let deadline = NIODeadline.now() + .milliseconds(Int64(batchIntervalMs))
-        loop.scheduleTask(deadline: deadline) {
-          scheduledFlush = false
-          if pendingBuffer.readableBytes > 0 {
-            let content = pendingBuffer.readString(length: pendingBuffer.readableBytes) ?? ""
-            writerBox.value.writeContent(
-              content, model: requestModel, responseId: responseId, created: created,
-              context: ctxBox.value)
-            pendingCharCount = 0
-            lastFlushNs = DispatchTime.now().uptimeNanoseconds
-          }
-        }
-      }
-
-      @inline(__always)
-      func processTokenOnLoop(_ token: String) {
-        if !firstTokenSent {
-          writerBox.value.writeContent(
-            token, model: requestModel, responseId: responseId, created: created,
-            context: ctxBox.value)
-          firstTokenSent = true
-          lastFlushNs = DispatchTime.now().uptimeNanoseconds
-          return
-        }
-        pendingBuffer.writeString(token)
-        pendingCharCount &+= token.count
-        let nowNs = DispatchTime.now().uptimeNanoseconds
-        if pendingCharCount >= batchCharThreshold || nowNs - lastFlushNs >= flushIntervalNs {
-          if pendingBuffer.readableBytes > 0 {
-            let content = pendingBuffer.readString(length: pendingBuffer.readableBytes) ?? ""
-            writerBox.value.writeContent(
-              content, model: requestModel, responseId: responseId, created: created,
-              context: ctxBox.value)
-            pendingCharCount = 0
-            lastFlushNs = nowNs
-          }
-        } else {
-          scheduleFlushOnLoopIfNeeded()
-        }
-      }
-
-      // Immediately send role prelude before first model token (helps TTFT)
-      executeOnLoop(loop) {
-        writerBox.value.writeRole(
-          "assistant", model: requestModel, responseId: responseId, created: created,
-          context: ctxBox.value)
-      }
-
-      for await event in eventStream {
-        guard let token = event.chunk else { continue }
-        if shouldCheckStop {
-          stopTail += token
-          if stopTail.count > maxStopLen {
-            let overflow = stopTail.count - maxStopLen
-            stopTail.removeFirst(overflow)
-          }
-          if stopSequences.first(where: { stopTail.contains($0) }) != nil {
+          } else {
             executeOnLoop(loop) {
-              if pendingBuffer.readableBytes > 0 {
-                let content = pendingBuffer.readString(length: pendingBuffer.readableBytes) ?? ""
-                writerBox.value.writeContent(
-                  content, model: requestModel, responseId: responseId, created: created,
-                  context: ctxBox.value)
-                pendingCharCount = 0
-                lastFlushNs = DispatchTime.now().uptimeNanoseconds
-              }
+              writerBox.value.writeFinish(
+                effectiveModel, responseId: responseId, created: created, context: ctxBox.value)
+              writerBox.value.writeEnd(ctxBox.value)
             }
-            break
           }
         }
-
-        executeOnLoop(loop) {
-          processTokenOnLoop(token)
-        }
-      }
-
-      executeOnLoop(loop) {
-        if pendingBuffer.readableBytes > 0 {
-          let content = pendingBuffer.readString(length: pendingBuffer.readableBytes) ?? ""
-          writerBox.value.writeContent(
-            content, model: requestModel, responseId: responseId, created: created,
-            context: ctxBox.value)
-          pendingCharCount = 0
-          lastFlushNs = DispatchTime.now().uptimeNanoseconds
-        }
+        return
       }
     }
 
-    // Send final chunk (non-tool path). For tool_calls path we already returned above
-    // Trim to first stop sequence if present (non-tool path)
-    if !stopSequences.isEmpty {
-      for s in stopSequences {
-        if let range = fullResponse.range(of: s) {
-          fullResponse = String(fullResponse[..<range.lowerBound])
+    // Use the service stream
+    let stream = try await service.streamDeltas(
+      prompt: prompt, parameters: parameters)
+
+    // Stop sequence handling across chunk boundaries
+    var accumulated: String = ""
+    var alreadyEmitted: Int = 0
+    let shouldCheckStop = !stopSequences.isEmpty
+
+    for await delta in stream {
+      guard !delta.isEmpty else { continue }
+      accumulated += delta
+
+      // New content since last emission
+      let newSlice = String(accumulated.dropFirst(alreadyEmitted))
+
+      if shouldCheckStop && !newSlice.isEmpty {
+        if let stopIndex = stopSequences.compactMap({ s in accumulated.range(of: s)?.lowerBound })
+          .first
+        {
+          let endIdx = stopIndex
+          let finalRange =
+            accumulated.index(accumulated.startIndex, offsetBy: alreadyEmitted)..<endIdx
+          let finalContent = String(accumulated[finalRange])
+          if !finalContent.isEmpty {
+            executeOnLoop(loop) {
+              writerBox.value.writeContent(
+                finalContent, model: effectiveModel, responseId: responseId, created: created,
+                context: ctxBox.value)
+            }
+            alreadyEmitted += finalContent.count
+          }
           break
         }
       }
+
+      if !newSlice.isEmpty {
+        executeOnLoop(loop) {
+          writerBox.value.writeContent(
+            newSlice, model: effectiveModel, responseId: responseId, created: created,
+            context: ctxBox.value)
+        }
+        alreadyEmitted += newSlice.count
+      }
     }
 
-    // Send finish and end
+    // Finish and end
     executeOnLoop(loop) {
       writerBox.value.writeFinish(
-        requestModel, responseId: responseId, created: created, context: ctxBox.value)
+        effectiveModel, responseId: responseId, created: created, context: ctxBox.value)
       writerBox.value.writeEnd(ctxBox.value)
     }
   }
 
-  private func handleNonStreamingResponse(
-    messages: [Message],
-    model: LMModel,
-    temperature: Float,
-    maxTokens: Int,
-    requestModel: String,
+  private func handleServiceNonStreamingResponse(
+    service: ModelService,
+    prompt: String,
+    effectiveModel: String,
+    parameters: GenerationParameters,
+    stopSequences: [String],
     tools: [Tool]?,
     toolChoice: ToolChoiceOption?,
-    sessionId: String?,
-    stopSequences: [String],
     context: ChannelHandlerContext,
     extraHeaders: [(String, String)]? = nil
   ) async throws {
-    // Generate complete response
-    let eventStream = try await MLXService.shared.generateEvents(
-      messages: messages,
-      model: model,
-      temperature: temperature,
-      maxTokens: maxTokens,
-      tools: tools,
-      toolChoice: toolChoice,
-      sessionId: sessionId
-    )
-
-    var fullResponse = ""
-    var tokenCount = 0
-    var segments: [String] = []
-    segments.reserveCapacity(512)
-
-    let stopSequences: [String] = stopSequences
-    let shouldCheckStop = !stopSequences.isEmpty
-    let maxStopLen: Int = shouldCheckStop ? (stopSequences.map { $0.count }.max() ?? 0) : 0
-    var stopTail = ""
-    for await event in eventStream {
-      if let toolCall = event.toolCall {
-        // Build OpenAI-compatible tool_calls in non-streaming response
-        let argsData = try? JSONSerialization.data(
-          withJSONObject: toolCall.function.arguments.mapValues { $0.anyValue })
-        let argsString = argsData.flatMap { String(data: $0, encoding: .utf8) } ?? "{}"
-        let tc = ToolCall(
-          id: "call_\(UUID().uuidString.prefix(8))",
-          type: "function",
-          function: ToolCallFunction(name: toolCall.function.name, arguments: argsString)
-        )
-        // Construct response with tool call and return immediately
-        let response = ChatCompletionResponse(
-          id: "chatcmpl-\(UUID().uuidString.prefix(8))",
-          created: Int(Date().timeIntervalSince1970),
-          model: requestModel,
-          choices: [
-            ChatChoice(
-              index: 0,
-              message: ChatMessage(
-                role: "assistant", content: nil, tool_calls: [tc], tool_call_id: nil),
-              finish_reason: "tool_calls"
-            )
-          ],
-          usage: Usage(
-            prompt_tokens: messages.reduce(0) { $0 + $1.content.count / 4 },
-            completion_tokens: 0,
-            total_tokens: messages.reduce(0) { $0 + $1.content.count / 4 }
-          ),
-          system_fingerprint: nil
-        )
-        try await sendJSONResponse(
-          response, status: .ok, context: context, extraHeaders: extraHeaders)
-        return
-      }
-      guard let token = event.chunk else { continue }
-      if shouldCheckStop {
-        stopTail += token
-        if stopTail.count > maxStopLen {
-          let overflow = stopTail.count - maxStopLen
-          stopTail.removeFirst(overflow)
+    // If the service is tool-capable and tools are provided (and not disabled), delegate
+    if let toolService = service as? ToolCapableService {
+      let shouldUseTools: Bool = {
+        guard let tools = tools, !tools.isEmpty else { return false }
+        if let c = toolChoice { if case .none = c { return false } }
+        return true
+      }()
+      if shouldUseTools {
+        do {
+          let reply = try await toolService.respondWithTools(
+            prompt: prompt,
+            parameters: parameters,
+            stopSequences: stopSequences,
+            tools: tools!,
+            toolChoice: toolChoice
+          )
+          let tokenCount = max(1, reply.count / 4)
+          let res = ChatCompletionResponse(
+            id: "chatcmpl-\(UUID().uuidString.prefix(8))",
+            created: Int(Date().timeIntervalSince1970),
+            model: effectiveModel,
+            choices: [
+              ChatChoice(
+                index: 0,
+                message: ChatMessage(
+                  role: "assistant", content: reply, tool_calls: nil, tool_call_id: nil),
+                finish_reason: "stop")
+            ],
+            usage: Usage(
+              prompt_tokens: prompt.count / 4,
+              completion_tokens: tokenCount,
+              total_tokens: prompt.count / 4 + tokenCount
+            ),
+            system_fingerprint: nil
+          )
+          try await sendJSONResponse(res, status: .ok, context: context, extraHeaders: extraHeaders)
+          return
+        } catch let inv as ServiceToolInvocation {
+          // Map tool invocation to OpenAI-compatible tool_calls and return
+          let tc = ToolCall(
+            id: "call_\(UUID().uuidString.prefix(8))",
+            type: "function",
+            function: ToolCallFunction(name: inv.toolName, arguments: inv.jsonArguments)
+          )
+          let res = ChatCompletionResponse(
+            id: "chatcmpl-\(UUID().uuidString.prefix(8))",
+            created: Int(Date().timeIntervalSince1970),
+            model: effectiveModel,
+            choices: [
+              ChatChoice(
+                index: 0,
+                message: ChatMessage(
+                  role: "assistant", content: nil, tool_calls: [tc], tool_call_id: nil),
+                finish_reason: "tool_calls")
+            ],
+            usage: Usage(
+              prompt_tokens: prompt.count / 4,
+              completion_tokens: 0,
+              total_tokens: prompt.count / 4
+            ),
+            system_fingerprint: nil
+          )
+          try await sendJSONResponse(res, status: .ok, context: context, extraHeaders: extraHeaders)
+          return
         }
-        if stopSequences.first(where: { stopTail.contains($0) }) != nil {
-          break
-        }
       }
-      segments.append(token)
-      tokenCount += 1
     }
-    fullResponse = segments.joined()
 
-    // Trim at stop if present
+    var reply = try await service.generateOneShot(prompt: prompt, parameters: parameters)
+
     if !stopSequences.isEmpty {
       for s in stopSequences {
-        if let range = fullResponse.range(of: s) {
-          fullResponse = String(fullResponse[..<range.lowerBound])
+        if let r = reply.range(of: s) {
+          reply = String(reply[..<r.lowerBound])
           break
         }
       }
     }
-    let finishReason = "stop"
 
-    // Create response
+    let tokenCount = max(1, reply.count / 4)
     let response = ChatCompletionResponse(
       id: "chatcmpl-\(UUID().uuidString.prefix(8))",
       created: Int(Date().timeIntervalSince1970),
-      model: requestModel,
+      model: effectiveModel,
       choices: [
         ChatChoice(
           index: 0,
           message: ChatMessage(
-            role: "assistant", content: fullResponse, tool_calls: nil, tool_call_id: nil),
-          finish_reason: finishReason
+            role: "assistant", content: reply, tool_calls: nil, tool_call_id: nil),
+          finish_reason: "stop"
         )
       ],
       usage: Usage(
-        prompt_tokens: messages.reduce(0) { $0 + $1.content.count / 4 },
+        prompt_tokens: prompt.count / 4,
         completion_tokens: tokenCount,
-        total_tokens: messages.reduce(0) { $0 + $1.content.count / 4 } + tokenCount
+        total_tokens: prompt.count / 4 + tokenCount
       ),
       system_fingerprint: nil
     )
 
     try await sendJSONResponse(response, status: .ok, context: context, extraHeaders: extraHeaders)
   }
-
-  // Tool Call Parsing moved to ToolCallParser
 
   private func sendJSONResponse<T: Encodable>(
     _ response: T,

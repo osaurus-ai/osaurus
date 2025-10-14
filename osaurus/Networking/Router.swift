@@ -117,8 +117,15 @@ public struct Router {
   }
 
   private func modelsEndpoint() -> (HTTPResponseStatus, [(String, String)], String) {
-    let models = MLXService.getAvailableModels().map { modelName in
+    var models = MLXService.getAvailableModels().map { modelName in
       OpenAIModel(from: modelName)
+    }
+
+    // Expose the system default Foundation model when available
+    if FoundationModelService.isDefaultModelAvailable() {
+      let foundation = OpenAIModel(from: "foundation")
+      // Prepend so clients see a usable choice even with no local models
+      models.insert(foundation, at: 0)
     }
 
     let response = ModelsResponse(data: models)
