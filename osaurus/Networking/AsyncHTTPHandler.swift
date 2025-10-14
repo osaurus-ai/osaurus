@@ -12,6 +12,10 @@ import MLXLMCommon
 import NIOCore
 import NIOHTTP1
 
+#if canImport(FoundationModels)
+  import FoundationModels
+#endif
+
 private struct UncheckedSendableBox<T>: @unchecked Sendable {
   let value: T
 }
@@ -72,8 +76,74 @@ class AsyncHTTPHandler {
     ServerController.signalGenerationStart()
     defer { ServerController.signalGenerationEnd() }
     do {
-      // Find the model using nonisolated static accessor
+      // Determine if we should use FoundationModels default session
+      let noModelsInstalled = MLXService.getAvailableModels().isEmpty
+      // Prepare model services
+      let services: [ModelService] = [FoundationModelService()]
+      let route = ModelServiceRouter.resolve(
+        requestedModel: request.model,
+        installedModels: MLXService.getAvailableModels(),
+        services: services
+      )
+
+      // Convert messages
+      let messages = request.toInternalMessages()
+
+      // Get generation parameters
+      let temperature = request.temperature ?? 0.7
+      let maxTokens = request.max_tokens ?? 2048
+
+      // Honor only request-provided stop sequences; otherwise rely on library EOS handling
+      let effectiveStops: [String] = request.stop ?? []
+
+      switch route {
+      case .service(let service, let effectiveModel):
+        // Build a generic chat-style prompt for services
+        let prompt = PromptBuilder.buildPrompt(from: messages)
+        if request.stream ?? false {
+          try await handleServiceStreamingResponse(
+            service: service,
+            prompt: prompt,
+            effectiveModel: effectiveModel,
+            parameters: GenerationParameters(temperature: temperature, maxTokens: maxTokens),
+            stopSequences: effectiveStops,
+            context: context,
+            writer: writer,
+            extraHeaders: extraHeaders
+          )
+        } else {
+          try await handleServiceNonStreamingResponse(
+            service: service,
+            prompt: prompt,
+            effectiveModel: effectiveModel,
+            parameters: GenerationParameters(temperature: temperature, maxTokens: maxTokens),
+            stopSequences: effectiveStops,
+            context: context,
+            extraHeaders: extraHeaders
+          )
+        }
+        return
+      case .none:
+        break
+      }
+
+      // Find MLX model using nonisolated static accessor
       guard let model = MLXService.findModel(named: request.model) else {
+        // If no models installed but FoundationModels not available, return a helpful error
+        if noModelsInstalled {
+          let error = OpenAIError(
+            error: OpenAIError.ErrorDetail(
+              message:
+                "No local models found and no compatible model service is available.",
+              type: "invalid_request_error",
+              param: "model",
+              code: nil
+            )
+          )
+          try await sendJSONResponse(
+            error, status: .notFound, context: context, extraHeaders: extraHeaders)
+          return
+        }
         let error = OpenAIError(
           error: OpenAIError.ErrorDetail(
             message: "Model not found: \(request.model)",
@@ -86,16 +156,6 @@ class AsyncHTTPHandler {
           error, status: .notFound, context: context, extraHeaders: extraHeaders)
         return
       }
-
-      // Convert messages
-      let messages = request.toInternalMessages()
-
-      // Get generation parameters
-      let temperature = request.temperature ?? 0.7
-      let maxTokens = request.max_tokens ?? 2048
-
-      // Honor only request-provided stop sequences; otherwise rely on library EOS handling
-      let effectiveStops: [String] = request.stop ?? []
 
       // Check if streaming is requested
       if request.stream ?? false {
@@ -140,6 +200,135 @@ class AsyncHTTPHandler {
       try? await sendJSONResponse(
         errorResponse, status: .internalServerError, context: context, extraHeaders: extraHeaders)
     }
+  }
+
+  // MARK: - Generic ModelService handlers
+
+  private func handleServiceStreamingResponse(
+    service: ModelService,
+    prompt: String,
+    effectiveModel: String,
+    parameters: GenerationParameters,
+    stopSequences: [String],
+    context: ChannelHandlerContext,
+    writer: ResponseWriter,
+    extraHeaders: [(String, String)]? = nil
+  ) async throws {
+    let loop = context.eventLoop
+    let ctxBox = UncheckedSendableBox(value: context)
+    let writerBox = UncheckedSendableBox(value: writer)
+
+    // Write headers
+    executeOnLoop(loop) {
+      writerBox.value.writeHeaders(ctxBox.value, extraHeaders: extraHeaders)
+    }
+
+    let responseId = "chatcmpl-\(UUID().uuidString.prefix(8))"
+    let created = Int(Date().timeIntervalSince1970)
+
+    // Send role prelude (SSE will emit; NDJSON writer ignores)
+    executeOnLoop(loop) {
+      writerBox.value.writeRole(
+        "assistant", model: effectiveModel, responseId: responseId, created: created,
+        context: ctxBox.value)
+    }
+
+    // Use the service stream
+    let stream = try await service.streamDeltas(
+      prompt: prompt, parameters: parameters)
+
+    // Stop sequence handling across chunk boundaries
+    var accumulated: String = ""
+    var alreadyEmitted: Int = 0
+    let shouldCheckStop = !stopSequences.isEmpty
+
+    for await delta in stream {
+      guard !delta.isEmpty else { continue }
+      accumulated += delta
+
+      // New content since last emission
+      let newSlice = String(accumulated.dropFirst(alreadyEmitted))
+
+      if shouldCheckStop && !newSlice.isEmpty {
+        if let stopIndex = stopSequences.compactMap({ s in accumulated.range(of: s)?.lowerBound })
+          .first
+        {
+          let endIdx = stopIndex
+          let finalRange =
+            accumulated.index(accumulated.startIndex, offsetBy: alreadyEmitted)..<endIdx
+          let finalContent = String(accumulated[finalRange])
+          if !finalContent.isEmpty {
+            executeOnLoop(loop) {
+              writerBox.value.writeContent(
+                finalContent, model: effectiveModel, responseId: responseId, created: created,
+                context: ctxBox.value)
+            }
+            alreadyEmitted += finalContent.count
+          }
+          break
+        }
+      }
+
+      if !newSlice.isEmpty {
+        executeOnLoop(loop) {
+          writerBox.value.writeContent(
+            newSlice, model: effectiveModel, responseId: responseId, created: created,
+            context: ctxBox.value)
+        }
+        alreadyEmitted += newSlice.count
+      }
+    }
+
+    // Finish and end
+    executeOnLoop(loop) {
+      writerBox.value.writeFinish(
+        effectiveModel, responseId: responseId, created: created, context: ctxBox.value)
+      writerBox.value.writeEnd(ctxBox.value)
+    }
+  }
+
+  private func handleServiceNonStreamingResponse(
+    service: ModelService,
+    prompt: String,
+    effectiveModel: String,
+    parameters: GenerationParameters,
+    stopSequences: [String],
+    context: ChannelHandlerContext,
+    extraHeaders: [(String, String)]? = nil
+  ) async throws {
+    var reply = try await service.generateOneShot(prompt: prompt, parameters: parameters)
+
+    if !stopSequences.isEmpty {
+      for s in stopSequences {
+        if let r = reply.range(of: s) {
+          reply = String(reply[..<r.lowerBound])
+          break
+        }
+      }
+    }
+
+    let tokenCount = max(1, reply.count / 4)
+    let response = ChatCompletionResponse(
+      id: "chatcmpl-\(UUID().uuidString.prefix(8))",
+      created: Int(Date().timeIntervalSince1970),
+      model: effectiveModel,
+      choices: [
+        ChatChoice(
+          index: 0,
+          message: ChatMessage(
+            role: "assistant", content: reply, tool_calls: nil, tool_call_id: nil),
+          finish_reason: "stop"
+        )
+      ],
+      usage: Usage(
+        prompt_tokens: prompt.count / 4,
+        completion_tokens: tokenCount,
+        total_tokens: prompt.count / 4 + tokenCount
+      ),
+      system_fingerprint: nil
+    )
+
+    try await sendJSONResponse(response, status: .ok, context: context, extraHeaders: extraHeaders)
   }
 
   private func handleStreamingResponse(

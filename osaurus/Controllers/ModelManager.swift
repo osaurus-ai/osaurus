@@ -775,7 +775,7 @@ extension ModelManager {
         "Qwen3-Next 80B A3B Thinking (4-bit). Reasoning-focused assistant; heavy memory requirements.",
       downloadURL: "https://huggingface.co/mlx-community/Qwen3-Next-80B-A3B-Thinking-4bit"
     ),
-    
+
     MLXModel(
       id: "lmstudio-community/gpt-oss-20b-MLX-8bit",
       name: friendlyName(from: "lmstudio-community/gpt-oss-20b-MLX-8bit"),
