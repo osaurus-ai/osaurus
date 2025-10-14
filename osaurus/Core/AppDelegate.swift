@@ -251,6 +251,8 @@ extension AppDelegate {
     "com.dinoki.osaurus.control.serve")
   fileprivate static let controlStopNotification = Notification.Name(
     "com.dinoki.osaurus.control.stop")
+  fileprivate static let controlShowUINotification = Notification.Name(
+    "com.dinoki.osaurus.control.ui")
 
   private func setupControlNotifications() {
     let center = DistributedNotificationCenter.default()
@@ -264,6 +266,12 @@ extension AppDelegate {
       self,
       selector: #selector(handleStopCommand(_:)),
       name: Self.controlStopNotification,
+      object: nil
+    )
+    center.addObserver(
+      self,
+      selector: #selector(handleShowUICommand(_:)),
+      name: Self.controlShowUINotification,
       object: nil
     )
   }
@@ -302,6 +310,12 @@ extension AppDelegate {
   @objc private func handleStopCommand(_ note: Notification) {
     Task { @MainActor in
       await serverController.stopServer()
+    }
+  }
+
+  @objc private func handleShowUICommand(_ note: Notification) {
+    Task { @MainActor in
+      self.showPopover()
     }
   }
 }

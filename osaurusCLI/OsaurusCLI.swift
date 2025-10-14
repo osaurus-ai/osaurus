@@ -15,6 +15,7 @@ struct OsaurusCLI {
     case stop
     case list
     case run(String)
+    case ui
     case help
   }
 
@@ -29,6 +30,7 @@ struct OsaurusCLI {
     case "run":
       if let modelId = rest.first, !modelId.isEmpty { return .run(modelId) }
       return nil
+    case "ui": return .ui
     case "help", "-h", "--help": return .help
     default: return nil
     }
@@ -53,6 +55,8 @@ struct OsaurusCLI {
       await runList()
     case .run(let modelId):
       await runRun([modelId])
+    case .ui:
+      await runUI()
     case .help:
       printUsage()
       exit(EXIT_SUCCESS)
@@ -71,6 +75,7 @@ struct OsaurusCLI {
         osaurus status          Check if the Osaurus server is running
         osaurus list            List available model IDs
         osaurus run <model_id>  Chat with a downloaded model (interactive)
+        osaurus ui              Show the Osaurus menu popover in the menu bar
         osaurus help            Show this help
 
       """
@@ -244,6 +249,15 @@ struct OsaurusCLI {
       userInfo: userInfo,
       deliverImmediately: true
     )
+  }
+
+  // MARK: - UI
+  private static func runUI() async {
+    await launchAppIfNeeded()
+    postDistributedNotification(name: "com.dinoki.osaurus.control.ui", userInfo: [:])
+    // No strong success signal, but give it a brief moment and exit
+    try? await Task.sleep(nanoseconds: 150_000_000)
+    exit(EXIT_SUCCESS)
   }
 
   private static func launchAppIfNeeded() async {
