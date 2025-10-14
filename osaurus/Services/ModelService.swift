@@ -60,8 +60,13 @@ struct ModelServiceRouter {
 
     for svc in services {
       guard svc.isAvailable() else { continue }
+      // Route default to a service that handles it
       if isDefault && svc.handles(requestedModel: requestedModel) {
-        return .service(service: svc, effectiveModel: "default")
+        return .service(service: svc, effectiveModel: "foundation")
+      }
+      // Allow explicit "foundation" (or other service-specific id) to select the service
+      if svc.handles(requestedModel: trimmed), !isDefault {
+        return .service(service: svc, effectiveModel: trimmed)
       }
     }
 
@@ -69,7 +74,7 @@ struct ModelServiceRouter {
     if installedModels.isEmpty {
       for svc in services {
         if svc.isAvailable() {
-          return .service(service: svc, effectiveModel: "default")
+          return .service(service: svc, effectiveModel: "foundation")
         }
       }
     }

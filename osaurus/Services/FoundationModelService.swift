@@ -39,6 +39,7 @@ final class FoundationModelService: ModelService {
   func handles(requestedModel: String?) -> Bool {
     let t = (requestedModel ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
     return t.isEmpty || t.caseInsensitiveCompare("default") == .orderedSame
+      || t.caseInsensitiveCompare("foundation") == .orderedSame
   }
 
   /// Generate a single response from the system default language model.
@@ -123,6 +124,4 @@ final class FoundationModelService: ModelService {
     return try await Self.generateOneShot(
       prompt: prompt, temperature: parameters.temperature, maxTokens: parameters.maxTokens)
   }
-
-  // Leave prompt-building responsibility to callers for flexibility across services
 }
