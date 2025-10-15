@@ -49,24 +49,40 @@ osaurus/
 │   ├── ServerController.swift      # NIO server lifecycle
 │   └── ModelManager.swift          # Model discovery & downloads (Hugging Face)
 ├── Models/
+│   ├── InternalMessage.swift
 │   ├── MLXModel.swift
 │   ├── OpenAIAPI.swift             # OpenAI‑compatible DTOs
 │   ├── ResponseWriters.swift       # SSE and NDJSON response writers
 │   ├── ServerConfiguration.swift
+│   ├── ServerConfigurationStore.swift
 │   └── ServerHealth.swift
 ├── Networking/
 │   ├── HTTPHandler.swift           # Request parsing & routing entry
 │   ├── Router.swift                # Routes → handlers with path normalization
 │   └── AsyncHTTPHandler.swift      # Unified streaming handler
 ├── Services/
+│   ├── DirectoryPickerService.swift
+│   ├── FoundationModelService.swift
+│   ├── HuggingFaceService.swift
+│   ├── LoginItemService.swift
 │   ├── MLXService.swift            # MLX loading, session caching, generation
+│   ├── ModelService.swift
+│   ├── PromptBuilder.swift
 │   ├── SearchService.swift
-│   └── SystemMonitorService.swift  # Real-time CPU and RAM monitoring
+│   ├── SharedConfigurationService.swift
+│   ├── SystemMonitorService.swift  # Real-time CPU and RAM monitoring
+│   └── UpdaterService.swift
 ├── Theme/
 │   └── Theme.swift
 ├── Views/
-│   ├── Components/SimpleComponents.swift
+│   ├── Components/
+│   │   ├── EmptyStateView.swift
+│   │   ├── InfoRow.swift
+│   │   ├── ModelRowView.swift
+│   │   └── SimpleComponents.swift
 │   ├── ContentView.swift           # Start/stop server, quick controls
+│   ├── DirectoryPickerView.swift
+│   ├── ModelDetailView.swift
 │   └── ModelDownloadView.swift     # Browse/download/manage models
 └── Assets.xcassets/
 ```
