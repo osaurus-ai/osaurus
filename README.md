@@ -38,6 +38,7 @@ Created by Dinoki Labs ([dinoki.ai](https://dinoki.ai)), a fully native desktop 
 - macOS 15.5+
 - Apple Silicon (M1 or newer)
 - Xcode 16.4+ (to build from source)
+- Apple Intelligence features require macOS 26 (Tahoe)
 
 ```
 osaurus/
@@ -466,6 +467,7 @@ Foundation Models:
 - Localhost by default; `--expose` enables LAN access. No authentication; use only on trusted networks or behind a reverse proxy.
 - `/transcribe` endpoints are placeholders pending Whisper integration
 - Apple Foundation Models availability depends on macOS version and frameworks. If unavailable, requests with `model: "foundation"`/`"default"` will return an error. Use `/v1/models` to detect support.
+- Apple Intelligence requires macOS 26 (Tahoe).
 
 ## Dependencies
 
