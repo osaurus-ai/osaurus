@@ -7,13 +7,14 @@
 ![Platform](<https://img.shields.io/badge/Platform-macOS%20(Apple%20Silicon)-black?logo=apple>)
 ![OpenAI API](https://img.shields.io/badge/OpenAI%20API-compatible-0A7CFF)
 ![Ollama API](https://img.shields.io/badge/Ollama%20API-compatible-0A7CFF)
+![Foundation Models](https://img.shields.io/badge/Apple%20Foundation%20Models-supported-0A7CFF)
 ![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen)
 
 <p align="center">
   <img width="452" height="222" alt="Screenshot 2025-09-22 at 7 02 10 PM" src="https://github.com/user-attachments/assets/6cd07add-2768-4556-ad0c-ed721ebc6596" />
 </p>
 
-Native, Apple Silicon–only local LLM server. Built on Apple's MLX for maximum performance on M‑series chips. SwiftUI app + SwiftNIO server with OpenAI‑compatible and Ollama‑compatible endpoints.
+Native, Apple Silicon–only local LLM server. Built on Apple's MLX for maximum performance on M‑series chips, with Apple Foundation Models integration when available. SwiftUI app + SwiftNIO server with OpenAI‑compatible and Ollama‑compatible endpoints.
 
 Created by Dinoki Labs ([dinoki.ai](https://dinoki.ai)), a fully native desktop AI assistant and companion.
 
@@ -22,6 +23,7 @@ Created by Dinoki Labs ([dinoki.ai](https://dinoki.ai)), a fully native desktop 
 ## Highlights
 
 - **Native MLX runtime**: Optimized for Apple Silicon using MLX/MLXLLM
+- **Apple Foundation Models**: Use the system default model via `model: "foundation"` or `model: "default"` on supported macOS versions; accelerated by Apple Neural Engine (ANE) when available
 - **Apple Silicon only**: Designed and tested for M‑series Macs
 - **OpenAI API compatible**: `/v1/models` and `/v1/chat/completions` (stream and non‑stream)
 - **Ollama‑compatible**: `/chat` endpoint with NDJSON streaming for OllamaKit and other Ollama clients
@@ -197,6 +199,8 @@ List models:
 curl -s http://127.0.0.1:1337/v1/models | jq
 ```
 
+If your system supports Apple Foundation Models, you will also see a `foundation` entry representing the system default model. You can target it explicitly with `model: "foundation"` or by passing `model: "default"` or an empty string (the server routes default requests to the system model when available).
+
 Ollama‑compatible models list:
 
 ```bash
@@ -215,6 +219,18 @@ curl -s http://127.0.0.1:1337/v1/chat/completions \
       }'
 ```
 
+Non‑streaming with Apple Foundation Models (when available):
+
+```bash
+curl -s http://127.0.0.1:1337/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{
+        "model": "foundation",
+        "messages": [{"role":"user","content":"Write a haiku about dinosaurs"}],
+        "max_tokens": 200
+      }'
+```
+
 Streaming chat completion (SSE format for `/chat/completions`):
 
 ```bash
@@ -222,6 +238,18 @@ curl -N http://127.0.0.1:1337/v1/chat/completions \
   -H "Content-Type: application/json" \
   -d '{
         "model": "llama-3.2-3b-instruct-4bit",
+        "messages": [{"role":"user","content":"Summarize Jurassic Park in one paragraph"}],
+        "stream": true
+      }'
+```
+
+Streaming with Apple Foundation Models (when available):
+
+```bash
+curl -N http://127.0.0.1:1337/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{
+        "model": "default",
         "messages": [{"role":"user","content":"Summarize Jurassic Park in one paragraph"}],
         "stream": true
       }'
@@ -250,6 +278,10 @@ If you're building a macOS app (Swift/Objective‑C/SwiftUI/Electron) and want t
 ### Function/Tool Calling (OpenAI‑compatible)
 
 Osaurus supports OpenAI‑style function calling. Send `tools` and optional `tool_choice` in your request. The model is instructed to reply with an exact JSON object containing `tool_calls`, and the server parses it, including common formatting like code fences.
+
+Notes on Apple Foundation Models:
+
+- When using `model: "foundation"`/`"default"` on supported systems, tool calls are mapped through Apple Foundation Models' tool interface. In streaming mode, Osaurus emits OpenAI‑style `tool_calls` deltas so your client code works unchanged.
 
 Define tools and let the model decide (`tool_choice: "auto"`):
 
@@ -421,11 +453,16 @@ Notes
 - Required files are fetched automatically (tokenizer/config/weights)
 - Change the models directory with `OSU_MODELS_DIR`
 
+Foundation Models:
+
+- On macOS versions that provide Apple Foundation Models, the `/v1/models` list includes a virtual `foundation` entry representing the system default language model. You can select it via `model: "foundation"` or `model: "default"`.
+
 ## Notes & Limitations
 
 - Apple Silicon only (requires MLX); Intel Macs are not supported
 - Localhost by default; `--expose` enables LAN access. No authentication; use only on trusted networks or behind a reverse proxy.
 - `/transcribe` endpoints are placeholders pending Whisper integration
+- Apple Foundation Models availability depends on macOS version and frameworks. If unavailable, requests with `model: "foundation"`/`"default"` will return an error. Use `/v1/models` to detect support.
 
 ## Dependencies
 
