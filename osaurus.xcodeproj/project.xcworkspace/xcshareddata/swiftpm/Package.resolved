@@ -33,8 +33,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/ml-explore/mlx-swift-examples",
       "state" : {
-        "revision" : "0afaa267171972ffdac9f4f1b320a585e2511bd5",
-        "version" : "2.25.8"
+        "revision" : "8775112da257e8b0a5bf45e3f84fb80222592c89",
+        "version" : "2.25.9"
       }
     },
     {
@@ -69,8 +69,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/huggingface/swift-jinja.git",
       "state" : {
-        "revision" : "62b91283572c80a9d79fe77e2fa344cfd9233cfa",
-        "version" : "2.0.2"
+        "revision" : "c1ef5963ba4a97a589b9c9583ff4ee3352a86d23",
+        "version" : "2.1.0"
       }
     },
     {
@@ -78,8 +78,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/apple/swift-nio.git",
       "state" : {
-        "revision" : "a18bddb0acf7a40d982b2f128ce73ce4ee31f352",
-        "version" : "2.86.2"
+        "revision" : "4e8f4b1c9adaa59315c523540c1ff2b38adc20a9",
+        "version" : "2.87.0"
       }
     },
     {
