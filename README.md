@@ -143,7 +143,7 @@ Once installed, you can launch Osaurus from:
 
 - **Spotlight**: Press `⌘ Space` and type "osaurus"
 - **Applications folder**: Find Osaurus in `/Applications`
-- **Terminal**: Run `open -a osaurus`
+- **Terminal**: Run `osaurus ui` (or `open -a osaurus`)
 
 The app will appear in your menu bar, ready to serve local LLMs on your Mac.
 
@@ -158,7 +158,7 @@ Models are stored by default at `~/MLXModels`. Override with the environment var
 
 ### Command-line server management
 
-The CLI lets you start/stop the server programmatically. If `osaurus` isn’t found in your `PATH` after installing the app:
+The CLI lets you start/stop the server and open the UI from your terminal. If `osaurus` isn’t found in your `PATH` after installing the app:
 
 - Run the one-liner above to create the symlink, or
 - From a cloned repo, run: `scripts/install_cli_symlink.sh`, or
@@ -173,6 +173,9 @@ osaurus serve --port 1337 --expose
 
 # Start exposed without prompt (non-interactive)
 osaurus serve --port 1337 --expose --yes
+
+# Open the UI (menu bar popover)
+osaurus ui
 
 # Check status
 osaurus status
