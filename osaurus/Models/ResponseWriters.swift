@@ -19,6 +19,8 @@ protocol ResponseWriter {
     context: ChannelHandlerContext)
   func writeFinish(
     _ model: String, responseId: String, created: Int, context: ChannelHandlerContext)
+  /// Emit an error payload over the current streaming format and flush
+  func writeError(_ message: String, context: ChannelHandlerContext)
   func writeEnd(_ context: ChannelHandlerContext)
 }
 
@@ -119,6 +121,34 @@ final class SSEResponseWriter: ResponseWriter {
     }
   }
 
+  func writeError(_ message: String, context: ChannelHandlerContext) {
+    let encoder = IkigaJSONEncoder()
+    var buffer = context.channel.allocator.buffer(capacity: 256)
+    buffer.writeString("data: ")
+    do {
+      let err = OpenAIError(
+        error: OpenAIError.ErrorDetail(
+          message: message,
+          type: "internal_error",
+          param: nil,
+          code: nil
+        )
+      )
+      try encoder.encodeAndWrite(err, into: &buffer)
+      buffer.writeString("\n\n")
+      context.write(NIOAny(HTTPServerResponsePart.body(.byteBuffer(buffer))), promise: nil)
+      context.flush()
+    } catch {
+      // As a last resort, send a minimal JSON error payload
+      buffer.clear()
+      buffer.writeString("data: {\"error\":{\"message\":\"")
+      buffer.writeString(message)
+      buffer.writeString("\",\"type\":\"internal_error\"}}\n\n")
+      context.write(NIOAny(HTTPServerResponsePart.body(.byteBuffer(buffer))), promise: nil)
+      context.flush()
+    }
+  }
+
   func writeEnd(_ context: ChannelHandlerContext) {
     var tail = context.channel.allocator.buffer(capacity: 16)
     tail.writeString("data: [DONE]\n\n")
@@ -180,6 +210,23 @@ final class NDJSONResponseWriter: ResponseWriter {
         "content": content,
       ],
       "done": done,
+    ]
+    if let jsonData = try? JSONSerialization.data(withJSONObject: response) {
+      var buffer = context.channel.allocator.buffer(capacity: 256)
+      buffer.writeBytes(jsonData)
+      buffer.writeString("\n")
+      context.write(NIOAny(HTTPServerResponsePart.body(.byteBuffer(buffer))), promise: nil)
+      context.flush()
+    }
+  }
+
+  func writeError(_ message: String, context: ChannelHandlerContext) {
+    let response: [String: Any] = [
+      "error": [
+        "message": message,
+        "type": "internal_error",
+      ],
+      "done": true,
     ]
     if let jsonData = try? JSONSerialization.data(withJSONObject: response) {
       var buffer = context.channel.allocator.buffer(capacity: 256)
