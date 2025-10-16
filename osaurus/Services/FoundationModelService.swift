@@ -99,7 +99,9 @@ final class FoundationModelService: ToolCapableService {
                 previous = current
               }
             } catch {
-              // Ignore stream errors; caller can decide how to surface them
+              // Surface stream error as an out-of-band message for the HTTP layer to convert to an error
+              let prefix = "__OS_ERROR__:"
+              continuation.yield(prefix + error.localizedDescription)
             }
             continuation.finish()
           }

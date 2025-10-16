@@ -201,17 +201,35 @@ class AsyncHTTPHandler {
             tools: tools!,
             toolChoice: toolChoice
           )
+          var emittedAny = false
           for try await delta in stream {
+            // Detect out-of-band error marker from Foundation service
+            if delta.hasPrefix("__OS_ERROR__:") {
+              let msg = String(delta.dropFirst("__OS_ERROR__:".count))
+              executeOnLoop(loop) {
+                writerBox.value.writeError(msg, context: ctxBox.value)
+                writerBox.value.writeEnd(ctxBox.value)
+              }
+              return
+            }
             executeOnLoop(loop) {
               writerBox.value.writeContent(
                 delta, model: effectiveModel, responseId: responseId, created: created,
                 context: ctxBox.value)
             }
+            emittedAny = true
           }
-          executeOnLoop(loop) {
-            writerBox.value.writeFinish(
-              effectiveModel, responseId: responseId, created: created, context: ctxBox.value)
-            writerBox.value.writeEnd(ctxBox.value)
+          if emittedAny {
+            executeOnLoop(loop) {
+              writerBox.value.writeFinish(
+                effectiveModel, responseId: responseId, created: created, context: ctxBox.value)
+              writerBox.value.writeEnd(ctxBox.value)
+            }
+          } else {
+            executeOnLoop(loop) {
+              writerBox.value.writeError("Generation produced no content.", context: ctxBox.value)
+              writerBox.value.writeEnd(ctxBox.value)
+            }
           }
         } catch let inv as ServiceToolInvocation {
           if isSSE {
@@ -298,21 +316,47 @@ class AsyncHTTPHandler {
               writerBox.value.writeEnd(ctxBox.value)
             }
           }
+        } catch {
+          // Stream failed; emit error over the chosen streaming format
+          executeOnLoop(loop) {
+            writerBox.value.writeError(error.localizedDescription, context: ctxBox.value)
+            writerBox.value.writeEnd(ctxBox.value)
+          }
         }
         return
       }
     }
 
     // Use the service stream
-    let stream = try await service.streamDeltas(
-      prompt: prompt, parameters: parameters)
+    let stream: AsyncStream<String>
+    do {
+      stream = try await service.streamDeltas(
+        prompt: prompt, parameters: parameters)
+    } catch {
+      // If obtaining the stream fails after headers have been sent, emit an error chunk
+      executeOnLoop(loop) {
+        writerBox.value.writeError(error.localizedDescription, context: ctxBox.value)
+        writerBox.value.writeEnd(ctxBox.value)
+      }
+      return
+    }
 
     // Stop sequence handling across chunk boundaries
     var accumulated: String = ""
     var alreadyEmitted: Int = 0
     let shouldCheckStop = !stopSequences.isEmpty
 
+    var emittedAnyContent = false
     for await delta in stream {
+      // Detect out-of-band error marker from Foundation service
+      if delta.hasPrefix("__OS_ERROR__:") {
+        let msg = String(delta.dropFirst("__OS_ERROR__:".count))
+        executeOnLoop(loop) {
+          writerBox.value.writeError(msg, context: ctxBox.value)
+          writerBox.value.writeEnd(ctxBox.value)
+        }
+        return
+      }
       guard !delta.isEmpty else { continue }
       accumulated += delta
 
@@ -334,6 +378,7 @@ class AsyncHTTPHandler {
                 context: ctxBox.value)
             }
             alreadyEmitted += finalContent.count
+            emittedAnyContent = true
           }
           break
         }
@@ -346,14 +391,22 @@ class AsyncHTTPHandler {
             context: ctxBox.value)
         }
         alreadyEmitted += newSlice.count
+        emittedAnyContent = true
       }
     }
 
-    // Finish and end
-    executeOnLoop(loop) {
-      writerBox.value.writeFinish(
-        effectiveModel, responseId: responseId, created: created, context: ctxBox.value)
-      writerBox.value.writeEnd(ctxBox.value)
+    // Finish or emit error and end
+    if emittedAnyContent {
+      executeOnLoop(loop) {
+        writerBox.value.writeFinish(
+          effectiveModel, responseId: responseId, created: created, context: ctxBox.value)
+        writerBox.value.writeEnd(ctxBox.value)
+      }
+    } else {
+      executeOnLoop(loop) {
+        writerBox.value.writeError("Generation produced no content.", context: ctxBox.value)
+        writerBox.value.writeEnd(ctxBox.value)
+      }
     }
   }
 
