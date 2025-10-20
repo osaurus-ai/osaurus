@@ -138,7 +138,7 @@ public struct Router {
 
   private func tagsEndpoint() -> (HTTPResponseStatus, [(String, String)], String) {
     let now = Date().ISO8601Format()
-    let models = MLXService.getAvailableModels().map { modelName in
+    var models = MLXService.getAvailableModels().map { modelName in
       var model = OpenAIModel(from: modelName)
       // Fields for "/tags" compatibility
       model.name = modelName
@@ -155,6 +155,25 @@ public struct Router {
         quantization_level: ""
       )
       return model
+    }
+
+    // Expose the system default Foundation model when available for Ollama-compatible /tags
+    if FoundationModelService.isDefaultModelAvailable() {
+      var foundation = OpenAIModel(from: "foundation")
+      foundation.name = "foundation"
+      foundation.model = "foundation"
+      foundation.modified_at = now
+      foundation.size = 0
+      foundation.digest = ""
+      foundation.details = ModelDetails(
+        parent_model: "",
+        format: "native",
+        family: "foundation",
+        families: ["foundation"],
+        parameter_size: "",
+        quantization_level: ""
+      )
+      models.insert(foundation, at: 0)
     }
 
     let response: [String: [OpenAIModel]] = ["models": models]
