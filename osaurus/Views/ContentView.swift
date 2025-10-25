@@ -198,6 +198,8 @@ struct ContentView: View {
       return "Starting..."
     case .running:
       return "Running on port \(String(server.port))"
+    case .restarting:
+      return "Restarting..."
     case .stopping:
       return "Stopping..."
     case .error(let message):
@@ -209,6 +211,7 @@ struct ContentView: View {
     switch server.serverHealth {
     case .stopped: return "Stopped"
     case .starting: return "Starting..."
+    case .restarting: return "Restarting..."
     case .running: return "Running"
     case .stopping: return "Stopping..."
     case .error: return "Error"
@@ -218,7 +221,7 @@ struct ContentView: View {
   private var statusColor: Color {
     switch server.serverHealth {
     case .stopped: return .gray
-    case .starting, .stopping: return .orange
+    case .starting, .restarting, .stopping: return .orange
     case .running: return .green
     case .error: return .red
     }
@@ -226,7 +229,7 @@ struct ContentView: View {
 
   private var isBusy: Bool {
     switch server.serverHealth {
-    case .starting, .stopping: return true
+    case .starting, .restarting, .stopping: return true
     default: return false
     }
   }
@@ -265,7 +268,7 @@ extension ContentView {
     switch server.serverHealth {
     case .stopped, .starting, .error:
       return true
-    case .running, .stopping:
+    case .running, .restarting, .stopping:
       return false
     }
   }
@@ -275,6 +278,7 @@ extension ContentView {
     switch server.serverHealth {
     case .stopped, .error: return "Start"
     case .starting: return "Starting…"
+    case .restarting: return "" // not shown
     case .stopping: return "Stopping…" // not shown
     case .running: return ""
     }
@@ -284,7 +288,7 @@ extension ContentView {
     if server.isRestarting { return "" }
     switch server.serverHealth {
     case .stopped, .error: return "play.circle.fill"
-    case .starting, .stopping: return "hourglass"
+    case .starting, .restarting, .stopping: return "hourglass"
     case .running: return ""
     }
   }

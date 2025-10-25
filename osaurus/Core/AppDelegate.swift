@@ -199,6 +199,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSPopoverD
         tooltip = serverController.isRestarting ? "Osaurus — Restarting…" : "Osaurus — Ready to start"
       case .starting:
         tooltip = "Osaurus — Starting…"
+      case .restarting:
+        tooltip = "Osaurus — Restarting…"
       case .running:
         tooltip = "Osaurus — Running on port \(serverController.port)"
       case .stopping:

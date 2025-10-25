@@ -97,6 +97,21 @@ final class SharedConfigurationService {
         print(
           "[Osaurus] SharedConfigurationService: failed to write starting configuration: \(error)")
       }
+    case .restarting:
+      // Publish minimal metadata while restarting
+      let values: [String: Any] = [
+        "instanceId": instanceId,
+        "updatedAt": ISO8601DateFormatter().string(from: Date()),
+        "health": "restarting",
+      ]
+      do {
+        let jsonData = try JSONSerialization.data(
+          withJSONObject: values, options: [.prettyPrinted, .sortedKeys])
+        try jsonData.write(to: fileURL, options: [.atomic])
+      } catch {
+        print(
+          "[Osaurus] SharedConfigurationService: failed to write restarting configuration: \(error)")
+      }
     case .stopped, .stopping, .error:
       // Remove the file to indicate this instance is not serving
       remove()
