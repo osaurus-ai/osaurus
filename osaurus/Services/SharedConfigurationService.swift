@@ -110,7 +110,8 @@ final class SharedConfigurationService {
         try jsonData.write(to: fileURL, options: [.atomic])
       } catch {
         print(
-          "[Osaurus] SharedConfigurationService: failed to write restarting configuration: \(error)")
+          "[Osaurus] SharedConfigurationService: failed to write restarting configuration: \(error)"
+        )
       }
     case .stopped, .stopping, .error:
       // Remove the file to indicate this instance is not serving

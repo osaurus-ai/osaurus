@@ -196,7 +196,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSPopoverD
       var tooltip: String
       switch serverController.serverHealth {
       case .stopped:
-        tooltip = serverController.isRestarting ? "Osaurus — Restarting…" : "Osaurus — Ready to start"
+        tooltip =
+          serverController.isRestarting ? "Osaurus — Restarting…" : "Osaurus — Ready to start"
       case .starting:
         tooltip = "Osaurus — Starting…"
       case .restarting:

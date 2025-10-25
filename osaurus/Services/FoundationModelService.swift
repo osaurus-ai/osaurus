@@ -301,11 +301,11 @@ final class FoundationModelService: ToolCapableService {
       switch json {
       case .object(let dict):
         // enum of strings
-        if case let .array(enumVals)? = dict["enum"],
+        if case .array(let enumVals)? = dict["enum"],
           case .string = enumVals.first
         {
           let choices: [String] = enumVals.compactMap { v in
-            if case let .string(s) = v { return s } else { return nil }
+            if case .string(let s) = v { return s } else { return nil }
           }
           return DynamicGenerationSchema(
             name: name, description: jsonStringOrNil(dict["description"]), anyOf: choices)
@@ -320,7 +320,7 @@ final class FoundationModelService: ToolCapableService {
             // Prefer first non-null type
             typeString =
               arr.compactMap { v in
-                if case let .string(s) = v, s != "null" { return s } else { return nil }
+                if case .string(let s) = v, s != "null" { return s } else { return nil }
               }.first
           default: break
           }
@@ -356,7 +356,7 @@ final class FoundationModelService: ToolCapableService {
           var required: Set<String> = []
           if case .array(let reqArr)? = dict["required"] {
             required = Set(
-              reqArr.compactMap { v in if case let .string(s) = v { return s } else { return nil } }
+              reqArr.compactMap { v in if case .string(let s) = v { return s } else { return nil } }
             )
           }
           var properties: [DynamicGenerationSchema.Property] = []
@@ -401,14 +401,14 @@ final class FoundationModelService: ToolCapableService {
     // Helpers to extract primitive values from JSONValue
     private func jsonStringOrNil(_ value: JSONValue?) -> String? {
       guard let value else { return nil }
-      if case let .string(s) = value { return s }
+      if case .string(let s) = value { return s }
       return nil
     }
     private func jsonIntOrNil(_ value: JSONValue?) -> Int? {
       guard let value else { return nil }
       switch value {
-      case let .number(d): return Int(d)
-      case let .string(s): return Int(s)
+      case .number(let d): return Int(d)
+      case .string(let s): return Int(s)
       default: return nil
       }
     }
