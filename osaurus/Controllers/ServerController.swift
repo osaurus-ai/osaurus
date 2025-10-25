@@ -23,6 +23,7 @@ final class ServerController: ObservableObject {
   @Published var localNetworkAddress: String = "127.0.0.1"
   @Published var configuration: ServerConfiguration = .default
   @Published var activeRequestCount: Int = 0
+  @Published var isRestarting: Bool = false
 
   // Provide shared access to configuration for non-UI callers
   nonisolated static func sharedConfiguration() async -> ServerConfiguration? {
@@ -129,6 +130,16 @@ final class ServerController: ObservableObject {
       handleServerError(error)
       await cleanupRuntime()
     }
+  }
+
+  /// Restarts the server to apply configuration changes
+  func restartServer() async {
+    isRestarting = true
+    defer { isRestarting = false }
+    if serverChannel != nil || eventLoopGroup != nil || isRunning {
+      await stopServer()
+    }
+    await startServer()
   }
 
   /// Stops the running server

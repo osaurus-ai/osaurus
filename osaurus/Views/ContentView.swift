@@ -43,7 +43,7 @@ struct ContentView: View {
               .font(.system(size: 18, weight: .bold, design: .rounded))
               .foregroundColor(theme.primaryText)
 
-            if server.isRunning {
+            if server.isRunning || server.isRestarting {
               HStack(spacing: 4) {
                 Text("http://\(server.localNetworkAddress):\(String(server.port))")
                   .font(.system(size: 11, weight: .regular, design: .monospaced))
@@ -72,14 +72,16 @@ struct ContentView: View {
 
           Spacer()
 
-          // Primary control button in top-right
-          SimpleToggleButton(
-            isOn: server.serverHealth == .running,
-            title: primaryButtonTitle,
-            icon: primaryButtonIcon,
-            action: toggleServer
-          )
-          .disabled(isBusy)
+          // Primary control button in top-right (shown for stopped/starting/error)
+          if shouldShowPrimaryButton {
+            SimpleToggleButton(
+              isOn: false,
+              title: primaryButtonTitle,
+              icon: primaryButtonIcon,
+              action: toggleServer
+            )
+            .disabled(isBusy)
+          }
         }
 
         // Bottom row: Actions
@@ -91,28 +93,27 @@ struct ContentView: View {
 
           // Action buttons
           HStack(spacing: 6) {
-            if !server.isRunning {
-              Button(action: { showConfiguration = true }) {
-                Image(systemName: "gearshape")
-                  .font(.system(size: 14))
-                  .foregroundColor(theme.primaryText)
-                  .frame(width: 28, height: 28)
-                  .background(
-                    Circle()
-                      .fill(theme.buttonBackground)
-                      .overlay(
-                        Circle()
-                          .stroke(theme.buttonBorder, lineWidth: 1)
-                      )
-                  )
-              }
-              .buttonStyle(PlainButtonStyle())
-              .help("Configure server")
-              .popover(
-                isPresented: $showConfiguration, attachmentAnchor: .point(.bottom), arrowEdge: .top
-              ) {
-                ConfigurationView(portString: $portString, configuration: $server.configuration)
-              }
+            Button(action: { showConfiguration = true }) {
+              Image(systemName: "gearshape")
+                .font(.system(size: 14))
+                .foregroundColor(theme.primaryText)
+                .frame(width: 28, height: 28)
+                .background(
+                  Circle()
+                    .fill(theme.buttonBackground)
+                    .overlay(
+                      Circle()
+                        .stroke(theme.buttonBorder, lineWidth: 1)
+                    )
+                )
+            }
+            .buttonStyle(PlainButtonStyle())
+            .help("Configure server")
+            .popover(
+              isPresented: $showConfiguration, attachmentAnchor: .point(.bottom), arrowEdge: .top
+            ) {
+              ConfigurationView(portString: $portString, configuration: $server.configuration)
+                .environmentObject(server)
             }
 
             Button(action: {
@@ -231,23 +232,17 @@ struct ContentView: View {
   }
 
   private func toggleServer() {
-    if server.isRunning {
-      Task { @MainActor in
-        await server.stopServer()
-      }
-    } else {
-      guard let port = Int(portString), (1..<65536).contains(port) else {
-        server.lastErrorMessage = "Please enter a valid port between 1 and 65535"
+    guard server.serverHealth != .running else { return }
+    guard let port = Int(portString), (1..<65536).contains(port) else {
+      server.lastErrorMessage = "Please enter a valid port between 1 and 65535"
+      showError = true
+      return
+    }
+    server.port = port
+    Task { @MainActor in
+      await server.startServer()
+      if server.lastErrorMessage != nil {
         showError = true
-        return
-      }
-
-      server.port = port
-      Task { @MainActor in
-        await server.startServer()
-        if server.lastErrorMessage != nil {
-          showError = true
-        }
       }
     }
   }
@@ -265,29 +260,39 @@ struct ContentView: View {
 }
 
 extension ContentView {
-  fileprivate var primaryButtonTitle: String {
+  private var shouldShowPrimaryButton: Bool {
+    if server.isRestarting { return false }
     switch server.serverHealth {
-    case .stopped: return "Start"
+    case .stopped, .starting, .error:
+      return true
+    case .running, .stopping:
+      return false
+    }
+  }
+
+  fileprivate var primaryButtonTitle: String {
+    if server.isRestarting { return "" }
+    switch server.serverHealth {
+    case .stopped, .error: return "Start"
     case .starting: return "Starting…"
-    case .running: return "Stop"
-    case .stopping: return "Stopping…"
-    case .error: return "Retry"
+    case .stopping: return "Stopping…" // not shown
+    case .running: return ""
     }
   }
 
   fileprivate var primaryButtonIcon: String {
+    if server.isRestarting { return "" }
     switch server.serverHealth {
-    case .stopped: return "play.circle.fill"
-    case .starting: return "hourglass"
-    case .running: return "stop.circle.fill"
-    case .stopping: return "hourglass"
-    case .error: return "exclamationmark.triangle.fill"
+    case .stopped, .error: return "play.circle.fill"
+    case .starting, .stopping: return "hourglass"
+    case .running: return ""
     }
   }
 }
 
 // MARK: - Configuration View
 struct ConfigurationView: View {
+  @EnvironmentObject var server: ServerController
   @Environment(\.theme) private var theme
   @Binding var portString: String
   @Binding var configuration: ServerConfiguration
@@ -670,6 +675,11 @@ struct ConfigurationView: View {
               ServerConfigurationStore.save(configuration)
               // Apply login item state
               LoginItemService.shared.applyStartAtLogin(configuration.startAtLogin)
+
+              // Restart server immediately to apply changes
+              Task { @MainActor in
+                await server.restartServer()
+              }
 
               dismiss()
             }

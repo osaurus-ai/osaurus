@@ -75,6 +75,11 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSPopoverD
     }
     statusItem = item
     updateStatusItemAndMenu()
+
+    // Auto-start server on app launch
+    Task { @MainActor in
+      await serverController.startServer()
+    }
   }
 
   func application(_ application: NSApplication, open urls: [URL]) {
@@ -156,7 +161,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSPopoverD
     statusItem.menu = nil
     if let button = statusItem.button {
       // Update symbol based on server activity
-      let isActive = (serverController.serverHealth == .running)
+      let isActive = (serverController.serverHealth == .running) || serverController.isRestarting
       let desiredName = isActive ? "brain.fill" : "brain"
       var image = NSImage(systemSymbolName: desiredName, accessibilityDescription: "Osaurus")
       if image == nil && isActive {
@@ -191,7 +196,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSPopoverD
       var tooltip: String
       switch serverController.serverHealth {
       case .stopped:
-        tooltip = "Osaurus — Ready to start"
+        tooltip = serverController.isRestarting ? "Osaurus — Restarting…" : "Osaurus — Ready to start"
       case .starting:
         tooltip = "Osaurus — Starting…"
       case .running:
