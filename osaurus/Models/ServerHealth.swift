@@ -11,6 +11,7 @@ import Foundation
 public enum ServerHealth: Equatable {
   case stopped
   case starting
+  case restarting
   case running
   case stopping
   case error(String)
@@ -20,6 +21,7 @@ public enum ServerHealth: Equatable {
     switch self {
     case .stopped: return "Server Stopped"
     case .starting: return "Starting Server..."
+    case .restarting: return "Restarting Server..."
     case .running: return "Server Running"
     case .stopping: return "Stopping Server..."
     case .error: return "Server Error"
@@ -31,6 +33,7 @@ public enum ServerHealth: Equatable {
     switch self {
     case .stopped: return "Stopped"
     case .starting: return "Starting..."
+    case .restarting: return "Restarting..."
     case .running: return "Running"
     case .stopping: return "Stopping..."
     case .error: return "Error"

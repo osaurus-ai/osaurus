@@ -512,7 +512,7 @@ struct SystemResourceMonitor: View {
             }
           )
       }
-      .frame(minWidth: 90)
+      .frame(minWidth: 50)
 
       // RAM Usage
       VStack(alignment: .leading, spacing: 6) {
@@ -562,7 +562,7 @@ struct SystemResourceMonitor: View {
             }
           )
       }
-      .frame(minWidth: 90)
+      .frame(minWidth: 50)
     }
     .padding(.horizontal, 10)
     .padding(.vertical, 6)

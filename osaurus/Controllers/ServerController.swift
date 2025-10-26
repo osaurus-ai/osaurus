@@ -23,6 +23,7 @@ final class ServerController: ObservableObject {
   @Published var localNetworkAddress: String = "127.0.0.1"
   @Published var configuration: ServerConfiguration = .default
   @Published var activeRequestCount: Int = 0
+  @Published var isRestarting: Bool = false
 
   // Provide shared access to configuration for non-UI callers
   nonisolated static func sharedConfiguration() async -> ServerConfiguration? {
@@ -131,12 +132,22 @@ final class ServerController: ObservableObject {
     }
   }
 
+  /// Restarts the server to apply configuration changes
+  func restartServer() async {
+    isRestarting = true
+    serverHealth = .restarting
+    defer { isRestarting = false }
+    if serverChannel != nil || eventLoopGroup != nil || isRunning {
+      await stopServer()
+    }
+    await startServer()
+  }
+
   /// Stops the running server
   func stopServer() async {
     // If nothing to stop, return
     guard serverChannel != nil || eventLoopGroup != nil else { return }
-
-    serverHealth = .stopping
+    if !isRestarting { serverHealth = .stopping }
     print("[Osaurus] Stopping NIO server...")
 
     isRunning = false
@@ -152,7 +163,7 @@ final class ServerController: ObservableObject {
     localNetworkAddress = "127.0.0.1"
     await cleanupRuntime()
 
-    serverHealth = .stopped
+    if !isRestarting { serverHealth = .stopped }
     print("[Osaurus] Server stopped successfully")
   }
 
@@ -240,7 +251,7 @@ final class ServerController: ObservableObject {
       Task { @MainActor in
         guard let self else { return }
         self.isRunning = false
-        self.serverHealth = .stopped
+        if !self.isRestarting { self.serverHealth = .stopped }
         self.serverChannel = nil
       }
     }
