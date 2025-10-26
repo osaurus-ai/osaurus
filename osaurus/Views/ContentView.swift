@@ -28,11 +28,7 @@ struct ContentView: View {
           appName: "Osaurus",
           serverURL: "http://\(server.localNetworkAddress):\(String(server.port))",
           statusLineText: statusText,
-          showPrimaryButton: shouldShowPrimaryButton,
-          primaryButtonTitle: primaryButtonTitle,
-          primaryButtonIcon: primaryButtonIcon,
-          isPrimaryButtonBusy: isBusy,
-          onPrimaryAction: toggleServer,
+          onRetry: toggleServer,
           badgeText: statusBadgeText,
           badgeColor: statusBadgeColor,
           badgeAnimating: statusBadgeAnimating
@@ -43,7 +39,7 @@ struct ContentView: View {
       .padding(16)
     }
     .frame(
-      width: 380,
+      width: 300,
       height: 150
     )
     .environment(\.theme, themeManager.currentTheme)
@@ -76,12 +72,7 @@ struct ContentView: View {
     }
   }
 
-  private var isBusy: Bool {
-    switch server.serverHealth {
-    case .starting, .restarting, .stopping: return true
-    default: return false
-    }
-  }
+  // Primary action state removed; badge handles retry on error
 
   private var statusBadgeText: String {
     switch server.serverHealth {
@@ -129,38 +120,7 @@ struct ContentView: View {
 
 }
 
-extension ContentView {
-  // MARK: - Primary Button State
-  private var shouldShowPrimaryButton: Bool {
-    if server.isRestarting { return false }
-    switch server.serverHealth {
-    case .stopped, .starting, .error:
-      return true
-    case .running, .restarting, .stopping:
-      return false
-    }
-  }
-
-  fileprivate var primaryButtonTitle: String {
-    if server.isRestarting { return "" }
-    switch server.serverHealth {
-    case .stopped, .error: return "Start"
-    case .starting: return "Starting…"
-    case .restarting: return ""  // not shown
-    case .stopping: return "Stopping…"  // not shown
-    case .running: return ""
-    }
-  }
-
-  fileprivate var primaryButtonIcon: String {
-    if server.isRestarting { return "" }
-    switch server.serverHealth {
-    case .stopped, .error: return "play.circle.fill"
-    case .starting, .restarting, .stopping: return "hourglass"
-    case .running: return ""
-    }
-  }
-}
+// Primary button logic removed
 
 // MARK: - Subviews
 private struct TopStatusHeader: View {
@@ -170,11 +130,7 @@ private struct TopStatusHeader: View {
   let appName: String
   let serverURL: String
   let statusLineText: String
-  let showPrimaryButton: Bool
-  let primaryButtonTitle: String
-  let primaryButtonIcon: String
-  let isPrimaryButtonBusy: Bool
-  let onPrimaryAction: () -> Void
+  let onRetry: () -> Void
   let badgeText: String
   let badgeColor: Color
   let badgeAnimating: Bool
@@ -195,7 +151,18 @@ private struct TopStatusHeader: View {
             .font(.system(size: 18, weight: .bold, design: .rounded))
             .foregroundColor(theme.primaryText)
 
-          StatusBadge(status: badgeText, color: badgeColor, isAnimating: badgeAnimating)
+          Spacer()
+
+          // Make the status badge clickable as "Retry" when in error state
+          if case .error = server.serverHealth {
+            Button(action: onRetry) {
+              StatusBadge(status: "Retry", color: badgeColor, isAnimating: badgeAnimating)
+            }
+            .buttonStyle(PlainButtonStyle())
+            .help("Retry")
+          } else {
+            StatusBadge(status: badgeText, color: badgeColor, isAnimating: badgeAnimating)
+          }
         }
 
         if server.isRunning || server.isRestarting {
@@ -216,23 +183,17 @@ private struct TopStatusHeader: View {
           .transition(.move(edge: .bottom).combined(with: .opacity))
         } else {
           Text(statusLineText)
-            .font(.system(size: 12, weight: .medium))
+            .font(.system(size: 11, weight: .regular, design: .monospaced))
+            .lineLimit(1)
+            .truncationMode(.tail)
             .foregroundColor(theme.secondaryText)
+            .help(statusLineText)
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
       }
-
-      Spacer()
-
-      if showPrimaryButton {
-        SimpleToggleButton(
-          isOn: false,
-          title: primaryButtonTitle,
-          icon: primaryButtonIcon,
-          action: onPrimaryAction
-        )
-        .disabled(isPrimaryButtonBusy)
-      }
+      .frame(maxWidth: .infinity, alignment: .leading)
     }
+    .frame(maxWidth: .infinity, alignment: .leading)
   }
 
   private func copyURL() {
@@ -249,7 +210,7 @@ private struct BottomActionBar: View {
   @State private var showConfiguration = false
 
   var body: some View {
-    HStack(spacing: 4) {
+    VStack(spacing: 4) {
       SystemResourceMonitor()
 
       Spacer()
