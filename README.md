@@ -11,7 +11,7 @@
 ![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen)
 
 <p align="center">
-  <img width="452" height="222" alt="Screenshot 2025-09-22 at 7 02 10 PM" src="https://github.com/user-attachments/assets/6cd07add-2768-4556-ad0c-ed721ebc6596" />
+  <img width="372" height="222" alt="Screenshot 2025-10-26 at 8 11 50 AM" src="https://github.com/user-attachments/assets/df0bdef9-c866-4d92-a1d5-91d959d9dd62" />
 </p>
 
 Native, Apple Silicon–only local LLM server. Built on Apple's MLX for maximum performance on M‑series chips, with Apple Foundation Models integration when available. SwiftUI app + SwiftNIO server with OpenAI‑compatible and Ollama‑compatible endpoints.
