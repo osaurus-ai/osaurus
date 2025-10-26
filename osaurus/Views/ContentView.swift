@@ -234,6 +234,12 @@ private struct BottomActionBar: View {
           updater.checkForUpdates()
         }
 
+        CircularIconButton(systemName: "questionmark.circle", help: "Documentation") {
+          if let url = URL(string: "https://docs.osaurus.ai/") {
+            NSWorkspace.shared.open(url)
+          }
+        }
+
         CircularIconButton(systemName: "power", help: "Quit") {
           NSApp.terminate(nil)
         }
