@@ -390,7 +390,8 @@ extension AppDelegate {
 
       let controller = NSHostingController(rootView: root)
       // Create already centered on the active screen to avoid any reposition jank
-      let defaultSize = NSSize(width: 720, height: 560)
+      // Start with compact size since chat is initially empty
+      let defaultSize = NSSize(width: 720, height: 250)
       let mouse = NSEvent.mouseLocation
       let screen = NSScreen.screens.first { NSMouseInRect(mouse, $0.frame, false) } ?? NSScreen.main
       let initialRect: NSRect

@@ -106,6 +106,7 @@ struct ChatView: View {
   @State private var focusTrigger: Int = 0
   @State private var isPinnedToBottom: Bool = true
   @State private var inputIsFocused: Bool = false
+  @State private var hostWindow: NSWindow?
 
   var body: some View {
     GeometryReader { proxy in
@@ -121,26 +122,78 @@ struct ChatView: View {
         VStack(spacing: 10) {
           header(containerWidth)
           if hasAnyModel {
-            conversation(containerWidth)
+            if !session.turns.isEmpty {
+              conversation(containerWidth)
+                .transition(.opacity.combined(with: .move(edge: .top)))
+            } else {
+              // Add minimal spacer when empty to keep window compact
+              Spacer()
+                .frame(height: 0)
+            }
             inputBar(containerWidth)
           } else {
             emptyState
           }
+
+          // Add flexible spacer only when there are messages
+          if !session.turns.isEmpty && hasAnyModel {
+            Spacer(minLength: 0)
+          }
         }
+        .animation(.easeInOut(duration: 0.25), value: session.turns.isEmpty)
         .padding(14)
-        .frame(maxWidth: 820)
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .frame(maxWidth: 1000)
+        .frame(
+          maxWidth: .infinity,
+          maxHeight: session.turns.isEmpty ? .infinity : .infinity,
+          alignment: .top
+        )
       }
     }
     .frame(
-      minWidth: 560, idealWidth: 720, maxWidth: .infinity, minHeight: 420, idealHeight: 560,
+      minWidth: 700,
+      idealWidth: 900,
+      maxWidth: .infinity,
+      minHeight: session.turns.isEmpty ? 200 : 525,
+      idealHeight: session.turns.isEmpty ? 250 : 700,
       maxHeight: .infinity
     )
+    .animation(.easeInOut(duration: 0.3), value: session.turns.isEmpty)
+    .background(WindowAccessor(window: $hostWindow))
     .onExitCommand { AppDelegate.shared?.closeChatOverlay() }
     .onReceive(NotificationCenter.default.publisher(for: .chatOverlayActivated)) { _ in
       focusTrigger &+= 1
       isPinnedToBottom = true
     }
+    .onChange(of: session.turns.isEmpty) { oldValue, newValue in
+      // Resize window when chat is cleared or gets content
+      resizeWindowForContent(isEmpty: newValue)
+    }
+  }
+
+  private func resizeWindowForContent(isEmpty: Bool) {
+    guard let window = hostWindow else { return }
+
+    let targetHeight: CGFloat = isEmpty ? 250 : 700
+    let currentFrame = window.frame
+
+    // Calculate center point of current window
+    let currentCenterY = currentFrame.origin.y + (currentFrame.height / 2)
+    let currentCenterX = currentFrame.origin.x + (currentFrame.width / 2)
+
+    // Keep window centered at the same point
+    let newFrame = NSRect(
+      x: currentCenterX - (currentFrame.width / 2),
+      y: currentCenterY - (targetHeight / 2),
+      width: currentFrame.width,
+      height: targetHeight
+    )
+
+    NSAnimationContext.runAnimationGroup({ context in
+      context.duration = 0.3
+      context.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+      window.animator().setFrame(newFrame, display: true)
+    })
   }
 
   private func header(_ width: CGFloat) -> some View {
@@ -186,17 +239,42 @@ struct ChatView: View {
             ForEach(Array(session.turns.enumerated()), id: \.offset) { item in
               let turn = item.element
               VStack(alignment: .leading, spacing: 6) {
-                Text(turn.role == .user ? "You" : "Assistant")
-                  .font(Typography.small(width))
-                  .foregroundColor(theme.tertiaryText)
+                HStack {
+                  Text(turn.role == .user ? "You" : "Assistant")
+                    .font(Typography.small(width))
+                    .fontWeight(.semibold)
+                    .foregroundColor(turn.role == .user ? .white : theme.primaryText)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 4)
+                    .background(
+                      turn.role == .user
+                        ? theme.accentColor.opacity(0.8)
+                        : theme.secondaryBackground.opacity(0.6)
+                    )
+                    .clipShape(Capsule())
+                  Spacer()
+                }
 
                 ZStack(alignment: .topTrailing) {
-                  MarkdownMessageView(text: turn.content, baseWidth: width)
-                    .font(Typography.body(width))
-                    .foregroundColor(theme.primaryText)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                  if turn.content.isEmpty && turn.role == .assistant && session.isStreaming {
+                    HStack(spacing: 8) {
+                      ProgressView()
+                        .scaleEffect(0.8)
+                        .progressViewStyle(CircularProgressViewStyle(tint: theme.tertiaryText))
+                      Text("Thinking…")
+                        .font(Typography.body(width))
+                        .foregroundColor(theme.tertiaryText)
+                      Spacer()
+                    }
+                    .padding(.vertical, 8)
+                  } else {
+                    MarkdownMessageView(text: turn.content, baseWidth: width)
+                      .font(Typography.body(width))
+                      .foregroundColor(theme.primaryText)
+                      .frame(maxWidth: .infinity, alignment: .leading)
+                  }
 
-                  if turn.role == .assistant {
+                  if turn.role == .assistant && !turn.content.isEmpty {
                     Button(action: { copyToPasteboard(turn.content) }) {
                       Image(systemName: "doc.on.doc")
                     }
@@ -215,7 +293,7 @@ struct ChatView: View {
               )
               .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
               .overlay(alignment: .topTrailing) {
-                if turn.role == .assistant {
+                if turn.role == .assistant && !turn.content.isEmpty {
                   Button(action: { copyToPasteboard(turn.content) }) {
                     Image(systemName: "doc.on.doc")
                   }
@@ -261,7 +339,7 @@ struct ChatView: View {
           .padding(8)
         }
       }
-      .onChange(of: session.turns.count) {
+      .onChange(of: session.turns.count) { _, _ in
         if hasInitialScroll {
           if isPinnedToBottom { withAnimation { proxy.scrollTo("BOTTOM", anchor: .bottom) } }
         } else {
@@ -269,7 +347,7 @@ struct ChatView: View {
           hasInitialScroll = true
         }
       }
-      .onChange(of: session.scrollTick) {
+      .onChange(of: session.scrollTick) { _, _ in
         if isPinnedToBottom { withAnimation { proxy.scrollTo("BOTTOM", anchor: .bottom) } }
       }
       .onReceive(NotificationCenter.default.publisher(for: .chatOverlayActivated)) { _ in
@@ -294,7 +372,7 @@ struct ChatView: View {
           onCommit: { session.sendCurrent() },
           onFocusChange: { focused in inputIsFocused = focused }
         )
-        .frame(minHeight: 60, maxHeight: 120)
+        .frame(minHeight: session.turns.isEmpty ? 40 : 60, maxHeight: 120)
         .overlay(
           RoundedRectangle(cornerRadius: 8, style: .continuous)
             .stroke(
@@ -372,12 +450,12 @@ struct MultilineTextView: NSViewRepresentable {
     tv.isRichText = false
     tv.isAutomaticQuoteSubstitutionEnabled = false
     tv.isAutomaticDashSubstitutionEnabled = false
-    tv.font = NSFont.systemFont(ofSize: 13)
+    tv.font = NSFont.systemFont(ofSize: 15)
     tv.backgroundColor = .clear
     tv.textColor = NSColor.labelColor
     tv.string = text
     tv.commitHandler = onCommit
-    tv.minSize = NSSize(width: 0, height: 60)
+    tv.minSize = NSSize(width: 0, height: 40)
     tv.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: 120)
     tv.isVerticallyResizable = true
     tv.isHorizontallyResizable = false
@@ -459,6 +537,27 @@ struct MultilineTextView: NSViewRepresentable {
       let r = super.resignFirstResponder()
       if r { focusHandler?(false) }
       return r
+    }
+  }
+}
+
+// MARK: - Window Accessor Helper
+struct WindowAccessor: NSViewRepresentable {
+  @Binding var window: NSWindow?
+
+  func makeNSView(context: Context) -> NSView {
+    let view = NSView()
+    DispatchQueue.main.async {
+      self.window = view.window
+    }
+    return view
+  }
+
+  func updateNSView(_ nsView: NSView, context: Context) {
+    if window == nil {
+      DispatchQueue.main.async {
+        self.window = nsView.window
+      }
     }
   }
 }

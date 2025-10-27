@@ -16,14 +16,14 @@ enum Typography {
   }
 
   static func title(_ width: CGFloat) -> Font {
-    .system(size: 16 * scale(for: width), weight: .semibold, design: .rounded)
+    .system(size: 18 * scale(for: width), weight: .semibold, design: .rounded)
   }
 
-  static func body(_ width: CGFloat) -> Font { .system(size: 13 * scale(for: width)) }
+  static func body(_ width: CGFloat) -> Font { .system(size: 15 * scale(for: width)) }
 
-  static func small(_ width: CGFloat) -> Font { .system(size: 11 * scale(for: width)) }
+  static func small(_ width: CGFloat) -> Font { .system(size: 13 * scale(for: width)) }
 
   static func code(_ width: CGFloat) -> Font {
-    .system(size: 12 * scale(for: width), weight: .regular, design: .monospaced)
+    .system(size: 14 * scale(for: width), weight: .regular, design: .monospaced)
   }
 }
