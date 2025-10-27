@@ -216,6 +216,10 @@ private struct BottomActionBar: View {
       Spacer()
 
       HStack(spacing: 6) {
+        CircularIconButton(systemName: "bubble.left", help: "Chat") {
+          AppDelegate.shared?.showChatOverlay()
+        }
+
         CircularIconButton(systemName: "gearshape", help: "Configure server") {
           showConfiguration = true
         }
