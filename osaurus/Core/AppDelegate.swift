@@ -82,8 +82,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSPopoverD
       await serverController.startServer()
     }
 
-    // Setup global hotkey for Chat overlay
-    setupChatHotKey()
+    // Setup global hotkey for Chat overlay (configured)
+    applyChatHotkey()
   }
 
   func application(_ application: NSApplication, open urls: [URL]) {
@@ -334,6 +334,14 @@ extension AppDelegate {
 
 // MARK: Deep Link Handling
 extension AppDelegate {
+  func applyChatHotkey() {
+    let cfg = ChatConfigurationStore.load()
+    HotKeyManager.shared.register(hotkey: cfg.hotkey) { [weak self] in
+      Task { @MainActor in
+        self?.toggleChatOverlay()
+      }
+    }
+  }
   fileprivate func handleDeepLink(_ url: URL) {
     guard let scheme = url.scheme?.lowercased(), scheme == "huggingface" else { return }
     guard let components = URLComponents(url: url, resolvingAgainstBaseURL: false) else { return }
@@ -368,13 +376,7 @@ extension AppDelegate {
 
 // MARK: - Chat Overlay Window
 extension AppDelegate {
-  private func setupChatHotKey() {
-    HotKeyManager.shared.registerCommandSemicolon { [weak self] in
-      Task { @MainActor in
-        self?.toggleChatOverlay()
-      }
-    }
-  }
+  private func setupChatHotKey() {}
 
   @MainActor private func toggleChatOverlay() {
     if let win = chatWindow, win.isVisible {

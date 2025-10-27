@@ -14,6 +14,10 @@ struct ConfigurationView: View {
   @State private var cliInstallMessage: String? = nil
   @State private var cliInstallSuccess: Bool = false
 
+  // Chat settings state
+  @State private var tempChatHotkey: Hotkey? = nil
+  @State private var tempSystemPrompt: String = ""
+
   // Advanced settings state
   @State private var tempTopP: String = ""
   @State private var tempKVBits: String = ""
@@ -43,6 +47,54 @@ struct ConfigurationView: View {
       // Scrollable content area
       ScrollView {
         VStack(alignment: .leading, spacing: 16) {
+          // Chat settings section
+          VStack(alignment: .leading, spacing: 12) {
+            Label("Chat", systemImage: "message")
+              .font(.system(size: 13, weight: .semibold))
+              .foregroundColor(theme.primaryText)
+
+            // Global Hotkey
+            VStack(alignment: .leading, spacing: 6) {
+              Text("Global Hotkey")
+                .font(.system(size: 11, weight: .medium))
+                .foregroundColor(theme.secondaryText)
+              HotkeyRecorder(value: $tempChatHotkey)
+            }
+
+            // System Prompt
+            VStack(alignment: .leading, spacing: 6) {
+              Text("System Prompt")
+                .font(.system(size: 11, weight: .medium))
+                .foregroundColor(theme.secondaryText)
+              ZStack(alignment: .topLeading) {
+                TextEditor(text: $tempSystemPrompt)
+                  .font(.system(size: 12, design: .monospaced))
+                  .frame(minHeight: 80, maxHeight: 140)
+                  .padding(6)
+                  .background(
+                    RoundedRectangle(cornerRadius: 6)
+                      .fill(theme.inputBackground)
+                      .overlay(
+                        RoundedRectangle(cornerRadius: 6)
+                          .stroke(theme.inputBorder, lineWidth: 1)
+                      )
+                  )
+                  .foregroundColor(theme.primaryText)
+                if tempSystemPrompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                  Text("Optional. Shown as a system message for all chats.")
+                    .font(.system(size: 10))
+                    .foregroundColor(theme.tertiaryText)
+                    .padding(.top, 10)
+                    .padding(.leading, 12)
+                }
+              }
+            }
+          }
+          .padding(12)
+          .background(
+            RoundedRectangle(cornerRadius: 8)
+              .fill(theme.secondaryBackground)
+          )
           // Port configuration section
           VStack(alignment: .leading, spacing: 12) {
             Label("Network Settings", systemImage: "network")
@@ -383,6 +435,12 @@ struct ConfigurationView: View {
 
               // Persist to disk
               ServerConfigurationStore.save(configuration)
+              // Save Chat configuration
+              let chatCfg = ChatConfiguration(
+                hotkey: tempChatHotkey, systemPrompt: tempSystemPrompt)
+              ChatConfigurationStore.save(chatCfg)
+              // Apply hotkey without relaunch
+              AppDelegate.shared?.applyChatHotkey()
               // Apply login item state
               LoginItemService.shared.applyStartAtLogin(configuration.startAtLogin)
 
@@ -417,6 +475,9 @@ struct ConfigurationView: View {
       tempPortString = portString
       tempExposeToNetwork = configuration.exposeToNetwork
       tempStartAtLogin = configuration.startAtLogin
+      let chat = ChatConfigurationStore.load()
+      tempChatHotkey = chat.hotkey
+      tempSystemPrompt = chat.systemPrompt
       let defaults = ServerConfiguration.default
       tempTopP = configuration.genTopP == defaults.genTopP ? "" : String(configuration.genTopP)
       tempKVBits = configuration.genKVBits.map(String.init) ?? ""

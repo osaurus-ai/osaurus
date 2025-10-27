@@ -56,7 +56,12 @@ final class ChatSession: ObservableObject {
     guard !trimmed.isEmpty else { return }
     turns.append((.user, trimmed))
 
-    let messages = turns.map { Message(role: $0.role, content: $0.content) }
+    var messages = turns.map { Message(role: $0.role, content: $0.content) }
+    let chatCfg = ChatConfigurationStore.load()
+    let sys = chatCfg.systemPrompt.trimmingCharacters(in: .whitespacesAndNewlines)
+    if !sys.isEmpty {
+      messages.insert(Message(role: .system, content: sys), at: 0)
+    }
     let prompt = PromptBuilder.buildPrompt(from: messages)
 
     currentTask = Task { @MainActor in
