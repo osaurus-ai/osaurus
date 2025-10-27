@@ -44,14 +44,14 @@ protocol ThemeProtocol {
   // Glass / Code styling
   var glassTintOverlay: Color { get }
   var codeBlockBackground: Color { get }
-  
+
   // Glass specific
   var glassOpacityPrimary: Double { get }
   var glassOpacitySecondary: Double { get }
   var glassOpacityTertiary: Double { get }
   var glassBlurRadius: Double { get }
   var glassEdgeLight: Color { get }
-  
+
   // Animation timing
   var animationDurationQuick: Double { get }
   var animationDurationMedium: Double { get }
@@ -99,14 +99,14 @@ struct LightTheme: ThemeProtocol {
   let inputBorder = Color(hex: "d1d5db")
   let glassTintOverlay = Color.black.opacity(0.12)
   let codeBlockBackground = Color.black.opacity(0.08)
-  
+
   // Glass specific
   let glassOpacityPrimary: Double = 0.15
   let glassOpacitySecondary: Double = 0.10
   let glassOpacityTertiary: Double = 0.05
   let glassBlurRadius: Double = 20
   let glassEdgeLight = Color.white.opacity(0.3)
-  
+
   // Animation timing
   let animationDurationQuick: Double = 0.2
   let animationDurationMedium: Double = 0.3
@@ -154,14 +154,14 @@ struct DarkTheme: ThemeProtocol {
   let inputBorder = Color(hex: "3f3f46")
   let glassTintOverlay = Color.black.opacity(0.18)
   let codeBlockBackground = Color.black.opacity(0.35)
-  
+
   // Glass specific
   let glassOpacityPrimary: Double = 0.10
   let glassOpacitySecondary: Double = 0.08
   let glassOpacityTertiary: Double = 0.05
   let glassBlurRadius: Double = 30
   let glassEdgeLight = Color.white.opacity(0.2)
-  
+
   // Animation timing
   let animationDurationQuick: Double = 0.2
   let animationDurationMedium: Double = 0.3

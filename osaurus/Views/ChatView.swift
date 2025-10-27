@@ -101,7 +101,7 @@ final class ChatSession: ObservableObject {
 struct ChatView: View {
   @EnvironmentObject var server: ServerController
   @StateObject private var themeManager = ThemeManager.shared
-  
+
   private var theme: ThemeProtocol {
     themeManager.currentTheme
   }
@@ -203,6 +203,7 @@ struct ChatView: View {
         .font(Typography.title(width))
         .foregroundColor(theme.primaryText)
         .fontWeight(.medium)
+        .padding(.vertical, 4)
       Spacer()
       if session.modelOptions.count > 1 {
         Picker("Model", selection: $session.selectedModel) {
@@ -246,17 +247,12 @@ struct ChatView: View {
                 if turn.role == .user {
                   Spacer()
                 }
-                
+
                 VStack(alignment: turn.role == .user ? .trailing : .leading, spacing: 8) {
-                  HStack(spacing: 4) {
-                    Circle()
-                      .fill(turn.role == .user ? Color.accentColor : theme.secondaryText)
-                      .frame(width: 6, height: 6)
-                    Text(turn.role == .user ? "You" : "Assistant")
-                      .font(Typography.small(width))
-                      .fontWeight(.medium)
-                      .foregroundColor(turn.role == .user ? Color.accentColor : theme.secondaryText)
-                  }
+                  Text(turn.role == .user ? "You" : "Assistant")
+                    .font(Typography.small(width))
+                    .fontWeight(.medium)
+                    .foregroundColor(turn.role == .user ? Color.accentColor : theme.secondaryText)
 
                   ZStack(alignment: .topTrailing) {
                     Group {
@@ -270,7 +266,6 @@ struct ChatView: View {
                             .foregroundColor(theme.primaryText)
                         }
                         .padding(16)
-                        .frame(minWidth: 100, maxWidth: min(width * 0.75, 600))
                         .background(
                           GlassMessageBubble(role: turn.role, isStreaming: session.isStreaming)
                         )
@@ -279,7 +274,6 @@ struct ChatView: View {
                           .font(Typography.body(width))
                           .foregroundColor(theme.primaryText)
                           .padding(16)
-                          .frame(minWidth: 100, maxWidth: min(width * 0.75, 600))
                           .background(
                             GlassMessageBubble(role: turn.role, isStreaming: session.isStreaming)
                           )
@@ -287,7 +281,7 @@ struct ChatView: View {
                       }
                     }
                     .fixedSize(horizontal: false, vertical: true)
-                    
+
                     if turn.role == .assistant && !turn.content.isEmpty {
                       HoverButton(action: { copyToPasteboard(turn.content) }) {
                         Image(systemName: "doc.on.doc")
@@ -299,7 +293,11 @@ struct ChatView: View {
                     }
                   }
                 }
-                
+                .frame(
+                  maxWidth: min(width * 0.75, 600),
+                  alignment: turn.role == .user ? .trailing : .leading
+                )
+
                 if turn.role == .assistant {
                   Spacer()
                 }
@@ -374,10 +372,13 @@ struct ChatView: View {
           onCommit: { session.sendCurrent() },
           onFocusChange: { focused in inputIsFocused = focused }
         )
-        .frame(minHeight: session.turns.isEmpty ? 48 : 64, maxHeight: 120)
+        .frame(minHeight: 48, maxHeight: 120)
         .background(
           RoundedRectangle(cornerRadius: 16, style: .continuous)
-            .fill(theme.glassOpacityTertiary == 0.05 ? theme.secondaryBackground.opacity(0.4) : theme.primaryBackground.opacity(0.4))
+            .fill(
+              theme.glassOpacityTertiary == 0.05
+                ? theme.secondaryBackground.opacity(0.4) : theme.primaryBackground.opacity(0.4)
+            )
             .background(
               RoundedRectangle(cornerRadius: 16, style: .continuous)
                 .fill(.ultraThinMaterial)
@@ -388,15 +389,15 @@ struct ChatView: View {
             .strokeBorder(
               inputIsFocused
                 ? LinearGradient(
-                    colors: [Color.accentColor.opacity(0.6), Color.accentColor.opacity(0.3)],
-                    startPoint: .topLeading,
-                    endPoint: .bottomTrailing
-                  )
+                  colors: [Color.accentColor.opacity(0.6), Color.accentColor.opacity(0.3)],
+                  startPoint: .topLeading,
+                  endPoint: .bottomTrailing
+                )
                 : LinearGradient(
-                    colors: [theme.glassEdgeLight, theme.glassEdgeLight.opacity(0.3)],
-                    startPoint: .topLeading,
-                    endPoint: .bottomTrailing
-                  ),
+                  colors: [theme.glassEdgeLight, theme.glassEdgeLight.opacity(0.3)],
+                  startPoint: .topLeading,
+                  endPoint: .bottomTrailing
+                ),
               lineWidth: inputIsFocused ? 1.5 : 0.5
             )
         )
@@ -439,8 +440,14 @@ struct ChatView: View {
           )
         }
         .buttonStyle(.plain)
-        .disabled(session.input.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || session.isStreaming)
-        .opacity(session.input.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || session.isStreaming ? 0.5 : 1)
+        .disabled(
+          session.input.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            || session.isStreaming
+        )
+        .opacity(
+          session.input.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            || session.isStreaming ? 0.5 : 1
+        )
         .animation(.easeInOut(duration: theme.animationDurationQuick), value: session.input)
         .keyboardShortcut(.return, modifiers: [.command])
       }
@@ -590,12 +597,12 @@ struct HoverButton<Content: View>: View {
   let content: () -> Content
   @State private var isHovered: Bool = false
   @Environment(\.theme) private var theme
-  
+
   init(action: @escaping () -> Void, @ViewBuilder content: @escaping () -> Content) {
     self.action = action
     self.content = content
   }
-  
+
   var body: some View {
     Button(action: action) {
       content()

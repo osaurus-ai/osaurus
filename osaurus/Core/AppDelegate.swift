@@ -371,14 +371,17 @@ extension AppDelegate {
   private func setupChatHotKey() {
     HotKeyManager.shared.registerControlShiftC { [weak self] in
       Task { @MainActor in
-        self?.showChatOverlay()
+        self?.toggleChatOverlay()
       }
     }
   }
 
   @MainActor private func toggleChatOverlay() {
-    // Preserve legacy callers; now always show/focus instead of closing when visible
-    showChatOverlay()
+    if let win = chatWindow, win.isVisible {
+      closeChatOverlay()
+    } else {
+      showChatOverlay()
+    }
   }
 
   @MainActor func showChatOverlay() {
@@ -402,7 +405,7 @@ extension AppDelegate {
       }
       let win = NSPanel(
         contentRect: initialRect,
-        styleMask: [.titled, .fullSizeContentView, .closable],
+        styleMask: [.titled, .fullSizeContentView],
         backing: .buffered,
         defer: false
       )
@@ -416,7 +419,8 @@ extension AppDelegate {
       win.standardWindowButton(.zoomButton)?.isHidden = true
       win.titleVisibility = .hidden
       win.titlebarAppearsTransparent = true
-      win.isMovableByWindowBackground = false
+      win.isMovableByWindowBackground = true
+      win.standardWindowButton(.closeButton)?.isHidden = true
       win.level = .modalPanel
       win.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
       win.contentViewController = controller
