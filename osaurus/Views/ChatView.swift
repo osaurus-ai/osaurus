@@ -104,35 +104,49 @@ struct ChatView: View {
   @StateObject private var session = ChatSession()
   // Using AppKit-backed text view to handle Enter vs Shift+Enter
   @State private var focusTrigger: Int = 0
+  @State private var isPinnedToBottom: Bool = true
+  @State private var inputIsFocused: Bool = false
 
   var body: some View {
-    ZStack {
-      // Subtle material-like background using theme color
-      theme.primaryBackground.opacity(0.95)
-        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+    GeometryReader { proxy in
+      let containerWidth = proxy.size.width
+      ZStack(alignment: .bottomTrailing) {
+        // HUD-style glass background
+        GlassBackground(cornerRadius: 16)
+          .allowsHitTesting(false)
+        RoundedRectangle(cornerRadius: 16, style: .continuous)
+          .fill(theme.glassTintOverlay)
+          .allowsHitTesting(false)
 
-      VStack(spacing: 8) {
-        header
-        if hasAnyModel {
-          conversation
-          inputBar
-        } else {
-          emptyState
+        VStack(spacing: 10) {
+          header(containerWidth)
+          if hasAnyModel {
+            conversation(containerWidth)
+            inputBar(containerWidth)
+          } else {
+            emptyState
+          }
         }
+        .padding(14)
+        .frame(maxWidth: 820)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
       }
-      .padding(12)
     }
-    .frame(width: 720, height: 560)
+    .frame(
+      minWidth: 560, idealWidth: 720, maxWidth: .infinity, minHeight: 420, idealHeight: 560,
+      maxHeight: .infinity
+    )
     .onExitCommand { AppDelegate.shared?.closeChatOverlay() }
     .onReceive(NotificationCenter.default.publisher(for: .chatOverlayActivated)) { _ in
       focusTrigger &+= 1
+      isPinnedToBottom = true
     }
   }
 
-  private var header: some View {
+  private func header(_ width: CGFloat) -> some View {
     HStack(spacing: 8) {
       Text("Chat")
-        .font(.system(size: 14, weight: .semibold, design: .rounded))
+        .font(Typography.title(width))
         .foregroundColor(theme.primaryText)
       Spacer()
       if session.modelOptions.count > 1 {
@@ -163,65 +177,149 @@ struct ChatView: View {
     }
   }
 
-  private var conversation: some View {
+  private func conversation(_ width: CGFloat) -> some View {
     ScrollViewReader { proxy in
       @State var hasInitialScroll = false
-      ScrollView {
-        LazyVStack(alignment: .leading, spacing: 8) {
-          ForEach(Array(session.turns.enumerated()), id: \.offset) { item in
-            let turn = item.element
-            VStack(alignment: .leading, spacing: 4) {
-              Text(turn.role == .user ? "You" : "Assistant")
-                .font(.system(size: 11, weight: .medium))
-                .foregroundColor(theme.secondaryText)
-              Text(turn.content)
-                .font(.system(size: 13))
-                .foregroundColor(theme.primaryText)
+      ZStack(alignment: .bottomTrailing) {
+        ScrollView {
+          LazyVStack(alignment: .leading, spacing: 10) {
+            ForEach(Array(session.turns.enumerated()), id: \.offset) { item in
+              let turn = item.element
+              VStack(alignment: .leading, spacing: 6) {
+                Text(turn.role == .user ? "You" : "Assistant")
+                  .font(Typography.small(width))
+                  .foregroundColor(theme.tertiaryText)
+
+                ZStack(alignment: .topTrailing) {
+                  MarkdownMessageView(text: turn.content, baseWidth: width)
+                    .font(Typography.body(width))
+                    .foregroundColor(theme.primaryText)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                  if turn.role == .assistant {
+                    Button(action: { copyToPasteboard(turn.content) }) {
+                      Image(systemName: "doc.on.doc")
+                    }
+                    .buttonStyle(.borderless)
+                    .opacity(0.0)
+                    .help("Copy message")
+                  }
+                }
+              }
+              .frame(maxWidth: .infinity, alignment: .leading)
+              .padding(10)
+              .background(
+                (turn.role == .user
+                  ? theme.secondaryBackground.opacity(0.28)
+                  : theme.secondaryBackground.opacity(0.35))
+              )
+              .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+              .overlay(alignment: .topTrailing) {
+                if turn.role == .assistant {
+                  Button(action: { copyToPasteboard(turn.content) }) {
+                    Image(systemName: "doc.on.doc")
+                  }
+                  .buttonStyle(.borderless)
+                  .padding(6)
+                  .background(Color.black.opacity(0.25))
+                  .clipShape(Capsule())
+                  .opacity(0)
+                  .accessibilityLabel("Copy message")
+                  .onHover { hovering in
+                    withAnimation(.easeInOut(duration: 0.15)) {
+                      // Fade in/out on hover via layer-backed opacity
+                    }
+                  }
+                }
+              }
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(8)
-            .background(theme.secondaryBackground.opacity(0.5))
-            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+            Color.clear
+              .frame(height: 1)
+              .id("BOTTOM")
+              .onAppear { isPinnedToBottom = true }
+              .onDisappear { isPinnedToBottom = false }
           }
-          Color.clear.frame(height: 1).id("BOTTOM")
+          .padding(2)
         }
-        .padding(2)
+
+        if !isPinnedToBottom && !session.turns.isEmpty {
+          Button(action: {
+            withAnimation { proxy.scrollTo("BOTTOM", anchor: .bottom) }
+            isPinnedToBottom = true
+          }) {
+            HStack(spacing: 6) {
+              Image(systemName: "arrow.down")
+              Text("Jump to latest")
+            }
+            .font(Typography.small(width))
+            .padding(.vertical, 6)
+            .padding(.horizontal, 10)
+            .background(Color.black.opacity(0.3))
+            .clipShape(Capsule())
+          }
+          .buttonStyle(.plain)
+          .padding(8)
+        }
       }
       .onChange(of: session.turns.count) { _ in
         if hasInitialScroll {
-          withAnimation { proxy.scrollTo("BOTTOM", anchor: .bottom) }
+          if isPinnedToBottom { withAnimation { proxy.scrollTo("BOTTOM", anchor: .bottom) } }
         } else {
           proxy.scrollTo("BOTTOM", anchor: .bottom)
           hasInitialScroll = true
         }
       }
       .onChange(of: session.scrollTick) { _ in
-        withAnimation { proxy.scrollTo("BOTTOM", anchor: .bottom) }
+        if isPinnedToBottom { withAnimation { proxy.scrollTo("BOTTOM", anchor: .bottom) } }
       }
       .onReceive(NotificationCenter.default.publisher(for: .chatOverlayActivated)) { _ in
         proxy.scrollTo("BOTTOM", anchor: .bottom)
         hasInitialScroll = true
+        isPinnedToBottom = true
       }
     }
   }
 
-  private var inputBar: some View {
+  private func copyToPasteboard(_ text: String) {
+    NSPasteboard.general.clearContents()
+    NSPasteboard.general.setString(text, forType: .string)
+  }
+
+  private func inputBar(_ width: CGFloat) -> some View {
     VStack(spacing: 6) {
-      MultilineTextView(
-        text: $session.input, focusTrigger: $focusTrigger, onCommit: { session.sendCurrent() }
-      )
-      .frame(minHeight: 60, maxHeight: 120)
-      .overlay(
-        RoundedRectangle(cornerRadius: 8, style: .continuous)
-          .stroke(theme.tertiaryText.opacity(0.2), lineWidth: 1)
-      )
-      .background(theme.primaryBackground)
-      .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+      ZStack(alignment: .topLeading) {
+        MultilineTextView(
+          text: $session.input,
+          focusTrigger: $focusTrigger,
+          onCommit: { session.sendCurrent() },
+          onFocusChange: { focused in inputIsFocused = focused }
+        )
+        .frame(minHeight: 60, maxHeight: 120)
+        .overlay(
+          RoundedRectangle(cornerRadius: 8, style: .continuous)
+            .stroke(
+              inputIsFocused ? theme.accentColor.opacity(0.6) : theme.tertiaryText.opacity(0.2),
+              lineWidth: inputIsFocused ? 1.5 : 1)
+        )
+        .background(theme.primaryBackground.opacity(0.85))
+        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+
+        if session.input.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+          Text("Message…")
+            .font(Typography.body(width))
+            .foregroundColor(theme.tertiaryText)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 8)
+        }
+      }
 
       HStack(spacing: 8) {
         Spacer()
         Button(action: { session.sendCurrent() }) {
-          Text("Send")
+          HStack(spacing: 6) {
+            Image(systemName: "paperplane.fill")
+            Text("Send")
+          }
         }
         .keyboardShortcut(.return, modifiers: [.command])
       }
@@ -260,6 +358,7 @@ struct MultilineTextView: NSViewRepresentable {
   @Binding var text: String
   @Binding var focusTrigger: Int
   var onCommit: () -> Void
+  var onFocusChange: ((Bool) -> Void)? = nil
 
   func makeNSView(context: Context) -> NSScrollView {
     let scroll = NSScrollView()
@@ -295,6 +394,7 @@ struct MultilineTextView: NSViewRepresentable {
     if let tv = nsView.documentView as? CommitInterceptTextView {
       if tv.string != text { tv.string = text }
       tv.commitHandler = onCommit
+      tv.focusHandler = onFocusChange
       if context.coordinator.lastFocusTrigger != focusTrigger {
         context.coordinator.lastFocusTrigger = focusTrigger
         // Try focusing immediately, then again on the next runloop to handle first-show timing
@@ -317,10 +417,19 @@ struct MultilineTextView: NSViewRepresentable {
       guard let tv = notification.object as? NSTextView else { return }
       parent.text = tv.string
     }
+
+    func textDidBeginEditing(_ notification: Notification) {
+      parent.onFocusChange?(true)
+    }
+
+    func textDidEndEditing(_ notification: Notification) {
+      parent.onFocusChange?(false)
+    }
   }
 
   final class CommitInterceptTextView: NSTextView {
     var commitHandler: (() -> Void)?
+    var focusHandler: ((Bool) -> Void)?
     override func keyDown(with event: NSEvent) {
       let isReturn = (event.keyCode == kVK_Return || event.keyCode == kVK_ANSI_KeypadEnter)
       if isReturn {
@@ -338,6 +447,18 @@ struct MultilineTextView: NSViewRepresentable {
         }
       }
       super.keyDown(with: event)
+    }
+
+    override func becomeFirstResponder() -> Bool {
+      let r = super.becomeFirstResponder()
+      if r { focusHandler?(true) }
+      return r
+    }
+
+    override func resignFirstResponder() -> Bool {
+      let r = super.resignFirstResponder()
+      if r { focusHandler?(false) }
+      return r
     }
   }
 }

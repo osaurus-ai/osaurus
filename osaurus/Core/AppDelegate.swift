@@ -405,13 +405,17 @@ extension AppDelegate {
         backing: .buffered,
         defer: false
       )
+      // Enable resizing and glass-style translucency
+      win.styleMask.insert(.resizable)
+      win.isOpaque = false
+      win.backgroundColor = .clear
       win.hidesOnDeactivate = false
       win.isExcludedFromWindowsMenu = true
       win.standardWindowButton(.miniaturizeButton)?.isHidden = true
       win.standardWindowButton(.zoomButton)?.isHidden = true
       win.titleVisibility = .hidden
       win.titlebarAppearsTransparent = true
-      win.isMovableByWindowBackground = true
+      win.isMovableByWindowBackground = false
       win.level = .modalPanel
       win.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
       win.contentViewController = controller

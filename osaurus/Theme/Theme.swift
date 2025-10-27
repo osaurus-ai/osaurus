@@ -41,6 +41,9 @@ protocol ThemeProtocol {
   var buttonBorder: Color { get }
   var inputBackground: Color { get }
   var inputBorder: Color { get }
+  // Glass / Code styling
+  var glassTintOverlay: Color { get }
+  var codeBlockBackground: Color { get }
 
   // Shadows
   var shadowColor: Color { get }
@@ -81,6 +84,8 @@ struct LightTheme: ThemeProtocol {
   let buttonBorder = Color(hex: "d1d5db")
   let inputBackground = Color(hex: "ffffff")
   let inputBorder = Color(hex: "d1d5db")
+  let glassTintOverlay = Color.black.opacity(0.12)
+  let codeBlockBackground = Color.black.opacity(0.08)
 
   // Shadows
   let shadowColor = Color.black
@@ -121,6 +126,8 @@ struct DarkTheme: ThemeProtocol {
   let buttonBorder = Color(hex: "3f3f46")
   let inputBackground = Color(hex: "18181b")
   let inputBorder = Color(hex: "3f3f46")
+  let glassTintOverlay = Color.black.opacity(0.18)
+  let codeBlockBackground = Color.black.opacity(0.35)
 
   // Shadows
   let shadowColor = Color.black
