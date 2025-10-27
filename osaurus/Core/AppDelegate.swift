@@ -369,7 +369,7 @@ extension AppDelegate {
 // MARK: - Chat Overlay Window
 extension AppDelegate {
   private func setupChatHotKey() {
-    HotKeyManager.shared.registerControlShiftC { [weak self] in
+    HotKeyManager.shared.registerCommandSemicolon { [weak self] in
       Task { @MainActor in
         self?.toggleChatOverlay()
       }

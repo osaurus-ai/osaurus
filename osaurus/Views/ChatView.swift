@@ -29,7 +29,8 @@ final class ChatSession: ObservableObject {
     let mlx = MLXService.getAvailableModels()
     opts.append(contentsOf: mlx)
     modelOptions = opts
-    // Leave selectedModel nil to let router pick foundation or first MLX
+    // Set default selectedModel to first available
+    selectedModel = opts.first
   }
 
   func sendCurrent() {
@@ -132,6 +133,7 @@ struct ChatView: View {
                 .frame(height: 0)
             }
             inputBar(containerWidth)
+            bottomControls(containerWidth)
           } else {
             emptyState
           }
@@ -161,6 +163,12 @@ struct ChatView: View {
     )
     .animation(.easeInOut(duration: 0.3), value: session.turns.isEmpty)
     .background(WindowAccessor(window: $hostWindow))
+    .overlay(alignment: .topTrailing) {
+      HoveringIcon(systemName: "xmark", help: "Close") {
+        AppDelegate.shared?.closeChatOverlay()
+      }
+      .padding(20)
+    }
     .onExitCommand { AppDelegate.shared?.closeChatOverlay() }
     .onReceive(NotificationCenter.default.publisher(for: .chatOverlayActivated)) { _ in
       focusTrigger &+= 1
@@ -199,31 +207,11 @@ struct ChatView: View {
 
   private func header(_ width: CGFloat) -> some View {
     HStack(spacing: 12) {
-      Text("Chat")
+      Text("Chat with \(displayModelName(session.selectedModel))")
         .font(Typography.title(width))
         .foregroundColor(theme.primaryText)
         .fontWeight(.medium)
         .padding(.vertical, 4)
-      Spacer()
-      if session.modelOptions.count > 1 {
-        Picker("Model", selection: $session.selectedModel) {
-          ForEach(session.modelOptions, id: \.self) { name in
-            Text(name).tag(Optional(name))
-          }
-          Text("Auto").tag(Optional<String>.none)
-        }
-        .labelsHidden()
-        .frame(width: 140)
-        .help("Select model (Auto picks Foundation or first MLX)")
-      }
-      if session.isStreaming {
-        Button(action: { session.stop() }) {
-          Image(systemName: "stop.circle.fill")
-            .foregroundColor(Color.accentColor)
-        }
-        .buttonStyle(.plain)
-        .help("Stop")
-      }
       if !session.turns.isEmpty {
         Button(action: { session.reset() }) {
           Image(systemName: "trash")
@@ -232,7 +220,15 @@ struct ChatView: View {
         .buttonStyle(.plain)
         .help("Reset chat")
       }
+      Spacer()
     }
+  }
+
+  private func displayModelName(_ raw: String?) -> String {
+    guard let raw else { return "Model" }
+    if raw.lowercased() == "foundation" { return "Foundation" }
+    if let last = raw.split(separator: "/").last { return String(last) }
+    return raw
   }
 
   private func conversation(_ width: CGFloat) -> some View {
@@ -364,93 +360,183 @@ struct ChatView: View {
   }
 
   private func inputBar(_ width: CGFloat) -> some View {
-    VStack(spacing: 8) {
-      ZStack(alignment: .topLeading) {
-        GlassInputFieldBridge(
-          text: $session.input,
-          isFocused: inputIsFocused,
-          onCommit: { session.sendCurrent() },
-          onFocusChange: { focused in inputIsFocused = focused }
-        )
-        .frame(minHeight: 48, maxHeight: 120)
+    ZStack(alignment: .topLeading) {
+      GlassInputFieldBridge(
+        text: $session.input,
+        isFocused: inputIsFocused,
+        onCommit: { session.sendCurrent() },
+        onFocusChange: { focused in inputIsFocused = focused }
+      )
+      .frame(minHeight: 48, maxHeight: 120)
+      .background(
+        RoundedRectangle(cornerRadius: 16, style: .continuous)
+          .fill(
+            theme.glassOpacityTertiary == 0.05
+              ? theme.secondaryBackground.opacity(0.4) : theme.primaryBackground.opacity(0.4)
+          )
+          .background(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+              .fill(.ultraThinMaterial)
+          )
+      )
+      .overlay(
+        RoundedRectangle(cornerRadius: 16, style: .continuous)
+          .strokeBorder(
+            inputIsFocused
+              ? LinearGradient(
+                colors: [Color.accentColor.opacity(0.6), Color.accentColor.opacity(0.3)],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+              )
+              : LinearGradient(
+                colors: [theme.glassEdgeLight, theme.glassEdgeLight.opacity(0.3)],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+              ),
+            lineWidth: inputIsFocused ? 1.5 : 0.5
+          )
+      )
+      .shadow(
+        color: inputIsFocused ? Color.accentColor.opacity(0.2) : Color.clear,
+        radius: inputIsFocused ? 20 : 0
+      )
+      .animation(.easeInOut(duration: theme.animationDurationMedium), value: inputIsFocused)
+
+      if session.input.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+        Text("Type your message…")
+          .font(.system(size: 15))
+          .foregroundColor(theme.tertiaryText)
+          .padding(.horizontal, 8)
+          .padding(.vertical, 8)
+          .allowsHitTesting(false)
+      }
+    }
+  }
+
+  private var primaryActionButton: some View {
+    Group {
+      if session.isStreaming {
+        Button(action: { session.stop() }) {
+          HStack(spacing: 6) {
+            Image(systemName: "stop.fill")
+            Text("Stop")
+          }
+        }
+        .font(.system(size: 14, weight: .medium))
+        .foregroundColor(.white)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 8)
         .background(
-          RoundedRectangle(cornerRadius: 16, style: .continuous)
-            .fill(
-              theme.glassOpacityTertiary == 0.05
-                ? theme.secondaryBackground.opacity(0.4) : theme.primaryBackground.opacity(0.4)
-            )
-            .background(
-              RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .fill(.ultraThinMaterial)
-            )
-        )
-        .overlay(
-          RoundedRectangle(cornerRadius: 16, style: .continuous)
-            .strokeBorder(
-              inputIsFocused
-                ? LinearGradient(
-                  colors: [Color.accentColor.opacity(0.6), Color.accentColor.opacity(0.3)],
-                  startPoint: .topLeading,
-                  endPoint: .bottomTrailing
-                )
-                : LinearGradient(
-                  colors: [theme.glassEdgeLight, theme.glassEdgeLight.opacity(0.3)],
-                  startPoint: .topLeading,
-                  endPoint: .bottomTrailing
-                ),
-              lineWidth: inputIsFocused ? 1.5 : 0.5
-            )
+          Capsule()
+            .fill(Color.red.opacity(0.9))
         )
         .shadow(
-          color: inputIsFocused ? Color.accentColor.opacity(0.2) : Color.clear,
-          radius: inputIsFocused ? 20 : 0
+          color: Color.red.opacity(0.3),
+          radius: 8,
+          x: 0,
+          y: 2
         )
-        .animation(.easeInOut(duration: theme.animationDurationMedium), value: inputIsFocused)
-
-        if session.input.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-          Text("Message…")
-            .font(Typography.body(width))
-            .foregroundColor(theme.tertiaryText)
-            .padding(.horizontal, 16)
-            .padding(.vertical, 12)
-            .allowsHitTesting(false)
-        }
-      }
-
-      HStack(spacing: 8) {
-        Spacer()
+        .buttonStyle(.plain)
+        .help("Stop response")
+      } else {
         Button(action: { session.sendCurrent() }) {
           HStack(spacing: 6) {
             Image(systemName: "paperplane.fill")
             Text("Send")
           }
-          .font(.system(size: 14, weight: .medium))
-          .foregroundColor(.white)
-          .padding(.horizontal, 16)
-          .padding(.vertical, 8)
-          .background(
-            Capsule()
-              .fill(Color.accentColor.opacity(0.9))
-          )
-          .shadow(
-            color: Color.accentColor.opacity(0.3),
-            radius: 8,
-            x: 0,
-            y: 2
-          )
         }
+        .font(.system(size: 14, weight: .medium))
+        .foregroundColor(.white)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 8)
+        .background(
+          Capsule()
+            .fill(Color.accentColor.opacity(0.9))
+        )
+        .shadow(
+          color: Color.accentColor.opacity(0.3),
+          radius: 8,
+          x: 0,
+          y: 2
+        )
         .buttonStyle(.plain)
         .disabled(
           session.input.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            || session.isStreaming
         )
         .opacity(
-          session.input.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            || session.isStreaming ? 0.5 : 1
+          session.input.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? 0.5 : 1
         )
         .animation(.easeInOut(duration: theme.animationDurationQuick), value: session.input)
         .keyboardShortcut(.return, modifiers: [.command])
       }
+    }
+  }
+
+  private var sendButton: some View {
+    Button(action: { session.sendCurrent() }) {
+      HStack(spacing: 6) {
+        Image(systemName: "paperplane.fill")
+        Text("Send")
+      }
+      .font(.system(size: 14, weight: .medium))
+      .foregroundColor(.white)
+      .padding(.horizontal, 16)
+      .padding(.vertical, 8)
+      .background(
+        Capsule()
+          .fill(Color.accentColor.opacity(0.9))
+      )
+      .shadow(
+        color: Color.accentColor.opacity(0.3),
+        radius: 8,
+        x: 0,
+        y: 2
+      )
+    }
+    .buttonStyle(.plain)
+    .disabled(
+      session.input.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        || session.isStreaming
+    )
+    .opacity(
+      session.input.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        || session.isStreaming ? 0.5 : 1
+    )
+    .animation(.easeInOut(duration: theme.animationDurationQuick), value: session.input)
+    .keyboardShortcut(.return, modifiers: [.command])
+  }
+
+  private func bottomControls(_ width: CGFloat) -> some View {
+    HStack(spacing: 8) {
+      if session.modelOptions.count > 1 {
+        Picker("Model", selection: $session.selectedModel) {
+          ForEach(session.modelOptions, id: \.self) { name in
+            Text(name).tag(Optional(name))
+          }
+        }
+        .labelsHidden()
+        .pickerStyle(.menu)
+        .frame(width: 180)
+        .help("Select model")
+      } else if let selected = session.selectedModel {
+        Text(selected)
+          .font(.system(size: 12, weight: .medium))
+          .foregroundColor(theme.secondaryText)
+          .padding(.vertical, 6)
+          .padding(.horizontal, 10)
+          .background(
+            RoundedRectangle(cornerRadius: 6)
+              .fill(theme.secondaryBackground.opacity(0.6))
+              .overlay(
+                RoundedRectangle(cornerRadius: 6)
+                  .stroke(theme.glassEdgeLight.opacity(0.3), lineWidth: 1)
+              )
+          )
+      }
+
+      Spacer()
+
+      primaryActionButton
     }
   }
 
@@ -468,7 +554,7 @@ struct ChatView: View {
         }
         if FoundationModelService.isDefaultModelAvailable() {
           Button("Use Foundation") {
-            session.selectedModel = nil
+            session.selectedModel = "foundation"
           }
         }
       }
@@ -629,6 +715,31 @@ struct HoverButton<Content: View>: View {
       isHovered = hovering
     }
     .help("Copy message")
+  }
+}
+
+// MARK: - Hovering Icon Button
+struct HoveringIcon: View {
+  let systemName: String
+  let help: String
+  let action: () -> Void
+  @State private var isHovered: Bool = false
+  @Environment(\.theme) private var theme
+
+  var body: some View {
+    Button(action: action) {
+      Image(systemName: systemName)
+        .font(.system(size: 14, weight: .medium))
+        .foregroundColor(theme.secondaryText)
+        .padding(6)
+    }
+    .buttonStyle(.plain)
+    .opacity(isHovered ? 1 : 0)
+    .animation(.easeInOut(duration: 0.15), value: isHovered)
+    .onHover { hovering in
+      isHovered = hovering
+    }
+    .help(help)
   }
 }
 
