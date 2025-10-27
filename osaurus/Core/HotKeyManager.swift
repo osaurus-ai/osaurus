@@ -2,7 +2,7 @@
 //  HotKeyManager.swift
 //  osaurus
 //
-//  Created by Assistant on 10/26/25.
+//  Created by Terence on 10/26/25.
 //
 
 import AppKit

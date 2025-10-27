@@ -2,7 +2,7 @@
 //  ChatView.swift
 //  osaurus
 //
-//  Created by Assistant on 10/26/25.
+//  Created by Terence on 10/26/25.
 //
 
 import AppKit
@@ -100,7 +100,11 @@ final class ChatSession: ObservableObject {
 
 struct ChatView: View {
   @EnvironmentObject var server: ServerController
-  @Environment(\.theme) private var theme
+  @StateObject private var themeManager = ThemeManager.shared
+  
+  private var theme: ThemeProtocol {
+    themeManager.currentTheme
+  }
   @StateObject private var session = ChatSession()
   // Using AppKit-backed text view to handle Enter vs Shift+Enter
   @State private var focusTrigger: Int = 0
@@ -112,11 +116,8 @@ struct ChatView: View {
     GeometryReader { proxy in
       let containerWidth = proxy.size.width
       ZStack(alignment: .bottomTrailing) {
-        // HUD-style glass background
-        GlassBackground(cornerRadius: 16)
-          .allowsHitTesting(false)
-        RoundedRectangle(cornerRadius: 16, style: .continuous)
-          .fill(theme.glassTintOverlay)
+        // Unified glass surface background
+        GlassSurface(cornerRadius: 28)
           .allowsHitTesting(false)
 
         VStack(spacing: 10) {
@@ -141,7 +142,7 @@ struct ChatView: View {
           }
         }
         .animation(.easeInOut(duration: 0.25), value: session.turns.isEmpty)
-        .padding(14)
+        .padding(20)
         .frame(maxWidth: 1000)
         .frame(
           maxWidth: .infinity,
@@ -197,10 +198,11 @@ struct ChatView: View {
   }
 
   private func header(_ width: CGFloat) -> some View {
-    HStack(spacing: 8) {
+    HStack(spacing: 12) {
       Text("Chat")
         .font(Typography.title(width))
         .foregroundColor(theme.primaryText)
+        .fontWeight(.medium)
       Spacer()
       if session.modelOptions.count > 1 {
         Picker("Model", selection: $session.selectedModel) {
@@ -215,7 +217,8 @@ struct ChatView: View {
       }
       if session.isStreaming {
         Button(action: { session.stop() }) {
-          Image(systemName: "stop.circle")
+          Image(systemName: "stop.circle.fill")
+            .foregroundColor(Color.accentColor)
         }
         .buttonStyle(.plain)
         .help("Stop")
@@ -223,6 +226,7 @@ struct ChatView: View {
       if !session.turns.isEmpty {
         Button(action: { session.reset() }) {
           Image(systemName: "trash")
+            .foregroundColor(theme.secondaryText)
         }
         .buttonStyle(.plain)
         .help("Reset chat")
@@ -235,81 +239,72 @@ struct ChatView: View {
       @State var hasInitialScroll = false
       ZStack(alignment: .bottomTrailing) {
         ScrollView {
-          LazyVStack(alignment: .leading, spacing: 10) {
+          LazyVStack(spacing: 16) {
             ForEach(Array(session.turns.enumerated()), id: \.offset) { item in
               let turn = item.element
-              VStack(alignment: .leading, spacing: 6) {
-                HStack {
-                  Text(turn.role == .user ? "You" : "Assistant")
-                    .font(Typography.small(width))
-                    .fontWeight(.semibold)
-                    .foregroundColor(turn.role == .user ? .white : theme.primaryText)
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 4)
-                    .background(
-                      turn.role == .user
-                        ? theme.accentColor.opacity(0.8)
-                        : theme.secondaryBackground.opacity(0.6)
-                    )
-                    .clipShape(Capsule())
+              HStack(alignment: .top, spacing: 16) {
+                if turn.role == .user {
                   Spacer()
                 }
-
-                ZStack(alignment: .topTrailing) {
-                  if turn.content.isEmpty && turn.role == .assistant && session.isStreaming {
-                    HStack(spacing: 8) {
-                      ProgressView()
-                        .scaleEffect(0.8)
-                        .progressViewStyle(CircularProgressViewStyle(tint: theme.tertiaryText))
-                      Text("Thinking…")
-                        .font(Typography.body(width))
-                        .foregroundColor(theme.tertiaryText)
-                      Spacer()
-                    }
-                    .padding(.vertical, 8)
-                  } else {
-                    MarkdownMessageView(text: turn.content, baseWidth: width)
-                      .font(Typography.body(width))
-                      .foregroundColor(theme.primaryText)
-                      .frame(maxWidth: .infinity, alignment: .leading)
+                
+                VStack(alignment: turn.role == .user ? .trailing : .leading, spacing: 8) {
+                  HStack(spacing: 4) {
+                    Circle()
+                      .fill(turn.role == .user ? Color.accentColor : theme.secondaryText)
+                      .frame(width: 6, height: 6)
+                    Text(turn.role == .user ? "You" : "Assistant")
+                      .font(Typography.small(width))
+                      .fontWeight(.medium)
+                      .foregroundColor(turn.role == .user ? Color.accentColor : theme.secondaryText)
                   }
 
-                  if turn.role == .assistant && !turn.content.isEmpty {
-                    Button(action: { copyToPasteboard(turn.content) }) {
-                      Image(systemName: "doc.on.doc")
+                  ZStack(alignment: .topTrailing) {
+                    Group {
+                      if turn.content.isEmpty && turn.role == .assistant && session.isStreaming {
+                        HStack(spacing: 8) {
+                          ProgressView()
+                            .scaleEffect(0.8)
+                            .progressViewStyle(CircularProgressViewStyle(tint: Color.accentColor))
+                          Text("Thinking…")
+                            .font(Typography.body(width))
+                            .foregroundColor(theme.primaryText)
+                        }
+                        .padding(16)
+                        .frame(minWidth: 100, maxWidth: min(width * 0.75, 600))
+                        .background(
+                          GlassMessageBubble(role: turn.role, isStreaming: session.isStreaming)
+                        )
+                      } else {
+                        MarkdownMessageView(text: turn.content, baseWidth: width)
+                          .font(Typography.body(width))
+                          .foregroundColor(theme.primaryText)
+                          .padding(16)
+                          .frame(minWidth: 100, maxWidth: min(width * 0.75, 600))
+                          .background(
+                            GlassMessageBubble(role: turn.role, isStreaming: session.isStreaming)
+                          )
+                          .transition(.opacity.combined(with: .scale(scale: 0.95)))
+                      }
                     }
-                    .buttonStyle(.borderless)
-                    .opacity(0.0)
-                    .help("Copy message")
-                  }
-                }
-              }
-              .frame(maxWidth: .infinity, alignment: .leading)
-              .padding(10)
-              .background(
-                (turn.role == .user
-                  ? theme.secondaryBackground.opacity(0.28)
-                  : theme.secondaryBackground.opacity(0.35))
-              )
-              .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-              .overlay(alignment: .topTrailing) {
-                if turn.role == .assistant && !turn.content.isEmpty {
-                  Button(action: { copyToPasteboard(turn.content) }) {
-                    Image(systemName: "doc.on.doc")
-                  }
-                  .buttonStyle(.borderless)
-                  .padding(6)
-                  .background(Color.black.opacity(0.25))
-                  .clipShape(Capsule())
-                  .opacity(0)
-                  .accessibilityLabel("Copy message")
-                  .onHover { hovering in
-                    withAnimation(.easeInOut(duration: 0.15)) {
-                      // Fade in/out on hover via layer-backed opacity
+                    .fixedSize(horizontal: false, vertical: true)
+                    
+                    if turn.role == .assistant && !turn.content.isEmpty {
+                      HoverButton(action: { copyToPasteboard(turn.content) }) {
+                        Image(systemName: "doc.on.doc")
+                          .font(.system(size: 12))
+                          .foregroundColor(theme.tertiaryText)
+                      }
+                      .padding(8)
+                      .offset(x: -8, y: 8)
                     }
                   }
                 }
+                
+                if turn.role == .assistant {
+                  Spacer()
+                }
               }
+              .frame(maxWidth: .infinity)
             }
             Color.clear
               .frame(height: 1)
@@ -317,26 +312,33 @@ struct ChatView: View {
               .onAppear { isPinnedToBottom = true }
               .onDisappear { isPinnedToBottom = false }
           }
-          .padding(2)
+          .padding(.horizontal, 16)
+          .padding(.vertical, 8)
+          .frame(maxWidth: .infinity)
         }
+        .scrollContentBackground(.hidden)
+        .scrollIndicators(.hidden)
 
         if !isPinnedToBottom && !session.turns.isEmpty {
           Button(action: {
             withAnimation { proxy.scrollTo("BOTTOM", anchor: .bottom) }
             isPinnedToBottom = true
           }) {
-            HStack(spacing: 6) {
-              Image(systemName: "arrow.down")
-              Text("Jump to latest")
+            HStack(spacing: 4) {
+              Image(systemName: "chevron.down.circle.fill")
+                .font(.system(size: 24))
+                .foregroundColor(Color.accentColor)
+                .background(
+                  Circle()
+                    .fill(theme.primaryBackground.opacity(0.9))
+                    .frame(width: 20, height: 20)
+                )
             }
-            .font(Typography.small(width))
-            .padding(.vertical, 6)
-            .padding(.horizontal, 10)
-            .background(Color.black.opacity(0.3))
-            .clipShape(Capsule())
+            .shadow(color: Color.black.opacity(0.2), radius: 8, x: 0, y: 2)
           }
           .buttonStyle(.plain)
-          .padding(8)
+          .transition(.opacity.combined(with: .scale))
+          .padding(16)
         }
       }
       .onChange(of: session.turns.count) { _, _ in
@@ -364,30 +366,53 @@ struct ChatView: View {
   }
 
   private func inputBar(_ width: CGFloat) -> some View {
-    VStack(spacing: 6) {
+    VStack(spacing: 8) {
       ZStack(alignment: .topLeading) {
-        MultilineTextView(
+        GlassInputFieldBridge(
           text: $session.input,
-          focusTrigger: $focusTrigger,
+          isFocused: inputIsFocused,
           onCommit: { session.sendCurrent() },
           onFocusChange: { focused in inputIsFocused = focused }
         )
-        .frame(minHeight: session.turns.isEmpty ? 40 : 60, maxHeight: 120)
-        .overlay(
-          RoundedRectangle(cornerRadius: 8, style: .continuous)
-            .stroke(
-              inputIsFocused ? theme.accentColor.opacity(0.6) : theme.tertiaryText.opacity(0.2),
-              lineWidth: inputIsFocused ? 1.5 : 1)
+        .frame(minHeight: session.turns.isEmpty ? 48 : 64, maxHeight: 120)
+        .background(
+          RoundedRectangle(cornerRadius: 16, style: .continuous)
+            .fill(theme.glassOpacityTertiary == 0.05 ? theme.secondaryBackground.opacity(0.4) : theme.primaryBackground.opacity(0.4))
+            .background(
+              RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .fill(.ultraThinMaterial)
+            )
         )
-        .background(theme.primaryBackground.opacity(0.85))
-        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .overlay(
+          RoundedRectangle(cornerRadius: 16, style: .continuous)
+            .strokeBorder(
+              inputIsFocused
+                ? LinearGradient(
+                    colors: [Color.accentColor.opacity(0.6), Color.accentColor.opacity(0.3)],
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing
+                  )
+                : LinearGradient(
+                    colors: [theme.glassEdgeLight, theme.glassEdgeLight.opacity(0.3)],
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing
+                  ),
+              lineWidth: inputIsFocused ? 1.5 : 0.5
+            )
+        )
+        .shadow(
+          color: inputIsFocused ? Color.accentColor.opacity(0.2) : Color.clear,
+          radius: inputIsFocused ? 20 : 0
+        )
+        .animation(.easeInOut(duration: theme.animationDurationMedium), value: inputIsFocused)
 
         if session.input.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
           Text("Message…")
             .font(Typography.body(width))
             .foregroundColor(theme.tertiaryText)
-            .padding(.horizontal, 8)
-            .padding(.vertical, 8)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 12)
+            .allowsHitTesting(false)
         }
       }
 
@@ -398,7 +423,25 @@ struct ChatView: View {
             Image(systemName: "paperplane.fill")
             Text("Send")
           }
+          .font(.system(size: 14, weight: .medium))
+          .foregroundColor(.white)
+          .padding(.horizontal, 16)
+          .padding(.vertical, 8)
+          .background(
+            Capsule()
+              .fill(Color.accentColor.opacity(0.9))
+          )
+          .shadow(
+            color: Color.accentColor.opacity(0.3),
+            radius: 8,
+            x: 0,
+            y: 2
+          )
         }
+        .buttonStyle(.plain)
+        .disabled(session.input.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || session.isStreaming)
+        .opacity(session.input.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || session.isStreaming ? 0.5 : 1)
+        .animation(.easeInOut(duration: theme.animationDurationQuick), value: session.input)
         .keyboardShortcut(.return, modifiers: [.command])
       }
     }
@@ -538,6 +581,47 @@ struct MultilineTextView: NSViewRepresentable {
       if r { focusHandler?(false) }
       return r
     }
+  }
+}
+
+// MARK: - Hover Button Component
+struct HoverButton<Content: View>: View {
+  let action: () -> Void
+  let content: () -> Content
+  @State private var isHovered: Bool = false
+  @Environment(\.theme) private var theme
+  
+  init(action: @escaping () -> Void, @ViewBuilder content: @escaping () -> Content) {
+    self.action = action
+    self.content = content
+  }
+  
+  var body: some View {
+    Button(action: action) {
+      content()
+        .padding(6)
+        .background(
+          Circle()
+            .fill(theme.secondaryBackground.opacity(isHovered ? 0.9 : 0.7))
+            .overlay(
+              Circle()
+                .strokeBorder(theme.glassEdgeLight, lineWidth: 0.5)
+            )
+        )
+        .shadow(
+          color: Color.black.opacity(0.1),
+          radius: 4,
+          x: 0,
+          y: 2
+        )
+    }
+    .buttonStyle(.plain)
+    .opacity(isHovered ? 1 : 0)
+    .animation(.easeInOut(duration: 0.15), value: isHovered)
+    .onHover { hovering in
+      isHovered = hovering
+    }
+    .help("Copy message")
   }
 }
 
