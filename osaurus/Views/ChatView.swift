@@ -261,7 +261,7 @@ struct ChatView: View {
           .padding(8)
         }
       }
-      .onChange(of: session.turns.count) { _ in
+      .onChange(of: session.turns.count) {
         if hasInitialScroll {
           if isPinnedToBottom { withAnimation { proxy.scrollTo("BOTTOM", anchor: .bottom) } }
         } else {
@@ -269,7 +269,7 @@ struct ChatView: View {
           hasInitialScroll = true
         }
       }
-      .onChange(of: session.scrollTick) { _ in
+      .onChange(of: session.scrollTick) {
         if isPinnedToBottom { withAnimation { proxy.scrollTo("BOTTOM", anchor: .bottom) } }
       }
       .onReceive(NotificationCenter.default.publisher(for: .chatOverlayActivated)) { _ in
