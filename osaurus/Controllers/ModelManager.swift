@@ -98,6 +98,9 @@ final class ModelManager: NSObject, ObservableObject {
     for sm in suggestedModels {
       downloadStates[sm.id] = sm.isDownloaded ? .completed : .notStarted
     }
+    // Merge MLX registry-supported models into All
+    let registry = Self.registryModels()
+    mergeAvailable(with: registry)
     // Also surface any locally-downloaded models even if not on the SDK allowlist
     let localModels = Self.discoverLocalModels()
     mergeAvailable(with: localModels)
@@ -609,6 +612,19 @@ final class ModelManager: NSObject, ObservableObject {
       allowed.insert(config.name.lowercased())
     }
     return allowed
+  }
+
+  /// Build MLXModel entries from the MLX registry of supported models
+  static func registryModels() -> [MLXModel] {
+    return LLMRegistry.shared.models.map { cfg in
+      let id = cfg.name
+      return MLXModel(
+        id: id,
+        name: friendlyName(from: id),
+        description: "From MLX registry",
+        downloadURL: "https://huggingface.co/\(id)"
+      )
+    }
   }
 
   private func copyContents(of sourceDirectory: URL, to destinationDirectory: URL) throws {
