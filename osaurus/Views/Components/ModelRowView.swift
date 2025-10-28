@@ -31,105 +31,85 @@ struct ModelRowView: View {
   /// Callback when user taps the Details button
   let onViewDetails: () -> Void
 
-  /// Callback when user taps the Delete button
-  let onDelete: () -> Void
-
   // MARK: - State
 
   /// Whether the user is currently hovering over this row
   @State private var isHovering = false
 
-  /// Shows temporary "Copied!" feedback when user copies model ID
-  @State private var showCopiedFeedback = false
-
   var body: some View {
-    VStack(spacing: 0) {
-      HStack(spacing: 16) {
-        // Model info
-        VStack(alignment: .leading, spacing: 6) {
-          HStack(alignment: .center, spacing: 8) {
-            Text(model.name)
-              .font(.system(size: 15, weight: .medium))
-              .foregroundColor(theme.primaryText)
-              .lineLimit(1)
-              .truncationMode(.tail)
+    Button(action: onViewDetails) {
+      VStack(spacing: 0) {
+        HStack(spacing: 16) {
+          // Model info
+          VStack(alignment: .leading, spacing: 6) {
+            HStack(alignment: .center, spacing: 8) {
+              Text(model.name)
+                .font(.system(size: 15, weight: .medium))
+                .foregroundColor(theme.primaryText)
+                .lineLimit(1)
+                .truncationMode(.tail)
 
-            if model.isDownloaded {
-              Image(systemName: "checkmark.circle.fill")
-                .font(.system(size: 12))
-                .foregroundColor(theme.successColor)
-            }
-
-            Spacer(minLength: 0)
-          }
-
-          if !model.description.isEmpty {
-            Text(model.description)
-              .font(.system(size: 13))
-              .foregroundColor(theme.secondaryText)
-              .lineLimit(2)
-              .truncationMode(.tail)
-          }
-
-          // Repository link
-          if let url = URL(string: model.downloadURL) {
-            Link(repositoryName(from: model.downloadURL), destination: url)
-              .font(.system(size: 12))
-              .foregroundColor(theme.tertiaryText)
-              .lineLimit(1)
-              .truncationMode(.middle)
-          }
-
-          // Download progress
-          if case .downloading(let progress) = downloadState {
-            VStack(alignment: .leading, spacing: 6) {
-              SimpleProgressBar(progress: progress)
-                .frame(height: 4)
-
-              if let line = formattedMetricsLine() {
-                Text(line)
-                  .font(.system(size: 11))
-                  .foregroundColor(theme.tertiaryText)
+              if model.isDownloaded {
+                Image(systemName: "checkmark.circle.fill")
+                  .font(.system(size: 12))
+                  .foregroundColor(theme.successColor)
               }
             }
-            .padding(.top, 4)
-          }
-        }
 
-        // Actions
-        HStack(spacing: 8) {
-          Button(action: onViewDetails) {
-            Text("Details")
-              .font(.system(size: 13))
-              .foregroundColor(theme.accentColor)
-          }
-          .buttonStyle(PlainButtonStyle())
-
-          if model.isDownloaded {
-            Button(action: onDelete) {
-              Image(systemName: "trash")
+            if !model.description.isEmpty {
+              Text(model.description)
                 .font(.system(size: 13))
-                .foregroundColor(theme.errorColor)
+                .foregroundColor(theme.secondaryText)
+                .lineLimit(2)
+                .truncationMode(.tail)
             }
-            .buttonStyle(PlainButtonStyle())
+
+            // Repository link (non-interactive to allow full-row tap)
+            if let url = URL(string: model.downloadURL) {
+              Link(repositoryName(from: model.downloadURL), destination: url)
+                .font(.system(size: 12))
+                .foregroundColor(theme.tertiaryText)
+                .lineLimit(1)
+                .truncationMode(.middle)
+                .allowsHitTesting(false)
+            }
+
+            // Download progress
+            if case .downloading(let progress) = downloadState {
+              VStack(alignment: .leading, spacing: 6) {
+                SimpleProgressBar(progress: progress)
+                  .frame(height: 4)
+
+                if let line = formattedMetricsLine() {
+                  Text(line)
+                    .font(.system(size: 11))
+                    .foregroundColor(theme.tertiaryText)
+                }
+              }
+              .padding(.top, 4)
+            }
           }
 
-          Button(action: copyModelID) {
-            Image(systemName: showCopiedFeedback ? "checkmark" : "doc.on.doc")
-              .font(.system(size: 13))
-              .foregroundColor(showCopiedFeedback ? theme.successColor : theme.tertiaryText)
-          }
-          .buttonStyle(PlainButtonStyle())
-          .help(showCopiedFeedback ? "Copied!" : "Copy model ID")
+          Spacer(minLength: 0)
+
+          // Chevron indicator
+          Image(systemName: "chevron.right")
+            .font(.system(size: 12, weight: .semibold))
+            .foregroundColor(theme.tertiaryText)
         }
-      }
-      .padding(.vertical, 16)
-      .padding(.horizontal, 20)
+        .padding(.vertical, 16)
+        .padding(.horizontal, 20)
 
-      Divider()
-        .padding(.leading, 20)
+        Divider()
+          .padding(.leading, 20)
+      }
+      .frame(maxWidth: .infinity, alignment: .leading)
+      .contentShape(Rectangle())
+      .background(isHovering ? theme.secondaryBackground : Color.clear)
     }
-    .background(isHovering ? theme.secondaryBackground : Color.clear)
+    .buttonStyle(PlainButtonStyle())
+    .frame(maxWidth: .infinity, alignment: .leading)
+    .contentShape(Rectangle())
     .onHover { hovering in
       withAnimation(.easeInOut(duration: 0.15)) {
         isHovering = hovering
@@ -139,41 +119,7 @@ struct ModelRowView: View {
 
   // MARK: - Actions
 
-  /// Copies the normalized model ID to the system clipboard
-  ///
-  /// The ID is normalized for API use:
-  /// - Extracts the last part after "/"
-  /// - Converts to lowercase
-  /// - Replaces spaces and underscores with hyphens
-  ///
-  /// Shows temporary visual feedback for 2 seconds after copying.
-  private func copyModelID() {
-    let apiId: String = {
-      let last = model.id.split(separator: "/").last.map(String.init) ?? model.name
-      let normalized =
-        last
-        .trimmingCharacters(in: .whitespacesAndNewlines)
-        .replacingOccurrences(of: " ", with: "-")
-        .replacingOccurrences(of: "_", with: "-")
-        .lowercased()
-      return normalized
-    }()
-
-    NSPasteboard.general.clearContents()
-    NSPasteboard.general.setString(apiId, forType: .string)
-
-    // Show feedback
-    withAnimation {
-      showCopiedFeedback = true
-    }
-
-    // Reset feedback after delay
-    DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
-      withAnimation {
-        showCopiedFeedback = false
-      }
-    }
-  }
+  // Copy action removed; row opens details instead
 
   // MARK: - Metrics Formatting
 

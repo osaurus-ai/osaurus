@@ -20,11 +20,7 @@ struct ModelDownloadView: View {
   @StateObject private var themeManager = ThemeManager.shared
   @Environment(\.theme) private var theme
 
-  /// Controls the delete confirmation alert
-  @State private var showDeleteConfirmation = false
-
-  /// Model pending deletion (set when user taps delete)
-  @State private var modelToDelete: MLXModel?
+  // Delete confirmation removed; deletion lives in detail view
 
   /// Current search query text
   @State private var searchText: String = ""
@@ -59,18 +55,7 @@ struct ModelDownloadView: View {
     .frame(minWidth: 720, minHeight: 600)
     .background(theme.primaryBackground)
     .environment(\.theme, themeManager.currentTheme)
-    .alert("Delete Model", isPresented: $showDeleteConfirmation) {
-      Button("Cancel", role: .cancel) {}
-      Button("Delete", role: .destructive) {
-        if let model = modelToDelete {
-          modelManager.deleteModel(model)
-        }
-      }
-    } message: {
-      Text(
-        "Are you sure you want to delete \(modelToDelete?.name ?? "this model")? This action cannot be undone."
-      )
-    }
+    // Delete confirmation alert removed
     .onAppear {
       // If invoked via deeplink, prefill search and ensure the model is visible
       if let modelId = deeplinkModelId, !modelId.isEmpty {
@@ -130,7 +115,7 @@ struct ModelDownloadView: View {
         HStack(spacing: 4) {
           ForEach(ModelListTab.allCases, id: \.self) { tab in
             Button(action: { selectedTab = tab }) {
-              Text(tab.title)
+              Text("\(tab.title) (\(tabCount(tab)))")
                 .font(.system(size: 14, weight: selectedTab == tab ? .medium : .regular))
                 .foregroundColor(selectedTab == tab ? theme.primaryText : theme.secondaryText)
                 .padding(.horizontal, 12)
@@ -205,11 +190,7 @@ struct ModelDownloadView: View {
                   model: model,
                   downloadState: modelManager.effectiveDownloadState(for: model),
                   metrics: modelManager.downloadMetrics[model.id],
-                  onViewDetails: { modelToShowDetails = model },
-                  onDelete: {
-                    modelToDelete = model
-                    showDeleteConfirmation = true
-                  }
+                  onViewDetails: { modelToShowDetails = model }
                 )
                 .onAppear { /* no-op */  }
               }
@@ -225,12 +206,18 @@ struct ModelDownloadView: View {
 
   /// All available models filtered by current search text
   private var filteredModels: [MLXModel] {
-    SearchService.filterModels(modelManager.availableModels, with: searchText)
+    let filtered = SearchService.filterModels(modelManager.availableModels, with: searchText)
+    return filtered.sorted { lhs, rhs in
+      lhs.name.localizedCaseInsensitiveCompare(rhs.name) == .orderedAscending
+    }
   }
 
   /// Suggested (curated) models filtered by current search text
   private var filteredSuggestedModels: [MLXModel] {
-    SearchService.filterModels(modelManager.suggestedModels, with: searchText)
+    let filtered = SearchService.filterModels(modelManager.suggestedModels, with: searchText)
+    return filtered.sorted { lhs, rhs in
+      lhs.name.localizedCaseInsensitiveCompare(rhs.name) == .orderedAscending
+    }
   }
 
   /// Downloaded models filtered by current search text and sorted by download date
@@ -261,10 +248,7 @@ struct ModelDownloadView: View {
     let downloaded = byLowerId.values.filter { $0.isDownloaded }
     let filtered = SearchService.filterModels(Array(downloaded), with: searchText)
     return filtered.sorted { lhs, rhs in
-      let la = lhs.downloadedAt ?? .distantPast
-      let ra = rhs.downloadedAt ?? .distantPast
-      if la == ra { return lhs.name < rhs.name }
-      return la > ra  // Newest first
+      lhs.name.localizedCaseInsensitiveCompare(rhs.name) == .orderedAscending
     }
   }
 
@@ -281,6 +265,18 @@ struct ModelDownloadView: View {
     }
 
     return baseModels
+  }
+
+  /// Count for a given tab that respects current search filter
+  private func tabCount(_ tab: ModelListTab) -> Int {
+    switch tab {
+    case .all:
+      return filteredModels.count
+    case .suggested:
+      return filteredSuggestedModels.count
+    case .downloaded:
+      return filteredDownloadedModels.count
+    }
   }
 }
 
