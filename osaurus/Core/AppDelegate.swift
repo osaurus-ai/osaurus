@@ -21,6 +21,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSPopoverD
 
   private var activityDot: NSView?
   private var modelManagerWindow: NSWindow?
+  private var chatWindow: NSWindow?
 
   func applicationDidFinishLaunching(_ notification: Notification) {
     AppDelegate.shared = self
@@ -80,6 +81,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSPopoverD
     Task { @MainActor in
       await serverController.startServer()
     }
+
+    // Setup global hotkey for Chat overlay (configured)
+    applyChatHotkey()
   }
 
   func application(_ application: NSApplication, open urls: [URL]) {
@@ -330,6 +334,14 @@ extension AppDelegate {
 
 // MARK: Deep Link Handling
 extension AppDelegate {
+  func applyChatHotkey() {
+    let cfg = ChatConfigurationStore.load()
+    HotKeyManager.shared.register(hotkey: cfg.hotkey) { [weak self] in
+      Task { @MainActor in
+        self?.toggleChatOverlay()
+      }
+    }
+  }
   fileprivate func handleDeepLink(_ url: URL) {
     guard let scheme = url.scheme?.lowercased(), scheme == "huggingface" else { return }
     guard let components = URLComponents(url: url, resolvingAgainstBaseURL: false) else { return }
@@ -360,6 +372,114 @@ extension AppDelegate {
       showModelManagerWindow(deeplinkModelId: modelId, file: file)
     }
   }
+}
+
+// MARK: - Chat Overlay Window
+extension AppDelegate {
+  private func setupChatHotKey() {}
+
+  @MainActor private func toggleChatOverlay() {
+    if let win = chatWindow, win.isVisible {
+      closeChatOverlay()
+    } else {
+      showChatOverlay()
+    }
+  }
+
+  @MainActor func showChatOverlay() {
+    if chatWindow == nil {
+      let themeManager = ThemeManager.shared
+      let root = ChatView()
+        .environmentObject(serverController)
+        .environment(\.theme, themeManager.currentTheme)
+
+      let controller = NSHostingController(rootView: root)
+      // Create already centered on the active screen to avoid any reposition jank
+      // Start with compact size since chat is initially empty
+      let defaultSize = NSSize(width: 720, height: 250)
+      let mouse = NSEvent.mouseLocation
+      let screen = NSScreen.screens.first { NSMouseInRect(mouse, $0.frame, false) } ?? NSScreen.main
+      let initialRect: NSRect
+      if let s = screen {
+        initialRect = centeredRect(size: defaultSize, on: s)
+      } else {
+        initialRect = NSRect(x: 0, y: 0, width: defaultSize.width, height: defaultSize.height)
+      }
+      let win = NSPanel(
+        contentRect: initialRect,
+        styleMask: [.titled, .fullSizeContentView],
+        backing: .buffered,
+        defer: false
+      )
+      // Enable resizing and glass-style translucency
+      win.styleMask.insert(.resizable)
+      win.isOpaque = false
+      win.backgroundColor = .clear
+      win.hidesOnDeactivate = false
+      win.isExcludedFromWindowsMenu = true
+      win.standardWindowButton(.miniaturizeButton)?.isHidden = true
+      win.standardWindowButton(.zoomButton)?.isHidden = true
+      win.titleVisibility = .hidden
+      win.titlebarAppearsTransparent = true
+      win.isMovableByWindowBackground = true
+      win.standardWindowButton(.closeButton)?.isHidden = true
+      win.level = .modalPanel
+      win.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
+      win.contentViewController = controller
+      win.delegate = self
+      win.animationBehavior = .none
+      chatWindow = win
+      // Pre-layout before showing to avoid initial jank
+      controller.view.layoutSubtreeIfNeeded()
+      NSApp.activate(ignoringOtherApps: true)
+      chatWindow?.makeKeyAndOrderFront(nil)
+      DispatchQueue.main.async {
+        NotificationCenter.default.post(name: .chatOverlayActivated, object: nil)
+      }
+      return
+    }
+
+    guard let win = chatWindow else { return }
+    NSApp.activate(ignoringOtherApps: true)
+    if win.isMiniaturized { win.deminiaturize(nil) }
+    centerWindowOnActiveScreen(win)
+    win.makeKeyAndOrderFront(nil)
+    DispatchQueue.main.async {
+      NotificationCenter.default.post(name: .chatOverlayActivated, object: nil)
+    }
+  }
+
+  @MainActor func closeChatOverlay() {
+    chatWindow?.orderOut(nil)
+  }
+}
+
+// MARK: - Chat Overlay Helpers
+extension AppDelegate {
+  fileprivate func centerWindowOnActiveScreen(_ window: NSWindow) {
+    let mouse = NSEvent.mouseLocation
+    let screen = NSScreen.screens.first { NSMouseInRect(mouse, $0.frame, false) } ?? NSScreen.main
+    guard let s = screen else {
+      window.center()
+      return
+    }
+    // Use visibleFrame to avoid menu bar and dock overlap
+    let vf = s.visibleFrame
+    let size = window.frame.size
+    let x = vf.midX - size.width / 2
+    let y = vf.midY - size.height / 2
+    window.setFrameOrigin(NSPoint(x: x, y: y))
+  }
+
+  fileprivate func centeredRect(size: NSSize, on screen: NSScreen) -> NSRect {
+    let vf = screen.visibleFrame
+    let origin = NSPoint(x: vf.midX - size.width / 2, y: vf.midY - size.height / 2)
+    return NSRect(origin: origin, size: size)
+  }
+}
+
+extension Notification.Name {
+  static let chatOverlayActivated = Notification.Name("chatOverlayActivated")
 }
 
 // MARK: Model Manager Window
