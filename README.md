@@ -29,6 +29,7 @@ Created by Dinoki Labs ([dinoki.ai](https://dinoki.ai)), a fully native desktop 
 - **Ollama‑compatible**: `/chat` endpoint with NDJSON streaming for OllamaKit and other Ollama clients
 - **Function/Tool calling**: OpenAI‑style `tools` + `tool_choice`, with `tool_calls` parsing and streaming deltas
 - **Fast token streaming**: Server‑Sent Events for low‑latency output
+- **In‑app Chat overlay**: Chat directly with your models in a resizable glass window — streaming, Markdown, model picker, and a global hotkey (default ⌘;)
 - **Model manager UI**: Browse, download, and manage MLX models from `mlx-community`
 - **System resource monitor**: Real-time CPU and RAM usage visualization
 - **Self‑contained**: SwiftUI app with an embedded SwiftNIO HTTP server
@@ -47,7 +48,8 @@ osaurus/
 │   └── osaurusApp.swift
 ├── Controllers/
 │   ├── ServerController.swift      # NIO server lifecycle
-│   └── ModelManager.swift          # Model discovery & downloads (Hugging Face)
+│   ├── ModelManager.swift          # Model discovery & downloads (Hugging Face)
+│   └── HotKeyManager.swift         # Global hotkey registration
 ├── Models/
 │   ├── InternalMessage.swift
 │   ├── MLXModel.swift
@@ -55,6 +57,8 @@ osaurus/
 │   ├── ResponseWriters.swift       # SSE and NDJSON response writers
 │   ├── ServerConfiguration.swift
 │   ├── ServerConfigurationStore.swift
+│   ├── ChatConfiguration.swift
+│   ├── ChatConfigurationStore.swift
 │   └── ServerHealth.swift
 ├── Networking/
 │   ├── HTTPHandler.swift           # Request parsing & routing entry
@@ -83,7 +87,8 @@ osaurus/
 │   ├── ContentView.swift           # Start/stop server, quick controls
 │   ├── DirectoryPickerView.swift
 │   ├── ModelDetailView.swift
-│   └── ModelDownloadView.swift     # Browse/download/manage models
+│   ├── ModelDownloadView.swift     # Browse/download/manage models
+│   └── ChatView.swift              # In‑app chat overlay
 └── Assets.xcassets/
 ```
 
@@ -100,6 +105,15 @@ osaurus/
 - Health endpoint and simple status UI
 - Real-time system resource monitoring
 - Path normalization for API compatibility
+
+### In‑app Chat
+
+- Overlay chat UI accessible from the menu bar bubble button or a global hotkey (default ⌘;)
+- Foundation‑first model picker, plus any installed MLX models; `foundation` appears when available
+- Real‑time token streaming with a Stop button and smooth auto‑scroll
+- Rich Markdown rendering with one‑click copy per message
+- Input shortcuts: Return or ⌘Return to send; Shift+Return inserts a newline
+- Optional global system prompt is prepended to every chat
 
 ## Benchmarks
 
@@ -170,8 +184,16 @@ The app will appear in your menu bar, ready to serve local LLMs on your Mac.
 2. Build and run the `osaurus` target
 3. In the UI, configure the port via the gear icon (default `1337`) and press Start
 4. Open the model manager to download a model (e.g., "Llama 3.2 3B Instruct 4bit")
+5. Open the Chat overlay via the chat bubble icon or press `⌘;` to start chatting
 
 Models are stored by default at `~/MLXModels`. Override with the environment variable `OSU_MODELS_DIR`.
+
+### Chat settings
+
+- Open the configuration popover (gear icon) → Chat
+- Global Hotkey: record a shortcut to toggle the Chat overlay (default `⌘;`)
+- System Prompt: optional text prepended to all chats
+- Settings are saved locally and the hotkey applies immediately
 
 ### Command-line server management
 
