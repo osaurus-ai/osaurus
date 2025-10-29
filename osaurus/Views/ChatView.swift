@@ -593,7 +593,9 @@ struct MultilineTextView: NSViewRepresentable {
     tv.isAutomaticDashSubstitutionEnabled = false
     tv.font = NSFont.systemFont(ofSize: 15)
     tv.backgroundColor = .clear
-    tv.textColor = NSColor.labelColor
+    tv.usesAdaptiveColorMappingForDarkAppearance = true
+    tv.textColor = NSColor.textColor
+    tv.insertionPointColor = NSColor.textColor
     tv.string = text
     tv.commitHandler = onCommit
     tv.minSize = NSSize(width: 0, height: 40)
