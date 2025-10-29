@@ -18,7 +18,7 @@ Native, Apple Silicon–only local LLM server. Built on Apple's MLX for maximum 
 
 Created by Dinoki Labs ([dinoki.ai](https://dinoki.ai)), a fully native desktop AI assistant and companion.
 
-📚 **[View Documentation](https://docs.dinoki.ai/)** - Guides, tutorials, and comprehensive documentation
+📚 **[View Documentation](https://docs.osaurus.ai/)** - Guides, tutorials, and comprehensive documentation
 
 ## Highlights
 
