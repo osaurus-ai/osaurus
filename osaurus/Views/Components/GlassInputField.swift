@@ -45,6 +45,7 @@ struct GlassInputField: View {
       // Text Editor
       TextEditor(text: $text)
         .font(.system(size: 15))
+        .foregroundColor(.primary)
         .scrollContentBackground(.hidden)
         .background(Color.clear)
         .padding(.horizontal, 8)
@@ -115,7 +116,9 @@ struct GlassInputFieldBridge: NSViewRepresentable {
     textView.isRichText = false
     textView.font = NSFont.systemFont(ofSize: 15)
     textView.backgroundColor = .clear
-    textView.textColor = NSColor.labelColor
+    textView.usesAdaptiveColorMappingForDarkAppearance = true
+    textView.textColor = NSColor.textColor
+    textView.insertionPointColor = NSColor.textColor
     textView.string = text
     textView.textContainerInset = NSSize(width: 8, height: 8)
     textView.drawsBackground = false
