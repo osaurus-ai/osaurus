@@ -365,7 +365,7 @@ struct ChatView: View {
       .onTapGesture { inputIsFocused = true }
       .animation(.easeInOut(duration: theme.animationDurationMedium), value: inputIsFocused)
 
-      if session.input.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+      if session.input.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !inputIsFocused {
         Text("Type your message…")
           .font(.system(size: 15))
           .foregroundColor(theme.tertiaryText)
