@@ -92,7 +92,7 @@ struct ModelDownloadView: View {
 
         // Show count of downloaded models and total size
         Text(
-          "\(filteredDownloadedModels.count) downloaded • \(modelManager.totalDownloadedSizeString)"
+          "\(completedDownloadedModelsCount) downloaded • \(modelManager.totalDownloadedSizeString)"
         )
         .font(.system(size: 13))
         .foregroundColor(theme.secondaryText)
@@ -190,7 +190,8 @@ struct ModelDownloadView: View {
                   model: model,
                   downloadState: modelManager.effectiveDownloadState(for: model),
                   metrics: modelManager.downloadMetrics[model.id],
-                  onViewDetails: { modelToShowDetails = model }
+                  onViewDetails: { modelToShowDetails = model },
+                  onCancel: { modelManager.cancelDownload(model.id) }
                 )
                 .onAppear { /* no-op */  }
               }
@@ -220,14 +221,7 @@ struct ModelDownloadView: View {
     }
   }
 
-  /// Downloaded models filtered by current search text and sorted by download date
-  ///
-  /// This computed property:
-  /// 1. Combines available and suggested models
-  /// 2. Removes duplicates by model ID
-  /// 3. Filters to only downloaded models
-  /// 4. Applies search filter
-  /// 5. Sorts by download date (newest first), with name as secondary sort
+  /// Downloaded tab contents: include active downloads at the top, then completed ones
   private var filteredDownloadedModels: [MLXModel] {
     // Prefer curated (suggested) variants over auto-discovered ones when deduplicating
     let combined = modelManager.suggestedModels + modelManager.availableModels
@@ -245,11 +239,61 @@ struct ModelDownloadView: View {
         byLowerId[key] = m
       }
     }
-    let downloaded = byLowerId.values.filter { $0.isDownloaded }
-    let filtered = SearchService.filterModels(Array(downloaded), with: searchText)
-    return filtered.sorted { lhs, rhs in
-      lhs.name.localizedCaseInsensitiveCompare(rhs.name) == .orderedAscending
+
+    let all = Array(byLowerId.values)
+    // Active: in-progress downloads regardless of on-disk completion
+    let active: [MLXModel] = all.filter { m in
+      switch modelManager.downloadStates[m.id] ?? .notStarted {
+      case .downloading: return true
+      default: return false
+      }
     }
+    // Completed: on-disk completed models
+    let completed: [MLXModel] = all.filter { $0.isDownloaded }
+    // Merge with active first; de-dupe by lowercase id while preserving order
+    var seen: Set<String> = []
+    var merged: [MLXModel] = []
+    for m in active + completed {
+      let k = m.id.lowercased()
+      if !seen.contains(k) {
+        seen.insert(k)
+        merged.append(m)
+      }
+    }
+    // Apply search filter
+    let filtered = SearchService.filterModels(merged, with: searchText)
+    // Sort: active first, then by name
+    return filtered.sorted { lhs, rhs in
+      let lhsActive: Bool = {
+        if case .downloading = (modelManager.downloadStates[lhs.id] ?? .notStarted) { return true }
+        return false
+      }()
+      let rhsActive: Bool = {
+        if case .downloading = (modelManager.downloadStates[rhs.id] ?? .notStarted) { return true }
+        return false
+      }()
+      if lhsActive != rhsActive { return lhsActive && !rhsActive }
+      return lhs.name.localizedCaseInsensitiveCompare(rhs.name) == .orderedAscending
+    }
+  }
+
+  /// Count of completed (on-disk) downloaded models respecting current search
+  private var completedDownloadedModelsCount: Int {
+    let combined = modelManager.suggestedModels + modelManager.availableModels
+    var byLowerId: [String: MLXModel] = [:]
+    for m in combined {
+      let key = m.id.lowercased()
+      if let existing = byLowerId[key] {
+        let existingIsDiscovered = existing.description == "Discovered on Hugging Face"
+        let currentIsDiscovered = m.description == "Discovered on Hugging Face"
+        if existingIsDiscovered && !currentIsDiscovered { byLowerId[key] = m }
+      } else {
+        byLowerId[key] = m
+      }
+    }
+    let completed = byLowerId.values.filter { $0.isDownloaded }
+    let filtered = SearchService.filterModels(Array(completed), with: searchText)
+    return filtered.count
   }
 
   /// Models to display based on the currently selected tab
@@ -275,7 +319,8 @@ struct ModelDownloadView: View {
     case .suggested:
       return filteredSuggestedModels.count
     case .downloaded:
-      return filteredDownloadedModels.count
+      // Count completed-only for tab label
+      return completedDownloadedModelsCount
     }
   }
 }

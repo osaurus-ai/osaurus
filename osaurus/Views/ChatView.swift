@@ -12,7 +12,7 @@ import SwiftUI
 
 @MainActor
 final class ChatSession: ObservableObject {
-  @Published var turns: [(role: MessageRole, content: String)] = []
+  @Published var turns: [ChatTurn] = []
   @Published var isStreaming: Bool = false
   @Published var input: String = ""
   @Published var selectedModel: String? = nil
@@ -54,7 +54,7 @@ final class ChatSession: ObservableObject {
   func send(_ text: String) {
     let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !trimmed.isEmpty else { return }
-    turns.append((.user, trimmed))
+    turns.append(ChatTurn(role: .user, content: trimmed))
 
     var messages = turns.map { Message(role: $0.role, content: $0.content) }
     let chatCfg = ChatConfigurationStore.load()
@@ -80,24 +80,26 @@ final class ChatSession: ObservableObject {
         services: services
       ) {
       case .none:
-        turns.append((.assistant, "No model available. Open Model Manager to download one."))
+        turns.append(
+          ChatTurn(
+            role: .assistant, content: "No model available. Open Model Manager to download one."))
         return
       case .service(let svc, _):
-        turns.append((.assistant, ""))
-        let idx = turns.count - 1
+        let assistantTurn = ChatTurn(role: .assistant, content: "")
+        turns.append(assistantTurn)
         let params = GenerationParameters(temperature: 0.7, maxTokens: 1024)
         do {
           let stream = try await svc.streamDeltas(prompt: prompt, parameters: params)
           for await delta in stream {
             if Task.isCancelled { break }
             if !delta.isEmpty {
-              turns[idx].content += delta
+              assistantTurn.content += delta
               // Signal UI to autoscroll while streaming
               scrollTick &+= 1
             }
           }
         } catch {
-          turns[idx].content = "Error: \(error.localizedDescription)"
+          assistantTurn.content = "Error: \(error.localizedDescription)"
         }
       }
     }
@@ -244,68 +246,10 @@ struct ChatView: View {
       ZStack(alignment: .bottomTrailing) {
         ScrollView {
           LazyVStack(spacing: 16) {
-            ForEach(Array(session.turns.enumerated()), id: \.offset) { item in
-              let turn = item.element
-              HStack(alignment: .top, spacing: 16) {
-                if turn.role == .user {
-                  Spacer()
-                }
-
-                VStack(alignment: turn.role == .user ? .trailing : .leading, spacing: 8) {
-                  Text(turn.role == .user ? "You" : "Assistant")
-                    .font(Typography.small(width))
-                    .fontWeight(.medium)
-                    .foregroundColor(turn.role == .user ? Color.accentColor : theme.secondaryText)
-
-                  ZStack(alignment: .topTrailing) {
-                    Group {
-                      if turn.content.isEmpty && turn.role == .assistant && session.isStreaming {
-                        HStack(spacing: 8) {
-                          ProgressView()
-                            .scaleEffect(0.8)
-                            .progressViewStyle(CircularProgressViewStyle(tint: Color.accentColor))
-                          Text("Thinking…")
-                            .font(Typography.body(width))
-                            .foregroundColor(theme.primaryText)
-                        }
-                        .padding(16)
-                        .background(
-                          GlassMessageBubble(role: turn.role, isStreaming: session.isStreaming)
-                        )
-                      } else {
-                        MarkdownMessageView(text: turn.content, baseWidth: width)
-                          .font(Typography.body(width))
-                          .foregroundColor(theme.primaryText)
-                          .padding(16)
-                          .background(
-                            GlassMessageBubble(role: turn.role, isStreaming: session.isStreaming)
-                          )
-                          .transition(.opacity.combined(with: .scale(scale: 0.95)))
-                      }
-                    }
-                    .fixedSize(horizontal: false, vertical: true)
-
-                    if turn.role == .assistant && !turn.content.isEmpty {
-                      HoverButton(action: { copyToPasteboard(turn.content) }) {
-                        Image(systemName: "doc.on.doc")
-                          .font(.system(size: 12))
-                          .foregroundColor(theme.tertiaryText)
-                      }
-                      .padding(8)
-                      .offset(x: -8, y: 8)
-                    }
-                  }
-                }
-                .frame(
-                  maxWidth: min(width * 0.75, 600),
-                  alignment: turn.role == .user ? .trailing : .leading
-                )
-
-                if turn.role == .assistant {
-                  Spacer()
-                }
+            ForEach(session.turns) { turn in
+              MessageRowView(turn: turn, width: width, isStreaming: session.isStreaming) { text in
+                copyToPasteboard(text)
               }
-              .frame(maxWidth: .infinity)
             }
             Color.clear
               .frame(height: 1)
@@ -576,6 +520,78 @@ struct ChatView: View {
 
   private var hasAnyModel: Bool {
     FoundationModelService.isDefaultModelAvailable() || !MLXService.getAvailableModels().isEmpty
+  }
+}
+
+// MARK: - Message Row (observes individual turn)
+private struct MessageRowView: View {
+  @ObservedObject var turn: ChatTurn
+  let width: CGFloat
+  let isStreaming: Bool
+  let onCopy: (String) -> Void
+  @Environment(\.theme) private var theme
+
+  var body: some View {
+    HStack(alignment: .top, spacing: 16) {
+      if turn.role == .user {
+        Spacer()
+      }
+
+      VStack(alignment: turn.role == .user ? .trailing : .leading, spacing: 8) {
+        Text(turn.role == .user ? "You" : "Assistant")
+          .font(Typography.small(width))
+          .fontWeight(.medium)
+          .foregroundColor(turn.role == .user ? Color.accentColor : theme.secondaryText)
+
+        ZStack(alignment: .topTrailing) {
+          Group {
+            if turn.content.isEmpty && turn.role == .assistant && isStreaming {
+              HStack(spacing: 8) {
+                ProgressView()
+                  .scaleEffect(0.8)
+                  .progressViewStyle(CircularProgressViewStyle(tint: Color.accentColor))
+                Text("Thinking…")
+                  .font(Typography.body(width))
+                  .foregroundColor(theme.primaryText)
+              }
+              .padding(16)
+              .background(
+                GlassMessageBubble(role: turn.role, isStreaming: isStreaming)
+              )
+            } else {
+              MarkdownMessageView(text: turn.content, baseWidth: width)
+                .font(Typography.body(width))
+                .foregroundColor(theme.primaryText)
+                .padding(16)
+                .background(
+                  GlassMessageBubble(role: turn.role, isStreaming: isStreaming)
+                )
+                .transition(.opacity.combined(with: .scale(scale: 0.95)))
+            }
+          }
+          .fixedSize(horizontal: false, vertical: true)
+
+          if turn.role == .assistant && !turn.content.isEmpty {
+            HoverButton(action: { onCopy(turn.content) }) {
+              Image(systemName: "doc.on.doc")
+                .font(.system(size: 12))
+                .foregroundColor(theme.tertiaryText)
+            }
+            .padding(8)
+            .offset(x: -8, y: 8)
+          }
+        }
+      }
+      .frame(
+        maxWidth: min(width * 0.75, 600),
+        alignment: turn.role == .user ? .trailing : .leading
+      )
+
+      if turn.role == .assistant {
+        Spacer()
+      }
+    }
+    .frame(maxWidth: .infinity)
   }
 }
 

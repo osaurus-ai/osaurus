@@ -32,6 +32,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSPopoverD
     // App has launched
     print("Osaurus server app launched")
 
+    // Configure local notifications
+    NotificationService.shared.configureOnLaunch()
+
     // Set up observers for server state changes
     setupObservers()
 

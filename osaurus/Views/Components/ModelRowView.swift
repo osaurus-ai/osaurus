@@ -31,6 +31,9 @@ struct ModelRowView: View {
   /// Callback when user taps the Details button
   let onViewDetails: () -> Void
 
+  /// Optional cancel action when downloading
+  let onCancel: (() -> Void)?
+
   // MARK: - State
 
   /// Whether the user is currently hovering over this row
@@ -77,8 +80,18 @@ struct ModelRowView: View {
             // Download progress
             if case .downloading(let progress) = downloadState {
               VStack(alignment: .leading, spacing: 6) {
-                SimpleProgressBar(progress: progress)
-                  .frame(height: 4)
+                HStack(spacing: 8) {
+                  SimpleProgressBar(progress: progress)
+                    .frame(height: 4)
+                    .frame(maxWidth: .infinity)
+                  if let onCancel = onCancel {
+                    CircularIconButton(
+                      systemName: "xmark",
+                      help: "Cancel download",
+                      action: onCancel
+                    )
+                  }
+                }
 
                 if let line = formattedMetricsLine() {
                   Text(line)
