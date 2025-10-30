@@ -496,6 +496,9 @@ final class ModelManager: NSObject, ObservableObject {
             self.downloadMetrics[model.id] = nil
             self.progressSamples[model.id] = nil
             self.downloadSizeEstimates[model.id] = nil
+            if completed {
+              NotificationService.shared.postModelReady(modelId: model.id, modelName: model.name)
+            }
           }
         }
       } catch is CancellationError {
