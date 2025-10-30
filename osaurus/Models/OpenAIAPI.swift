@@ -51,6 +51,46 @@ struct ChatMessage: Codable {
   let tool_call_id: String?
 }
 
+// Allow decoding OpenAI-style array-of-parts content while preserving string encoding
+extension ChatMessage {
+  private struct ContentPart: Codable {
+    let type: String
+    let text: String?
+    let input_text: String?
+  }
+
+  private enum CodingKeys: String, CodingKey {
+    case role
+    case content
+    case tool_calls
+    case tool_call_id
+  }
+
+  init(from decoder: Decoder) throws {
+    let container = try decoder.container(keyedBy: CodingKeys.self)
+    self.role = try container.decode(String.self, forKey: .role)
+    self.tool_calls = try? container.decode([ToolCall].self, forKey: .tool_calls)
+    self.tool_call_id = try? container.decode(String.self, forKey: .tool_call_id)
+
+    if let stringContent = try? container.decode(String.self, forKey: .content) {
+      self.content = stringContent
+    } else if let parts = try? container.decode([ContentPart].self, forKey: .content) {
+      let texts = parts.compactMap { $0.text ?? $0.input_text }
+      self.content = texts.isEmpty ? nil : texts.joined()
+    } else {
+      self.content = nil
+    }
+  }
+
+  func encode(to encoder: Encoder) throws {
+    var container = encoder.container(keyedBy: CodingKeys.self)
+    try container.encode(role, forKey: .role)
+    try container.encodeIfPresent(content, forKey: .content)
+    try container.encodeIfPresent(tool_calls, forKey: .tool_calls)
+    try container.encodeIfPresent(tool_call_id, forKey: .tool_call_id)
+  }
+}
+
 extension ChatMessage {
   init(role: String, content: String) {
     self.role = role
