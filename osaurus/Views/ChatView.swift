@@ -178,7 +178,9 @@ struct ChatView: View {
     .onReceive(NotificationCenter.default.publisher(for: .chatOverlayActivated)) { _ in
       focusTrigger &+= 1
       isPinnedToBottom = true
+      inputIsFocused = true
     }
+    .onAppear { inputIsFocused = true }
     .onChange(of: session.turns.isEmpty) { oldValue, newValue in
       // Resize window when chat is cleared or gets content
       resizeWindowForContent(isEmpty: newValue)
@@ -374,17 +376,19 @@ struct ChatView: View {
       )
       .frame(minHeight: 48, maxHeight: 120)
       .background(
-        RoundedRectangle(cornerRadius: 16, style: .continuous)
-          .fill(
-            theme.glassOpacityTertiary == 0.05
-              ? theme.secondaryBackground.opacity(0.4) : theme.primaryBackground.opacity(0.4)
-          )
-          .background(
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
-              .fill(.ultraThinMaterial)
-          )
+        ZStack {
+          RoundedRectangle(cornerRadius: 16, style: .continuous)
+            .fill(
+              theme.glassOpacityTertiary == 0.05
+                ? theme.secondaryBackground.opacity(0.4) : theme.primaryBackground.opacity(0.4)
+            )
+            .allowsHitTesting(false)
+          RoundedRectangle(cornerRadius: 16, style: .continuous)
+            .fill(.ultraThinMaterial)
+            .allowsHitTesting(false)
+        }
       )
-      .overlay(
+      .overlay(alignment: .center) {
         RoundedRectangle(cornerRadius: 16, style: .continuous)
           .strokeBorder(
             inputIsFocused
@@ -400,11 +404,14 @@ struct ChatView: View {
               ),
             lineWidth: inputIsFocused ? 1.5 : 0.5
           )
-      )
+          .allowsHitTesting(false)
+      }
       .shadow(
         color: inputIsFocused ? Color.accentColor.opacity(0.2) : Color.clear,
         radius: inputIsFocused ? 20 : 0
       )
+      .contentShape(RoundedRectangle(cornerRadius: 16))
+      .onTapGesture { inputIsFocused = true }
       .animation(.easeInOut(duration: theme.animationDurationMedium), value: inputIsFocused)
 
       if session.input.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {

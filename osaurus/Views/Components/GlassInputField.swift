@@ -122,6 +122,17 @@ struct GlassInputFieldBridge: NSViewRepresentable {
     textView.string = text
     textView.textContainerInset = NSSize(width: 8, height: 8)
     textView.drawsBackground = false
+    textView.isEditable = true
+    textView.isSelectable = true
+    textView.minSize = NSSize(width: 0, height: 0)
+    textView.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: 120)
+    textView.isVerticallyResizable = true
+    textView.isHorizontallyResizable = false
+    textView.textContainer?.containerSize = NSSize(
+      width: scrollView.contentSize.width, height: .greatestFiniteMagnitude)
+    textView.textContainer?.widthTracksTextView = true
+    textView.textColor = NSColor.labelColor
+    textView.insertionPointColor = NSColor.labelColor
 
     scrollView.documentView = textView
 
@@ -133,6 +144,10 @@ struct GlassInputFieldBridge: NSViewRepresentable {
 
     if textView.string != text {
       textView.string = text
+    }
+
+    if let tc = textView.textContainer, tc.containerSize.width != nsView.contentSize.width {
+      tc.containerSize.width = nsView.contentSize.width
     }
 
     if isFocused && nsView.window?.firstResponder != textView {
