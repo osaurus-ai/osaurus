@@ -120,8 +120,6 @@ struct ContentView: View {
 
 }
 
-// Primary button logic removed
-
 // MARK: - Subviews
 private struct TopStatusHeader: View {
   @Environment(\.theme) private var theme

@@ -84,12 +84,16 @@ final class ChatSession: ObservableObject {
           ChatTurn(
             role: .assistant, content: "No model available. Open Model Manager to download one."))
         return
-      case .service(let svc, _):
+      case .service(let svc, let effectiveModel):
         let assistantTurn = ChatTurn(role: .assistant, content: "")
         turns.append(assistantTurn)
         let params = GenerationParameters(temperature: 0.7, maxTokens: 1024)
         do {
-          let stream = try await svc.streamDeltas(prompt: prompt, parameters: params)
+          let stream = try await svc.streamDeltas(
+            prompt: prompt,
+            parameters: params,
+            requestedModel: effectiveModel
+          )
           for await delta in stream {
             if Task.isCancelled { break }
             if !delta.isEmpty {

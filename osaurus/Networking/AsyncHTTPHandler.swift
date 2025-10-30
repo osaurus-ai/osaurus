@@ -331,7 +331,9 @@ class AsyncHTTPHandler {
     let stream: AsyncStream<String>
     do {
       stream = try await service.streamDeltas(
-        prompt: prompt, parameters: parameters)
+        prompt: prompt,
+        parameters: parameters,
+        requestedModel: effectiveModel)
     } catch {
       // If obtaining the stream fails after headers have been sent, emit an error chunk
       executeOnLoop(loop) {
@@ -489,7 +491,11 @@ class AsyncHTTPHandler {
       }
     }
 
-    var reply = try await service.generateOneShot(prompt: prompt, parameters: parameters)
+    var reply = try await service.generateOneShot(
+      prompt: prompt,
+      parameters: parameters,
+      requestedModel: effectiveModel
+    )
 
     if !stopSequences.isEmpty {
       for s in stopSequences {

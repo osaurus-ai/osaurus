@@ -465,6 +465,7 @@ struct SystemResourceMonitor: View {
   @StateObject private var monitor = SystemMonitorService.shared
   @State private var isHoveringCPU = false
   @State private var isHoveringRAM = false
+  @State private var showResourcePopover = false
 
   var body: some View {
     HStack(spacing: 12) {
@@ -574,6 +575,17 @@ struct SystemResourceMonitor: View {
             .stroke(theme.cardBorder, lineWidth: 1)
         )
     )
+    .contentShape(Rectangle())
+    .onTapGesture { showResourcePopover.toggle() }
+    .popover(
+      isPresented: $showResourcePopover,
+      attachmentAnchor: .point(.bottom),
+      arrowEdge: .top
+    ) {
+      ModelCacheInspectorView()
+        .frame(minWidth: 280)
+        .padding(12)
+    }
   }
 
   private func colorForUsage(_ usage: Double) -> Color {
