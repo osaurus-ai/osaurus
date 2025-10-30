@@ -192,10 +192,10 @@ struct ChatView: View {
           if isReturn {
             let hasShift = event.modifierFlags.contains(.shift)
             if hasShift {
-              return event // allow newline
+              return event  // allow newline
             } else {
               session.sendCurrent()
-              return nil // consume
+              return nil  // consume
             }
           }
           return event

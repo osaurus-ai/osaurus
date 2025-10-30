@@ -45,5 +45,3 @@ struct ChatTextEditor: View {
     .frame(minHeight: 48, maxHeight: 120)
   }
 }
-
-
