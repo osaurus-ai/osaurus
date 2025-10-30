@@ -327,9 +327,16 @@ struct ChatView: View {
                 ? theme.secondaryBackground.opacity(0.4) : theme.primaryBackground.opacity(0.4)
             )
             .allowsHitTesting(false)
-          RoundedRectangle(cornerRadius: 16, style: .continuous)
-            .fill(.ultraThinMaterial)
-            .allowsHitTesting(false)
+          Group {
+            if #available(macOS 13.0, *) {
+              RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .fill(.ultraThinMaterial)
+            } else {
+              RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .fill(theme.primaryBackground.opacity(0.85))
+            }
+          }
+          .allowsHitTesting(false)
         }
       )
       .overlay(alignment: .center) {
@@ -358,7 +365,7 @@ struct ChatView: View {
       .onTapGesture { inputIsFocused = true }
       .animation(.easeInOut(duration: theme.animationDurationMedium), value: inputIsFocused)
 
-      if session.input.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+      if session.input.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !inputIsFocused {
         Text("Type your message…")
           .font(.system(size: 15))
           .foregroundColor(theme.tertiaryText)
