@@ -119,9 +119,12 @@ struct GlassInputFieldBridge: NSViewRepresentable {
     textView.isRichText = false
     textView.font = NSFont.systemFont(ofSize: 15)
     textView.backgroundColor = .clear
-    textView.usesAdaptiveColorMappingForDarkAppearance = true
-    textView.textColor = NSColor.textColor
-    textView.insertionPointColor = NSColor.textColor
+    // Use explicit high-contrast colors to avoid vibrancy/lightening issues
+    textView.usesAdaptiveColorMappingForDarkAppearance = false
+    let isDark = (NSApp.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua)
+    let forcedTextColor: NSColor = isDark ? .white : .black
+    textView.textColor = forcedTextColor
+    textView.insertionPointColor = forcedTextColor
     textView.string = text
     textView.textContainerInset = NSSize(width: 8, height: 8)
     textView.drawsBackground = false
@@ -134,18 +137,9 @@ struct GlassInputFieldBridge: NSViewRepresentable {
     textView.textContainer?.containerSize = NSSize(
       width: scrollView.contentSize.width, height: .greatestFiniteMagnitude)
     textView.textContainer?.widthTracksTextView = true
-    textView.textColor = NSColor.labelColor
-    textView.insertionPointColor = NSColor.labelColor
-
-    // On older macOS versions, explicitly set appearance to avoid vibrancy
-    // making the text appear very faint or invisible over materials.
-    if #available(macOS 13.0, *) {
-      // Default behavior is fine on newer systems
-    } else {
-      textView.usesAdaptiveColorMappingForDarkAppearance = false
-      let isDark = (NSApp.effectiveAppearance.name == .darkAqua)
-      textView.appearance = NSAppearance(named: isDark ? .darkAqua : .aqua)
-    }
+    // Keep strong contrast regardless of appearance changes
+    textView.textColor = forcedTextColor
+    textView.insertionPointColor = forcedTextColor
 
     scrollView.documentView = textView
 
@@ -167,6 +161,16 @@ struct GlassInputFieldBridge: NSViewRepresentable {
       DispatchQueue.main.async {
         nsView.window?.makeFirstResponder(textView)
       }
+    }
+
+    // Re-assert contrast-safe colors in case appearance changed at runtime
+    let isDark = (NSApp.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua)
+    let forcedTextColor: NSColor = isDark ? .white : .black
+    if textView.textColor != forcedTextColor {
+      textView.textColor = forcedTextColor
+    }
+    if textView.insertionPointColor != forcedTextColor {
+      textView.insertionPointColor = forcedTextColor
     }
   }
 
