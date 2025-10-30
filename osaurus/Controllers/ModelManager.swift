@@ -950,7 +950,7 @@ extension ModelManager {
 
 extension ModelManager {
   /// Parse a user-provided text into a Hugging Face repo id ("org/repo") if possible.
-  fileprivate static func parseHuggingFaceRepoId(from input: String) -> String? {
+  static func parseHuggingFaceRepoId(from input: String) -> String? {
     let trimmed = input.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !trimmed.isEmpty else { return nil }
     if let url = URL(string: trimmed), let host = url.host?.lowercased(), host == "huggingface.co" {

@@ -66,6 +66,10 @@ struct ModelDownloadView: View {
       modelManager.fetchRemoteMLXModels(searchText: searchText)
     }
     .onChange(of: searchText) { _, newValue in
+      // If input looks like a Hugging Face repo, switch to All so it's visible
+      if ModelManager.parseHuggingFaceRepoId(from: newValue) != nil, selectedTab != .all {
+        selectedTab = .all
+      }
       // Debounce remote search to avoid spamming the API
       searchDebounceTask?.cancel()
       searchDebounceTask = Task { @MainActor in
