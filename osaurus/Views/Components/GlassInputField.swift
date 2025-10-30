@@ -107,6 +107,9 @@ struct GlassInputFieldBridge: NSViewRepresentable {
   func makeNSView(context: Context) -> NSScrollView {
     let scrollView = NSScrollView()
     scrollView.drawsBackground = false
+    // Ensure no opaque backgrounds that can interfere with vibrancy on older macOS
+    scrollView.backgroundColor = .clear
+    scrollView.contentView.drawsBackground = false
     scrollView.hasVerticalScroller = true
     scrollView.autohidesScrollers = true
     scrollView.borderType = .noBorder
@@ -133,6 +136,16 @@ struct GlassInputFieldBridge: NSViewRepresentable {
     textView.textContainer?.widthTracksTextView = true
     textView.textColor = NSColor.labelColor
     textView.insertionPointColor = NSColor.labelColor
+
+    // On older macOS versions, explicitly set appearance to avoid vibrancy
+    // making the text appear very faint or invisible over materials.
+    if #available(macOS 13.0, *) {
+      // Default behavior is fine on newer systems
+    } else {
+      textView.usesAdaptiveColorMappingForDarkAppearance = false
+      let isDark = (NSApp.effectiveAppearance.name == .darkAqua)
+      textView.appearance = NSAppearance(named: isDark ? .darkAqua : .aqua)
+    }
 
     scrollView.documentView = textView
 
