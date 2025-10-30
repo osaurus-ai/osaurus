@@ -31,13 +31,15 @@ protocol ModelService {
   /// Stream incremental text deltas for the provided prompt.
   func streamDeltas(
     prompt: String,
-    parameters: GenerationParameters
+    parameters: GenerationParameters,
+    requestedModel: String?
   ) async throws -> AsyncStream<String>
 
   /// Generate a single-shot response for the provided prompt.
   func generateOneShot(
     prompt: String,
-    parameters: GenerationParameters
+    parameters: GenerationParameters,
+    requestedModel: String?
   ) async throws -> String
 }
 

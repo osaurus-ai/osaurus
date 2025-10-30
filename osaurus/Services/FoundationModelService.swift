@@ -68,7 +68,8 @@ final class FoundationModelService: ToolCapableService {
 
   func streamDeltas(
     prompt: String,
-    parameters: GenerationParameters
+    parameters: GenerationParameters,
+    requestedModel: String?
   ) async throws -> AsyncStream<String> {
     #if canImport(FoundationModels)
       if #available(macOS 26.0, *) {
@@ -116,7 +117,8 @@ final class FoundationModelService: ToolCapableService {
 
   func generateOneShot(
     prompt: String,
-    parameters: GenerationParameters
+    parameters: GenerationParameters,
+    requestedModel: String?
   ) async throws -> String {
     return try await Self.generateOneShot(
       prompt: prompt, temperature: parameters.temperature, maxTokens: parameters.maxTokens)

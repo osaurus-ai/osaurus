@@ -64,9 +64,13 @@ final class MLXService: @unchecked Sendable {
 
   /// Cache to store loaded model containers to avoid reloading weights from disk.
   private final class SessionHolder: NSObject {
+    let name: String
     let container: ModelContainer
-    init(container: ModelContainer) {
+    let weightsSizeBytes: Int64
+    init(name: String, container: ModelContainer, weightsSizeBytes: Int64) {
+      self.name = name
       self.container = container
+      self.weightsSizeBytes = weightsSizeBytes
     }
   }
 
@@ -74,6 +78,9 @@ final class MLXService: @unchecked Sendable {
 
   private let sessionCacheQueue = DispatchQueue(
     label: "com.osaurus.sessioncache", attributes: .concurrent)
+
+  // Track cached model names explicitly since NSCache doesn't expose keys
+  private var cachedModelNames: Set<String> = []
 
   /// Per-model concurrency gates to protect underlying MLX containers
   private final class ConcurrencyGate {
@@ -123,6 +130,64 @@ final class MLXService: @unchecked Sendable {
     )
     p.prefillStepSize = prefillStep
     return p
+  }
+
+  // MARK: - Model Cache Introspection (for UI)
+  struct ModelCacheSummary: Sendable {
+    let name: String
+    let bytes: Int64
+    let isCurrent: Bool
+  }
+
+  /// Returns a snapshot of currently cached models with approximate memory usage.
+  /// This also prunes any names whose entries have been evicted by NSCache.
+  func cachedModelSummaries() -> [ModelCacheSummary] {
+    return sessionCacheQueue.sync(flags: .barrier) {
+      var toRemove: [String] = []
+      var results: [ModelCacheSummary] = []
+      for name in cachedModelNames {
+        if let holder = modelCache.object(forKey: name as NSString) {
+          let summary = ModelCacheSummary(
+            name: name,
+            bytes: holder.weightsSizeBytes,
+            isCurrent: (name == currentModelName)
+          )
+          results.append(summary)
+        } else {
+          toRemove.append(name)
+        }
+      }
+      if !toRemove.isEmpty {
+        for n in toRemove { cachedModelNames.remove(n) }
+      }
+      // Sort: current model first, then by name
+      return results.sorted { lhs, rhs in
+        if lhs.isCurrent != rhs.isCurrent { return lhs.isCurrent }
+        return lhs.name < rhs.name
+      }
+    }
+  }
+
+  // MARK: - Weights size (disk) estimation
+  private func computeWeightsSizeBytes(at url: URL) -> Int64 {
+    let fm = FileManager.default
+    guard
+      let enumerator = fm.enumerator(
+        at: url, includingPropertiesForKeys: [.isRegularFileKey, .fileSizeKey])
+    else {
+      return 0
+    }
+    var total: Int64 = 0
+    for case let fileURL as URL in enumerator {
+      if fileURL.pathExtension.lowercased() == "safetensors" {
+        if let attrs = try? fm.attributesOfItem(atPath: fileURL.path),
+          let size = attrs[.size] as? NSNumber
+        {
+          total += size.int64Value
+        }
+      }
+    }
+    return total
   }
 
   private func mapMessagesToMLX(_ messages: [Message]) -> [MLXLMCommon.Chat.Message] {
@@ -408,12 +473,17 @@ final class MLXService: @unchecked Sendable {
         ])
     }
 
-    // Load the model container
+    // Load the model container and compute weights disk size
     let container = try await loadModelContainer(directory: localURL)
-    let holder = SessionHolder(container: container)
+    let weightsBytes = computeWeightsSizeBytes(at: localURL)
+    let holder = SessionHolder(
+      name: model.name, container: container, weightsSizeBytes: weightsBytes)
 
     // Cache for future requests
     modelCache.setObject(holder, forKey: model.name as NSString)
+    sessionCacheQueue.async(flags: .barrier) { [weak self] in
+      self?.cachedModelNames.insert(model.name)
+    }
     currentModelName = model.name
     updateAvailableModelsCache()
 
@@ -515,6 +585,9 @@ final class MLXService: @unchecked Sendable {
   /// Unload a model from memory
   func unloadModel(named name: String) {
     modelCache.removeObject(forKey: name as NSString)
+    sessionCacheQueue.async(flags: .barrier) { [weak self] in
+      self?.cachedModelNames.remove(name)
+    }
     if currentModelName == name {
       currentModelName = nil
     }
@@ -526,6 +599,9 @@ final class MLXService: @unchecked Sendable {
   /// Clear all cached models
   func clearCache() {
     modelCache.removeAllObjects()
+    sessionCacheQueue.async(flags: .barrier) { [weak self] in
+      self?.cachedModelNames.removeAll()
+    }
     currentModelName = nil
 
     // Update available models cache
@@ -550,9 +626,10 @@ extension MLXService: ToolCapableService {
 
   func streamDeltas(
     prompt: String,
-    parameters: GenerationParameters
+    parameters: GenerationParameters,
+    requestedModel: String?
   ) async throws -> AsyncStream<String> {
-    let model = try selectDefaultModel()
+    let model = try selectModel(requestedName: requestedModel)
     let messages = [Message(role: .user, content: prompt)]
     let eventStream = try await generateEvents(
       messages: messages,
@@ -578,9 +655,10 @@ extension MLXService: ToolCapableService {
 
   func generateOneShot(
     prompt: String,
-    parameters: GenerationParameters
+    parameters: GenerationParameters,
+    requestedModel: String?
   ) async throws -> String {
-    let model = try selectDefaultModel()
+    let model = try selectModel(requestedName: requestedModel)
     let messages = [Message(role: .user, content: prompt)]
     let eventStream = try await generateEvents(
       messages: messages,
@@ -717,5 +795,11 @@ extension MLXService: ToolCapableService {
     throw NSError(
       domain: "MLXService", code: 2,
       userInfo: [NSLocalizedDescriptionKey: "No local MLX models available"])
+  }
+
+  private func selectModel(requestedName: String?) throws -> LocalModelRef {
+    let trimmed = (requestedName ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+    if !trimmed.isEmpty, let m = Self.findModel(named: trimmed) { return m }
+    return try selectDefaultModel()
   }
 }
