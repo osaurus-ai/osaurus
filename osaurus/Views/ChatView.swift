@@ -119,6 +119,7 @@ struct ChatView: View {
   @State private var isPinnedToBottom: Bool = true
   @State private var inputIsFocused: Bool = false
   @State private var hostWindow: NSWindow?
+  @State private var keyMonitor: Any?
 
   var body: some View {
     GeometryReader { proxy in
@@ -182,7 +183,31 @@ struct ChatView: View {
       isPinnedToBottom = true
       inputIsFocused = true
     }
-    .onAppear { inputIsFocused = true }
+    .onAppear {
+      inputIsFocused = true
+      if keyMonitor == nil {
+        keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+          guard inputIsFocused else { return event }
+          let isReturn = (event.keyCode == kVK_Return || event.keyCode == kVK_ANSI_KeypadEnter)
+          if isReturn {
+            let hasShift = event.modifierFlags.contains(.shift)
+            if hasShift {
+              return event // allow newline
+            } else {
+              session.sendCurrent()
+              return nil // consume
+            }
+          }
+          return event
+        }
+      }
+    }
+    .onDisappear {
+      if let monitor = keyMonitor {
+        NSEvent.removeMonitor(monitor)
+        keyMonitor = nil
+      }
+    }
     .onChange(of: session.turns.isEmpty) { oldValue, newValue in
       // Resize window when chat is cleared or gets content
       resizeWindowForContent(isEmpty: newValue)
@@ -312,11 +337,11 @@ struct ChatView: View {
 
   private func inputBar(_ width: CGFloat) -> some View {
     ZStack(alignment: .topLeading) {
-      GlassInputFieldBridge(
+      ChatTextEditor(
         text: $session.input,
-        isFocused: inputIsFocused,
-        onCommit: { session.sendCurrent() },
-        onFocusChange: { focused in inputIsFocused = focused }
+        placeholder: "Type your message…",
+        isFocused: $inputIsFocused,
+        onSend: { session.sendCurrent() }
       )
       .frame(minHeight: 48, maxHeight: 120)
       .background(
@@ -364,15 +389,6 @@ struct ChatView: View {
       .contentShape(RoundedRectangle(cornerRadius: 16))
       .onTapGesture { inputIsFocused = true }
       .animation(.easeInOut(duration: theme.animationDurationMedium), value: inputIsFocused)
-
-      if session.input.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !inputIsFocused {
-        Text("Type your message…")
-          .font(.system(size: 15))
-          .foregroundColor(theme.tertiaryText)
-          .padding(.horizontal, 8)
-          .padding(.vertical, 8)
-          .allowsHitTesting(false)
-      }
     }
   }
 
@@ -430,7 +446,7 @@ struct ChatView: View {
           session.input.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? 0.5 : 1
         )
         .animation(.easeInOut(duration: theme.animationDurationQuick), value: session.input)
-        .keyboardShortcut(.return, modifiers: [.command])
+        .keyboardShortcut(.return)
       }
     }
   }
@@ -466,7 +482,7 @@ struct ChatView: View {
         || session.isStreaming ? 0.5 : 1
     )
     .animation(.easeInOut(duration: theme.animationDurationQuick), value: session.input)
-    .keyboardShortcut(.return, modifiers: [.command])
+    .keyboardShortcut(.return)
   }
 
   private func bottomControls(_ width: CGFloat) -> some View {
@@ -599,118 +615,6 @@ private struct MessageRowView: View {
       }
     }
     .frame(maxWidth: .infinity)
-  }
-}
-
-// MARK: - AppKit-backed Multiline Text View with Enter to send
-struct MultilineTextView: NSViewRepresentable {
-  @Binding var text: String
-  @Binding var focusTrigger: Int
-  var onCommit: () -> Void
-  var onFocusChange: ((Bool) -> Void)? = nil
-
-  func makeNSView(context: Context) -> NSScrollView {
-    let scroll = NSScrollView()
-    scroll.drawsBackground = false
-    scroll.hasVerticalScroller = true
-    scroll.hasHorizontalScroller = false
-    scroll.autohidesScrollers = true
-
-    let tv = CommitInterceptTextView()
-    tv.delegate = context.coordinator
-    tv.isRichText = false
-    tv.isAutomaticQuoteSubstitutionEnabled = false
-    tv.isAutomaticDashSubstitutionEnabled = false
-    tv.font = NSFont.systemFont(ofSize: 15)
-    tv.backgroundColor = .clear
-    tv.usesAdaptiveColorMappingForDarkAppearance = true
-    tv.textColor = NSColor.textColor
-    tv.insertionPointColor = NSColor.textColor
-    tv.string = text
-    tv.commitHandler = onCommit
-    tv.minSize = NSSize(width: 0, height: 40)
-    tv.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: 120)
-    tv.isVerticallyResizable = true
-    tv.isHorizontallyResizable = false
-    tv.textContainerInset = NSSize(width: 6, height: 6)
-    tv.textContainer?.containerSize = NSSize(
-      width: scroll.contentSize.width, height: CGFloat.greatestFiniteMagnitude)
-    tv.textContainer?.widthTracksTextView = true
-
-    scroll.documentView = tv
-    return scroll
-  }
-
-  func updateNSView(_ nsView: NSScrollView, context: Context) {
-    if let tv = nsView.documentView as? CommitInterceptTextView {
-      if tv.string != text { tv.string = text }
-      tv.commitHandler = onCommit
-      tv.focusHandler = onFocusChange
-      if context.coordinator.lastFocusTrigger != focusTrigger {
-        context.coordinator.lastFocusTrigger = focusTrigger
-        // Try focusing immediately, then again on the next runloop to handle first-show timing
-        nsView.window?.makeFirstResponder(tv)
-        DispatchQueue.main.async {
-          nsView.window?.makeFirstResponder(tv)
-        }
-      }
-    }
-  }
-
-  func makeCoordinator() -> Coordinator { Coordinator(self) }
-
-  final class Coordinator: NSObject, NSTextViewDelegate {
-    var parent: MultilineTextView
-    var lastFocusTrigger: Int = 0
-    init(_ parent: MultilineTextView) { self.parent = parent }
-
-    func textDidChange(_ notification: Notification) {
-      guard let tv = notification.object as? NSTextView else { return }
-      parent.text = tv.string
-    }
-
-    func textDidBeginEditing(_ notification: Notification) {
-      parent.onFocusChange?(true)
-    }
-
-    func textDidEndEditing(_ notification: Notification) {
-      parent.onFocusChange?(false)
-    }
-  }
-
-  final class CommitInterceptTextView: NSTextView {
-    var commitHandler: (() -> Void)?
-    var focusHandler: ((Bool) -> Void)?
-    override func keyDown(with event: NSEvent) {
-      let isReturn = (event.keyCode == kVK_Return || event.keyCode == kVK_ANSI_KeypadEnter)
-      if isReturn {
-        let hasShift = event.modifierFlags.contains(.shift)
-        let hasCommand = event.modifierFlags.contains(.command)
-        if hasShift {
-          // Insert newline
-          self.insertNewline(nil)
-          return
-        }
-        if hasCommand || !hasCommand {
-          // Command-Return or plain Return: commit
-          commitHandler?()
-          return
-        }
-      }
-      super.keyDown(with: event)
-    }
-
-    override func becomeFirstResponder() -> Bool {
-      let r = super.becomeFirstResponder()
-      if r { focusHandler?(true) }
-      return r
-    }
-
-    override func resignFirstResponder() -> Bool {
-      let r = super.resignFirstResponder()
-      if r { focusHandler?(false) }
-      return r
-    }
   }
 }
 
