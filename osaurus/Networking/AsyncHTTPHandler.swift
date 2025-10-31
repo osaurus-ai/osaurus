@@ -199,7 +199,8 @@ class AsyncHTTPHandler {
             parameters: parameters,
             stopSequences: stopSequences,
             tools: tools!,
-            toolChoice: toolChoice
+            toolChoice: toolChoice,
+            requestedModel: effectiveModel
           )
           var emittedAny = false
           for try await delta in stream {
@@ -437,7 +438,8 @@ class AsyncHTTPHandler {
             parameters: parameters,
             stopSequences: stopSequences,
             tools: tools!,
-            toolChoice: toolChoice
+            toolChoice: toolChoice,
+            requestedModel: effectiveModel
           )
           let tokenCount = max(1, reply.count / 4)
           let res = ChatCompletionResponse(
