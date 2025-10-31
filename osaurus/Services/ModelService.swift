@@ -50,7 +50,8 @@ protocol ToolCapableService: ModelService {
     parameters: GenerationParameters,
     stopSequences: [String],
     tools: [Tool],
-    toolChoice: ToolChoiceOption?
+    toolChoice: ToolChoiceOption?,
+    requestedModel: String?
   ) async throws -> String
 
   func streamWithTools(
@@ -58,7 +59,8 @@ protocol ToolCapableService: ModelService {
     parameters: GenerationParameters,
     stopSequences: [String],
     tools: [Tool],
-    toolChoice: ToolChoiceOption?
+    toolChoice: ToolChoiceOption?,
+    requestedModel: String?
   ) async throws -> AsyncThrowingStream<String, Error>
 }
 

@@ -131,7 +131,8 @@ final class FoundationModelService: ToolCapableService {
     parameters: GenerationParameters,
     stopSequences: [String],
     tools: [Tool],
-    toolChoice: ToolChoiceOption?
+    toolChoice: ToolChoiceOption?,
+    requestedModel: String?
   ) async throws -> String {
     #if canImport(FoundationModels)
       if #available(macOS 26.0, *) {
@@ -179,7 +180,8 @@ final class FoundationModelService: ToolCapableService {
     parameters: GenerationParameters,
     stopSequences: [String],
     tools: [Tool],
-    toolChoice: ToolChoiceOption?
+    toolChoice: ToolChoiceOption?,
+    requestedModel: String?
   ) async throws -> AsyncThrowingStream<String, Error> {
     #if canImport(FoundationModels)
       if #available(macOS 26.0, *) {

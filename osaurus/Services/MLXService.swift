@@ -685,9 +685,10 @@ extension MLXService: ToolCapableService {
     parameters: GenerationParameters,
     stopSequences: [String],
     tools: [Tool],
-    toolChoice: ToolChoiceOption?
+    toolChoice: ToolChoiceOption?,
+    requestedModel: String?
   ) async throws -> String {
-    let model = try selectDefaultModel()
+    let model = try selectModel(requestedName: requestedModel)
     let messages = [Message(role: .user, content: prompt)]
     let eventStream = try await generateEvents(
       messages: messages,
@@ -727,9 +728,10 @@ extension MLXService: ToolCapableService {
     parameters: GenerationParameters,
     stopSequences: [String],
     tools: [Tool],
-    toolChoice: ToolChoiceOption?
+    toolChoice: ToolChoiceOption?,
+    requestedModel: String?
   ) async throws -> AsyncThrowingStream<String, Error> {
-    let model = try selectDefaultModel()
+    let model = try selectModel(requestedName: requestedModel)
     let messages = [Message(role: .user, content: prompt)]
     let eventStream = try await generateEvents(
       messages: messages,
@@ -787,19 +789,16 @@ extension MLXService: ToolCapableService {
 
   // MARK: - Private helpers
 
-  private func selectDefaultModel() throws -> LocalModelRef {
-    if let current = currentModelName, let m = Self.findModel(named: current) { return m }
-    if let firstName = Self.getAvailableModels().first, let m = Self.findModel(named: firstName) {
-      return m
-    }
-    throw NSError(
-      domain: "MLXService", code: 2,
-      userInfo: [NSLocalizedDescriptionKey: "No local MLX models available"])
-  }
-
   private func selectModel(requestedName: String?) throws -> LocalModelRef {
     let trimmed = (requestedName ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-    if !trimmed.isEmpty, let m = Self.findModel(named: trimmed) { return m }
-    return try selectDefaultModel()
+    guard !trimmed.isEmpty else {
+      throw NSError(
+        domain: "MLXService", code: 3,
+        userInfo: [NSLocalizedDescriptionKey: "Requested model is required"])
+    }
+    if let m = Self.findModel(named: trimmed) { return m }
+    throw NSError(
+      domain: "MLXService", code: 4,
+      userInfo: [NSLocalizedDescriptionKey: "Requested model not found: \(trimmed)"])
   }
 }
