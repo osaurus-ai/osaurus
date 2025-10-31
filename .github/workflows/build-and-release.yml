@@ -108,6 +108,12 @@ jobs:
             updates/appcast.xml
           if-no-files-found: warn
 
+      - name: Post to Discord
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
+        run: bash scripts/discord_notify.sh
+
   mark_released:
     needs: build # wait until the DMG & GitHub release are done
     if: startsWith(github.ref, 'refs/tags/') # only on real release tags
