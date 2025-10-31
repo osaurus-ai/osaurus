@@ -3,23 +3,23 @@
   <channel>
     <title>Osaurus</title>
         <item>
-            <title>0.3.7</title>
-            <pubDate>Thu, 30 Oct 2025 22:40:07 +0000</pubDate>
+            <title>0.3.8</title>
+            <pubDate>Fri, 31 Oct 2025 11:41:23 +0000</pubDate>
             <sparkle:channel>release</sparkle:channel>
-            <sparkle:version>0.3.7</sparkle:version>
-            <sparkle:shortVersionString>0.3.7</sparkle:shortVersionString>
+            <sparkle:version>0.3.8</sparkle:version>
+            <sparkle:shortVersionString>0.3.8</sparkle:shortVersionString>
             <sparkle:minimumSystemVersion>15.5</sparkle:minimumSystemVersion>
             <sparkle:releaseNotesLink>https://dinoki-ai.github.io/osaurus/Osaurus-latest.html</sparkle:releaseNotesLink>
-            <enclosure url="https://github.com/dinoki-ai/osaurus/releases/download/0.3.7/Osaurus-0.3.7.dmg" length="7815000" type="application/octet-stream" sparkle:edSignature="8MWMIWpjWAElWjPBuM2f1JPTrHBOODGqk2XdEMJ6ce4dSe6D6LYpcWN/jl5OZMQifavRzKBhHq34ftahF8BYAg=="/>
+            <enclosure url="https://github.com/dinoki-ai/osaurus/releases/download/0.3.8/Osaurus-0.3.8.dmg" length="7815646" type="application/octet-stream" sparkle:edSignature="IFVgxdHHhGMZGIg1C5uEoMP0iRRz4aEXf6Ki/QWwUJluyMUWsLLNsJFnGEryREtlMASpH/TGcha1sakwlGjVCQ=="/>
         </item>
         <item>
             <title>0.0.9</title>
-            <pubDate>Thu, 30 Oct 2025 22:40:08 +0000</pubDate>
+            <pubDate>Fri, 31 Oct 2025 11:41:24 +0000</pubDate>
             <sparkle:channel>release</sparkle:channel>
             <sparkle:version>0.0.9</sparkle:version>
             <sparkle:shortVersionString>0.0.9</sparkle:shortVersionString>
             <sparkle:minimumSystemVersion>15.5</sparkle:minimumSystemVersion>
-            <enclosure url="https://github.com/dinoki-ai/osaurus/releases/download/0.3.7/Osaurus-0.0.9.dmg" length="7520848" type="application/octet-stream"/>
+            <enclosure url="https://github.com/dinoki-ai/osaurus/releases/download/0.3.8/Osaurus-0.0.9.dmg" length="7520848" type="application/octet-stream"/>
         </item>
   </channel>
 </rss>
