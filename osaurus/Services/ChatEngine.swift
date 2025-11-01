@@ -10,7 +10,8 @@ import Foundation
 actor ChatEngine: Sendable {
   struct EngineError: Error {}
 
-  func streamChat(request: ChatCompletionRequest) async throws -> AsyncThrowingStream<String, Error> {
+  func streamChat(request: ChatCompletionRequest) async throws -> AsyncThrowingStream<String, Error>
+  {
     let messages = request.toInternalMessages()
     let prompt = PromptBuilder.buildPrompt(from: messages)
 
@@ -61,7 +62,8 @@ actor ChatEngine: Sendable {
     )
 
     let created = Int(Date().timeIntervalSince1970)
-    let responseId = "chatcmpl-\(UUID().uuidString.replacingOccurrences(of: "-", with: "").prefix(12))"
+    let responseId =
+      "chatcmpl-\(UUID().uuidString.replacingOccurrences(of: "-", with: "").prefix(12))"
 
     switch route {
     case .service(let service, let effectiveModel):
@@ -90,5 +92,3 @@ actor ChatEngine: Sendable {
     }
   }
 }
-
-

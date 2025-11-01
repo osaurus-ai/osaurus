@@ -7,12 +7,12 @@
 
 import Foundation
 
-struct GenerationParameters {
+struct GenerationParameters: Sendable {
   let temperature: Float
   let maxTokens: Int
 }
 
-struct ServiceToolInvocation: Error {
+struct ServiceToolInvocation: Error, Sendable {
   let toolName: String
   let jsonArguments: String
 }

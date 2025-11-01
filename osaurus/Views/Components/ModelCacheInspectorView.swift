@@ -9,7 +9,7 @@ import SwiftUI
 
 struct ModelCacheInspectorView: View {
   @Environment(\.theme) private var theme
-  @State private var items: [MLXService.ModelCacheSummary] = []
+  @State private var items: [ModelRuntime.ModelCacheSummary] = []
   @State private var isClearingAll = false
 
   var body: some View {
@@ -19,7 +19,7 @@ struct ModelCacheInspectorView: View {
           .font(.system(size: 13, weight: .semibold))
           .foregroundColor(theme.primaryText)
         Spacer()
-        Button(action: refresh) {
+        Button(action: { Task { await refresh() } }) {
           Image(systemName: "arrow.clockwise")
             .font(.system(size: 12, weight: .semibold))
         }
@@ -62,8 +62,10 @@ struct ModelCacheInspectorView: View {
               }
               Spacer()
               Button(role: .destructive) {
-                MLXService.shared.unloadModel(named: item.name)
-                refresh()
+                Task {
+                  await ModelManager.shared.unloadRuntimeModel(named: item.name)
+                  await refresh()
+                }
               } label: {
                 Text("Unload")
                   .font(.system(size: 12, weight: .semibold))
@@ -86,10 +88,12 @@ struct ModelCacheInspectorView: View {
 
       HStack {
         Button(role: .destructive) {
-          isClearingAll = true
-          MLXService.shared.clearCache()
-          refresh()
-          isClearingAll = false
+          Task {
+            isClearingAll = true
+            await ModelManager.shared.clearRuntimeCache()
+            await refresh()
+            isClearingAll = false
+          }
         } label: {
           HStack(spacing: 6) {
             Image(systemName: "trash")
@@ -102,11 +106,13 @@ struct ModelCacheInspectorView: View {
         Spacer()
       }
     }
-    .onAppear(perform: refresh)
+    .onAppear {
+      Task { await refresh() }
+    }
   }
 
-  private func refresh() {
-    items = MLXService.shared.cachedModelSummaries()
+  private func refresh() async {
+    items = await ModelManager.shared.cachedRuntimeSummaries()
   }
 
   private func formatBytes(_ bytes: Int64) -> String {

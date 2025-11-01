@@ -245,7 +245,8 @@ actor FoundationModelService: ToolCapableService, ThrowingStreamingService {
           } catch let error as LanguageModelSession.ToolCallError {
             if let inv = error.underlyingError as? ToolInvocationError {
               continuation.finish(
-                throwing: ServiceToolInvocation(toolName: inv.toolName, jsonArguments: inv.jsonArguments)
+                throwing: ServiceToolInvocation(
+                  toolName: inv.toolName, jsonArguments: inv.jsonArguments)
               )
             } else {
               continuation.finish(throwing: error)

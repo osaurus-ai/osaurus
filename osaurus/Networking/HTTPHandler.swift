@@ -81,7 +81,8 @@ final class HTTPHandler: ChannelInboundHandler, @unchecked Sendable {
       if head.method == .HEAD {
         var headers = [("Content-Type", "text/plain; charset=utf-8")]
         headers.append(contentsOf: corsHeadersForCurrentRequest)
-        sendResponse(context: context, version: head.version, status: .noContent, headers: headers, body: "")
+        sendResponse(
+          context: context, version: head.version, status: .noContent, headers: headers, body: "")
       }
       // Handle core endpoints directly; fall back to Router only for legacy coverage
       else if head.method == .GET, path == "/" {
@@ -100,17 +101,20 @@ final class HTTPHandler: ChannelInboundHandler, @unchecked Sendable {
         var headers = [("Content-Type", "application/json; charset=utf-8")]
         headers.append(contentsOf: corsHeadersForCurrentRequest)
         let body = data.flatMap { String(decoding: $0, as: UTF8.self) } ?? "{}"
-        sendResponse(context: context, version: head.version, status: .ok, headers: headers, body: body)
+        sendResponse(
+          context: context, version: head.version, status: .ok, headers: headers, body: body)
       } else if head.method == .GET, path == "/models" {
         var models = MLXService.getAvailableModels().map { OpenAIModel(from: $0) }
         if FoundationModelService.isDefaultModelAvailable() {
           models.insert(OpenAIModel(from: "foundation"), at: 0)
         }
         let response = ModelsResponse(data: models)
-        let json = (try? JSONEncoder().encode(response)).map { String(decoding: $0, as: UTF8.self) } ?? "{}"
+        let json =
+          (try? JSONEncoder().encode(response)).map { String(decoding: $0, as: UTF8.self) } ?? "{}"
         var headers = [("Content-Type", "application/json; charset=utf-8")]
         headers.append(contentsOf: corsHeadersForCurrentRequest)
-        sendResponse(context: context, version: head.version, status: .ok, headers: headers, body: json)
+        sendResponse(
+          context: context, version: head.version, status: .ok, headers: headers, body: json)
       } else if head.method == .GET, path == "/tags" {
         let now = Date().ISO8601Format()
         var models = MLXService.getAvailableModels().map { name -> OpenAIModel in
@@ -148,12 +152,14 @@ final class HTTPHandler: ChannelInboundHandler, @unchecked Sendable {
           models.insert(fm, at: 0)
         }
         let payload = ["models": models]
-        let json = (try? JSONEncoder().encode(payload)).map { String(decoding: $0, as: UTF8.self) } ?? "{}"
+        let json =
+          (try? JSONEncoder().encode(payload)).map { String(decoding: $0, as: UTF8.self) } ?? "{}"
         var headers = [("Content-Type", "application/json; charset=utf-8")]
         headers.append(contentsOf: corsHeadersForCurrentRequest)
-        sendResponse(context: context, version: head.version, status: .ok, headers: headers, body: json)
-      }
-      else if head.method == .POST, path == "/chat/completions" || path == "/v1/chat/completions" {
+        sendResponse(
+          context: context, version: head.version, status: .ok, headers: headers, body: json)
+      } else if head.method == .POST, path == "/chat/completions" || path == "/v1/chat/completions"
+      {
         handleChatCompletions(head: head, context: context)
       } else if head.method == .POST, path == "/chat" {
         handleChatNDJSON(head: head, context: context)
@@ -346,7 +352,8 @@ final class HTTPHandler: ChannelInboundHandler, @unchecked Sendable {
     let wantsSSE = (req.stream ?? false) || accept.contains("text/event-stream")
 
     let created = Int(Date().timeIntervalSince1970)
-    let responseId = "chatcmpl-\(UUID().uuidString.replacingOccurrences(of: "-", with: "").prefix(12))"
+    let responseId =
+      "chatcmpl-\(UUID().uuidString.replacingOccurrences(of: "-", with: "").prefix(12))"
     let model = req.model
 
     if wantsSSE {
@@ -360,7 +367,8 @@ final class HTTPHandler: ChannelInboundHandler, @unchecked Sendable {
         let w = writerBox.value
         let ctx = ctxBox.value
         w.writeHeaders(ctx, extraHeaders: cors)
-        w.writeRole("assistant", model: model, responseId: responseId, created: created, context: ctx)
+        w.writeRole(
+          "assistant", model: model, responseId: responseId, created: created, context: ctx)
       }
       Task.detached(priority: .userInitiated) { [weak self] in
         guard let self else { return }
@@ -370,7 +378,8 @@ final class HTTPHandler: ChannelInboundHandler, @unchecked Sendable {
             self.executeOnLoop(loopBox.value) {
               let w = writerBox.value
               let ctx = ctxBox.value
-              w.writeContent(delta, model: model, responseId: responseId, created: created, context: ctx)
+              w.writeContent(
+                delta, model: model, responseId: responseId, created: created, context: ctx)
             }
           }
           self.executeOnLoop(loopBox.value) {
@@ -458,13 +467,16 @@ final class HTTPHandler: ChannelInboundHandler, @unchecked Sendable {
           self.executeOnLoop(loopBox.value) {
             let w = writerBox.value
             let ctx = ctxBox.value
-            w.writeContent(delta, model: req.model, responseId: "", created: Int(Date().timeIntervalSince1970), context: ctx)
+            w.writeContent(
+              delta, model: req.model, responseId: "", created: Int(Date().timeIntervalSince1970),
+              context: ctx)
           }
         }
         self.executeOnLoop(loopBox.value) {
           let w = writerBox.value
           let ctx = ctxBox.value
-          w.writeFinish(req.model, responseId: "", created: Int(Date().timeIntervalSince1970), context: ctx)
+          w.writeFinish(
+            req.model, responseId: "", created: Int(Date().timeIntervalSince1970), context: ctx)
           w.writeEnd(ctx)
         }
       } catch {

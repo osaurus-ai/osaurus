@@ -36,6 +36,9 @@ enum ModelListTab: CaseIterable {
 final class ModelManager: NSObject, ObservableObject {
   static let shared = ModelManager()
 
+  /// Runtime for loaded MLX containers and generation
+  let runtime = ModelRuntime.shared
+
   /// Detailed metrics for an in-flight download
   struct DownloadMetrics: Equatable {
     let bytesReceived: Int64?
@@ -106,6 +109,19 @@ final class ModelManager: NSObject, ObservableObject {
     mergeAvailable(with: localModels)
 
     isLoadingModels = false
+  }
+
+  // Bridge runtime operations for UI
+  func cachedRuntimeSummaries() async -> [ModelRuntime.ModelCacheSummary] {
+    return await runtime.cachedModelSummaries()
+  }
+
+  func unloadRuntimeModel(named name: String) async {
+    await runtime.unload(name: name)
+  }
+
+  func clearRuntimeCache() async {
+    await runtime.clearAll()
   }
 
   /// Fetch MLX-compatible models from Hugging Face and merge into availableModels.
@@ -828,7 +844,7 @@ extension ModelManager {
     ),
   ]
 
-  fileprivate static func friendlyName(from repoId: String) -> String {
+  nonisolated fileprivate static func friendlyName(from repoId: String) -> String {
     // Take the last path component and title-case-ish
     let last = repoId.split(separator: "/").last.map(String.init) ?? repoId
     let spaced = last.replacingOccurrences(of: "-", with: " ")
@@ -839,6 +855,50 @@ extension ModelManager {
       .replacingOccurrences(of: "qwen", with: "Qwen", options: .caseInsensitive)
       .replacingOccurrences(of: "gemma", with: "Gemma", options: .caseInsensitive)
       .replacingOccurrences(of: "deepseek", with: "DeepSeek", options: .caseInsensitive)
+  }
+}
+
+// MARK: - Installed models helpers for services
+
+extension ModelManager {
+  /// List installed MLX model names (repo component, lowercased), unique and sorted by name.
+  nonisolated static func installedModelNames() -> [String] {
+    let models = discoverLocalModels()
+    var seen: Set<String> = []
+    var names: [String] = []
+    for m in models {
+      let repo = m.id.split(separator: "/").last.map(String.init)?.lowercased() ?? m.id.lowercased()
+      if !seen.contains(repo) {
+        seen.insert(repo)
+        names.append(repo)
+      }
+    }
+    return names.sorted()
+  }
+
+  /// Find an installed model by user-provided name.
+  /// Accepts repo name (case-insensitive) or full id (case-insensitive).
+  nonisolated static func findInstalledModel(named name: String) -> (name: String, id: String)? {
+    let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmed.isEmpty else { return nil }
+    let models = discoverLocalModels()
+
+    // Try repo component first
+    if let match = models.first(where: { m in
+      m.id.split(separator: "/").last.map(String.init)?.lowercased() == trimmed.lowercased()
+    }) {
+      let repo =
+        match.id.split(separator: "/").last.map(String.init)?.lowercased() ?? trimmed.lowercased()
+      return (repo, match.id)
+    }
+
+    // Try full id match
+    if let match = models.first(where: { m in m.id.lowercased() == trimmed.lowercased() }) {
+      let repo =
+        match.id.split(separator: "/").last.map(String.init)?.lowercased() ?? trimmed.lowercased()
+      return (repo, match.id)
+    }
+    return nil
   }
 }
 
@@ -964,9 +1024,9 @@ extension ModelManager {
   }
 
   /// Discover locally downloaded models regardless of SDK allowlist.
-  fileprivate static func discoverLocalModels() -> [MLXModel] {
+  nonisolated static func discoverLocalModels() -> [MLXModel] {
     let fm = FileManager.default
-    let root = DirectoryPickerService.shared.effectiveModelsDirectory
+    let root = DirectoryPickerService.defaultModelsDirectory()
     guard
       let orgDirs = try? fm.contentsOfDirectory(
         at: root, includingPropertiesForKeys: [.isDirectoryKey], options: [.skipsHiddenFiles])
