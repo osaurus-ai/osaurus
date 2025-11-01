@@ -16,13 +16,15 @@ final class HTTPHandler: ChannelInboundHandler, @unchecked Sendable {
   typealias OutboundOut = HTTPServerResponsePart
 
   private let configuration: ServerConfiguration
+  private let chatEngine: ChatEngine
   private var requestHead: HTTPRequestHead?
   private var requestBodyBuffer: ByteBuffer?
   private var context: ChannelHandlerContext?
   private var corsHeadersForCurrentRequest: [(String, String)] = []
 
-  init(configuration: ServerConfiguration) {
+  init(configuration: ServerConfiguration, chatEngine: ChatEngine = ChatEngine()) {
     self.configuration = configuration
+    self.chatEngine = chatEngine
   }
 
   func channelRead(context: ChannelHandlerContext, data: NIOAny) {
@@ -56,8 +58,9 @@ final class HTTPHandler: ChannelInboundHandler, @unchecked Sendable {
         return
       }
 
-      // Extract path without query parameters
+      // Extract and normalize path (support /, /v1, /api, /v1/api)
       let pathOnly = extractPath(from: head.uri)
+      let path = normalize(pathOnly)
 
       // Handle CORS preflight (OPTIONS)
       if head.method == .OPTIONS {
@@ -74,22 +77,95 @@ final class HTTPHandler: ChannelInboundHandler, @unchecked Sendable {
         return
       }
 
-      // Create router with context
-      let router = Router(context: context, handler: self)
-      let response = router.route(
-        method: head.method.rawValue, path: pathOnly,
-        bodyBuffer: requestBodyBuffer ?? context.channel.allocator.buffer(capacity: 0))
-      // Only send response if not handled asynchronously
-      if !response.body.isEmpty || response.status != .ok {
-        // Merge CORS headers into response
-        var headersWithCORS = response.headers
-        for (n, v) in corsHeadersForCurrentRequest { headersWithCORS.append((n, v)) }
+      // Handle simple HEAD
+      if head.method == .HEAD {
+        var headers = [("Content-Type", "text/plain; charset=utf-8")]
+        headers.append(contentsOf: corsHeadersForCurrentRequest)
+        sendResponse(context: context, version: head.version, status: .noContent, headers: headers, body: "")
+      }
+      // Handle core endpoints directly; fall back to Router only for legacy coverage
+      else if head.method == .GET, path == "/" {
+        var headers = [("Content-Type", "text/plain; charset=utf-8")]
+        headers.append(contentsOf: corsHeadersForCurrentRequest)
         sendResponse(
           context: context,
           version: head.version,
-          status: response.status,
-          headers: headersWithCORS,
-          body: response.body
+          status: .ok,
+          headers: headers,
+          body: "Osaurus Server is running! 🦕"
+        )
+      } else if head.method == .GET, path == "/health" {
+        let obj: [String: Any] = ["status": "healthy", "timestamp": Date().ISO8601Format()]
+        let data = try? JSONSerialization.data(withJSONObject: obj)
+        var headers = [("Content-Type", "application/json; charset=utf-8")]
+        headers.append(contentsOf: corsHeadersForCurrentRequest)
+        let body = data.flatMap { String(decoding: $0, as: UTF8.self) } ?? "{}"
+        sendResponse(context: context, version: head.version, status: .ok, headers: headers, body: body)
+      } else if head.method == .GET, path == "/models" {
+        var models = MLXService.getAvailableModels().map { OpenAIModel(from: $0) }
+        if FoundationModelService.isDefaultModelAvailable() {
+          models.insert(OpenAIModel(from: "foundation"), at: 0)
+        }
+        let response = ModelsResponse(data: models)
+        let json = (try? JSONEncoder().encode(response)).map { String(decoding: $0, as: UTF8.self) } ?? "{}"
+        var headers = [("Content-Type", "application/json; charset=utf-8")]
+        headers.append(contentsOf: corsHeadersForCurrentRequest)
+        sendResponse(context: context, version: head.version, status: .ok, headers: headers, body: json)
+      } else if head.method == .GET, path == "/tags" {
+        let now = Date().ISO8601Format()
+        var models = MLXService.getAvailableModels().map { name -> OpenAIModel in
+          var m = OpenAIModel(from: name)
+          m.name = name
+          m.model = name
+          m.modified_at = now
+          m.size = 0
+          m.digest = ""
+          m.details = ModelDetails(
+            parent_model: "",
+            format: "safetensors",
+            family: "unknown",
+            families: ["unknown"],
+            parameter_size: "",
+            quantization_level: ""
+          )
+          return m
+        }
+        if FoundationModelService.isDefaultModelAvailable() {
+          var fm = OpenAIModel(from: "foundation")
+          fm.name = "foundation"
+          fm.model = "foundation"
+          fm.modified_at = now
+          fm.size = 0
+          fm.digest = ""
+          fm.details = ModelDetails(
+            parent_model: "",
+            format: "native",
+            family: "foundation",
+            families: ["foundation"],
+            parameter_size: "",
+            quantization_level: ""
+          )
+          models.insert(fm, at: 0)
+        }
+        let payload = ["models": models]
+        let json = (try? JSONEncoder().encode(payload)).map { String(decoding: $0, as: UTF8.self) } ?? "{}"
+        var headers = [("Content-Type", "application/json; charset=utf-8")]
+        headers.append(contentsOf: corsHeadersForCurrentRequest)
+        sendResponse(context: context, version: head.version, status: .ok, headers: headers, body: json)
+      }
+      else if head.method == .POST, path == "/chat/completions" || path == "/v1/chat/completions" {
+        handleChatCompletions(head: head, context: context)
+      } else if head.method == .POST, path == "/chat" {
+        handleChatNDJSON(head: head, context: context)
+      } else {
+        var headers = [("Content-Type", "text/plain; charset=utf-8")]
+        headers.append(contentsOf: corsHeadersForCurrentRequest)
+        sendResponse(
+          context: context,
+          version: head.version,
+          status: .notFound,
+          headers: headers,
+          body: "Not Found"
         )
       }
 
@@ -105,6 +181,23 @@ final class HTTPHandler: ChannelInboundHandler, @unchecked Sendable {
       return String(uri[..<queryIndex])
     }
     return uri
+  }
+
+  // Normalize common provider prefixes so we cover /, /v1, /api, /v1/api
+  private func normalize(_ path: String) -> String {
+    func stripPrefix(_ prefix: String, from s: String) -> String? {
+      if s == prefix { return "/" }
+      if s.hasPrefix(prefix + "/") {
+        let idx = s.index(s.startIndex, offsetBy: prefix.count)
+        let rest = String(s[idx...])
+        return rest.isEmpty ? "/" : rest
+      }
+      return nil
+    }
+    if let r = stripPrefix("/v1/api", from: path) { return r }
+    if let r = stripPrefix("/api", from: path) { return r }
+    if let r = stripPrefix("/v1", from: path) { return r }
+    return path
   }
 
   private func sendBadRequest(context: ChannelHandlerContext) {
@@ -124,29 +217,36 @@ final class HTTPHandler: ChannelInboundHandler, @unchecked Sendable {
     headers: [(String, String)],
     body: String
   ) {
-    // Create response head
-    var responseHead = HTTPResponseHead(version: version, status: status)
-
-    // Create body buffer
-    var buffer = context.channel.allocator.buffer(capacity: body.utf8.count)
-    buffer.writeString(body)
-
-    // Build headers
-    var nioHeaders = HTTPHeaders()
-    for (name, value) in headers {
-      nioHeaders.add(name: name, value: value)
-    }
-    nioHeaders.add(name: "Content-Length", value: String(buffer.readableBytes))
-    nioHeaders.add(name: "Connection", value: "close")
-    responseHead.headers = nioHeaders
-
-    // Send response
-    context.write(self.wrapOutboundOut(.head(responseHead)), promise: nil)
-    context.write(self.wrapOutboundOut(.body(.byteBuffer(buffer))), promise: nil)
+    let loop = context.eventLoop
     let ctxBox = UncheckedSendableBox(value: context)
-    context.writeAndFlush(self.wrapOutboundOut(.end(nil))).whenComplete { _ in
+    let bodyBox = UncheckedSendableBox(value: body)
+    let headersBox = UncheckedSendableBox(value: headers)
+    executeOnLoop(loop) {
       let context = ctxBox.value
-      context.close(promise: nil)
+      // Create response head
+      var responseHead = HTTPResponseHead(version: version, status: status)
+
+      // Create body buffer
+      var buffer = context.channel.allocator.buffer(capacity: bodyBox.value.utf8.count)
+      buffer.writeString(bodyBox.value)
+
+      // Build headers
+      var nioHeaders = HTTPHeaders()
+      for (name, value) in headersBox.value {
+        nioHeaders.add(name: name, value: value)
+      }
+      nioHeaders.add(name: "Content-Length", value: String(buffer.readableBytes))
+      nioHeaders.add(name: "Connection", value: "close")
+      responseHead.headers = nioHeaders
+
+      // Send response
+      context.write(self.wrapOutboundOut(.head(responseHead)), promise: nil)
+      context.write(self.wrapOutboundOut(.body(.byteBuffer(buffer))), promise: nil)
+      let ctxBox2 = UncheckedSendableBox(value: context)
+      context.writeAndFlush(self.wrapOutboundOut(.end(nil))).whenComplete { _ in
+        let context = ctxBox2.value
+        context.close(promise: nil)
+      }
     }
   }
 
@@ -218,4 +318,168 @@ final class HTTPHandler: ChannelInboundHandler, @unchecked Sendable {
 
   /// Expose CORS headers for use by async writers
   var currentCORSHeaders: [(String, String)] { corsHeadersForCurrentRequest }
+
+  // MARK: - Chat handlers
+
+  private func handleChatCompletions(head: HTTPRequestHead, context: ChannelHandlerContext) {
+    let data: Data
+    if let body = requestBodyBuffer {
+      var bodyCopy = body
+      let bytes = bodyCopy.readBytes(length: bodyCopy.readableBytes) ?? []
+      data = Data(bytes)
+    } else {
+      data = Data()
+    }
+
+    guard let req = try? JSONDecoder().decode(ChatCompletionRequest.self, from: data) else {
+      sendResponse(
+        context: context,
+        version: head.version,
+        status: .badRequest,
+        headers: [("Content-Type", "text/plain; charset=utf-8")],
+        body: "Invalid request format"
+      )
+      return
+    }
+
+    let accept = head.headers.first(name: "Accept") ?? ""
+    let wantsSSE = (req.stream ?? false) || accept.contains("text/event-stream")
+
+    let created = Int(Date().timeIntervalSince1970)
+    let responseId = "chatcmpl-\(UUID().uuidString.replacingOccurrences(of: "-", with: "").prefix(12))"
+    let model = req.model
+
+    if wantsSSE {
+      let writer = SSEResponseWriter()
+      let cors = corsHeadersForCurrentRequest
+      let loop = context.eventLoop
+      let writerBox = UncheckedSendableBox(value: writer)
+      let ctxBox = UncheckedSendableBox(value: context)
+      let loopBox = UncheckedSendableBox(value: loop)
+      executeOnLoop(loopBox.value) {
+        let w = writerBox.value
+        let ctx = ctxBox.value
+        w.writeHeaders(ctx, extraHeaders: cors)
+        w.writeRole("assistant", model: model, responseId: responseId, created: created, context: ctx)
+      }
+      Task.detached(priority: .userInitiated) { [weak self] in
+        guard let self else { return }
+        do {
+          let stream = try await self.chatEngine.streamChat(request: req)
+          for try await delta in stream {
+            self.executeOnLoop(loopBox.value) {
+              let w = writerBox.value
+              let ctx = ctxBox.value
+              w.writeContent(delta, model: model, responseId: responseId, created: created, context: ctx)
+            }
+          }
+          self.executeOnLoop(loopBox.value) {
+            let w = writerBox.value
+            let ctx = ctxBox.value
+            w.writeFinish(model, responseId: responseId, created: created, context: ctx)
+            w.writeEnd(ctx)
+          }
+        } catch {
+          self.executeOnLoop(loopBox.value) {
+            let w = writerBox.value
+            let ctx = ctxBox.value
+            w.writeError(error.localizedDescription, context: ctx)
+            w.writeEnd(ctx)
+          }
+        }
+      }
+    } else {
+      let ctxBox = UncheckedSendableBox(value: context)
+      Task.detached(priority: .userInitiated) { [weak self] in
+        guard let self else { return }
+        do {
+          let resp = try await self.chatEngine.completeChat(request: req)
+          let json = try JSONEncoder().encode(resp)
+          var headers: [(String, String)] = [("Content-Type", "application/json")]
+          headers.append(contentsOf: self.corsHeadersForCurrentRequest)
+          let body = String(decoding: json, as: UTF8.self)
+          self.sendResponse(
+            context: ctxBox.value,
+            version: head.version,
+            status: .ok,
+            headers: headers,
+            body: body
+          )
+        } catch {
+          self.sendResponse(
+            context: ctxBox.value,
+            version: head.version,
+            status: .internalServerError,
+            headers: [("Content-Type", "text/plain; charset=utf-8")],
+            body: "Internal error: \(error.localizedDescription)"
+          )
+        }
+      }
+    }
+  }
+
+  private func handleChatNDJSON(head: HTTPRequestHead, context: ChannelHandlerContext) {
+    let data: Data
+    if let body = requestBodyBuffer {
+      var bodyCopy = body
+      let bytes = bodyCopy.readBytes(length: bodyCopy.readableBytes) ?? []
+      data = Data(bytes)
+    } else {
+      data = Data()
+    }
+
+    guard let req = try? JSONDecoder().decode(ChatCompletionRequest.self, from: data) else {
+      sendResponse(
+        context: context,
+        version: head.version,
+        status: .badRequest,
+        headers: [("Content-Type", "text/plain; charset=utf-8")],
+        body: "Invalid request format"
+      )
+      return
+    }
+
+    let writer = NDJSONResponseWriter()
+    let cors = corsHeadersForCurrentRequest
+    let loop = context.eventLoop
+    let writerBox = UncheckedSendableBox(value: writer)
+    let ctxBox = UncheckedSendableBox(value: context)
+    let loopBox = UncheckedSendableBox(value: loop)
+    executeOnLoop(loopBox.value) {
+      let w = writerBox.value
+      let ctx = ctxBox.value
+      w.writeHeaders(ctx, extraHeaders: cors)
+    }
+    Task.detached(priority: .userInitiated) { [weak self] in
+      guard let self else { return }
+      do {
+        let stream = try await self.chatEngine.streamChat(request: req)
+        for try await delta in stream {
+          self.executeOnLoop(loopBox.value) {
+            let w = writerBox.value
+            let ctx = ctxBox.value
+            w.writeContent(delta, model: req.model, responseId: "", created: Int(Date().timeIntervalSince1970), context: ctx)
+          }
+        }
+        self.executeOnLoop(loopBox.value) {
+          let w = writerBox.value
+          let ctx = ctxBox.value
+          w.writeFinish(req.model, responseId: "", created: Int(Date().timeIntervalSince1970), context: ctx)
+          w.writeEnd(ctx)
+        }
+      } catch {
+        self.executeOnLoop(loopBox.value) {
+          let w = writerBox.value
+          let ctx = ctxBox.value
+          w.writeError(error.localizedDescription, context: ctx)
+          w.writeEnd(ctx)
+        }
+      }
+    }
+  }
+
+  @inline(__always)
+  private func executeOnLoop(_ loop: EventLoop, _ block: @escaping @Sendable () -> Void) {
+    if loop.inEventLoop { block() } else { loop.execute { block() } }
+  }
 }
