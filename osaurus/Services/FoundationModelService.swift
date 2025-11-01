@@ -16,7 +16,7 @@ enum FoundationModelServiceError: Error {
   case generationFailed
 }
 
-final class FoundationModelService: ToolCapableService {
+actor FoundationModelService: ToolCapableService, ThrowingStreamingService {
   let id: String = "foundation"
 
   /// Returns true if the system default language model is available on this device/OS.
@@ -32,9 +32,9 @@ final class FoundationModelService: ToolCapableService {
     #endif
   }
 
-  func isAvailable() -> Bool { Self.isDefaultModelAvailable() }
+  nonisolated func isAvailable() -> Bool { Self.isDefaultModelAvailable() }
 
-  func handles(requestedModel: String?) -> Bool {
+  nonisolated func handles(requestedModel: String?) -> Bool {
     let t = (requestedModel ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
     return t.isEmpty || t.caseInsensitiveCompare("default") == .orderedSame
       || t.caseInsensitiveCompare("foundation") == .orderedSame
@@ -71,6 +71,29 @@ final class FoundationModelService: ToolCapableService {
     parameters: GenerationParameters,
     requestedModel: String?
   ) async throws -> AsyncStream<String> {
+    // Bridge the throwing stream to a non-throwing AsyncStream for compatibility.
+    let throwing = try await streamDeltasThrowing(
+      prompt: prompt, parameters: parameters, requestedModel: requestedModel)
+    return AsyncStream<String> { continuation in
+      Task {
+        do {
+          for try await delta in throwing {
+            continuation.yield(delta)
+          }
+          continuation.finish()
+        } catch {
+          // On error, finish quietly (no sentinel strings)
+          continuation.finish()
+        }
+      }
+    }
+  }
+
+  func streamDeltasThrowing(
+    prompt: String,
+    parameters: GenerationParameters,
+    requestedModel: String?
+  ) async throws -> AsyncThrowingStream<String, Error> {
     #if canImport(FoundationModels)
       if #available(macOS 26.0, *) {
         let session = LanguageModelSession()
@@ -80,35 +103,31 @@ final class FoundationModelService: ToolCapableService {
           temperature: Double(parameters.temperature),
           maximumResponseTokens: parameters.maxTokens
         )
-        let stream = session.streamResponse(to: prompt, options: options)
-        let streamBox = UncheckedSendableBox(value: stream)
 
-        return AsyncStream<String> { continuation in
-          let continuationBox = UncheckedSendableBox(value: continuation)
-          Task {
-            var previous = ""
-            do {
-              for try await snapshot in streamBox.value {
-                let current = snapshot.content
-                let delta: String
-                if current.hasPrefix(previous) {
-                  delta = String(current.dropFirst(previous.count))
-                } else {
-                  delta = current
-                }
-                if !delta.isEmpty {
-                  continuationBox.value.yield(delta)
-                }
-                previous = current
+        let (stream, continuation) = AsyncThrowingStream<String, Error>.makeStream()
+        Task {
+          var previous = ""
+          do {
+            var iterator = session.streamResponse(to: prompt, options: options).makeAsyncIterator()
+            while let snapshot = try await iterator.next() {
+              let current = snapshot.content
+              let delta: String
+              if current.hasPrefix(previous) {
+                delta = String(current.dropFirst(previous.count))
+              } else {
+                delta = current
               }
-            } catch {
-              // Surface stream error as an out-of-band message for the HTTP layer to convert to an error
-              let prefix = "__OS_ERROR__:"
-              continuationBox.value.yield(prefix + error.localizedDescription)
+              if !delta.isEmpty {
+                continuation.yield(delta)
+              }
+              previous = current
             }
-            continuationBox.value.finish()
+            continuation.finish()
+          } catch {
+            continuation.finish(throwing: error)
           }
         }
+        return stream
       } else {
         throw FoundationModelServiceError.notAvailable
       }
@@ -199,49 +218,43 @@ final class FoundationModelService: ToolCapableService {
         )
 
         let session = LanguageModelSession(model: .default, tools: appleTools, instructions: nil)
-        let stream = session.streamResponse(to: prompt, options: options)
-        let streamBox = UncheckedSendableBox(value: stream)
-
-        return AsyncThrowingStream<String, Error> { continuation in
-          let continuationBox = UncheckedSendableBox(value: continuation)
-          Task {
-            var previous = ""
-            do {
-              var iterator = streamBox.value.makeAsyncIterator()
-              while let snapshot = try await iterator.next() {
-                var current = snapshot.content
-                if !stopSequences.isEmpty,
-                  let r = stopSequences.compactMap({ current.range(of: $0)?.lowerBound }).first
-                {
-                  current = String(current[..<r])
-                }
-                let delta: String
-                if current.hasPrefix(previous) {
-                  delta = String(current.dropFirst(previous.count))
-                } else {
-                  delta = current
-                }
-                if !delta.isEmpty {
-                  continuationBox.value.yield(delta)
-                }
-                previous = current
+        let (stream, continuation) = AsyncThrowingStream<String, Error>.makeStream()
+        Task {
+          var previous = ""
+          do {
+            var iterator = session.streamResponse(to: prompt, options: options).makeAsyncIterator()
+            while let snapshot = try await iterator.next() {
+              var current = snapshot.content
+              if !stopSequences.isEmpty,
+                let r = stopSequences.compactMap({ current.range(of: $0)?.lowerBound }).first
+              {
+                current = String(current[..<r])
               }
-              continuationBox.value.finish()
-            } catch let error as LanguageModelSession.ToolCallError {
-              if let inv = error.underlyingError as? ToolInvocationError {
-                // Surface as shared ServiceToolInvocation
-                continuationBox.value.finish(
-                  throwing: ServiceToolInvocation(
-                    toolName: inv.toolName, jsonArguments: inv.jsonArguments)
-                )
+              let delta: String
+              if current.hasPrefix(previous) {
+                delta = String(current.dropFirst(previous.count))
               } else {
-                continuationBox.value.finish(throwing: error)
+                delta = current
               }
-            } catch {
-              continuationBox.value.finish(throwing: error)
+              if !delta.isEmpty {
+                continuation.yield(delta)
+              }
+              previous = current
             }
+            continuation.finish()
+          } catch let error as LanguageModelSession.ToolCallError {
+            if let inv = error.underlyingError as? ToolInvocationError {
+              continuation.finish(
+                throwing: ServiceToolInvocation(toolName: inv.toolName, jsonArguments: inv.jsonArguments)
+              )
+            } else {
+              continuation.finish(throwing: error)
+            }
+          } catch {
+            continuation.finish(throwing: error)
           }
         }
+        return stream
       } else {
         throw FoundationModelServiceError.notAvailable
       }

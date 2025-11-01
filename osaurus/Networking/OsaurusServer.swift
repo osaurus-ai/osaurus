@@ -6,9 +6,9 @@
 //
 
 import Foundation
-@preconcurrency import NIOCore
-@preconcurrency import NIOHTTP1
-@preconcurrency import NIOPosix
+import NIOCore
+import NIOHTTP1
+import NIOPosix
 
 public actor OsaurusServer: Sendable {
   public struct Config: Sendable {

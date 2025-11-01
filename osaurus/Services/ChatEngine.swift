@@ -30,21 +30,14 @@ actor ChatEngine: Sendable {
 
     switch route {
     case .service(let service, _):
-      let base = try await service.streamDeltas(
+      guard let throwingService = service as? ThrowingStreamingService else {
+        throw EngineError()
+      }
+      return try await throwingService.streamDeltasThrowing(
         prompt: prompt,
         parameters: params,
         requestedModel: request.model
       )
-      let baseBox = UncheckedSendableBox(value: base)
-      return AsyncThrowingStream<String, Error> { continuation in
-        let contBox = UncheckedSendableBox(value: continuation)
-        Task {
-          for await delta in baseBox.value {
-            contBox.value.yield(delta)
-          }
-          contBox.value.finish()
-        }
-      }
     case .none:
       throw EngineError()
     }

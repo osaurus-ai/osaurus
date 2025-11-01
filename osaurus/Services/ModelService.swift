@@ -64,6 +64,15 @@ protocol ToolCapableService: ModelService {
   ) async throws -> AsyncThrowingStream<String, Error>
 }
 
+/// Optional capability for services that can produce throwing streams directly.
+protocol ThrowingStreamingService: ModelService, Sendable {
+  func streamDeltasThrowing(
+    prompt: String,
+    parameters: GenerationParameters,
+    requestedModel: String?
+  ) async throws -> AsyncThrowingStream<String, Error>
+}
+
 /// Simple router that selects a service based on the request and environment.
 enum ModelRoute {
   case service(service: ModelService, effectiveModel: String)
