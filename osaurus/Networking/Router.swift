@@ -7,8 +7,8 @@
 
 import Foundation
 import IkigaJSON
-import NIOCore
-import NIOHTTP1
+@preconcurrency import NIOCore
+@preconcurrency import NIOHTTP1
 
 /// Simple routing logic for HTTP requests
 public struct Router {
@@ -201,10 +201,11 @@ public struct Router {
     // Use detached task to avoid actor context propagation overhead
     // Capture CORS headers on the event loop thread to avoid cross-thread access to handler
     let corsHeaders = handler?.currentCORSHeaders
+    let ctxBox = UncheckedSendableBox(value: context)
     Task.detached(priority: .userInitiated) {
       await AsyncHTTPHandler.shared.handleChatCompletion(
         request: request,
-        context: context,
+        context: ctxBox.value,
         extraHeaders: corsHeaders
       )
     }
@@ -229,10 +230,11 @@ public struct Router {
     }
 
     let corsHeaders = handler?.currentCORSHeaders
+    let ctxBox = UncheckedSendableBox(value: context)
     Task.detached(priority: .userInitiated) {
       await AsyncHTTPHandler.shared.handleChatCompletion(
         request: request,
-        context: context,
+        context: ctxBox.value,
         extraHeaders: corsHeaders
       )
     }
@@ -254,10 +256,11 @@ public struct Router {
     }
 
     let corsHeaders = handler?.currentCORSHeaders
+    let ctxBox = UncheckedSendableBox(value: context)
     Task.detached(priority: .userInitiated) {
       await AsyncHTTPHandler.shared.handleChat(
         request: request,
-        context: context,
+        context: ctxBox.value,
         extraHeaders: corsHeaders
       )
     }
@@ -279,10 +282,11 @@ public struct Router {
     }
 
     let corsHeaders = handler?.currentCORSHeaders
+    let ctxBox = UncheckedSendableBox(value: context)
     Task.detached(priority: .userInitiated) {
       await AsyncHTTPHandler.shared.handleChat(
         request: request,
-        context: context,
+        context: ctxBox.value,
         extraHeaders: corsHeaders
       )
     }

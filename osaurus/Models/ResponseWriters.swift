@@ -7,8 +7,8 @@
 
 import Foundation
 import IkigaJSON
-import NIOCore
-import NIOHTTP1
+@preconcurrency import NIOCore
+@preconcurrency import NIOHTTP1
 
 protocol ResponseWriter {
   func writeHeaders(_ context: ChannelHandlerContext, extraHeaders: [(String, String)]?)
@@ -153,8 +153,10 @@ final class SSEResponseWriter: ResponseWriter {
     var tail = context.channel.allocator.buffer(capacity: 16)
     tail.writeString("data: [DONE]\n\n")
     context.write(NIOAny(HTTPServerResponsePart.body(.byteBuffer(tail))), promise: nil)
+    let ctxBox = UncheckedSendableBox(value: context)
     context.writeAndFlush(NIOAny(HTTPServerResponsePart.end(nil as HTTPHeaders?))).whenComplete {
       _ in
+      let context = ctxBox.value
       context.close(promise: nil)
     }
   }
@@ -238,8 +240,10 @@ final class NDJSONResponseWriter: ResponseWriter {
   }
 
   func writeEnd(_ context: ChannelHandlerContext) {
+    let ctxBox = UncheckedSendableBox(value: context)
     context.writeAndFlush(NIOAny(HTTPServerResponsePart.end(nil as HTTPHeaders?))).whenComplete {
       _ in
+      let context = ctxBox.value
       context.close(promise: nil)
     }
   }

@@ -276,9 +276,5 @@ private struct RecordingCatcher: NSViewRepresentable {
       }
     }
 
-    deinit {
-      if let t = localToken { NSEvent.removeMonitor(t) }
-      if let t = globalToken { NSEvent.removeMonitor(t) }
-    }
   }
 }

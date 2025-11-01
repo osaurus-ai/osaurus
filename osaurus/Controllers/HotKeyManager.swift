@@ -8,6 +8,7 @@
 import AppKit
 import Carbon.HIToolbox
 
+@MainActor
 final class HotKeyManager {
   static let shared = HotKeyManager()
   private var monitor: Any?

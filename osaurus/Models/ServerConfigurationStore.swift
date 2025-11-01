@@ -10,7 +10,7 @@ import Foundation
 /// Handles persistence of `ServerConfiguration` to Application Support
 enum ServerConfigurationStore {
   /// Optional directory override for tests. When set, the store reads/writes here.
-  static var overrideDirectory: URL?
+  nonisolated(unsafe) static var overrideDirectory: URL?
   /// Shared access pattern; use static functions for simplicity
   static func load() -> ServerConfiguration? {
     let url = configurationFileURL()

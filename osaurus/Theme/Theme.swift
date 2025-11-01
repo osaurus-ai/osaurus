@@ -174,6 +174,7 @@ struct DarkTheme: ThemeProtocol {
 }
 
 // MARK: - Theme Manager
+@MainActor
 class ThemeManager: ObservableObject {
   static let shared = ThemeManager()
 
@@ -202,7 +203,7 @@ class ThemeManager: ObservableObject {
 
 // MARK: - Theme Environment Key
 struct ThemeEnvironmentKey: EnvironmentKey {
-  static let defaultValue: ThemeProtocol = LightTheme()
+  nonisolated(unsafe) static let defaultValue: ThemeProtocol = LightTheme()
 }
 
 extension EnvironmentValues {

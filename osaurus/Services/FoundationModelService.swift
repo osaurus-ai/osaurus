@@ -81,12 +81,14 @@ final class FoundationModelService: ToolCapableService {
           maximumResponseTokens: parameters.maxTokens
         )
         let stream = session.streamResponse(to: prompt, options: options)
+        let streamBox = UncheckedSendableBox(value: stream)
 
         return AsyncStream<String> { continuation in
+          let continuationBox = UncheckedSendableBox(value: continuation)
           Task {
             var previous = ""
             do {
-              for try await snapshot in stream {
+              for try await snapshot in streamBox.value {
                 let current = snapshot.content
                 let delta: String
                 if current.hasPrefix(previous) {
@@ -95,16 +97,16 @@ final class FoundationModelService: ToolCapableService {
                   delta = current
                 }
                 if !delta.isEmpty {
-                  continuation.yield(delta)
+                  continuationBox.value.yield(delta)
                 }
                 previous = current
               }
             } catch {
               // Surface stream error as an out-of-band message for the HTTP layer to convert to an error
               let prefix = "__OS_ERROR__:"
-              continuation.yield(prefix + error.localizedDescription)
+              continuationBox.value.yield(prefix + error.localizedDescription)
             }
-            continuation.finish()
+            continuationBox.value.finish()
           }
         }
       } else {
@@ -198,12 +200,14 @@ final class FoundationModelService: ToolCapableService {
 
         let session = LanguageModelSession(model: .default, tools: appleTools, instructions: nil)
         let stream = session.streamResponse(to: prompt, options: options)
+        let streamBox = UncheckedSendableBox(value: stream)
 
         return AsyncThrowingStream<String, Error> { continuation in
+          let continuationBox = UncheckedSendableBox(value: continuation)
           Task {
             var previous = ""
             do {
-              var iterator = stream.makeAsyncIterator()
+              var iterator = streamBox.value.makeAsyncIterator()
               while let snapshot = try await iterator.next() {
                 var current = snapshot.content
                 if !stopSequences.isEmpty,
@@ -218,23 +222,23 @@ final class FoundationModelService: ToolCapableService {
                   delta = current
                 }
                 if !delta.isEmpty {
-                  continuation.yield(delta)
+                  continuationBox.value.yield(delta)
                 }
                 previous = current
               }
-              continuation.finish()
+              continuationBox.value.finish()
             } catch let error as LanguageModelSession.ToolCallError {
               if let inv = error.underlyingError as? ToolInvocationError {
                 // Surface as shared ServiceToolInvocation
-                continuation.finish(
+                continuationBox.value.finish(
                   throwing: ServiceToolInvocation(
                     toolName: inv.toolName, jsonArguments: inv.jsonArguments)
                 )
               } else {
-                continuation.finish(throwing: error)
+                continuationBox.value.finish(throwing: error)
               }
             } catch {
-              continuation.finish(throwing: error)
+              continuationBox.value.finish(throwing: error)
             }
           }
         }

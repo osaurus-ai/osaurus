@@ -10,7 +10,9 @@ struct CodeBlockView: View {
   let code: String
   let language: String?
   let baseWidth: CGFloat
+  @Environment(\.theme) private var theme
   @State private var copied = false
+  private var codeBackground: Color { theme.codeBlockBackground }
 
   var body: some View {
     ZStack(alignment: .topTrailing) {
@@ -51,9 +53,4 @@ struct CodeBlockView: View {
     copied = true
     DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { copied = false }
   }
-}
-
-private var codeBackground: Color {
-  let theme = ThemeManager.shared.currentTheme
-  return theme.codeBlockBackground
 }

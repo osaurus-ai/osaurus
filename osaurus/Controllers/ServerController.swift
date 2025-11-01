@@ -45,7 +45,7 @@ final class ServerController: ObservableObject {
 
   // Singleton holder to allow async access to the current controller instance when injected as EnvironmentObject
   private struct ServerControllerHolder {
-    static var shared = ServerControllerHolder()
+    nonisolated(unsafe) static var shared = ServerControllerHolder()
     weak var controller: ServerController?
     private init() {}
   }
@@ -387,7 +387,9 @@ final class ServerController: ObservableObject {
             ptr.pointee.ifa_addr, socklen_t(addr.sa_len), &hostname, socklen_t(hostname.count), nil,
             socklen_t(0), NI_NUMERICHOST) == 0
           {
-            let ip = String(cString: hostname)
+            // Trim at NUL terminator before decoding to avoid deprecated cString initializer.
+            let nulTrimmed = hostname.prefix { $0 != 0 }
+            let ip = String(decoding: nulTrimmed.map { UInt8(bitPattern: $0) }, as: UTF8.self)
             let name = String(cString: ptr.pointee.ifa_name)
             if name.starts(with: "en") {  // en0, en1, etc. are common for Wi-Fi/Ethernet on macOS
               address = ip

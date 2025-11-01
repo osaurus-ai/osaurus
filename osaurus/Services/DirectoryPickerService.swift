@@ -9,6 +9,7 @@ import Foundation
 import SwiftUI
 
 /// Service for managing user-selected directory access with security-scoped bookmarks
+@MainActor
 final class DirectoryPickerService: ObservableObject {
   static let shared = DirectoryPickerService()
 
@@ -122,7 +123,7 @@ final class DirectoryPickerService: ObservableObject {
 
   /// Get the effective models directory (user-selected or default)
   /// This method is thread-safe for use from any context
-  var effectiveModelsDirectory: URL {
+  nonisolated var effectiveModelsDirectory: URL {
     return directoryQueue.sync {
       // Check UserDefaults directly for the bookmark
       if let bookmarkData = UserDefaults.standard.data(forKey: bookmarkKey) {
@@ -173,6 +174,26 @@ final class DirectoryPickerService: ObservableObject {
 
       return newDefault
     }
+  }
+
+  /// Nonisolated helper to compute the default models directory without accessing instance state.
+  /// Mirrors the fallback logic used by `effectiveModelsDirectory`.
+  nonisolated static func defaultModelsDirectory() -> URL {
+    let fileManager = FileManager.default
+    if let override = ProcessInfo.processInfo.environment["OSU_MODELS_DIR"], !override.isEmpty {
+      let expanded = (override as NSString).expandingTildeInPath
+      return URL(fileURLWithPath: expanded, isDirectory: true)
+    }
+    let homeURL = fileManager.homeDirectoryForCurrentUser
+    let newDefault = homeURL.appendingPathComponent("MLXModels")
+    let documentsPath = fileManager.urls(
+      for: .documentDirectory,
+      in: .userDomainMask
+    ).first!
+    let oldDefault = documentsPath.appendingPathComponent("MLXModels")
+    if fileManager.fileExists(atPath: newDefault.path) { return newDefault }
+    if fileManager.fileExists(atPath: oldDefault.path) { return oldDefault }
+    return newDefault
   }
 
   /// Reset directory selection

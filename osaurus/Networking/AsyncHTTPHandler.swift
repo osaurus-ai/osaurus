@@ -8,21 +8,17 @@
 import Dispatch
 import Foundation
 import IkigaJSON
-import NIOCore
-import NIOHTTP1
-
-private struct UncheckedSendableBox<T>: @unchecked Sendable {
-  let value: T
-}
+@preconcurrency import NIOCore
+@preconcurrency import NIOHTTP1
 
 /// Handles async operations for HTTP endpoints
 class AsyncHTTPHandler {
-  static let shared = AsyncHTTPHandler()
+  nonisolated(unsafe) static let shared = AsyncHTTPHandler()
 
   private init() {}
 
   @inline(__always)
-  private func executeOnLoop(_ loop: EventLoop, _ block: @escaping () -> Void) {
+  private func executeOnLoop(_ loop: EventLoop, _ block: @escaping @Sendable () -> Void) {
     if loop.inEventLoop {
       block()
     } else {
@@ -532,7 +528,7 @@ class AsyncHTTPHandler {
     try await sendJSONResponse(response, status: .ok, context: context, extraHeaders: extraHeaders)
   }
 
-  private func sendJSONResponse<T: Encodable>(
+  private func sendJSONResponse<T: Encodable & Sendable>(
     _ response: T,
     status: HTTPResponseStatus,
     context: ChannelHandlerContext,

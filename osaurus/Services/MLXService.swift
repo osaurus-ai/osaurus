@@ -7,7 +7,7 @@
 
 import Foundation
 import MLXLLM
-import MLXLMCommon
+@preconcurrency import MLXLMCommon
 
 // MARK: - Debug logging helpers (gated by environment variables)
 private enum DebugLog {
@@ -376,7 +376,7 @@ final class MLXService: @unchecked Sendable {
   /// Returns pairs of (name, id) where id is "org/repo" and name is the repo lowercased.
   nonisolated private static func scanDiskForModels() -> [(name: String, id: String)] {
     let fm = FileManager.default
-    let root = DirectoryPickerService.shared.effectiveModelsDirectory
+    let root = DirectoryPickerService.defaultModelsDirectory()
     guard
       let topLevel = try? fm.contentsOfDirectory(
         at: root, includingPropertiesForKeys: [.isDirectoryKey], options: [.skipsHiddenFiles])
@@ -443,7 +443,7 @@ final class MLXService: @unchecked Sendable {
   /// Locate local directory for a given model id ("org/repo") if files exist
   nonisolated private static func findLocalDirectory(forModelId id: String) -> URL? {
     let parts = id.split(separator: "/").map(String.init)
-    let url: URL = parts.reduce(DirectoryPickerService.shared.effectiveModelsDirectory) {
+    let url: URL = parts.reduce(DirectoryPickerService.defaultModelsDirectory()) {
       partial, component in
       partial.appendingPathComponent(component, isDirectory: true)
     }
@@ -501,6 +501,7 @@ final class MLXService: @unchecked Sendable {
     sessionId: String? = nil
   ) async throws -> AsyncStream<MLXLMCommon.Generation> {
     let holder = try await load(model: model)
+    let holderBox = UncheckedSendableBox(value: holder)
 
     // Acquire a per-model gate to avoid concurrent use of the same container
     let gate: ConcurrencyGate = sessionCacheQueue.sync(flags: .barrier) {
@@ -534,42 +535,46 @@ final class MLXService: @unchecked Sendable {
 
     // Map internal messages to MLX Chat.Message
     let chat: [MLXLMCommon.Chat.Message] = mapMessagesToMLX(messages)
+    let chatBox = UncheckedSendableBox(value: chat)
 
     // Convert OpenAI-style tools to Tokenizers.ToolSpec and honor tool_choice
     let tokenizerTools: [[String: Any]]? = makeTokenizerTools(tools: tools, toolChoice: toolChoice)
+    let tokenizerToolsBox = UncheckedSendableBox(value: tokenizerTools)
 
     // Build and return a wrapper stream that forwards MLX events and releases the gate on completion
     return AsyncStream<MLXLMCommon.Generation> { continuation in
+      let gateBox = UncheckedSendableBox(value: gate)
       Task {
-        gate.wait()
-        defer { gate.signal() }
+        gateBox.value.wait()
+        defer { gateBox.value.signal() }
         do {
-          let stream: AsyncStream<MLXLMCommon.Generation> = try await holder.container.perform {
-            (context: MLXLMCommon.ModelContext) in
-            // Prepare full chat input (for tokenization and to get delta tokens later)
-            let fullInput = MLXLMCommon.UserInput(
-              chat: chat, processing: .init(), tools: tokenizerTools)
-            let fullLMInput = try await context.processor.prepare(input: fullInput)
+          let stream: AsyncStream<MLXLMCommon.Generation> = try await holderBox.value.container
+            .perform {
+              (context: MLXLMCommon.ModelContext) in
+              // Prepare full chat input (for tokenization and to get delta tokens later)
+              let fullInput = MLXLMCommon.UserInput(
+                chat: chatBox.value, processing: .init(), tools: tokenizerToolsBox.value)
+              let fullLMInput = try await context.processor.prepare(input: fullInput)
 
-            // Ensure common EOS tokens are recognized to avoid infinite generation loops
-            var contextWithEOS = context
-            // Merge existing extra EOS tokens with common variants
-            let existing = context.configuration.extraEOSTokens
-            let extra: Set<String> = Set([
-              "</end_of_turn>",  // some models emit this HTML-style tag
-              "<end_of_turn>",
-              "<|end|>",
-              "<eot>",
-            ])
-            contextWithEOS.configuration.extraEOSTokens = existing.union(extra)
+              // Ensure common EOS tokens are recognized to avoid infinite generation loops
+              var contextWithEOS = context
+              // Merge existing extra EOS tokens with common variants
+              let existing = context.configuration.extraEOSTokens
+              let extra: Set<String> = Set([
+                "</end_of_turn>",  // some models emit this HTML-style tag
+                "<end_of_turn>",
+                "<|end|>",
+                "<eot>",
+              ])
+              contextWithEOS.configuration.extraEOSTokens = existing.union(extra)
 
-            return try MLXLMCommon.generate(
-              input: fullLMInput,
-              cache: nil,
-              parameters: genParams,
-              context: contextWithEOS
-            )
-          }
+              return try MLXLMCommon.generate(
+                input: fullLMInput,
+                cache: nil,
+                parameters: genParams,
+                context: contextWithEOS
+              )
+            }
           for await event in stream {
             continuation.yield(event)
           }

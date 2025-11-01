@@ -403,19 +403,13 @@ final class ModelManager: NSObject, ObservableObject {
 
       do {
         // Download a snapshot to a temporary location managed by Hub
-        let snapshotDirectory = try await Hub.snapshot(
-          from: repo,
-          matching: patterns,
-          progressHandler: { progress in
+        let progressHandlerBox: UncheckedSendableBox<(Progress) -> Void> = UncheckedSendableBox(
+          value: { (progress: Progress) in
             Task { @MainActor [weak self] in
               guard let self = self else { return }
-              // Ignore progress updates from stale/canceled tasks
               guard self.downloadTokens[model.id] == token else { return }
-              // Clamp to [0, 1]
               let fraction = max(0.0, min(1.0, progress.fractionCompleted))
               self.downloadStates[model.id] = .downloading(progress: fraction)
-
-              // Derive bytes, speed, and ETA using estimated total size if available
               let estTotalBytes = self.downloadSizeEstimates[model.id]
               let completedUnits = progress.completedUnitCount
               let totalUnits = progress.totalUnitCount
@@ -434,33 +428,28 @@ final class ModelManager: NSObject, ObservableObject {
                 }
               }()
               let now = Date().timeIntervalSince1970
-
               var samples = self.progressSamples[model.id] ?? []
               samples.append((timestamp: now, completed: bytesCompleted ?? completedUnits))
               // Keep only the last 5s of samples
               let window: TimeInterval = 5.0
               samples = samples.filter { now - $0.timestamp <= window }
               self.progressSamples[model.id] = samples
-
               var speed: Double? = nil
               if let first = samples.first, let last = samples.last,
                 last.timestamp > first.timestamp
               {
                 let bytesDelta = Double(last.completed - first.completed)
                 let timeDelta = last.timestamp - first.timestamp
-                if timeDelta > 0 {
-                  speed = max(0, bytesDelta / timeDelta)
-                }
+                if timeDelta > 0 { speed = max(0, bytesDelta / timeDelta) }
               }
-
               var eta: Double? = nil
               if let speed, speed > 0, let totalBytesForDisplay,
-                let bytesCompleted = bytesCompleted, totalBytesForDisplay > 0
+                let bytesCompleted = bytesCompleted,
+                totalBytesForDisplay > 0
               {
                 let remaining = Double(totalBytesForDisplay - bytesCompleted)
                 if remaining > 0 { eta = remaining / speed }
               }
-
               self.downloadMetrics[model.id] = DownloadMetrics(
                 bytesReceived: bytesCompleted,
                 totalBytes: totalBytesForDisplay,
@@ -468,8 +457,12 @@ final class ModelManager: NSObject, ObservableObject {
                 etaSeconds: eta
               )
             }
-          }
-        )
+          })
+
+        let snapshotDirectory = try await Hub.snapshot(
+          from: repo,
+          matching: patterns,
+          progressHandler: progressHandlerBox.value)
 
         // Copy snapshot contents into our managed models directory
         try self.copyContents(of: snapshotDirectory, to: model.localDirectory)

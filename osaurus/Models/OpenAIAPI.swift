@@ -10,7 +10,7 @@ import Foundation
 // MARK: - OpenAI API Compatible Structures
 
 /// OpenAI-compatible model object
-struct OpenAIModel: Codable {
+struct OpenAIModel: Codable, Sendable {
   let id: String
   var object: String = "model"
   let created: Int
@@ -26,7 +26,7 @@ struct OpenAIModel: Codable {
   var details: ModelDetails? = nil
 }
 
-struct ModelDetails: Codable {
+struct ModelDetails: Codable, Sendable {
   let parent_model: String?
   let format: String?
   let family: String?
@@ -36,13 +36,13 @@ struct ModelDetails: Codable {
 }
 
 /// Response for /models endpoint
-struct ModelsResponse: Codable {
+struct ModelsResponse: Codable, Sendable {
   var object: String = "list"
   let data: [OpenAIModel]
 }
 
 /// Chat message in OpenAI format
-struct ChatMessage: Codable {
+struct ChatMessage: Codable, Sendable {
   let role: String
   let content: String?
   /// Present when assistant requests tool invocations
@@ -101,7 +101,7 @@ extension ChatMessage {
 }
 
 /// Chat completion request
-struct ChatCompletionRequest: Codable {
+struct ChatCompletionRequest: Codable, Sendable {
   let model: String
   let messages: [ChatMessage]
   let temperature: Float?
@@ -121,21 +121,21 @@ struct ChatCompletionRequest: Codable {
 }
 
 /// Chat completion choice
-struct ChatChoice: Codable {
+struct ChatChoice: Codable, Sendable {
   let index: Int
   let message: ChatMessage
   let finish_reason: String
 }
 
 /// Token usage information
-struct Usage: Codable {
+struct Usage: Codable, Sendable {
   let prompt_tokens: Int
   let completion_tokens: Int
   let total_tokens: Int
 }
 
 /// Chat completion response
-struct ChatCompletionResponse: Codable {
+struct ChatCompletionResponse: Codable, Sendable {
   let id: String
   var object: String = "chat.completion"
   let created: Int
@@ -148,7 +148,7 @@ struct ChatCompletionResponse: Codable {
 // MARK: - Streaming Response Structures
 
 /// Delta content for streaming
-struct DeltaContent: Codable {
+struct DeltaContent: Codable, Sendable {
   let role: String?
   let content: String?
   let refusal: String?
@@ -167,14 +167,14 @@ struct DeltaContent: Codable {
 }
 
 /// Streaming choice
-struct StreamChoice: Codable {
+struct StreamChoice: Codable, Sendable {
   let index: Int
   let delta: DeltaContent
   let finish_reason: String?
 }
 
 /// Chat completion chunk for streaming
-struct ChatCompletionChunk: Codable {
+struct ChatCompletionChunk: Codable, Sendable {
   let id: String
   var object: String = "chat.completion.chunk"
   let created: Int
@@ -186,10 +186,10 @@ struct ChatCompletionChunk: Codable {
 // MARK: - Error Response
 
 /// OpenAI-compatible error response
-struct OpenAIError: Codable, Error {
+struct OpenAIError: Codable, Error, Sendable {
   let error: ErrorDetail
 
-  struct ErrorDetail: Codable {
+  struct ErrorDetail: Codable, Sendable {
     let message: String
     let type: String
     let param: String?
@@ -227,28 +227,28 @@ extension OpenAIModel {
 // MARK: - Tools: Request/Response Models
 
 /// Tool definition (currently only type=="function")
-struct Tool: Codable {
+struct Tool: Codable, Sendable {
   let type: String  // "function"
   let function: ToolFunction
 }
 
-struct ToolFunction: Codable {
+struct ToolFunction: Codable, Sendable {
   let name: String
   let description: String?
   let parameters: JSONValue?
 }
 
 /// tool_choice option
-enum ToolChoiceOption: Codable {
+enum ToolChoiceOption: Codable, Sendable {
   case auto
   case none
   case function(FunctionName)
 
-  struct FunctionName: Codable {
+  struct FunctionName: Codable, Sendable {
     let type: String
     let function: Name
   }
-  struct Name: Codable { let name: String }
+  struct Name: Codable, Sendable { let name: String }
 
   init(from decoder: Decoder) throws {
     let container = try decoder.singleValueContainer()
@@ -278,27 +278,27 @@ enum ToolChoiceOption: Codable {
 }
 
 /// Assistant tool call in responses
-struct ToolCall: Codable {
+struct ToolCall: Codable, Sendable {
   let id: String
   let type: String  // "function"
   let function: ToolCallFunction
 }
 
-struct ToolCallFunction: Codable {
+struct ToolCallFunction: Codable, Sendable {
   let name: String
   /// Arguments serialized as JSON string per OpenAI spec
   let arguments: String
 }
 
 // Streaming deltas for tool calls
-struct DeltaToolCall: Codable {
+struct DeltaToolCall: Codable, Sendable {
   let index: Int?
   let id: String?
   let type: String?
   let function: DeltaToolCallFunction?
 }
 
-struct DeltaToolCallFunction: Codable {
+struct DeltaToolCallFunction: Codable, Sendable {
   let name: String?
   let arguments: String?
 }
@@ -306,7 +306,7 @@ struct DeltaToolCallFunction: Codable {
 // MARK: - Generic JSON value for tool parameters
 
 /// Simple JSON value representation to carry arbitrary JSON schema/arguments
-enum JSONValue: Codable {
+enum JSONValue: Codable, Sendable {
   case string(String)
   case number(Double)
   case bool(Bool)
