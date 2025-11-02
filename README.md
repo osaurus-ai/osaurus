@@ -63,7 +63,7 @@ osaurus/
 ├── Networking/
 │   ├── HTTPHandler.swift           # Request parsing & routing entry
 │   ├── Router.swift                # Routes → handlers with path normalization
-│   └── AsyncHTTPHandler.swift      # Unified streaming handler
+│
 ├── Services/
 │   ├── DirectoryPickerService.swift
 │   ├── FoundationModelService.swift
@@ -233,7 +233,7 @@ Notes:
 
 Base URL: `http://127.0.0.1:1337` (or your chosen port)
 
-📚 **Need more help?** Check out our [comprehensive documentation](https://docs.dinoki.ai/) for detailed guides, tutorials, and advanced usage examples.
+📚 **Need more help?** Check out our [comprehensive documentation](https://docs.osaurus.ai/) for detailed guides, tutorials, and advanced usage examples.
 
 List models:
 
@@ -355,6 +355,8 @@ curl -s http://127.0.0.1:1337/v1/chat/completions \
 ```
 
 Non‑stream response will include `message.tool_calls` and `finish_reason: "tool_calls"`. Streaming responses emit OpenAI‑style deltas for `tool_calls` (id, type, function name, and chunked `arguments`), finishing with `finish_reason: "tool_calls"` and `[DONE]`.
+
+Note: Tool‑calling is supported on the OpenAI‑style `/chat/completions` endpoint. The Ollama‑style `/chat` (NDJSON) endpoint streams text only and does not emit `tool_calls` deltas.
 
 After you execute a tool, continue the conversation by sending a `tool` role message with `tool_call_id`:
 
@@ -506,6 +508,17 @@ Foundation Models:
 - `/transcribe` endpoints are placeholders pending Whisper integration
 - Apple Foundation Models availability depends on macOS version and frameworks. If unavailable, requests with `model: "foundation"`/`"default"` will return an error. Use `/v1/models` to detect support.
 - Apple Intelligence requires macOS 26 (Tahoe).
+- Tool‑calling deltas are only available on `/chat/completions` (SSE). The `/chat` (NDJSON) endpoint is text‑only.
+
+## Request parameters & behavior
+
+- **temperature**: Supported on all backends.
+- **max_tokens**: Supported on all backends.
+- **top_p**: If provided per request, overrides the server default; otherwise the server uses the configured `genTopP`.
+- **frequency_penalty / presence_penalty**: Mapped to a repetition penalty on MLX backends (`repetitionPenalty = 1.0 + max(fp, pp)` when positive). If both are missing or ≤ 0, no repetition penalty is applied.
+- **stop**: Array of strings. Honored in both streaming and non‑streaming modes on MLX and Foundation backends; output is trimmed before the first stop sequence.
+- **n**: Only `1` is supported; other values are ignored.
+- **session_id**: Accepted but not currently used for KV‑cache reuse.
 
 ## Dependencies
 
@@ -519,7 +532,7 @@ Foundation Models:
 
 ## Community
 
-- 📚 Browse our [Documentation](https://docs.dinoki.ai/) for guides and tutorials
+- 📚 Browse our [Documentation](https://docs.osaurus.ai/) for guides and tutorials
 - 💬 Join us on [Discord](https://discord.gg/dinoki)
 - 📖 Read the [Contributing Guide](CONTRIBUTING.md) and our [Code of Conduct](CODE_OF_CONDUCT.md)
 - 🔒 See our [Security Policy](SECURITY.md) for reporting vulnerabilities
