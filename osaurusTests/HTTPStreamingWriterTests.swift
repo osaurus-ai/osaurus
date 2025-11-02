@@ -5,6 +5,7 @@
 
 import Foundation
 import NIOCore
+import NIOEmbedded
 import NIOHTTP1
 import Testing
 
@@ -17,11 +18,12 @@ struct HTTPStreamingWriterTests {
     let writer = SSEResponseWriter()
 
     // Simulate writes
-    writer.writeHeaders(channel.embeddedContext(), extraHeaders: nil)
-    writer.writeRole("assistant", model: "test-model", responseId: "id", created: 0, context: channel.embeddedContext())
-    writer.writeContent("hi", model: "test-model", responseId: "id", created: 0, context: channel.embeddedContext())
-    writer.writeFinish("test-model", responseId: "id", created: 0, context: channel.embeddedContext())
-    writer.writeEnd(channel.embeddedContext())
+    let ctx = try channel.embeddedContext()
+    writer.writeHeaders(ctx, extraHeaders: nil)
+    writer.writeRole("assistant", model: "test-model", responseId: "id", created: 0, context: ctx)
+    writer.writeContent("hi", model: "test-model", responseId: "id", created: 0, context: ctx)
+    writer.writeFinish("test-model", responseId: "id", created: 0, context: ctx)
+    writer.writeEnd(ctx)
 
     // Read head
     guard let headPart = try channel.readOutbound(as: HTTPServerResponsePart.self) else {
@@ -39,10 +41,14 @@ struct HTTPStreamingWriterTests {
     var sawDone = false
     while let part = try channel.readOutbound(as: HTTPServerResponsePart.self) {
       switch part {
-      case .body(let buf):
-        var b = buf
-        if let s = b.readString(length: b.readableBytes) {
-          if s.contains("data: [DONE]") { sawDone = true }
+      case .body(let io):
+        switch io {
+        case .byteBuffer(var b):
+          if let s = b.readString(length: b.readableBytes) {
+            if s.contains("data: [DONE]") { sawDone = true }
+          }
+        default:
+          break
         }
       case .end:
         break
@@ -57,10 +63,11 @@ struct HTTPStreamingWriterTests {
     let channel = EmbeddedChannel()
     let writer = NDJSONResponseWriter()
 
-    writer.writeHeaders(channel.embeddedContext(), extraHeaders: nil)
-    writer.writeContent("hello", model: "test-model", responseId: "", created: 0, context: channel.embeddedContext())
-    writer.writeFinish("test-model", responseId: "", created: 0, context: channel.embeddedContext())
-    writer.writeEnd(channel.embeddedContext())
+    let ctx = try channel.embeddedContext()
+    writer.writeHeaders(ctx, extraHeaders: nil)
+    writer.writeContent("hello", model: "test-model", responseId: "", created: 0, context: ctx)
+    writer.writeFinish("test-model", responseId: "", created: 0, context: ctx)
+    writer.writeEnd(ctx)
 
     guard let headPart = try channel.readOutbound(as: HTTPServerResponsePart.self) else {
       #expect(Bool(false), "expected response head")
@@ -76,10 +83,14 @@ struct HTTPStreamingWriterTests {
     var sawDone = false
     while let part = try channel.readOutbound(as: HTTPServerResponsePart.self) {
       switch part {
-      case .body(let buf):
-        var b = buf
-        if let s = b.readString(length: b.readableBytes) {
-          if s.contains("\"done\": true") { sawDone = true }
+      case .body(let io):
+        switch io {
+        case .byteBuffer(var b):
+          if let s = b.readString(length: b.readableBytes) {
+            if s.contains("\"done\":true") || s.contains("\"done\": true") { sawDone = true }
+          }
+        default:
+          break
         }
       case .end:
         break
@@ -92,24 +103,22 @@ struct HTTPStreamingWriterTests {
 }
 
 // Minimal helper to get a ChannelHandlerContext from EmbeddedChannel
-private extension EmbeddedChannel {
-  func embeddedContext() -> ChannelHandlerContext {
+extension EmbeddedChannel {
+  @preconcurrency
+  fileprivate func embeddedContext() throws -> ChannelHandlerContext {
     // EmbeddedChannel uses a single context for tests; the first handler context is sufficient
-    return self.pipeline.context(handlerType: NIOAsyncTestingHandler.self)
-      .recover { _ in
+    return try self.pipeline.context(handlerType: NIOAsyncTestingHandler.self)
+      .flatMapError { _ in
         // Install a dummy handler to obtain a context
         self.pipeline.addHandler(NIOAsyncTestingHandler()).flatMap {
           self.pipeline.context(handlerType: NIOAsyncTestingHandler.self)
         }
       }
-      .map { $0 }
       .wait()
   }
 }
 
 // Dummy handler used only to fetch a context in tests
-final class NIOAsyncTestingHandler: ChannelInboundHandler {
+final class NIOAsyncTestingHandler: ChannelInboundHandler, @unchecked Sendable {
   typealias InboundIn = ByteBuffer
 }
-
-

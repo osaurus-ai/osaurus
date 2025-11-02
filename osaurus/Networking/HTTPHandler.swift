@@ -16,7 +16,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
   typealias OutboundOut = HTTPServerResponsePart
 
   private let configuration: ServerConfiguration
-  private let chatEngine: ChatEngine
+  private let chatEngine: ChatEngineProtocol
   private final class RequestState {
     var requestHead: HTTPRequestHead?
     var requestBodyBuffer: ByteBuffer?
@@ -25,7 +25,9 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
   private let stateRef: NIOLoopBound<RequestState>
 
   init(
-    configuration: ServerConfiguration, eventLoop: EventLoop, chatEngine: ChatEngine = ChatEngine()
+    configuration: ServerConfiguration,
+    eventLoop: EventLoop,
+    chatEngine: ChatEngineProtocol = ChatEngine()
   ) {
     self.configuration = configuration
     self.chatEngine = chatEngine

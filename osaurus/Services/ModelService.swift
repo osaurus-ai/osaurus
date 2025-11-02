@@ -17,7 +17,7 @@ struct ServiceToolInvocation: Error, Sendable {
   let jsonArguments: String
 }
 
-protocol ModelService {
+protocol ModelService: Sendable {
   /// Stable identifier for the service (e.g., "foundation").
   var id: String { get }
 

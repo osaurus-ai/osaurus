@@ -7,7 +7,19 @@
 
 import Foundation
 
-actor ChatEngine: Sendable {
+actor ChatEngine: Sendable, ChatEngineProtocol {
+  private let services: [ModelService]
+  private let installedModelsProvider: @Sendable () -> [String]
+
+  init(
+    services: [ModelService] = [FoundationModelService(), MLXService()],
+    installedModelsProvider: @escaping @Sendable () -> [String] = {
+      MLXService.getAvailableModels()
+    }
+  ) {
+    self.services = services
+    self.installedModelsProvider = installedModelsProvider
+  }
   struct EngineError: Error {}
 
   func streamChat(request: ChatCompletionRequest) async throws -> AsyncThrowingStream<String, Error>
@@ -19,9 +31,9 @@ actor ChatEngine: Sendable {
     let maxTokens = request.max_tokens ?? 512
     let params = GenerationParameters(temperature: temperature, maxTokens: maxTokens)
 
-    // Candidate services; Foundation + MLX
-    let services: [ModelService] = [FoundationModelService(), MLXService()]
-    let installed = MLXService.getAvailableModels()
+    // Candidate services and installed models (injected for testability)
+    let services = self.services
+    let installed = self.installedModelsProvider()
 
     let route = ModelServiceRouter.resolve(
       requestedModel: request.model,
@@ -52,8 +64,8 @@ actor ChatEngine: Sendable {
     let maxTokens = request.max_tokens ?? 512
     let params = GenerationParameters(temperature: temperature, maxTokens: maxTokens)
 
-    let services: [ModelService] = [FoundationModelService(), MLXService()]
-    let installed = MLXService.getAvailableModels()
+    let services = self.services
+    let installed = self.installedModelsProvider()
 
     let route = ModelServiceRouter.resolve(
       requestedModel: request.model,

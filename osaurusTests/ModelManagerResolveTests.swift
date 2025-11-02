@@ -41,5 +41,3 @@ struct ModelManagerResolveTests {
     #expect(denied == nil)
   }
 }
-
-
