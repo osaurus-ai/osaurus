@@ -190,7 +190,7 @@ actor ModelRuntime {
               accumulated += token
               if !stopSequences.isEmpty,
                 let stopIndex = stopSequences.compactMap({ s in accumulated.range(of: s)?.lowerBound
-                  }).first
+                }).first
               {
                 accumulated = String(accumulated[..<stopIndex])
                 break

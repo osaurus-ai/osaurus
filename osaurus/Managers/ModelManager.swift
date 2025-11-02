@@ -36,9 +36,6 @@ enum ModelListTab: CaseIterable {
 final class ModelManager: NSObject, ObservableObject {
   static let shared = ModelManager()
 
-  /// Runtime for loaded MLX containers and generation
-  let runtime = ModelRuntime.shared
-
   /// Detailed metrics for an in-flight download
   struct DownloadMetrics: Equatable {
     let bytesReceived: Int64?
@@ -109,19 +106,6 @@ final class ModelManager: NSObject, ObservableObject {
     mergeAvailable(with: localModels)
 
     isLoadingModels = false
-  }
-
-  // Bridge runtime operations for UI
-  func cachedRuntimeSummaries() async -> [ModelRuntime.ModelCacheSummary] {
-    return await runtime.cachedModelSummaries()
-  }
-
-  func unloadRuntimeModel(named name: String) async {
-    await runtime.unload(name: name)
-  }
-
-  func clearRuntimeCache() async {
-    await runtime.clearAll()
   }
 
   /// Fetch MLX-compatible models from Hugging Face and merge into availableModels.

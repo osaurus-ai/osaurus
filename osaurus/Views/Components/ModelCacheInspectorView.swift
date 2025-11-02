@@ -63,7 +63,7 @@ struct ModelCacheInspectorView: View {
               Spacer()
               Button(role: .destructive) {
                 Task {
-                  await ModelManager.shared.unloadRuntimeModel(named: item.name)
+                  await MLXService().unloadRuntimeModel(named: item.name)
                   await refresh()
                 }
               } label: {
@@ -90,7 +90,7 @@ struct ModelCacheInspectorView: View {
         Button(role: .destructive) {
           Task {
             isClearingAll = true
-            await ModelManager.shared.clearRuntimeCache()
+            await MLXService().clearRuntimeCache()
             await refresh()
             isClearingAll = false
           }
@@ -112,7 +112,7 @@ struct ModelCacheInspectorView: View {
   }
 
   private func refresh() async {
-    items = await ModelManager.shared.cachedRuntimeSummaries()
+    items = await MLXService().cachedRuntimeSummaries()
   }
 
   private func formatBytes(_ bytes: Int64) -> String {

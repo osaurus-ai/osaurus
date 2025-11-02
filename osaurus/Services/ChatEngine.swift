@@ -19,13 +19,13 @@ actor ChatEngine: Sendable {
     let maxTokens = request.max_tokens ?? 512
     let params = GenerationParameters(temperature: temperature, maxTokens: maxTokens)
 
-    // Candidate services; expand as additional engines are migrated
-    var services: [ModelService] = []
-    services.append(FoundationModelService())
+    // Candidate services; Foundation + MLX
+    let services: [ModelService] = [FoundationModelService(), MLXService()]
+    let installed = MLXService.getAvailableModels()
 
     let route = ModelServiceRouter.resolve(
       requestedModel: request.model,
-      installedModels: [],
+      installedModels: installed,
       services: services
     )
 
@@ -52,12 +52,12 @@ actor ChatEngine: Sendable {
     let maxTokens = request.max_tokens ?? 512
     let params = GenerationParameters(temperature: temperature, maxTokens: maxTokens)
 
-    var services: [ModelService] = []
-    services.append(FoundationModelService())
+    let services: [ModelService] = [FoundationModelService(), MLXService()]
+    let installed = MLXService.getAvailableModels()
 
     let route = ModelServiceRouter.resolve(
       requestedModel: request.model,
-      installedModels: [],
+      installedModels: installed,
       services: services
     )
 

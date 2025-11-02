@@ -13,8 +13,7 @@ private struct LocalModelRef {
   let modelId: String
 }
 
-actor MLXService: ToolCapableService {
-  static let shared = MLXService()
+actor MLXService: ToolCapableService, ThrowingStreamingService {
 
   nonisolated var id: String { "mlx" }
 
@@ -54,7 +53,7 @@ actor MLXService: ToolCapableService {
       return nil
     }()
     guard let model = chosen else { return }
-    await ModelManager.shared.runtime.warmUp(
+    await ModelRuntime.shared.warmUp(
       modelId: model.modelId, modelName: model.name, prefillChars: prefillChars,
       maxTokens: maxTokens)
   }
@@ -66,16 +65,34 @@ actor MLXService: ToolCapableService {
     parameters: GenerationParameters,
     requestedModel: String?
   ) async throws -> AsyncStream<String> {
+    let throwing = try await streamDeltasThrowing(
+      prompt: prompt, parameters: parameters, requestedModel: requestedModel)
+    let (stream, continuation) = AsyncStream<String>.makeStream()
+    Task {
+      do {
+        for try await delta in throwing { continuation.yield(delta) }
+      } catch {
+        // finish quietly for non-throwing API
+      }
+      continuation.finish()
+    }
+    return stream
+  }
+
+  func streamDeltasThrowing(
+    prompt: String,
+    parameters: GenerationParameters,
+    requestedModel: String?
+  ) async throws -> AsyncThrowingStream<String, Error> {
     let model = try selectModel(requestedName: requestedModel)
-    let messages = [Message(role: .user, content: prompt)]
-    return try await ModelManager.shared.runtime.deltasStream(
-      messages: messages,
+    return try await ModelRuntime.shared.streamWithTools(
+      prompt: prompt,
+      parameters: parameters,
+      stopSequences: [],
+      tools: [],
+      toolChoice: nil,
       modelId: model.modelId,
-      modelName: model.name,
-      temperature: parameters.temperature,
-      maxTokens: parameters.maxTokens,
-      tools: nil,
-      toolChoice: nil
+      modelName: model.name
     )
   }
 
@@ -102,7 +119,7 @@ actor MLXService: ToolCapableService {
     requestedModel: String?
   ) async throws -> String {
     let model = try selectModel(requestedName: requestedModel)
-    return try await ModelManager.shared.runtime.respondWithTools(
+    return try await ModelRuntime.shared.respondWithTools(
       prompt: prompt,
       parameters: parameters,
       stopSequences: stopSequences,
@@ -122,7 +139,7 @@ actor MLXService: ToolCapableService {
     requestedModel: String?
   ) async throws -> AsyncThrowingStream<String, Error> {
     let model = try selectModel(requestedName: requestedModel)
-    return try await ModelManager.shared.runtime.streamWithTools(
+    return try await ModelRuntime.shared.streamWithTools(
       prompt: prompt,
       parameters: parameters,
       stopSequences: stopSequences,
@@ -131,6 +148,20 @@ actor MLXService: ToolCapableService {
       modelId: model.modelId,
       modelName: model.name
     )
+  }
+
+  // MARK: - Runtime cache management
+
+  func cachedRuntimeSummaries() async -> [ModelRuntime.ModelCacheSummary] {
+    await ModelRuntime.shared.cachedModelSummaries()
+  }
+
+  func unloadRuntimeModel(named name: String) async {
+    await ModelRuntime.shared.unload(name: name)
+  }
+
+  func clearRuntimeCache() async {
+    await ModelRuntime.shared.clearAll()
   }
 
   // MARK: - Helpers
