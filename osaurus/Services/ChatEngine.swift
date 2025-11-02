@@ -24,8 +24,8 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
 
   func streamChat(request: ChatCompletionRequest) async throws -> AsyncThrowingStream<String, Error>
   {
-    let messages = request.toInternalMessages()
-    let prompt = PromptBuilder.buildPrompt(from: messages)
+    // Build prompt directly from OpenAI-format messages to preserve tool_calls and tool results
+    let prompt = OpenAIPromptBuilder.buildPrompt(from: request.messages)
 
     let temperature = request.temperature ?? 1.0
     let maxTokens = request.max_tokens ?? 512
@@ -79,8 +79,8 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
   }
 
   func completeChat(request: ChatCompletionRequest) async throws -> ChatCompletionResponse {
-    let messages = request.toInternalMessages()
-    let prompt = PromptBuilder.buildPrompt(from: messages)
+    // Build prompt directly from OpenAI-format messages to preserve tool_calls and tool results
+    let prompt = OpenAIPromptBuilder.buildPrompt(from: request.messages)
 
     let temperature = request.temperature ?? 1.0
     let maxTokens = request.max_tokens ?? 512
