@@ -187,108 +187,27 @@ public struct Router {
   private func chatCompletionsEndpoint(
     body: Data, context: ChannelHandlerContext?, handler: HTTPHandler?
   ) -> (HTTPResponseStatus, [(String, String)], String) {
-    let decoder = Self.makeJSONDecoder()
-    guard let request = try? decoder.decode(ChatCompletionRequest.self, from: body) else {
-      return errorResponse(message: "Invalid request format", statusCode: .badRequest)
-    }
-
-    // Async operations require context and handler
-    guard let context = context, handler != nil else {
-      return errorResponse(message: "Server configuration error", statusCode: .internalServerError)
-    }
-
-    // Handle async generation without MainActor; writes will be marshaled to the event loop
-    // Use detached task to avoid actor context propagation overhead
-    // Capture CORS headers on the event loop thread to avoid cross-thread access to handler
-    let corsHeaders = handler?.currentCORSHeaders
-    Task.detached(priority: .userInitiated) {
-      await AsyncHTTPHandler.shared.handleChatCompletion(
-        request: request,
-        context: context,
-        extraHeaders: corsHeaders
-      )
-    }
-
-    // Return empty response - actual response will be sent asynchronously
-    // Include CORS headers so initial 200 has proper CORS for streaming
-    let cors = corsHeaders ?? []
-    return (.ok, cors, "")
+    // In the simplified architecture, this path is handled directly by HTTPHandler.
+    // Router no longer supports async streaming; return a server error when called directly.
+    return errorResponse(message: "Server configuration error", statusCode: .internalServerError)
   }
 
   private func chatCompletionsEndpoint(
     bodyBuffer: ByteBuffer, context: ChannelHandlerContext?, handler: HTTPHandler?
   ) -> (HTTPResponseStatus, [(String, String)], String) {
-    // Decode directly from ByteBuffer to avoid extra Data copies
-    let decoder = Self.makeJSONDecoder()
-    guard let request = try? decoder.decode(ChatCompletionRequest.self, from: bodyBuffer) else {
-      return errorResponse(message: "Invalid request format", statusCode: .badRequest)
-    }
-
-    guard let context = context, handler != nil else {
-      return errorResponse(message: "Server configuration error", statusCode: .internalServerError)
-    }
-
-    let corsHeaders = handler?.currentCORSHeaders
-    Task.detached(priority: .userInitiated) {
-      await AsyncHTTPHandler.shared.handleChatCompletion(
-        request: request,
-        context: context,
-        extraHeaders: corsHeaders
-      )
-    }
-
-    let cors = corsHeaders ?? []
-    return (.ok, cors, "")
+    return errorResponse(message: "Server configuration error", statusCode: .internalServerError)
   }
 
   private func chatEndpoint(body: Data, context: ChannelHandlerContext?, handler: HTTPHandler?) -> (
     HTTPResponseStatus, [(String, String)], String
   ) {
-    let decoder = Self.makeJSONDecoder()
-    guard let request = try? decoder.decode(ChatCompletionRequest.self, from: body) else {
-      return errorResponse(message: "Invalid request format", statusCode: .badRequest)
-    }
-
-    guard let context = context, handler != nil else {
-      return errorResponse(message: "Server configuration error", statusCode: .internalServerError)
-    }
-
-    let corsHeaders = handler?.currentCORSHeaders
-    Task.detached(priority: .userInitiated) {
-      await AsyncHTTPHandler.shared.handleChat(
-        request: request,
-        context: context,
-        extraHeaders: corsHeaders
-      )
-    }
-
-    let cors = corsHeaders ?? []
-    return (.ok, cors, "")
+    return errorResponse(message: "Server configuration error", statusCode: .internalServerError)
   }
 
   private func chatEndpoint(
     bodyBuffer: ByteBuffer, context: ChannelHandlerContext?, handler: HTTPHandler?
   ) -> (HTTPResponseStatus, [(String, String)], String) {
-    let decoder = Self.makeJSONDecoder()
-    guard let request = try? decoder.decode(ChatCompletionRequest.self, from: bodyBuffer) else {
-      return errorResponse(message: "Invalid request format", statusCode: .badRequest)
-    }
-
-    guard let context = context, handler != nil else {
-      return errorResponse(message: "Server configuration error", statusCode: .internalServerError)
-    }
-
-    let corsHeaders = handler?.currentCORSHeaders
-    Task.detached(priority: .userInitiated) {
-      await AsyncHTTPHandler.shared.handleChat(
-        request: request,
-        context: context,
-        extraHeaders: corsHeaders
-      )
-    }
-
-    let cors = corsHeaders ?? []
-    return (.ok, cors, "")
+    return errorResponse(message: "Server configuration error", statusCode: .internalServerError)
   }
 
   private func errorResponse(message: String, statusCode: HTTPResponseStatus) -> (

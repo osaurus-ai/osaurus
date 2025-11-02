@@ -7,6 +7,7 @@
 
 import Foundation
 
+@MainActor
 enum ChatConfigurationStore {
   static var overrideDirectory: URL?
 

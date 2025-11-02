@@ -8,14 +8,14 @@
 import Foundation
 
 /// Message role for chat interactions
-enum MessageRole: String, Codable {
+enum MessageRole: String, Codable, Sendable {
   case system
   case user
   case assistant
 }
 
 /// Chat message structure
-struct Message: Codable {
+struct Message: Codable, Sendable {
   let role: MessageRole
   let content: String
 

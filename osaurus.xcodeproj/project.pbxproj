@@ -572,7 +572,8 @@
 				SPARKLE_PUBLIC_ED_KEY = REPLACE_WITH_PUBLIC_ED_KEY;
 				SU_FEED_URL = "https://dinoki.github.io/osaurus/appcast.xml";
 				SWIFT_EMIT_LOC_STRINGS = YES;
-				SWIFT_VERSION = 5.0;
+				SWIFT_STRICT_CONCURRENCY = complete;
+				SWIFT_VERSION = 6.0;
 			};
 			name = Debug;
 		};
@@ -613,7 +614,8 @@
 				SPARKLE_PUBLIC_ED_KEY = REPLACE_WITH_PUBLIC_ED_KEY;
 				SU_FEED_URL = "https://dinoki.github.io/osaurus/appcast.xml";
 				SWIFT_EMIT_LOC_STRINGS = YES;
-				SWIFT_VERSION = 5.0;
+				SWIFT_STRICT_CONCURRENCY = complete;
+				SWIFT_VERSION = 6.0;
 			};
 			name = Release;
 		};
@@ -631,7 +633,8 @@
 				PRODUCT_BUNDLE_IDENTIFIER = com.dinoki.osaurusTests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = NO;
-				SWIFT_VERSION = 5.0;
+				SWIFT_STRICT_CONCURRENCY = complete;
+				SWIFT_VERSION = 6.0;
 				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/osaurus.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/osaurus";
 			};
 			name = Debug;
@@ -650,7 +653,8 @@
 				PRODUCT_BUNDLE_IDENTIFIER = com.dinoki.osaurusTests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = NO;
-				SWIFT_VERSION = 5.0;
+				SWIFT_STRICT_CONCURRENCY = complete;
+				SWIFT_VERSION = 6.0;
 				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/osaurus.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/osaurus";
 			};
 			name = Release;
@@ -667,7 +671,8 @@
 				PRODUCT_BUNDLE_IDENTIFIER = com.dinoki.osaurusUITests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = NO;
-				SWIFT_VERSION = 5.0;
+				SWIFT_STRICT_CONCURRENCY = complete;
+				SWIFT_VERSION = 6.0;
 				TEST_TARGET_NAME = osaurus;
 			};
 			name = Debug;
@@ -684,7 +689,8 @@
 				PRODUCT_BUNDLE_IDENTIFIER = com.dinoki.osaurusUITests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = NO;
-				SWIFT_VERSION = 5.0;
+				SWIFT_STRICT_CONCURRENCY = complete;
+				SWIFT_VERSION = 6.0;
 				TEST_TARGET_NAME = osaurus;
 			};
 			name = Release;
@@ -703,7 +709,8 @@
 				PRODUCT_MODULE_NAME = OsaurusCLI;
 				PRODUCT_NAME = osaurus;
 				SKIP_INSTALL = YES;
-				SWIFT_VERSION = 5.0;
+				SWIFT_STRICT_CONCURRENCY = complete;
+				SWIFT_VERSION = 6.0;
 			};
 			name = Debug;
 		};
@@ -721,7 +728,8 @@
 				PRODUCT_MODULE_NAME = OsaurusCLI;
 				PRODUCT_NAME = osaurus;
 				SKIP_INSTALL = YES;
-				SWIFT_VERSION = 5.0;
+				SWIFT_STRICT_CONCURRENCY = complete;
+				SWIFT_VERSION = 6.0;
 			};
 			name = Release;
 		};

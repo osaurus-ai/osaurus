@@ -7,17 +7,21 @@
 
 import Foundation
 
-struct GenerationParameters {
+struct GenerationParameters: Sendable {
   let temperature: Float
   let maxTokens: Int
+  /// Optional per-request top_p override (falls back to server configuration when nil)
+  let topPOverride: Float?
+  /// Optional repetition penalty (applies when supported by backend)
+  let repetitionPenalty: Float?
 }
 
-struct ServiceToolInvocation: Error {
+struct ServiceToolInvocation: Error, Sendable {
   let toolName: String
   let jsonArguments: String
 }
 
-protocol ModelService {
+protocol ModelService: Sendable {
   /// Stable identifier for the service (e.g., "foundation").
   var id: String { get }
 
@@ -64,6 +68,16 @@ protocol ToolCapableService: ModelService {
   ) async throws -> AsyncThrowingStream<String, Error>
 }
 
+/// Optional capability for services that can produce throwing streams directly.
+protocol ThrowingStreamingService: ModelService, Sendable {
+  func streamDeltasThrowing(
+    prompt: String,
+    parameters: GenerationParameters,
+    requestedModel: String?,
+    stopSequences: [String]
+  ) async throws -> AsyncThrowingStream<String, Error>
+}
+
 /// Simple router that selects a service based on the request and environment.
 enum ModelRoute {
   case service(service: ModelService, effectiveModel: String)
@@ -74,11 +88,9 @@ struct ModelServiceRouter {
   /// Decide which service should handle this request.
   /// - Parameters:
   ///   - requestedModel: Model string requested by client. "default" or empty means system default.
-  ///   - installedModels: Names of installed MLX models.
   ///   - services: Candidate services to consider (default includes FoundationModels service when present).
   static func resolve(
     requestedModel: String?,
-    installedModels: [String],
     services: [ModelService]
   ) -> ModelRoute {
     let trimmed = requestedModel?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""

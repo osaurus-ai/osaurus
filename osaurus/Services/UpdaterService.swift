@@ -8,6 +8,7 @@
 import Foundation
 import Sparkle
 
+@MainActor
 final class UpdaterViewModel: NSObject, ObservableObject, SPUUpdaterDelegate {
   lazy var updaterController: SPUStandardUpdaterController = SPUStandardUpdaterController(
     startingUpdater: true, updaterDelegate: self, userDriverDelegate: nil)
@@ -22,27 +23,27 @@ final class UpdaterViewModel: NSObject, ObservableObject, SPUUpdaterDelegate {
 
   // MARK: - SPUUpdaterDelegate
 
-  func allowedChannels(for updater: SPUUpdater) -> Set<String> {
+  nonisolated func allowedChannels(for updater: SPUUpdater) -> Set<String> {
     return Set(["release"])
   }
 
-  func feedURLString(for updater: SPUUpdater) -> String? {
+  nonisolated func feedURLString(for updater: SPUUpdater) -> String? {
     return "https://dinoki-ai.github.io/osaurus/appcast.xml"
   }
 
   // MARK: - Verbose Logging Hooks
 
-  func updater(_ updater: SPUUpdater, didFindValidUpdate item: SUAppcastItem) {
+  nonisolated func updater(_ updater: SPUUpdater, didFindValidUpdate item: SUAppcastItem) {
     NSLog(
       "Sparkle: didFindValidUpdate version=%@ short=%@", item.versionString,
       item.displayVersionString)
   }
 
-  func updaterDidNotFindUpdate(_ updater: SPUUpdater) {
+  nonisolated func updaterDidNotFindUpdate(_ updater: SPUUpdater) {
     NSLog("Sparkle: didNotFindUpdate")
   }
 
-  func updater(_ updater: SPUUpdater, didAbortWithError error: Error) {
+  nonisolated func updater(_ updater: SPUUpdater, didAbortWithError error: Error) {
     let nsErr = error as NSError
     NSLog(
       "Sparkle: didAbortWithError domain=%@ code=%ld desc=%@ userInfo=%@", nsErr.domain, nsErr.code,
@@ -54,7 +55,7 @@ final class UpdaterViewModel: NSObject, ObservableObject, SPUUpdaterDelegate {
     }
   }
 
-  func updater(
+  nonisolated func updater(
     _ updater: SPUUpdater, willDownloadUpdate item: SUAppcastItem, with request: NSMutableURLRequest
   ) {
     NSLog(
@@ -62,23 +63,23 @@ final class UpdaterViewModel: NSObject, ObservableObject, SPUUpdaterDelegate {
       request.url?.absoluteString ?? "nil")
   }
 
-  func updater(_ updater: SPUUpdater, didDownloadUpdate item: SUAppcastItem) {
+  nonisolated func updater(_ updater: SPUUpdater, didDownloadUpdate item: SUAppcastItem) {
     NSLog("Sparkle: didDownloadUpdate version=%@", item.versionString)
   }
 
-  func updater(_ updater: SPUUpdater, willExtractUpdate item: SUAppcastItem) {
+  nonisolated func updater(_ updater: SPUUpdater, willExtractUpdate item: SUAppcastItem) {
     NSLog("Sparkle: willExtractUpdate version=%@", item.versionString)
   }
 
-  func updater(_ updater: SPUUpdater, didExtractUpdate item: SUAppcastItem) {
+  nonisolated func updater(_ updater: SPUUpdater, didExtractUpdate item: SUAppcastItem) {
     NSLog("Sparkle: didExtractUpdate version=%@", item.versionString)
   }
 
-  func updater(_ updater: SPUUpdater, willInstallUpdate item: SUAppcastItem) {
+  nonisolated func updater(_ updater: SPUUpdater, willInstallUpdate item: SUAppcastItem) {
     NSLog("Sparkle: willInstallUpdate version=%@", item.versionString)
   }
 
-  func updater(_ updater: SPUUpdater, didFinishInstallingUpdate item: SUAppcastItem) {
+  nonisolated func updater(_ updater: SPUUpdater, didFinishInstallingUpdate item: SUAppcastItem) {
     NSLog("Sparkle: didFinishInstallingUpdate version=%@", item.versionString)
   }
 }

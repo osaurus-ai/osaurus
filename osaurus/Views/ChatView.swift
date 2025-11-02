@@ -56,13 +56,12 @@ final class ChatSession: ObservableObject {
     guard !trimmed.isEmpty else { return }
     turns.append(ChatTurn(role: .user, content: trimmed))
 
-    var messages = turns.map { Message(role: $0.role, content: $0.content) }
+    var chatMessages = turns.map { ChatMessage(role: $0.role.rawValue, content: $0.content) }
     let chatCfg = ChatConfigurationStore.load()
     let sys = chatCfg.systemPrompt.trimmingCharacters(in: .whitespacesAndNewlines)
     if !sys.isEmpty {
-      messages.insert(Message(role: .system, content: sys), at: 0)
+      chatMessages.insert(ChatMessage(role: "system", content: sys), at: 0)
     }
-    let prompt = PromptBuilder.buildPrompt(from: messages)
 
     currentTask = Task { @MainActor in
       isStreaming = true
@@ -72,39 +71,36 @@ final class ChatSession: ObservableObject {
         ServerController.signalGenerationEnd()
       }
 
-      let services: [ModelService] = [FoundationModelService(), MLXService.shared]
-      let installed = MLXService.getAvailableModels()
-      switch ModelServiceRouter.resolve(
-        requestedModel: selectedModel,
-        installedModels: installed,
-        services: services
-      ) {
-      case .none:
-        turns.append(
-          ChatTurn(
-            role: .assistant, content: "No model available. Open Model Manager to download one."))
-        return
-      case .service(let svc, let effectiveModel):
-        let assistantTurn = ChatTurn(role: .assistant, content: "")
-        turns.append(assistantTurn)
-        let params = GenerationParameters(temperature: 0.7, maxTokens: 1024)
-        do {
-          let stream = try await svc.streamDeltas(
-            prompt: prompt,
-            parameters: params,
-            requestedModel: effectiveModel
-          )
-          for await delta in stream {
-            if Task.isCancelled { break }
-            if !delta.isEmpty {
-              assistantTurn.content += delta
-              // Signal UI to autoscroll while streaming
-              scrollTick &+= 1
-            }
+      let assistantTurn = ChatTurn(role: .assistant, content: "")
+      turns.append(assistantTurn)
+      do {
+        let engine = ChatEngine()
+        let req = ChatCompletionRequest(
+          model: selectedModel ?? "default",
+          messages: chatMessages,
+          temperature: 0.7,
+          max_tokens: 1024,
+          stream: true,
+          top_p: nil,
+          frequency_penalty: nil,
+          presence_penalty: nil,
+          stop: nil,
+          n: nil,
+          tools: nil,
+          tool_choice: nil,
+          session_id: nil
+        )
+        let stream = try await engine.streamChat(request: req)
+        for try await delta in stream {
+          if Task.isCancelled { break }
+          if !delta.isEmpty {
+            assistantTurn.content += delta
+            // Signal UI to autoscroll while streaming
+            scrollTick &+= 1
           }
-        } catch {
-          assistantTurn.content = "Error: \(error.localizedDescription)"
         }
+      } catch {
+        assistantTurn.content = "Error: \(error.localizedDescription)"
       }
     }
   }
@@ -694,7 +690,7 @@ struct WindowAccessor: NSViewRepresentable {
 
   func makeNSView(context: Context) -> NSView {
     let view = NSView()
-    DispatchQueue.main.async {
+    Task { @MainActor in
       self.window = view.window
     }
     return view
@@ -702,7 +698,7 @@ struct WindowAccessor: NSViewRepresentable {
 
   func updateNSView(_ nsView: NSView, context: Context) {
     if window == nil {
-      DispatchQueue.main.async {
+      Task { @MainActor in
         self.window = nsView.window
       }
     }

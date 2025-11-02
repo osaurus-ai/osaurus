@@ -403,73 +403,65 @@ final class ModelManager: NSObject, ObservableObject {
 
       do {
         // Download a snapshot to a temporary location managed by Hub
+        let progressHandler: @Sendable (Progress) -> Void = { (progress: Progress) in
+          Task { @MainActor [weak self] in
+            guard let self = self else { return }
+            guard self.downloadTokens[model.id] == token else { return }
+            let fraction = max(0.0, min(1.0, progress.fractionCompleted))
+            self.downloadStates[model.id] = .downloading(progress: fraction)
+            let estTotalBytes = self.downloadSizeEstimates[model.id]
+            let completedUnits = progress.completedUnitCount
+            let totalUnits = progress.totalUnitCount
+            let bytesCompleted: Int64? = {
+              if let est = estTotalBytes, est > 0 {
+                return Int64((Double(est) * fraction).rounded())
+              } else {
+                return completedUnits > 0 ? completedUnits : nil
+              }
+            }()
+            let totalBytesForDisplay: Int64? = {
+              if let est = estTotalBytes, est > 0 {
+                return est
+              } else {
+                return totalUnits > 0 ? totalUnits : nil
+              }
+            }()
+            let now = Date().timeIntervalSince1970
+            var samples = self.progressSamples[model.id] ?? []
+            samples.append((timestamp: now, completed: bytesCompleted ?? completedUnits))
+            // Keep only the last 5s of samples
+            let window: TimeInterval = 5.0
+            samples = samples.filter { now - $0.timestamp <= window }
+            self.progressSamples[model.id] = samples
+            var speed: Double? = nil
+            if let first = samples.first, let last = samples.last,
+              last.timestamp > first.timestamp
+            {
+              let bytesDelta = Double(last.completed - first.completed)
+              let timeDelta = last.timestamp - first.timestamp
+              if timeDelta > 0 { speed = max(0, bytesDelta / timeDelta) }
+            }
+            var eta: Double? = nil
+            if let speed, speed > 0, let totalBytesForDisplay,
+              let bytesCompleted = bytesCompleted,
+              totalBytesForDisplay > 0
+            {
+              let remaining = Double(totalBytesForDisplay - bytesCompleted)
+              if remaining > 0 { eta = remaining / speed }
+            }
+            self.downloadMetrics[model.id] = DownloadMetrics(
+              bytesReceived: bytesCompleted,
+              totalBytes: totalBytesForDisplay,
+              bytesPerSecond: speed,
+              etaSeconds: eta
+            )
+          }
+        }
+
         let snapshotDirectory = try await Hub.snapshot(
           from: repo,
           matching: patterns,
-          progressHandler: { progress in
-            Task { @MainActor [weak self] in
-              guard let self = self else { return }
-              // Ignore progress updates from stale/canceled tasks
-              guard self.downloadTokens[model.id] == token else { return }
-              // Clamp to [0, 1]
-              let fraction = max(0.0, min(1.0, progress.fractionCompleted))
-              self.downloadStates[model.id] = .downloading(progress: fraction)
-
-              // Derive bytes, speed, and ETA using estimated total size if available
-              let estTotalBytes = self.downloadSizeEstimates[model.id]
-              let completedUnits = progress.completedUnitCount
-              let totalUnits = progress.totalUnitCount
-              let bytesCompleted: Int64? = {
-                if let est = estTotalBytes, est > 0 {
-                  return Int64((Double(est) * fraction).rounded())
-                } else {
-                  return completedUnits > 0 ? completedUnits : nil
-                }
-              }()
-              let totalBytesForDisplay: Int64? = {
-                if let est = estTotalBytes, est > 0 {
-                  return est
-                } else {
-                  return totalUnits > 0 ? totalUnits : nil
-                }
-              }()
-              let now = Date().timeIntervalSince1970
-
-              var samples = self.progressSamples[model.id] ?? []
-              samples.append((timestamp: now, completed: bytesCompleted ?? completedUnits))
-              // Keep only the last 5s of samples
-              let window: TimeInterval = 5.0
-              samples = samples.filter { now - $0.timestamp <= window }
-              self.progressSamples[model.id] = samples
-
-              var speed: Double? = nil
-              if let first = samples.first, let last = samples.last,
-                last.timestamp > first.timestamp
-              {
-                let bytesDelta = Double(last.completed - first.completed)
-                let timeDelta = last.timestamp - first.timestamp
-                if timeDelta > 0 {
-                  speed = max(0, bytesDelta / timeDelta)
-                }
-              }
-
-              var eta: Double? = nil
-              if let speed, speed > 0, let totalBytesForDisplay,
-                let bytesCompleted = bytesCompleted, totalBytesForDisplay > 0
-              {
-                let remaining = Double(totalBytesForDisplay - bytesCompleted)
-                if remaining > 0 { eta = remaining / speed }
-              }
-
-              self.downloadMetrics[model.id] = DownloadMetrics(
-                bytesReceived: bytesCompleted,
-                totalBytes: totalBytesForDisplay,
-                bytesPerSecond: speed,
-                etaSeconds: eta
-              )
-            }
-          }
-        )
+          progressHandler: progressHandler)
 
         // Copy snapshot contents into our managed models directory
         try self.copyContents(of: snapshotDirectory, to: model.localDirectory)
@@ -835,7 +827,7 @@ extension ModelManager {
     ),
   ]
 
-  fileprivate static func friendlyName(from repoId: String) -> String {
+  nonisolated fileprivate static func friendlyName(from repoId: String) -> String {
     // Take the last path component and title-case-ish
     let last = repoId.split(separator: "/").last.map(String.init) ?? repoId
     let spaced = last.replacingOccurrences(of: "-", with: " ")
@@ -846,6 +838,50 @@ extension ModelManager {
       .replacingOccurrences(of: "qwen", with: "Qwen", options: .caseInsensitive)
       .replacingOccurrences(of: "gemma", with: "Gemma", options: .caseInsensitive)
       .replacingOccurrences(of: "deepseek", with: "DeepSeek", options: .caseInsensitive)
+  }
+}
+
+// MARK: - Installed models helpers for services
+
+extension ModelManager {
+  /// List installed MLX model names (repo component, lowercased), unique and sorted by name.
+  nonisolated static func installedModelNames() -> [String] {
+    let models = discoverLocalModels()
+    var seen: Set<String> = []
+    var names: [String] = []
+    for m in models {
+      let repo = m.id.split(separator: "/").last.map(String.init)?.lowercased() ?? m.id.lowercased()
+      if !seen.contains(repo) {
+        seen.insert(repo)
+        names.append(repo)
+      }
+    }
+    return names.sorted()
+  }
+
+  /// Find an installed model by user-provided name.
+  /// Accepts repo name (case-insensitive) or full id (case-insensitive).
+  nonisolated static func findInstalledModel(named name: String) -> (name: String, id: String)? {
+    let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmed.isEmpty else { return nil }
+    let models = discoverLocalModels()
+
+    // Try repo component first
+    if let match = models.first(where: { m in
+      m.id.split(separator: "/").last.map(String.init)?.lowercased() == trimmed.lowercased()
+    }) {
+      let repo =
+        match.id.split(separator: "/").last.map(String.init)?.lowercased() ?? trimmed.lowercased()
+      return (repo, match.id)
+    }
+
+    // Try full id match
+    if let match = models.first(where: { m in m.id.lowercased() == trimmed.lowercased() }) {
+      let repo =
+        match.id.split(separator: "/").last.map(String.init)?.lowercased() ?? trimmed.lowercased()
+      return (repo, match.id)
+    }
+    return nil
   }
 }
 
@@ -971,9 +1007,9 @@ extension ModelManager {
   }
 
   /// Discover locally downloaded models regardless of SDK allowlist.
-  fileprivate static func discoverLocalModels() -> [MLXModel] {
+  nonisolated static func discoverLocalModels() -> [MLXModel] {
     let fm = FileManager.default
-    let root = DirectoryPickerService.shared.effectiveModelsDirectory
+    let root = DirectoryPickerService.defaultModelsDirectory()
     guard
       let orgDirs = try? fm.contentsOfDirectory(
         at: root, includingPropertiesForKeys: [.isDirectoryKey], options: [.skipsHiddenFiles])

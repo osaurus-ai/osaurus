@@ -20,18 +20,18 @@ struct osaurusTests {
 
   @Test func openAI_decodes_arrayOfParts_content() async throws {
     let json = """
-    {
-      "model": "test-model",
-      "messages": [
-        {"role": "system", "content": "You are a test."},
-        {"role": "user", "content": [
-          {"type": "text", "text": "Hel"},
-          {"type": "text", "text": "lo"}
-        ]}
-      ],
-      "stream": false
-    }
-    """.data(using: .utf8)!
+      {
+        "model": "test-model",
+        "messages": [
+          {"role": "system", "content": "You are a test."},
+          {"role": "user", "content": [
+            {"type": "text", "text": "Hel"},
+            {"type": "text", "text": "lo"}
+          ]}
+        ],
+        "stream": false
+      }
+      """.data(using: .utf8)!
 
     let req = try JSONDecoder().decode(ChatCompletionRequest.self, from: json)
     #expect(req.messages.count == 2)

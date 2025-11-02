@@ -8,6 +8,7 @@
 import Foundation
 
 /// Handles persistence of `ServerConfiguration` to Application Support
+@MainActor
 enum ServerConfigurationStore {
   /// Optional directory override for tests. When set, the store reads/writes here.
   static var overrideDirectory: URL?

@@ -104,6 +104,95 @@ final class SSEResponseWriter: ResponseWriter {
     writeSSEChunk(chunk, context: context)
   }
 
+  // MARK: - Tool calling (OpenAI-style streaming deltas)
+
+  @inline(__always)
+  func writeToolCallStart(
+    callId: String,
+    functionName: String,
+    index: Int = 0,
+    model: String,
+    responseId: String,
+    created: Int,
+    context: ChannelHandlerContext
+  ) {
+    let delta = DeltaContent(
+      role: nil,
+      content: nil,
+      refusal: nil,
+      tool_calls: [
+        DeltaToolCall(
+          index: index,
+          id: callId,
+          type: "function",
+          function: DeltaToolCallFunction(name: functionName, arguments: nil)
+        )
+      ]
+    )
+    let chunk = ChatCompletionChunk(
+      id: responseId,
+      created: created,
+      model: model,
+      choices: [StreamChoice(index: 0, delta: delta, finish_reason: nil)],
+      system_fingerprint: nil
+    )
+    writeSSEChunk(chunk, context: context)
+  }
+
+  @inline(__always)
+  func writeToolCallArgumentsDelta(
+    callId: String,
+    index: Int,
+    argumentsChunk: String,
+    model: String,
+    responseId: String,
+    created: Int,
+    context: ChannelHandlerContext
+  ) {
+    guard !argumentsChunk.isEmpty else { return }
+    let delta = DeltaContent(
+      role: nil,
+      content: nil,
+      refusal: nil,
+      tool_calls: [
+        DeltaToolCall(
+          index: index,
+          id: nil,
+          type: nil,
+          function: DeltaToolCallFunction(name: nil, arguments: argumentsChunk)
+        )
+      ]
+    )
+    let chunk = ChatCompletionChunk(
+      id: responseId,
+      created: created,
+      model: model,
+      choices: [StreamChoice(index: 0, delta: delta, finish_reason: nil)],
+      system_fingerprint: nil
+    )
+    writeSSEChunk(chunk, context: context)
+  }
+
+  @inline(__always)
+  func writeFinishWithReason(
+    _ reason: String,
+    model: String,
+    responseId: String,
+    created: Int,
+    context: ChannelHandlerContext
+  ) {
+    let chunk = ChatCompletionChunk(
+      id: responseId,
+      created: created,
+      model: model,
+      choices: [
+        StreamChoice(index: 0, delta: DeltaContent(), finish_reason: reason)
+      ],
+      system_fingerprint: nil
+    )
+    writeSSEChunk(chunk, context: context)
+  }
+
   @inline(__always)
   private func writeSSEChunk(_ chunk: ChatCompletionChunk, context: ChannelHandlerContext) {
     let encoder = IkigaJSONEncoder()  // Create encoder per write for thread safety
@@ -153,9 +242,10 @@ final class SSEResponseWriter: ResponseWriter {
     var tail = context.channel.allocator.buffer(capacity: 16)
     tail.writeString("data: [DONE]\n\n")
     context.write(NIOAny(HTTPServerResponsePart.body(.byteBuffer(tail))), promise: nil)
+    let ctx = NIOLoopBound(context, eventLoop: context.eventLoop)
     context.writeAndFlush(NIOAny(HTTPServerResponsePart.end(nil as HTTPHeaders?))).whenComplete {
       _ in
-      context.close(promise: nil)
+      ctx.value.close(promise: nil)
     }
   }
 }
@@ -238,9 +328,10 @@ final class NDJSONResponseWriter: ResponseWriter {
   }
 
   func writeEnd(_ context: ChannelHandlerContext) {
+    let ctx = NIOLoopBound(context, eventLoop: context.eventLoop)
     context.writeAndFlush(NIOAny(HTTPServerResponsePart.end(nil as HTTPHeaders?))).whenComplete {
       _ in
-      context.close(promise: nil)
+      ctx.value.close(promise: nil)
     }
   }
 }

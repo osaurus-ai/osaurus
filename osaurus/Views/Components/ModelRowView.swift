@@ -130,10 +130,6 @@ struct ModelRowView: View {
     }
   }
 
-  // MARK: - Actions
-
-  // Copy action removed; row opens details instead
-
   // MARK: - Metrics Formatting
 
   /// Formats download metrics into a single human-readable line

@@ -72,8 +72,6 @@ struct ContentView: View {
     }
   }
 
-  // Primary action state removed; badge handles retry on error
-
   private var statusBadgeText: String {
     switch server.serverHealth {
     case .stopped: return "Stopped"

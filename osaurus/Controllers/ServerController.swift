@@ -42,8 +42,10 @@ final class ServerController: ObservableObject {
 
   private var eventLoopGroup: MultiThreadedEventLoopGroup?
   private var serverChannel: Channel?
+  private var serverActor: OsaurusServer?
 
   // Singleton holder to allow async access to the current controller instance when injected as EnvironmentObject
+  @MainActor
   private struct ServerControllerHolder {
     static var shared = ServerControllerHolder()
     weak var controller: ServerController?
@@ -103,29 +105,18 @@ final class ServerController: ObservableObject {
       // Ensure any previous instance is shut down
       try await stopServerIfNeeded()
 
-      // Create event loop group (allow env-based override to reduce contention)
-      let env = ProcessInfo.processInfo.environment
-      let nioThreads = Int(env["OSU_NIO_THREADS"] ?? "") ?? configuration.numberOfThreads
-      let group = MultiThreadedEventLoopGroup(numberOfThreads: nioThreads)
-      self.eventLoopGroup = group
-
-      // Bootstrap server using a nonisolated creator to avoid MainActor hops
-      let currentConfig = self.configuration
-      let bootstrap = ServerController.createServerBootstrap(
-        group: group, configuration: currentConfig)
-
-      // Bind to configured host and port (async-safe)
-      let channel = try await bootstrap.bind(host: bindHost, port: configuration.port).get()
-      self.serverChannel = channel
+      let server = OsaurusServer()
+      try await server.start(
+        .init(host: bindHost, port: configuration.port),
+        serverConfiguration: self.configuration
+      )
+      self.serverActor = server
 
       // Update state
       isRunning = true
       serverHealth = .running
       lastErrorMessage = nil
       print("[Osaurus] NIO server started successfully on port \(configuration.port)")
-
-      // Handle channel closure
-      setupChannelClosureHandler(channel)
     } catch {
       handleServerError(error)
       await cleanupRuntime()
@@ -146,18 +137,16 @@ final class ServerController: ObservableObject {
   /// Stops the running server
   func stopServer() async {
     // If nothing to stop, return
-    guard serverChannel != nil || eventLoopGroup != nil else { return }
+    guard serverActor != nil || serverChannel != nil || eventLoopGroup != nil else { return }
     if !isRestarting { serverHealth = .stopping }
     print("[Osaurus] Stopping NIO server...")
 
     isRunning = false
 
-    // Close the server channel if present
-    if let channel = serverChannel {
-      do { try await channel.close().get() } catch {
-        print("[Osaurus] Error closing channel: \(error)")
-      }
-      serverChannel = nil
+    // Stop the actor-backed server if present
+    if let server = serverActor {
+      await server.stop(gracefully: true)
+      serverActor = nil
     }
 
     localNetworkAddress = "127.0.0.1"
@@ -169,17 +158,15 @@ final class ServerController: ObservableObject {
 
   /// Ensures the server is properly shut down before app termination
   func ensureShutdown() async {
-    guard serverChannel != nil || eventLoopGroup != nil else { return }
+    guard serverActor != nil || serverChannel != nil || eventLoopGroup != nil else { return }
 
     print("[Osaurus] Ensuring NIO server shutdown before app termination")
     isRunning = false
     serverHealth = .stopping
 
-    if let channel = serverChannel {
-      do { try await channel.close().get() } catch {
-        print("[Osaurus] Error closing channel: \(error)")
-      }
-      serverChannel = nil
+    if let server = serverActor {
+      await server.stop(gracefully: true)
+      serverActor = nil
     }
 
     localNetworkAddress = "127.0.0.1"
@@ -217,33 +204,6 @@ final class ServerController: ObservableObject {
   }
 
   // MARK: - Private Helpers
-
-  /// Creates configured server bootstrap outside of MainActor to ensure pipeline ops run on the channel's EventLoop
-  nonisolated static func createServerBootstrap(
-    group: EventLoopGroup, configuration: ServerConfiguration
-  ) -> ServerBootstrap {
-    let env = ProcessInfo.processInfo.environment
-    let maxMessagesPerReadEnv = Int(env["OSU_NIO_MAX_MESSAGES_PER_READ"] ?? "") ?? 8
-    let maxMessagesPerRead: ChannelOptions.Types.MaxMessagesPerReadOption.Value = numericCast(
-      maxMessagesPerReadEnv)
-    return ServerBootstrap(group: group)
-      // Server options
-      .serverChannelOption(ChannelOptions.backlog, value: configuration.backlog)
-      .serverChannelOption(ChannelOptions.socketOption(.so_reuseaddr), value: 1)
-      // Child channels (accepted connections)
-      .childChannelInitializer { channel in
-        channel.pipeline.configureHTTPServerPipeline(
-          withPipeliningAssistance: false, withErrorHandling: false
-        ).flatMap {
-          channel.pipeline.addHandler(HTTPHandler(configuration: configuration))
-        }
-      }
-      .childChannelOption(ChannelOptions.socketOption(.so_reuseaddr), value: 1)
-      .childChannelOption(ChannelOptions.socketOption(.tcp_nodelay), value: 1)
-      .childChannelOption(ChannelOptions.allowRemoteHalfClosure, value: true)
-      .childChannelOption(ChannelOptions.maxMessagesPerRead, value: maxMessagesPerRead)
-      .childChannelOption(ChannelOptions.recvAllocator, value: AdaptiveRecvByteBufferAllocator())
-  }
 
   /// Sets up channel closure handler
   private func setupChannelClosureHandler(_ channel: Channel) {
@@ -291,17 +251,13 @@ final class ServerController: ObservableObject {
     let connection = NWConnection(host: NWEndpoint.Host(host), port: nwPort, using: .tcp)
 
     let stateStream = AsyncStream<NWConnection.State> { continuation in
-      let finished = AtomicFlag()
       connection.stateUpdateHandler = { state in
-        if finished.get() { return }
         continuation.yield(state)
         switch state {
         case .ready, .failed(_), .cancelled:
-          if !finished.testAndSetTrue() {
-            continuation.finish()
-            // Avoid further callbacks
-            connection.stateUpdateHandler = nil
-          }
+          continuation.finish()
+          // Avoid further callbacks
+          connection.stateUpdateHandler = nil
         default:
           break
         }
@@ -343,27 +299,8 @@ final class ServerController: ObservableObject {
     }
   }
 
-  // MARK: - Concurrency Helpers
-  private final class AtomicFlag: @unchecked Sendable {
-    private let lock = NSLock()
-    private var value: Bool = false
-    func get() -> Bool {
-      lock.lock()
-      defer { lock.unlock() }
-      return value
-    }
-    /// Sets the flag to true and returns the previous value atomically.
-    func testAndSetTrue() -> Bool {
-      lock.lock()
-      defer { lock.unlock() }
-      let was = value
-      value = true
-      return was
-    }
-  }
-
   private func stopServerIfNeeded() async throws {
-    if serverChannel != nil || eventLoopGroup != nil {
+    if serverActor != nil || serverChannel != nil || eventLoopGroup != nil {
       await stopServer()
     }
   }
@@ -387,7 +324,9 @@ final class ServerController: ObservableObject {
             ptr.pointee.ifa_addr, socklen_t(addr.sa_len), &hostname, socklen_t(hostname.count), nil,
             socklen_t(0), NI_NUMERICHOST) == 0
           {
-            let ip = String(cString: hostname)
+            // Trim at NUL terminator before decoding to avoid deprecated cString initializer.
+            let nulTrimmed = hostname.prefix { $0 != 0 }
+            let ip = String(decoding: nulTrimmed.map { UInt8(bitPattern: $0) }, as: UTF8.self)
             let name = String(cString: ptr.pointee.ifa_name)
             if name.starts(with: "en") {  // en0, en1, etc. are common for Wi-Fi/Ethernet on macOS
               address = ip

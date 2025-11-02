@@ -9,6 +9,7 @@ import Foundation
 import ServiceManagement
 
 /// Manages "Start at Login" registration for the main app
+@MainActor
 final class LoginItemService {
   static let shared = LoginItemService()
   private init() {}

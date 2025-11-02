@@ -9,6 +9,7 @@ import Combine
 import Darwin
 import Foundation
 
+@MainActor
 class SystemMonitorService: ObservableObject {
   static let shared = SystemMonitorService()
 
@@ -30,7 +31,9 @@ class SystemMonitorService: ObservableObject {
 
     // Update every 2 seconds to avoid excessive CPU usage
     timer = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { [weak self] _ in
-      self?.updateResourceUsage()
+      Task { @MainActor in
+        self?.updateResourceUsage()
+      }
     }
   }
 
@@ -118,7 +121,9 @@ class SystemMonitorService: ObservableObject {
 
     guard vmResult == KERN_SUCCESS else { return (0.0, 0.0, 0.0) }
 
-    let pageSize = vm_kernel_page_size
+    var rawPage: vm_size_t = 0
+    host_page_size(mach_host_self(), &rawPage)
+    let pageSize = rawPage
     let totalMemory = Double(ProcessInfo.processInfo.physicalMemory)
     let freeMemory = Double(vmInfo.free_count) * Double(pageSize)
     let inactiveMemory = Double(vmInfo.inactive_count) * Double(pageSize)
@@ -134,7 +139,4 @@ class SystemMonitorService: ObservableObject {
     return (min(100.0, max(0.0, percentage)), totalGB, usedGB)
   }
 
-  deinit {
-    stopMonitoring()
-  }
 }

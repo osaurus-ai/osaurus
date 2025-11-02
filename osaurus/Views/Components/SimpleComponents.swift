@@ -276,7 +276,8 @@ struct CopyableURLField: View {
       showCopied = true
     }
 
-    DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+    Task { @MainActor in
+      try? await Task.sleep(nanoseconds: 2_000_000_000)
       withAnimation(.easeInOut(duration: 0.2)) {
         showCopied = false
       }

@@ -122,5 +122,3 @@ struct MLXModelTests {
     #expect(model.isDownloaded == false)
   }
 }
-
-

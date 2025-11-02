@@ -9,6 +9,7 @@ import AppKit
 import Foundation
 import UserNotifications
 
+@MainActor
 final class NotificationService: NSObject, UNUserNotificationCenterDelegate {
   static let shared = NotificationService()
 
@@ -60,7 +61,7 @@ final class NotificationService: NSObject, UNUserNotificationCenterDelegate {
 
   // MARK: - UNUserNotificationCenterDelegate
 
-  func userNotificationCenter(
+  nonisolated func userNotificationCenter(
     _ center: UNUserNotificationCenter,
     didReceive response: UNNotificationResponse,
     withCompletionHandler completionHandler: @escaping () -> Void
@@ -73,7 +74,7 @@ final class NotificationService: NSObject, UNUserNotificationCenterDelegate {
     if response.actionIdentifier == actionOpenId
       || response.actionIdentifier == UNNotificationDefaultActionIdentifier
     {
-      DispatchQueue.main.async {
+      Task { @MainActor in
         AppDelegate.shared?.showModelManagerWindow(deeplinkModelId: modelId, file: nil)
       }
     }
