@@ -7,7 +7,7 @@
 
 import Foundation
 import MLXLLM
-@preconcurrency import MLXLMCommon
+import MLXLMCommon
 
 actor ModelRuntime {
   // MARK: - Types

@@ -6,58 +6,62 @@
 //
 
 import Foundation
-@preconcurrency import NIOCore
-@preconcurrency import NIOHTTP1
-@preconcurrency import NIOPosix
+import NIOCore
+import NIOHTTP1
+import NIOPosix
 
 /// SwiftNIO HTTP request handler
-/// @unchecked Sendable justification: All mutable state is confined to the
-/// channel's event loop. Cross-thread interactions hop back to the event loop
-/// via `executeOnLoop(_:)`, and streaming work performed in Tasks propagates
-/// results to the loop before any state mutation.
-final class HTTPHandler: ChannelInboundHandler, @unchecked Sendable {
+final class HTTPHandler: ChannelInboundHandler, Sendable {
   typealias InboundIn = HTTPServerRequestPart
   typealias OutboundOut = HTTPServerResponsePart
 
   private let configuration: ServerConfiguration
   private let chatEngine: ChatEngine
-  private var requestHead: HTTPRequestHead?
-  private var requestBodyBuffer: ByteBuffer?
-  private var context: ChannelHandlerContext?
-  private var corsHeadersForCurrentRequest: [(String, String)] = []
+  private final class RequestState {
+    var requestHead: HTTPRequestHead?
+    var requestBodyBuffer: ByteBuffer?
+    var corsHeaders: [(String, String)] = []
+  }
+  private let stateRef: NIOLoopBound<RequestState>
 
-  init(configuration: ServerConfiguration, chatEngine: ChatEngine = ChatEngine()) {
+  init(
+    configuration: ServerConfiguration, eventLoop: EventLoop, chatEngine: ChatEngine = ChatEngine()
+  ) {
     self.configuration = configuration
     self.chatEngine = chatEngine
+    self.stateRef = NIOLoopBound(RequestState(), eventLoop: eventLoop)
   }
 
   func channelRead(context: ChannelHandlerContext, data: NIOAny) {
-    self.context = context
     let part = self.unwrapInboundIn(data)
 
     switch part {
     case .head(let head):
-      requestHead = head
+      stateRef.value.requestHead = head
       // Compute CORS headers for this request
-      corsHeadersForCurrentRequest = computeCORSHeaders(for: head, isPreflight: false)
+      stateRef.value.corsHeaders = computeCORSHeaders(for: head, isPreflight: false)
       // Pre-size body buffer if Content-Length is available
       if let lengthStr = head.headers.first(name: "Content-Length"), let length = Int(lengthStr),
         length > 0
       {
-        requestBodyBuffer = context.channel.allocator.buffer(capacity: length)
+        stateRef.value.requestBodyBuffer = context.channel.allocator.buffer(capacity: length)
       } else {
-        requestBodyBuffer = context.channel.allocator.buffer(capacity: 0)
+        stateRef.value.requestBodyBuffer = context.channel.allocator.buffer(capacity: 0)
       }
 
     case .body(var buffer):
       // Collect body data directly into a ByteBuffer
-      if requestBodyBuffer == nil {
-        requestBodyBuffer = context.channel.allocator.buffer(capacity: buffer.readableBytes)
+      if stateRef.value.requestBodyBuffer == nil {
+        stateRef.value.requestBodyBuffer = context.channel.allocator.buffer(
+          capacity: buffer.readableBytes)
       }
-      requestBodyBuffer!.writeBuffer(&buffer)
+      if var existing = stateRef.value.requestBodyBuffer {
+        existing.writeBuffer(&buffer)
+        stateRef.value.requestBodyBuffer = existing
+      }
 
     case .end:
-      guard let head = requestHead else {
+      guard let head = stateRef.value.requestHead else {
         sendBadRequest(context: context)
         return
       }
@@ -76,22 +80,22 @@ final class HTTPHandler: ChannelInboundHandler, @unchecked Sendable {
           headers: cors,
           body: ""
         )
-        requestHead = nil
-        requestBodyBuffer = nil
+        stateRef.value.requestHead = nil
+        stateRef.value.requestBodyBuffer = nil
         return
       }
 
       // Handle simple HEAD
       if head.method == .HEAD {
         var headers = [("Content-Type", "text/plain; charset=utf-8")]
-        headers.append(contentsOf: corsHeadersForCurrentRequest)
+        headers.append(contentsOf: stateRef.value.corsHeaders)
         sendResponse(
           context: context, version: head.version, status: .noContent, headers: headers, body: "")
       }
       // Handle core endpoints directly; fall back to Router only for legacy coverage
       else if head.method == .GET, path == "/" {
         var headers = [("Content-Type", "text/plain; charset=utf-8")]
-        headers.append(contentsOf: corsHeadersForCurrentRequest)
+        headers.append(contentsOf: stateRef.value.corsHeaders)
         sendResponse(
           context: context,
           version: head.version,
@@ -103,7 +107,7 @@ final class HTTPHandler: ChannelInboundHandler, @unchecked Sendable {
         let obj: [String: Any] = ["status": "healthy", "timestamp": Date().ISO8601Format()]
         let data = try? JSONSerialization.data(withJSONObject: obj)
         var headers = [("Content-Type", "application/json; charset=utf-8")]
-        headers.append(contentsOf: corsHeadersForCurrentRequest)
+        headers.append(contentsOf: stateRef.value.corsHeaders)
         let body = data.flatMap { String(decoding: $0, as: UTF8.self) } ?? "{}"
         sendResponse(
           context: context, version: head.version, status: .ok, headers: headers, body: body)
@@ -116,7 +120,7 @@ final class HTTPHandler: ChannelInboundHandler, @unchecked Sendable {
         let json =
           (try? JSONEncoder().encode(response)).map { String(decoding: $0, as: UTF8.self) } ?? "{}"
         var headers = [("Content-Type", "application/json; charset=utf-8")]
-        headers.append(contentsOf: corsHeadersForCurrentRequest)
+        headers.append(contentsOf: stateRef.value.corsHeaders)
         sendResponse(
           context: context, version: head.version, status: .ok, headers: headers, body: json)
       } else if head.method == .GET, path == "/tags" {
@@ -159,7 +163,7 @@ final class HTTPHandler: ChannelInboundHandler, @unchecked Sendable {
         let json =
           (try? JSONEncoder().encode(payload)).map { String(decoding: $0, as: UTF8.self) } ?? "{}"
         var headers = [("Content-Type", "application/json; charset=utf-8")]
-        headers.append(contentsOf: corsHeadersForCurrentRequest)
+        headers.append(contentsOf: stateRef.value.corsHeaders)
         sendResponse(
           context: context, version: head.version, status: .ok, headers: headers, body: json)
       } else if head.method == .POST, path == "/chat/completions" || path == "/v1/chat/completions"
@@ -169,7 +173,7 @@ final class HTTPHandler: ChannelInboundHandler, @unchecked Sendable {
         handleChatNDJSON(head: head, context: context)
       } else {
         var headers = [("Content-Type", "text/plain; charset=utf-8")]
-        headers.append(contentsOf: corsHeadersForCurrentRequest)
+        headers.append(contentsOf: stateRef.value.corsHeaders)
         sendResponse(
           context: context,
           version: head.version,
@@ -179,8 +183,8 @@ final class HTTPHandler: ChannelInboundHandler, @unchecked Sendable {
         )
       }
 
-      requestHead = nil
-      requestBodyBuffer = nil
+      stateRef.value.requestHead = nil
+      stateRef.value.requestBodyBuffer = nil
     }
   }
 
@@ -228,21 +232,21 @@ final class HTTPHandler: ChannelInboundHandler, @unchecked Sendable {
     body: String
   ) {
     let loop = context.eventLoop
-    let ctxBox = UncheckedSendableBox(value: context)
-    let bodyBox = UncheckedSendableBox(value: body)
-    let headersBox = UncheckedSendableBox(value: headers)
+    let ctx = NIOLoopBound(context, eventLoop: loop)
+    let bodyCopy = body
+    let headersCopy = headers
     executeOnLoop(loop) {
-      let context = ctxBox.value
+      let context = ctx.value
       // Create response head
       var responseHead = HTTPResponseHead(version: version, status: status)
 
       // Create body buffer
-      var buffer = context.channel.allocator.buffer(capacity: bodyBox.value.utf8.count)
-      buffer.writeString(bodyBox.value)
+      var buffer = context.channel.allocator.buffer(capacity: bodyCopy.utf8.count)
+      buffer.writeString(bodyCopy)
 
       // Build headers
       var nioHeaders = HTTPHeaders()
-      for (name, value) in headersBox.value {
+      for (name, value) in headersCopy {
         nioHeaders.add(name: name, value: value)
       }
       nioHeaders.add(name: "Content-Length", value: String(buffer.readableBytes))
@@ -250,12 +254,11 @@ final class HTTPHandler: ChannelInboundHandler, @unchecked Sendable {
       responseHead.headers = nioHeaders
 
       // Send response
-      context.write(self.wrapOutboundOut(.head(responseHead)), promise: nil)
-      context.write(self.wrapOutboundOut(.body(.byteBuffer(buffer))), promise: nil)
-      let ctxBox2 = UncheckedSendableBox(value: context)
-      context.writeAndFlush(self.wrapOutboundOut(.end(nil))).whenComplete { _ in
-        let context = ctxBox2.value
-        context.close(promise: nil)
+      context.write(NIOAny(HTTPServerResponsePart.head(responseHead)), promise: nil)
+      context.write(NIOAny(HTTPServerResponsePart.body(.byteBuffer(buffer))), promise: nil)
+      context.writeAndFlush(NIOAny(HTTPServerResponsePart.end(nil as HTTPHeaders?))).whenComplete {
+        _ in
+        ctx.value.close(promise: nil)
       }
     }
   }
@@ -326,14 +329,14 @@ final class HTTPHandler: ChannelInboundHandler, @unchecked Sendable {
     return collapsed
   }
 
-  /// Expose CORS headers for use by async writers
-  var currentCORSHeaders: [(String, String)] { corsHeadersForCurrentRequest }
+  /// Expose CORS headers for use by async writers (must be accessed on event loop)
+  var currentCORSHeaders: [(String, String)] { stateRef.value.corsHeaders }
 
   // MARK: - Chat handlers
 
   private func handleChatCompletions(head: HTTPRequestHead, context: ChannelHandlerContext) {
     let data: Data
-    if let body = requestBodyBuffer {
+    if let body = stateRef.value.requestBodyBuffer {
       var bodyCopy = body
       let bytes = bodyCopy.readBytes(length: bodyCopy.readableBytes) ?? []
       data = Data(bytes)
@@ -362,70 +365,94 @@ final class HTTPHandler: ChannelInboundHandler, @unchecked Sendable {
 
     if wantsSSE {
       let writer = SSEResponseWriter()
-      let cors = corsHeadersForCurrentRequest
+      let cors = stateRef.value.corsHeaders
       let loop = context.eventLoop
-      let writerBox = UncheckedSendableBox(value: writer)
-      let ctxBox = UncheckedSendableBox(value: context)
-      let loopBox = UncheckedSendableBox(value: loop)
-      executeOnLoop(loopBox.value) {
-        let w = writerBox.value
-        let ctx = ctxBox.value
-        w.writeHeaders(ctx, extraHeaders: cors)
-        w.writeRole(
-          "assistant", model: model, responseId: responseId, created: created, context: ctx)
+      let writerBound = NIOLoopBound(writer, eventLoop: loop)
+      let ctx = NIOLoopBound(context, eventLoop: loop)
+      let chatEngine = self.chatEngine
+      let hop: (@escaping @Sendable () -> Void) -> Void = { block in
+        if loop.inEventLoop { block() } else { loop.execute { block() } }
       }
-      Task(priority: .userInitiated) { [weak self] in
-        guard let self else { return }
+      hop {
+        writerBound.value.writeHeaders(ctx.value, extraHeaders: cors)
+        writerBound.value.writeRole(
+          "assistant", model: model, responseId: responseId, created: created, context: ctx.value)
+      }
+      Task(priority: .userInitiated) {
         do {
-          let stream = try await self.chatEngine.streamChat(request: req)
+          let stream = try await chatEngine.streamChat(request: req)
           for try await delta in stream {
-            self.executeOnLoop(loopBox.value) {
-              let w = writerBox.value
-              let ctx = ctxBox.value
-              w.writeContent(
-                delta, model: model, responseId: responseId, created: created, context: ctx)
+            hop {
+              writerBound.value.writeContent(
+                delta, model: model, responseId: responseId, created: created, context: ctx.value)
             }
           }
-          self.executeOnLoop(loopBox.value) {
-            let w = writerBox.value
-            let ctx = ctxBox.value
-            w.writeFinish(model, responseId: responseId, created: created, context: ctx)
-            w.writeEnd(ctx)
+          hop {
+            writerBound.value.writeFinish(
+              model, responseId: responseId, created: created, context: ctx.value)
+            writerBound.value.writeEnd(ctx.value)
           }
         } catch {
-          self.executeOnLoop(loopBox.value) {
-            let w = writerBox.value
-            let ctx = ctxBox.value
-            w.writeError(error.localizedDescription, context: ctx)
-            w.writeEnd(ctx)
+          hop {
+            writerBound.value.writeError(error.localizedDescription, context: ctx.value)
+            writerBound.value.writeEnd(ctx.value)
           }
         }
       }
     } else {
-      let ctxBox = UncheckedSendableBox(value: context)
-      Task(priority: .userInitiated) { [weak self] in
-        guard let self else { return }
+      let cors = stateRef.value.corsHeaders
+      let loop = context.eventLoop
+      let ctx = NIOLoopBound(context, eventLoop: loop)
+      let chatEngine = self.chatEngine
+      let hop: (@escaping @Sendable () -> Void) -> Void = { block in
+        if loop.inEventLoop { block() } else { loop.execute { block() } }
+      }
+      Task(priority: .userInitiated) {
         do {
-          let resp = try await self.chatEngine.completeChat(request: req)
+          let resp = try await chatEngine.completeChat(request: req)
           let json = try JSONEncoder().encode(resp)
           var headers: [(String, String)] = [("Content-Type", "application/json")]
-          headers.append(contentsOf: self.corsHeadersForCurrentRequest)
+          headers.append(contentsOf: cors)
+          let headersCopy = headers
           let body = String(decoding: json, as: UTF8.self)
-          self.sendResponse(
-            context: ctxBox.value,
-            version: head.version,
-            status: .ok,
-            headers: headers,
-            body: body
-          )
+          hop {
+            var responseHead = HTTPResponseHead(version: head.version, status: .ok)
+            var buffer = ctx.value.channel.allocator.buffer(capacity: body.utf8.count)
+            buffer.writeString(body)
+            var nioHeaders = HTTPHeaders()
+            for (name, value) in headersCopy { nioHeaders.add(name: name, value: value) }
+            nioHeaders.add(name: "Content-Length", value: String(buffer.readableBytes))
+            nioHeaders.add(name: "Connection", value: "close")
+            responseHead.headers = nioHeaders
+            let c = ctx.value
+            c.write(NIOAny(HTTPServerResponsePart.head(responseHead)), promise: nil)
+            c.write(NIOAny(HTTPServerResponsePart.body(.byteBuffer(buffer))), promise: nil)
+            c.writeAndFlush(NIOAny(HTTPServerResponsePart.end(nil as HTTPHeaders?))).whenComplete {
+              _ in
+              ctx.value.close(promise: nil)
+            }
+          }
         } catch {
-          self.sendResponse(
-            context: ctxBox.value,
-            version: head.version,
-            status: .internalServerError,
-            headers: [("Content-Type", "text/plain; charset=utf-8")],
-            body: "Internal error: \(error.localizedDescription)"
-          )
+          let body = "Internal error: \(error.localizedDescription)"
+          let headers: [(String, String)] = [("Content-Type", "text/plain; charset=utf-8")]
+          let headersCopy = headers
+          hop {
+            var responseHead = HTTPResponseHead(version: head.version, status: .internalServerError)
+            var buffer = ctx.value.channel.allocator.buffer(capacity: body.utf8.count)
+            buffer.writeString(body)
+            var nioHeaders = HTTPHeaders()
+            for (name, value) in headersCopy { nioHeaders.add(name: name, value: value) }
+            nioHeaders.add(name: "Content-Length", value: String(buffer.readableBytes))
+            nioHeaders.add(name: "Connection", value: "close")
+            responseHead.headers = nioHeaders
+            let c = ctx.value
+            c.write(NIOAny(HTTPServerResponsePart.head(responseHead)), promise: nil)
+            c.write(NIOAny(HTTPServerResponsePart.body(.byteBuffer(buffer))), promise: nil)
+            c.writeAndFlush(NIOAny(HTTPServerResponsePart.end(nil as HTTPHeaders?))).whenComplete {
+              _ in
+              ctx.value.close(promise: nil)
+            }
+          }
         }
       }
     }
@@ -433,7 +460,7 @@ final class HTTPHandler: ChannelInboundHandler, @unchecked Sendable {
 
   private func handleChatNDJSON(head: HTTPRequestHead, context: ChannelHandlerContext) {
     let data: Data
-    if let body = requestBodyBuffer {
+    if let body = stateRef.value.requestBodyBuffer {
       var bodyCopy = body
       let bytes = bodyCopy.readBytes(length: bodyCopy.readableBytes) ?? []
       data = Data(bytes)
@@ -453,42 +480,37 @@ final class HTTPHandler: ChannelInboundHandler, @unchecked Sendable {
     }
 
     let writer = NDJSONResponseWriter()
-    let cors = corsHeadersForCurrentRequest
+    let cors = stateRef.value.corsHeaders
     let loop = context.eventLoop
-    let writerBox = UncheckedSendableBox(value: writer)
-    let ctxBox = UncheckedSendableBox(value: context)
-    let loopBox = UncheckedSendableBox(value: loop)
-    executeOnLoop(loopBox.value) {
-      let w = writerBox.value
-      let ctx = ctxBox.value
-      w.writeHeaders(ctx, extraHeaders: cors)
+    let writerBound = NIOLoopBound(writer, eventLoop: loop)
+    let ctx = NIOLoopBound(context, eventLoop: loop)
+    let chatEngine = self.chatEngine
+    let hop: (@escaping @Sendable () -> Void) -> Void = { block in
+      if loop.inEventLoop { block() } else { loop.execute { block() } }
     }
-    Task(priority: .userInitiated) { [weak self] in
-      guard let self else { return }
+    hop {
+      writerBound.value.writeHeaders(ctx.value, extraHeaders: cors)
+    }
+    Task(priority: .userInitiated) {
       do {
-        let stream = try await self.chatEngine.streamChat(request: req)
+        let stream = try await chatEngine.streamChat(request: req)
         for try await delta in stream {
-          self.executeOnLoop(loopBox.value) {
-            let w = writerBox.value
-            let ctx = ctxBox.value
-            w.writeContent(
+          hop {
+            writerBound.value.writeContent(
               delta, model: req.model, responseId: "", created: Int(Date().timeIntervalSince1970),
-              context: ctx)
+              context: ctx.value)
           }
         }
-        self.executeOnLoop(loopBox.value) {
-          let w = writerBox.value
-          let ctx = ctxBox.value
-          w.writeFinish(
-            req.model, responseId: "", created: Int(Date().timeIntervalSince1970), context: ctx)
-          w.writeEnd(ctx)
+        hop {
+          writerBound.value.writeFinish(
+            req.model, responseId: "", created: Int(Date().timeIntervalSince1970),
+            context: ctx.value)
+          writerBound.value.writeEnd(ctx.value)
         }
       } catch {
-        self.executeOnLoop(loopBox.value) {
-          let w = writerBox.value
-          let ctx = ctxBox.value
-          w.writeError(error.localizedDescription, context: ctx)
-          w.writeEnd(ctx)
+        hop {
+          writerBound.value.writeError(error.localizedDescription, context: ctx.value)
+          writerBound.value.writeEnd(ctx.value)
         }
       }
     }

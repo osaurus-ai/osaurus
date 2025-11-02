@@ -40,7 +40,8 @@ public actor OsaurusServer: Sendable {
       .childChannelInitializer { channel in
         channel.pipeline.configureHTTPServerPipeline().flatMap {
           // Inject configuration; ChatEngine is created per-connection by the handler.
-          channel.pipeline.addHandler(HTTPHandler(configuration: serverConfiguration))
+          channel.pipeline.addHandler(
+            HTTPHandler(configuration: serverConfiguration, eventLoop: channel.eventLoop))
         }
       }
       .childChannelOption(ChannelOptions.socketOption(.so_reuseaddr), value: 1)

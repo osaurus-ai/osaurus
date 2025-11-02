@@ -7,8 +7,8 @@
 
 import Foundation
 import IkigaJSON
-@preconcurrency import NIOCore
-@preconcurrency import NIOHTTP1
+import NIOCore
+import NIOHTTP1
 
 /// Simple routing logic for HTTP requests
 public struct Router {
