@@ -76,7 +76,8 @@ struct FakeThrowingStreamingService: ThrowingStreamingService {
   func streamDeltasThrowing(
     prompt: String,
     parameters: GenerationParameters,
-    requestedModel: String?
+    requestedModel: String?,
+    stopSequences: [String]
   ) async throws -> AsyncThrowingStream<String, Error> {
     AsyncThrowingStream { continuation in
       for d in deltas { continuation.yield(d) }

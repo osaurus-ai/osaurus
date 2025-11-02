@@ -10,6 +10,10 @@ import Foundation
 struct GenerationParameters: Sendable {
   let temperature: Float
   let maxTokens: Int
+  /// Optional per-request top_p override (falls back to server configuration when nil)
+  let topPOverride: Float?
+  /// Optional repetition penalty (applies when supported by backend)
+  let repetitionPenalty: Float?
 }
 
 struct ServiceToolInvocation: Error, Sendable {
@@ -69,7 +73,8 @@ protocol ThrowingStreamingService: ModelService, Sendable {
   func streamDeltasThrowing(
     prompt: String,
     parameters: GenerationParameters,
-    requestedModel: String?
+    requestedModel: String?,
+    stopSequences: [String]
   ) async throws -> AsyncThrowingStream<String, Error>
 }
 
@@ -83,11 +88,9 @@ struct ModelServiceRouter {
   /// Decide which service should handle this request.
   /// - Parameters:
   ///   - requestedModel: Model string requested by client. "default" or empty means system default.
-  ///   - installedModels: Names of installed MLX models.
   ///   - services: Candidate services to consider (default includes FoundationModels service when present).
   static func resolve(
     requestedModel: String?,
-    installedModels: [String],
     services: [ModelService]
   ) -> ModelRoute {
     let trimmed = requestedModel?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""

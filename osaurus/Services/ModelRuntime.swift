@@ -92,6 +92,7 @@ actor ModelRuntime {
         modelName: modelName,
         temperature: 0.0,
         maxTokens: maxTokens,
+        stopSequences: [],
         tools: nil,
         toolChoice: nil
       )
@@ -107,6 +108,7 @@ actor ModelRuntime {
     modelName: String,
     temperature: Float,
     maxTokens: Int,
+    stopSequences: [String],
     tools: [Tool]?,
     toolChoice: ToolChoiceOption?
   ) async throws -> AsyncStream<String> {
@@ -118,6 +120,7 @@ actor ModelRuntime {
         modelName: modelName,
         temperature: temperature,
         maxTokens: maxTokens,
+        stopSequences: stopSequences,
         tools: tools,
         toolChoice: toolChoice,
         continuation: continuation
@@ -155,7 +158,8 @@ actor ModelRuntime {
             let params = ModelRuntime.makeGenerateParameters(
               temperature: parameters.temperature,
               maxTokens: parameters.maxTokens,
-              topP: topP,
+              topP: parameters.topPOverride ?? topP,
+              repetitionPenalty: parameters.repetitionPenalty,
               kvBits: kvBits,
               kvGroup: kvGroup,
               quantStart: quantStart,
@@ -235,11 +239,6 @@ actor ModelRuntime {
 
   // MARK: - Internals
 
-  // No gate needed.
-
-  // removed prepareInputs; parameters and chat are built inside perform closures to avoid
-  // capturing non-Sendable MLX types across tasks.
-
   private func loadContainer(id: String, name: String) async throws -> SessionHolder {
     if let existing = modelCache.object(forKey: name as NSString) { return existing }
     guard let localURL = findLocalDirectory(forModelId: id) else {
@@ -264,6 +263,7 @@ actor ModelRuntime {
     modelName: String,
     temperature: Float,
     maxTokens: Int,
+    stopSequences: [String],
     tools: [Tool]?,
     toolChoice: ToolChoiceOption?,
     continuation: AsyncStream<String>.Continuation
@@ -284,6 +284,7 @@ actor ModelRuntime {
           temperature: temperature,
           maxTokens: maxTokens,
           topP: topP,
+          repetitionPenalty: nil,
           kvBits: kvBits,
           kvGroup: kvGroup,
           quantStart: quantStart,
@@ -306,8 +307,28 @@ actor ModelRuntime {
           context: contextWithEOS
         )
       }
+      var accumulated = ""
+      var alreadyEmitted = 0
+      let shouldCheckStop = !stopSequences.isEmpty
       for await event in stream {
-        if let chunk = event.chunk, !chunk.isEmpty { continuation.yield(chunk) }
+        guard let token = event.chunk, !token.isEmpty else { continue }
+        accumulated += token
+        let newSlice = String(accumulated.dropFirst(alreadyEmitted))
+        if shouldCheckStop {
+          if let stopIndex = stopSequences.compactMap({ s in accumulated.range(of: s)?.lowerBound })
+            .first
+          {
+            let finalRange =
+              accumulated.index(accumulated.startIndex, offsetBy: alreadyEmitted)..<stopIndex
+            let finalContent = String(accumulated[finalRange])
+            if !finalContent.isEmpty { continuation.yield(finalContent) }
+            break
+          }
+        }
+        if !newSlice.isEmpty {
+          continuation.yield(newSlice)
+          alreadyEmitted += newSlice.count
+        }
       }
     } catch {
       // ignore, best-effort
@@ -343,7 +364,8 @@ actor ModelRuntime {
         let params = ModelRuntime.makeGenerateParameters(
           temperature: parameters.temperature,
           maxTokens: parameters.maxTokens,
-          topP: topP,
+          topP: parameters.topPOverride ?? topP,
+          repetitionPenalty: parameters.repetitionPenalty,
           kvBits: kvBits,
           kvGroup: kvGroup,
           quantStart: quantStart,
@@ -407,6 +429,7 @@ actor ModelRuntime {
     temperature: Float,
     maxTokens: Int,
     topP: Float,
+    repetitionPenalty: Float?,
     kvBits: Int?,
     kvGroup: Int,
     quantStart: Int,
@@ -421,7 +444,7 @@ actor ModelRuntime {
       quantizedKVStart: quantStart,
       temperature: temperature,
       topP: topP,
-      repetitionPenalty: nil,
+      repetitionPenalty: repetitionPenalty,
       repetitionContextSize: 20
     )
     p.prefillStepSize = prefillStep

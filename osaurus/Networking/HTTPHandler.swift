@@ -394,6 +394,46 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
               model, responseId: responseId, created: created, context: ctx.value)
             writerBound.value.writeEnd(ctx.value)
           }
+        } catch let inv as ServiceToolInvocation {
+          // Translate tool invocation to OpenAI-style streaming tool_calls deltas
+          let raw = UUID().uuidString.replacingOccurrences(of: "-", with: "")
+          let callId = "call_" + String(raw.prefix(24))
+          let args = inv.jsonArguments
+          let chunkSize = 1024
+          hop {
+            writerBound.value.writeToolCallStart(
+              callId: callId,
+              functionName: inv.toolName,
+              index: 0,
+              model: model,
+              responseId: responseId,
+              created: created,
+              context: ctx.value
+            )
+          }
+          var i = args.startIndex
+          while i < args.endIndex {
+            let next = args.index(i, offsetBy: chunkSize, limitedBy: args.endIndex) ?? args.endIndex
+            let chunk = String(args[i..<next])
+            hop {
+              writerBound.value.writeToolCallArgumentsDelta(
+                callId: callId,
+                index: 0,
+                argumentsChunk: chunk,
+                model: model,
+                responseId: responseId,
+                created: created,
+                context: ctx.value
+              )
+            }
+            i = next
+          }
+          hop {
+            writerBound.value.writeFinishWithReason(
+              "tool_calls", model: model, responseId: responseId, created: created,
+              context: ctx.value)
+            writerBound.value.writeEnd(ctx.value)
+          }
         } catch {
           hop {
             writerBound.value.writeError(error.localizedDescription, context: ctx.value)

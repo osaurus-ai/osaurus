@@ -73,7 +73,7 @@ actor FoundationModelService: ToolCapableService, ThrowingStreamingService {
   ) async throws -> AsyncStream<String> {
     // Bridge the throwing stream to a non-throwing AsyncStream for compatibility.
     let throwing = try await streamDeltasThrowing(
-      prompt: prompt, parameters: parameters, requestedModel: requestedModel)
+      prompt: prompt, parameters: parameters, requestedModel: requestedModel, stopSequences: [])
     return AsyncStream<String> { continuation in
       Task {
         do {
@@ -92,7 +92,8 @@ actor FoundationModelService: ToolCapableService, ThrowingStreamingService {
   func streamDeltasThrowing(
     prompt: String,
     parameters: GenerationParameters,
-    requestedModel: String?
+    requestedModel: String?,
+    stopSequences: [String]
   ) async throws -> AsyncThrowingStream<String, Error> {
     #if canImport(FoundationModels)
       if #available(macOS 26.0, *) {
@@ -110,7 +111,12 @@ actor FoundationModelService: ToolCapableService, ThrowingStreamingService {
           do {
             var iterator = session.streamResponse(to: prompt, options: options).makeAsyncIterator()
             while let snapshot = try await iterator.next() {
-              let current = snapshot.content
+              var current = snapshot.content
+              if !stopSequences.isEmpty,
+                let r = stopSequences.compactMap({ current.range(of: $0)?.lowerBound }).first
+              {
+                current = String(current[..<r])
+              }
               let delta: String
               if current.hasPrefix(previous) {
                 delta = String(current.dropFirst(previous.count))

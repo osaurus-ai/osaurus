@@ -66,7 +66,7 @@ actor MLXService: ToolCapableService, ThrowingStreamingService {
     requestedModel: String?
   ) async throws -> AsyncStream<String> {
     let throwing = try await streamDeltasThrowing(
-      prompt: prompt, parameters: parameters, requestedModel: requestedModel)
+      prompt: prompt, parameters: parameters, requestedModel: requestedModel, stopSequences: [])
     let (stream, continuation) = AsyncStream<String>.makeStream()
     Task {
       do {
@@ -82,13 +82,14 @@ actor MLXService: ToolCapableService, ThrowingStreamingService {
   func streamDeltasThrowing(
     prompt: String,
     parameters: GenerationParameters,
-    requestedModel: String?
+    requestedModel: String?,
+    stopSequences: [String]
   ) async throws -> AsyncThrowingStream<String, Error> {
     let model = try selectModel(requestedName: requestedModel)
     return try await ModelRuntime.shared.streamWithTools(
       prompt: prompt,
       parameters: parameters,
-      stopSequences: [],
+      stopSequences: stopSequences,
       tools: [],
       toolChoice: nil,
       modelId: model.modelId,

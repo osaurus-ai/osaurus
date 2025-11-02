@@ -20,8 +20,6 @@ struct ModelDownloadView: View {
   @StateObject private var themeManager = ThemeManager.shared
   @Environment(\.theme) private var theme
 
-  // Delete confirmation removed; deletion lives in detail view
-
   /// Current search query text
   @State private var searchText: String = ""
 
@@ -55,7 +53,6 @@ struct ModelDownloadView: View {
     .frame(minWidth: 720, minHeight: 600)
     .background(theme.primaryBackground)
     .environment(\.theme, themeManager.currentTheme)
-    // Delete confirmation alert removed
     .onAppear {
       // If invoked via deeplink, prefill search and ensure the model is visible
       if let modelId = deeplinkModelId, !modelId.isEmpty {

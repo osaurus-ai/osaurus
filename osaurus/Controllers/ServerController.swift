@@ -205,8 +205,6 @@ final class ServerController: ObservableObject {
 
   // MARK: - Private Helpers
 
-  // Legacy bootstrap removed after actor migration
-
   /// Sets up channel closure handler
   private func setupChannelClosureHandler(_ channel: Channel) {
     channel.closeFuture.whenComplete { [weak self] _ in
@@ -300,9 +298,6 @@ final class ServerController: ObservableObject {
       return result
     }
   }
-
-  // MARK: - Concurrency Helpers
-  // Removed custom AtomicFlag in favor of relying on AsyncStream.finish idempotency
 
   private func stopServerIfNeeded() async throws {
     if serverActor != nil || serverChannel != nil || eventLoopGroup != nil {

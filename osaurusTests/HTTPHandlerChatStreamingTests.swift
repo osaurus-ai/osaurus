@@ -83,6 +83,62 @@ struct HTTPHandlerChatStreamingTests {
     #expect(status == 200)
     #expect(body.contains("\"done\":true") || body.contains("\"done\": true"))
   }
+
+  @Test func sse_path_emits_tool_calls_deltas() async throws {
+    // Engine that immediately requests a tool call via throwing stream
+    struct MockToolCallEngine: ChatEngineProtocol {
+      func streamChat(request: ChatCompletionRequest) async throws -> AsyncThrowingStream<
+        String, Error
+      > {
+        AsyncThrowingStream { continuation in
+          continuation.finish(
+            throwing: ServiceToolInvocation(
+              toolName: "get_weather", jsonArguments: "{\"city\":\"SF\"}"))
+        }
+      }
+      func completeChat(request: ChatCompletionRequest) async throws -> ChatCompletionResponse {
+        fatalError("not used")
+      }
+    }
+
+    let server = try await startTestServer(with: MockToolCallEngine())
+    defer { Task { await server.shutdown() } }
+
+    var request = URLRequest(
+      url: URL(string: "http://\(server.host):\(server.port)/chat/completions")!)
+    request.httpMethod = "POST"
+    request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+    request.setValue("text/event-stream", forHTTPHeaderField: "Accept")
+    let reqBody = ChatCompletionRequest(
+      model: "fake",
+      messages: [ChatMessage(role: "user", content: "hi")],
+      temperature: 0.5,
+      max_tokens: 16,
+      stream: true,
+      top_p: nil,
+      frequency_penalty: nil,
+      presence_penalty: nil,
+      stop: nil,
+      n: nil,
+      tools: [
+        Tool(
+          type: "function",
+          function: ToolFunction(
+            name: "get_weather", description: nil, parameters: .object(["city": .string("")])))
+      ],
+      tool_choice: .auto,
+      session_id: nil
+    )
+    request.httpBody = try JSONEncoder().encode(reqBody)
+
+    let (data, resp) = try await URLSession.shared.data(for: request)
+    let status = (resp as? HTTPURLResponse)?.statusCode ?? -1
+    let body = String(decoding: data, as: UTF8.self)
+    #expect(status == 200)
+    #expect(body.contains("\"tool_calls\""))
+    #expect(body.contains("\"function\":{\"name\":\"get_weather\""))
+    #expect(body.contains("\"finish_reason\":\"tool_calls\""))
+  }
 }
 
 // MARK: - Test server bootstrap
