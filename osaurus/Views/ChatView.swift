@@ -690,7 +690,7 @@ struct WindowAccessor: NSViewRepresentable {
 
   func makeNSView(context: Context) -> NSView {
     let view = NSView()
-    DispatchQueue.main.async {
+    Task { @MainActor in
       self.window = view.window
     }
     return view
@@ -698,7 +698,7 @@ struct WindowAccessor: NSViewRepresentable {
 
   func updateNSView(_ nsView: NSView, context: Context) {
     if window == nil {
-      DispatchQueue.main.async {
+      Task { @MainActor in
         self.window = nsView.window
       }
     }

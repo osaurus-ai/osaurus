@@ -203,7 +203,8 @@ class ThemeManager: ObservableObject {
 
 // MARK: - Theme Environment Key
 struct ThemeEnvironmentKey: EnvironmentKey {
-  nonisolated(unsafe) static let defaultValue: ThemeProtocol = LightTheme()
+  // Use a computed property to avoid storing a non-Sendable static globally
+  static var defaultValue: ThemeProtocol { LightTheme() }
 }
 
 extension EnvironmentValues {

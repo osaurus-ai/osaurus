@@ -11,6 +11,10 @@ import Foundation
 @preconcurrency import NIOPosix
 
 /// SwiftNIO HTTP request handler
+/// @unchecked Sendable justification: All mutable state is confined to the
+/// channel's event loop. Cross-thread interactions hop back to the event loop
+/// via `executeOnLoop(_:)`, and streaming work performed in Tasks propagates
+/// results to the loop before any state mutation.
 final class HTTPHandler: ChannelInboundHandler, @unchecked Sendable {
   typealias InboundIn = HTTPServerRequestPart
   typealias OutboundOut = HTTPServerResponsePart
@@ -370,7 +374,7 @@ final class HTTPHandler: ChannelInboundHandler, @unchecked Sendable {
         w.writeRole(
           "assistant", model: model, responseId: responseId, created: created, context: ctx)
       }
-      Task.detached(priority: .userInitiated) { [weak self] in
+      Task(priority: .userInitiated) { [weak self] in
         guard let self else { return }
         do {
           let stream = try await self.chatEngine.streamChat(request: req)
@@ -399,7 +403,7 @@ final class HTTPHandler: ChannelInboundHandler, @unchecked Sendable {
       }
     } else {
       let ctxBox = UncheckedSendableBox(value: context)
-      Task.detached(priority: .userInitiated) { [weak self] in
+      Task(priority: .userInitiated) { [weak self] in
         guard let self else { return }
         do {
           let resp = try await self.chatEngine.completeChat(request: req)
@@ -459,7 +463,7 @@ final class HTTPHandler: ChannelInboundHandler, @unchecked Sendable {
       let ctx = ctxBox.value
       w.writeHeaders(ctx, extraHeaders: cors)
     }
-    Task.detached(priority: .userInitiated) { [weak self] in
+    Task(priority: .userInitiated) { [weak self] in
       guard let self else { return }
       do {
         let stream = try await self.chatEngine.streamChat(request: req)

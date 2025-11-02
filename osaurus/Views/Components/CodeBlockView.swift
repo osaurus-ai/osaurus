@@ -51,6 +51,9 @@ struct CodeBlockView: View {
     NSPasteboard.general.clearContents()
     NSPasteboard.general.setString(code, forType: .string)
     copied = true
-    DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { copied = false }
+    Task { @MainActor in
+      try? await Task.sleep(nanoseconds: 1_000_000_000)
+      copied = false
+    }
   }
 }

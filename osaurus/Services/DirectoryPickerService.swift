@@ -19,9 +19,8 @@ final class DirectoryPickerService: ObservableObject {
   private let bookmarkKey = "ModelDirectoryBookmark"
   private var securityScopedResource: URL?
 
-  // Thread-safe access to the effective directory
-  private let directoryQueue = DispatchQueue(
-    label: "com.dinoki.osaurus.directory-access", attributes: .concurrent)
+  // Thread-safe access to the effective directory no longer requires a queue;
+  // computation below uses thread-safe system APIs and returns a value.
 
   private init() {
     loadSavedDirectory()
@@ -124,56 +123,54 @@ final class DirectoryPickerService: ObservableObject {
   /// Get the effective models directory (user-selected or default)
   /// This method is thread-safe for use from any context
   nonisolated var effectiveModelsDirectory: URL {
-    return directoryQueue.sync {
-      // Check UserDefaults directly for the bookmark
-      if let bookmarkData = UserDefaults.standard.data(forKey: bookmarkKey) {
-        do {
-          var isStale = false
-          let url = try URL(
-            resolvingBookmarkData: bookmarkData,
-            options: .withSecurityScope,
-            relativeTo: nil,
-            bookmarkDataIsStale: &isStale)
+    // Check UserDefaults directly for the bookmark
+    if let bookmarkData = UserDefaults.standard.data(forKey: bookmarkKey) {
+      do {
+        var isStale = false
+        let url = try URL(
+          resolvingBookmarkData: bookmarkData,
+          options: .withSecurityScope,
+          relativeTo: nil,
+          bookmarkDataIsStale: &isStale)
 
-          if !isStale {
-            return url
-          }
-        } catch {
-          // Bookmark invalid, fall through to default
+        if !isStale {
+          return url
         }
+      } catch {
+        // Bookmark invalid, fall through to default
       }
+    }
 
-      // Fall back to default location
-      // Precedence:
-      // 1) OSU_MODELS_DIR env var
-      // 2) Existing old default at ~/Documents/MLXModels (if present)
-      // 3) New default at ~/MLXModels
-      let fileManager = FileManager.default
+    // Fall back to default location
+    // Precedence:
+    // 1) OSU_MODELS_DIR env var
+    // 2) Existing old default at ~/Documents/MLXModels (if present)
+    // 3) New default at ~/MLXModels
+    let fileManager = FileManager.default
 
-      if let override = ProcessInfo.processInfo.environment["OSU_MODELS_DIR"], !override.isEmpty {
-        let expanded = (override as NSString).expandingTildeInPath
-        return URL(fileURLWithPath: expanded, isDirectory: true)
-      }
+    if let override = ProcessInfo.processInfo.environment["OSU_MODELS_DIR"], !override.isEmpty {
+      let expanded = (override as NSString).expandingTildeInPath
+      return URL(fileURLWithPath: expanded, isDirectory: true)
+    }
 
-      let homeURL = fileManager.homeDirectoryForCurrentUser
-      let newDefault = homeURL.appendingPathComponent("MLXModels")
+    let homeURL = fileManager.homeDirectoryForCurrentUser
+    let newDefault = homeURL.appendingPathComponent("MLXModels")
 
-      let documentsPath = fileManager.urls(
-        for: .documentDirectory,
-        in: .userDomainMask
-      ).first!
-      let oldDefault = documentsPath.appendingPathComponent("MLXModels")
+    let documentsPath = fileManager.urls(
+      for: .documentDirectory,
+      in: .userDomainMask
+    ).first!
+    let oldDefault = documentsPath.appendingPathComponent("MLXModels")
 
-      if fileManager.fileExists(atPath: newDefault.path) {
-        return newDefault
-      }
-
-      if fileManager.fileExists(atPath: oldDefault.path) {
-        return oldDefault
-      }
-
+    if fileManager.fileExists(atPath: newDefault.path) {
       return newDefault
     }
+
+    if fileManager.fileExists(atPath: oldDefault.path) {
+      return oldDefault
+    }
+
+    return newDefault
   }
 
   /// Nonisolated helper to compute the default models directory without accessing instance state.

@@ -45,8 +45,9 @@ final class ServerController: ObservableObject {
   private var serverActor: OsaurusServer?
 
   // Singleton holder to allow async access to the current controller instance when injected as EnvironmentObject
+  @MainActor
   private struct ServerControllerHolder {
-    nonisolated(unsafe) static var shared = ServerControllerHolder()
+    static var shared = ServerControllerHolder()
     weak var controller: ServerController?
     private init() {}
   }
@@ -204,12 +205,7 @@ final class ServerController: ObservableObject {
 
   // MARK: - Private Helpers
 
-  // Legacy bootstrap kept for reference; no longer used after actor migration
-  nonisolated static func createServerBootstrap(
-    group: EventLoopGroup, configuration: ServerConfiguration
-  ) -> ServerBootstrap {
-    return ServerBootstrap(group: group)
-  }
+  // Legacy bootstrap removed after actor migration
 
   /// Sets up channel closure handler
   private func setupChannelClosureHandler(_ channel: Channel) {
@@ -257,17 +253,13 @@ final class ServerController: ObservableObject {
     let connection = NWConnection(host: NWEndpoint.Host(host), port: nwPort, using: .tcp)
 
     let stateStream = AsyncStream<NWConnection.State> { continuation in
-      let finished = AtomicFlag()
       connection.stateUpdateHandler = { state in
-        if finished.get() { return }
         continuation.yield(state)
         switch state {
         case .ready, .failed(_), .cancelled:
-          if !finished.testAndSetTrue() {
-            continuation.finish()
-            // Avoid further callbacks
-            connection.stateUpdateHandler = nil
-          }
+          continuation.finish()
+          // Avoid further callbacks
+          connection.stateUpdateHandler = nil
         default:
           break
         }
@@ -310,23 +302,7 @@ final class ServerController: ObservableObject {
   }
 
   // MARK: - Concurrency Helpers
-  private final class AtomicFlag: @unchecked Sendable {
-    private let lock = NSLock()
-    private var value: Bool = false
-    func get() -> Bool {
-      lock.lock()
-      defer { lock.unlock() }
-      return value
-    }
-    /// Sets the flag to true and returns the previous value atomically.
-    func testAndSetTrue() -> Bool {
-      lock.lock()
-      defer { lock.unlock() }
-      let was = value
-      value = true
-      return was
-    }
-  }
+  // Removed custom AtomicFlag in favor of relying on AsyncStream.finish idempotency
 
   private func stopServerIfNeeded() async throws {
     if serverActor != nil || serverChannel != nil || eventLoopGroup != nil {

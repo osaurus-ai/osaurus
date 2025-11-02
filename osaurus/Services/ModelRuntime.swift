@@ -111,7 +111,7 @@ actor ModelRuntime {
     toolChoice: ToolChoiceOption?
   ) async throws -> AsyncStream<String> {
     let (stream, continuation) = AsyncStream<String>.makeStream()
-    Task.detached {
+    Task {
       await ModelRuntime.shared.runDeltas(
         messages: messages,
         modelId: modelId,
@@ -218,7 +218,7 @@ actor ModelRuntime {
   ) async throws -> AsyncThrowingStream<String, Error> {
     let messages = [Message(role: .user, content: prompt)]
     let (stream, continuation) = AsyncThrowingStream<String, Error>.makeStream()
-    Task.detached {
+    Task {
       await ModelRuntime.shared.runStreamWithTools(
         messages: messages,
         parameters: parameters,

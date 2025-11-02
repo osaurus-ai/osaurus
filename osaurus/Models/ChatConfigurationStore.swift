@@ -7,8 +7,9 @@
 
 import Foundation
 
+@MainActor
 enum ChatConfigurationStore {
-  nonisolated(unsafe) static var overrideDirectory: URL?
+  static var overrideDirectory: URL?
 
   static func load() -> ChatConfiguration {
     let url = configurationFileURL()
