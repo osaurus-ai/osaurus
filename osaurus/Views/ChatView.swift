@@ -33,6 +33,20 @@ final class ChatSession: ObservableObject {
     selectedModel = opts.first
   }
 
+  func refreshModelOptions() {
+    var opts: [String] = []
+    if FoundationModelService.isDefaultModelAvailable() {
+      opts.append("foundation")
+    }
+    let mlx = MLXService.getAvailableModels()
+    opts.append(contentsOf: mlx)
+    let prev = selectedModel
+    let newSelected = (prev != nil && opts.contains(prev!)) ? prev : opts.first
+    if modelOptions == opts && selectedModel == newSelected { return }
+    modelOptions = opts
+    selectedModel = newSelected
+  }
+
   func sendCurrent() {
     guard !isStreaming else { return }
     let text = input
@@ -182,6 +196,7 @@ struct ChatView: View {
       focusTrigger &+= 1
       isPinnedToBottom = true
       inputIsFocused = true
+      session.refreshModelOptions()
     }
     .onAppear {
       inputIsFocused = true
@@ -201,6 +216,7 @@ struct ChatView: View {
           return event
         }
       }
+      session.refreshModelOptions()
     }
     .onDisappear {
       if let monitor = keyMonitor {
