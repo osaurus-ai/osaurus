@@ -129,113 +129,7 @@ actor ModelRuntime {
     return stream
   }
 
-  func respondWithTools(
-    prompt: String,
-    parameters: GenerationParameters,
-    stopSequences: [String],
-    tools: [Tool],
-    toolChoice: ToolChoiceOption?,
-    modelId: String,
-    modelName: String
-  ) async throws -> String {
-    let messages = [Message(role: .user, content: prompt)]
-    let cfg = await ServerController.sharedConfiguration()
-    let topP: Float = cfg?.genTopP ?? 1.0
-    let kvBits: Int? = cfg?.genKVBits
-    let kvGroup: Int = cfg?.genKVGroupSize ?? 64
-    let quantStart: Int = cfg?.genQuantizedKVStart ?? 0
-    let maxKV: Int? = cfg?.genMaxKVSize
-    let prefillStep: Int = cfg?.genPrefillStepSize ?? 512
-    let holder = try await loadContainer(id: modelId, name: modelName)
-
-    var accumulated = ""
-    try await withTaskCancellationHandler(
-      operation: {
-        do {
-          let stream: AsyncStream<MLXLMCommon.Generation> = try await holder.container.perform {
-            (context: MLXLMCommon.ModelContext) in
-            let chat = ModelRuntime.mapMessagesToMLX(messages)
-            let params = ModelRuntime.makeGenerateParameters(
-              temperature: parameters.temperature,
-              maxTokens: parameters.maxTokens,
-              topP: parameters.topPOverride ?? topP,
-              repetitionPenalty: parameters.repetitionPenalty,
-              kvBits: kvBits,
-              kvGroup: kvGroup,
-              quantStart: quantStart,
-              maxKV: maxKV,
-              prefillStep: prefillStep
-            )
-            let tt = ModelRuntime.makeTokenizerTools(tools: tools, toolChoice: toolChoice)
-            let fullInput = MLXLMCommon.UserInput(chat: chat, processing: .init(), tools: tt)
-            let fullLMInput = try await context.processor.prepare(input: fullInput)
-
-            var contextWithEOS = context
-            let existing = context.configuration.extraEOSTokens
-            let extra: Set<String> = Set(["</end_of_turn>", "<end_of_turn>", "<|end|>", "<eot>"])
-            contextWithEOS.configuration.extraEOSTokens = existing.union(extra)
-
-            return try MLXLMCommon.generate(
-              input: fullLMInput,
-              cache: nil,
-              parameters: params,
-              context: contextWithEOS
-            )
-          }
-          for await event in stream {
-            if let toolCall = event.toolCall {
-              let argsData = try? JSONSerialization.data(
-                withJSONObject: toolCall.function.arguments.mapValues { $0.anyValue })
-              let argsString = argsData.flatMap { String(data: $0, encoding: .utf8) } ?? "{}"
-              throw ServiceToolInvocation(
-                toolName: toolCall.function.name, jsonArguments: argsString)
-            }
-            if let token = event.chunk, !token.isEmpty {
-              accumulated += token
-              if !stopSequences.isEmpty,
-                let stopIndex = stopSequences.compactMap({ s in accumulated.range(of: s)?.lowerBound
-                }).first
-              {
-                accumulated = String(accumulated[..<stopIndex])
-                break
-              }
-            }
-          }
-        } catch {
-          throw error
-        }
-      },
-      onCancel: {
-        // no-op
-      })
-    return accumulated
-  }
-
-  func streamWithTools(
-    prompt: String,
-    parameters: GenerationParameters,
-    stopSequences: [String],
-    tools: [Tool],
-    toolChoice: ToolChoiceOption?,
-    modelId: String,
-    modelName: String
-  ) async throws -> AsyncThrowingStream<String, Error> {
-    let messages = [Message(role: .user, content: prompt)]
-    let (stream, continuation) = AsyncThrowingStream<String, Error>.makeStream()
-    Task {
-      await ModelRuntime.shared.runStreamWithTools(
-        messages: messages,
-        parameters: parameters,
-        stopSequences: stopSequences,
-        tools: tools,
-        toolChoice: toolChoice,
-        modelId: modelId,
-        modelName: modelName,
-        continuation: continuation
-      )
-    }
-    return stream
-  }
+  
 
   // MARK: - Internals
 
@@ -425,6 +319,203 @@ actor ModelRuntime {
     }
   }
 
+  // MARK: - New message-based (OpenAI ChatMessage) APIs
+
+  func respondWithTools(
+    messages: [ChatMessage],
+    parameters: GenerationParameters,
+    stopSequences: [String],
+    tools: [Tool],
+    toolChoice: ToolChoiceOption?,
+    modelId: String,
+    modelName: String
+  ) async throws -> String {
+    let cfg = await ServerController.sharedConfiguration()
+    let topP: Float = cfg?.genTopP ?? 1.0
+    let kvBits: Int? = cfg?.genKVBits
+    let kvGroup: Int = cfg?.genKVGroupSize ?? 64
+    let quantStart: Int = cfg?.genQuantizedKVStart ?? 0
+    let maxKV: Int? = cfg?.genMaxKVSize
+    let prefillStep: Int = cfg?.genPrefillStepSize ?? 512
+    let holder = try await loadContainer(id: modelId, name: modelName)
+
+    var accumulated = ""
+    try await withTaskCancellationHandler(
+      operation: {
+        do {
+          let stream: AsyncStream<MLXLMCommon.Generation> = try await holder.container.perform {
+            (context: MLXLMCommon.ModelContext) in
+            let chat = ModelRuntime.mapOpenAIChatToMLX(messages)
+            let params = ModelRuntime.makeGenerateParameters(
+              temperature: parameters.temperature,
+              maxTokens: parameters.maxTokens,
+              topP: parameters.topPOverride ?? topP,
+              repetitionPenalty: parameters.repetitionPenalty,
+              kvBits: kvBits,
+              kvGroup: kvGroup,
+              quantStart: quantStart,
+              maxKV: maxKV,
+              prefillStep: prefillStep
+            )
+            let tt = ModelRuntime.makeTokenizerTools(tools: tools, toolChoice: toolChoice)
+            let fullInput = MLXLMCommon.UserInput(chat: chat, processing: .init(), tools: tt)
+            let fullLMInput = try await context.processor.prepare(input: fullInput)
+
+            var contextWithEOS = context
+            let existing = context.configuration.extraEOSTokens
+            let extra: Set<String> = Set(["</end_of_turn>", "<end_of_turn>", "<|end|>", "<eot>"])
+            contextWithEOS.configuration.extraEOSTokens = existing.union(extra)
+
+            return try MLXLMCommon.generate(
+              input: fullLMInput,
+              cache: nil,
+              parameters: params,
+              context: contextWithEOS
+            )
+          }
+          for await event in stream {
+            if let toolCall = event.toolCall {
+              let argsData = try? JSONSerialization.data(
+                withJSONObject: toolCall.function.arguments.mapValues { $0.anyValue })
+              let argsString = argsData.flatMap { String(data: $0, encoding: .utf8) } ?? "{}"
+              throw ServiceToolInvocation(
+                toolName: toolCall.function.name, jsonArguments: argsString)
+            }
+            if let token = event.chunk, !token.isEmpty {
+              accumulated += token
+              if !stopSequences.isEmpty,
+                let stopIndex = stopSequences.compactMap({ s in accumulated.range(of: s)?.lowerBound
+                }).first
+              {
+                accumulated = String(accumulated[..<stopIndex])
+                break
+              }
+            }
+          }
+        } catch {
+          throw error
+        }
+      },
+      onCancel: {
+        // no-op
+      })
+    return accumulated
+  }
+
+  func streamWithTools(
+    messages: [ChatMessage],
+    parameters: GenerationParameters,
+    stopSequences: [String],
+    tools: [Tool],
+    toolChoice: ToolChoiceOption?,
+    modelId: String,
+    modelName: String
+  ) async throws -> AsyncThrowingStream<String, Error> {
+    let (stream, continuation) = AsyncThrowingStream<String, Error>.makeStream()
+    Task {
+      await ModelRuntime.shared.runStreamWithToolsFromOpenAI(
+        messages: messages,
+        parameters: parameters,
+        stopSequences: stopSequences,
+        tools: tools,
+        toolChoice: toolChoice,
+        modelId: modelId,
+        modelName: modelName,
+        continuation: continuation
+      )
+    }
+    return stream
+  }
+
+  private func runStreamWithToolsFromOpenAI(
+    messages: [ChatMessage],
+    parameters: GenerationParameters,
+    stopSequences: [String],
+    tools: [Tool],
+    toolChoice: ToolChoiceOption?,
+    modelId: String,
+    modelName: String,
+    continuation: AsyncThrowingStream<String, Error>.Continuation
+  ) async {
+    let cfg = await ServerController.sharedConfiguration()
+    let topP: Float = cfg?.genTopP ?? 1.0
+    let kvBits: Int? = cfg?.genKVBits
+    let kvGroup: Int = cfg?.genKVGroupSize ?? 64
+    let quantStart: Int = cfg?.genQuantizedKVStart ?? 0
+    let maxKV: Int? = cfg?.genMaxKVSize
+    let prefillStep: Int = cfg?.genPrefillStepSize ?? 512
+    var accumulated = ""
+    var alreadyEmitted = 0
+    let shouldCheckStop = !stopSequences.isEmpty
+    do {
+      let holder = try await loadContainer(id: modelId, name: modelName)
+      let events: AsyncStream<MLXLMCommon.Generation> = try await holder.container.perform {
+        (context: MLXLMCommon.ModelContext) in
+        let chat = ModelRuntime.mapOpenAIChatToMLX(messages)
+        let params = ModelRuntime.makeGenerateParameters(
+          temperature: parameters.temperature,
+          maxTokens: parameters.maxTokens,
+          topP: parameters.topPOverride ?? topP,
+          repetitionPenalty: parameters.repetitionPenalty,
+          kvBits: kvBits,
+          kvGroup: kvGroup,
+          quantStart: quantStart,
+          maxKV: maxKV,
+          prefillStep: prefillStep
+        )
+        let tt = ModelRuntime.makeTokenizerTools(tools: tools, toolChoice: toolChoice)
+        let fullInput = MLXLMCommon.UserInput(chat: chat, processing: .init(), tools: tt)
+        let fullLMInput = try await context.processor.prepare(input: fullInput)
+
+        var contextWithEOS = context
+        let existing = context.configuration.extraEOSTokens
+        let extra: Set<String> = Set(["</end_of_turn>", "<end_of_turn>", "<|end|>", "<eot>"])
+        contextWithEOS.configuration.extraEOSTokens = existing.union(extra)
+
+        return try MLXLMCommon.generate(
+          input: fullLMInput,
+          cache: nil,
+          parameters: params,
+          context: contextWithEOS
+        )
+      }
+      for await event in events {
+        if let toolCall = event.toolCall {
+          let argsData = try? JSONSerialization.data(
+            withJSONObject: toolCall.function.arguments.mapValues { $0.anyValue })
+          let argsString = argsData.flatMap { String(data: $0, encoding: .utf8) } ?? "{}"
+          continuation.finish(
+            throwing: ServiceToolInvocation(
+              toolName: toolCall.function.name, jsonArguments: argsString)
+          )
+          return
+        }
+        guard let token = event.chunk, !token.isEmpty else { continue }
+        accumulated += token
+        let newSlice = String(accumulated.dropFirst(alreadyEmitted))
+        if shouldCheckStop {
+          if let stopIndex = stopSequences.compactMap({ s in accumulated.range(of: s)?.lowerBound })
+            .first
+          {
+            let finalRange =
+              accumulated.index(accumulated.startIndex, offsetBy: alreadyEmitted)..<stopIndex
+            let finalContent = String(accumulated[finalRange])
+            if !finalContent.isEmpty { continuation.yield(finalContent) }
+            continuation.finish()
+            return
+          }
+        }
+        if !newSlice.isEmpty {
+          continuation.yield(newSlice)
+          alreadyEmitted += newSlice.count
+        }
+      }
+      continuation.finish()
+    } catch {
+      continuation.finish(throwing: error)
+    }
+  }
+
   nonisolated static func makeGenerateParameters(
     temperature: Float,
     maxTokens: Int,
@@ -483,6 +574,42 @@ actor ModelRuntime {
     } else {
       return tools.map { $0.toTokenizerToolSpec() }
     }
+  }
+
+  // Map OpenAI ChatMessage history to MLX Chat.Message array, preserving tool results
+  // by converting them into user-labeled text so the model can reason over outputs.
+  nonisolated static func mapOpenAIChatToMLX(
+    _ msgs: [ChatMessage]
+  ) -> [MLXLMCommon.Chat.Message] {
+    var toolIdToName: [String: String] = [:]
+    for m in msgs where m.role == "assistant" {
+      if let calls = m.tool_calls {
+        for call in calls { toolIdToName[call.id] = call.function.name }
+      }
+    }
+
+    var out: [MLXLMCommon.Chat.Message] = []
+    out.reserveCapacity(max(6, msgs.count))
+    for m in msgs {
+      switch m.role {
+      case "system":
+        out.append(MLXLMCommon.Chat.Message(role: .system, content: m.content ?? "", images: [], videos: []))
+      case "user":
+        out.append(MLXLMCommon.Chat.Message(role: .user, content: m.content ?? "", images: [], videos: []))
+      case "assistant":
+        if let c = m.content, !c.isEmpty {
+          out.append(MLXLMCommon.Chat.Message(role: .assistant, content: c, images: [], videos: []))
+        }
+        // assistant tool_calls are exposed via tools spec; we don't inject them as text
+      case "tool":
+        let name = (m.tool_call_id.flatMap { toolIdToName[$0] }) ?? "unknown"
+        let text = "Tool(\(name)) result:\n\(m.content ?? "")"
+        out.append(MLXLMCommon.Chat.Message(role: .user, content: text, images: [], videos: []))
+      default:
+        out.append(MLXLMCommon.Chat.Message(role: .user, content: m.content ?? "", images: [], videos: []))
+      }
+    }
+    return out
   }
 
   private func computeWeightsSizeBytes(at url: URL) -> Int64 {

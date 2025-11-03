@@ -24,9 +24,6 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
 
   func streamChat(request: ChatCompletionRequest) async throws -> AsyncThrowingStream<String, Error>
   {
-    // Build prompt directly from OpenAI-format messages to preserve tool_calls and tool results
-    let prompt = OpenAIPromptBuilder.buildPrompt(from: request.messages)
-
     let temperature = request.temperature ?? 1.0
     let maxTokens = request.max_tokens ?? 512
     let repPenalty: Float? = {
@@ -51,11 +48,11 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
 
     switch route {
     case .service(let service, _):
-      // If tools were provided and supported, use tool-capable streaming
+      // If tools were provided and supported, use message-based tool streaming
       if let tools = request.tools, !tools.isEmpty, let toolSvc = service as? ToolCapableService {
         let stopSequences = request.stop ?? []
         return try await toolSvc.streamWithTools(
-          prompt: prompt,
+          messages: request.messages,
           parameters: params,
           stopSequences: stopSequences,
           tools: tools,
@@ -68,7 +65,7 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
         throw EngineError()
       }
       return try await throwingService.streamDeltasThrowing(
-        prompt: prompt,
+        messages: request.messages,
         parameters: params,
         requestedModel: request.model,
         stopSequences: request.stop ?? []
@@ -79,9 +76,6 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
   }
 
   func completeChat(request: ChatCompletionRequest) async throws -> ChatCompletionResponse {
-    // Build prompt directly from OpenAI-format messages to preserve tool_calls and tool results
-    let prompt = OpenAIPromptBuilder.buildPrompt(from: request.messages)
-
     let temperature = request.temperature ?? 1.0
     let maxTokens = request.max_tokens ?? 512
     let repPenalty2: Float? = {
@@ -108,12 +102,12 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
 
     switch route {
     case .service(let service, let effectiveModel):
-      // If tools were provided and the service supports them, use the tool-capable API
+      // If tools were provided and the service supports them, use the message-based API
       if let tools = request.tools, !tools.isEmpty, let toolSvc = service as? ToolCapableService {
         let stopSequences = request.stop ?? []
         do {
           let text = try await toolSvc.respondWithTools(
-            prompt: prompt,
+            messages: request.messages,
             parameters: params,
             stopSequences: stopSequences,
             tools: tools,
@@ -166,7 +160,7 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
 
       // Fallback to plain generation (no tools)
       let text = try await service.generateOneShot(
-        prompt: prompt,
+        messages: request.messages,
         parameters: params,
         requestedModel: request.model
       )
