@@ -133,8 +133,6 @@ actor MLXService: ToolCapableService, ThrowingStreamingService {
     )
   }
 
-  
-
   func streamWithTools(
     messages: [ChatMessage],
     parameters: GenerationParameters,

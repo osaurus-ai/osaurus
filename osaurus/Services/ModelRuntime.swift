@@ -129,8 +129,6 @@ actor ModelRuntime {
     return stream
   }
 
-  
-
   // MARK: - Internals
 
   private func loadContainer(id: String, name: String) async throws -> SessionHolder {
@@ -549,6 +547,7 @@ actor ModelRuntime {
         case .system: return .system
         case .user: return .user
         case .assistant: return .assistant
+        case .tool: return .tool
         }
       }()
       return MLXLMCommon.Chat.Message(role: role, content: m.content, images: [], videos: [])
@@ -593,20 +592,23 @@ actor ModelRuntime {
     for m in msgs {
       switch m.role {
       case "system":
-        out.append(MLXLMCommon.Chat.Message(role: .system, content: m.content ?? "", images: [], videos: []))
+        out.append(
+          MLXLMCommon.Chat.Message(role: .system, content: m.content ?? "", images: [], videos: []))
       case "user":
-        out.append(MLXLMCommon.Chat.Message(role: .user, content: m.content ?? "", images: [], videos: []))
+        out.append(
+          MLXLMCommon.Chat.Message(role: .user, content: m.content ?? "", images: [], videos: []))
       case "assistant":
         if let c = m.content, !c.isEmpty {
           out.append(MLXLMCommon.Chat.Message(role: .assistant, content: c, images: [], videos: []))
         }
-        // assistant tool_calls are exposed via tools spec; we don't inject them as text
+      // assistant tool_calls are exposed via tools spec; we don't inject them as text
       case "tool":
         let name = (m.tool_call_id.flatMap { toolIdToName[$0] }) ?? "unknown"
         let text = "Tool(\(name)) result:\n\(m.content ?? "")"
         out.append(MLXLMCommon.Chat.Message(role: .user, content: text, images: [], videos: []))
       default:
-        out.append(MLXLMCommon.Chat.Message(role: .user, content: m.content ?? "", images: [], videos: []))
+        out.append(
+          MLXLMCommon.Chat.Message(role: .user, content: m.content ?? "", images: [], videos: []))
       }
     }
     return out

@@ -7,30 +7,6 @@
 
 import Foundation
 
-struct PromptBuilder {
-  static func buildPrompt(from messages: [Message]) -> String {
-    var parts: [String] = []
-    parts.reserveCapacity(max(4, messages.count * 2))
-    for m in messages {
-      switch m.role {
-      case .system:
-        parts.append("System:")
-        parts.append(m.content)
-      case .user:
-        parts.append("User:")
-        parts.append(m.content)
-      case .assistant:
-        parts.append("Assistant:")
-        parts.append(m.content)
-      }
-    }
-    parts.append("Assistant:")
-    return parts.joined(separator: "\n")
-  }
-}
-
-// MARK: - OpenAI-aware prompt builder (preserves tool calls and tool results)
-
 struct OpenAIPromptBuilder {
   /// Build a textual prompt from OpenAI-format chat messages, preserving assistant tool_calls
   /// and subsequent tool results (role=="tool") so models can reason over them.
