@@ -67,13 +67,13 @@ actor FoundationModelService: ToolCapableService, ThrowingStreamingService {
   }
 
   func streamDeltas(
-    prompt: String,
+    messages: [ChatMessage],
     parameters: GenerationParameters,
     requestedModel: String?
   ) async throws -> AsyncStream<String> {
     // Bridge the throwing stream to a non-throwing AsyncStream for compatibility.
     let throwing = try await streamDeltasThrowing(
-      prompt: prompt, parameters: parameters, requestedModel: requestedModel, stopSequences: [])
+      messages: messages, parameters: parameters, requestedModel: requestedModel, stopSequences: [])
     return AsyncStream<String> { continuation in
       Task {
         do {
@@ -90,11 +90,12 @@ actor FoundationModelService: ToolCapableService, ThrowingStreamingService {
   }
 
   func streamDeltasThrowing(
-    prompt: String,
+    messages: [ChatMessage],
     parameters: GenerationParameters,
     requestedModel: String?,
     stopSequences: [String]
   ) async throws -> AsyncThrowingStream<String, Error> {
+    let prompt = OpenAIPromptBuilder.buildPrompt(from: messages)
     #if canImport(FoundationModels)
       if #available(macOS 26.0, *) {
         let session = LanguageModelSession()
@@ -143,10 +144,11 @@ actor FoundationModelService: ToolCapableService, ThrowingStreamingService {
   }
 
   func generateOneShot(
-    prompt: String,
+    messages: [ChatMessage],
     parameters: GenerationParameters,
     requestedModel: String?
   ) async throws -> String {
+    let prompt = OpenAIPromptBuilder.buildPrompt(from: messages)
     return try await Self.generateOneShot(
       prompt: prompt, temperature: parameters.temperature, maxTokens: parameters.maxTokens)
   }
@@ -154,13 +156,14 @@ actor FoundationModelService: ToolCapableService, ThrowingStreamingService {
   // MARK: - Tool calling bridge (OpenAI tools -> FoundationModels)
 
   func respondWithTools(
-    prompt: String,
+    messages: [ChatMessage],
     parameters: GenerationParameters,
     stopSequences: [String],
     tools: [Tool],
     toolChoice: ToolChoiceOption?,
     requestedModel: String?
   ) async throws -> String {
+    let prompt = OpenAIPromptBuilder.buildPrompt(from: messages)
     #if canImport(FoundationModels)
       if #available(macOS 26.0, *) {
         let appleTools: [any FoundationModels.Tool] =
@@ -203,13 +206,14 @@ actor FoundationModelService: ToolCapableService, ThrowingStreamingService {
   }
 
   func streamWithTools(
-    prompt: String,
+    messages: [ChatMessage],
     parameters: GenerationParameters,
     stopSequences: [String],
     tools: [Tool],
     toolChoice: ToolChoiceOption?,
     requestedModel: String?
   ) async throws -> AsyncThrowingStream<String, Error> {
+    let prompt = OpenAIPromptBuilder.buildPrompt(from: messages)
     #if canImport(FoundationModels)
       if #available(macOS 26.0, *) {
         let appleTools: [any FoundationModels.Tool] =

@@ -32,25 +32,25 @@ protocol ModelService: Sendable {
   /// For example, the Foundation service returns true for nil/empty/"default".
   func handles(requestedModel: String?) -> Bool
 
-  /// Stream incremental text deltas for the provided prompt.
+  /// Stream incremental text deltas for the provided message history (non-throwing stream).
   func streamDeltas(
-    prompt: String,
+    messages: [ChatMessage],
     parameters: GenerationParameters,
     requestedModel: String?
   ) async throws -> AsyncStream<String>
 
-  /// Generate a single-shot response for the provided prompt.
+  /// Generate a single-shot response for the provided message history.
   func generateOneShot(
-    prompt: String,
+    messages: [ChatMessage],
     parameters: GenerationParameters,
     requestedModel: String?
   ) async throws -> String
 }
 
-/// Optional capability for services that can natively handle OpenAI-style tools.
+/// Optional capability for services that can natively handle OpenAI-style tools (message-based only).
 protocol ToolCapableService: ModelService {
   func respondWithTools(
-    prompt: String,
+    messages: [ChatMessage],
     parameters: GenerationParameters,
     stopSequences: [String],
     tools: [Tool],
@@ -59,7 +59,7 @@ protocol ToolCapableService: ModelService {
   ) async throws -> String
 
   func streamWithTools(
-    prompt: String,
+    messages: [ChatMessage],
     parameters: GenerationParameters,
     stopSequences: [String],
     tools: [Tool],
@@ -71,7 +71,7 @@ protocol ToolCapableService: ModelService {
 /// Optional capability for services that can produce throwing streams directly.
 protocol ThrowingStreamingService: ModelService, Sendable {
   func streamDeltasThrowing(
-    prompt: String,
+    messages: [ChatMessage],
     parameters: GenerationParameters,
     requestedModel: String?,
     stopSequences: [String]

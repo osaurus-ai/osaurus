@@ -67,23 +67,23 @@ struct ChatEngineTests {
       func isAvailable() -> Bool { true }
       func handles(requestedModel: String?) -> Bool { (requestedModel ?? "") == "fake" }
       func streamDeltas(
-        prompt: String,
+        messages: [ChatMessage],
         parameters: GenerationParameters,
         requestedModel: String?
       ) async throws -> AsyncStream<String> { AsyncStream { $0.finish() } }
       func streamDeltasThrowing(
-        prompt: String,
+        messages: [ChatMessage],
         parameters: GenerationParameters,
         requestedModel: String?,
         stopSequences: [String]
       ) async throws -> AsyncThrowingStream<String, Error> { AsyncThrowingStream { $0.finish() } }
       func generateOneShot(
-        prompt: String,
+        messages: [ChatMessage],
         parameters: GenerationParameters,
         requestedModel: String?
       ) async throws -> String { "" }
       func respondWithTools(
-        prompt: String,
+        messages: [ChatMessage],
         parameters: GenerationParameters,
         stopSequences: [String],
         tools: [Tool],
@@ -93,7 +93,7 @@ struct ChatEngineTests {
         throw ServiceToolInvocation(toolName: "get_weather", jsonArguments: "{\"city\":\"SF\"}")
       }
       func streamWithTools(
-        prompt: String,
+        messages: [ChatMessage],
         parameters: GenerationParameters,
         stopSequences: [String],
         tools: [Tool],

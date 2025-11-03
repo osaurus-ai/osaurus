@@ -61,12 +61,12 @@ actor MLXService: ToolCapableService, ThrowingStreamingService {
   // MARK: - ModelService
 
   func streamDeltas(
-    prompt: String,
+    messages: [ChatMessage],
     parameters: GenerationParameters,
     requestedModel: String?
   ) async throws -> AsyncStream<String> {
     let throwing = try await streamDeltasThrowing(
-      prompt: prompt, parameters: parameters, requestedModel: requestedModel, stopSequences: [])
+      messages: messages, parameters: parameters, requestedModel: requestedModel, stopSequences: [])
     let (stream, continuation) = AsyncStream<String>.makeStream()
     Task {
       do {
@@ -80,14 +80,14 @@ actor MLXService: ToolCapableService, ThrowingStreamingService {
   }
 
   func streamDeltasThrowing(
-    prompt: String,
+    messages: [ChatMessage],
     parameters: GenerationParameters,
     requestedModel: String?,
     stopSequences: [String]
   ) async throws -> AsyncThrowingStream<String, Error> {
     let model = try selectModel(requestedName: requestedModel)
     return try await ModelRuntime.shared.streamWithTools(
-      prompt: prompt,
+      messages: messages,
       parameters: parameters,
       stopSequences: stopSequences,
       tools: [],
@@ -98,21 +98,23 @@ actor MLXService: ToolCapableService, ThrowingStreamingService {
   }
 
   func generateOneShot(
-    prompt: String,
+    messages: [ChatMessage],
     parameters: GenerationParameters,
     requestedModel: String?
   ) async throws -> String {
     let stream = try await streamDeltas(
-      prompt: prompt, parameters: parameters, requestedModel: requestedModel)
+      messages: messages, parameters: parameters, requestedModel: requestedModel)
     var out = ""
     for await s in stream { out += s }
     return out
   }
 
-  // MARK: - Tool-capable bridge
+  // MARK: - Tool-capable bridge (message-based only)
+
+  // MARK: - Message-based Tool-capable bridge
 
   func respondWithTools(
-    prompt: String,
+    messages: [ChatMessage],
     parameters: GenerationParameters,
     stopSequences: [String],
     tools: [Tool],
@@ -121,7 +123,7 @@ actor MLXService: ToolCapableService, ThrowingStreamingService {
   ) async throws -> String {
     let model = try selectModel(requestedName: requestedModel)
     return try await ModelRuntime.shared.respondWithTools(
-      prompt: prompt,
+      messages: messages,
       parameters: parameters,
       stopSequences: stopSequences,
       tools: tools,
@@ -131,8 +133,10 @@ actor MLXService: ToolCapableService, ThrowingStreamingService {
     )
   }
 
+  
+
   func streamWithTools(
-    prompt: String,
+    messages: [ChatMessage],
     parameters: GenerationParameters,
     stopSequences: [String],
     tools: [Tool],
@@ -141,7 +145,7 @@ actor MLXService: ToolCapableService, ThrowingStreamingService {
   ) async throws -> AsyncThrowingStream<String, Error> {
     let model = try selectModel(requestedName: requestedModel)
     return try await ModelRuntime.shared.streamWithTools(
-      prompt: prompt,
+      messages: messages,
       parameters: parameters,
       stopSequences: stopSequences,
       tools: tools,

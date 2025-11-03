@@ -61,7 +61,7 @@ struct FakeThrowingStreamingService: ThrowingStreamingService {
   }
 
   func streamDeltas(
-    prompt: String,
+    messages: [ChatMessage],
     parameters: GenerationParameters,
     requestedModel: String?
   ) async throws -> AsyncStream<String> {
@@ -74,7 +74,7 @@ struct FakeThrowingStreamingService: ThrowingStreamingService {
   }
 
   func streamDeltasThrowing(
-    prompt: String,
+    messages: [ChatMessage],
     parameters: GenerationParameters,
     requestedModel: String?,
     stopSequences: [String]
@@ -86,7 +86,7 @@ struct FakeThrowingStreamingService: ThrowingStreamingService {
   }
 
   func generateOneShot(
-    prompt: String,
+    messages: [ChatMessage],
     parameters: GenerationParameters,
     requestedModel: String?
   ) async throws -> String {
@@ -107,7 +107,7 @@ struct FakeNonThrowingService: ModelService {
   }
 
   func streamDeltas(
-    prompt: String,
+    messages: [ChatMessage],
     parameters: GenerationParameters,
     requestedModel: String?
   ) async throws -> AsyncStream<String> {
@@ -120,7 +120,7 @@ struct FakeNonThrowingService: ModelService {
   }
 
   func generateOneShot(
-    prompt: String,
+    messages: [ChatMessage],
     parameters: GenerationParameters,
     requestedModel: String?
   ) async throws -> String {
