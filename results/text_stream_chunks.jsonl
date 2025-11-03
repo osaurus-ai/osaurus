@@ -1,0 +1,3 @@
+{"id":"chatcmpl-F8099DD318BE","object":"chat.completion.chunk","created":1762173450,"model":"foundation","choices":[{"index":0,"delta":{"role":"assistant","content":""}}]}
+{"id":"chatcmpl-F8099DD318BE","object":"chat.completion.chunk","created":1762173450,"model":"foundation","choices":[{"index":0,"delta":{"content":"Hello! How can I assist you today?"}}]}
+{"id":"chatcmpl-F8099DD318BE","object":"chat.completion.chunk","created":1762173450,"model":"foundation","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}

@@ -1,0 +1,5 @@
+{"id":"chatcmpl-0745E7D2C395","object":"chat.completion.chunk","created":1762173452,"model":"foundation","choices":[{"index":0,"delta":{"role":"assistant","content":""}}]}
+{"id":"chatcmpl-0745E7D2C395","object":"chat.completion.chunk","created":1762173452,"model":"foundation","choices":[{"index":0,"delta":{"content":"null"}}]}
+{"id":"chatcmpl-0745E7D2C395","object":"chat.completion.chunk","created":1762173452,"model":"foundation","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_74C4510E4F2641C4AF1285CA","type":"function","function":{"name":"get_weather"}}]}}]}
+{"id":"chatcmpl-0745E7D2C395","object":"chat.completion.chunk","created":1762173452,"model":"foundation","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"{\"city\": \"San Francisco\"}"}}]}}]}
+{"id":"chatcmpl-0745E7D2C395","object":"chat.completion.chunk","created":1762173452,"model":"foundation","choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}

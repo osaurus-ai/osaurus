@@ -1,0 +1,1 @@
+{"model":"foundation","messages":[{"role":"user","content":"Say hello in one short sentence."}],"stream":true,"temperature":0.2,"max_tokens":64}
