@@ -49,9 +49,23 @@ struct ToolsManagerView: View {
 
   private var contentView: some View {
     VStack(spacing: 0) {
-      // Search bar
+      // Tabs + Search bar (styled like ModelDownloadView)
       HStack(spacing: 12) {
+        // Single selected tab: All Tools (count)
+        HStack(spacing: 4) {
+          Text("All Tools (\(filteredEntries.count))")
+            .font(.system(size: 14, weight: .medium))
+            .foregroundColor(theme.primaryText)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 6)
+            .background(
+              RoundedRectangle(cornerRadius: 6)
+                .fill(theme.tertiaryBackground)
+            )
+        }
+
         Spacer()
+
         HStack(spacing: 8) {
           Image(systemName: "magnifyingglass")
             .font(.system(size: 14))
