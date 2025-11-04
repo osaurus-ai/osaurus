@@ -22,7 +22,7 @@ final class ToolRegistry {
   }
 
   private init() {
-    // Register built-in tools here
+    // Register built-in tools
     register(WeatherTool())
     register(StockTool())
   }

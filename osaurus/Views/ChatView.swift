@@ -117,16 +117,17 @@ final class ChatSession: ObservableObject {
           return msgs
         }
 
+        let maxAttempts = max(chatCfg.maxToolAttempts ?? 3, 1)
         var attempts = 0
-        outer: while attempts < 3 {
+        outer: while attempts < maxAttempts {
           attempts += 1
           let req = ChatCompletionRequest(
             model: selectedModel ?? "default",
             messages: buildMessages(),
-            temperature: 0.7,
-            max_tokens: 1024,
+            temperature: chatCfg.temperature ?? 0.7,
+            max_tokens: chatCfg.maxTokens ?? 1024,
             stream: true,
-            top_p: nil,
+            top_p: chatCfg.topPOverride,
             frequency_penalty: nil,
             presence_penalty: nil,
             stop: nil,
