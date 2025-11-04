@@ -29,7 +29,7 @@ struct MLXModel: Identifiable, Codable {
     self.name = name
     self.description = description
     self.downloadURL = downloadURL
-    self.rootDirectory = rootDirectory ?? DirectoryPickerService.defaultModelsDirectory()
+    self.rootDirectory = rootDirectory ?? DirectoryPickerService.effectiveModelsDirectory()
   }
 
   /// Local directory where this model should be stored

@@ -1009,7 +1009,7 @@ extension ModelManager {
   /// Discover locally downloaded models regardless of SDK allowlist.
   nonisolated static func discoverLocalModels() -> [MLXModel] {
     let fm = FileManager.default
-    let root = DirectoryPickerService.defaultModelsDirectory()
+    let root = DirectoryPickerService.effectiveModelsDirectory()
     guard
       let orgDirs = try? fm.contentsOfDirectory(
         at: root, includingPropertiesForKeys: [.isDirectoryKey], options: [.skipsHiddenFiles])

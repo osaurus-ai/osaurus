@@ -754,7 +754,7 @@ actor ModelRuntime {
 
   private func findLocalDirectory(forModelId id: String) -> URL? {
     let parts = id.split(separator: "/").map(String.init)
-    let base = DirectoryPickerService.defaultModelsDirectory()
+    let base = DirectoryPickerService.effectiveModelsDirectory()
     let url = parts.reduce(base) { partial, component in
       partial.appendingPathComponent(component, isDirectory: true)
     }
