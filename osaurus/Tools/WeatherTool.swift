@@ -2,14 +2,14 @@
 //  WeatherTool.swift
 //  osaurus
 //
-//  Deterministic, offline weather tool (Dinoki-style). No API keys.
+//  Weather lookup tool using wttr.in API.
 //
 
 import Foundation
 
 struct WeatherTool: ChatTool {
   let name: String = "get_weather"
-  let toolDescription: String = "Get current weather for a city (offline, approximate)."
+  let toolDescription: String = "Get current weather for a city via wttr.in"
 
   var parameters: JSONValue? {
     // Minimal JSON Schema-like structure (OpenAI compatible)
@@ -37,77 +37,121 @@ struct WeatherTool: ChatTool {
       (args["location"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
     let unitRaw = ((args["unit"] as? String) ?? "celsius").lowercased()
     let unit = (unitRaw == "fahrenheit") ? "fahrenheit" : "celsius"
-    let location = locationRaw.isEmpty ? "San Francisco" : locationRaw
+    let fallbackLocation = "San Francisco"
+    let userLocation = locationRaw.isEmpty ? fallbackLocation : locationRaw
 
-    // Deterministic pseudo-random values based on location + date
-    let seed = Self.seed(from: location)
-    var rng = LCG(seed: seed)
-    let baseTempC = rng.nextRange(min: -5.0, max: 28.0)
-    let dayOffset = Self.dayOfYear()
-    let seasonal = sin((Double(dayOffset) / 365.0) * 2.0 * Double.pi) * 6.0
-    let tempC = (baseTempC + seasonal).rounded()
-    let humidity = Int(rng.nextRange(min: 25.0, max: 95.0).rounded())
-    let windKph = (rng.nextRange(min: 0.0, max: 38.0) * 10).rounded() / 10
-    let conditions = [
-      "Sunny", "Partly Cloudy", "Cloudy", "Rain", "Windy", "Foggy", "Thunderstorms", "Snow",
-    ]
-    let condition = conditions[Int(abs(rng.nextInt()) % conditions.count)]
-
-    let temperature: Double = unit == "fahrenheit" ? (tempC * 9.0 / 5.0 + 32.0) : tempC
-    let tempRounded = (temperature * 10).rounded() / 10
-
-    let payload: [String: Any] = [
-      "location": location,
-      "unit": unit,
-      "temperature": tempRounded,
-      "humidity": humidity,
-      "wind_kph": windKph,
-      "condition": condition,
-      "source": "offline",
-    ]
-    let data = try JSONSerialization.data(withJSONObject: payload, options: [.sortedKeys])
-    let json = String(data: data, encoding: .utf8) ?? "{}"
-
-    let summary: String
-    if unit == "fahrenheit" {
-      summary =
-        "Weather in \(location): \(Int(tempRounded))°F, \(condition), humidity \(humidity)%, wind \(windKph) kph."
-    } else {
-      summary =
-        "Weather in \(location): \(Int(tempRounded))°C, \(condition), humidity \(humidity)%, wind \(windKph) kph."
+    // Build wttr.in URL
+    let clean = userLocation.replacingOccurrences(of: " ", with: "+")
+    guard let encoded = clean.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) else {
+      return Self.failureResult(reason: "Invalid location", source: "wttr.in")
+    }
+    let urlString = "https://wttr.in/\(encoded)?format=j1"
+    guard let url = URL(string: urlString) else {
+      return Self.failureResult(reason: "Invalid URL", source: "wttr.in")
     }
 
-    return summary + "\n" + json
+    var request = URLRequest(url: url)
+    request.setValue("application/json", forHTTPHeaderField: "Accept")
+    request.setValue("Osaurus/1.0", forHTTPHeaderField: "User-Agent")
+    request.timeoutInterval = 10
+
+    do {
+      let (data, response) = try await URLSession.shared.data(for: request)
+      guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
+        return Self.failureResult(reason: "Server returned an error", source: "wttr.in")
+      }
+
+      let decoder = JSONDecoder()
+      let wttr = try decoder.decode(WttrResponse.self, from: data)
+      guard let current = wttr.current_condition.first else {
+        return Self.failureResult(reason: "Weather data unavailable", source: "wttr.in")
+      }
+
+      // Compose display location from nearest_area when available
+      let displayLocation: String = {
+        guard let area = wttr.nearest_area?.first else { return userLocation }
+        let city = area.areaName?.first?.value ?? userLocation
+        let region = area.region?.first?.value
+        let country = area.country?.first?.value
+        if let r = region, let c = country, !r.isEmpty, !c.isEmpty, r != city {
+          return "\(city), \(r), \(c)"
+        } else if let c = country, !c.isEmpty {
+          return "\(city), \(c)"
+        } else {
+          return city
+        }
+      }()
+
+      // Extract condition and measurements
+      let condition = current.weatherDesc?.first?.value ?? "Clear conditions"
+      let humidity = Int(current.humidity) ?? 0
+      let windKph = Double(current.windspeedKmph ?? "0") ?? 0.0
+
+      // Select and round temperature based on unit
+      let tempString = (unit == "fahrenheit") ? current.temp_F : current.temp_C
+      let tempValue = Double(tempString) ?? 0.0
+      let tempRounded = (tempValue * 10).rounded() / 10
+
+      // Build JSON payload
+      let payload: [String: Any] = [
+        "location": displayLocation,
+        "unit": unit,
+        "temperature": tempRounded,
+        "humidity": humidity,
+        "wind_kph": windKph,
+        "condition": condition,
+        "source": "wttr.in",
+      ]
+      let jsonData = try JSONSerialization.data(withJSONObject: payload, options: [.sortedKeys])
+      let json = String(data: jsonData, encoding: .utf8) ?? "{}"
+
+      let summary: String
+      if unit == "fahrenheit" {
+        summary =
+          "Weather in \(displayLocation): \(Int(tempRounded))°F, \(condition), humidity \(humidity)%, wind \(windKph) kph."
+      } else {
+        summary =
+          "Weather in \(displayLocation): \(Int(tempRounded))°C, \(condition), humidity \(humidity)%, wind \(windKph) kph."
+      }
+
+      return summary + "\n" + json
+    } catch {
+      return Self.failureResult(reason: "\(error.localizedDescription)", source: "wttr.in")
+    }
   }
 
   // MARK: - Helpers
 
-  private static func seed(from text: String) -> UInt64 {
-    let lower = text.lowercased()
-    var hasher = Hasher()
-    hasher.combine(lower)
-    hasher.combine(dayOfYear())
-    return UInt64(bitPattern: Int64(hasher.finalize()))
+  // wttr.in response models (minimal)
+  private struct WttrResponse: Decodable {
+    let current_condition: [Current]
+    let nearest_area: [Area]?  // optional in case the API omits
+
+    struct Current: Decodable {
+      let temp_C: String
+      let temp_F: String
+      let humidity: String
+      let windspeedKmph: String?
+      let weatherDesc: [ValueHolder]?
+    }
+
+    struct Area: Decodable {
+      let areaName: [ValueHolder]?
+      let region: [ValueHolder]?
+      let country: [ValueHolder]?
+    }
+
+    struct ValueHolder: Decodable { let value: String }
   }
 
-  private static func dayOfYear() -> Int {
-    let cal = Calendar(identifier: .gregorian)
-    let today = Date()
-    return cal.ordinality(of: .day, in: .year, for: today) ?? 1
+  private static func failureResult(reason: String, source: String) -> String {
+    let summary = "Weather lookup failed: \(reason)"
+    let dict: [String: Any] = ["error": reason, "source": source]
+    let data =
+      (try? JSONSerialization.data(withJSONObject: dict, options: [.sortedKeys]))
+      ?? Data("{}".utf8)
+    let json = String(data: data, encoding: .utf8) ?? "{}"
+    return summary + "\n" + json
   }
 
-  private struct LCG {
-    // Simple linear congruential generator
-    private var state: UInt64
-    init(seed: UInt64) { self.state = seed &* 6_364_136_223_846_793_005 &+ 1 }
-    mutating func next() -> UInt64 {
-      state = state &* 2_862_933_555_777_941_757 &+ 3_037_000_493
-      return state
-    }
-    mutating func nextInt() -> Int { Int(truncatingIfNeeded: next()) }
-    mutating func nextRange(min: Double, max: Double) -> Double {
-      let v = Double(next() % 10_000) / 10_000.0
-      return min + (max - min) * v
-    }
-  }
 }
