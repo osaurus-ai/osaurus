@@ -47,9 +47,9 @@ osaurus/
 │   ├── AppDelegate.swift
 │   └── osaurusApp.swift
 ├── Controllers/
-│   ├── ServerController.swift      # NIO server lifecycle
-│   ├── ModelManager.swift          # Model discovery & downloads (Hugging Face)
-│   └── HotKeyManager.swift         # Global hotkey registration
+│   └── ServerController.swift      # NIO server lifecycle
+├── Managers/
+│   └── ModelManager.swift          # Model discovery & downloads (Hugging Face)
 ├── Models/
 │   ├── InternalMessage.swift
 │   ├── MLXModel.swift
@@ -221,7 +221,15 @@ osaurus status
 
 # Stop the server
 osaurus stop
+
+# List model IDs
+osaurus list
+
+# Interactive chat with a downloaded model (use an ID from `osaurus list`)
+osaurus run llama-3.2-3b-instruct-4bit
 ```
+
+Tip: Set OSU_PORT to override the default/auto-detected port for CLI commands.
 
 Notes:
 
@@ -300,7 +308,7 @@ curl -N http://127.0.0.1:1337/v1/chat/completions \
 Ollama‑compatible streaming (NDJSON format for `/chat`):
 
 ```bash
-curl -N http://127.0.0.1:1337/v1/api/chat \
+curl -N http://127.0.0.1:1337/v1/chat \
   -H "Content-Type: application/json" \
   -d '{
         "model": "llama-3.2-3b-instruct-4bit",
