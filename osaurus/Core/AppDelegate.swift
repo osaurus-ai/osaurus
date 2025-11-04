@@ -21,6 +21,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSPopoverD
 
   private var activityDot: NSView?
   private var modelManagerWindow: NSWindow?
+  private var toolsManagerWindow: NSWindow?
   private var chatWindow: NSWindow?
 
   func applicationDidFinishLaunching(_ notification: Notification) {
@@ -547,7 +548,61 @@ extension AppDelegate {
   }
 
   func windowWillClose(_ notification: Notification) {
-    guard let win = notification.object as? NSWindow, win == modelManagerWindow else { return }
-    modelManagerWindow = nil
+    guard let win = notification.object as? NSWindow else { return }
+    if win == modelManagerWindow { modelManagerWindow = nil }
+    if win == toolsManagerWindow { toolsManagerWindow = nil }
+  }
+}
+
+// MARK: Tools Manager Window
+extension AppDelegate {
+  @MainActor func showToolsManagerWindow() {
+    let presentWindow: () -> Void = { [weak self] in
+      guard let self = self else { return }
+      let themeManager = ThemeManager.shared
+      let root = ToolsManagerView()
+        .environment(\.theme, themeManager.currentTheme)
+
+      let hostingController = NSHostingController(rootView: root)
+
+      if let window = self.toolsManagerWindow {
+        window.contentViewController = hostingController
+        if window.isMiniaturized { window.deminiaturize(nil) }
+        NSApp.activate(ignoringOtherApps: true)
+        window.center()
+        window.makeKeyAndOrderFront(nil)
+        window.orderFrontRegardless()
+        return
+      }
+
+      let window = NSWindow(
+        contentRect: NSRect(x: 0, y: 0, width: 820, height: 640),
+        styleMask: [.titled, .closable, .fullSizeContentView],
+        backing: .buffered,
+        defer: false
+      )
+      window.titleVisibility = .hidden
+      window.titlebarAppearsTransparent = true
+      window.isMovableByWindowBackground = true
+      window.contentViewController = hostingController
+      window.center()
+      window.delegate = self
+      window.isReleasedWhenClosed = false
+      self.toolsManagerWindow = window
+
+      NSApp.activate(ignoringOtherApps: true)
+      window.makeKeyAndOrderFront(nil)
+      window.orderFrontRegardless()
+    }
+
+    if let pop = popover, pop.isShown {
+      pop.performClose(nil)
+      Task { @MainActor in
+        try? await Task.sleep(nanoseconds: 200_000_000)
+        presentWindow()
+      }
+    } else {
+      presentWindow()
+    }
   }
 }

@@ -45,35 +45,32 @@ struct MockChatEngine: ChatEngineProtocol {
   }
 }
 
-// MARK: - ModelService fakes
+// MARK: - ModelService fake
 
-struct FakeThrowingStreamingService: ThrowingStreamingService {
-  var id: String = "fake"
-  var handledModelName: String = "fake"
+struct FakeModelService: ModelService {
+  var id: String { "fake" }
+
   var available: Bool = true
-  var deltas: [String] = ["a", "b", "c"]
+  var supportedModel: String = "fake"
+  var deltas: [String] = []
+  var completeText: String = "hello"
 
   func isAvailable() -> Bool { available }
 
   func handles(requestedModel: String?) -> Bool {
-    let trimmed = (requestedModel ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-    return !trimmed.isEmpty && trimmed == handledModelName
+    let t = (requestedModel ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+    return t == supportedModel
   }
 
-  func streamDeltas(
+  func generateOneShot(
     messages: [ChatMessage],
     parameters: GenerationParameters,
     requestedModel: String?
-  ) async throws -> AsyncStream<String> {
-    let (stream, cont) = AsyncStream<String>.makeStream()
-    Task {
-      for d in deltas { cont.yield(d) }
-      cont.finish()
-    }
-    return stream
+  ) async throws -> String {
+    return completeText
   }
 
-  func streamDeltasThrowing(
+  func streamDeltas(
     messages: [ChatMessage],
     parameters: GenerationParameters,
     requestedModel: String?,
@@ -83,47 +80,5 @@ struct FakeThrowingStreamingService: ThrowingStreamingService {
       for d in deltas { continuation.yield(d) }
       continuation.finish()
     }
-  }
-
-  func generateOneShot(
-    messages: [ChatMessage],
-    parameters: GenerationParameters,
-    requestedModel: String?
-  ) async throws -> String {
-    deltas.joined()
-  }
-}
-
-struct FakeNonThrowingService: ModelService {
-  var id: String = "plain"
-  var handledModelName: String = "plain"
-  var available: Bool = true
-
-  func isAvailable() -> Bool { available }
-
-  func handles(requestedModel: String?) -> Bool {
-    let trimmed = (requestedModel ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-    return !trimmed.isEmpty && trimmed == handledModelName
-  }
-
-  func streamDeltas(
-    messages: [ChatMessage],
-    parameters: GenerationParameters,
-    requestedModel: String?
-  ) async throws -> AsyncStream<String> {
-    let (stream, cont) = AsyncStream<String>.makeStream()
-    Task {
-      cont.yield("x")
-      cont.finish()
-    }
-    return stream
-  }
-
-  func generateOneShot(
-    messages: [ChatMessage],
-    parameters: GenerationParameters,
-    requestedModel: String?
-  ) async throws -> String {
-    "x"
   }
 }

@@ -60,11 +60,8 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
           requestedModel: request.model
         )
       }
-      // Fallback to plain streaming
-      guard let throwingService = service as? ThrowingStreamingService else {
-        throw EngineError()
-      }
-      return try await throwingService.streamDeltasThrowing(
+
+      return try await service.streamDeltas(
         messages: request.messages,
         parameters: params,
         requestedModel: request.model,

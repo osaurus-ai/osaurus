@@ -17,6 +17,10 @@ struct ConfigurationView: View {
   // Chat settings state
   @State private var tempChatHotkey: Hotkey? = nil
   @State private var tempSystemPrompt: String = ""
+  @State private var tempChatTemperature: String = ""
+  @State private var tempChatMaxTokens: String = ""
+  @State private var tempChatTopP: String = ""
+  @State private var tempChatMaxToolAttempts: String = ""
 
   // Advanced settings state
   @State private var tempTopP: String = ""
@@ -87,6 +91,38 @@ struct ConfigurationView: View {
                     .padding(.top, 10)
                     .padding(.leading, 12)
                 }
+              }
+            }
+
+            // Chat Generation (per-chat overrides)
+            VStack(alignment: .leading, spacing: 8) {
+              Text("Generation")
+                .font(.system(size: 11, weight: .medium))
+                .foregroundColor(theme.secondaryText)
+
+              VStack(spacing: 10) {
+                advancedField(
+                  "Temperature", text: $tempChatTemperature, placeholder: "0.7",
+                  help: "Controls randomness (0–2). Empty uses default 0.7")
+                advancedField(
+                  "Max Tokens", text: $tempChatMaxTokens, placeholder: "1024",
+                  help: "Maximum response tokens. Empty uses default 1024")
+                advancedField(
+                  "Top P Override", text: $tempChatTopP, placeholder: "",
+                  help: "Override server Top P (0–1). Empty uses server default")
+              }
+            }
+
+            // Tools (per-chat overrides)
+            VStack(alignment: .leading, spacing: 8) {
+              Text("Tools")
+                .font(.system(size: 11, weight: .medium))
+                .foregroundColor(theme.secondaryText)
+
+              VStack(spacing: 10) {
+                advancedField(
+                  "Max Tool Attempts", text: $tempChatMaxToolAttempts, placeholder: "3",
+                  help: "Max consecutive tool calls per prompt (min 1)")
               }
             }
           }
@@ -435,9 +471,39 @@ struct ConfigurationView: View {
 
               // Persist to disk
               ServerConfigurationStore.save(configuration)
-              // Save Chat configuration
+              // Save Chat configuration (per-chat overrides)
+              let trimmedTemp = tempChatTemperature.trimmingCharacters(in: .whitespacesAndNewlines)
+              let parsedTemp: Float? = {
+                guard !trimmedTemp.isEmpty, let v = Float(trimmedTemp) else { return nil }
+                return max(0.0, min(2.0, v))
+              }()
+
+              let trimmedMax = tempChatMaxTokens.trimmingCharacters(in: .whitespacesAndNewlines)
+              let parsedMax: Int? = {
+                guard !trimmedMax.isEmpty, let v = Int(trimmedMax) else { return nil }
+                return max(1, v)
+              }()
+
+              let trimmedTopPChat = tempChatTopP.trimmingCharacters(in: .whitespacesAndNewlines)
+              let parsedTopP: Float? = {
+                guard !trimmedTopPChat.isEmpty, let v = Float(trimmedTopPChat) else { return nil }
+                return max(0.0, min(1.0, v))
+              }()
+
+              let parsedMaxToolAttempts: Int? = {
+                let s = tempChatMaxToolAttempts.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !s.isEmpty, let v = Int(s) else { return nil }
+                return max(1, min(10, v))
+              }()
+
               let chatCfg = ChatConfiguration(
-                hotkey: tempChatHotkey, systemPrompt: tempSystemPrompt)
+                hotkey: tempChatHotkey,
+                systemPrompt: tempSystemPrompt,
+                temperature: parsedTemp,
+                maxTokens: parsedMax,
+                topPOverride: parsedTopP,
+                maxToolAttempts: parsedMaxToolAttempts
+              )
               ChatConfigurationStore.save(chatCfg)
               // Apply hotkey without relaunch
               AppDelegate.shared?.applyChatHotkey()
@@ -478,6 +544,10 @@ struct ConfigurationView: View {
       let chat = ChatConfigurationStore.load()
       tempChatHotkey = chat.hotkey
       tempSystemPrompt = chat.systemPrompt
+      tempChatTemperature = chat.temperature.map { String($0) } ?? ""
+      tempChatMaxTokens = chat.maxTokens.map(String.init) ?? ""
+      tempChatTopP = chat.topPOverride.map { String($0) } ?? ""
+      tempChatMaxToolAttempts = chat.maxToolAttempts.map(String.init) ?? ""
       let defaults = ServerConfiguration.default
       tempTopP = configuration.genTopP == defaults.genTopP ? "" : String(configuration.genTopP)
       tempKVBits = configuration.genKVBits.map(String.init) ?? ""

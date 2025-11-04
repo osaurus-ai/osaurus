@@ -11,7 +11,7 @@ import Testing
 struct ChatEngineTests {
 
   @Test func streamChat_yields_deltas_success() async throws {
-    let svc = FakeThrowingStreamingService(deltas: ["a", "b", "c"])
+    let svc = FakeModelService(deltas: ["a", "b", "c"])
     let engine = ChatEngine(services: [svc], installedModelsProvider: { [] })
     let req = ChatCompletionRequest(
       model: "fake",
@@ -35,7 +35,7 @@ struct ChatEngineTests {
   }
 
   @Test func completeChat_returns_choice_success() async throws {
-    let svc = FakeThrowingStreamingService(deltas: ["he", "llo"])
+    let svc = FakeModelService()
     let engine = ChatEngine(services: [svc], installedModelsProvider: { [] })
     let req = ChatCompletionRequest(
       model: "fake",
@@ -67,11 +67,6 @@ struct ChatEngineTests {
       func isAvailable() -> Bool { true }
       func handles(requestedModel: String?) -> Bool { (requestedModel ?? "") == "fake" }
       func streamDeltas(
-        messages: [ChatMessage],
-        parameters: GenerationParameters,
-        requestedModel: String?
-      ) async throws -> AsyncStream<String> { AsyncStream { $0.finish() } }
-      func streamDeltasThrowing(
         messages: [ChatMessage],
         parameters: GenerationParameters,
         requestedModel: String?,
@@ -174,7 +169,7 @@ struct ChatEngineTests {
   }
 
   @Test func streamChat_throws_when_service_not_throwing_streaming() async throws {
-    let svc = FakeNonThrowingService()
+    let svc = FakeModelService()
     let engine = ChatEngine(services: [svc], installedModelsProvider: { [] })
     let req = ChatCompletionRequest(
       model: "plain",

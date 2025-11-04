@@ -43,7 +43,11 @@ struct ModelDownloadView: View {
   var body: some View {
     VStack(spacing: 0) {
       // Header
-      headerView
+      ManagerHeader(
+        title: "Models",
+        subtitle:
+          "\(completedDownloadedModelsCount) downloaded • \(modelManager.totalDownloadedSizeString)"
+      )
 
       Divider()
 
@@ -83,27 +87,7 @@ struct ModelDownloadView: View {
 
   // MARK: - Header View
 
-  /// Header section displaying the page title and download statistics
-  private var headerView: some View {
-    HStack(spacing: 24) {
-      VStack(alignment: .leading, spacing: 4) {
-        Text("Models")
-          .font(.system(size: 24, weight: .semibold))
-          .foregroundColor(theme.primaryText)
-
-        // Show count of downloaded models and total size
-        Text(
-          "\(completedDownloadedModelsCount) downloaded • \(modelManager.totalDownloadedSizeString)"
-        )
-        .font(.system(size: 13))
-        .foregroundColor(theme.secondaryText)
-      }
-
-      Spacer()
-    }
-    .padding(.horizontal, 24)
-    .padding(.vertical, 20)
-  }
+  /// Header section now provided by ManagerHeader
 
   // MARK: - Model List View
 
@@ -115,50 +99,16 @@ struct ModelDownloadView: View {
         // Tabs
         HStack(spacing: 4) {
           ForEach(ModelListTab.allCases, id: \.self) { tab in
-            Button(action: { selectedTab = tab }) {
-              Text("\(tab.title) (\(tabCount(tab)))")
-                .font(.system(size: 14, weight: selectedTab == tab ? .medium : .regular))
-                .foregroundColor(selectedTab == tab ? theme.primaryText : theme.secondaryText)
-                .padding(.horizontal, 12)
-                .padding(.vertical, 6)
-                .background(
-                  RoundedRectangle(cornerRadius: 6)
-                    .fill(selectedTab == tab ? theme.tertiaryBackground : Color.clear)
-                )
+            TabPill(title: tab.title, isSelected: selectedTab == tab, count: tabCount(tab)) {
+              selectedTab = tab
             }
-            .buttonStyle(PlainButtonStyle())
           }
         }
 
         Spacer()
 
         // Search field
-        HStack(spacing: 8) {
-          Image(systemName: "magnifyingglass")
-            .font(.system(size: 14))
-            .foregroundColor(theme.tertiaryText)
-
-          TextField("Search models", text: $searchText)
-            .textFieldStyle(PlainTextFieldStyle())
-            .font(.system(size: 14))
-            .foregroundColor(theme.primaryText)
-
-          if !searchText.isEmpty {
-            Button(action: { searchText = "" }) {
-              Image(systemName: "xmark.circle.fill")
-                .font(.system(size: 12))
-                .foregroundColor(theme.tertiaryText)
-            }
-            .buttonStyle(PlainButtonStyle())
-          }
-        }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
-        .frame(width: 240)
-        .background(
-          RoundedRectangle(cornerRadius: 6)
-            .fill(theme.tertiaryBackground)
-        )
+        SearchField(text: $searchText, placeholder: "Search models")
 
       }
       .padding(.horizontal, 24)

@@ -70,13 +70,6 @@ final class ChatSession: ObservableObject {
     guard !trimmed.isEmpty else { return }
     turns.append(ChatTurn(role: .user, content: trimmed))
 
-    var chatMessages = turns.map { ChatMessage(role: $0.role.rawValue, content: $0.content) }
-    let chatCfg = ChatConfigurationStore.load()
-    let sys = chatCfg.systemPrompt.trimmingCharacters(in: .whitespacesAndNewlines)
-    if !sys.isEmpty {
-      chatMessages.insert(ChatMessage(role: "system", content: sys), at: 0)
-    }
-
     currentTask = Task { @MainActor in
       isStreaming = true
       ServerController.signalGenerationStart()
@@ -89,28 +82,91 @@ final class ChatSession: ObservableObject {
       turns.append(assistantTurn)
       do {
         let engine = ChatEngine()
-        let req = ChatCompletionRequest(
-          model: selectedModel ?? "default",
-          messages: chatMessages,
-          temperature: 0.7,
-          max_tokens: 1024,
-          stream: true,
-          top_p: nil,
-          frequency_penalty: nil,
-          presence_penalty: nil,
-          stop: nil,
-          n: nil,
-          tools: nil,
-          tool_choice: nil,
-          session_id: nil
-        )
-        let stream = try await engine.streamChat(request: req)
-        for try await delta in stream {
-          if Task.isCancelled { break }
-          if !delta.isEmpty {
-            assistantTurn.content += delta
-            // Signal UI to autoscroll while streaming
-            scrollTick &+= 1
+        let chatCfg = ChatConfigurationStore.load()
+        let sys = chatCfg.systemPrompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        let toolSpecs = ToolRegistry.shared.specs()
+
+        @MainActor
+        func buildMessages() -> [ChatMessage] {
+          var msgs: [ChatMessage] = []
+          if !sys.isEmpty { msgs.append(ChatMessage(role: "system", content: sys)) }
+          for t in turns {
+            switch t.role {
+            case .assistant:
+              msgs.append(
+                ChatMessage(
+                  role: "assistant",
+                  content: t.content.isEmpty ? nil : t.content,
+                  tool_calls: t.toolCalls,
+                  tool_call_id: nil
+                )
+              )
+            case .tool:
+              msgs.append(
+                ChatMessage(
+                  role: "tool",
+                  content: t.content,
+                  tool_calls: nil,
+                  tool_call_id: t.toolCallId
+                )
+              )
+            default:
+              msgs.append(ChatMessage(role: t.role.rawValue, content: t.content))
+            }
+          }
+          return msgs
+        }
+
+        let maxAttempts = max(chatCfg.maxToolAttempts ?? 3, 1)
+        var attempts = 0
+        outer: while attempts < maxAttempts {
+          attempts += 1
+          let req = ChatCompletionRequest(
+            model: selectedModel ?? "default",
+            messages: buildMessages(),
+            temperature: chatCfg.temperature ?? 0.7,
+            max_tokens: chatCfg.maxTokens ?? 1024,
+            stream: true,
+            top_p: chatCfg.topPOverride,
+            frequency_penalty: nil,
+            presence_penalty: nil,
+            stop: nil,
+            n: nil,
+            tools: toolSpecs,
+            tool_choice: .auto,
+            session_id: nil
+          )
+          do {
+            let stream = try await engine.streamChat(request: req)
+            for try await delta in stream {
+              if Task.isCancelled { break outer }
+              if !delta.isEmpty {
+                assistantTurn.content += delta
+                scrollTick &+= 1
+              }
+            }
+            break  // finished normally
+          } catch let inv as ServiceToolInvocation {
+            // Create OpenAI-style tool call id
+            let raw = UUID().uuidString.replacingOccurrences(of: "-", with: "")
+            let callId = "call_" + String(raw.prefix(24))
+            let call = ToolCall(
+              id: callId,
+              type: "function",
+              function: ToolCallFunction(name: inv.toolName, arguments: inv.jsonArguments)
+            )
+            if assistantTurn.toolCalls == nil { assistantTurn.toolCalls = [] }
+            assistantTurn.toolCalls!.append(call)
+
+            // Execute tool and append hidden tool result turn
+            let resultText = try await ToolRegistry.shared.execute(
+              name: inv.toolName, argumentsJSON: inv.jsonArguments)
+            assistantTurn.toolResults[callId] = resultText
+            let toolTurn = ChatTurn(role: .tool, content: resultText)
+            toolTurn.toolCallId = callId
+            turns.append(toolTurn)
+            // Continue loop with new history
+            continue
           }
         }
       } catch {
@@ -287,7 +343,7 @@ struct ChatView: View {
       ZStack(alignment: .bottomTrailing) {
         ScrollView {
           LazyVStack(spacing: 16) {
-            ForEach(session.turns) { turn in
+            ForEach(session.turns.filter { $0.role != .tool }) { turn in
               MessageRowView(turn: turn, width: width, isStreaming: session.isStreaming) { text in
                 copyToPasteboard(text)
               }
@@ -619,6 +675,10 @@ private struct MessageRowView: View {
             .padding(8)
             .offset(x: -8, y: 8)
           }
+        }
+        // Grouped tool responses (collapsible), attached to assistant turns
+        if turn.role == .assistant, let calls = turn.toolCalls, !calls.isEmpty {
+          GroupedToolResponseView(calls: calls, resultsById: turn.toolResults)
         }
       }
       .frame(

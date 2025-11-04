@@ -28,10 +28,29 @@ public struct ChatConfiguration: Codable, Equatable, Sendable {
   public var hotkey: Hotkey?
   /// Global system prompt prepended to every chat session (optional)
   public var systemPrompt: String
+  /// Optional per-chat override for temperature (nil uses app default)
+  public var temperature: Float?
+  /// Optional per-chat override for maximum response tokens (nil uses app default)
+  public var maxTokens: Int?
+  /// Optional per-chat override for top_p sampling (nil uses server default)
+  public var topPOverride: Float?
+  /// Optional per-chat limit on consecutive tool attempts (nil uses default)
+  public var maxToolAttempts: Int?
 
-  public init(hotkey: Hotkey?, systemPrompt: String) {
+  public init(
+    hotkey: Hotkey?,
+    systemPrompt: String,
+    temperature: Float? = nil,
+    maxTokens: Int? = nil,
+    topPOverride: Float? = nil,
+    maxToolAttempts: Int? = nil
+  ) {
     self.hotkey = hotkey
     self.systemPrompt = systemPrompt
+    self.temperature = temperature
+    self.maxTokens = maxTokens
+    self.topPOverride = topPOverride
+    self.maxToolAttempts = maxToolAttempts
   }
 
   public static var `default`: ChatConfiguration {
@@ -41,7 +60,11 @@ public struct ChatConfiguration: Codable, Equatable, Sendable {
     let display = "⌘;"
     return ChatConfiguration(
       hotkey: Hotkey(keyCode: key, carbonModifiers: mods, displayString: display),
-      systemPrompt: ""
+      systemPrompt: "",
+      temperature: 0.7,
+      maxTokens: 1024,
+      topPOverride: nil,
+      maxToolAttempts: nil
     )
   }
 }

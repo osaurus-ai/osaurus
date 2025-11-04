@@ -216,6 +216,14 @@ private struct BottomActionBar: View {
           AppDelegate.shared?.showChatOverlay()
         }
 
+        CircularIconButton(systemName: "wrench.and.screwdriver", help: "Manage tools") {
+          AppDelegate.shared?.showToolsManagerWindow()
+        }
+
+        CircularIconButton(systemName: "cube.box", help: "Manage models") {
+          AppDelegate.shared?.showModelManagerWindow()
+        }
+
         CircularIconButton(systemName: "gearshape", help: "Configure server") {
           showConfiguration = true
         }
@@ -224,10 +232,6 @@ private struct BottomActionBar: View {
         ) {
           ConfigurationView(portString: $portString, configuration: $server.configuration)
             .environmentObject(server)
-        }
-
-        CircularIconButton(systemName: "cube.box", help: "Manage models") {
-          AppDelegate.shared?.showModelManagerWindow()
         }
 
         CircularIconButton(systemName: "arrow.up.circle", help: "Check for Updates…") {
