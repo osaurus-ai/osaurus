@@ -24,6 +24,7 @@ final class ToolRegistry {
   private init() {
     // Register built-in tools here
     register(WeatherTool())
+    register(StockTool())
   }
 
   func register(_ tool: ChatTool) {
