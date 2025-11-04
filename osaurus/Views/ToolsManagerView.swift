@@ -18,7 +18,7 @@ struct ToolsManagerView: View {
 
   var body: some View {
     VStack(spacing: 0) {
-      headerView
+      ManagerHeader(title: "Tools", subtitle: "Manage available tools for chat")
       Divider()
       contentView
     }
@@ -29,69 +29,15 @@ struct ToolsManagerView: View {
     .onChange(of: searchText) { _, _ in reload() }
   }
 
-  private var headerView: some View {
-    HStack(spacing: 24) {
-      VStack(alignment: .leading, spacing: 4) {
-        Text("Tools")
-          .font(.system(size: 24, weight: .semibold))
-          .foregroundColor(theme.primaryText)
-
-        Text("Manage available tools for chat")
-          .font(.system(size: 13))
-          .foregroundColor(theme.secondaryText)
-      }
-
-      Spacer()
-    }
-    .padding(.horizontal, 24)
-    .padding(.vertical, 20)
-  }
-
   private var contentView: some View {
     VStack(spacing: 0) {
       // Tabs + Search bar (styled like ModelDownloadView)
       HStack(spacing: 12) {
-        // Single selected tab: All Tools (count)
-        HStack(spacing: 4) {
-          Text("All Tools (\(filteredEntries.count))")
-            .font(.system(size: 14, weight: .medium))
-            .foregroundColor(theme.primaryText)
-            .padding(.horizontal, 12)
-            .padding(.vertical, 6)
-            .background(
-              RoundedRectangle(cornerRadius: 6)
-                .fill(theme.tertiaryBackground)
-            )
-        }
+        TabPill(title: "All Tools", isSelected: true, count: filteredEntries.count)
 
         Spacer()
 
-        HStack(spacing: 8) {
-          Image(systemName: "magnifyingglass")
-            .font(.system(size: 14))
-            .foregroundColor(theme.tertiaryText)
-
-          TextField("Search tools", text: $searchText)
-            .textFieldStyle(PlainTextFieldStyle())
-            .font(.system(size: 14))
-            .foregroundColor(theme.primaryText)
-
-          if !searchText.isEmpty {
-            Button(action: { searchText = "" }) {
-              Image(systemName: "xmark.circle.fill")
-                .font(.system(size: 12))
-                .foregroundColor(theme.tertiaryText)
-            }
-            .buttonStyle(PlainButtonStyle())
-          }
-        }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
-        .frame(width: 240)
-        .background(
-          RoundedRectangle(cornerRadius: 6)
-            .fill(theme.tertiaryBackground)
-        )
+        SearchField(text: $searchText, placeholder: "Search tools")
       }
       .padding(.horizontal, 24)
       .padding(.vertical, 16)
@@ -116,38 +62,16 @@ struct ToolsManagerView: View {
   }
 
   private func toolRow(_ entry: ToolRegistry.ToolEntry) -> some View {
-    HStack(spacing: 12) {
-      VStack(alignment: .leading, spacing: 2) {
-        Text(entry.name)
-          .font(.system(size: 14, weight: .medium))
-          .foregroundColor(theme.primaryText)
-        Text(entry.description)
-          .font(.system(size: 12))
-          .foregroundColor(theme.secondaryText)
-      }
-      Spacer()
-      Toggle(
-        isOn: Binding(
-          get: { entry.enabled },
-          set: { newValue in
-            ToolRegistry.shared.setEnabled(newValue, for: entry.name)
-            reload()
-          }
-        )
-      ) {
-        Text("")
-      }
-      .toggleStyle(SwitchToggleStyle())
-      .labelsHidden()
-    }
-    .padding(12)
-    .background(
-      RoundedRectangle(cornerRadius: 8)
-        .fill(theme.tertiaryBackground)
-        .overlay(
-          RoundedRectangle(cornerRadius: 8)
-            .stroke(theme.glassEdgeLight.opacity(0.25), lineWidth: 1)
-        )
+    ToggleRow(
+      title: entry.name,
+      subtitle: entry.description,
+      isOn: Binding(
+        get: { entry.enabled },
+        set: { newValue in
+          ToolRegistry.shared.setEnabled(newValue, for: entry.name)
+          reload()
+        }
+      )
     )
   }
 
