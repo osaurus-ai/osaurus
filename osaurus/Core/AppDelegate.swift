@@ -81,6 +81,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSPopoverD
     statusItem = item
     updateStatusItemAndMenu()
 
+    // Initialize directory access early so security-scoped bookmark is active
+    let _ = DirectoryPickerService.shared
+
     // Auto-start server on app launch
     Task { @MainActor in
       await serverController.startServer()

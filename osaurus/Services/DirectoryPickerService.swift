@@ -193,6 +193,42 @@ final class DirectoryPickerService: ObservableObject {
     return newDefault
   }
 
+  /// Nonisolated static resolver that respects the saved bookmark when present.
+  /// Falls back to env var and defaults when no valid bookmark exists.
+  nonisolated static func effectiveModelsDirectory() -> URL {
+    // Mirror instance-based bookmark resolution without requiring the singleton
+    if let bookmarkData = UserDefaults.standard.data(forKey: "ModelDirectoryBookmark") {
+      do {
+        var isStale = false
+        let url = try URL(
+          resolvingBookmarkData: bookmarkData,
+          options: .withSecurityScope,
+          relativeTo: nil,
+          bookmarkDataIsStale: &isStale)
+        if !isStale { return url }
+      } catch {
+        // Fall through to defaults
+      }
+    }
+
+    // Fallback precedence matches instance property
+    let fileManager = FileManager.default
+    if let override = ProcessInfo.processInfo.environment["OSU_MODELS_DIR"], !override.isEmpty {
+      let expanded = (override as NSString).expandingTildeInPath
+      return URL(fileURLWithPath: expanded, isDirectory: true)
+    }
+    let homeURL = fileManager.homeDirectoryForCurrentUser
+    let newDefault = homeURL.appendingPathComponent("MLXModels")
+    let documentsPath = fileManager.urls(
+      for: .documentDirectory,
+      in: .userDomainMask
+    ).first!
+    let oldDefault = documentsPath.appendingPathComponent("MLXModels")
+    if fileManager.fileExists(atPath: newDefault.path) { return newDefault }
+    if fileManager.fileExists(atPath: oldDefault.path) { return oldDefault }
+    return newDefault
+  }
+
   /// Reset directory selection
   @MainActor func resetDirectory() {
     securityScopedResource?.stopAccessingSecurityScopedResource()
