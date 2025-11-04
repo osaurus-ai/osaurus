@@ -230,6 +230,10 @@ private struct BottomActionBar: View {
           AppDelegate.shared?.showModelManagerWindow()
         }
 
+        CircularIconButton(systemName: "wrench.and.screwdriver", help: "Manage tools") {
+          AppDelegate.shared?.showToolsManagerWindow()
+        }
+
         CircularIconButton(systemName: "arrow.up.circle", help: "Check for Updates…") {
           updater.checkForUpdates()
         }
