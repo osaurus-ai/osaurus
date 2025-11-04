@@ -415,114 +415,92 @@ actor ModelRuntime {
   ) async throws -> AsyncThrowingStream<String, Error> {
     let (stream, continuation) = AsyncThrowingStream<String, Error>.makeStream()
     Task {
-      await ModelRuntime.shared.runStreamWithToolsFromOpenAI(
-        messages: messages,
-        parameters: parameters,
-        stopSequences: stopSequences,
-        tools: tools,
-        toolChoice: toolChoice,
-        modelId: modelId,
-        modelName: modelName,
-        continuation: continuation
-      )
-    }
-    return stream
-  }
-
-  private func runStreamWithToolsFromOpenAI(
-    messages: [ChatMessage],
-    parameters: GenerationParameters,
-    stopSequences: [String],
-    tools: [Tool],
-    toolChoice: ToolChoiceOption?,
-    modelId: String,
-    modelName: String,
-    continuation: AsyncThrowingStream<String, Error>.Continuation
-  ) async {
-    let cfg = await ServerController.sharedConfiguration()
-    let topP: Float = cfg?.genTopP ?? 1.0
-    let kvBits: Int? = cfg?.genKVBits
-    let kvGroup: Int = cfg?.genKVGroupSize ?? 64
-    let quantStart: Int = cfg?.genQuantizedKVStart ?? 0
-    let maxKV: Int? = cfg?.genMaxKVSize
-    let prefillStep: Int = cfg?.genPrefillStepSize ?? 512
-    var accumulated = ""
-    var alreadyEmitted = 0
-    let shouldCheckStop = !stopSequences.isEmpty
-    do {
-      let holder = try await loadContainer(id: modelId, name: modelName)
-      let events: AsyncStream<MLXLMCommon.Generation> = try await holder.container.perform {
-        (context: MLXLMCommon.ModelContext) in
-        let chat = ModelRuntime.mapOpenAIChatToMLX(messages)
-        let params = ModelRuntime.makeGenerateParameters(
-          temperature: parameters.temperature,
-          maxTokens: parameters.maxTokens,
-          topP: parameters.topPOverride ?? topP,
-          repetitionPenalty: parameters.repetitionPenalty,
-          kvBits: kvBits,
-          kvGroup: kvGroup,
-          quantStart: quantStart,
-          maxKV: maxKV,
-          prefillStep: prefillStep
-        )
-        let tt = ModelRuntime.makeTokenizerTools(tools: tools, toolChoice: toolChoice)
-        let fullInput = MLXLMCommon.UserInput(chat: chat, processing: .init(), tools: tt)
-        let fullLMInput = try await context.processor.prepare(input: fullInput)
-
-        var contextWithEOS = context
-        let existing = context.configuration.extraEOSTokens
-        let extra: Set<String> = Set(["</end_of_turn>", "<end_of_turn>", "<|end|>", "<eot>"])
-        contextWithEOS.configuration.extraEOSTokens = existing.union(extra)
-
-        return try MLXLMCommon.generate(
-          input: fullLMInput,
-          cache: nil,
-          parameters: params,
-          context: contextWithEOS
-        )
-      }
-      for await event in events {
-        if let toolCall = event.toolCall {
-          let argsData = try? JSONSerialization.data(
-            withJSONObject: toolCall.function.arguments.mapValues { $0.anyValue })
-          let argsString = argsData.flatMap { String(data: $0, encoding: .utf8) } ?? "{}"
-          continuation.finish(
-            throwing: ServiceToolInvocation(
-              toolName: toolCall.function.name, jsonArguments: argsString)
+      let cfg = await ServerController.sharedConfiguration()
+      let topP: Float = cfg?.genTopP ?? 1.0
+      let kvBits: Int? = cfg?.genKVBits
+      let kvGroup: Int = cfg?.genKVGroupSize ?? 64
+      let quantStart: Int = cfg?.genQuantizedKVStart ?? 0
+      let maxKV: Int? = cfg?.genMaxKVSize
+      let prefillStep: Int = cfg?.genPrefillStepSize ?? 512
+      var accumulated = ""
+      var alreadyEmitted = 0
+      let shouldCheckStop = !stopSequences.isEmpty
+      do {
+        let holder = try await loadContainer(id: modelId, name: modelName)
+        let events: AsyncStream<MLXLMCommon.Generation> = try await holder.container.perform {
+          (context: MLXLMCommon.ModelContext) in
+          let chat = ModelRuntime.mapOpenAIChatToMLX(messages)
+          let params = ModelRuntime.makeGenerateParameters(
+            temperature: parameters.temperature,
+            maxTokens: parameters.maxTokens,
+            topP: parameters.topPOverride ?? topP,
+            repetitionPenalty: parameters.repetitionPenalty,
+            kvBits: kvBits,
+            kvGroup: kvGroup,
+            quantStart: quantStart,
+            maxKV: maxKV,
+            prefillStep: prefillStep
           )
-          return
-        }
-        guard let token = event.chunk, !token.isEmpty else { continue }
-        accumulated += token
-        // Fallback: detect inline tool-call JSON in generated text
-        if let (name, argsJSON) = Self.detectInlineToolCall(in: accumulated, tools: tools) {
-          continuation.finish(
-            throwing: ServiceToolInvocation(toolName: name, jsonArguments: argsJSON)
+          let tt = ModelRuntime.makeTokenizerTools(tools: tools, toolChoice: toolChoice)
+          let fullInput = MLXLMCommon.UserInput(chat: chat, processing: .init(), tools: tt)
+          let fullLMInput = try await context.processor.prepare(input: fullInput)
+
+          var contextWithEOS = context
+          let existing = context.configuration.extraEOSTokens
+          let extra: Set<String> = Set(["</end_of_turn>", "<end_of_turn>", "<|end|>", "<eot>"])
+          contextWithEOS.configuration.extraEOSTokens = existing.union(extra)
+
+          return try MLXLMCommon.generate(
+            input: fullLMInput,
+            cache: nil,
+            parameters: params,
+            context: contextWithEOS
           )
-          return
         }
-        let newSlice = String(accumulated.dropFirst(alreadyEmitted))
-        if shouldCheckStop {
-          if let stopIndex = stopSequences.compactMap({ s in accumulated.range(of: s)?.lowerBound })
-            .first
-          {
-            let finalRange =
-              accumulated.index(accumulated.startIndex, offsetBy: alreadyEmitted)..<stopIndex
-            let finalContent = String(accumulated[finalRange])
-            if !finalContent.isEmpty { continuation.yield(finalContent) }
-            continuation.finish()
+        for await event in events {
+          if let toolCall = event.toolCall {
+            let argsData = try? JSONSerialization.data(
+              withJSONObject: toolCall.function.arguments.mapValues { $0.anyValue })
+            let argsString = argsData.flatMap { String(data: $0, encoding: .utf8) } ?? "{}"
+            continuation.finish(
+              throwing: ServiceToolInvocation(
+                toolName: toolCall.function.name, jsonArguments: argsString)
+            )
             return
           }
+          guard let token = event.chunk, !token.isEmpty else { continue }
+          accumulated += token
+          // Fallback: detect inline tool-call JSON in generated text
+          if let (name, argsJSON) = Self.detectInlineToolCall(in: accumulated, tools: tools) {
+            continuation.finish(
+              throwing: ServiceToolInvocation(toolName: name, jsonArguments: argsJSON)
+            )
+            return
+          }
+          let newSlice = String(accumulated.dropFirst(alreadyEmitted))
+          if shouldCheckStop {
+            if let stopIndex = stopSequences.compactMap({ s in accumulated.range(of: s)?.lowerBound
+            })
+            .first {
+              let finalRange =
+                accumulated.index(accumulated.startIndex, offsetBy: alreadyEmitted)..<stopIndex
+              let finalContent = String(accumulated[finalRange])
+              if !finalContent.isEmpty { continuation.yield(finalContent) }
+              continuation.finish()
+              return
+            }
+          }
+          if !newSlice.isEmpty {
+            continuation.yield(newSlice)
+            alreadyEmitted += newSlice.count
+          }
         }
-        if !newSlice.isEmpty {
-          continuation.yield(newSlice)
-          alreadyEmitted += newSlice.count
-        }
+        continuation.finish()
+      } catch {
+        continuation.finish(throwing: error)
       }
-      continuation.finish()
-    } catch {
-      continuation.finish(throwing: error)
     }
+    return stream
   }
 
   nonisolated static func makeGenerateParameters(
@@ -609,9 +587,15 @@ actor ModelRuntime {
         out.append(
           MLXLMCommon.Chat.Message(role: .user, content: m.content ?? "", images: [], videos: []))
       case "assistant":
-        out.append(
-          MLXLMCommon.Chat.Message(
-            role: .assistant, content: m.content ?? "", images: [], videos: []))
+        // If assistant only signaled tool calls without textual content, drop it.
+        if let calls = m.tool_calls, !calls.isEmpty, m.content == nil || m.content?.isEmpty == true
+        {
+          break
+        } else {
+          out.append(
+            MLXLMCommon.Chat.Message(
+              role: .assistant, content: m.content ?? "", images: [], videos: []))
+        }
       case "tool":
         out.append(
           MLXLMCommon.Chat.Message(role: .tool, content: m.content ?? "", images: [], videos: [])

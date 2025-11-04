@@ -16,7 +16,7 @@ enum FoundationModelServiceError: Error {
   case generationFailed
 }
 
-actor FoundationModelService: ToolCapableService, ThrowingStreamingService {
+actor FoundationModelService: ToolCapableService {
   let id: String = "foundation"
 
   /// Returns true if the system default language model is available on this device/OS.
@@ -67,29 +67,6 @@ actor FoundationModelService: ToolCapableService, ThrowingStreamingService {
   }
 
   func streamDeltas(
-    messages: [ChatMessage],
-    parameters: GenerationParameters,
-    requestedModel: String?
-  ) async throws -> AsyncStream<String> {
-    // Bridge the throwing stream to a non-throwing AsyncStream for compatibility.
-    let throwing = try await streamDeltasThrowing(
-      messages: messages, parameters: parameters, requestedModel: requestedModel, stopSequences: [])
-    return AsyncStream<String> { continuation in
-      Task {
-        do {
-          for try await delta in throwing {
-            continuation.yield(delta)
-          }
-          continuation.finish()
-        } catch {
-          // On error, finish quietly (no sentinel strings)
-          continuation.finish()
-        }
-      }
-    }
-  }
-
-  func streamDeltasThrowing(
     messages: [ChatMessage],
     parameters: GenerationParameters,
     requestedModel: String?,

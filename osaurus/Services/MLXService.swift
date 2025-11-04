@@ -13,7 +13,7 @@ private struct LocalModelRef {
   let modelId: String
 }
 
-actor MLXService: ToolCapableService, ThrowingStreamingService {
+actor MLXService: ToolCapableService {
 
   nonisolated var id: String { "mlx" }
 
@@ -63,25 +63,6 @@ actor MLXService: ToolCapableService, ThrowingStreamingService {
   func streamDeltas(
     messages: [ChatMessage],
     parameters: GenerationParameters,
-    requestedModel: String?
-  ) async throws -> AsyncStream<String> {
-    let throwing = try await streamDeltasThrowing(
-      messages: messages, parameters: parameters, requestedModel: requestedModel, stopSequences: [])
-    let (stream, continuation) = AsyncStream<String>.makeStream()
-    Task {
-      do {
-        for try await delta in throwing { continuation.yield(delta) }
-      } catch {
-        // finish quietly for non-throwing API
-      }
-      continuation.finish()
-    }
-    return stream
-  }
-
-  func streamDeltasThrowing(
-    messages: [ChatMessage],
-    parameters: GenerationParameters,
     requestedModel: String?,
     stopSequences: [String]
   ) async throws -> AsyncThrowingStream<String, Error> {
@@ -103,13 +84,11 @@ actor MLXService: ToolCapableService, ThrowingStreamingService {
     requestedModel: String?
   ) async throws -> String {
     let stream = try await streamDeltas(
-      messages: messages, parameters: parameters, requestedModel: requestedModel)
+      messages: messages, parameters: parameters, requestedModel: requestedModel, stopSequences: [])
     var out = ""
-    for await s in stream { out += s }
+    for try await s in stream { out += s }
     return out
   }
-
-  // MARK: - Tool-capable bridge (message-based only)
 
   // MARK: - Message-based Tool-capable bridge
 
