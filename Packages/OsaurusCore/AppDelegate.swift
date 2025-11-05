@@ -11,7 +11,8 @@ import QuartzCore
 import SwiftUI
 
 @MainActor
-class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSPopoverDelegate {
+public final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSPopoverDelegate
+{
   static weak var shared: AppDelegate?
   let serverController = ServerController()
   private var statusItem: NSStatusItem?
@@ -24,7 +25,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSPopoverD
   private var toolsManagerWindow: NSWindow?
   private var chatWindow: NSWindow?
 
-  func applicationDidFinishLaunching(_ notification: Notification) {
+  public func applicationDidFinishLaunching(_ notification: Notification) {
     AppDelegate.shared = self
 
     // Configure as menu bar app (hide Dock icon)
@@ -93,13 +94,13 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSPopoverD
     applyChatHotkey()
   }
 
-  func application(_ application: NSApplication, open urls: [URL]) {
+  public func application(_ application: NSApplication, open urls: [URL]) {
     for url in urls {
       handleDeepLink(url)
     }
   }
 
-  func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+  public func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
     // Quit immediately without confirmation; still shut down server gracefully if running
     guard serverController.isRunning else {
       return .terminateNow
@@ -114,7 +115,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSPopoverD
     return .terminateLater
   }
 
-  func applicationWillTerminate(_ notification: Notification) {
+  public func applicationWillTerminate(_ notification: Notification) {
     print("Osaurus server app terminating")
     SharedConfigurationService.shared.remove()
   }
@@ -238,7 +239,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSPopoverD
   }
 
   // Expose a method to show the popover programmatically (e.g., for Cmd+,)
-  func showPopover() {
+  public func showPopover() {
     guard let statusButton = statusItem?.button else { return }
     if let popover, popover.isShown {
       // Already visible; bring app to front
@@ -550,7 +551,7 @@ extension AppDelegate {
     }
   }
 
-  func windowWillClose(_ notification: Notification) {
+  public func windowWillClose(_ notification: Notification) {
     guard let win = notification.object as? NSWindow else { return }
     if win == modelManagerWindow { modelManagerWindow = nil }
     if win == toolsManagerWindow { toolsManagerWindow = nil }

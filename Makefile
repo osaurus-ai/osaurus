@@ -4,7 +4,7 @@ SHELL := /bin/bash
 SCHEME_CLI := osaurus-cli
 SCHEME_APP := osaurus
 CONFIG := Release
-PROJECT := osaurus.xcodeproj
+PROJECT := App/osaurus.xcodeproj
 DERIVED := build/DerivedData
 
 .PHONY: help cli app install-cli serve status clean
@@ -46,5 +46,3 @@ status:
 clean:
 	rm -rf $(DERIVED)
 	@echo "Cleaned $(DERIVED)"
-
-

@@ -18,7 +18,7 @@ if [[ "${CODE_SIGN_IDENTITY_VALUE}" != Developer\ ID\ Application:* ]]; then
   CODE_SIGN_IDENTITY_VALUE="Developer ID Application: ${CODE_SIGN_IDENTITY_VALUE}"
 fi
 
-xcodebuild -project osaurus.xcodeproj \
+xcodebuild -project App/osaurus.xcodeproj \
   -scheme osaurus \
   -configuration Release \
   -derivedDataPath build \
@@ -53,5 +53,3 @@ xcodebuild -exportArchive \
   -archivePath build/osaurus.xcarchive \
   -exportPath build_output \
   -exportOptionsPlist ExportOptions.plist
-
-

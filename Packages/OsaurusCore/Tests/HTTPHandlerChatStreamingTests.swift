@@ -9,7 +9,7 @@ import NIOHTTP1
 import NIOPosix
 import Testing
 
-@testable import osaurus
+@testable import OsaurusCore
 
 struct HTTPHandlerChatStreamingTests {
 
