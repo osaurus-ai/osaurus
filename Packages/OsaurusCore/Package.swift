@@ -24,6 +24,7 @@ let package = Package(
         .product(name: "NIOPosix", package: "swift-nio"),
         .product(name: "IkigaJSON", package: "IkigaJSON"),
         .product(name: "Sparkle", package: "Sparkle"),
+        .product(name: "MLX", package: "mlx-swift"),
         .product(name: "MLXLLM", package: "mlx-swift-examples"),
         .product(name: "MLXLMCommon", package: "mlx-swift-examples"),
         .product(name: "Hub", package: "swift-transformers"),
