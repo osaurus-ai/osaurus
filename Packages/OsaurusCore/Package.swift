@@ -11,6 +11,7 @@ let package = Package(
     .package(url: "https://github.com/apple/swift-nio.git", from: "2.88.0"),
     .package(url: "https://github.com/orlandos-nl/IkigaJSON", from: "2.3.2"),
     .package(url: "https://github.com/sparkle-project/Sparkle", from: "2.7.0"),
+    .package(url: "https://github.com/ml-explore/mlx-swift", from: "0.29.1"),
     .package(url: "https://github.com/ml-explore/mlx-swift-examples", from: "2.29.1"),
     .package(url: "https://github.com/huggingface/swift-transformers", from: "1.0.0"),
   ],
