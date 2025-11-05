@@ -6,6 +6,7 @@
 //
 
 import AppKit
+import OsaurusCore
 import SwiftUI
 
 @main

@@ -9,7 +9,7 @@ import Foundation
 import NIOHTTP1
 import Testing
 
-@testable import osaurus
+@testable import OsaurusCore
 
 struct osaurusTests {
 

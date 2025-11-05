@@ -7,7 +7,7 @@ import Foundation
 import MLXLMCommon
 import Testing
 
-@testable import osaurus
+@testable import OsaurusCore
 
 struct ModelRuntimeMappingTests {
 

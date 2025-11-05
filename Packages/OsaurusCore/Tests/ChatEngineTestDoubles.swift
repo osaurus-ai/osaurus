@@ -6,7 +6,7 @@
 import Foundation
 import Testing
 
-@testable import osaurus
+@testable import OsaurusCore
 
 // MARK: - ChatEngineProtocol mock
 

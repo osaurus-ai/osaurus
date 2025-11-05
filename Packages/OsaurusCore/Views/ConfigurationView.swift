@@ -660,6 +660,11 @@ extension ConfigurationView {
   private func resolveCLIExecutableURL() -> URL? {
     let fm = FileManager.default
     let appURL = Bundle.main.bundleURL
+    // Prefer embedded CLI in Helpers; fallback to MacOS for dev/main binary
+    let helpers = appURL.appendingPathComponent("Contents/Helpers/osaurus", isDirectory: false)
+    if fm.fileExists(atPath: helpers.path), fm.isExecutableFile(atPath: helpers.path) {
+      return helpers
+    }
     let embedded = appURL.appendingPathComponent("Contents/MacOS/osaurus", isDirectory: false)
     if fm.fileExists(atPath: embedded.path), fm.isExecutableFile(atPath: embedded.path) {
       return embedded
@@ -680,7 +685,16 @@ extension ConfigurationView {
     }
 
     // Also try if the app got embedded but we ran before copy phase: check inside the app that lives in Products/Release
-    let releaseEmbedded = productsDir.deletingLastPathComponent()
+    let releaseDir = productsDir.deletingLastPathComponent()
+    let releaseHelpers =
+      releaseDir
+      .appendingPathComponent("Release/osaurus.app/Contents/Helpers/osaurus", isDirectory: false)
+    if fm.fileExists(atPath: releaseHelpers.path), fm.isExecutableFile(atPath: releaseHelpers.path)
+    {
+      return releaseHelpers
+    }
+    let releaseEmbedded =
+      releaseDir
       .appendingPathComponent("Release/osaurus.app/Contents/MacOS/osaurus", isDirectory: false)
     if fm.fileExists(atPath: releaseEmbedded.path),
       fm.isExecutableFile(atPath: releaseEmbedded.path)

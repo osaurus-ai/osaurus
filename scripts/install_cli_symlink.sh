@@ -43,12 +43,16 @@ done
 
 resolve_cli_from_app() {
   local app_path="$1"
-  local cli_path
-  cli_path="$app_path/Contents/MacOS/osaurus"
-  if [[ -x "$cli_path" ]]; then
-    echo "$cli_path"
-    return 0
-  fi
+  local candidate
+  for candidate in \
+    "$app_path/Contents/Helpers/osaurus" \
+    "$app_path/Contents/MacOS/osaurus"
+  do
+    if [[ -x "$candidate" ]]; then
+      echo "$candidate"
+      return 0
+    fi
+  done
   return 1
 }
 
@@ -58,9 +62,12 @@ resolve_cli_from_dev() {
   for candidate in \
     "$base/osaurus" \
     "$base/osaurus-cli" \
+    "$base/osaurus.app/Contents/Helpers/osaurus" \
     "$base/osaurus.app/Contents/MacOS/osaurus" \
     "$REPO_ROOT/build/DerivedData/Build/Products/Debug/osaurus" \
-    "$REPO_ROOT/build/DerivedData/Build/Products/Debug/osaurus-cli"
+    "$REPO_ROOT/build/DerivedData/Build/Products/Debug/osaurus-cli" \
+    "$REPO_ROOT/build/DerivedData/Build/Products/Debug/osaurus.app/Contents/Helpers/osaurus" \
+    "$REPO_ROOT/build/DerivedData/Build/Products/Debug/osaurus.app/Contents/MacOS/osaurus"
   do
     if [[ -x "$candidate" ]]; then
       echo "$candidate"
@@ -147,5 +154,3 @@ else
   echo "Installed symlink (user): $TARGET_LINK -> $CLI_SRC"
   echo "Make sure $TARGET_DIR is on your PATH (e.g., add to your shell profile)."
 fi
-
-

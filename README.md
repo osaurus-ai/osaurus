@@ -43,54 +43,27 @@ Created by Dinoki Labs ([dinoki.ai](https://dinoki.ai)), a fully native desktop 
 
 ```
 osaurus/
-├── Core/
-│   ├── AppDelegate.swift
-│   └── osaurusApp.swift
-├── Controllers/
-│   └── ServerController.swift      # NIO server lifecycle
-├── Managers/
-│   └── ModelManager.swift          # Model discovery & downloads (Hugging Face)
-├── Models/
-│   ├── InternalMessage.swift
-│   ├── MLXModel.swift
-│   ├── OpenAIAPI.swift             # OpenAI‑compatible DTOs
-│   ├── ResponseWriters.swift       # SSE and NDJSON response writers
-│   ├── ServerConfiguration.swift
-│   ├── ServerConfigurationStore.swift
-│   ├── ChatConfiguration.swift
-│   ├── ChatConfigurationStore.swift
-│   └── ServerHealth.swift
-├── Networking/
-│   ├── HTTPHandler.swift           # Request parsing & routing entry
-│   ├── Router.swift                # Routes → handlers with path normalization
-│
-├── Services/
-│   ├── DirectoryPickerService.swift
-│   ├── FoundationModelService.swift
-│   ├── HuggingFaceService.swift
-│   ├── LoginItemService.swift
-│   ├── MLXService.swift            # MLX loading, session caching, generation
-│   ├── ModelService.swift
-│   ├── PromptBuilder.swift
-│   ├── SearchService.swift
-│   ├── SharedConfigurationService.swift
-│   ├── SystemMonitorService.swift  # Real-time CPU and RAM monitoring
-│   └── UpdaterService.swift
-├── Theme/
-│   └── Theme.swift
-├── Views/
-│   ├── Components/
-│   │   ├── EmptyStateView.swift
-│   │   ├── InfoRow.swift
-│   │   ├── ModelRowView.swift
-│   │   └── SimpleComponents.swift
-│   ├── ContentView.swift           # Start/stop server, quick controls
-│   ├── DirectoryPickerView.swift
-│   ├── ModelDetailView.swift
-│   ├── ModelDownloadView.swift     # Browse/download/manage models
-│   └── ChatView.swift              # In‑app chat overlay
-└── Assets.xcassets/
+├── App/
+│   ├── osaurus.xcodeproj
+│   └── osaurus/
+│       ├── osaurusApp.swift        # Thin app entry point
+│       └── Assets.xcassets/
+└── Packages/
+    ├── OsaurusCore/                # Swift Package (all app logic & deps)
+    │   ├── Controllers/            # NIO server lifecycle
+    │   ├── Managers/               # Model discovery & downloads (Hugging Face)
+    │   ├── Models/                 # DTOs, config, health, etc.
+    │   ├── Networking/             # Router, handlers, response writers
+    │   ├── Services/               # MLX runtime, Foundation, Hugging Face, etc.
+    │   ├── Theme/
+    │   └── Views/                  # SwiftUI views (popover, chat, managers)
+    └── OsaurusCLI/                 # Swift Package (executable CLI)
 ```
+
+Notes:
+
+- Dependencies are managed by Swift Package Manager in `Packages/OsaurusCore/Package.swift`.
+- The macOS app target depends only on `OsaurusCore`.
 
 ## Features
 
@@ -162,9 +135,9 @@ brew install --cask osaurus
 This installs `Osaurus.app`. The CLI (`osaurus`) is embedded inside the app and will be auto-linked by the cask if available. If the `osaurus` command isn't found on your PATH, run one of the following:
 
 ```bash
-# One-liner: symlink the embedded CLI into your Homebrew bin
-ln -sf "/Applications/Osaurus.app/Contents/MacOS/osaurus" "$(brew --prefix)/bin/osaurus" || \
-ln -sf "$HOME/Applications/Osaurus.app/Contents/MacOS/osaurus" "$(brew --prefix)/bin/osaurus"
+# One-liner: symlink the embedded CLI into your Homebrew bin (Helpers preferred)
+ln -sf "/Applications/Osaurus.app/Contents/Helpers/osaurus" "$(brew --prefix)/bin/osaurus" || \
+ln -sf "$HOME/Applications/Osaurus.app/Contents/Helpers/osaurus" "$(brew --prefix)/bin/osaurus"
 
 # Or use the helper script (auto-detects paths and Homebrew prefix)
 curl -fsSL https://raw.githubusercontent.com/dinoki-ai/osaurus/main/scripts/install_cli_symlink.sh | bash
@@ -180,7 +153,7 @@ The app will appear in your menu bar, ready to serve local LLMs on your Mac.
 
 ### Build and run
 
-1. Open `osaurus.xcodeproj` in Xcode 16.4+
+1. Open `osaurus.xcworkspace` (recommended for editing app + packages), or open `App/osaurus.xcodeproj` to build the app target directly
 2. Build and run the `osaurus` target
 3. In the UI, configure the port via the gear icon (default `1337`) and press Start
 4. Open the model manager to download a model (e.g., "Llama 3.2 3B Instruct 4bit")
@@ -530,9 +503,12 @@ Foundation Models:
 
 ## Dependencies
 
-- SwiftNIO (HTTP server)
-- SwiftUI/AppKit (UI)
-- MLX‑Swift, MLXLLM (runtime and generation)
+- Managed via Swift Package Manager in `Packages/OsaurusCore/Package.swift`:
+  - SwiftNIO (HTTP server)
+  - IkigaJSON (fast JSON)
+  - Sparkle (updates)
+  - MLX‑Swift, MLXLLM, MLXLMCommon (runtime and generation)
+  - Hugging Face swift‑transformers (Hub/Tokenizers)
 
 ## Contributors
 

@@ -54,11 +54,16 @@ resolve_app_path() {
 
 resolve_cli_from_app() {
   local app_path="$1"
-  local cli="$app_path/Contents/MacOS/osaurus"
-  if [[ -x "$cli" ]]; then
-    echo "$cli"
-    return 0
-  fi
+  local candidate
+  for candidate in \
+    "$app_path/Contents/Helpers/osaurus" \
+    "$app_path/Contents/MacOS/osaurus"
+  do
+    if [[ -x "$candidate" ]]; then
+      echo "$candidate"
+      return 0
+    fi
+  done
   return 1
 }
 
@@ -67,6 +72,7 @@ resolve_cli_from_dev() {
   local candidates=(
     "$base/Release/osaurus"
     "$base/Release/osaurus-cli"
+    "$base/Release/osaurus.app/Contents/Helpers/osaurus"
     "$base/Release/osaurus.app/Contents/MacOS/osaurus"
     "$base/Debug/osaurus"
     "$base/Debug/osaurus-cli"
@@ -114,5 +120,3 @@ EOF
 }
 
 main "$@"
-
-

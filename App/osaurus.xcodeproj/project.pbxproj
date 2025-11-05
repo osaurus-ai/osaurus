@@ -7,17 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
-		F0195FE52E5B467600A3DB17 /* Sparkle in Frameworks */ = {isa = PBXBuildFile; productRef = F0195FE42E5B467600A3DB17 /* Sparkle */; };
-		F0BB3CA02E52234700895593 /* NIO in Frameworks */ = {isa = PBXBuildFile; productRef = F0BB3C9F2E52234700895593 /* NIO */; };
-		F0BB3CA22E52234700895593 /* NIOConcurrencyHelpers in Frameworks */ = {isa = PBXBuildFile; productRef = F0BB3CA12E52234700895593 /* NIOConcurrencyHelpers */; };
-		F0BB3CA42E52234700895593 /* NIOCore in Frameworks */ = {isa = PBXBuildFile; productRef = F0BB3CA32E52234700895593 /* NIOCore */; };
-		F0BB3CA62E52240500895593 /* NIOHTTP1 in Frameworks */ = {isa = PBXBuildFile; productRef = F0BB3CA52E52240500895593 /* NIOHTTP1 */; };
-		F0C60D622E53DE140028ED4F /* MLX in Frameworks */ = {isa = PBXBuildFile; productRef = F0C60D612E53DE140028ED4F /* MLX */; };
-		F0C60D722E5491A10028ED4F /* MLXLLM in Frameworks */ = {isa = PBXBuildFile; productRef = F0C60D712E5491A10028ED4F /* MLXLLM */; };
-		F0C60D742E5491A10028ED4F /* MLXLMCommon in Frameworks */ = {isa = PBXBuildFile; productRef = F0C60D732E5491A10028ED4F /* MLXLMCommon */; };
-		F0C60D762E5491A10028ED4F /* MLXVLM in Frameworks */ = {isa = PBXBuildFile; productRef = F0C60D752E5491A10028ED4F /* MLXVLM */; };
-		F0C60E872E54A26A0028ED4F /* Transformers in Frameworks */ = {isa = PBXBuildFile; productRef = F0C60E862E54A26A0028ED4F /* Transformers */; };
-		F0C87F542E5881BA00567D31 /* IkigaJSON in Frameworks */ = {isa = PBXBuildFile; productRef = F0C87F532E5881BA00567D31 /* IkigaJSON */; };
+		F0AACC022E70000100895593 /* OsaurusCore in Frameworks */ = {isa = PBXBuildFile; productRef = F0AACC012E70000100895593 /* OsaurusCore */; };
 		F0EEC1062E60000100895593 /* OsaurusCLI.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0EEC1052E60000100895593 /* OsaurusCLI.swift */; };
 		F0EEC1212E60000100895593 /* osaurus in Embed CLI */ = {isa = PBXBuildFile; fileRef = F0EEC10A2E60000100895593 /* osaurus */; settings = {ATTRIBUTES = (CodeSignOnCopy, ); }; };
 /* End PBXBuildFile section */
@@ -87,11 +77,6 @@
 			path = osaurus;
 			sourceTree = "<group>";
 		};
-		F0BB3C372E51FBCD00895593 /* osaurusTests */ = {
-			isa = PBXFileSystemSynchronizedRootGroup;
-			path = osaurusTests;
-			sourceTree = "<group>";
-		};
 		F0BB3C412E51FBCD00895593 /* osaurusUITests */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			path = osaurusUITests;
@@ -104,17 +89,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				F0C60D722E5491A10028ED4F /* MLXLLM in Frameworks */,
-				F0BB3CA42E52234700895593 /* NIOCore in Frameworks */,
-				F0BB3CA02E52234700895593 /* NIO in Frameworks */,
-				F0BB3CA22E52234700895593 /* NIOConcurrencyHelpers in Frameworks */,
-				F0C60D622E53DE140028ED4F /* MLX in Frameworks */,
-				F0BB3CA62E52240500895593 /* NIOHTTP1 in Frameworks */,
-				F0C60E872E54A26A0028ED4F /* Transformers in Frameworks */,
-				F0195FE52E5B467600A3DB17 /* Sparkle in Frameworks */,
-				F0C60D762E5491A10028ED4F /* MLXVLM in Frameworks */,
-				F0C60D742E5491A10028ED4F /* MLXLMCommon in Frameworks */,
-				F0C87F542E5881BA00567D31 /* IkigaJSON in Frameworks */,
+				F0AACC022E70000100895593 /* OsaurusCore in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -146,11 +121,10 @@
 			isa = PBXGroup;
 			children = (
 				F0BB3C282E51FBCC00895593 /* osaurus */,
-				F0BB3C372E51FBCD00895593 /* osaurusTests */,
 				F0BB3C412E51FBCD00895593 /* osaurusUITests */,
 				F0C60E852E54A26A0028ED4F /* Frameworks */,
 				F0BB3C272E51FBCC00895593 /* Products */,
-				F0EEC1042E60000100895593 /* osaurusCLI */,
+				F0EEC1042E60000100895593 /* ../Packages/OsaurusCLI */,
 			);
 			sourceTree = "<group>";
 		};
@@ -172,12 +146,12 @@
 			name = Frameworks;
 			sourceTree = "<group>";
 		};
-		F0EEC1042E60000100895593 /* osaurusCLI */ = {
+		F0EEC1042E60000100895593 /* ../Packages/OsaurusCLI */ = {
 			isa = PBXGroup;
 			children = (
 				F0EEC1052E60000100895593 /* OsaurusCLI.swift */,
 			);
-			path = osaurusCLI;
+			path = ../Packages/OsaurusCLI;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -202,17 +176,7 @@
 			);
 			name = osaurus;
 			packageProductDependencies = (
-				F0BB3C9F2E52234700895593 /* NIO */,
-				F0BB3CA12E52234700895593 /* NIOConcurrencyHelpers */,
-				F0BB3CA32E52234700895593 /* NIOCore */,
-				F0BB3CA52E52240500895593 /* NIOHTTP1 */,
-				F0C60D612E53DE140028ED4F /* MLX */,
-				F0C60D712E5491A10028ED4F /* MLXLLM */,
-				F0C60D732E5491A10028ED4F /* MLXLMCommon */,
-				F0C60D752E5491A10028ED4F /* MLXVLM */,
-				F0C60E862E54A26A0028ED4F /* Transformers */,
-				F0C87F532E5881BA00567D31 /* IkigaJSON */,
-				F0195FE42E5B467600A3DB17 /* Sparkle */,
+				F0AACC012E70000100895593 /* OsaurusCore */,
 			);
 			productName = osaurus;
 			productReference = F0BB3C262E51FBCC00895593 /* osaurus.app */;
@@ -230,9 +194,6 @@
 			);
 			dependencies = (
 				F0BB3C362E51FBCD00895593 /* PBXTargetDependency */,
-			);
-			fileSystemSynchronizedGroups = (
-				F0BB3C372E51FBCD00895593 /* osaurusTests */,
 			);
 			name = osaurusTests;
 			packageProductDependencies = (
@@ -316,12 +277,7 @@
 			mainGroup = F0BB3C1D2E51FBCC00895593;
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
-				F0BB3C9E2E52234700895593 /* XCRemoteSwiftPackageReference "swift-nio" */,
-				F0C60D602E53DE140028ED4F /* XCRemoteSwiftPackageReference "mlx-swift" */,
-				F0C60D702E5491A10028ED4F /* XCRemoteSwiftPackageReference "mlx-swift-examples" */,
-				F0D0T1002E55AAAA0028ED4F /* XCRemoteSwiftPackageReference "swift-transformers" */,
-				F0C87F522E5881BA00567D31 /* XCRemoteSwiftPackageReference "IkigaJSON" */,
-				F0195FE32E5B467600A3DB17 /* XCRemoteSwiftPackageReference "Sparkle" */,
+				F0AACC002E70000100895593 /* XCLocalSwiftPackageReference "../Packages/OsaurusCore" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = F0BB3C272E51FBCC00895593 /* Products */;
@@ -565,6 +521,7 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
+				MACOSX_DEPLOYMENT_TARGET = 15.0;
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.dinoki.osaurus;
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -607,6 +564,7 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
+				MACOSX_DEPLOYMENT_TARGET = 15.0;
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.dinoki.osaurus;
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -783,112 +741,21 @@
 		};
 /* End XCConfigurationList section */
 
+/* Begin XCLocalSwiftPackageReference section */
+		F0AACC002E70000100895593 /* XCLocalSwiftPackageReference "../Packages/OsaurusCore" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = ../Packages/OsaurusCore;
+		};
+/* End XCLocalSwiftPackageReference section */
+
 /* Begin XCRemoteSwiftPackageReference section */
-		F0195FE32E5B467600A3DB17 /* XCRemoteSwiftPackageReference "Sparkle" */ = {
-			isa = XCRemoteSwiftPackageReference;
-			repositoryURL = "https://github.com/sparkle-project/Sparkle";
-			requirement = {
-				kind = exactVersion;
-				version = 2.7.0;
-			};
-		};
-		F0BB3C9E2E52234700895593 /* XCRemoteSwiftPackageReference "swift-nio" */ = {
-			isa = XCRemoteSwiftPackageReference;
-			repositoryURL = "https://github.com/apple/swift-nio.git";
-			requirement = {
-				kind = upToNextMajorVersion;
-				minimumVersion = 2.86.0;
-			};
-		};
-		F0C60D602E53DE140028ED4F /* XCRemoteSwiftPackageReference "mlx-swift" */ = {
-			isa = XCRemoteSwiftPackageReference;
-			repositoryURL = "https://github.com/ml-explore/mlx-swift";
-			requirement = {
-				kind = upToNextMajorVersion;
-				minimumVersion = 0.25.6;
-			};
-		};
-		F0C60D702E5491A10028ED4F /* XCRemoteSwiftPackageReference "mlx-swift-examples" */ = {
-			isa = XCRemoteSwiftPackageReference;
-			repositoryURL = "https://github.com/ml-explore/mlx-swift-examples";
-			requirement = {
-				kind = upToNextMajorVersion;
-				minimumVersion = 2.25.8;
-			};
-		};
-		F0C87F522E5881BA00567D31 /* XCRemoteSwiftPackageReference "IkigaJSON" */ = {
-			isa = XCRemoteSwiftPackageReference;
-			repositoryURL = "https://github.com/orlandos-nl/IkigaJSON";
-			requirement = {
-				kind = upToNextMajorVersion;
-				minimumVersion = 2.3.2;
-			};
-		};
-		F0D0T1002E55AAAA0028ED4F /* XCRemoteSwiftPackageReference "swift-transformers" */ = {
-			isa = XCRemoteSwiftPackageReference;
-			repositoryURL = "https://github.com/huggingface/swift-transformers";
-			requirement = {
-				kind = upToNextMajorVersion;
-				minimumVersion = 1.0.0;
-			};
-		};
 /* End XCRemoteSwiftPackageReference section */
 
-/* Begin XCSwiftPackageProductDependency section */
-		F0195FE42E5B467600A3DB17 /* Sparkle */ = {
+	/* Begin XCSwiftPackageProductDependency section */
+		F0AACC012E70000100895593 /* OsaurusCore */ = {
 			isa = XCSwiftPackageProductDependency;
-			package = F0195FE32E5B467600A3DB17 /* XCRemoteSwiftPackageReference "Sparkle" */;
-			productName = Sparkle;
-		};
-		F0BB3C9F2E52234700895593 /* NIO */ = {
-			isa = XCSwiftPackageProductDependency;
-			package = F0BB3C9E2E52234700895593 /* XCRemoteSwiftPackageReference "swift-nio" */;
-			productName = NIO;
-		};
-		F0BB3CA12E52234700895593 /* NIOConcurrencyHelpers */ = {
-			isa = XCSwiftPackageProductDependency;
-			package = F0BB3C9E2E52234700895593 /* XCRemoteSwiftPackageReference "swift-nio" */;
-			productName = NIOConcurrencyHelpers;
-		};
-		F0BB3CA32E52234700895593 /* NIOCore */ = {
-			isa = XCSwiftPackageProductDependency;
-			package = F0BB3C9E2E52234700895593 /* XCRemoteSwiftPackageReference "swift-nio" */;
-			productName = NIOCore;
-		};
-		F0BB3CA52E52240500895593 /* NIOHTTP1 */ = {
-			isa = XCSwiftPackageProductDependency;
-			package = F0BB3C9E2E52234700895593 /* XCRemoteSwiftPackageReference "swift-nio" */;
-			productName = NIOHTTP1;
-		};
-		F0C60D612E53DE140028ED4F /* MLX */ = {
-			isa = XCSwiftPackageProductDependency;
-			package = F0C60D602E53DE140028ED4F /* XCRemoteSwiftPackageReference "mlx-swift" */;
-			productName = MLX;
-		};
-		F0C60D712E5491A10028ED4F /* MLXLLM */ = {
-			isa = XCSwiftPackageProductDependency;
-			package = F0C60D702E5491A10028ED4F /* XCRemoteSwiftPackageReference "mlx-swift-examples" */;
-			productName = MLXLLM;
-		};
-		F0C60D732E5491A10028ED4F /* MLXLMCommon */ = {
-			isa = XCSwiftPackageProductDependency;
-			package = F0C60D702E5491A10028ED4F /* XCRemoteSwiftPackageReference "mlx-swift-examples" */;
-			productName = MLXLMCommon;
-		};
-		F0C60D752E5491A10028ED4F /* MLXVLM */ = {
-			isa = XCSwiftPackageProductDependency;
-			package = F0C60D702E5491A10028ED4F /* XCRemoteSwiftPackageReference "mlx-swift-examples" */;
-			productName = MLXVLM;
-		};
-		F0C60E862E54A26A0028ED4F /* Transformers */ = {
-			isa = XCSwiftPackageProductDependency;
-			package = F0D0T1002E55AAAA0028ED4F /* XCRemoteSwiftPackageReference "swift-transformers" */;
-			productName = Transformers;
-		};
-		F0C87F532E5881BA00567D31 /* IkigaJSON */ = {
-			isa = XCSwiftPackageProductDependency;
-			package = F0C87F522E5881BA00567D31 /* XCRemoteSwiftPackageReference "IkigaJSON" */;
-			productName = IkigaJSON;
+			package = F0AACC002E70000100895593 /* XCLocalSwiftPackageReference "../Packages/OsaurusCore" */;
+			productName = OsaurusCore;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};
