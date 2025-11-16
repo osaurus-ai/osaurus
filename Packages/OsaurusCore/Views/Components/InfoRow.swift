@@ -10,30 +10,30 @@ import SwiftUI
 
 /// The label is styled as secondary text and the value as primary text.
 struct InfoRow: View {
-  // MARK: - Dependencies
+    // MARK: - Dependencies
 
-  @Environment(\.theme) private var theme
+    @Environment(\.theme) private var theme
 
-  // MARK: - Properties
+    // MARK: - Properties
 
-  /// Label text (shown on the left in secondary color)
-  let label: String
+    /// Label text (shown on the left in secondary color)
+    let label: String
 
-  /// Value text (shown on the right in primary color)
-  let value: String
+    /// Value text (shown on the right in primary color)
+    let value: String
 
-  var body: some View {
-    HStack {
-      Text(label)
-        .font(.system(size: 13, weight: .medium))
-        .foregroundColor(theme.secondaryText)
+    var body: some View {
+        HStack {
+            Text(label)
+                .font(.system(size: 13, weight: .medium))
+                .foregroundColor(theme.secondaryText)
 
-      Spacer()
+            Spacer()
 
-      Text(value)
-        .font(.system(size: 13, weight: .medium))
-        .foregroundColor(theme.primaryText)
-        .multilineTextAlignment(.trailing)
+            Text(value)
+                .font(.system(size: 13, weight: .medium))
+                .foregroundColor(theme.primaryText)
+                .multilineTextAlignment(.trailing)
+        }
     }
-  }
 }

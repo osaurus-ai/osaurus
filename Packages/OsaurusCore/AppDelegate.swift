@@ -11,553 +11,555 @@ import QuartzCore
 import SwiftUI
 
 @MainActor
-public final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSPopoverDelegate
-{
-  static weak var shared: AppDelegate?
-  let serverController = ServerController()
-  private var statusItem: NSStatusItem?
-  private var popover: NSPopover?
-  private var cancellables: Set<AnyCancellable> = []
-  let updater = UpdaterViewModel()
+public final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSPopoverDelegate {
+    static weak var shared: AppDelegate?
+    let serverController = ServerController()
+    private var statusItem: NSStatusItem?
+    private var popover: NSPopover?
+    private var cancellables: Set<AnyCancellable> = []
+    let updater = UpdaterViewModel()
 
-  private var activityDot: NSView?
-  private var managementWindow: NSWindow?
-  private var chatWindow: NSWindow?
+    private var activityDot: NSView?
+    private var managementWindow: NSWindow?
+    private var chatWindow: NSWindow?
 
-  public func applicationDidFinishLaunching(_ notification: Notification) {
-    AppDelegate.shared = self
+    public func applicationDidFinishLaunching(_ notification: Notification) {
+        AppDelegate.shared = self
 
-    // Configure as menu bar app (hide Dock icon)
-    NSApp.setActivationPolicy(.accessory)
+        // Configure as menu bar app (hide Dock icon)
+        NSApp.setActivationPolicy(.accessory)
 
-    // App has launched
-    print("Osaurus server app launched")
+        // App has launched
+        print("Osaurus server app launched")
 
-    // Configure local notifications
-    NotificationService.shared.configureOnLaunch()
+        // Configure local notifications
+        NotificationService.shared.configureOnLaunch()
 
-    // Set up observers for server state changes
-    setupObservers()
+        // Set up observers for server state changes
+        setupObservers()
 
-    // Set up distributed control listeners (local-only management)
-    setupControlNotifications()
+        // Set up distributed control listeners (local-only management)
+        setupControlNotifications()
 
-    // Apply saved Start at Login preference on launch
-    let launchedByCLI = ProcessInfo.processInfo.arguments.contains("--launched-by-cli")
-    if !launchedByCLI {
-      LoginItemService.shared.applyStartAtLogin(serverController.configuration.startAtLogin)
-    }
-
-    // Create status bar item and attach click handler
-    let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-    if let button = item.button {
-      if let image = NSImage(systemSymbolName: "brain", accessibilityDescription: "Osaurus") {
-        image.isTemplate = true
-        button.image = image
-      } else {
-        button.title = "Osaurus"
-      }
-      button.toolTip = "Osaurus Server"
-      button.target = self
-      button.action = #selector(togglePopover(_:))
-
-      // Add a small green blinking dot at the bottom-right of the status bar button
-      let dot = NSView()
-      dot.wantsLayer = true
-      dot.translatesAutoresizingMaskIntoConstraints = false
-      dot.isHidden = true
-      button.addSubview(dot)
-      NSLayoutConstraint.activate([
-        dot.trailingAnchor.constraint(equalTo: button.trailingAnchor, constant: -3),
-        dot.bottomAnchor.constraint(equalTo: button.bottomAnchor, constant: -3),
-        dot.widthAnchor.constraint(equalToConstant: 7),
-        dot.heightAnchor.constraint(equalToConstant: 7),
-      ])
-      if let layer = dot.layer {
-        layer.backgroundColor = NSColor.systemGreen.cgColor
-        layer.cornerRadius = 3.5
-        layer.borderWidth = 1
-        layer.borderColor = NSColor.white.withAlphaComponent(0.9).cgColor
-      }
-      activityDot = dot
-    }
-    statusItem = item
-    updateStatusItemAndMenu()
-
-    // Initialize directory access early so security-scoped bookmark is active
-    let _ = DirectoryPickerService.shared
-
-    // Auto-start server on app launch
-    Task { @MainActor in
-      await serverController.startServer()
-    }
-
-    // Setup global hotkey for Chat overlay (configured)
-    applyChatHotkey()
-  }
-
-  public func application(_ application: NSApplication, open urls: [URL]) {
-    for url in urls {
-      handleDeepLink(url)
-    }
-  }
-
-  public func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
-    // Quit immediately without confirmation; still shut down server gracefully if running
-    guard serverController.isRunning else {
-      return .terminateNow
-    }
-
-    // Delay termination briefly to allow async shutdown
-    Task { @MainActor in
-      await serverController.ensureShutdown()
-      NSApp.reply(toApplicationShouldTerminate: true)
-    }
-
-    return .terminateLater
-  }
-
-  public func applicationWillTerminate(_ notification: Notification) {
-    print("Osaurus server app terminating")
-    SharedConfigurationService.shared.remove()
-  }
-
-  // MARK: Status Item / Menu
-
-  private func setupObservers() {
-    cancellables.removeAll()
-    serverController.$serverHealth
-      .receive(on: RunLoop.main)
-      .sink { [weak self] _ in
-        self?.updateStatusItemAndMenu()
-      }
-      .store(in: &cancellables)
-    serverController.$isRunning
-      .receive(on: RunLoop.main)
-      .sink { [weak self] _ in
-        self?.updateStatusItemAndMenu()
-      }
-      .store(in: &cancellables)
-    serverController.$configuration
-      .receive(on: RunLoop.main)
-      .sink { [weak self] _ in
-        self?.updateStatusItemAndMenu()
-      }
-      .store(in: &cancellables)
-
-    serverController.$activeRequestCount
-      .receive(on: RunLoop.main)
-      .sink { [weak self] _ in
-        self?.updateStatusItemAndMenu()
-      }
-      .store(in: &cancellables)
-
-    // Publish shared configuration on state/config/address changes
-    Publishers.CombineLatest3(
-      serverController.$serverHealth,
-      serverController.$configuration,
-      serverController.$localNetworkAddress
-    )
-    .receive(on: RunLoop.main)
-    .sink { health, config, address in
-      SharedConfigurationService.shared.update(
-        health: health,
-        configuration: config,
-        localAddress: address
-      )
-    }
-    .store(in: &cancellables)
-  }
-
-  private func updateStatusItemAndMenu() {
-    guard let statusItem else { return }
-    // Ensure no NSMenu is attached so button action is triggered
-    statusItem.menu = nil
-    if let button = statusItem.button {
-      // Update symbol based on server activity
-      let isActive = (serverController.serverHealth == .running) || serverController.isRestarting
-      let desiredName = isActive ? "brain.fill" : "brain"
-      var image = NSImage(systemSymbolName: desiredName, accessibilityDescription: "Osaurus")
-      if image == nil && isActive {
-        // Fallback if brain.fill is unavailable on this macOS version
-        image = NSImage(systemSymbolName: "brain", accessibilityDescription: "Osaurus")
-      }
-      if let image {
-        image.isTemplate = true
-        button.image = image
-      }
-      // Toggle green blinking dot overlay
-      let isGenerating = serverController.activeRequestCount > 0
-      if let dot = activityDot {
-        if isGenerating {
-          dot.isHidden = false
-          if let layer = dot.layer, layer.animation(forKey: "blink") == nil {
-            let anim = CABasicAnimation(keyPath: "opacity")
-            anim.fromValue = 1.0
-            anim.toValue = 0.2
-            anim.duration = 0.8
-            anim.autoreverses = true
-            anim.repeatCount = .infinity
-            layer.add(anim, forKey: "blink")
-          }
-        } else {
-          if let layer = dot.layer {
-            layer.removeAnimation(forKey: "blink")
-          }
-          dot.isHidden = true
+        // Apply saved Start at Login preference on launch
+        let launchedByCLI = ProcessInfo.processInfo.arguments.contains("--launched-by-cli")
+        if !launchedByCLI {
+            LoginItemService.shared.applyStartAtLogin(serverController.configuration.startAtLogin)
         }
-      }
-      var tooltip: String
-      switch serverController.serverHealth {
-      case .stopped:
-        tooltip =
-          serverController.isRestarting ? "Osaurus — Restarting…" : "Osaurus — Ready to start"
-      case .starting:
-        tooltip = "Osaurus — Starting…"
-      case .restarting:
-        tooltip = "Osaurus — Restarting…"
-      case .running:
-        tooltip = "Osaurus — Running on port \(serverController.port)"
-      case .stopping:
-        tooltip = "Osaurus — Stopping…"
-      case .error(let message):
-        tooltip = "Osaurus — Error: \(message)"
-      }
-      if serverController.activeRequestCount > 0 {
-        tooltip += " — Generating…"
-      }
-      button.toolTip = tooltip
+
+        // Create status bar item and attach click handler
+        let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+        if let button = item.button {
+            if let image = NSImage(systemSymbolName: "brain", accessibilityDescription: "Osaurus") {
+                image.isTemplate = true
+                button.image = image
+            } else {
+                button.title = "Osaurus"
+            }
+            button.toolTip = "Osaurus Server"
+            button.target = self
+            button.action = #selector(togglePopover(_:))
+
+            // Add a small green blinking dot at the bottom-right of the status bar button
+            let dot = NSView()
+            dot.wantsLayer = true
+            dot.translatesAutoresizingMaskIntoConstraints = false
+            dot.isHidden = true
+            button.addSubview(dot)
+            NSLayoutConstraint.activate([
+                dot.trailingAnchor.constraint(equalTo: button.trailingAnchor, constant: -3),
+                dot.bottomAnchor.constraint(equalTo: button.bottomAnchor, constant: -3),
+                dot.widthAnchor.constraint(equalToConstant: 7),
+                dot.heightAnchor.constraint(equalToConstant: 7),
+            ])
+            if let layer = dot.layer {
+                layer.backgroundColor = NSColor.systemGreen.cgColor
+                layer.cornerRadius = 3.5
+                layer.borderWidth = 1
+                layer.borderColor = NSColor.white.withAlphaComponent(0.9).cgColor
+            }
+            activityDot = dot
+        }
+        statusItem = item
+        updateStatusItemAndMenu()
+
+        // Initialize directory access early so security-scoped bookmark is active
+        let _ = DirectoryPickerService.shared
+
+        // Auto-start server on app launch
+        Task { @MainActor in
+            await serverController.startServer()
+        }
+
+        // Setup global hotkey for Chat overlay (configured)
+        applyChatHotkey()
     }
-  }
 
-  // MARK: - Actions
-
-  @objc private func togglePopover(_ sender: Any?) {
-    if let popover, popover.isShown {
-      popover.performClose(sender)
-      return
+    public func application(_ application: NSApplication, open urls: [URL]) {
+        for url in urls {
+            handleDeepLink(url)
+        }
     }
-    showPopover()
-  }
 
-  // Expose a method to show the popover programmatically (e.g., for Cmd+,)
-  public func showPopover() {
-    guard let statusButton = statusItem?.button else { return }
-    if let popover, popover.isShown {
-      // Already visible; bring app to front
-      NSApp.activate(ignoringOtherApps: true)
-      return
+    public func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        // Quit immediately without confirmation; still shut down server gracefully if running
+        guard serverController.isRunning else {
+            return .terminateNow
+        }
+
+        // Delay termination briefly to allow async shutdown
+        Task { @MainActor in
+            await serverController.ensureShutdown()
+            NSApp.reply(toApplicationShouldTerminate: true)
+        }
+
+        return .terminateLater
     }
-    let popover = NSPopover()
-    popover.behavior = .transient
-    popover.animates = true
 
-    let themeManager = ThemeManager.shared
-    let contentView = ContentView()
-      .environmentObject(serverController)
-      .environment(\.theme, themeManager.currentTheme)
-      .environmentObject(updater)
+    public func applicationWillTerminate(_ notification: Notification) {
+        print("Osaurus server app terminating")
+        SharedConfigurationService.shared.remove()
+    }
 
-    popover.contentViewController = NSHostingController(rootView: contentView)
-    self.popover = popover
+    // MARK: Status Item / Menu
 
-    popover.show(relativeTo: statusButton.bounds, of: statusButton, preferredEdge: .minY)
-    NSApp.activate(ignoringOtherApps: true)
-  }
+    private func setupObservers() {
+        cancellables.removeAll()
+        serverController.$serverHealth
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _ in
+                self?.updateStatusItemAndMenu()
+            }
+            .store(in: &cancellables)
+        serverController.$isRunning
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _ in
+                self?.updateStatusItemAndMenu()
+            }
+            .store(in: &cancellables)
+        serverController.$configuration
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _ in
+                self?.updateStatusItemAndMenu()
+            }
+            .store(in: &cancellables)
+
+        serverController.$activeRequestCount
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _ in
+                self?.updateStatusItemAndMenu()
+            }
+            .store(in: &cancellables)
+
+        // Publish shared configuration on state/config/address changes
+        Publishers.CombineLatest3(
+            serverController.$serverHealth,
+            serverController.$configuration,
+            serverController.$localNetworkAddress
+        )
+        .receive(on: RunLoop.main)
+        .sink { health, config, address in
+            SharedConfigurationService.shared.update(
+                health: health,
+                configuration: config,
+                localAddress: address
+            )
+        }
+        .store(in: &cancellables)
+    }
+
+    private func updateStatusItemAndMenu() {
+        guard let statusItem else { return }
+        // Ensure no NSMenu is attached so button action is triggered
+        statusItem.menu = nil
+        if let button = statusItem.button {
+            // Update symbol based on server activity
+            let isActive = (serverController.serverHealth == .running) || serverController.isRestarting
+            let desiredName = isActive ? "brain.fill" : "brain"
+            var image = NSImage(systemSymbolName: desiredName, accessibilityDescription: "Osaurus")
+            if image == nil && isActive {
+                // Fallback if brain.fill is unavailable on this macOS version
+                image = NSImage(systemSymbolName: "brain", accessibilityDescription: "Osaurus")
+            }
+            if let image {
+                image.isTemplate = true
+                button.image = image
+            }
+            // Toggle green blinking dot overlay
+            let isGenerating = serverController.activeRequestCount > 0
+            if let dot = activityDot {
+                if isGenerating {
+                    dot.isHidden = false
+                    if let layer = dot.layer, layer.animation(forKey: "blink") == nil {
+                        let anim = CABasicAnimation(keyPath: "opacity")
+                        anim.fromValue = 1.0
+                        anim.toValue = 0.2
+                        anim.duration = 0.8
+                        anim.autoreverses = true
+                        anim.repeatCount = .infinity
+                        layer.add(anim, forKey: "blink")
+                    }
+                } else {
+                    if let layer = dot.layer {
+                        layer.removeAnimation(forKey: "blink")
+                    }
+                    dot.isHidden = true
+                }
+            }
+            var tooltip: String
+            switch serverController.serverHealth {
+            case .stopped:
+                tooltip =
+                    serverController.isRestarting ? "Osaurus — Restarting…" : "Osaurus — Ready to start"
+            case .starting:
+                tooltip = "Osaurus — Starting…"
+            case .restarting:
+                tooltip = "Osaurus — Restarting…"
+            case .running:
+                tooltip = "Osaurus — Running on port \(serverController.port)"
+            case .stopping:
+                tooltip = "Osaurus — Stopping…"
+            case .error(let message):
+                tooltip = "Osaurus — Error: \(message)"
+            }
+            if serverController.activeRequestCount > 0 {
+                tooltip += " — Generating…"
+            }
+            button.toolTip = tooltip
+        }
+    }
+
+    // MARK: - Actions
+
+    @objc private func togglePopover(_ sender: Any?) {
+        if let popover, popover.isShown {
+            popover.performClose(sender)
+            return
+        }
+        showPopover()
+    }
+
+    // Expose a method to show the popover programmatically (e.g., for Cmd+,)
+    public func showPopover() {
+        guard let statusButton = statusItem?.button else { return }
+        if let popover, popover.isShown {
+            // Already visible; bring app to front
+            NSApp.activate(ignoringOtherApps: true)
+            return
+        }
+        let popover = NSPopover()
+        popover.behavior = .transient
+        popover.animates = true
+
+        let themeManager = ThemeManager.shared
+        let contentView = ContentView()
+            .environmentObject(serverController)
+            .environment(\.theme, themeManager.currentTheme)
+            .environmentObject(updater)
+
+        popover.contentViewController = NSHostingController(rootView: contentView)
+        self.popover = popover
+
+        popover.show(relativeTo: statusButton.bounds, of: statusButton, preferredEdge: .minY)
+        NSApp.activate(ignoringOtherApps: true)
+    }
 
 }
 
 // MARK: - Distributed Control (Local Only)
 extension AppDelegate {
-  fileprivate static let controlServeNotification = Notification.Name(
-    "com.dinoki.osaurus.control.serve")
-  fileprivate static let controlStopNotification = Notification.Name(
-    "com.dinoki.osaurus.control.stop")
-  fileprivate static let controlShowUINotification = Notification.Name(
-    "com.dinoki.osaurus.control.ui")
-
-  private func setupControlNotifications() {
-    let center = DistributedNotificationCenter.default()
-    center.addObserver(
-      self,
-      selector: #selector(handleServeCommand(_:)),
-      name: Self.controlServeNotification,
-      object: nil
+    fileprivate static let controlServeNotification = Notification.Name(
+        "com.dinoki.osaurus.control.serve"
     )
-    center.addObserver(
-      self,
-      selector: #selector(handleStopCommand(_:)),
-      name: Self.controlStopNotification,
-      object: nil
+    fileprivate static let controlStopNotification = Notification.Name(
+        "com.dinoki.osaurus.control.stop"
     )
-    center.addObserver(
-      self,
-      selector: #selector(handleShowUICommand(_:)),
-      name: Self.controlShowUINotification,
-      object: nil
+    fileprivate static let controlShowUINotification = Notification.Name(
+        "com.dinoki.osaurus.control.ui"
     )
-  }
 
-  @objc private func handleServeCommand(_ note: Notification) {
-    var desiredPort: Int? = nil
-    var exposeFlag: Bool = false
-    if let ui = note.userInfo {
-      if let p = ui["port"] as? Int {
-        desiredPort = p
-      } else if let s = ui["port"] as? String, let p = Int(s) {
-        desiredPort = p
-      }
-      if let e = ui["expose"] as? Bool {
-        exposeFlag = e
-      } else if let es = ui["expose"] as? String {
-        let v = es.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        exposeFlag = (v == "1" || v == "true" || v == "yes" || v == "y")
-      }
+    private func setupControlNotifications() {
+        let center = DistributedNotificationCenter.default()
+        center.addObserver(
+            self,
+            selector: #selector(handleServeCommand(_:)),
+            name: Self.controlServeNotification,
+            object: nil
+        )
+        center.addObserver(
+            self,
+            selector: #selector(handleStopCommand(_:)),
+            name: Self.controlStopNotification,
+            object: nil
+        )
+        center.addObserver(
+            self,
+            selector: #selector(handleShowUICommand(_:)),
+            name: Self.controlShowUINotification,
+            object: nil
+        )
     }
 
-    // Apply defaults if not provided
-    let targetPort = desiredPort ?? (ServerConfigurationStore.load()?.port ?? 1337)
-    guard (1..<65536).contains(targetPort) else { return }
+    @objc private func handleServeCommand(_ note: Notification) {
+        var desiredPort: Int? = nil
+        var exposeFlag: Bool = false
+        if let ui = note.userInfo {
+            if let p = ui["port"] as? Int {
+                desiredPort = p
+            } else if let s = ui["port"] as? String, let p = Int(s) {
+                desiredPort = p
+            }
+            if let e = ui["expose"] as? Bool {
+                exposeFlag = e
+            } else if let es = ui["expose"] as? String {
+                let v = es.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+                exposeFlag = (v == "1" || v == "true" || v == "yes" || v == "y")
+            }
+        }
 
-    // Apply exposure policy based on request (default localhost-only)
-    serverController.configuration.exposeToNetwork = exposeFlag
-    serverController.port = targetPort
-    serverController.saveConfiguration()
+        // Apply defaults if not provided
+        let targetPort = desiredPort ?? (ServerConfigurationStore.load()?.port ?? 1337)
+        guard (1 ..< 65536).contains(targetPort) else { return }
 
-    Task { @MainActor in
-      await serverController.startServer()
+        // Apply exposure policy based on request (default localhost-only)
+        serverController.configuration.exposeToNetwork = exposeFlag
+        serverController.port = targetPort
+        serverController.saveConfiguration()
+
+        Task { @MainActor in
+            await serverController.startServer()
+        }
     }
-  }
 
-  @objc private func handleStopCommand(_ note: Notification) {
-    Task { @MainActor in
-      await serverController.stopServer()
+    @objc private func handleStopCommand(_ note: Notification) {
+        Task { @MainActor in
+            await serverController.stopServer()
+        }
     }
-  }
 
-  @objc private func handleShowUICommand(_ note: Notification) {
-    Task { @MainActor in
-      self.showPopover()
+    @objc private func handleShowUICommand(_ note: Notification) {
+        Task { @MainActor in
+            self.showPopover()
+        }
     }
-  }
 }
 
 // MARK: Deep Link Handling
 extension AppDelegate {
-  func applyChatHotkey() {
-    let cfg = ChatConfigurationStore.load()
-    HotKeyManager.shared.register(hotkey: cfg.hotkey) { [weak self] in
-      Task { @MainActor in
-        self?.toggleChatOverlay()
-      }
+    func applyChatHotkey() {
+        let cfg = ChatConfigurationStore.load()
+        HotKeyManager.shared.register(hotkey: cfg.hotkey) { [weak self] in
+            Task { @MainActor in
+                self?.toggleChatOverlay()
+            }
+        }
     }
-  }
-  fileprivate func handleDeepLink(_ url: URL) {
-    guard let scheme = url.scheme?.lowercased(), scheme == "huggingface" else { return }
-    guard let components = URLComponents(url: url, resolvingAgainstBaseURL: false) else { return }
-    let items = components.queryItems ?? []
-    let modelId = items.first(where: { $0.name.lowercased() == "model" })?.value?
-      .trimmingCharacters(in: .whitespacesAndNewlines)
-    let file = items.first(where: { $0.name.lowercased() == "file" })?.value?.trimmingCharacters(
-      in: .whitespacesAndNewlines)
+    fileprivate func handleDeepLink(_ url: URL) {
+        guard let scheme = url.scheme?.lowercased(), scheme == "huggingface" else { return }
+        guard let components = URLComponents(url: url, resolvingAgainstBaseURL: false) else { return }
+        let items = components.queryItems ?? []
+        let modelId = items.first(where: { $0.name.lowercased() == "model" })?.value?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let file = items.first(where: { $0.name.lowercased() == "file" })?.value?.trimmingCharacters(
+            in: .whitespacesAndNewlines
+        )
 
-    guard let modelId, !modelId.isEmpty else {
-      // No model id provided; ignore silently
-      return
+        guard let modelId, !modelId.isEmpty else {
+            // No model id provided; ignore silently
+            return
+        }
+
+        // Resolve to ensure it appears in the UI; enforce MLX-only via metadata
+        Task { @MainActor in
+            if await ModelManager.shared.resolveModelIfMLXCompatible(byRepoId: modelId) == nil {
+                let alert = NSAlert()
+                alert.messageText = "Unsupported model"
+                alert.informativeText = "Osaurus only supports MLX-compatible Hugging Face repositories."
+                alert.alertStyle = .warning
+                alert.addButton(withTitle: "OK")
+                alert.runModal()
+                return
+            }
+
+            // Open Model Manager in its own window for deeplinks
+            showManagementWindow(initialTab: .models, deeplinkModelId: modelId, deeplinkFile: file)
+        }
     }
-
-    // Resolve to ensure it appears in the UI; enforce MLX-only via metadata
-    Task { @MainActor in
-      if await ModelManager.shared.resolveModelIfMLXCompatible(byRepoId: modelId) == nil {
-        let alert = NSAlert()
-        alert.messageText = "Unsupported model"
-        alert.informativeText = "Osaurus only supports MLX-compatible Hugging Face repositories."
-        alert.alertStyle = .warning
-        alert.addButton(withTitle: "OK")
-        alert.runModal()
-        return
-      }
-
-      // Open Model Manager in its own window for deeplinks
-      showManagementWindow(initialTab: .models, deeplinkModelId: modelId, deeplinkFile: file)
-    }
-  }
 }
 
 // MARK: - Chat Overlay Window
 extension AppDelegate {
-  private func setupChatHotKey() {}
+    private func setupChatHotKey() {}
 
-  @MainActor private func toggleChatOverlay() {
-    if let win = chatWindow, win.isVisible {
-      closeChatOverlay()
-    } else {
-      showChatOverlay()
-    }
-  }
-
-  @MainActor func showChatOverlay() {
-    if chatWindow == nil {
-      let themeManager = ThemeManager.shared
-      let root = ChatView()
-        .environmentObject(serverController)
-        .environment(\.theme, themeManager.currentTheme)
-
-      let controller = NSHostingController(rootView: root)
-      // Create already centered on the active screen to avoid any reposition jank
-      // Start with compact size since chat is initially empty
-      let defaultSize = NSSize(width: 720, height: 250)
-      let mouse = NSEvent.mouseLocation
-      let screen = NSScreen.screens.first { NSMouseInRect(mouse, $0.frame, false) } ?? NSScreen.main
-      let initialRect: NSRect
-      if let s = screen {
-        initialRect = centeredRect(size: defaultSize, on: s)
-      } else {
-        initialRect = NSRect(x: 0, y: 0, width: defaultSize.width, height: defaultSize.height)
-      }
-      let win = NSPanel(
-        contentRect: initialRect,
-        styleMask: [.titled, .fullSizeContentView],
-        backing: .buffered,
-        defer: false
-      )
-      // Enable resizing and glass-style translucency
-      win.styleMask.insert(.resizable)
-      win.isOpaque = false
-      win.backgroundColor = .clear
-      win.hidesOnDeactivate = false
-      win.isExcludedFromWindowsMenu = true
-      win.standardWindowButton(.miniaturizeButton)?.isHidden = true
-      win.standardWindowButton(.zoomButton)?.isHidden = true
-      win.titleVisibility = .hidden
-      win.titlebarAppearsTransparent = true
-      win.isMovableByWindowBackground = true
-      win.standardWindowButton(.closeButton)?.isHidden = true
-      win.level = .modalPanel
-      win.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
-      win.contentViewController = controller
-      win.delegate = self
-      win.animationBehavior = .none
-      chatWindow = win
-      // Pre-layout before showing to avoid initial jank
-      controller.view.layoutSubtreeIfNeeded()
-      NSApp.activate(ignoringOtherApps: true)
-      chatWindow?.makeKeyAndOrderFront(nil)
-      Task { @MainActor in
-        NotificationCenter.default.post(name: .chatOverlayActivated, object: nil)
-      }
-      return
+    @MainActor private func toggleChatOverlay() {
+        if let win = chatWindow, win.isVisible {
+            closeChatOverlay()
+        } else {
+            showChatOverlay()
+        }
     }
 
-    guard let win = chatWindow else { return }
-    NSApp.activate(ignoringOtherApps: true)
-    if win.isMiniaturized { win.deminiaturize(nil) }
-    centerWindowOnActiveScreen(win)
-    win.makeKeyAndOrderFront(nil)
-    Task { @MainActor in
-      NotificationCenter.default.post(name: .chatOverlayActivated, object: nil)
-    }
-  }
+    @MainActor func showChatOverlay() {
+        if chatWindow == nil {
+            let themeManager = ThemeManager.shared
+            let root = ChatView()
+                .environmentObject(serverController)
+                .environment(\.theme, themeManager.currentTheme)
 
-  @MainActor func closeChatOverlay() {
-    chatWindow?.orderOut(nil)
-  }
+            let controller = NSHostingController(rootView: root)
+            // Create already centered on the active screen to avoid any reposition jank
+            // Start with compact size since chat is initially empty
+            let defaultSize = NSSize(width: 720, height: 250)
+            let mouse = NSEvent.mouseLocation
+            let screen = NSScreen.screens.first { NSMouseInRect(mouse, $0.frame, false) } ?? NSScreen.main
+            let initialRect: NSRect
+            if let s = screen {
+                initialRect = centeredRect(size: defaultSize, on: s)
+            } else {
+                initialRect = NSRect(x: 0, y: 0, width: defaultSize.width, height: defaultSize.height)
+            }
+            let win = NSPanel(
+                contentRect: initialRect,
+                styleMask: [.titled, .fullSizeContentView],
+                backing: .buffered,
+                defer: false
+            )
+            // Enable resizing and glass-style translucency
+            win.styleMask.insert(.resizable)
+            win.isOpaque = false
+            win.backgroundColor = .clear
+            win.hidesOnDeactivate = false
+            win.isExcludedFromWindowsMenu = true
+            win.standardWindowButton(.miniaturizeButton)?.isHidden = true
+            win.standardWindowButton(.zoomButton)?.isHidden = true
+            win.titleVisibility = .hidden
+            win.titlebarAppearsTransparent = true
+            win.isMovableByWindowBackground = true
+            win.standardWindowButton(.closeButton)?.isHidden = true
+            win.level = .modalPanel
+            win.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
+            win.contentViewController = controller
+            win.delegate = self
+            win.animationBehavior = .none
+            chatWindow = win
+            // Pre-layout before showing to avoid initial jank
+            controller.view.layoutSubtreeIfNeeded()
+            NSApp.activate(ignoringOtherApps: true)
+            chatWindow?.makeKeyAndOrderFront(nil)
+            Task { @MainActor in
+                NotificationCenter.default.post(name: .chatOverlayActivated, object: nil)
+            }
+            return
+        }
+
+        guard let win = chatWindow else { return }
+        NSApp.activate(ignoringOtherApps: true)
+        if win.isMiniaturized { win.deminiaturize(nil) }
+        centerWindowOnActiveScreen(win)
+        win.makeKeyAndOrderFront(nil)
+        Task { @MainActor in
+            NotificationCenter.default.post(name: .chatOverlayActivated, object: nil)
+        }
+    }
+
+    @MainActor func closeChatOverlay() {
+        chatWindow?.orderOut(nil)
+    }
 }
 
 // MARK: - Chat Overlay Helpers
 extension AppDelegate {
-  fileprivate func centerWindowOnActiveScreen(_ window: NSWindow) {
-    let mouse = NSEvent.mouseLocation
-    let screen = NSScreen.screens.first { NSMouseInRect(mouse, $0.frame, false) } ?? NSScreen.main
-    guard let s = screen else {
-      window.center()
-      return
+    fileprivate func centerWindowOnActiveScreen(_ window: NSWindow) {
+        let mouse = NSEvent.mouseLocation
+        let screen = NSScreen.screens.first { NSMouseInRect(mouse, $0.frame, false) } ?? NSScreen.main
+        guard let s = screen else {
+            window.center()
+            return
+        }
+        // Use visibleFrame to avoid menu bar and dock overlap
+        let vf = s.visibleFrame
+        let size = window.frame.size
+        let x = vf.midX - size.width / 2
+        let y = vf.midY - size.height / 2
+        window.setFrameOrigin(NSPoint(x: x, y: y))
     }
-    // Use visibleFrame to avoid menu bar and dock overlap
-    let vf = s.visibleFrame
-    let size = window.frame.size
-    let x = vf.midX - size.width / 2
-    let y = vf.midY - size.height / 2
-    window.setFrameOrigin(NSPoint(x: x, y: y))
-  }
 
-  fileprivate func centeredRect(size: NSSize, on screen: NSScreen) -> NSRect {
-    let vf = screen.visibleFrame
-    let origin = NSPoint(x: vf.midX - size.width / 2, y: vf.midY - size.height / 2)
-    return NSRect(origin: origin, size: size)
-  }
+    fileprivate func centeredRect(size: NSSize, on screen: NSScreen) -> NSRect {
+        let vf = screen.visibleFrame
+        let origin = NSPoint(x: vf.midX - size.width / 2, y: vf.midY - size.height / 2)
+        return NSRect(origin: origin, size: size)
+    }
 }
 
 extension Notification.Name {
-  static let chatOverlayActivated = Notification.Name("chatOverlayActivated")
+    static let chatOverlayActivated = Notification.Name("chatOverlayActivated")
 }
 
 // MARK: Management Window
 extension AppDelegate {
-  @MainActor func showManagementWindow(
-    initialTab: ManagementTab = .models,
-    deeplinkModelId: String? = nil,
-    deeplinkFile: String? = nil
-  ) {
-    let presentWindow: () -> Void = { [weak self] in
-      guard let self = self else { return }
+    @MainActor func showManagementWindow(
+        initialTab: ManagementTab = .models,
+        deeplinkModelId: String? = nil,
+        deeplinkFile: String? = nil
+    ) {
+        let presentWindow: () -> Void = { [weak self] in
+            guard let self = self else { return }
 
-      let themeManager = ThemeManager.shared
-      let root = ManagementView(
-        initialTab: initialTab,
-        deeplinkModelId: deeplinkModelId,
-        deeplinkFile: deeplinkFile
-      )
-        .environment(\.theme, themeManager.currentTheme)
+            let themeManager = ThemeManager.shared
+            let root = ManagementView(
+                initialTab: initialTab,
+                deeplinkModelId: deeplinkModelId,
+                deeplinkFile: deeplinkFile
+            )
+            .environment(\.theme, themeManager.currentTheme)
 
-      let hostingController = NSHostingController(rootView: root)
+            let hostingController = NSHostingController(rootView: root)
 
-      if let window = self.managementWindow {
-        window.contentViewController = hostingController
-        if window.isMiniaturized { window.deminiaturize(nil) }
-        NSApp.activate(ignoringOtherApps: true)
-        window.center()
-        window.makeKeyAndOrderFront(nil)
-        window.orderFrontRegardless()
-        NSLog("[Management] Reused existing window and brought to front")
-        return
-      }
+            if let window = self.managementWindow {
+                window.contentViewController = hostingController
+                if window.isMiniaturized { window.deminiaturize(nil) }
+                NSApp.activate(ignoringOtherApps: true)
+                window.center()
+                window.makeKeyAndOrderFront(nil)
+                window.orderFrontRegardless()
+                NSLog("[Management] Reused existing window and brought to front")
+                return
+            }
 
-      let window = NSWindow(
-        contentRect: NSRect(x: 0, y: 0, width: 820, height: 640),
-        styleMask: [.titled, .closable, .fullSizeContentView],
-        backing: .buffered,
-        defer: false
-      )
-      window.titleVisibility = .hidden
-      window.titlebarAppearsTransparent = true
-      window.isMovableByWindowBackground = true
-      window.contentViewController = hostingController
-      window.center()
-      window.delegate = self
-      window.isReleasedWhenClosed = false
-      self.managementWindow = window
+            let window = NSWindow(
+                contentRect: NSRect(x: 0, y: 0, width: 820, height: 640),
+                styleMask: [.titled, .closable, .fullSizeContentView],
+                backing: .buffered,
+                defer: false
+            )
+            window.titleVisibility = .hidden
+            window.titlebarAppearsTransparent = true
+            window.isMovableByWindowBackground = true
+            window.contentViewController = hostingController
+            window.center()
+            window.delegate = self
+            window.isReleasedWhenClosed = false
+            self.managementWindow = window
 
-      NSApp.activate(ignoringOtherApps: true)
-      window.makeKeyAndOrderFront(nil)
-      window.orderFrontRegardless()
-      NSLog("[Management] Created new window and presented")
+            NSApp.activate(ignoringOtherApps: true)
+            window.makeKeyAndOrderFront(nil)
+            window.orderFrontRegardless()
+            NSLog("[Management] Created new window and presented")
+        }
+
+        if let pop = popover, pop.isShown {
+            pop.performClose(nil)
+            Task { @MainActor in
+                try? await Task.sleep(nanoseconds: 200_000_000)
+                presentWindow()
+            }
+        } else {
+            presentWindow()
+        }
     }
 
-    if let pop = popover, pop.isShown {
-      pop.performClose(nil)
-      Task { @MainActor in
-        try? await Task.sleep(nanoseconds: 200_000_000)
-        presentWindow()
-      }
-    } else {
-      presentWindow()
+    public func windowWillClose(_ notification: Notification) {
+        guard let win = notification.object as? NSWindow else { return }
+        if win == managementWindow { managementWindow = nil }
     }
-  }
-
-  public func windowWillClose(_ notification: Notification) {
-    guard let win = notification.object as? NSWindow else { return }
-    if win == managementWindow { managementWindow = nil }
-  }
 }
-

@@ -11,271 +11,271 @@ import SwiftUI
 
 /// Deep linking is supported via `deeplinkModelId` to open the view with a specific model pre-selected.
 struct ModelDownloadView: View {
-  // MARK: - State Management
+    // MARK: - State Management
 
-  /// Shared model manager for handling downloads and model state
-  @StateObject private var modelManager = ModelManager.shared
+    /// Shared model manager for handling downloads and model state
+    @StateObject private var modelManager = ModelManager.shared
 
-  /// Theme manager for consistent UI styling
-  @StateObject private var themeManager = ThemeManager.shared
-  @Environment(\.theme) private var theme
+    /// Theme manager for consistent UI styling
+    @StateObject private var themeManager = ThemeManager.shared
+    @Environment(\.theme) private var theme
 
-  /// Current search query text
-  @State private var searchText: String = ""
+    /// Current search query text
+    @State private var searchText: String = ""
 
-  /// Currently selected tab (All, Suggested, or Downloaded)
-  @State private var selectedTab: ModelListTab = .all
+    /// Currently selected tab (All, Suggested, or Downloaded)
+    @State private var selectedTab: ModelListTab = .all
 
-  /// Debounce task to prevent excessive API calls during typing
-  @State private var searchDebounceTask: Task<Void, Never>? = nil
+    /// Debounce task to prevent excessive API calls during typing
+    @State private var searchDebounceTask: Task<Void, Never>? = nil
 
-  /// Model to show in the detail sheet
-  @State private var modelToShowDetails: MLXModel? = nil
+    /// Model to show in the detail sheet
+    @State private var modelToShowDetails: MLXModel? = nil
 
-  // MARK: - Deep Link Support
+    // MARK: - Deep Link Support
 
-  /// Optional model ID for deep linking (e.g., from URL schemes)
-  var deeplinkModelId: String? = nil
+    /// Optional model ID for deep linking (e.g., from URL schemes)
+    var deeplinkModelId: String? = nil
 
-  /// Optional file path for deep linking
-  var deeplinkFile: String? = nil
+    /// Optional file path for deep linking
+    var deeplinkFile: String? = nil
 
-  var body: some View {
-    VStack(spacing: 0) {
-      // Header
-      ManagerHeader(
-        title: "Models",
-        subtitle:
-          "\(completedDownloadedModelsCount) downloaded • \(modelManager.totalDownloadedSizeString)"
-      )
+    var body: some View {
+        VStack(spacing: 0) {
+            // Header
+            ManagerHeader(
+                title: "Models",
+                subtitle:
+                    "\(completedDownloadedModelsCount) downloaded • \(modelManager.totalDownloadedSizeString)"
+            )
 
-      Divider()
+            Divider()
 
-      // Model list
-      modelListView
-    }
-    .frame(minWidth: 720, minHeight: 600)
-    .background(theme.primaryBackground)
-    .environment(\.theme, themeManager.currentTheme)
-    .onAppear {
-      // If invoked via deeplink, prefill search and ensure the model is visible
-      if let modelId = deeplinkModelId, !modelId.isEmpty {
-        searchText = modelId.split(separator: "/").last.map(String.init) ?? modelId
-        _ = modelManager.resolveModel(byRepoId: modelId)
-      }
-      // Kick off initial remote fetch to augment curated list
-      modelManager.fetchRemoteMLXModels(searchText: searchText)
-    }
-    .onChange(of: searchText) { _, newValue in
-      // If input looks like a Hugging Face repo, switch to All so it's visible
-      if ModelManager.parseHuggingFaceRepoId(from: newValue) != nil, selectedTab != .all {
-        selectedTab = .all
-      }
-      // Debounce remote search to avoid spamming the API
-      searchDebounceTask?.cancel()
-      searchDebounceTask = Task { @MainActor in
-        do { try await Task.sleep(nanoseconds: 300_000_000) } catch { return }
-        if Task.isCancelled { return }
-        modelManager.fetchRemoteMLXModels(searchText: newValue)
-      }
-    }
-    .sheet(item: $modelToShowDetails) { model in
-      ModelDetailView(model: model)
+            // Model list
+            modelListView
+        }
+        .frame(minWidth: 720, minHeight: 600)
+        .background(theme.primaryBackground)
         .environment(\.theme, themeManager.currentTheme)
-    }
-  }
-
-  // MARK: - Header View
-
-  /// Header section now provided by ManagerHeader
-
-  // MARK: - Model List View
-
-  /// Main content area with tabs, search, and scrollable model list
-  private var modelListView: some View {
-    VStack(spacing: 0) {
-      // Search and filter bar
-      HStack(spacing: 12) {
-        // Tabs
-        HStack(spacing: 4) {
-          ForEach(ModelListTab.allCases, id: \.self) { tab in
-            TabPill(title: tab.title, isSelected: selectedTab == tab, count: tabCount(tab)) {
-              selectedTab = tab
+        .onAppear {
+            // If invoked via deeplink, prefill search and ensure the model is visible
+            if let modelId = deeplinkModelId, !modelId.isEmpty {
+                searchText = modelId.split(separator: "/").last.map(String.init) ?? modelId
+                _ = modelManager.resolveModel(byRepoId: modelId)
             }
-          }
+            // Kick off initial remote fetch to augment curated list
+            modelManager.fetchRemoteMLXModels(searchText: searchText)
         }
-
-        Spacer()
-
-        // Search field
-        SearchField(text: $searchText, placeholder: "Search models")
-
-      }
-      .padding(.horizontal, 24)
-      .padding(.vertical, 16)
-      .background(theme.secondaryBackground)
-
-      if modelManager.isLoadingModels {
-        VStack(spacing: 12) {
-          ProgressView()
-            .progressViewStyle(CircularProgressViewStyle())
-          Text("Loading models…")
-            .font(.system(size: 13))
-            .foregroundColor(theme.secondaryText)
+        .onChange(of: searchText) { _, newValue in
+            // If input looks like a Hugging Face repo, switch to All so it's visible
+            if ModelManager.parseHuggingFaceRepoId(from: newValue) != nil, selectedTab != .all {
+                selectedTab = .all
+            }
+            // Debounce remote search to avoid spamming the API
+            searchDebounceTask?.cancel()
+            searchDebounceTask = Task { @MainActor in
+                do { try await Task.sleep(nanoseconds: 300_000_000) } catch { return }
+                if Task.isCancelled { return }
+                modelManager.fetchRemoteMLXModels(searchText: newValue)
+            }
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .padding(40)
-      } else {
-        ScrollView {
-          LazyVStack(spacing: 12) {
-            if displayedModels.isEmpty {
-              EmptyStateView(
-                selectedTab: selectedTab,
-                searchText: searchText,
-                onClearSearch: { searchText = "" }
-              )
-              .padding(.vertical, 40)
+        .sheet(item: $modelToShowDetails) { model in
+            ModelDetailView(model: model)
+                .environment(\.theme, themeManager.currentTheme)
+        }
+    }
+
+    // MARK: - Header View
+
+    /// Header section now provided by ManagerHeader
+
+    // MARK: - Model List View
+
+    /// Main content area with tabs, search, and scrollable model list
+    private var modelListView: some View {
+        VStack(spacing: 0) {
+            // Search and filter bar
+            HStack(spacing: 12) {
+                // Tabs
+                HStack(spacing: 4) {
+                    ForEach(ModelListTab.allCases, id: \.self) { tab in
+                        TabPill(title: tab.title, isSelected: selectedTab == tab, count: tabCount(tab)) {
+                            selectedTab = tab
+                        }
+                    }
+                }
+
+                Spacer()
+
+                // Search field
+                SearchField(text: $searchText, placeholder: "Search models")
+
+            }
+            .padding(.horizontal, 24)
+            .padding(.vertical, 16)
+            .background(theme.secondaryBackground)
+
+            if modelManager.isLoadingModels {
+                VStack(spacing: 12) {
+                    ProgressView()
+                        .progressViewStyle(CircularProgressViewStyle())
+                    Text("Loading models…")
+                        .font(.system(size: 13))
+                        .foregroundColor(theme.secondaryText)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .padding(40)
             } else {
-              ForEach(displayedModels) { model in
-                ModelRowView(
-                  model: model,
-                  downloadState: modelManager.effectiveDownloadState(for: model),
-                  metrics: modelManager.downloadMetrics[model.id],
-                  onViewDetails: { modelToShowDetails = model },
-                  onCancel: { modelManager.cancelDownload(model.id) }
-                )
-                .onAppear { /* no-op */  }
-              }
+                ScrollView {
+                    LazyVStack(spacing: 12) {
+                        if displayedModels.isEmpty {
+                            EmptyStateView(
+                                selectedTab: selectedTab,
+                                searchText: searchText,
+                                onClearSearch: { searchText = "" }
+                            )
+                            .padding(.vertical, 40)
+                        } else {
+                            ForEach(displayedModels) { model in
+                                ModelRowView(
+                                    model: model,
+                                    downloadState: modelManager.effectiveDownloadState(for: model),
+                                    metrics: modelManager.downloadMetrics[model.id],
+                                    onViewDetails: { modelToShowDetails = model },
+                                    onCancel: { modelManager.cancelDownload(model.id) }
+                                )
+                                .onAppear { /* no-op */  }
+                            }
+                        }
+                    }
+                    .padding(24)
+                }
             }
-          }
-          .padding(24)
         }
-      }
     }
-  }
 
-  // MARK: - Model Filtering
+    // MARK: - Model Filtering
 
-  /// All available models filtered by current search text
-  private var filteredModels: [MLXModel] {
-    let filtered = SearchService.filterModels(modelManager.availableModels, with: searchText)
-    return filtered.sorted { lhs, rhs in
-      lhs.name.localizedCaseInsensitiveCompare(rhs.name) == .orderedAscending
-    }
-  }
-
-  /// Suggested (curated) models filtered by current search text
-  private var filteredSuggestedModels: [MLXModel] {
-    let filtered = SearchService.filterModels(modelManager.suggestedModels, with: searchText)
-    return filtered.sorted { lhs, rhs in
-      lhs.name.localizedCaseInsensitiveCompare(rhs.name) == .orderedAscending
-    }
-  }
-
-  /// Downloaded tab contents: include active downloads at the top, then completed ones
-  private var filteredDownloadedModels: [MLXModel] {
-    // Prefer curated (suggested) variants over auto-discovered ones when deduplicating
-    let combined = modelManager.suggestedModels + modelManager.availableModels
-    var byLowerId: [String: MLXModel] = [:]
-    for m in combined {
-      let key = m.id.lowercased()
-      if let existing = byLowerId[key] {
-        // Prefer entries that are not the generic discovery description
-        let existingIsDiscovered = existing.description == "Discovered on Hugging Face"
-        let currentIsDiscovered = m.description == "Discovered on Hugging Face"
-        if existingIsDiscovered && !currentIsDiscovered {
-          byLowerId[key] = m
+    /// All available models filtered by current search text
+    private var filteredModels: [MLXModel] {
+        let filtered = SearchService.filterModels(modelManager.availableModels, with: searchText)
+        return filtered.sorted { lhs, rhs in
+            lhs.name.localizedCaseInsensitiveCompare(rhs.name) == .orderedAscending
         }
-      } else {
-        byLowerId[key] = m
-      }
     }
 
-    let all = Array(byLowerId.values)
-    // Active: in-progress downloads regardless of on-disk completion
-    let active: [MLXModel] = all.filter { m in
-      switch modelManager.downloadStates[m.id] ?? .notStarted {
-      case .downloading: return true
-      default: return false
-      }
-    }
-    // Completed: on-disk completed models
-    let completed: [MLXModel] = all.filter { $0.isDownloaded }
-    // Merge with active first; de-dupe by lowercase id while preserving order
-    var seen: Set<String> = []
-    var merged: [MLXModel] = []
-    for m in active + completed {
-      let k = m.id.lowercased()
-      if !seen.contains(k) {
-        seen.insert(k)
-        merged.append(m)
-      }
-    }
-    // Apply search filter
-    let filtered = SearchService.filterModels(merged, with: searchText)
-    // Sort: active first, then by name
-    return filtered.sorted { lhs, rhs in
-      let lhsActive: Bool = {
-        if case .downloading = (modelManager.downloadStates[lhs.id] ?? .notStarted) { return true }
-        return false
-      }()
-      let rhsActive: Bool = {
-        if case .downloading = (modelManager.downloadStates[rhs.id] ?? .notStarted) { return true }
-        return false
-      }()
-      if lhsActive != rhsActive { return lhsActive && !rhsActive }
-      return lhs.name.localizedCaseInsensitiveCompare(rhs.name) == .orderedAscending
-    }
-  }
-
-  /// Count of completed (on-disk) downloaded models respecting current search
-  private var completedDownloadedModelsCount: Int {
-    let combined = modelManager.suggestedModels + modelManager.availableModels
-    var byLowerId: [String: MLXModel] = [:]
-    for m in combined {
-      let key = m.id.lowercased()
-      if let existing = byLowerId[key] {
-        let existingIsDiscovered = existing.description == "Discovered on Hugging Face"
-        let currentIsDiscovered = m.description == "Discovered on Hugging Face"
-        if existingIsDiscovered && !currentIsDiscovered { byLowerId[key] = m }
-      } else {
-        byLowerId[key] = m
-      }
-    }
-    let completed = byLowerId.values.filter { $0.isDownloaded }
-    let filtered = SearchService.filterModels(Array(completed), with: searchText)
-    return filtered.count
-  }
-
-  /// Models to display based on the currently selected tab
-  private var displayedModels: [MLXModel] {
-    let baseModels: [MLXModel]
-    switch selectedTab {
-    case .all:
-      baseModels = filteredModels
-    case .suggested:
-      baseModels = filteredSuggestedModels
-    case .downloaded:
-      baseModels = filteredDownloadedModels
+    /// Suggested (curated) models filtered by current search text
+    private var filteredSuggestedModels: [MLXModel] {
+        let filtered = SearchService.filterModels(modelManager.suggestedModels, with: searchText)
+        return filtered.sorted { lhs, rhs in
+            lhs.name.localizedCaseInsensitiveCompare(rhs.name) == .orderedAscending
+        }
     }
 
-    return baseModels
-  }
+    /// Downloaded tab contents: include active downloads at the top, then completed ones
+    private var filteredDownloadedModels: [MLXModel] {
+        // Prefer curated (suggested) variants over auto-discovered ones when deduplicating
+        let combined = modelManager.suggestedModels + modelManager.availableModels
+        var byLowerId: [String: MLXModel] = [:]
+        for m in combined {
+            let key = m.id.lowercased()
+            if let existing = byLowerId[key] {
+                // Prefer entries that are not the generic discovery description
+                let existingIsDiscovered = existing.description == "Discovered on Hugging Face"
+                let currentIsDiscovered = m.description == "Discovered on Hugging Face"
+                if existingIsDiscovered && !currentIsDiscovered {
+                    byLowerId[key] = m
+                }
+            } else {
+                byLowerId[key] = m
+            }
+        }
 
-  /// Count for a given tab that respects current search filter
-  private func tabCount(_ tab: ModelListTab) -> Int {
-    switch tab {
-    case .all:
-      return filteredModels.count
-    case .suggested:
-      return filteredSuggestedModels.count
-    case .downloaded:
-      // Count completed-only for tab label
-      return completedDownloadedModelsCount
+        let all = Array(byLowerId.values)
+        // Active: in-progress downloads regardless of on-disk completion
+        let active: [MLXModel] = all.filter { m in
+            switch modelManager.downloadStates[m.id] ?? .notStarted {
+            case .downloading: return true
+            default: return false
+            }
+        }
+        // Completed: on-disk completed models
+        let completed: [MLXModel] = all.filter { $0.isDownloaded }
+        // Merge with active first; de-dupe by lowercase id while preserving order
+        var seen: Set<String> = []
+        var merged: [MLXModel] = []
+        for m in active + completed {
+            let k = m.id.lowercased()
+            if !seen.contains(k) {
+                seen.insert(k)
+                merged.append(m)
+            }
+        }
+        // Apply search filter
+        let filtered = SearchService.filterModels(merged, with: searchText)
+        // Sort: active first, then by name
+        return filtered.sorted { lhs, rhs in
+            let lhsActive: Bool = {
+                if case .downloading = (modelManager.downloadStates[lhs.id] ?? .notStarted) { return true }
+                return false
+            }()
+            let rhsActive: Bool = {
+                if case .downloading = (modelManager.downloadStates[rhs.id] ?? .notStarted) { return true }
+                return false
+            }()
+            if lhsActive != rhsActive { return lhsActive && !rhsActive }
+            return lhs.name.localizedCaseInsensitiveCompare(rhs.name) == .orderedAscending
+        }
     }
-  }
+
+    /// Count of completed (on-disk) downloaded models respecting current search
+    private var completedDownloadedModelsCount: Int {
+        let combined = modelManager.suggestedModels + modelManager.availableModels
+        var byLowerId: [String: MLXModel] = [:]
+        for m in combined {
+            let key = m.id.lowercased()
+            if let existing = byLowerId[key] {
+                let existingIsDiscovered = existing.description == "Discovered on Hugging Face"
+                let currentIsDiscovered = m.description == "Discovered on Hugging Face"
+                if existingIsDiscovered && !currentIsDiscovered { byLowerId[key] = m }
+            } else {
+                byLowerId[key] = m
+            }
+        }
+        let completed = byLowerId.values.filter { $0.isDownloaded }
+        let filtered = SearchService.filterModels(Array(completed), with: searchText)
+        return filtered.count
+    }
+
+    /// Models to display based on the currently selected tab
+    private var displayedModels: [MLXModel] {
+        let baseModels: [MLXModel]
+        switch selectedTab {
+        case .all:
+            baseModels = filteredModels
+        case .suggested:
+            baseModels = filteredSuggestedModels
+        case .downloaded:
+            baseModels = filteredDownloadedModels
+        }
+
+        return baseModels
+    }
+
+    /// Count for a given tab that respects current search filter
+    private func tabCount(_ tab: ModelListTab) -> Int {
+        switch tab {
+        case .all:
+            return filteredModels.count
+        case .suggested:
+            return filteredSuggestedModels.count
+        case .downloaded:
+            // Count completed-only for tab label
+            return completedDownloadedModelsCount
+        }
+    }
 }
 
 #Preview {
-  ModelDownloadView()
+    ModelDownloadView()
 }
