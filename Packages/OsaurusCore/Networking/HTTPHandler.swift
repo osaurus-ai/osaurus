@@ -12,554 +12,599 @@ import NIOPosix
 
 /// SwiftNIO HTTP request handler
 final class HTTPHandler: ChannelInboundHandler, Sendable {
-  typealias InboundIn = HTTPServerRequestPart
-  typealias OutboundOut = HTTPServerResponsePart
+    typealias InboundIn = HTTPServerRequestPart
+    typealias OutboundOut = HTTPServerResponsePart
 
-  private let configuration: ServerConfiguration
-  private let chatEngine: ChatEngineProtocol
-  private final class RequestState {
-    var requestHead: HTTPRequestHead?
-    var requestBodyBuffer: ByteBuffer?
-    var corsHeaders: [(String, String)] = []
-  }
-  private let stateRef: NIOLoopBound<RequestState>
-
-  init(
-    configuration: ServerConfiguration,
-    eventLoop: EventLoop,
-    chatEngine: ChatEngineProtocol = ChatEngine()
-  ) {
-    self.configuration = configuration
-    self.chatEngine = chatEngine
-    self.stateRef = NIOLoopBound(RequestState(), eventLoop: eventLoop)
-  }
-
-  func channelRead(context: ChannelHandlerContext, data: NIOAny) {
-    let part = self.unwrapInboundIn(data)
-
-    switch part {
-    case .head(let head):
-      stateRef.value.requestHead = head
-      // Compute CORS headers for this request
-      stateRef.value.corsHeaders = computeCORSHeaders(for: head, isPreflight: false)
-      // Pre-size body buffer if Content-Length is available
-      if let lengthStr = head.headers.first(name: "Content-Length"), let length = Int(lengthStr),
-        length > 0
-      {
-        stateRef.value.requestBodyBuffer = context.channel.allocator.buffer(capacity: length)
-      } else {
-        stateRef.value.requestBodyBuffer = context.channel.allocator.buffer(capacity: 0)
-      }
-
-    case .body(var buffer):
-      // Collect body data directly into a ByteBuffer
-      if stateRef.value.requestBodyBuffer == nil {
-        stateRef.value.requestBodyBuffer = context.channel.allocator.buffer(
-          capacity: buffer.readableBytes)
-      }
-      if var existing = stateRef.value.requestBodyBuffer {
-        existing.writeBuffer(&buffer)
-        stateRef.value.requestBodyBuffer = existing
-      }
-
-    case .end:
-      guard let head = stateRef.value.requestHead else {
-        sendBadRequest(context: context)
-        return
-      }
-
-      // Extract and normalize path (support /, /v1, /api, /v1/api)
-      let pathOnly = extractPath(from: head.uri)
-      let path = normalize(pathOnly)
-
-      // Handle CORS preflight (OPTIONS)
-      if head.method == .OPTIONS {
-        let cors = computeCORSHeaders(for: head, isPreflight: true)
-        sendResponse(
-          context: context,
-          version: head.version,
-          status: .noContent,
-          headers: cors,
-          body: ""
-        )
-        stateRef.value.requestHead = nil
-        stateRef.value.requestBodyBuffer = nil
-        return
-      }
-
-      // Handle simple HEAD
-      if head.method == .HEAD {
-        var headers = [("Content-Type", "text/plain; charset=utf-8")]
-        headers.append(contentsOf: stateRef.value.corsHeaders)
-        sendResponse(
-          context: context, version: head.version, status: .noContent, headers: headers, body: "")
-      }
-      // Handle core endpoints directly; fall back to Router only for legacy coverage
-      else if head.method == .GET, path == "/" {
-        var headers = [("Content-Type", "text/plain; charset=utf-8")]
-        headers.append(contentsOf: stateRef.value.corsHeaders)
-        sendResponse(
-          context: context,
-          version: head.version,
-          status: .ok,
-          headers: headers,
-          body: "Osaurus Server is running! 🦕"
-        )
-      } else if head.method == .GET, path == "/health" {
-        let obj: [String: Any] = ["status": "healthy", "timestamp": Date().ISO8601Format()]
-        let data = try? JSONSerialization.data(withJSONObject: obj)
-        var headers = [("Content-Type", "application/json; charset=utf-8")]
-        headers.append(contentsOf: stateRef.value.corsHeaders)
-        let body = data.flatMap { String(decoding: $0, as: UTF8.self) } ?? "{}"
-        sendResponse(
-          context: context, version: head.version, status: .ok, headers: headers, body: body)
-      } else if head.method == .GET, path == "/models" {
-        var models = MLXService.getAvailableModels().map { OpenAIModel(from: $0) }
-        if FoundationModelService.isDefaultModelAvailable() {
-          models.insert(OpenAIModel(from: "foundation"), at: 0)
-        }
-        let response = ModelsResponse(data: models)
-        let json =
-          (try? JSONEncoder().encode(response)).map { String(decoding: $0, as: UTF8.self) } ?? "{}"
-        var headers = [("Content-Type", "application/json; charset=utf-8")]
-        headers.append(contentsOf: stateRef.value.corsHeaders)
-        sendResponse(
-          context: context, version: head.version, status: .ok, headers: headers, body: json)
-      } else if head.method == .GET, path == "/tags" {
-        let now = Date().ISO8601Format()
-        var models = MLXService.getAvailableModels().map { name -> OpenAIModel in
-          var m = OpenAIModel(from: name)
-          m.name = name
-          m.model = name
-          m.modified_at = now
-          m.size = 0
-          m.digest = ""
-          m.details = ModelDetails(
-            parent_model: "",
-            format: "safetensors",
-            family: "unknown",
-            families: ["unknown"],
-            parameter_size: "",
-            quantization_level: ""
-          )
-          return m
-        }
-        if FoundationModelService.isDefaultModelAvailable() {
-          var fm = OpenAIModel(from: "foundation")
-          fm.name = "foundation"
-          fm.model = "foundation"
-          fm.modified_at = now
-          fm.size = 0
-          fm.digest = ""
-          fm.details = ModelDetails(
-            parent_model: "",
-            format: "native",
-            family: "foundation",
-            families: ["foundation"],
-            parameter_size: "",
-            quantization_level: ""
-          )
-          models.insert(fm, at: 0)
-        }
-        let payload = ["models": models]
-        let json =
-          (try? JSONEncoder().encode(payload)).map { String(decoding: $0, as: UTF8.self) } ?? "{}"
-        var headers = [("Content-Type", "application/json; charset=utf-8")]
-        headers.append(contentsOf: stateRef.value.corsHeaders)
-        sendResponse(
-          context: context, version: head.version, status: .ok, headers: headers, body: json)
-      } else if head.method == .POST, path == "/chat/completions" || path == "/v1/chat/completions"
-      {
-        handleChatCompletions(head: head, context: context)
-      } else if head.method == .POST, path == "/chat" {
-        handleChatNDJSON(head: head, context: context)
-      } else {
-        var headers = [("Content-Type", "text/plain; charset=utf-8")]
-        headers.append(contentsOf: stateRef.value.corsHeaders)
-        sendResponse(
-          context: context,
-          version: head.version,
-          status: .notFound,
-          headers: headers,
-          body: "Not Found"
-        )
-      }
-
-      stateRef.value.requestHead = nil
-      stateRef.value.requestBodyBuffer = nil
+    private let configuration: ServerConfiguration
+    private let chatEngine: ChatEngineProtocol
+    private final class RequestState {
+        var requestHead: HTTPRequestHead?
+        var requestBodyBuffer: ByteBuffer?
+        var corsHeaders: [(String, String)] = []
     }
-  }
+    private let stateRef: NIOLoopBound<RequestState>
 
-  // MARK: - Private Helpers
-
-  private func extractPath(from uri: String) -> String {
-    if let queryIndex = uri.firstIndex(of: "?") {
-      return String(uri[..<queryIndex])
-    }
-    return uri
-  }
-
-  // Normalize common provider prefixes so we cover /, /v1, /api, /v1/api
-  private func normalize(_ path: String) -> String {
-    func stripPrefix(_ prefix: String, from s: String) -> String? {
-      if s == prefix { return "/" }
-      if s.hasPrefix(prefix + "/") {
-        let idx = s.index(s.startIndex, offsetBy: prefix.count)
-        let rest = String(s[idx...])
-        return rest.isEmpty ? "/" : rest
-      }
-      return nil
-    }
-    if let r = stripPrefix("/v1/api", from: path) { return r }
-    if let r = stripPrefix("/api", from: path) { return r }
-    if let r = stripPrefix("/v1", from: path) { return r }
-    return path
-  }
-
-  private func sendBadRequest(context: ChannelHandlerContext) {
-    sendResponse(
-      context: context,
-      version: HTTPVersion(major: 1, minor: 1),
-      status: .badRequest,
-      headers: [("Content-Type", "text/plain; charset=utf-8")],
-      body: "Bad Request"
-    )
-  }
-
-  private func sendResponse(
-    context: ChannelHandlerContext,
-    version: HTTPVersion,
-    status: HTTPResponseStatus,
-    headers: [(String, String)],
-    body: String
-  ) {
-    let loop = context.eventLoop
-    let ctx = NIOLoopBound(context, eventLoop: loop)
-    let bodyCopy = body
-    let headersCopy = headers
-    executeOnLoop(loop) {
-      let context = ctx.value
-      // Create response head
-      var responseHead = HTTPResponseHead(version: version, status: status)
-
-      // Create body buffer
-      var buffer = context.channel.allocator.buffer(capacity: bodyCopy.utf8.count)
-      buffer.writeString(bodyCopy)
-
-      // Build headers
-      var nioHeaders = HTTPHeaders()
-      for (name, value) in headersCopy {
-        nioHeaders.add(name: name, value: value)
-      }
-      nioHeaders.add(name: "Content-Length", value: String(buffer.readableBytes))
-      nioHeaders.add(name: "Connection", value: "close")
-      responseHead.headers = nioHeaders
-
-      // Send response
-      context.write(NIOAny(HTTPServerResponsePart.head(responseHead)), promise: nil)
-      context.write(NIOAny(HTTPServerResponsePart.body(.byteBuffer(buffer))), promise: nil)
-      context.writeAndFlush(NIOAny(HTTPServerResponsePart.end(nil as HTTPHeaders?))).whenComplete {
-        _ in
-        ctx.value.close(promise: nil)
-      }
-    }
-  }
-
-  func errorCaught(context: ChannelHandlerContext, error: Error) {
-    // Log and close the connection to avoid NIO debug preconditions crashing the app
-    print("[Osaurus][NIO] errorCaught: \(error)")
-    context.close(promise: nil)
-  }
-
-  // MARK: - CORS
-  private func computeCORSHeaders(for head: HTTPRequestHead, isPreflight: Bool) -> [(
-    String, String
-  )] {
-    guard !configuration.allowedOrigins.isEmpty else { return [] }
-    let origin = head.headers.first(name: "Origin")
-    var headers: [(String, String)] = []
-
-    let allowsAny = configuration.allowedOrigins.contains("*")
-    if allowsAny {
-      headers.append(("Access-Control-Allow-Origin", "*"))
-    } else if let origin,
-      !origin.contains("\r"), !origin.contains("\n"),
-      configuration.allowedOrigins.contains(origin)
-    {
-      headers.append(("Access-Control-Allow-Origin", origin))
-      headers.append(("Vary", "Origin"))
-    } else {
-      // Not allowed; for preflight return no CORS headers which will cause browser to block
-      return []
+    init(
+        configuration: ServerConfiguration,
+        eventLoop: EventLoop,
+        chatEngine: ChatEngineProtocol = ChatEngine()
+    ) {
+        self.configuration = configuration
+        self.chatEngine = chatEngine
+        self.stateRef = NIOLoopBound(RequestState(), eventLoop: eventLoop)
     }
 
-    if isPreflight {
-      // Methods
-      let reqMethod = head.headers.first(name: "Access-Control-Request-Method")
-      let allowMethods = sanitizeTokenList(reqMethod ?? "GET, POST, OPTIONS, HEAD")
-      headers.append(("Access-Control-Allow-Methods", allowMethods))
-      // Headers
-      let reqHeaders = head.headers.first(name: "Access-Control-Request-Headers")
-      let allowHeaders = sanitizeTokenList(reqHeaders ?? "Content-Type, Authorization")
-      headers.append(("Access-Control-Allow-Headers", allowHeaders))
-      headers.append(("Access-Control-Max-Age", "600"))
-    }
-    return headers
-  }
+    func channelRead(context: ChannelHandlerContext, data: NIOAny) {
+        let part = self.unwrapInboundIn(data)
 
-  /// Allow only RFC7230 token characters plus comma and space for reflected header lists
-  private func sanitizeTokenList(_ value: String) -> String {
-    let allowedPunctuation = Set("!#$%&'*+-.^_`|~ ,")
-    var result = String()
-    result.reserveCapacity(value.count)
-    for scalar in value.unicodeScalars {
-      switch scalar.value {
-      case 0x30...0x39,  // 0-9
-        0x41...0x5A,  // A-Z
-        0x61...0x7A:  // a-z
-        result.unicodeScalars.append(scalar)
-      default:
-        let ch = Character(scalar)
-        if allowedPunctuation.contains(ch) {
-          result.append(ch)
-        }
-      }
-    }
-    // Trim leading/trailing spaces and collapse runs of spaces around commas
-    let collapsed = result.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }
-      .filter { !$0.isEmpty }.joined(separator: ", ")
-    return collapsed
-  }
-
-  /// Expose CORS headers for use by async writers (must be accessed on event loop)
-  var currentCORSHeaders: [(String, String)] { stateRef.value.corsHeaders }
-
-  // MARK: - Chat handlers
-
-  private func handleChatCompletions(head: HTTPRequestHead, context: ChannelHandlerContext) {
-    let data: Data
-    if let body = stateRef.value.requestBodyBuffer {
-      var bodyCopy = body
-      let bytes = bodyCopy.readBytes(length: bodyCopy.readableBytes) ?? []
-      data = Data(bytes)
-    } else {
-      data = Data()
-    }
-
-    guard let req = try? JSONDecoder().decode(ChatCompletionRequest.self, from: data) else {
-      sendResponse(
-        context: context,
-        version: head.version,
-        status: .badRequest,
-        headers: [("Content-Type", "text/plain; charset=utf-8")],
-        body: "Invalid request format"
-      )
-      return
-    }
-
-    let accept = head.headers.first(name: "Accept") ?? ""
-    let wantsSSE = (req.stream ?? false) || accept.contains("text/event-stream")
-
-    let created = Int(Date().timeIntervalSince1970)
-    let responseId =
-      "chatcmpl-\(UUID().uuidString.replacingOccurrences(of: "-", with: "").prefix(12))"
-    let model = req.model
-
-    if wantsSSE {
-      let writer = SSEResponseWriter()
-      let cors = stateRef.value.corsHeaders
-      let loop = context.eventLoop
-      let writerBound = NIOLoopBound(writer, eventLoop: loop)
-      let ctx = NIOLoopBound(context, eventLoop: loop)
-      let chatEngine = self.chatEngine
-      let hop: (@escaping @Sendable () -> Void) -> Void = { block in
-        if loop.inEventLoop { block() } else { loop.execute { block() } }
-      }
-      hop {
-        writerBound.value.writeHeaders(ctx.value, extraHeaders: cors)
-        writerBound.value.writeRole(
-          "assistant", model: model, responseId: responseId, created: created, context: ctx.value)
-      }
-      Task(priority: .userInitiated) {
-        do {
-          let stream = try await chatEngine.streamChat(request: req)
-          for try await delta in stream {
-            hop {
-              writerBound.value.writeContent(
-                delta, model: model, responseId: responseId, created: created, context: ctx.value)
+        switch part {
+        case .head(let head):
+            stateRef.value.requestHead = head
+            // Compute CORS headers for this request
+            stateRef.value.corsHeaders = computeCORSHeaders(for: head, isPreflight: false)
+            // Pre-size body buffer if Content-Length is available
+            if let lengthStr = head.headers.first(name: "Content-Length"), let length = Int(lengthStr),
+                length > 0
+            {
+                stateRef.value.requestBodyBuffer = context.channel.allocator.buffer(capacity: length)
+            } else {
+                stateRef.value.requestBodyBuffer = context.channel.allocator.buffer(capacity: 0)
             }
-          }
-          hop {
-            writerBound.value.writeFinish(
-              model, responseId: responseId, created: created, context: ctx.value)
-            writerBound.value.writeEnd(ctx.value)
-          }
-        } catch let inv as ServiceToolInvocation {
-          // Translate tool invocation to OpenAI-style streaming tool_calls deltas
-          let raw = UUID().uuidString.replacingOccurrences(of: "-", with: "")
-          let callId = "call_" + String(raw.prefix(24))
-          let args = inv.jsonArguments
-          let chunkSize = 1024
-          hop {
-            writerBound.value.writeToolCallStart(
-              callId: callId,
-              functionName: inv.toolName,
-              index: 0,
-              model: model,
-              responseId: responseId,
-              created: created,
-              context: ctx.value
+
+        case .body(var buffer):
+            // Collect body data directly into a ByteBuffer
+            if stateRef.value.requestBodyBuffer == nil {
+                stateRef.value.requestBodyBuffer = context.channel.allocator.buffer(
+                    capacity: buffer.readableBytes
+                )
+            }
+            if var existing = stateRef.value.requestBodyBuffer {
+                existing.writeBuffer(&buffer)
+                stateRef.value.requestBodyBuffer = existing
+            }
+
+        case .end:
+            guard let head = stateRef.value.requestHead else {
+                sendBadRequest(context: context)
+                return
+            }
+
+            // Extract and normalize path (support /, /v1, /api, /v1/api)
+            let pathOnly = extractPath(from: head.uri)
+            let path = normalize(pathOnly)
+
+            // Handle CORS preflight (OPTIONS)
+            if head.method == .OPTIONS {
+                let cors = computeCORSHeaders(for: head, isPreflight: true)
+                sendResponse(
+                    context: context,
+                    version: head.version,
+                    status: .noContent,
+                    headers: cors,
+                    body: ""
+                )
+                stateRef.value.requestHead = nil
+                stateRef.value.requestBodyBuffer = nil
+                return
+            }
+
+            // Handle simple HEAD
+            if head.method == .HEAD {
+                var headers = [("Content-Type", "text/plain; charset=utf-8")]
+                headers.append(contentsOf: stateRef.value.corsHeaders)
+                sendResponse(
+                    context: context,
+                    version: head.version,
+                    status: .noContent,
+                    headers: headers,
+                    body: ""
+                )
+            }
+            // Handle core endpoints directly; fall back to Router only for legacy coverage
+            else if head.method == .GET, path == "/" {
+                var headers = [("Content-Type", "text/plain; charset=utf-8")]
+                headers.append(contentsOf: stateRef.value.corsHeaders)
+                sendResponse(
+                    context: context,
+                    version: head.version,
+                    status: .ok,
+                    headers: headers,
+                    body: "Osaurus Server is running! 🦕"
+                )
+            } else if head.method == .GET, path == "/health" {
+                let obj: [String: Any] = ["status": "healthy", "timestamp": Date().ISO8601Format()]
+                let data = try? JSONSerialization.data(withJSONObject: obj)
+                var headers = [("Content-Type", "application/json; charset=utf-8")]
+                headers.append(contentsOf: stateRef.value.corsHeaders)
+                let body = data.flatMap { String(decoding: $0, as: UTF8.self) } ?? "{}"
+                sendResponse(
+                    context: context,
+                    version: head.version,
+                    status: .ok,
+                    headers: headers,
+                    body: body
+                )
+            } else if head.method == .GET, path == "/models" {
+                var models = MLXService.getAvailableModels().map { OpenAIModel(from: $0) }
+                if FoundationModelService.isDefaultModelAvailable() {
+                    models.insert(OpenAIModel(from: "foundation"), at: 0)
+                }
+                let response = ModelsResponse(data: models)
+                let json =
+                    (try? JSONEncoder().encode(response)).map { String(decoding: $0, as: UTF8.self) } ?? "{}"
+                var headers = [("Content-Type", "application/json; charset=utf-8")]
+                headers.append(contentsOf: stateRef.value.corsHeaders)
+                sendResponse(
+                    context: context,
+                    version: head.version,
+                    status: .ok,
+                    headers: headers,
+                    body: json
+                )
+            } else if head.method == .GET, path == "/tags" {
+                let now = Date().ISO8601Format()
+                var models = MLXService.getAvailableModels().map { name -> OpenAIModel in
+                    var m = OpenAIModel(from: name)
+                    m.name = name
+                    m.model = name
+                    m.modified_at = now
+                    m.size = 0
+                    m.digest = ""
+                    m.details = ModelDetails(
+                        parent_model: "",
+                        format: "safetensors",
+                        family: "unknown",
+                        families: ["unknown"],
+                        parameter_size: "",
+                        quantization_level: ""
+                    )
+                    return m
+                }
+                if FoundationModelService.isDefaultModelAvailable() {
+                    var fm = OpenAIModel(from: "foundation")
+                    fm.name = "foundation"
+                    fm.model = "foundation"
+                    fm.modified_at = now
+                    fm.size = 0
+                    fm.digest = ""
+                    fm.details = ModelDetails(
+                        parent_model: "",
+                        format: "native",
+                        family: "foundation",
+                        families: ["foundation"],
+                        parameter_size: "",
+                        quantization_level: ""
+                    )
+                    models.insert(fm, at: 0)
+                }
+                let payload = ["models": models]
+                let json =
+                    (try? JSONEncoder().encode(payload)).map { String(decoding: $0, as: UTF8.self) } ?? "{}"
+                var headers = [("Content-Type", "application/json; charset=utf-8")]
+                headers.append(contentsOf: stateRef.value.corsHeaders)
+                sendResponse(
+                    context: context,
+                    version: head.version,
+                    status: .ok,
+                    headers: headers,
+                    body: json
+                )
+            } else if head.method == .POST, path == "/chat/completions" || path == "/v1/chat/completions" {
+                handleChatCompletions(head: head, context: context)
+            } else if head.method == .POST, path == "/chat" {
+                handleChatNDJSON(head: head, context: context)
+            } else {
+                var headers = [("Content-Type", "text/plain; charset=utf-8")]
+                headers.append(contentsOf: stateRef.value.corsHeaders)
+                sendResponse(
+                    context: context,
+                    version: head.version,
+                    status: .notFound,
+                    headers: headers,
+                    body: "Not Found"
+                )
+            }
+
+            stateRef.value.requestHead = nil
+            stateRef.value.requestBodyBuffer = nil
+        }
+    }
+
+    // MARK: - Private Helpers
+
+    private func extractPath(from uri: String) -> String {
+        if let queryIndex = uri.firstIndex(of: "?") {
+            return String(uri[..<queryIndex])
+        }
+        return uri
+    }
+
+    // Normalize common provider prefixes so we cover /, /v1, /api, /v1/api
+    private func normalize(_ path: String) -> String {
+        func stripPrefix(_ prefix: String, from s: String) -> String? {
+            if s == prefix { return "/" }
+            if s.hasPrefix(prefix + "/") {
+                let idx = s.index(s.startIndex, offsetBy: prefix.count)
+                let rest = String(s[idx...])
+                return rest.isEmpty ? "/" : rest
+            }
+            return nil
+        }
+        if let r = stripPrefix("/v1/api", from: path) { return r }
+        if let r = stripPrefix("/api", from: path) { return r }
+        if let r = stripPrefix("/v1", from: path) { return r }
+        return path
+    }
+
+    private func sendBadRequest(context: ChannelHandlerContext) {
+        sendResponse(
+            context: context,
+            version: HTTPVersion(major: 1, minor: 1),
+            status: .badRequest,
+            headers: [("Content-Type", "text/plain; charset=utf-8")],
+            body: "Bad Request"
+        )
+    }
+
+    private func sendResponse(
+        context: ChannelHandlerContext,
+        version: HTTPVersion,
+        status: HTTPResponseStatus,
+        headers: [(String, String)],
+        body: String
+    ) {
+        let loop = context.eventLoop
+        let ctx = NIOLoopBound(context, eventLoop: loop)
+        let bodyCopy = body
+        let headersCopy = headers
+        executeOnLoop(loop) {
+            let context = ctx.value
+            // Create response head
+            var responseHead = HTTPResponseHead(version: version, status: status)
+
+            // Create body buffer
+            var buffer = context.channel.allocator.buffer(capacity: bodyCopy.utf8.count)
+            buffer.writeString(bodyCopy)
+
+            // Build headers
+            var nioHeaders = HTTPHeaders()
+            for (name, value) in headersCopy {
+                nioHeaders.add(name: name, value: value)
+            }
+            nioHeaders.add(name: "Content-Length", value: String(buffer.readableBytes))
+            nioHeaders.add(name: "Connection", value: "close")
+            responseHead.headers = nioHeaders
+
+            // Send response
+            context.write(NIOAny(HTTPServerResponsePart.head(responseHead)), promise: nil)
+            context.write(NIOAny(HTTPServerResponsePart.body(.byteBuffer(buffer))), promise: nil)
+            context.writeAndFlush(NIOAny(HTTPServerResponsePart.end(nil as HTTPHeaders?))).whenComplete {
+                _ in
+                ctx.value.close(promise: nil)
+            }
+        }
+    }
+
+    func errorCaught(context: ChannelHandlerContext, error: Error) {
+        // Log and close the connection to avoid NIO debug preconditions crashing the app
+        print("[Osaurus][NIO] errorCaught: \(error)")
+        context.close(promise: nil)
+    }
+
+    // MARK: - CORS
+    private func computeCORSHeaders(for head: HTTPRequestHead, isPreflight: Bool) -> [(
+        String, String
+    )] {
+        guard !configuration.allowedOrigins.isEmpty else { return [] }
+        let origin = head.headers.first(name: "Origin")
+        var headers: [(String, String)] = []
+
+        let allowsAny = configuration.allowedOrigins.contains("*")
+        if allowsAny {
+            headers.append(("Access-Control-Allow-Origin", "*"))
+        } else if let origin,
+            !origin.contains("\r"), !origin.contains("\n"),
+            configuration.allowedOrigins.contains(origin)
+        {
+            headers.append(("Access-Control-Allow-Origin", origin))
+            headers.append(("Vary", "Origin"))
+        } else {
+            // Not allowed; for preflight return no CORS headers which will cause browser to block
+            return []
+        }
+
+        if isPreflight {
+            // Methods
+            let reqMethod = head.headers.first(name: "Access-Control-Request-Method")
+            let allowMethods = sanitizeTokenList(reqMethod ?? "GET, POST, OPTIONS, HEAD")
+            headers.append(("Access-Control-Allow-Methods", allowMethods))
+            // Headers
+            let reqHeaders = head.headers.first(name: "Access-Control-Request-Headers")
+            let allowHeaders = sanitizeTokenList(reqHeaders ?? "Content-Type, Authorization")
+            headers.append(("Access-Control-Allow-Headers", allowHeaders))
+            headers.append(("Access-Control-Max-Age", "600"))
+        }
+        return headers
+    }
+
+    /// Allow only RFC7230 token characters plus comma and space for reflected header lists
+    private func sanitizeTokenList(_ value: String) -> String {
+        let allowedPunctuation = Set("!#$%&'*+-.^_`|~ ,")
+        var result = String()
+        result.reserveCapacity(value.count)
+        for scalar in value.unicodeScalars {
+            switch scalar.value {
+            case 0x30 ... 0x39,  // 0-9
+                0x41 ... 0x5A,  // A-Z
+                0x61 ... 0x7A:  // a-z
+                result.unicodeScalars.append(scalar)
+            default:
+                let ch = Character(scalar)
+                if allowedPunctuation.contains(ch) {
+                    result.append(ch)
+                }
+            }
+        }
+        // Trim leading/trailing spaces and collapse runs of spaces around commas
+        let collapsed = result.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }.joined(separator: ", ")
+        return collapsed
+    }
+
+    /// Expose CORS headers for use by async writers (must be accessed on event loop)
+    var currentCORSHeaders: [(String, String)] { stateRef.value.corsHeaders }
+
+    // MARK: - Chat handlers
+
+    private func handleChatCompletions(head: HTTPRequestHead, context: ChannelHandlerContext) {
+        let data: Data
+        if let body = stateRef.value.requestBodyBuffer {
+            var bodyCopy = body
+            let bytes = bodyCopy.readBytes(length: bodyCopy.readableBytes) ?? []
+            data = Data(bytes)
+        } else {
+            data = Data()
+        }
+
+        guard let req = try? JSONDecoder().decode(ChatCompletionRequest.self, from: data) else {
+            sendResponse(
+                context: context,
+                version: head.version,
+                status: .badRequest,
+                headers: [("Content-Type", "text/plain; charset=utf-8")],
+                body: "Invalid request format"
             )
-          }
-          var i = args.startIndex
-          while i < args.endIndex {
-            let next = args.index(i, offsetBy: chunkSize, limitedBy: args.endIndex) ?? args.endIndex
-            let chunk = String(args[i..<next])
+            return
+        }
+
+        let accept = head.headers.first(name: "Accept") ?? ""
+        let wantsSSE = (req.stream ?? false) || accept.contains("text/event-stream")
+
+        let created = Int(Date().timeIntervalSince1970)
+        let responseId =
+            "chatcmpl-\(UUID().uuidString.replacingOccurrences(of: "-", with: "").prefix(12))"
+        let model = req.model
+
+        if wantsSSE {
+            let writer = SSEResponseWriter()
+            let cors = stateRef.value.corsHeaders
+            let loop = context.eventLoop
+            let writerBound = NIOLoopBound(writer, eventLoop: loop)
+            let ctx = NIOLoopBound(context, eventLoop: loop)
+            let chatEngine = self.chatEngine
+            let hop: (@escaping @Sendable () -> Void) -> Void = { block in
+                if loop.inEventLoop { block() } else { loop.execute { block() } }
+            }
             hop {
-              writerBound.value.writeToolCallArgumentsDelta(
-                callId: callId,
-                index: 0,
-                argumentsChunk: chunk,
-                model: model,
-                responseId: responseId,
-                created: created,
-                context: ctx.value
-              )
+                writerBound.value.writeHeaders(ctx.value, extraHeaders: cors)
+                writerBound.value.writeRole(
+                    "assistant",
+                    model: model,
+                    responseId: responseId,
+                    created: created,
+                    context: ctx.value
+                )
             }
-            i = next
-          }
-          hop {
-            writerBound.value.writeFinishWithReason(
-              "tool_calls", model: model, responseId: responseId, created: created,
-              context: ctx.value)
-            writerBound.value.writeEnd(ctx.value)
-          }
-        } catch {
-          hop {
-            writerBound.value.writeError(error.localizedDescription, context: ctx.value)
-            writerBound.value.writeEnd(ctx.value)
-          }
+            Task(priority: .userInitiated) {
+                do {
+                    let stream = try await chatEngine.streamChat(request: req)
+                    for try await delta in stream {
+                        hop {
+                            writerBound.value.writeContent(
+                                delta,
+                                model: model,
+                                responseId: responseId,
+                                created: created,
+                                context: ctx.value
+                            )
+                        }
+                    }
+                    hop {
+                        writerBound.value.writeFinish(
+                            model,
+                            responseId: responseId,
+                            created: created,
+                            context: ctx.value
+                        )
+                        writerBound.value.writeEnd(ctx.value)
+                    }
+                } catch let inv as ServiceToolInvocation {
+                    // Translate tool invocation to OpenAI-style streaming tool_calls deltas
+                    let raw = UUID().uuidString.replacingOccurrences(of: "-", with: "")
+                    let callId = "call_" + String(raw.prefix(24))
+                    let args = inv.jsonArguments
+                    let chunkSize = 1024
+                    hop {
+                        writerBound.value.writeToolCallStart(
+                            callId: callId,
+                            functionName: inv.toolName,
+                            index: 0,
+                            model: model,
+                            responseId: responseId,
+                            created: created,
+                            context: ctx.value
+                        )
+                    }
+                    var i = args.startIndex
+                    while i < args.endIndex {
+                        let next = args.index(i, offsetBy: chunkSize, limitedBy: args.endIndex) ?? args.endIndex
+                        let chunk = String(args[i ..< next])
+                        hop {
+                            writerBound.value.writeToolCallArgumentsDelta(
+                                callId: callId,
+                                index: 0,
+                                argumentsChunk: chunk,
+                                model: model,
+                                responseId: responseId,
+                                created: created,
+                                context: ctx.value
+                            )
+                        }
+                        i = next
+                    }
+                    hop {
+                        writerBound.value.writeFinishWithReason(
+                            "tool_calls",
+                            model: model,
+                            responseId: responseId,
+                            created: created,
+                            context: ctx.value
+                        )
+                        writerBound.value.writeEnd(ctx.value)
+                    }
+                } catch {
+                    hop {
+                        writerBound.value.writeError(error.localizedDescription, context: ctx.value)
+                        writerBound.value.writeEnd(ctx.value)
+                    }
+                }
+            }
+        } else {
+            let cors = stateRef.value.corsHeaders
+            let loop = context.eventLoop
+            let ctx = NIOLoopBound(context, eventLoop: loop)
+            let chatEngine = self.chatEngine
+            let hop: (@escaping @Sendable () -> Void) -> Void = { block in
+                if loop.inEventLoop { block() } else { loop.execute { block() } }
+            }
+            Task(priority: .userInitiated) {
+                do {
+                    let resp = try await chatEngine.completeChat(request: req)
+                    let json = try JSONEncoder().encode(resp)
+                    var headers: [(String, String)] = [("Content-Type", "application/json")]
+                    headers.append(contentsOf: cors)
+                    let headersCopy = headers
+                    let body = String(decoding: json, as: UTF8.self)
+                    hop {
+                        var responseHead = HTTPResponseHead(version: head.version, status: .ok)
+                        var buffer = ctx.value.channel.allocator.buffer(capacity: body.utf8.count)
+                        buffer.writeString(body)
+                        var nioHeaders = HTTPHeaders()
+                        for (name, value) in headersCopy { nioHeaders.add(name: name, value: value) }
+                        nioHeaders.add(name: "Content-Length", value: String(buffer.readableBytes))
+                        nioHeaders.add(name: "Connection", value: "close")
+                        responseHead.headers = nioHeaders
+                        let c = ctx.value
+                        c.write(NIOAny(HTTPServerResponsePart.head(responseHead)), promise: nil)
+                        c.write(NIOAny(HTTPServerResponsePart.body(.byteBuffer(buffer))), promise: nil)
+                        c.writeAndFlush(NIOAny(HTTPServerResponsePart.end(nil as HTTPHeaders?))).whenComplete {
+                            _ in
+                            ctx.value.close(promise: nil)
+                        }
+                    }
+                } catch {
+                    let body = "Internal error: \(error.localizedDescription)"
+                    let headers: [(String, String)] = [("Content-Type", "text/plain; charset=utf-8")]
+                    let headersCopy = headers
+                    hop {
+                        var responseHead = HTTPResponseHead(version: head.version, status: .internalServerError)
+                        var buffer = ctx.value.channel.allocator.buffer(capacity: body.utf8.count)
+                        buffer.writeString(body)
+                        var nioHeaders = HTTPHeaders()
+                        for (name, value) in headersCopy { nioHeaders.add(name: name, value: value) }
+                        nioHeaders.add(name: "Content-Length", value: String(buffer.readableBytes))
+                        nioHeaders.add(name: "Connection", value: "close")
+                        responseHead.headers = nioHeaders
+                        let c = ctx.value
+                        c.write(NIOAny(HTTPServerResponsePart.head(responseHead)), promise: nil)
+                        c.write(NIOAny(HTTPServerResponsePart.body(.byteBuffer(buffer))), promise: nil)
+                        c.writeAndFlush(NIOAny(HTTPServerResponsePart.end(nil as HTTPHeaders?))).whenComplete {
+                            _ in
+                            ctx.value.close(promise: nil)
+                        }
+                    }
+                }
+            }
         }
-      }
-    } else {
-      let cors = stateRef.value.corsHeaders
-      let loop = context.eventLoop
-      let ctx = NIOLoopBound(context, eventLoop: loop)
-      let chatEngine = self.chatEngine
-      let hop: (@escaping @Sendable () -> Void) -> Void = { block in
+    }
+
+    private func handleChatNDJSON(head: HTTPRequestHead, context: ChannelHandlerContext) {
+        let data: Data
+        if let body = stateRef.value.requestBodyBuffer {
+            var bodyCopy = body
+            let bytes = bodyCopy.readBytes(length: bodyCopy.readableBytes) ?? []
+            data = Data(bytes)
+        } else {
+            data = Data()
+        }
+
+        guard let req = try? JSONDecoder().decode(ChatCompletionRequest.self, from: data) else {
+            sendResponse(
+                context: context,
+                version: head.version,
+                status: .badRequest,
+                headers: [("Content-Type", "text/plain; charset=utf-8")],
+                body: "Invalid request format"
+            )
+            return
+        }
+
+        let writer = NDJSONResponseWriter()
+        let cors = stateRef.value.corsHeaders
+        let loop = context.eventLoop
+        let writerBound = NIOLoopBound(writer, eventLoop: loop)
+        let ctx = NIOLoopBound(context, eventLoop: loop)
+        let chatEngine = self.chatEngine
+        let hop: (@escaping @Sendable () -> Void) -> Void = { block in
+            if loop.inEventLoop { block() } else { loop.execute { block() } }
+        }
+        hop {
+            writerBound.value.writeHeaders(ctx.value, extraHeaders: cors)
+        }
+        Task(priority: .userInitiated) {
+            do {
+                let stream = try await chatEngine.streamChat(request: req)
+                for try await delta in stream {
+                    hop {
+                        writerBound.value.writeContent(
+                            delta,
+                            model: req.model,
+                            responseId: "",
+                            created: Int(Date().timeIntervalSince1970),
+                            context: ctx.value
+                        )
+                    }
+                }
+                hop {
+                    writerBound.value.writeFinish(
+                        req.model,
+                        responseId: "",
+                        created: Int(Date().timeIntervalSince1970),
+                        context: ctx.value
+                    )
+                    writerBound.value.writeEnd(ctx.value)
+                }
+            } catch {
+                hop {
+                    writerBound.value.writeError(error.localizedDescription, context: ctx.value)
+                    writerBound.value.writeEnd(ctx.value)
+                }
+            }
+        }
+    }
+
+    @inline(__always)
+    private func executeOnLoop(_ loop: EventLoop, _ block: @escaping @Sendable () -> Void) {
         if loop.inEventLoop { block() } else { loop.execute { block() } }
-      }
-      Task(priority: .userInitiated) {
-        do {
-          let resp = try await chatEngine.completeChat(request: req)
-          let json = try JSONEncoder().encode(resp)
-          var headers: [(String, String)] = [("Content-Type", "application/json")]
-          headers.append(contentsOf: cors)
-          let headersCopy = headers
-          let body = String(decoding: json, as: UTF8.self)
-          hop {
-            var responseHead = HTTPResponseHead(version: head.version, status: .ok)
-            var buffer = ctx.value.channel.allocator.buffer(capacity: body.utf8.count)
-            buffer.writeString(body)
-            var nioHeaders = HTTPHeaders()
-            for (name, value) in headersCopy { nioHeaders.add(name: name, value: value) }
-            nioHeaders.add(name: "Content-Length", value: String(buffer.readableBytes))
-            nioHeaders.add(name: "Connection", value: "close")
-            responseHead.headers = nioHeaders
-            let c = ctx.value
-            c.write(NIOAny(HTTPServerResponsePart.head(responseHead)), promise: nil)
-            c.write(NIOAny(HTTPServerResponsePart.body(.byteBuffer(buffer))), promise: nil)
-            c.writeAndFlush(NIOAny(HTTPServerResponsePart.end(nil as HTTPHeaders?))).whenComplete {
-              _ in
-              ctx.value.close(promise: nil)
-            }
-          }
-        } catch {
-          let body = "Internal error: \(error.localizedDescription)"
-          let headers: [(String, String)] = [("Content-Type", "text/plain; charset=utf-8")]
-          let headersCopy = headers
-          hop {
-            var responseHead = HTTPResponseHead(version: head.version, status: .internalServerError)
-            var buffer = ctx.value.channel.allocator.buffer(capacity: body.utf8.count)
-            buffer.writeString(body)
-            var nioHeaders = HTTPHeaders()
-            for (name, value) in headersCopy { nioHeaders.add(name: name, value: value) }
-            nioHeaders.add(name: "Content-Length", value: String(buffer.readableBytes))
-            nioHeaders.add(name: "Connection", value: "close")
-            responseHead.headers = nioHeaders
-            let c = ctx.value
-            c.write(NIOAny(HTTPServerResponsePart.head(responseHead)), promise: nil)
-            c.write(NIOAny(HTTPServerResponsePart.body(.byteBuffer(buffer))), promise: nil)
-            c.writeAndFlush(NIOAny(HTTPServerResponsePart.end(nil as HTTPHeaders?))).whenComplete {
-              _ in
-              ctx.value.close(promise: nil)
-            }
-          }
-        }
-      }
     }
-  }
-
-  private func handleChatNDJSON(head: HTTPRequestHead, context: ChannelHandlerContext) {
-    let data: Data
-    if let body = stateRef.value.requestBodyBuffer {
-      var bodyCopy = body
-      let bytes = bodyCopy.readBytes(length: bodyCopy.readableBytes) ?? []
-      data = Data(bytes)
-    } else {
-      data = Data()
-    }
-
-    guard let req = try? JSONDecoder().decode(ChatCompletionRequest.self, from: data) else {
-      sendResponse(
-        context: context,
-        version: head.version,
-        status: .badRequest,
-        headers: [("Content-Type", "text/plain; charset=utf-8")],
-        body: "Invalid request format"
-      )
-      return
-    }
-
-    let writer = NDJSONResponseWriter()
-    let cors = stateRef.value.corsHeaders
-    let loop = context.eventLoop
-    let writerBound = NIOLoopBound(writer, eventLoop: loop)
-    let ctx = NIOLoopBound(context, eventLoop: loop)
-    let chatEngine = self.chatEngine
-    let hop: (@escaping @Sendable () -> Void) -> Void = { block in
-      if loop.inEventLoop { block() } else { loop.execute { block() } }
-    }
-    hop {
-      writerBound.value.writeHeaders(ctx.value, extraHeaders: cors)
-    }
-    Task(priority: .userInitiated) {
-      do {
-        let stream = try await chatEngine.streamChat(request: req)
-        for try await delta in stream {
-          hop {
-            writerBound.value.writeContent(
-              delta, model: req.model, responseId: "", created: Int(Date().timeIntervalSince1970),
-              context: ctx.value)
-          }
-        }
-        hop {
-          writerBound.value.writeFinish(
-            req.model, responseId: "", created: Int(Date().timeIntervalSince1970),
-            context: ctx.value)
-          writerBound.value.writeEnd(ctx.value)
-        }
-      } catch {
-        hop {
-          writerBound.value.writeError(error.localizedDescription, context: ctx.value)
-          writerBound.value.writeEnd(ctx.value)
-        }
-      }
-    }
-  }
-
-  @inline(__always)
-  private func executeOnLoop(_ loop: EventLoop, _ block: @escaping @Sendable () -> Void) {
-    if loop.inEventLoop { block() } else { loop.execute { block() } }
-  }
 }

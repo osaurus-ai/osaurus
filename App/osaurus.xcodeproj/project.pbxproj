@@ -748,10 +748,7 @@
 		};
 /* End XCLocalSwiftPackageReference section */
 
-/* Begin XCRemoteSwiftPackageReference section */
-/* End XCRemoteSwiftPackageReference section */
-
-	/* Begin XCSwiftPackageProductDependency section */
+/* Begin XCSwiftPackageProductDependency section */
 		F0AACC012E70000100895593 /* OsaurusCore */ = {
 			isa = XCSwiftPackageProductDependency;
 			package = F0AACC002E70000100895593 /* XCLocalSwiftPackageReference "../Packages/OsaurusCore" */;

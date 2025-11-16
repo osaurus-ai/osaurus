@@ -10,43 +10,41 @@ import Foundation
 import SwiftUI
 
 enum ManagementTab: Hashable {
-  case models
-  case tools
+    case models
+    case tools
 }
 
 struct ManagementView: View {
-  @State private var selectedTab: ManagementTab
-  var deeplinkModelId: String?
-  var deeplinkFile: String?
+    @State private var selectedTab: ManagementTab
+    var deeplinkModelId: String?
+    var deeplinkFile: String?
 
-  init(
-    initialTab: ManagementTab = .models,
-    deeplinkModelId: String? = nil,
-    deeplinkFile: String? = nil
-  ) {
-    _selectedTab = State(initialValue: initialTab)
-    self.deeplinkModelId = deeplinkModelId
-    self.deeplinkFile = deeplinkFile
-  }
-
-  var body: some View {
-    TabView(selection: $selectedTab) {
-      ModelDownloadView(
-        deeplinkModelId: deeplinkModelId,
-        deeplinkFile: deeplinkFile
-      )
-      .tabItem { Label("Models", systemImage: "cube.box") }
-      .tag(ManagementTab.models)
-
-      ToolsManagerView()
-        .tabItem { Label("Tools", systemImage: "wrench.and.screwdriver") }
-        .tag(ManagementTab.tools)
+    init(
+        initialTab: ManagementTab = .models,
+        deeplinkModelId: String? = nil,
+        deeplinkFile: String? = nil
+    ) {
+        _selectedTab = State(initialValue: initialTab)
+        self.deeplinkModelId = deeplinkModelId
+        self.deeplinkFile = deeplinkFile
     }
-  }
+
+    var body: some View {
+        TabView(selection: $selectedTab) {
+            ModelDownloadView(
+                deeplinkModelId: deeplinkModelId,
+                deeplinkFile: deeplinkFile
+            )
+            .tabItem { Label("Models", systemImage: "cube.box") }
+            .tag(ManagementTab.models)
+
+            ToolsManagerView()
+                .tabItem { Label("Tools", systemImage: "wrench.and.screwdriver") }
+                .tag(ManagementTab.tools)
+        }
+    }
 }
 
 #Preview {
-  ManagementView()
+    ManagementView()
 }
-
-

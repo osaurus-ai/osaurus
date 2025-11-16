@@ -8,23 +8,23 @@
 import SwiftUI
 
 struct GlassListRow<Content: View>: View {
-  @Environment(\.theme) private var theme
-  let content: () -> Content
+    @Environment(\.theme) private var theme
+    let content: () -> Content
 
-  init(@ViewBuilder content: @escaping () -> Content) {
-    self.content = content
-  }
+    init(@ViewBuilder content: @escaping () -> Content) {
+        self.content = content
+    }
 
-  var body: some View {
-    content()
-      .padding(12)
-      .background(
-        RoundedRectangle(cornerRadius: 8)
-          .fill(theme.tertiaryBackground)
-          .overlay(
-            RoundedRectangle(cornerRadius: 8)
-              .stroke(theme.glassEdgeLight.opacity(0.25), lineWidth: 1)
-          )
-      )
-  }
+    var body: some View {
+        content()
+            .padding(12)
+            .background(
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(theme.tertiaryBackground)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 8)
+                            .stroke(theme.glassEdgeLight.opacity(0.25), lineWidth: 1)
+                    )
+            )
+    }
 }

@@ -11,234 +11,238 @@ import SwiftUI
 /// Service for managing user-selected directory access with security-scoped bookmarks
 @MainActor
 final class DirectoryPickerService: ObservableObject {
-  static let shared = DirectoryPickerService()
+    static let shared = DirectoryPickerService()
 
-  @Published var selectedDirectory: URL?
-  @Published var hasValidDirectory: Bool = false
+    @Published var selectedDirectory: URL?
+    @Published var hasValidDirectory: Bool = false
 
-  private let bookmarkKey = "ModelDirectoryBookmark"
-  private var securityScopedResource: URL?
+    private let bookmarkKey = "ModelDirectoryBookmark"
+    private var securityScopedResource: URL?
 
-  // Thread-safe access to the effective directory no longer requires a queue;
-  // computation below uses thread-safe system APIs and returns a value.
+    // Thread-safe access to the effective directory no longer requires a queue;
+    // computation below uses thread-safe system APIs and returns a value.
 
-  private init() {
-    loadSavedDirectory()
-  }
-
-  /// Load previously saved directory from security-scoped bookmark
-  private func loadSavedDirectory() {
-    guard let bookmarkData = UserDefaults.standard.data(forKey: bookmarkKey) else {
-      return
+    private init() {
+        loadSavedDirectory()
     }
 
-    do {
-      var isStale = false
-      let url = try URL(
-        resolvingBookmarkData: bookmarkData,
-        options: .withSecurityScope,
-        relativeTo: nil,
-        bookmarkDataIsStale: &isStale)
-
-      if isStale {
-        // Bookmark is stale, need to recreate it
-        UserDefaults.standard.removeObject(forKey: bookmarkKey)
-        return
-      }
-
-      // Start accessing the security-scoped resource
-      guard url.startAccessingSecurityScopedResource() else {
-        print("Failed to start accessing security-scoped resource")
-        return
-      }
-
-      selectedDirectory = url
-      securityScopedResource = url
-      hasValidDirectory = true
-
-    } catch {
-      print("Failed to resolve security-scoped bookmark: \(error)")
-      UserDefaults.standard.removeObject(forKey: bookmarkKey)
-    }
-  }
-
-  /// Present directory picker and save selection
-  @MainActor func selectDirectory() {
-    let panel = NSOpenPanel()
-    panel.canChooseFiles = false
-    panel.canChooseDirectories = true
-    panel.canCreateDirectories = true
-    panel.allowsMultipleSelection = false
-    panel.title = "Choose Models Directory"
-    panel.message = "Select a directory where MLX models will be stored"
-
-    guard panel.runModal() == .OK, let url = panel.url else {
-      return
-    }
-
-    saveDirectory(url)
-  }
-
-  /// Save directory selection from SwiftUI file picker
-  @MainActor func saveDirectoryFromFilePicker(_ url: URL) {
-    // For security-scoped resources from file picker, we need to start accessing first
-    guard url.startAccessingSecurityScopedResource() else {
-      print("Failed to access security-scoped resource from file picker")
-      return
-    }
-
-    saveDirectory(url)
-  }
-
-  /// Save directory selection with security-scoped bookmark
-  private func saveDirectory(_ url: URL) {
-    // Stop accessing previous resource
-    securityScopedResource?.stopAccessingSecurityScopedResource()
-
-    do {
-      // Create security-scoped bookmark
-      let bookmarkData = try url.bookmarkData(
-        options: .withSecurityScope,
-        includingResourceValuesForKeys: nil,
-        relativeTo: nil)
-
-      // Save bookmark to UserDefaults
-      UserDefaults.standard.set(bookmarkData, forKey: bookmarkKey)
-
-      // Start accessing the new resource
-      guard url.startAccessingSecurityScopedResource() else {
-        print("Failed to start accessing newly selected directory")
-        return
-      }
-
-      selectedDirectory = url
-      securityScopedResource = url
-      hasValidDirectory = true
-
-    } catch {
-      print("Failed to create security-scoped bookmark: \(error)")
-    }
-  }
-
-  /// Get the effective models directory (user-selected or default)
-  /// This method is thread-safe for use from any context
-  nonisolated var effectiveModelsDirectory: URL {
-    // Check UserDefaults directly for the bookmark
-    if let bookmarkData = UserDefaults.standard.data(forKey: bookmarkKey) {
-      do {
-        var isStale = false
-        let url = try URL(
-          resolvingBookmarkData: bookmarkData,
-          options: .withSecurityScope,
-          relativeTo: nil,
-          bookmarkDataIsStale: &isStale)
-
-        if !isStale {
-          return url
+    /// Load previously saved directory from security-scoped bookmark
+    private func loadSavedDirectory() {
+        guard let bookmarkData = UserDefaults.standard.data(forKey: bookmarkKey) else {
+            return
         }
-      } catch {
-        // Bookmark invalid, fall through to default
-      }
+
+        do {
+            var isStale = false
+            let url = try URL(
+                resolvingBookmarkData: bookmarkData,
+                options: .withSecurityScope,
+                relativeTo: nil,
+                bookmarkDataIsStale: &isStale
+            )
+
+            if isStale {
+                // Bookmark is stale, need to recreate it
+                UserDefaults.standard.removeObject(forKey: bookmarkKey)
+                return
+            }
+
+            // Start accessing the security-scoped resource
+            guard url.startAccessingSecurityScopedResource() else {
+                print("Failed to start accessing security-scoped resource")
+                return
+            }
+
+            selectedDirectory = url
+            securityScopedResource = url
+            hasValidDirectory = true
+
+        } catch {
+            print("Failed to resolve security-scoped bookmark: \(error)")
+            UserDefaults.standard.removeObject(forKey: bookmarkKey)
+        }
     }
 
-    // Fall back to default location
-    // Precedence:
-    // 1) OSU_MODELS_DIR env var
-    // 2) Existing old default at ~/Documents/MLXModels (if present)
-    // 3) New default at ~/MLXModels
-    let fileManager = FileManager.default
+    /// Present directory picker and save selection
+    @MainActor func selectDirectory() {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.canCreateDirectories = true
+        panel.allowsMultipleSelection = false
+        panel.title = "Choose Models Directory"
+        panel.message = "Select a directory where MLX models will be stored"
 
-    if let override = ProcessInfo.processInfo.environment["OSU_MODELS_DIR"], !override.isEmpty {
-      let expanded = (override as NSString).expandingTildeInPath
-      return URL(fileURLWithPath: expanded, isDirectory: true)
+        guard panel.runModal() == .OK, let url = panel.url else {
+            return
+        }
+
+        saveDirectory(url)
     }
 
-    let homeURL = fileManager.homeDirectoryForCurrentUser
-    let newDefault = homeURL.appendingPathComponent("MLXModels")
+    /// Save directory selection from SwiftUI file picker
+    @MainActor func saveDirectoryFromFilePicker(_ url: URL) {
+        // For security-scoped resources from file picker, we need to start accessing first
+        guard url.startAccessingSecurityScopedResource() else {
+            print("Failed to access security-scoped resource from file picker")
+            return
+        }
 
-    let documentsPath = fileManager.urls(
-      for: .documentDirectory,
-      in: .userDomainMask
-    ).first!
-    let oldDefault = documentsPath.appendingPathComponent("MLXModels")
-
-    if fileManager.fileExists(atPath: newDefault.path) {
-      return newDefault
+        saveDirectory(url)
     }
 
-    if fileManager.fileExists(atPath: oldDefault.path) {
-      return oldDefault
+    /// Save directory selection with security-scoped bookmark
+    private func saveDirectory(_ url: URL) {
+        // Stop accessing previous resource
+        securityScopedResource?.stopAccessingSecurityScopedResource()
+
+        do {
+            // Create security-scoped bookmark
+            let bookmarkData = try url.bookmarkData(
+                options: .withSecurityScope,
+                includingResourceValuesForKeys: nil,
+                relativeTo: nil
+            )
+
+            // Save bookmark to UserDefaults
+            UserDefaults.standard.set(bookmarkData, forKey: bookmarkKey)
+
+            // Start accessing the new resource
+            guard url.startAccessingSecurityScopedResource() else {
+                print("Failed to start accessing newly selected directory")
+                return
+            }
+
+            selectedDirectory = url
+            securityScopedResource = url
+            hasValidDirectory = true
+
+        } catch {
+            print("Failed to create security-scoped bookmark: \(error)")
+        }
     }
 
-    return newDefault
-  }
+    /// Get the effective models directory (user-selected or default)
+    /// This method is thread-safe for use from any context
+    nonisolated var effectiveModelsDirectory: URL {
+        // Check UserDefaults directly for the bookmark
+        if let bookmarkData = UserDefaults.standard.data(forKey: bookmarkKey) {
+            do {
+                var isStale = false
+                let url = try URL(
+                    resolvingBookmarkData: bookmarkData,
+                    options: .withSecurityScope,
+                    relativeTo: nil,
+                    bookmarkDataIsStale: &isStale
+                )
 
-  /// Nonisolated helper to compute the default models directory without accessing instance state.
-  /// Mirrors the fallback logic used by `effectiveModelsDirectory`.
-  nonisolated static func defaultModelsDirectory() -> URL {
-    let fileManager = FileManager.default
-    if let override = ProcessInfo.processInfo.environment["OSU_MODELS_DIR"], !override.isEmpty {
-      let expanded = (override as NSString).expandingTildeInPath
-      return URL(fileURLWithPath: expanded, isDirectory: true)
+                if !isStale {
+                    return url
+                }
+            } catch {
+                // Bookmark invalid, fall through to default
+            }
+        }
+
+        // Fall back to default location
+        // Precedence:
+        // 1) OSU_MODELS_DIR env var
+        // 2) Existing old default at ~/Documents/MLXModels (if present)
+        // 3) New default at ~/MLXModels
+        let fileManager = FileManager.default
+
+        if let override = ProcessInfo.processInfo.environment["OSU_MODELS_DIR"], !override.isEmpty {
+            let expanded = (override as NSString).expandingTildeInPath
+            return URL(fileURLWithPath: expanded, isDirectory: true)
+        }
+
+        let homeURL = fileManager.homeDirectoryForCurrentUser
+        let newDefault = homeURL.appendingPathComponent("MLXModels")
+
+        let documentsPath = fileManager.urls(
+            for: .documentDirectory,
+            in: .userDomainMask
+        ).first!
+        let oldDefault = documentsPath.appendingPathComponent("MLXModels")
+
+        if fileManager.fileExists(atPath: newDefault.path) {
+            return newDefault
+        }
+
+        if fileManager.fileExists(atPath: oldDefault.path) {
+            return oldDefault
+        }
+
+        return newDefault
     }
-    let homeURL = fileManager.homeDirectoryForCurrentUser
-    let newDefault = homeURL.appendingPathComponent("MLXModels")
-    let documentsPath = fileManager.urls(
-      for: .documentDirectory,
-      in: .userDomainMask
-    ).first!
-    let oldDefault = documentsPath.appendingPathComponent("MLXModels")
-    if fileManager.fileExists(atPath: newDefault.path) { return newDefault }
-    if fileManager.fileExists(atPath: oldDefault.path) { return oldDefault }
-    return newDefault
-  }
 
-  /// Nonisolated static resolver that respects the saved bookmark when present.
-  /// Falls back to env var and defaults when no valid bookmark exists.
-  nonisolated static func effectiveModelsDirectory() -> URL {
-    // Mirror instance-based bookmark resolution without requiring the singleton
-    if let bookmarkData = UserDefaults.standard.data(forKey: "ModelDirectoryBookmark") {
-      do {
-        var isStale = false
-        let url = try URL(
-          resolvingBookmarkData: bookmarkData,
-          options: .withSecurityScope,
-          relativeTo: nil,
-          bookmarkDataIsStale: &isStale)
-        if !isStale { return url }
-      } catch {
-        // Fall through to defaults
-      }
+    /// Nonisolated helper to compute the default models directory without accessing instance state.
+    /// Mirrors the fallback logic used by `effectiveModelsDirectory`.
+    nonisolated static func defaultModelsDirectory() -> URL {
+        let fileManager = FileManager.default
+        if let override = ProcessInfo.processInfo.environment["OSU_MODELS_DIR"], !override.isEmpty {
+            let expanded = (override as NSString).expandingTildeInPath
+            return URL(fileURLWithPath: expanded, isDirectory: true)
+        }
+        let homeURL = fileManager.homeDirectoryForCurrentUser
+        let newDefault = homeURL.appendingPathComponent("MLXModels")
+        let documentsPath = fileManager.urls(
+            for: .documentDirectory,
+            in: .userDomainMask
+        ).first!
+        let oldDefault = documentsPath.appendingPathComponent("MLXModels")
+        if fileManager.fileExists(atPath: newDefault.path) { return newDefault }
+        if fileManager.fileExists(atPath: oldDefault.path) { return oldDefault }
+        return newDefault
     }
 
-    // Fallback precedence matches instance property
-    let fileManager = FileManager.default
-    if let override = ProcessInfo.processInfo.environment["OSU_MODELS_DIR"], !override.isEmpty {
-      let expanded = (override as NSString).expandingTildeInPath
-      return URL(fileURLWithPath: expanded, isDirectory: true)
+    /// Nonisolated static resolver that respects the saved bookmark when present.
+    /// Falls back to env var and defaults when no valid bookmark exists.
+    nonisolated static func effectiveModelsDirectory() -> URL {
+        // Mirror instance-based bookmark resolution without requiring the singleton
+        if let bookmarkData = UserDefaults.standard.data(forKey: "ModelDirectoryBookmark") {
+            do {
+                var isStale = false
+                let url = try URL(
+                    resolvingBookmarkData: bookmarkData,
+                    options: .withSecurityScope,
+                    relativeTo: nil,
+                    bookmarkDataIsStale: &isStale
+                )
+                if !isStale { return url }
+            } catch {
+                // Fall through to defaults
+            }
+        }
+
+        // Fallback precedence matches instance property
+        let fileManager = FileManager.default
+        if let override = ProcessInfo.processInfo.environment["OSU_MODELS_DIR"], !override.isEmpty {
+            let expanded = (override as NSString).expandingTildeInPath
+            return URL(fileURLWithPath: expanded, isDirectory: true)
+        }
+        let homeURL = fileManager.homeDirectoryForCurrentUser
+        let newDefault = homeURL.appendingPathComponent("MLXModels")
+        let documentsPath = fileManager.urls(
+            for: .documentDirectory,
+            in: .userDomainMask
+        ).first!
+        let oldDefault = documentsPath.appendingPathComponent("MLXModels")
+        if fileManager.fileExists(atPath: newDefault.path) { return newDefault }
+        if fileManager.fileExists(atPath: oldDefault.path) { return oldDefault }
+        return newDefault
     }
-    let homeURL = fileManager.homeDirectoryForCurrentUser
-    let newDefault = homeURL.appendingPathComponent("MLXModels")
-    let documentsPath = fileManager.urls(
-      for: .documentDirectory,
-      in: .userDomainMask
-    ).first!
-    let oldDefault = documentsPath.appendingPathComponent("MLXModels")
-    if fileManager.fileExists(atPath: newDefault.path) { return newDefault }
-    if fileManager.fileExists(atPath: oldDefault.path) { return oldDefault }
-    return newDefault
-  }
 
-  /// Reset directory selection
-  @MainActor func resetDirectory() {
-    securityScopedResource?.stopAccessingSecurityScopedResource()
-    securityScopedResource = nil
-    selectedDirectory = nil
-    hasValidDirectory = false
-    UserDefaults.standard.removeObject(forKey: bookmarkKey)
-  }
+    /// Reset directory selection
+    @MainActor func resetDirectory() {
+        securityScopedResource?.stopAccessingSecurityScopedResource()
+        securityScopedResource = nil
+        selectedDirectory = nil
+        hasValidDirectory = false
+        UserDefaults.standard.removeObject(forKey: bookmarkKey)
+    }
 
-  deinit {
-    securityScopedResource?.stopAccessingSecurityScopedResource()
-  }
+    deinit {
+        securityScopedResource?.stopAccessingSecurityScopedResource()
+    }
 }
