@@ -44,7 +44,10 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegat
     setupControlNotifications()
 
     // Apply saved Start at Login preference on launch
-    LoginItemService.shared.applyStartAtLogin(serverController.configuration.startAtLogin)
+    let launchedByCLI = ProcessInfo.processInfo.arguments.contains("--launched-by-cli")
+    if !launchedByCLI {
+      LoginItemService.shared.applyStartAtLogin(serverController.configuration.startAtLogin)
+    }
 
     // Create status bar item and attach click handler
     let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
