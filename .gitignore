@@ -122,3 +122,4 @@ ggml-*.bin
 ggml-*.metal
 
 .env
+Packages/**/Package.resolved

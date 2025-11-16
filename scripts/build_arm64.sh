@@ -18,6 +18,11 @@ if [[ "${CODE_SIGN_IDENTITY_VALUE}" != Developer\ ID\ Application:* ]]; then
   CODE_SIGN_IDENTITY_VALUE="Developer ID Application: ${CODE_SIGN_IDENTITY_VALUE}"
 fi
 
+# Ensure a clean and consistent SPM resolution before archiving
+rm -f "Packages/OsaurusCore/Package.resolved"
+rm -rf build/DerivedData build/SourcePackages
+xcodebuild -resolvePackageDependencies -project App/osaurus.xcodeproj -scheme osaurus
+
 xcodebuild -project App/osaurus.xcodeproj \
   -scheme osaurus \
   -configuration Release \
