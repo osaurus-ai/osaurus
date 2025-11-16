@@ -601,7 +601,7 @@ struct ChatView: View {
         .foregroundColor(theme.secondaryText)
       HStack(spacing: 8) {
         Button("Open Model Manager") {
-          AppDelegate.shared?.showModelManagerWindow()
+          AppDelegate.shared?.showManagementWindow(initialTab: .models)
         }
         if FoundationModelService.isDefaultModelAvailable() {
           Button("Use Foundation") {

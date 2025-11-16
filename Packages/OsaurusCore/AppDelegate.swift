@@ -21,8 +21,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegat
   let updater = UpdaterViewModel()
 
   private var activityDot: NSView?
-  private var modelManagerWindow: NSWindow?
-  private var toolsManagerWindow: NSWindow?
+  private var managementWindow: NSWindow?
   private var chatWindow: NSWindow?
 
   public func applicationDidFinishLaunching(_ notification: Notification) {
@@ -380,7 +379,7 @@ extension AppDelegate {
       }
 
       // Open Model Manager in its own window for deeplinks
-      showModelManagerWindow(deeplinkModelId: modelId, file: file)
+      showManagementWindow(initialTab: .models, deeplinkModelId: modelId, deeplinkFile: file)
     }
   }
 }
@@ -493,30 +492,34 @@ extension Notification.Name {
   static let chatOverlayActivated = Notification.Name("chatOverlayActivated")
 }
 
-// MARK: Model Manager Window
+// MARK: Management Window
 extension AppDelegate {
-  func showModelManagerWindow(deeplinkModelId: String? = nil, file: String? = nil) {
-    NSLog(
-      "[ModelManager] showModelManagerWindow called (modelId=%@, file=%@)",
-      deeplinkModelId ?? "nil", file ?? "nil")
+  @MainActor func showManagementWindow(
+    initialTab: ManagementTab = .models,
+    deeplinkModelId: String? = nil,
+    deeplinkFile: String? = nil
+  ) {
     let presentWindow: () -> Void = { [weak self] in
       guard let self = self else { return }
 
       let themeManager = ThemeManager.shared
-      let root = ModelDownloadView(deeplinkModelId: deeplinkModelId, deeplinkFile: file)
+      let root = ManagementView(
+        initialTab: initialTab,
+        deeplinkModelId: deeplinkModelId,
+        deeplinkFile: deeplinkFile
+      )
         .environment(\.theme, themeManager.currentTheme)
 
       let hostingController = NSHostingController(rootView: root)
 
-      if let window = self.modelManagerWindow {
-        // Reuse existing window; just replace content and ensure visible/focused
+      if let window = self.managementWindow {
         window.contentViewController = hostingController
         if window.isMiniaturized { window.deminiaturize(nil) }
         NSApp.activate(ignoringOtherApps: true)
         window.center()
         window.makeKeyAndOrderFront(nil)
         window.orderFrontRegardless()
-        NSLog("[ModelManager] Reused existing window and brought to front")
+        NSLog("[Management] Reused existing window and brought to front")
         return
       }
 
@@ -526,7 +529,6 @@ extension AppDelegate {
         backing: .buffered,
         defer: false
       )
-      // Minimalistic appearance: hidden titlebar, still closable
       window.titleVisibility = .hidden
       window.titlebarAppearsTransparent = true
       window.isMovableByWindowBackground = true
@@ -534,15 +536,14 @@ extension AppDelegate {
       window.center()
       window.delegate = self
       window.isReleasedWhenClosed = false
-      self.modelManagerWindow = window
+      self.managementWindow = window
 
       NSApp.activate(ignoringOtherApps: true)
       window.makeKeyAndOrderFront(nil)
       window.orderFrontRegardless()
-      NSLog("[ModelManager] Created new window and presented")
+      NSLog("[Management] Created new window and presented")
     }
 
-    // If popover is open, close first, then present shortly after to avoid layout recursion
     if let pop = popover, pop.isShown {
       pop.performClose(nil)
       Task { @MainActor in
@@ -556,60 +557,7 @@ extension AppDelegate {
 
   public func windowWillClose(_ notification: Notification) {
     guard let win = notification.object as? NSWindow else { return }
-    if win == modelManagerWindow { modelManagerWindow = nil }
-    if win == toolsManagerWindow { toolsManagerWindow = nil }
+    if win == managementWindow { managementWindow = nil }
   }
 }
 
-// MARK: Tools Manager Window
-extension AppDelegate {
-  @MainActor func showToolsManagerWindow() {
-    let presentWindow: () -> Void = { [weak self] in
-      guard let self = self else { return }
-      let themeManager = ThemeManager.shared
-      let root = ToolsManagerView()
-        .environment(\.theme, themeManager.currentTheme)
-
-      let hostingController = NSHostingController(rootView: root)
-
-      if let window = self.toolsManagerWindow {
-        window.contentViewController = hostingController
-        if window.isMiniaturized { window.deminiaturize(nil) }
-        NSApp.activate(ignoringOtherApps: true)
-        window.center()
-        window.makeKeyAndOrderFront(nil)
-        window.orderFrontRegardless()
-        return
-      }
-
-      let window = NSWindow(
-        contentRect: NSRect(x: 0, y: 0, width: 820, height: 640),
-        styleMask: [.titled, .closable, .fullSizeContentView],
-        backing: .buffered,
-        defer: false
-      )
-      window.titleVisibility = .hidden
-      window.titlebarAppearsTransparent = true
-      window.isMovableByWindowBackground = true
-      window.contentViewController = hostingController
-      window.center()
-      window.delegate = self
-      window.isReleasedWhenClosed = false
-      self.toolsManagerWindow = window
-
-      NSApp.activate(ignoringOtherApps: true)
-      window.makeKeyAndOrderFront(nil)
-      window.orderFrontRegardless()
-    }
-
-    if let pop = popover, pop.isShown {
-      pop.performClose(nil)
-      Task { @MainActor in
-        try? await Task.sleep(nanoseconds: 200_000_000)
-        presentWindow()
-      }
-    } else {
-      presentWindow()
-    }
-  }
-}
