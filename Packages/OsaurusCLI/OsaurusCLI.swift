@@ -238,26 +238,48 @@ struct OsaurusCLI {
 
     // Launch the app if not running, then post local-only distributed notification to start
     await launchAppIfNeeded()
+    let buildInfo: () -> [AnyHashable: Any] = {
+      var info: [AnyHashable: Any] = [:]
+      if let p = desiredPort { info["port"] = p }
+      if expose { info["expose"] = true }
+      return info
+    }
     postDistributedNotification(
       name: "com.dinoki.osaurus.control.serve",
-      userInfo: {
-        var info: [AnyHashable: Any] = [:]
-        if let p = desiredPort { info["port"] = p }
-        if expose { info["expose"] = true }
-        return info
-      }())
+      userInfo: buildInfo()
+    )
 
     // Poll health until running or timeout
     let portToCheck = desiredPort ?? (resolveConfiguredPort() ?? 1337)
-    let deadline = Date().addingTimeInterval(5.0)
+    let start = Date()
+    let deadline = start.addingTimeInterval(10.0)
+    var retried = false
     while Date() < deadline {
       if await checkHealth(port: portToCheck) {
         print("listening on http://127.0.0.1:\(portToCheck)")
         exit(EXIT_SUCCESS)
       }
+      // If the app was still initializing and missed the first signal, retry once after ~3s
+      if !retried && Date().timeIntervalSince(start) > 3.0 {
+        postDistributedNotification(
+          name: "com.dinoki.osaurus.control.serve",
+          userInfo: buildInfo()
+        )
+        retried = true
+      }
       try? await Task.sleep(nanoseconds: 200_000_000)  // 200ms
     }
-    fputs("Failed to start server on port \(portToCheck)\n", stderr)
+    // Improved guidance on failure
+    let altPort = min(max(portToCheck + 1, 1), 65535)
+    fputs(
+      """
+      Failed to start server on port \(portToCheck)
+      Hints:
+        - The port may be busy. Try: osaurus serve --port \(altPort)
+        - Ensure Osaurus.app is installed: brew install --cask osaurus
+        - You can also open the UI: osaurus ui
+      """.appending("\n"),
+      stderr)
     exit(EXIT_FAILURE)
   }
 
@@ -305,8 +327,31 @@ struct OsaurusCLI {
   // MARK: - UI
   private static func runUI() async {
     await launchAppIfNeeded()
-    postDistributedNotification(name: "com.dinoki.osaurus.control.ui", userInfo: [:])
-    // No strong success signal, but give it a brief moment and exit
+    let port = resolveConfiguredPort() ?? 1337
+    let start = Date()
+    let deadline = start.addingTimeInterval(6.0)
+    var lastPost = Date.distantPast
+    var postedAtLeastOnce = false
+    while Date() < deadline {
+      // Once the server is healthy, (re)post a UI request to ensure it is handled
+      if await checkHealth(port: port) {
+        postDistributedNotification(name: "com.dinoki.osaurus.control.ui", userInfo: [:])
+        // Give the app a moment to show the popover, then exit
+        try? await Task.sleep(nanoseconds: 300_000_000)
+        exit(EXIT_SUCCESS)
+      }
+      // If still not healthy, periodically post the UI request as the app may not have registered observers yet
+      if Date().timeIntervalSince(lastPost) > 0.8 {
+        postDistributedNotification(name: "com.dinoki.osaurus.control.ui", userInfo: [:])
+        postedAtLeastOnce = true
+        lastPost = Date()
+      }
+      try? await Task.sleep(nanoseconds: 200_000_000)
+    }
+    // Best-effort: post one final time and exit success
+    if !postedAtLeastOnce {
+      postDistributedNotification(name: "com.dinoki.osaurus.control.ui", userInfo: [:])
+    }
     try? await Task.sleep(nanoseconds: 150_000_000)
     exit(EXIT_SUCCESS)
   }
@@ -316,17 +361,77 @@ struct OsaurusCLI {
     let port = resolveConfiguredPort() ?? 1337
     if await checkHealth(port: port) { return }
 
-    // Launch the app via `open -b` by bundle id
-    let process = Process()
-    process.executableURL = URL(fileURLWithPath: "/usr/bin/open")
-    process.arguments = ["-b", "com.dinoki.osaurus", "--args", "--launched-by-cli"]
-    try? process.run()
-    process.waitUntilExit()
-    // Give the app a moment to initialize
-    try? await Task.sleep(nanoseconds: 300_000_000)
+    // Launch the app via `open -b` by bundle id, with fallback to explicit app path search
+    var launched = false
+    do {
+      let openByBundle = Process()
+      openByBundle.executableURL = URL(fileURLWithPath: "/usr/bin/open")
+      openByBundle.arguments = ["-b", "com.dinoki.osaurus", "--args", "--launched-by-cli"]
+      try? openByBundle.run()
+      openByBundle.waitUntilExit()
+      launched = (openByBundle.terminationStatus == 0)
+    }
+    if !launched {
+      if let appPath = findAppBundlePath() {
+        let openByPath = Process()
+        openByPath.executableURL = URL(fileURLWithPath: "/usr/bin/open")
+        openByPath.arguments = ["-a", appPath, "--args", "--launched-by-cli"]
+        try? openByPath.run()
+        openByPath.waitUntilExit()
+        launched = (openByPath.terminationStatus == 0)
+      }
+    }
+    if !launched {
+      fputs(
+        "Could not launch Osaurus.app. Install it with Homebrew: brew install --cask osaurus\n",
+        stderr)
+      return
+    }
+    // Give the app a moment to initialize (cold start can take a bit)
+    try? await Task.sleep(nanoseconds: 1_000_000_000)
   }
 
   private static func appURLForBundleId(_ bundleId: String) -> URL? { nil }
+  /// Attempts to locate the installed Osaurus.app bundle path using common locations and Spotlight.
+  private static func findAppBundlePath() -> String? {
+    let fm = FileManager.default
+    let home = NSHomeDirectory()
+    let candidates = [
+      "/Applications/Osaurus.app",
+      "\(home)/Applications/Osaurus.app",
+      "/Applications/osaurus.app",
+      "\(home)/Applications/osaurus.app",
+    ]
+    for c in candidates {
+      if fm.fileExists(atPath: c) { return c }
+    }
+    // Try Spotlight via mdfind, restricted to Applications folders
+    let mdfind = Process()
+    let outPipe = Pipe()
+    mdfind.executableURL = URL(fileURLWithPath: "/usr/bin/mdfind")
+    mdfind.standardOutput = outPipe
+    mdfind.arguments = [
+      "-onlyin", "/Applications",
+      "-onlyin", "\(home)/Applications",
+      "kMDItemCFBundleIdentifier == 'com.dinoki.osaurus'",
+    ]
+    do {
+      try mdfind.run()
+      mdfind.waitUntilExit()
+      if mdfind.terminationStatus == 0 {
+        let data = try outPipe.fileHandleForReading.readToEnd() ?? Data()
+        if let s = String(data: data, encoding: .utf8) {
+          if let first = s.split(separator: "\n").first, !first.isEmpty {
+            let path = String(first)
+            if fm.fileExists(atPath: path) { return path }
+          }
+        }
+      }
+    } catch {
+      // ignore failures; fallback will be nil
+    }
+    return nil
+  }
 
   // MARK: - List
   private struct ModelsListResponse: Decodable {

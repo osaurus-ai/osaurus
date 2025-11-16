@@ -202,6 +202,14 @@ osaurus list
 osaurus run llama-3.2-3b-instruct-4bit
 ```
 
+Note: `osaurus serve` will auto-launch Osaurus.app if it isn't already running.
+
+Troubleshooting:
+
+- If you see “Failed to start server on port …”, try a different port, e.g. `osaurus serve --port 1338`.
+- Ensure the app launches correctly: `open -b com.dinoki.osaurus`.
+- You can also open the UI directly: `osaurus ui`.
+
 Tip: Set OSU_PORT to override the default/auto-detected port for CLI commands.
 
 Notes:
