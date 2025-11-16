@@ -216,12 +216,8 @@ private struct BottomActionBar: View {
           AppDelegate.shared?.showChatOverlay()
         }
 
-        CircularIconButton(systemName: "wrench.and.screwdriver", help: "Manage tools") {
-          AppDelegate.shared?.showToolsManagerWindow()
-        }
-
-        CircularIconButton(systemName: "cube.box", help: "Manage models") {
-          AppDelegate.shared?.showModelManagerWindow()
+        CircularIconButton(systemName: "square.grid.2x2", help: "Management") {
+          AppDelegate.shared?.showManagementWindow()
         }
 
         CircularIconButton(systemName: "gearshape", help: "Configure server") {

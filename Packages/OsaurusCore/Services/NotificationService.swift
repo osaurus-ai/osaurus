@@ -75,7 +75,11 @@ final class NotificationService: NSObject, UNUserNotificationCenterDelegate {
       || response.actionIdentifier == UNNotificationDefaultActionIdentifier
     {
       Task { @MainActor in
-        AppDelegate.shared?.showModelManagerWindow(deeplinkModelId: modelId, file: nil)
+        AppDelegate.shared?.showManagementWindow(
+          initialTab: .models,
+          deeplinkModelId: modelId,
+          deeplinkFile: nil
+        )
       }
     }
   }
