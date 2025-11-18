@@ -384,7 +384,8 @@ struct OsaurusCLI {
         }
         // Even if `open -b` returned success, do a quick health-based fallback attempt
         // in case LaunchServices couldn't resolve the bundle id for some setups.
-        if !launched || !(await checkHealth(port: port)) {
+        let healthyAfterBundle = await checkHealth(port: port)
+        if !launched || !healthyAfterBundle {
             if let appPath = findAppBundlePath() {
                 let openByPath = Process()
                 openByPath.executableURL = URL(fileURLWithPath: "/usr/bin/open")
