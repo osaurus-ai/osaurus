@@ -254,8 +254,9 @@ struct OsaurusCLI {
         // Poll health until running or timeout
         let portToCheck = desiredPort ?? (resolveConfiguredPort() ?? 1337)
         let start = Date()
-        let deadline = start.addingTimeInterval(10.0)
+        let deadline = start.addingTimeInterval(12.0)
         var retried = false
+        var relaunched = false
         while Date() < deadline {
             if await checkHealth(port: portToCheck) {
                 print("listening on http://127.0.0.1:\(portToCheck)")
@@ -263,6 +264,11 @@ struct OsaurusCLI {
             }
             // If the app was still initializing and missed the first signal, retry once after ~3s
             if !retried && Date().timeIntervalSince(start) > 3.0 {
+                if !relaunched {
+                    // Attempt one more launch in case the first one didn't take
+                    await launchAppIfNeeded()
+                    relaunched = true
+                }
                 postDistributedNotification(
                     name: "com.dinoki.osaurus.control.serve",
                     userInfo: buildInfo()
@@ -279,6 +285,8 @@ struct OsaurusCLI {
             Hints:
               - The port may be busy. Try: osaurus serve --port \(altPort)
               - Ensure Osaurus.app is installed: brew install --cask osaurus
+              - Try launching the app first, then serve:
+                open -a /Applications/Osaurus.app && osaurus serve
               - You can also open the UI: osaurus ui
             """.appending("\n"),
             stderr
@@ -369,12 +377,14 @@ struct OsaurusCLI {
         do {
             let openByBundle = Process()
             openByBundle.executableURL = URL(fileURLWithPath: "/usr/bin/open")
-            openByBundle.arguments = ["-b", "com.dinoki.osaurus", "--args", "--launched-by-cli"]
+            openByBundle.arguments = ["-n", "-b", "com.dinoki.osaurus", "--args", "--launched-by-cli"]
             try? openByBundle.run()
             openByBundle.waitUntilExit()
             launched = (openByBundle.terminationStatus == 0)
         }
-        if !launched {
+        // Even if `open -b` returned success, do a quick health-based fallback attempt
+        // in case LaunchServices couldn't resolve the bundle id for some setups.
+        if !launched || !(await checkHealth(port: port)) {
             if let appPath = findAppBundlePath() {
                 let openByPath = Process()
                 openByPath.executableURL = URL(fileURLWithPath: "/usr/bin/open")
@@ -392,10 +402,9 @@ struct OsaurusCLI {
             return
         }
         // Give the app a moment to initialize (cold start can take a bit)
-        try? await Task.sleep(nanoseconds: 1_000_000_000)
+        try? await Task.sleep(nanoseconds: 1_500_000_000)
     }
 
-    private static func appURLForBundleId(_ bundleId: String) -> URL? { nil }
     /// Attempts to locate the installed Osaurus.app bundle path using common locations and Spotlight.
     private static func findAppBundlePath() -> String? {
         let fm = FileManager.default
@@ -409,16 +418,30 @@ struct OsaurusCLI {
         for c in candidates {
             if fm.fileExists(atPath: c) { return c }
         }
-        // Try Spotlight via mdfind, restricted to Applications folders
+        // Try Spotlight via mdfind, restricted to Applications folders first
+        if let path = spotlightFind(queryArgs: [
+            "-onlyin", "/Applications",
+            "-onlyin", "\(home)/Applications",
+            "kMDItemCFBundleIdentifier == 'com.dinoki.osaurus'",
+        ]) {
+            if fm.fileExists(atPath: path) { return path }
+        }
+        // Unrestricted Spotlight fallback (search entire metadata index)
+        if let path = spotlightFind(queryArgs: [
+            "kMDItemCFBundleIdentifier == 'com.dinoki.osaurus'"
+        ]) {
+            if fm.fileExists(atPath: path) { return path }
+        }
+        return nil
+    }
+
+    /// Runs mdfind with the provided arguments and returns the first non-empty line.
+    private static func spotlightFind(queryArgs: [String]) -> String? {
         let mdfind = Process()
         let outPipe = Pipe()
         mdfind.executableURL = URL(fileURLWithPath: "/usr/bin/mdfind")
         mdfind.standardOutput = outPipe
-        mdfind.arguments = [
-            "-onlyin", "/Applications",
-            "-onlyin", "\(home)/Applications",
-            "kMDItemCFBundleIdentifier == 'com.dinoki.osaurus'",
-        ]
+        mdfind.arguments = queryArgs
         do {
             try mdfind.run()
             mdfind.waitUntilExit()
@@ -426,8 +449,7 @@ struct OsaurusCLI {
                 let data = try outPipe.fileHandleForReading.readToEnd() ?? Data()
                 if let s = String(data: data, encoding: .utf8) {
                     if let first = s.split(separator: "\n").first, !first.isEmpty {
-                        let path = String(first)
-                        if fm.fileExists(atPath: path) { return path }
+                        return String(first)
                     }
                 }
             }
