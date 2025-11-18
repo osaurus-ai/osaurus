@@ -22,7 +22,7 @@ enum ToolConfigurationStore {
                 print("[Osaurus] Failed to load ToolConfiguration: \(error)")
             }
         }
-        // Defaults: all tools enabled (empty map implies enabled)
+        // Defaults: all tools disabled (empty map implies disabled)
         let defaults = ToolConfiguration()
         save(defaults)
         return defaults
