@@ -77,5 +77,8 @@ final class ToolRegistry {
     func setEnabled(_ enabled: Bool, for name: String) {
         configuration.setEnabled(enabled, for: name)
         ToolConfigurationStore.save(configuration)
+        Task { @MainActor in
+            await MCPServerManager.shared.notifyToolsListChanged()
+        }
     }
 }

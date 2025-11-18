@@ -91,6 +91,11 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegat
             await serverController.startServer()
         }
 
+        // Auto-start MCP stdio transport
+        Task { @MainActor in
+            try? await MCPServerManager.shared.startStdio()
+        }
+
         // Setup global hotkey for Chat overlay (configured)
         applyChatHotkey()
     }
@@ -118,6 +123,9 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegat
 
     public func applicationWillTerminate(_ notification: Notification) {
         print("Osaurus server app terminating")
+        Task { @MainActor in
+            await MCPServerManager.shared.stopAll()
+        }
         SharedConfigurationService.shared.remove()
     }
 
@@ -225,6 +233,8 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegat
             if serverController.activeRequestCount > 0 {
                 tooltip += " — Generating…"
             }
+            // Advertise MCP HTTP endpoints on the same port
+            tooltip += " — MCP: /mcp/*"
             button.toolTip = tooltip
         }
     }

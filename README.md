@@ -112,6 +112,16 @@ The following are 20-run averages from our batch benchmark suite. See raw result
 - `POST /chat/completions` → OpenAI‑compatible chat completions
 - `POST /chat` → Ollama‑compatible chat endpoint
 
+### MCP (Model Context Protocol)
+
+- Stdio transport auto-starts with the app. Connect using an MCP client that supports stdio.
+- HTTP endpoints (same port):
+  - `GET /mcp/health` → MCP availability probe
+  - `GET /mcp/tools` → List active tools (name, description)
+  - `POST /mcp/call` → Execute a tool with JSON `{ "name": string, "arguments": object }`
+
+MCP integration uses the official Swift SDK: [modelcontextprotocol/swift-sdk](https://github.com/modelcontextprotocol/swift-sdk).
+
 **Path normalization**: All endpoints support common API prefixes (`/v1`, `/api`, `/v1/api`). For example:
 
 - `/v1/models` → `/models`
