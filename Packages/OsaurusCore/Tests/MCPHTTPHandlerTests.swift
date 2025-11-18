@@ -31,7 +31,9 @@ struct MCPHTTPHandlerTests {
     @Test func mcp_tools_lists_only_enabled_tools() async throws {
         // Use a temp config directory so enablement doesn't leak
         let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent(
-            "osaurus-tests-\(UUID().uuidString)", isDirectory: true)
+            "osaurus-tests-\(UUID().uuidString)",
+            isDirectory: true
+        )
         await MainActor.run {
             ToolConfigurationStore.overrideDirectory = tempDir
         }
@@ -53,12 +55,18 @@ struct MCPHTTPHandlerTests {
         let tools = (json?["tools"] as? [[String: Any]]) ?? []
         let names = Set(tools.compactMap { $0["name"] as? String })
         #expect(names.contains(EchoTool.nameStatic))
+        if let echo = tools.first(where: { ($0["name"] as? String) == EchoTool.nameStatic }) {
+            let inputSchema = echo["inputSchema"] as? [String: Any]
+            #expect(inputSchema != nil)
+        }
     }
 
     @Test func mcp_call_executes_enabled_tool_and_returns_text_content() async throws {
         // Use a temp config directory so enablement doesn't leak
         let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent(
-            "osaurus-tests-\(UUID().uuidString)", isDirectory: true)
+            "osaurus-tests-\(UUID().uuidString)",
+            isDirectory: true
+        )
         await MainActor.run {
             ToolConfigurationStore.overrideDirectory = tempDir
         }
@@ -91,6 +99,41 @@ struct MCPHTTPHandlerTests {
         let text = content.first?["text"] as? String
         #expect(text == #"{"text":"hello"}"#)
     }
+
+    @Test func mcp_call_with_missing_required_arg_returns_error() async throws {
+        // Use a temp config directory so enablement doesn't leak
+        let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "osaurus-tests-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        await MainActor.run {
+            ToolConfigurationStore.overrideDirectory = tempDir
+        }
+        try? FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+
+        // Register and enable a test tool
+        await ToolRegistry.shared.register(EchoTool())
+        await ToolRegistry.shared.setEnabled(true, for: EchoTool.nameStatic)
+
+        let server = try await startTestServer()
+        defer { Task { await server.shutdown() } }
+
+        var request = URLRequest(url: URL(string: "http://\(server.host):\(server.port)/mcp/call")!)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        let bodyObj: [String: Any] = [
+            "name": EchoTool.nameStatic,
+            "arguments": [:],
+        ]
+        request.httpBody = try JSONSerialization.data(withJSONObject: bodyObj)
+
+        let (data, resp) = try await URLSession.shared.data(for: request)
+        let status = (resp as? HTTPURLResponse)?.statusCode ?? -1
+        #expect(status == 200)
+        let json = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+        let isError = (json?["isError"] as? Bool) ?? false
+        #expect(isError == true)
+    }
 }
 
 // MARK: - Test tool
@@ -103,6 +146,7 @@ private struct EchoTool: ChatTool {
         .object([
             "type": .string("object"),
             "properties": .object(["text": .object(["type": .string("string")])]),
+            "required": .array([.string("text")]),
         ])
     }
     func execute(argumentsJSON: String) async throws -> String {
@@ -149,5 +193,3 @@ private func startTestServer() async throws -> TestServer {
     let port = addr?.port ?? 0
     return TestServer(group: group, channel: ch, host: "127.0.0.1", port: port)
 }
-
-

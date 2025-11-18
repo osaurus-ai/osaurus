@@ -8,7 +8,7 @@
 import Foundation
 
 struct FileReadTool: ChatTool {
-    let name: String = "file.read"
+    let name: String = "file_read"
     let toolDescription: String =
         "Read file contents from disk. Supports start/max_bytes window and utf8/base64 encoding. Returns a summary plus JSON payload."
 

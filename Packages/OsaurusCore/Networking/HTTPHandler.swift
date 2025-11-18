@@ -631,10 +631,14 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 ToolRegistry.shared.listTools().filter { $0.enabled }
             }
             let tools = entries.map { e in
-                [
+                var obj: [String: Any] = [
                     "name": e.name,
                     "description": e.description,
                 ]
+                if let params = e.parameters {
+                    obj["inputSchema"] = params.anyValue
+                }
+                return obj
             }
             let payload: [String: Any] = ["tools": tools]
             let data = (try? JSONSerialization.data(withJSONObject: payload)) ?? Data("{}".utf8)
@@ -714,16 +718,14 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             return
         }
 
-        let argsJSON: String
-        if let args = req.arguments {
-            if let d = try? JSONSerialization.data(withJSONObject: args.value, options: []) {
-                argsJSON = String(decoding: d, as: UTF8.self)
-            } else {
-                argsJSON = "{}"
+        let argsJSON: String = {
+            if let a = req.arguments?.value,
+                let d = try? JSONSerialization.data(withJSONObject: a, options: [])
+            {
+                return String(decoding: d, as: UTF8.self)
             }
-        } else {
-            argsJSON = "{}"
-        }
+            return "{}"
+        }()
 
         let loop = context.eventLoop
         let ctx = NIOLoopBound(context, eventLoop: loop)
@@ -731,9 +733,38 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         let hop: (@escaping @Sendable () -> Void) -> Void = { block in
             if loop.inEventLoop { block() } else { loop.execute { block() } }
         }
+        let toolName = req.name
         Task(priority: .userInitiated) {
             do {
-                let result = try await ToolRegistry.shared.execute(name: req.name, argumentsJSON: argsJSON)
+                // Validate against schema if available
+                if let schema = await MainActor.run(body: { ToolRegistry.shared.parametersForTool(name: toolName) }) {
+                    let argsObject: Any =
+                        (try? JSONSerialization.jsonObject(with: Data(argsJSON.utf8))) as? [String: Any] ?? [:]
+                    let res = SchemaValidator.validate(arguments: argsObject, against: schema)
+                    if res.isValid == false {
+                        let message = res.errorMessage ?? "Invalid arguments"
+                        let payload: [String: Any] = [
+                            "content": [["type": "text", "text": message]],
+                            "isError": true,
+                        ]
+                        let data = (try? JSONSerialization.data(withJSONObject: payload)) ?? Data("{}".utf8)
+                        let body = String(decoding: data, as: UTF8.self)
+                        hop {
+                            var headers = [("Content-Type", "application/json; charset=utf-8")]
+                            headers.append(contentsOf: cors)
+                            self.sendResponse(
+                                context: ctx.value,
+                                version: head.version,
+                                status: .ok,
+                                headers: headers,
+                                body: body
+                            )
+                        }
+                        return
+                    }
+                }
+
+                let result = try await ToolRegistry.shared.execute(name: toolName, argumentsJSON: argsJSON)
                 let payload: [String: Any] = [
                     "content": [["type": "text", "text": result]],
                     "isError": false,

@@ -6,10 +6,7 @@
 //
 
 import Foundation
-
-#if canImport(MCP)
 import MCP
-#endif
 
 @MainActor
 final class MCPServerManager {
@@ -18,14 +15,11 @@ final class MCPServerManager {
     private init() {}
 
     // MARK: - MCP Core
-    #if canImport(MCP)
     private var server: MCP.Server?
     private var stdioTask: Task<Void, Never>?
-    #endif
 
     // MARK: - Lifecycle
     func startStdio() async throws {
-        #if canImport(MCP)
         // If already running, ignore
         if server != nil { return }
 
@@ -49,17 +43,13 @@ final class MCPServerManager {
                 try await srv.start(transport: transport)
             } catch {
                 // Silent fail in background; consider adding logging later
-                _ = self // keep self captured
+                _ = self  // keep self captured
             }
         }
         server = srv
-        #else
-        // MCP SDK not available; nothing to start
-        #endif
     }
 
     func stopAll() async {
-        #if canImport(MCP)
         if let stdioTask {
             stdioTask.cancel()
             self.stdioTask = nil
@@ -68,7 +58,6 @@ final class MCPServerManager {
             await server.stop()
             self.server = nil
         }
-        #endif
     }
 
     // MARK: - Dynamic Tool Changes
@@ -78,35 +67,46 @@ final class MCPServerManager {
     }
 
     // MARK: - Internal
-    #if canImport(MCP)
     private func registerHandlers(on server: MCP.Server) async {
         // ListTools returns only enabled tools from ToolRegistry
         await server.withMethodHandler(MCP.ListTools.self) { _ in
             let entries = await ToolRegistry.shared.listTools().filter { $0.enabled }
             let tools: [MCP.Tool] = entries.map { entry in
-                // Input schema is optional; we'll omit for now
-                MCP.Tool(name: entry.name, description: entry.description, inputSchema: nil)
+                let schema: MCP.Value = entry.parameters.map { Self.toMCPValue($0) } ?? .null
+                return MCP.Tool(name: entry.name, description: entry.description, inputSchema: schema)
             }
             return .init(tools: tools)
         }
 
         await server.withMethodHandler(MCP.CallTool.self) { params in
             // Try to stringify arguments; default to empty JSON object
-            let argsJSON: String
-            if let a = params.arguments {
-                // Attempt to encode arguments to JSON string
-                if let data = try? JSONEncoder().encode(a) {
-                    argsJSON = String(decoding: data, as: UTF8.self)
-                } else if let s = a as? String {
-                    argsJSON = s
-                } else {
-                    argsJSON = "{}"
+            let argsData: Data? = {
+                guard let a = params.arguments else { return nil }
+                return try? JSONEncoder().encode(a)
+            }()
+            let argumentsAny: Any = {
+                guard let d = argsData,
+                    let obj = try? JSONSerialization.jsonObject(with: d)
+                else { return [String: Any]() }
+                return obj
+            }()
+            let argsJSON: String = {
+                if let d = argsData {
+                    return String(decoding: d, as: UTF8.self)
                 }
-            } else {
-                argsJSON = "{}"
-            }
+                return "{}"
+            }()
 
             do {
+                // Validate against tool schema when available
+                if let schema = await ToolRegistry.shared.parametersForTool(name: params.name) {
+                    let result = SchemaValidator.validate(arguments: argumentsAny, against: schema)
+                    if result.isValid == false {
+                        let message = result.errorMessage ?? "Invalid arguments"
+                        return .init(content: [.text(message)], isError: true)
+                    }
+                }
+
                 let result = try await ToolRegistry.shared.execute(name: params.name, argumentsJSON: argsJSON)
                 return .init(content: [.text(result)], isError: false)
             } catch {
@@ -114,7 +114,26 @@ final class MCPServerManager {
             }
         }
     }
-    #endif
+
+    // MARK: - Schema bridging
+    nonisolated private static func toMCPValue(_ value: JSONValue) -> MCP.Value {
+        switch value {
+        case .null:
+            return .null
+        case .bool(let b):
+            return .bool(b)
+        case .number(let n):
+            return .double(n)
+        case .string(let s):
+            return .string(s)
+        case .array(let arr):
+            return .array(arr.map { toMCPValue($0) })
+        case .object(let obj):
+            var mapped: [String: MCP.Value] = [:]
+            for (k, v) in obj {
+                mapped[k] = toMCPValue(v)
+            }
+            return .object(mapped)
+        }
+    }
 }
-
-
