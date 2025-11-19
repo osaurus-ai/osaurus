@@ -193,6 +193,21 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 handleChatCompletions(head: head, context: context)
             } else if head.method == .POST, path == "/chat" {
                 handleChatNDJSON(head: head, context: context)
+            } else if head.method == .GET, path == "/mcp/health" {
+                var headers = [("Content-Type", "application/json; charset=utf-8")]
+                headers.append(contentsOf: stateRef.value.corsHeaders)
+                let body = #"{"status":"ok"}"#
+                sendResponse(
+                    context: context,
+                    version: head.version,
+                    status: .ok,
+                    headers: headers,
+                    body: body
+                )
+            } else if head.method == .GET, path == "/mcp/tools" {
+                handleMCPListTools(head: head, context: context)
+            } else if head.method == .POST, path == "/mcp/call" {
+                handleMCPCallTool(head: head, context: context)
             } else {
                 var headers = [("Content-Type", "text/plain; charset=utf-8")]
                 headers.append(contentsOf: stateRef.value.corsHeaders)
@@ -598,6 +613,192 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 hop {
                     writerBound.value.writeError(error.localizedDescription, context: ctx.value)
                     writerBound.value.writeEnd(ctx.value)
+                }
+            }
+        }
+    }
+
+    // MARK: - Minimal MCP-style endpoints (same port)
+    private func handleMCPListTools(head: HTTPRequestHead, context: ChannelHandlerContext) {
+        let loop = context.eventLoop
+        let ctx = NIOLoopBound(context, eventLoop: loop)
+        let cors = stateRef.value.corsHeaders
+        let hop: (@escaping @Sendable () -> Void) -> Void = { block in
+            if loop.inEventLoop { block() } else { loop.execute { block() } }
+        }
+        Task(priority: .userInitiated) {
+            let entries = await MainActor.run {
+                ToolRegistry.shared.listTools().filter { $0.enabled }
+            }
+            let tools = entries.map { e in
+                var obj: [String: Any] = [
+                    "name": e.name,
+                    "description": e.description,
+                ]
+                if let params = e.parameters {
+                    obj["inputSchema"] = params.anyValue
+                }
+                return obj
+            }
+            let payload: [String: Any] = ["tools": tools]
+            let data = (try? JSONSerialization.data(withJSONObject: payload)) ?? Data("{}".utf8)
+            let body = String(decoding: data, as: UTF8.self)
+            hop {
+                var headers = [("Content-Type", "application/json; charset=utf-8")]
+                headers.append(contentsOf: cors)
+                self.sendResponse(
+                    context: ctx.value,
+                    version: head.version,
+                    status: .ok,
+                    headers: headers,
+                    body: body
+                )
+            }
+        }
+    }
+
+    private func handleMCPCallTool(head: HTTPRequestHead, context: ChannelHandlerContext) {
+        let data: Data
+        if let body = stateRef.value.requestBodyBuffer {
+            var bodyCopy = body
+            let bytes = bodyCopy.readBytes(length: bodyCopy.readableBytes) ?? []
+            data = Data(bytes)
+        } else {
+            data = Data()
+        }
+
+        struct CallBody: Codable {
+            let name: String
+            let arguments: AnyCodable?
+        }
+
+        // Lightweight AnyCodable for arguments passthrough
+        struct AnyCodable: Codable {
+            let value: Any
+            init(from decoder: Decoder) throws {
+                let container = try decoder.singleValueContainer()
+                if let b = try? container.decode(Bool.self) { value = b; return }
+                if let i = try? container.decode(Int.self) { value = i; return }
+                if let d = try? container.decode(Double.self) { value = d; return }
+                if let s = try? container.decode(String.self) { value = s; return }
+                if let arr = try? container.decode([AnyCodable].self) { value = arr.map { $0.value }; return }
+                if let dict = try? container.decode([String: AnyCodable].self) {
+                    value = dict.mapValues { $0.value }
+                    return
+                }
+                value = NSNull()
+            }
+            func encode(to encoder: Encoder) throws {
+                var container = encoder.singleValueContainer()
+                switch value {
+                case let b as Bool: try container.encode(b)
+                case let i as Int: try container.encode(i)
+                case let d as Double: try container.encode(d)
+                case let s as String: try container.encode(s)
+                case let arr as [Any]:
+                    let enc = try JSONSerialization.data(withJSONObject: arr, options: [])
+                    try container.encode(String(decoding: enc, as: UTF8.self))
+                case let dict as [String: Any]:
+                    let enc = try JSONSerialization.data(withJSONObject: dict, options: [])
+                    try container.encode(String(decoding: enc, as: UTF8.self))
+                default:
+                    try container.encodeNil()
+                }
+            }
+        }
+
+        guard let req = try? JSONDecoder().decode(CallBody.self, from: data) else {
+            sendResponse(
+                context: context,
+                version: head.version,
+                status: .badRequest,
+                headers: [("Content-Type", "text/plain; charset=utf-8")],
+                body: "Invalid request format"
+            )
+            return
+        }
+
+        let argsJSON: String = {
+            if let a = req.arguments?.value,
+                let d = try? JSONSerialization.data(withJSONObject: a, options: [])
+            {
+                return String(decoding: d, as: UTF8.self)
+            }
+            return "{}"
+        }()
+
+        let loop = context.eventLoop
+        let ctx = NIOLoopBound(context, eventLoop: loop)
+        let cors = stateRef.value.corsHeaders
+        let hop: (@escaping @Sendable () -> Void) -> Void = { block in
+            if loop.inEventLoop { block() } else { loop.execute { block() } }
+        }
+        let toolName = req.name
+        Task(priority: .userInitiated) {
+            do {
+                // Validate against schema if available
+                if let schema = await MainActor.run(body: { ToolRegistry.shared.parametersForTool(name: toolName) }) {
+                    let argsObject: Any =
+                        (try? JSONSerialization.jsonObject(with: Data(argsJSON.utf8))) as? [String: Any] ?? [:]
+                    let res = SchemaValidator.validate(arguments: argsObject, against: schema)
+                    if res.isValid == false {
+                        let message = res.errorMessage ?? "Invalid arguments"
+                        let payload: [String: Any] = [
+                            "content": [["type": "text", "text": message]],
+                            "isError": true,
+                        ]
+                        let data = (try? JSONSerialization.data(withJSONObject: payload)) ?? Data("{}".utf8)
+                        let body = String(decoding: data, as: UTF8.self)
+                        hop {
+                            var headers = [("Content-Type", "application/json; charset=utf-8")]
+                            headers.append(contentsOf: cors)
+                            self.sendResponse(
+                                context: ctx.value,
+                                version: head.version,
+                                status: .ok,
+                                headers: headers,
+                                body: body
+                            )
+                        }
+                        return
+                    }
+                }
+
+                let result = try await ToolRegistry.shared.execute(name: toolName, argumentsJSON: argsJSON)
+                let payload: [String: Any] = [
+                    "content": [["type": "text", "text": result]],
+                    "isError": false,
+                ]
+                let d = (try? JSONSerialization.data(withJSONObject: payload)) ?? Data("{}".utf8)
+                let body = String(decoding: d, as: UTF8.self)
+                hop {
+                    var headers = [("Content-Type", "application/json; charset=utf-8")]
+                    headers.append(contentsOf: cors)
+                    self.sendResponse(
+                        context: ctx.value,
+                        version: head.version,
+                        status: .ok,
+                        headers: headers,
+                        body: body
+                    )
+                }
+            } catch {
+                let payload: [String: Any] = [
+                    "content": [["type": "text", "text": error.localizedDescription]],
+                    "isError": true,
+                ]
+                let d = (try? JSONSerialization.data(withJSONObject: payload)) ?? Data("{}".utf8)
+                let body = String(decoding: d, as: UTF8.self)
+                hop {
+                    var headers = [("Content-Type", "application/json; charset=utf-8")]
+                    headers.append(contentsOf: cors)
+                    self.sendResponse(
+                        context: ctx.value,
+                        version: head.version,
+                        status: .ok,
+                        headers: headers,
+                        body: body
+                    )
                 }
             }
         }

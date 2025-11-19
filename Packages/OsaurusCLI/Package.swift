@@ -7,7 +7,16 @@ let package = Package(
     products: [
         .executable(name: "osaurus", targets: ["OsaurusCLI"])
     ],
+    dependencies: [
+        .package(url: "https://github.com/modelcontextprotocol/swift-sdk.git", from: "0.10.0")
+    ],
     targets: [
-        .executableTarget(name: "OsaurusCLI", path: ".")
+        .executableTarget(
+            name: "OsaurusCLI",
+            dependencies: [
+                .product(name: "MCP", package: "swift-sdk")
+            ],
+            path: "."
+        )
     ]
 )

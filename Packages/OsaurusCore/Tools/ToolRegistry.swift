@@ -19,6 +19,7 @@ final class ToolRegistry {
         let name: String
         let description: String
         var enabled: Bool
+        let parameters: JSONValue?
     }
 
     private init() {
@@ -68,7 +69,8 @@ final class ToolRegistry {
                 ToolEntry(
                     name: t.name,
                     description: t.toolDescription,
-                    enabled: configuration.isEnabled(name: t.name)
+                    enabled: configuration.isEnabled(name: t.name),
+                    parameters: t.parameters
                 )
             }
     }
@@ -77,5 +79,13 @@ final class ToolRegistry {
     func setEnabled(_ enabled: Bool, for name: String) {
         configuration.setEnabled(enabled, for: name)
         ToolConfigurationStore.save(configuration)
+        Task { @MainActor in
+            await MCPServerManager.shared.notifyToolsListChanged()
+        }
+    }
+
+    /// Retrieve parameter schema for a tool by name.
+    func parametersForTool(name: String) -> JSONValue? {
+        return toolsByName[name]?.parameters
     }
 }

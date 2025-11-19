@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import MCP
 
 @main
 struct OsaurusCLI {
@@ -15,6 +16,7 @@ struct OsaurusCLI {
         case stop
         case list
         case run(String)
+        case mcp
         case ui
         case version
         case help
@@ -31,6 +33,7 @@ struct OsaurusCLI {
         case "run":
             if let modelId = rest.first, !modelId.isEmpty { return .run(modelId) }
             return nil
+        case "mcp": return .mcp
         case "ui": return .ui
         case "version", "--version", "-v": return .version
         case "help", "-h", "--help": return .help
@@ -57,6 +60,8 @@ struct OsaurusCLI {
             await runList()
         case .run(let modelId):
             await runRun([modelId])
+        case .mcp:
+            await runMCP()
         case .ui:
             await runUI()
         case .version:
@@ -76,6 +81,7 @@ struct OsaurusCLI {
                                       Start the server (default: localhost only). If --expose
                                       is set, a warning prompt will appear unless --yes is provided.
               osaurus stop            Stop the server
+              osaurus mcp             Run MCP stdio server proxying to local HTTP
               osaurus version         Show version (also: --version or -v)
               osaurus status          Check if the Osaurus server is running
               osaurus list            List available model IDs
@@ -642,5 +648,144 @@ struct OsaurusCLI {
             exit(EXIT_FAILURE)
         }
         return port
+    }
+}
+
+// MARK: - MCP Proxy (stdio -> HTTP)
+extension OsaurusCLI {
+    private static func runMCP() async {
+        // Ensure app server is up; auto-launch only if not already running
+        let port = await ensureServerReadyOrExit(pollSeconds: 5.0)
+        let baseURL = "http://127.0.0.1:\(port)"
+
+        // Build MCP server
+        let server = MCP.Server(
+            name: "Osaurus MCP Proxy",
+            version: Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "cli",
+            capabilities: .init(tools: .init(listChanged: true))
+        )
+
+        // Register ListTools -> GET /mcp/tools
+        await server.withMethodHandler(MCP.ListTools.self) { _ in
+            guard let url = URL(string: "\(baseURL)/mcp/tools") else {
+                return .init(tools: [])
+            }
+            var request = URLRequest(url: url)
+            request.httpMethod = "GET"
+            request.setValue("application/json", forHTTPHeaderField: "Accept")
+            request.timeoutInterval = 5.0
+            do {
+                let (data, response) = try await URLSession.shared.data(for: request)
+                guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
+                    return .init(tools: [])
+                }
+                let tools: [MCP.Tool]
+                if let obj = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+                    let arr = obj["tools"] as? [[String: Any]]
+                {
+                    tools = arr.map { item in
+                        let name = (item["name"] as? String) ?? ""
+                        let description = (item["description"] as? String) ?? ""
+                        let schemaAny = item["inputSchema"]
+                        let schema = toMCPValue(from: schemaAny)
+                        return MCP.Tool(name: name, description: description, inputSchema: schema)
+                    }
+                } else {
+                    tools = []
+                }
+                return .init(tools: tools)
+            } catch {
+                return .init(tools: [])
+            }
+        }
+
+        // Register CallTool -> POST /mcp/call
+        await server.withMethodHandler(MCP.CallTool.self) { params in
+            struct CallBody: Encodable {
+                let name: String
+                let arguments: MCP.Value?
+            }
+            struct CallResponse: Decodable {
+                struct Item: Decodable {
+                    let type: String
+                    let text: String?
+                }
+                let content: [Item]
+                let isError: Bool
+            }
+            guard let url = URL(string: "\(baseURL)/mcp/call") else {
+                return .init(content: [.text("Invalid URL")], isError: true)
+            }
+            var request = URLRequest(url: url)
+            request.httpMethod = "POST"
+            request.setValue("application/json; charset=utf-8", forHTTPHeaderField: "Content-Type")
+            request.setValue("application/json", forHTTPHeaderField: "Accept")
+            request.timeoutInterval = 30.0
+
+            do {
+                // Wrap dictionary arguments into a single MCP.Value object if present
+                let argValue: MCP.Value? = params.arguments.map { .object($0) }
+                let body = CallBody(name: params.name, arguments: argValue)
+                request.httpBody = try JSONEncoder().encode(body)
+
+                let (data, response) = try await URLSession.shared.data(for: request)
+                guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
+                    let message = String(decoding: data, as: UTF8.self)
+                    return .init(
+                        content: [
+                            .text("HTTP \(String(describing: (response as? HTTPURLResponse)?.statusCode)): \(message)")
+                        ],
+                        isError: true
+                    )
+                }
+                let decoded = try JSONDecoder().decode(CallResponse.self, from: data)
+                // Aggregate text items into a single text content to match our server's MCP usage
+                let text = decoded.content.compactMap { $0.type == "text" ? $0.text : nil }.joined()
+                if text.isEmpty {
+                    return .init(content: [], isError: decoded.isError)
+                } else {
+                    return .init(content: [.text(text)], isError: decoded.isError)
+                }
+            } catch {
+                return .init(content: [.text(error.localizedDescription)], isError: true)
+            }
+        }
+
+        // Start stdio transport
+        do {
+            let transport = MCP.StdioTransport()
+            try await server.start(transport: transport)
+            // Returned when stdio closes
+            exit(EXIT_SUCCESS)
+        } catch {
+            fputs("MCP server error: \(error.localizedDescription)\n", stderr)
+            exit(EXIT_FAILURE)
+        }
+    }
+
+    // Convert loosely-typed JSON (from JSONSerialization) into MCP.Value
+    private static func toMCPValue(from any: Any?) -> MCP.Value {
+        guard let value = any else { return .null }
+        if value is NSNull { return .null }
+        if let b = value as? Bool { return .bool(b) }
+        if let i = value as? Int { return .double(Double(i)) }
+        if let d = value as? Double { return .double(d) }
+        if let s = value as? String { return .string(s) }
+        if let arr = value as? [Any] {
+            return .array(arr.map { toMCPValue(from: $0) })
+        }
+        if let dict = value as? [String: Any] {
+            var mapped: [String: MCP.Value] = [:]
+            for (k, v) in dict {
+                mapped[k] = toMCPValue(from: v)
+            }
+            return .object(mapped)
+        }
+        // NSNumber (covers both ints and doubles when decoded by JSONSerialization)
+        if let n = value as? NSNumber {
+            if CFNumberGetType(n) == .charType { return .bool(n.boolValue) }
+            return .double(n.doubleValue)
+        }
+        return .null
     }
 }
