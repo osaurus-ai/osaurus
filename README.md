@@ -122,6 +122,30 @@ The following are 20-run averages from our batch benchmark suite. See raw result
 
 MCP integration uses the official Swift SDK: [modelcontextprotocol/swift-sdk](https://github.com/modelcontextprotocol/swift-sdk).
 
+#### MCP via CLI (stdio proxy)
+
+To avoid app restarts when launching from an MCP client, you can run the MCP server via the CLI, which proxies MCP stdio to the running HTTP server:
+
+```bash
+osaurus mcp
+```
+
+- If the server is already running, the CLI connects immediately (no relaunch).
+- If the server is not running, the CLI auto‑launches Osaurus and waits until healthy.
+
+Example MCP client configuration (generic JSON):
+
+```json
+{
+  "mcpServers": {
+    "osaurus": {
+      "command": "osaurus",
+      "args": ["mcp"]
+    }
+  }
+}
+```
+
 **Path normalization**: All endpoints support common API prefixes (`/v1`, `/api`, `/v1/api`). For example:
 
 - `/v1/models` → `/models`

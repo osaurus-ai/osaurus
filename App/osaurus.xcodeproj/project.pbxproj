@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		F02CD33F2ECE4FF400774034 /* MCP in Frameworks */ = {isa = PBXBuildFile; productRef = F02CD33E2ECE4FF400774034 /* MCP */; };
 		F0AACC022E70000100895593 /* OsaurusCore in Frameworks */ = {isa = PBXBuildFile; productRef = F0AACC012E70000100895593 /* OsaurusCore */; };
 		F0EEC1062E60000100895593 /* OsaurusCLI.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0EEC1052E60000100895593 /* OsaurusCLI.swift */; };
 		F0EEC1212E60000100895593 /* osaurus in Embed CLI */ = {isa = PBXBuildFile; fileRef = F0EEC10A2E60000100895593 /* osaurus */; settings = {ATTRIBUTES = (CodeSignOnCopy, ); }; };
@@ -111,6 +112,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				F02CD33F2ECE4FF400774034 /* MCP in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -278,6 +280,7 @@
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
 				F0AACC002E70000100895593 /* XCLocalSwiftPackageReference "../Packages/OsaurusCore" */,
+				F02CD33D2ECE4FF400774034 /* XCRemoteSwiftPackageReference "swift-sdk" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = F0BB3C272E51FBCC00895593 /* Products */;
@@ -748,7 +751,23 @@
 		};
 /* End XCLocalSwiftPackageReference section */
 
+/* Begin XCRemoteSwiftPackageReference section */
+		F02CD33D2ECE4FF400774034 /* XCRemoteSwiftPackageReference "swift-sdk" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/modelcontextprotocol/swift-sdk";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 0.10.2;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
 /* Begin XCSwiftPackageProductDependency section */
+		F02CD33E2ECE4FF400774034 /* MCP */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = F02CD33D2ECE4FF400774034 /* XCRemoteSwiftPackageReference "swift-sdk" */;
+			productName = MCP;
+		};
 		F0AACC012E70000100895593 /* OsaurusCore */ = {
 			isa = XCSwiftPackageProductDependency;
 			package = F0AACC002E70000100895593 /* XCLocalSwiftPackageReference "../Packages/OsaurusCore" */;
