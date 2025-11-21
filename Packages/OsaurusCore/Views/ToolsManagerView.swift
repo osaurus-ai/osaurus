@@ -73,17 +73,9 @@ struct ToolsManagerView: View {
     }
 
     private func toolRow(_ entry: ToolRegistry.ToolEntry) -> some View {
-        ToggleRow(
-            title: entry.name,
-            subtitle: entry.description,
-            isOn: Binding(
-                get: { entry.enabled },
-                set: { newValue in
-                    ToolRegistry.shared.setEnabled(newValue, for: entry.name)
-                    reload()
-                }
-            )
-        )
+        ToolSettingsRow(entry: entry) {
+            reload()
+        }
     }
 
     private var filteredEntries: [ToolRegistry.ToolEntry] {
@@ -103,4 +95,195 @@ struct ToolsManagerView: View {
 
 #Preview {
     ToolsManagerView()
+}
+
+// MARK: - Tool Settings Row with Policy/Grants
+private struct ToolSettingsRow: View {
+    @Environment(\.theme) private var theme
+    let entry: ToolRegistry.ToolEntry
+    let onChange: () -> Void
+    @State private var isExpanded: Bool = false
+    @State private var refreshToken: Int = 0
+
+    var body: some View {
+        let info = ToolRegistry.shared.policyInfo(for: entry.name)
+        GlassListRow {
+            VStack(alignment: .leading, spacing: 12) {
+                // Main row content
+                HStack(spacing: 12) {
+                    // Tool info and expand button combined
+                    Button(action: {
+                        withAnimation(.easeInOut(duration: 0.2)) {
+                            isExpanded.toggle()
+                        }
+                    }) {
+                        HStack(spacing: 10) {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(entry.name)
+                                    .font(.system(size: 14, weight: .medium))
+                                    .foregroundColor(theme.primaryText)
+                                Text(entry.description)
+                                    .font(.system(size: 12))
+                                    .foregroundColor(theme.secondaryText)
+                            }
+
+                            Spacer()
+
+                            // Permission indicator
+                            if let info = info {
+                                HStack(spacing: 6) {
+                                    Image(systemName: iconForPolicy(info.effectivePolicy))
+                                        .font(.system(size: 11))
+                                        .foregroundColor(colorForPolicy(info.effectivePolicy))
+                                    Text(info.effectivePolicy.rawValue.capitalized)
+                                        .font(.system(size: 11, weight: .medium))
+                                        .foregroundColor(theme.secondaryText)
+                                }
+                                .padding(.horizontal, 10)
+                                .padding(.vertical, 4)
+                                .background(
+                                    Capsule()
+                                        .fill(theme.secondaryBackground)
+                                )
+                            }
+
+                            Image(systemName: "chevron.right")
+                                .font(.system(size: 10, weight: .semibold))
+                                .foregroundColor(theme.tertiaryText)
+                                .rotationEffect(.degrees(isExpanded ? 90 : 0))
+                        }
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(PlainButtonStyle())
+
+                    // Enable toggle - separate from expand area
+                    Toggle(
+                        "",
+                        isOn: Binding(
+                            get: { entry.enabled },
+                            set: { newValue in
+                                ToolRegistry.shared.setEnabled(newValue, for: entry.name)
+                                onChange()
+                            }
+                        )
+                    )
+                    .toggleStyle(SwitchToggleStyle())
+                    .labelsHidden()
+                }
+
+                // Expanded permissions section
+                if isExpanded, let info {
+                    VStack(alignment: .leading, spacing: 12) {
+                        Divider()
+
+                        // Permission policy section
+                        VStack(alignment: .leading, spacing: 10) {
+                            HStack {
+                                Text("Permission Policy")
+                                    .font(.system(size: 12, weight: .medium))
+                                    .foregroundColor(theme.primaryText)
+
+                                Spacer()
+
+                                if info.configuredPolicy != nil {
+                                    Button("Use Default") {
+                                        ToolRegistry.shared.clearPolicy(for: entry.name)
+                                        bump()
+                                    }
+                                    .font(.system(size: 10))
+                                    .buttonStyle(.plain)
+                                    .foregroundColor(theme.accentColor)
+                                }
+                            }
+
+                            // Simple segmented picker
+                            Picker(
+                                "",
+                                selection: Binding(
+                                    get: { info.configuredPolicy ?? info.effectivePolicy },
+                                    set: { newValue in
+                                        ToolRegistry.shared.setPolicy(newValue, for: entry.name)
+                                        bump()
+                                    }
+                                )
+                            ) {
+                                Label("Auto", systemImage: "sparkles").tag(ToolPermissionPolicy.auto)
+                                Label("Ask", systemImage: "questionmark.circle").tag(ToolPermissionPolicy.ask)
+                                Label("Deny", systemImage: "xmark.circle").tag(ToolPermissionPolicy.deny)
+                            }
+                            .pickerStyle(.segmented)
+                            .labelsHidden()
+
+                            if let configured = info.configuredPolicy, configured != info.defaultPolicy {
+                                Text("Default is \(info.defaultPolicy.rawValue)")
+                                    .font(.system(size: 10))
+                                    .foregroundColor(theme.tertiaryText)
+                            }
+                        }
+
+                        // Required permissions section (if applicable)
+                        if info.isPermissioned, !info.requirements.isEmpty {
+                            Divider()
+
+                            VStack(alignment: .leading, spacing: 8) {
+                                Text("Required Permissions")
+                                    .font(.system(size: 12, weight: .medium))
+                                    .foregroundColor(theme.primaryText)
+
+                                VStack(alignment: .leading, spacing: 6) {
+                                    ForEach(info.requirements, id: \.self) { req in
+                                        Toggle(
+                                            isOn: Binding(
+                                                get: { info.grantsByRequirement[req] ?? false },
+                                                set: { val in
+                                                    ToolRegistry.shared.setGrant(val, requirement: req, for: entry.name)
+                                                    bump()
+                                                }
+                                            )
+                                        ) {
+                                            Text(req)
+                                                .font(.system(size: 11))
+                                                .foregroundColor(theme.primaryText)
+                                        }
+                                        .toggleStyle(.checkbox)
+                                    }
+                                }
+                                .padding(.leading, 2)
+                            }
+                        }
+                    }
+                    .padding(.top, 4)
+                    .transition(.opacity.combined(with: .scale(scale: 0.98)))
+                    .id(refreshToken)
+                }
+            }
+        }
+    }
+
+    private func bump() {
+        refreshToken &+= 1
+        onChange()
+    }
+
+    private func iconForPolicy(_ policy: ToolPermissionPolicy) -> String {
+        switch policy {
+        case .auto:
+            return "sparkles"
+        case .ask:
+            return "questionmark.circle"
+        case .deny:
+            return "xmark.circle"
+        }
+    }
+
+    private func colorForPolicy(_ policy: ToolPermissionPolicy) -> Color {
+        switch policy {
+        case .auto:
+            return theme.accentColor
+        case .ask:
+            return .orange
+        case .deny:
+            return theme.errorColor
+        }
+    }
 }
