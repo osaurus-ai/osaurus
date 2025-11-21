@@ -108,17 +108,55 @@ private struct ToolSettingsRow: View {
     var body: some View {
         let info = ToolRegistry.shared.policyInfo(for: entry.name)
         GlassListRow {
-            VStack(alignment: .leading, spacing: 10) {
+            VStack(alignment: .leading, spacing: 12) {
+                // Main row content
                 HStack(spacing: 12) {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(entry.name)
-                            .font(.system(size: 14, weight: .medium))
-                            .foregroundColor(theme.primaryText)
-                        Text(entry.description)
-                            .font(.system(size: 12))
-                            .foregroundColor(theme.secondaryText)
+                    // Tool info and expand button combined
+                    Button(action: {
+                        withAnimation(.easeInOut(duration: 0.2)) {
+                            isExpanded.toggle()
+                        }
+                    }) {
+                        HStack(spacing: 10) {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(entry.name)
+                                    .font(.system(size: 14, weight: .medium))
+                                    .foregroundColor(theme.primaryText)
+                                Text(entry.description)
+                                    .font(.system(size: 12))
+                                    .foregroundColor(theme.secondaryText)
+                            }
+
+                            Spacer()
+
+                            // Permission indicator
+                            if let info = info {
+                                HStack(spacing: 6) {
+                                    Image(systemName: iconForPolicy(info.effectivePolicy))
+                                        .font(.system(size: 11))
+                                        .foregroundColor(colorForPolicy(info.effectivePolicy))
+                                    Text(info.effectivePolicy.rawValue.capitalized)
+                                        .font(.system(size: 11, weight: .medium))
+                                        .foregroundColor(theme.secondaryText)
+                                }
+                                .padding(.horizontal, 10)
+                                .padding(.vertical, 4)
+                                .background(
+                                    Capsule()
+                                        .fill(theme.secondaryBackground)
+                                )
+                            }
+
+                            Image(systemName: "chevron.right")
+                                .font(.system(size: 10, weight: .semibold))
+                                .foregroundColor(theme.tertiaryText)
+                                .rotationEffect(.degrees(isExpanded ? 90 : 0))
+                        }
+                        .contentShape(Rectangle())
                     }
-                    Spacer()
+                    .buttonStyle(PlainButtonStyle())
+
+                    // Enable toggle - separate from expand area
                     Toggle(
                         "",
                         isOn: Binding(
@@ -131,63 +169,70 @@ private struct ToolSettingsRow: View {
                     )
                     .toggleStyle(SwitchToggleStyle())
                     .labelsHidden()
-                    Button(action: { isExpanded.toggle() }) {
-                        Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
-                            .foregroundColor(theme.secondaryText)
-                    }
-                    .buttonStyle(.plain)
-                    .help(isExpanded ? "Hide permissions" : "Show permissions")
                 }
 
+                // Expanded permissions section
                 if isExpanded, let info {
-                    Divider()
-                    VStack(alignment: .leading, spacing: 8) {
-                        HStack(spacing: 8) {
-                            Text("Permission policy")
-                                .font(.system(size: 12, weight: .semibold))
-                                .foregroundColor(theme.primaryText)
-                            Spacer()
-                            if let configured = info.configuredPolicy {
-                                Text("Overridden to \(configured.rawValue.uppercased())")
-                                    .font(.system(size: 11))
-                                    .foregroundColor(theme.secondaryText)
-                            } else {
-                                Text("Using default")
-                                    .font(.system(size: 11))
-                                    .foregroundColor(theme.secondaryText)
-                            }
-                        }
-                        HStack(spacing: 8) {
-                            PolicySegmentedControl(
-                                value: info.configuredPolicy ?? info.effectivePolicy
-                            ) { newValue in
-                                ToolRegistry.shared.setPolicy(newValue, for: entry.name)
-                                bump()
-                            }
-                            if info.configuredPolicy != nil {
-                                Button("Reset to Default") {
-                                    ToolRegistry.shared.clearPolicy(for: entry.name)
-                                    bump()
-                                }
-                                .font(.system(size: 11, weight: .medium))
-                            }
-                        }
-                        Text(
-                            "Default: \(info.defaultPolicy.rawValue.uppercased())  •  Effective: \(info.effectivePolicy.rawValue.uppercased())"
-                        )
-                        .font(.system(size: 11))
-                        .foregroundColor(theme.secondaryText)
+                    VStack(alignment: .leading, spacing: 12) {
+                        Divider()
 
+                        // Permission policy section
+                        VStack(alignment: .leading, spacing: 10) {
+                            HStack {
+                                Text("Permission Policy")
+                                    .font(.system(size: 12, weight: .medium))
+                                    .foregroundColor(theme.primaryText)
+
+                                Spacer()
+
+                                if info.configuredPolicy != nil {
+                                    Button("Use Default") {
+                                        ToolRegistry.shared.clearPolicy(for: entry.name)
+                                        bump()
+                                    }
+                                    .font(.system(size: 10))
+                                    .buttonStyle(.plain)
+                                    .foregroundColor(theme.accentColor)
+                                }
+                            }
+
+                            // Simple segmented picker
+                            Picker(
+                                "",
+                                selection: Binding(
+                                    get: { info.configuredPolicy ?? info.effectivePolicy },
+                                    set: { newValue in
+                                        ToolRegistry.shared.setPolicy(newValue, for: entry.name)
+                                        bump()
+                                    }
+                                )
+                            ) {
+                                Label("Auto", systemImage: "sparkles").tag(ToolPermissionPolicy.auto)
+                                Label("Ask", systemImage: "questionmark.circle").tag(ToolPermissionPolicy.ask)
+                                Label("Deny", systemImage: "xmark.circle").tag(ToolPermissionPolicy.deny)
+                            }
+                            .pickerStyle(.segmented)
+                            .labelsHidden()
+
+                            if let configured = info.configuredPolicy, configured != info.defaultPolicy {
+                                Text("Default is \(info.defaultPolicy.rawValue)")
+                                    .font(.system(size: 10))
+                                    .foregroundColor(theme.tertiaryText)
+                            }
+                        }
+
+                        // Required permissions section (if applicable)
                         if info.isPermissioned, !info.requirements.isEmpty {
                             Divider()
-                            Text("Requirement grants")
-                                .font(.system(size: 12, weight: .semibold))
-                                .foregroundColor(theme.primaryText)
-                            VStack(alignment: .leading, spacing: 6) {
-                                ForEach(info.requirements, id: \.self) { req in
-                                    HStack(spacing: 8) {
+
+                            VStack(alignment: .leading, spacing: 8) {
+                                Text("Required Permissions")
+                                    .font(.system(size: 12, weight: .medium))
+                                    .foregroundColor(theme.primaryText)
+
+                                VStack(alignment: .leading, spacing: 6) {
+                                    ForEach(info.requirements, id: \.self) { req in
                                         Toggle(
-                                            req,
                                             isOn: Binding(
                                                 get: { info.grantsByRequirement[req] ?? false },
                                                 set: { val in
@@ -195,13 +240,20 @@ private struct ToolSettingsRow: View {
                                                     bump()
                                                 }
                                             )
-                                        )
-                                        .font(.system(size: 12))
+                                        ) {
+                                            Text(req)
+                                                .font(.system(size: 11))
+                                                .foregroundColor(theme.primaryText)
+                                        }
+                                        .toggleStyle(.checkbox)
                                     }
                                 }
+                                .padding(.leading, 2)
                             }
                         }
                     }
+                    .padding(.top, 4)
+                    .transition(.opacity.combined(with: .scale(scale: 0.98)))
                     .id(refreshToken)
                 }
             }
@@ -212,25 +264,26 @@ private struct ToolSettingsRow: View {
         refreshToken &+= 1
         onChange()
     }
-}
 
-private struct PolicySegmentedControl: View {
-    let value: ToolPermissionPolicy
-    let onChange: (ToolPermissionPolicy) -> Void
-
-    var body: some View {
-        Picker(
-            "",
-            selection: Binding(
-                get: { value },
-                set: { onChange($0) }
-            )
-        ) {
-            Text("Auto").tag(ToolPermissionPolicy.auto)
-            Text("Ask").tag(ToolPermissionPolicy.ask)
-            Text("Deny").tag(ToolPermissionPolicy.deny)
+    private func iconForPolicy(_ policy: ToolPermissionPolicy) -> String {
+        switch policy {
+        case .auto:
+            return "sparkles"
+        case .ask:
+            return "questionmark.circle"
+        case .deny:
+            return "xmark.circle"
         }
-        .pickerStyle(.segmented)
-        .frame(maxWidth: 260)
+    }
+
+    private func colorForPolicy(_ policy: ToolPermissionPolicy) -> Color {
+        switch policy {
+        case .auto:
+            return theme.accentColor
+        case .ask:
+            return .orange
+        case .deny:
+            return theme.errorColor
+        }
     }
 }
