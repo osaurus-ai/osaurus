@@ -1211,8 +1211,11 @@ extension OsaurusCLI {
         do {
             let transport = MCP.StdioTransport()
             try await server.start(transport: transport)
-            // Returned when stdio closes
-            exit(EXIT_SUCCESS)
+
+            // Keep the process alive
+            while true {
+                try await Task.sleep(nanoseconds: 1_000_000_000)
+            }
         } catch {
             fputs("MCP server error: \(error.localizedDescription)\n", stderr)
             exit(EXIT_FAILURE)
