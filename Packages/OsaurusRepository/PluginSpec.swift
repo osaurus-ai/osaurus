@@ -1,3 +1,10 @@
+//
+//  PluginSpec.swift
+//  osaurus
+//
+//  Defines the plugin specification format and version resolution logic for plugin artifacts.
+//
+
 import Foundation
 
 public struct PluginABIConstraint: Codable, Equatable {

@@ -1,3 +1,10 @@
+//
+//  InstalledPluginsStore.swift
+//  osaurus
+//
+//  Manages the persistent store of installed plugin receipts, tracking versions and installation metadata.
+//
+
 import Foundation
 
 public struct PluginReceipt: Codable, Equatable {

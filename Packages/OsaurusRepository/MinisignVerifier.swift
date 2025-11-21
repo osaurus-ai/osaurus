@@ -1,3 +1,10 @@
+//
+//  MinisignVerifier.swift
+//  osaurus
+//
+//  Provides cryptographic signature verification using minisign format and Curve25519.
+//
+
 import Foundation
 import CryptoKit
 

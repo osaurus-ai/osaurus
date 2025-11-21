@@ -1,3 +1,10 @@
+//
+//  SemanticVersion.swift
+//  osaurus
+//
+//  Implements semantic versioning (SemVer) parsing and comparison with support for prerelease and build metadata.
+//
+
 import Foundation
 
 public struct SemanticVersion: Codable, Hashable, Comparable, CustomStringConvertible {

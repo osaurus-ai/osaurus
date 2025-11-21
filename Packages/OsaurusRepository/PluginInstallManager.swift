@@ -1,3 +1,10 @@
+//
+//  PluginInstallManager.swift
+//  osaurus
+//
+//  Handles plugin installation workflow including download, verification, extraction, and receipt generation.
+//
+
 import Foundation
 import CryptoKit
 

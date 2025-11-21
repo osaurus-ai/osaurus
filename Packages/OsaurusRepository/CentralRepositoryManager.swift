@@ -1,3 +1,10 @@
+//
+//  CentralRepositoryManager.swift
+//  osaurus
+//
+//  Manages the central plugin repository, including cloning, refreshing, and querying plugin specifications.
+//
+
 import Foundation
 
 public struct CentralRepository {

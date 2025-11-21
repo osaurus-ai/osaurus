@@ -1,3 +1,10 @@
+//
+//  ToolsPaths.swift
+//  osaurus
+//
+//  Provides centralized path management for plugin storage, specifications, and state directories.
+//
+
 import Foundation
 
 public enum ToolsPaths {
