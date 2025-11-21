@@ -7,6 +7,8 @@
 
 import Foundation
 import Darwin
+import CryptoKit
+import OsaurusRepository
 
 // C ABI mirror types
 struct osr_tool_spec_v1 {
@@ -30,8 +32,20 @@ struct osr_plugin_api_v1 {
     var execute: osr_execute_t?
 }
 
+// v2 API extends v1 with an additional manifest function (prefix layout compatible)
+typealias osr_get_plugin_manifest_json_t = @convention(c) () -> UnsafePointer<CChar>?
+struct osr_plugin_api_v2 {
+    var free_string: osr_free_string_t?
+    var tool_count: osr_tool_count_t?
+    var get_tool_spec: osr_get_tool_spec_t?
+    var execute: osr_execute_t?
+    // New in v2
+    var get_plugin_manifest_json: osr_get_plugin_manifest_json_t?
+}
+
 // Entry returns raw pointer to vtable; we cast after calling
 typealias osaurus_plugin_entry_v1_t = @convention(c) () -> UnsafeRawPointer?
+typealias osaurus_plugin_entry_v2_t = @convention(c) () -> UnsafeRawPointer?
 
 final class ExternalTool: OsaurusTool, PermissionedTool, @unchecked Sendable {
     let name: String
@@ -199,18 +213,34 @@ final class PluginManager {
         defer {
             // We keep the handle open for the lifetime of the process.
         }
-        guard let sym = dlsym(handle, "osaurus_plugin_entry_v1") else {
-            print("[Osaurus] Missing osaurus_plugin_entry_v1 in \(url.lastPathComponent)")
+        // Prefer v2, fallback to v1
+        var apiPtrV1: UnsafePointer<osr_plugin_api_v1>?
+        if let symV2 = dlsym(handle, "osaurus_plugin_entry_v2") {
+            let entryV2 = unsafeBitCast(symV2, to: osaurus_plugin_entry_v2_t.self)
+            if let apiRawPtr = entryV2() {
+                // Optional: read manifest for cross-check
+                let apiPtrV2 = apiRawPtr.assumingMemoryBound(to: osr_plugin_api_v2.self)
+                if let getManifest = apiPtrV2.pointee.get_plugin_manifest_json,
+                    let cstr = getManifest()
+                {
+                    let json = String(cString: cstr)
+                    apiPtrV2.pointee.free_string?(cstr)
+                    // Best-effort validation (matches directory layout)
+                    validateRuntimeManifest(json: json, pluginURL: url)
+                }
+                apiPtrV1 = apiRawPtr.assumingMemoryBound(to: osr_plugin_api_v1.self)
+            }
+        } else if let symV1 = dlsym(handle, "osaurus_plugin_entry_v1") {
+            let entryV1 = unsafeBitCast(symV1, to: osaurus_plugin_entry_v1_t.self)
+            if let apiRawPtr = entryV1() {
+                apiPtrV1 = apiRawPtr.assumingMemoryBound(to: osr_plugin_api_v1.self)
+            }
+        }
+        guard let apiPtr = apiPtrV1 else {
+            print("[Osaurus] Missing osaurus_plugin_entry_v2/v1 in \(url.lastPathComponent)")
             dlclose(handle)
             return nil
         }
-        let entry = unsafeBitCast(sym, to: osaurus_plugin_entry_v1_t.self)
-        guard let apiRawPtr = entry() else {
-            print("[Osaurus] Plugin entry returned null in \(url.lastPathComponent)")
-            dlclose(handle)
-            return nil
-        }
-        let apiPtr = apiRawPtr.assumingMemoryBound(to: osr_plugin_api_v1.self)
         let api = apiPtr.pointee
         guard let countFn = api.tool_count, let getSpec = api.get_tool_spec else {
             print("[Osaurus] Plugin missing required functions in \(url.lastPathComponent)")
@@ -232,13 +262,31 @@ final class PluginManager {
         return PluginBundle(path: url.path, handle: handle, apiPtr: apiPtr, tools: tools)
     }
 
+    private func validateRuntimeManifest(json: String, pluginURL: URL) {
+        // Compare manifest-reported plugin_id/version with directory names if present.
+        struct Manifest: Decodable {
+            let plugin_id: String?
+            let version: String?
+            let abi: Int?
+        }
+        guard let data = json.data(using: .utf8),
+            let m = try? JSONDecoder().decode(Manifest.self, from: data)
+        else {
+            return
+        }
+        let versionDir = pluginURL.deletingLastPathComponent()
+        let pluginDir = versionDir.deletingLastPathComponent()
+        if let pid = m.plugin_id, pid != pluginDir.lastPathComponent {
+            print("[Osaurus] Warning: plugin_id mismatch (manifest \(pid) vs dir \(pluginDir.lastPathComponent))")
+        }
+        if let ver = m.version, ver != versionDir.lastPathComponent {
+            print("[Osaurus] Warning: version mismatch (manifest \(ver) vs dir \(versionDir.lastPathComponent))")
+        }
+    }
+
     // MARK: - Tools directory
     static func toolsRootDirectory() -> URL {
-        let fm = FileManager.default
-        let supportDir = fm.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
-        let bundleId = Bundle.main.bundleIdentifier ?? "osaurus"
-        return supportDir.appendingPathComponent(bundleId, isDirectory: true)
-            .appendingPathComponent("Tools", isDirectory: true)
+        return ToolsPaths.toolsRootDirectory()
     }
 
     static func ensureToolsDirectoryExists() {
@@ -249,25 +297,85 @@ final class PluginManager {
         }
     }
 
-    /// Returns URLs of dylibs within Tools/* subdirectories.
+    /// Returns URLs of dylibs within versioned plugin directories, preferring `current` symlink.
     static func toolsDirectoryURLs() -> [URL] {
-        let root = toolsRootDirectory()
-        var urls: [URL] = []
         let fm = FileManager.default
+        let root = toolsRootDirectory()
+        var dylibURLs: [URL] = []
+
         guard
-            let enumerator = fm.enumerator(
+            let pluginDirs = try? fm.contentsOfDirectory(
                 at: root,
-                includingPropertiesForKeys: [.isRegularFileKey],
+                includingPropertiesForKeys: nil,
                 options: [.skipsHiddenFiles]
             )
         else {
-            return urls
+            return dylibURLs
         }
-        for case let fileURL as URL in enumerator {
-            if fileURL.pathExtension == "dylib" {
-                urls.append(fileURL)
+        for pluginDir in pluginDirs where pluginDir.hasDirectoryPath {
+            let currentLink = pluginDir.appendingPathComponent("current", isDirectory: false)
+            var versionDir: URL?
+            if let dest = try? fm.destinationOfSymbolicLink(atPath: currentLink.path) {
+                versionDir = pluginDir.appendingPathComponent(dest, isDirectory: true)
+            } else {
+                // Fallback: pick highest SemVer directory name
+                if let entries = try? fm.contentsOfDirectory(
+                    at: pluginDir,
+                    includingPropertiesForKeys: nil,
+                    options: [.skipsHiddenFiles]
+                ) {
+                    let versions: [(SemanticVersion, URL)] = entries.compactMap { url in
+                        guard url.hasDirectoryPath else { return nil }
+                        guard let v = SemanticVersion.parse(url.lastPathComponent) else { return nil }
+                        return (v, url)
+                    }
+                    if let best = versions.sorted(by: { $0.0 > $1.0 }).first {
+                        versionDir = best.1
+                    }
+                }
+            }
+            guard let vdir = versionDir else { continue }
+            if let enumerator = fm.enumerator(
+                at: vdir,
+                includingPropertiesForKeys: [.isRegularFileKey],
+                options: [.skipsHiddenFiles]
+            ) {
+                for case let fileURL as URL in enumerator {
+                    if fileURL.pathExtension == "dylib" {
+                        // Only include dylibs that pass local receipt verification
+                        if verifyDylibBeforeLoad(fileURL) {
+                            dylibURLs.append(fileURL)
+                        } else {
+                            print("[Osaurus] Skipping plugin (verification failed): \(fileURL.path)")
+                        }
+                    }
+                }
             }
         }
-        return urls
+        return dylibURLs
+    }
+
+    /// Verifies a dylib against its adjacent receipt.json (sha256). Returns true if OK or if no receipt exists (best-effort).
+    private static func verifyDylibBeforeLoad(_ dylibURL: URL) -> Bool {
+        let fm = FileManager.default
+        let receiptURL = dylibURL.deletingLastPathComponent().appendingPathComponent("receipt.json", isDirectory: false)
+        guard fm.fileExists(atPath: receiptURL.path),
+            let data = try? Data(contentsOf: receiptURL),
+            let receipt = try? JSONDecoder().decode(PluginReceipt.self, from: data),
+            let dylibData = try? Data(contentsOf: dylibURL)
+        else {
+            // If we cannot verify, allow load for now (useful during development)
+            return true
+        }
+        // Compute SHA256
+        let sha: String
+        if #available(macOS 10.15, *) {
+            let digest = CryptoKit.SHA256.hash(data: dylibData)
+            sha = Data(digest).map { String(format: "%02x", $0) }.joined()
+        } else {
+            // Fallback: naive mismatch since CryptoKit unavailable
+            sha = ""
+        }
+        return !sha.isEmpty && sha.lowercased() == receipt.dylib_sha256.lowercased()
     }
 }

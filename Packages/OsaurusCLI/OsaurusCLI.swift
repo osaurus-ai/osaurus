@@ -7,6 +7,8 @@
 
 import Foundation
 import MCP
+import CryptoKit
+import OsaurusRepository
 
 @main
 struct OsaurusCLI {
@@ -19,6 +21,7 @@ struct OsaurusCLI {
         case mcp
         case ui
         case tools([String])
+        case plugins([String])
         case version
         case help
     }
@@ -37,6 +40,7 @@ struct OsaurusCLI {
         case "mcp": return .mcp
         case "ui": return .ui
         case "tools": return .tools(rest)
+        case "plugins": return .plugins(rest)
         case "version", "--version", "-v": return .version
         case "help", "-h", "--help": return .help
         default: return nil
@@ -68,6 +72,8 @@ struct OsaurusCLI {
             await runUI()
         case .tools(let args):
             await runTools(args)
+        case .plugins(let args):
+            await runPlugins(args)
         case .version:
             runVersion()
         case .help:
@@ -98,6 +104,11 @@ struct OsaurusCLI {
                                       Install a plugin zip or unpacked directory
               osaurus tools list      List installed plugins
               osaurus tools reload    Ask the app to rescan plugins
+              osaurus plugins list    List installed plugins (versioned)
+              osaurus plugins install <plugin_id> [--version <semver>]
+                                     Install a plugin from configured taps
+              osaurus plugins verify [<plugin_id>]
+                                     Re-verify installed plugin(s)
               osaurus help            Show this help
 
             """
@@ -1105,6 +1116,244 @@ extension OsaurusCLI {
         print("Reload signal sent.")
         exit(EXIT_SUCCESS)
     }
+}
+
+// MARK: - Plugins & Taps (registry-backed)
+extension OsaurusCLI {
+    private static func runPlugins(_ args: [String]) async {
+        guard let sub = args.first else {
+            fputs(
+                "Missing plugins subcommand. Use one of: list, install, verify, search, outdated, upgrade, rollback\n",
+                stderr
+            )
+            exit(EXIT_FAILURE)
+        }
+        let rest = Array(args.dropFirst())
+        switch sub {
+        case "list":
+            runPluginsList()
+        case "install":
+            await runPluginsInstall(rest)
+        case "verify":
+            runPluginsVerify(rest)
+        case "search":
+            runPluginsSearch(rest)
+        case "outdated":
+            runPluginsOutdated()
+        case "upgrade":
+            await runPluginsUpgrade(rest)
+        case "rollback":
+            runPluginsRollback(rest)
+        default:
+            fputs("Unknown plugins subcommand: \(sub)\n", stderr)
+            exit(EXIT_FAILURE)
+        }
+    }
+
+    private static func runPluginsList() {
+        let fm = FileManager.default
+        let supportDir = fm.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+        let bundleId = Bundle.main.bundleIdentifier ?? "osaurus"
+        let url =
+            supportDir
+            .appendingPathComponent(bundleId, isDirectory: true)
+            .appendingPathComponent("Plugins", isDirectory: true)
+            .appendingPathComponent("receipts.json", isDirectory: false)
+        guard let data = try? Data(contentsOf: url) else {
+            print("(no plugins installed)")
+            exit(EXIT_SUCCESS)
+        }
+        struct IndexDump: Decodable { let receipts: [String: [String: PluginReceipt]] }
+        if let index = try? JSONDecoder().decode(IndexDump.self, from: data) {
+            if index.receipts.isEmpty {
+                print("(no plugins installed)")
+            } else {
+                for pluginId in index.receipts.keys.sorted() {
+                    let versions =
+                        index.receipts[pluginId]?.keys.sorted(by: { (a, b) in
+                            guard let va = SemanticVersion.parse(a), let vb = SemanticVersion.parse(b) else {
+                                return a > b
+                            }
+                            return va > vb
+                        }) ?? []
+                    let latest = versions.first ?? "-"
+                    print("\(pluginId)  versions: \(versions.joined(separator: ", "))  latest: \(latest)")
+                }
+            }
+            exit(EXIT_SUCCESS)
+        } else {
+            print("(no plugins installed)")
+            exit(EXIT_SUCCESS)
+        }
+    }
+
+    private static func runPluginsInstall(_ args: [String]) async {
+        guard let pluginId = args.first, !pluginId.isEmpty else {
+            fputs("Usage: osaurus plugins install <plugin_id> [--version <semver>]\n", stderr)
+            exit(EXIT_FAILURE)
+        }
+        var preferredVersion: SemanticVersion? = nil
+        if let idx = args.firstIndex(of: "--version"), idx + 1 < args.count {
+            let vstr = args[idx + 1]
+            preferredVersion = SemanticVersion.parse(vstr)
+            if preferredVersion == nil {
+                fputs("Invalid semver: \(vstr)\n", stderr)
+                exit(EXIT_FAILURE)
+            }
+        }
+        do {
+            let result = try await PluginInstallManager.shared.install(
+                pluginId: pluginId,
+                preferredVersion: preferredVersion
+            )
+            print(
+                "Installed \(result.receipt.plugin_id) @ \(result.receipt.version) to \(result.installDirectory.path)"
+            )
+            exit(EXIT_SUCCESS)
+        } catch {
+            fputs("Install failed: \(error)\n", stderr)
+            exit(EXIT_FAILURE)
+        }
+    }
+
+    private static func runPluginsVerify(_ args: [String]) {
+        let fm = FileManager.default
+        let root = PluginInstallManager.toolsRootDirectory()
+        guard let pluginDirs = try? fm.contentsOfDirectory(at: root, includingPropertiesForKeys: nil) else {
+            print("(no plugins installed)")
+            exit(EXIT_SUCCESS)
+        }
+        var failures = 0
+        for pluginDir in pluginDirs where pluginDir.hasDirectoryPath {
+            let versionsToCheck: [URL]
+            let currentLink = pluginDir.appendingPathComponent("current")
+            if let dest = try? fm.destinationOfSymbolicLink(atPath: currentLink.path) {
+                versionsToCheck = [pluginDir.appendingPathComponent(dest, isDirectory: true)]
+            } else {
+                versionsToCheck =
+                    (try? fm.contentsOfDirectory(at: pluginDir, includingPropertiesForKeys: nil))?.filter {
+                        $0.hasDirectoryPath
+                    } ?? []
+            }
+            for vdir in versionsToCheck {
+                let receiptURL = vdir.appendingPathComponent("receipt.json")
+                guard let rdata = try? Data(contentsOf: receiptURL),
+                    let receipt = try? JSONDecoder().decode(PluginReceipt.self, from: rdata)
+                else {
+                    continue
+                }
+                let dylibURL = vdir.appendingPathComponent(receipt.dylib_filename)
+                guard let dylibData = try? Data(contentsOf: dylibURL) else { continue }
+                let digest = CryptoKit.SHA256.hash(data: dylibData)
+                let sha = Data(digest).map { String(format: "%02x", $0) }.joined()
+                if sha.lowercased() == receipt.dylib_sha256.lowercased() {
+                    print("OK  \(receipt.plugin_id)@\(receipt.version)  \(receipt.dylib_filename)")
+                } else {
+                    print("FAIL  \(receipt.plugin_id)@\(receipt.version)  expected \(receipt.dylib_sha256) got \(sha)")
+                    failures += 1
+                }
+            }
+        }
+        exit(failures == 0 ? EXIT_SUCCESS : EXIT_FAILURE)
+    }
+
+    private static func runPluginsSearch(_ args: [String]) {
+        let query = args.first?.lowercased() ?? ""
+        let specs = CentralRepositoryManager.shared.listAllSpecs()
+        let filtered = specs.filter { spec in
+            if query.isEmpty { return true }
+            if spec.plugin_id.lowercased().contains(query) { return true }
+            if let name = spec.name?.lowercased(), name.contains(query) { return true }
+            return false
+        }
+        if filtered.isEmpty {
+            print("(no matches)")
+        } else {
+            for spec in filtered.sorted(by: { $0.plugin_id < $1.plugin_id }) {
+                let latest = spec.versions.map(\.version).sorted(by: >).first?.description ?? "-"
+                print("\(spec.plugin_id)\tlatest: \(latest)\t\(spec.name ?? "")")
+            }
+        }
+        exit(EXIT_SUCCESS)
+    }
+
+    private static func runPluginsOutdated() {
+        let specs = CentralRepositoryManager.shared.listAllSpecs()
+        let fm = FileManager.default
+        let root = PluginInstallManager.toolsRootDirectory()
+        guard let pluginDirs = try? fm.contentsOfDirectory(at: root, includingPropertiesForKeys: nil) else {
+            print("(no plugins installed)")
+            exit(EXIT_SUCCESS)
+        }
+        var any = false
+        for pluginDir in pluginDirs where pluginDir.hasDirectoryPath {
+            let pluginId = pluginDir.lastPathComponent
+            let installed = InstalledPluginsStore.shared.latestInstalledVersion(pluginId: pluginId)
+            guard
+                let available = specs.first(where: { $0.plugin_id == pluginId })?.versions.map(\.version).sorted(by: >)
+                    .first
+            else {
+                continue
+            }
+            if let inst = installed, available > inst {
+                print("\(pluginId)\tinstalled: \(inst)\tavailable: \(available)")
+                any = true
+            }
+        }
+        if !any { print("All up to date.") }
+        exit(EXIT_SUCCESS)
+    }
+
+    private static func runPluginsRollback(_ args: [String]) {
+        guard let pluginId = args.first, !pluginId.isEmpty else {
+            fputs("Usage: osaurus plugins rollback <plugin_id>\n", stderr)
+            exit(EXIT_FAILURE)
+        }
+        let versions = InstalledPluginsStore.shared.installedVersions(pluginId: pluginId)
+        guard versions.count >= 2 else {
+            fputs("No previous version to roll back to for \(pluginId)\n", stderr)
+            exit(EXIT_FAILURE)
+        }
+        let target = versions[1]  // previous
+        do {
+            try PluginInstallManager.updateCurrentSymlink(pluginId: pluginId, version: target)
+            print("Rolled back \(pluginId) to \(target)")
+            exit(EXIT_SUCCESS)
+        } catch {
+            fputs("Rollback failed: \(error)\n", stderr)
+            exit(EXIT_FAILURE)
+        }
+    }
+
+    private static func runPluginsUpgrade(_ args: [String]) async {
+        let targetId = args.first
+        let specs = CentralRepositoryManager.shared.listAllSpecs()
+        let pluginIds: [String]
+        if let t = targetId {
+            pluginIds = [t]
+        } else {
+            // All outdated
+            pluginIds = specs.map(\.plugin_id)
+        }
+        var failures = 0
+        for pid in pluginIds {
+            guard let spec = specs.first(where: { $0.plugin_id == pid }) else { continue }
+            let latest = spec.versions.map(\.version).sorted(by: >).first
+            let installed = InstalledPluginsStore.shared.latestInstalledVersion(pluginId: pid)
+            if let latest, installed == nil || latest > installed! {
+                do {
+                    _ = try await PluginInstallManager.shared.install(pluginId: pid, preferredVersion: latest)
+                    print("Upgraded \(pid) to \(latest)")
+                } catch {
+                    fputs("Upgrade failed for \(pid): \(error)\n", stderr)
+                    failures += 1
+                }
+            }
+        }
+        exit(failures == 0 ? EXIT_SUCCESS : EXIT_FAILURE)
+    }
+
+    // (taps removed; central repository only)
 }
 
 // MARK: - MCP Proxy (stdio -> HTTP)

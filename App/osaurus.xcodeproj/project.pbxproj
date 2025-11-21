@@ -11,6 +11,7 @@
 		F0AACC022E70000100895593 /* OsaurusCore in Frameworks */ = {isa = PBXBuildFile; productRef = F0AACC012E70000100895593 /* OsaurusCore */; };
 		F0EEC1062E60000100895593 /* OsaurusCLI.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0EEC1052E60000100895593 /* OsaurusCLI.swift */; };
 		F0EEC1212E60000100895593 /* osaurus in Embed CLI */ = {isa = PBXBuildFile; fileRef = F0EEC10A2E60000100895593 /* osaurus */; settings = {ATTRIBUTES = (CodeSignOnCopy, ); }; };
+		F0F4E29B2ED1209200BEFA4D /* OsaurusRepository in Frameworks */ = {isa = PBXBuildFile; productRef = F0F4E29A2ED1209200BEFA4D /* OsaurusRepository */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -113,6 +114,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				F02CD33F2ECE4FF400774034 /* MCP in Frameworks */,
+				F0F4E29B2ED1209200BEFA4D /* OsaurusRepository in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -281,6 +283,7 @@
 			packageReferences = (
 				F0AACC002E70000100895593 /* XCLocalSwiftPackageReference "../Packages/OsaurusCore" */,
 				F02CD33D2ECE4FF400774034 /* XCRemoteSwiftPackageReference "swift-sdk" */,
+				F0F4E2992ED1209200BEFA4D /* XCLocalSwiftPackageReference "../Packages/OsaurusRepository" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = F0BB3C272E51FBCC00895593 /* Products */;
@@ -775,6 +778,10 @@
 			isa = XCLocalSwiftPackageReference;
 			relativePath = ../Packages/OsaurusCore;
 		};
+		F0F4E2992ED1209200BEFA4D /* XCLocalSwiftPackageReference "../Packages/OsaurusRepository" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = ../Packages/OsaurusRepository;
+		};
 /* End XCLocalSwiftPackageReference section */
 
 /* Begin XCRemoteSwiftPackageReference section */
@@ -798,6 +805,10 @@
 			isa = XCSwiftPackageProductDependency;
 			package = F0AACC002E70000100895593 /* XCLocalSwiftPackageReference "../Packages/OsaurusCore" */;
 			productName = OsaurusCore;
+		};
+		F0F4E29A2ED1209200BEFA4D /* OsaurusRepository */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = OsaurusRepository;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};
