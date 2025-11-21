@@ -14,6 +14,15 @@ final class ToolRegistry {
     private var toolsByName: [String: OsaurusTool] = [:]
     private var configuration: ToolConfiguration = ToolConfigurationStore.load()
 
+    struct ToolPolicyInfo {
+        let isPermissioned: Bool
+        let defaultPolicy: ToolPermissionPolicy
+        let configuredPolicy: ToolPermissionPolicy?
+        let effectivePolicy: ToolPermissionPolicy
+        let requirements: [String]
+        let grantsByRequirement: [String: Bool]
+    }
+
     struct ToolEntry: Identifiable, Sendable {
         var id: String { name }
         let name: String
@@ -26,8 +35,6 @@ final class ToolRegistry {
         // Register built-in tools
         register(FileReadTool())
         register(FileWriteTool())
-        // Load external plugins
-        PluginManager.shared.loadAll()
     }
 
     func register(_ tool: OsaurusTool) {
@@ -69,11 +76,18 @@ final class ToolRegistry {
                     userInfo: [NSLocalizedDescriptionKey: "Execution denied by policy for tool: \(name)"]
                 )
             case .ask:
-                throw NSError(
-                    domain: "ToolRegistry",
-                    code: 4,
-                    userInfo: [NSLocalizedDescriptionKey: "Execution requires approval for tool: \(name)"]
+                let approved = await ToolPermissionPromptService.requestApproval(
+                    toolName: name,
+                    description: tool.description,
+                    argumentsJSON: argumentsJSON
                 )
+                if !approved {
+                    throw NSError(
+                        domain: "ToolRegistry",
+                        code: 4,
+                        userInfo: [NSLocalizedDescriptionKey: "User denied execution for tool: \(name)"]
+                    )
+                }
             case .auto:
                 let requirements = permissioned.requirements
                 if !configuration.hasGrants(for: name, requirements: requirements) {
@@ -97,11 +111,18 @@ final class ToolRegistry {
                     userInfo: [NSLocalizedDescriptionKey: "Execution denied by policy for tool: \(name)"]
                 )
             } else if effectivePolicy == .ask {
-                throw NSError(
-                    domain: "ToolRegistry",
-                    code: 7,
-                    userInfo: [NSLocalizedDescriptionKey: "Execution requires approval for tool: \(name)"]
+                let approved = await ToolPermissionPromptService.requestApproval(
+                    toolName: name,
+                    description: tool.description,
+                    argumentsJSON: argumentsJSON
                 )
+                if !approved {
+                    throw NSError(
+                        domain: "ToolRegistry",
+                        code: 4,
+                        userInfo: [NSLocalizedDescriptionKey: "User denied execution for tool: \(name)"]
+                    )
+                }
             }
         }
         return try await tool.execute(argumentsJSON: argumentsJSON)
@@ -142,9 +163,43 @@ final class ToolRegistry {
         ToolConfigurationStore.save(configuration)
     }
 
+    func clearPolicy(for name: String) {
+        configuration.clearPolicy(for: name)
+        ToolConfigurationStore.save(configuration)
+    }
+
     func setGrant(_ granted: Bool, requirement: String, for name: String) {
         configuration.setGrant(granted, requirement: requirement, for: name)
         ToolConfigurationStore.save(configuration)
+    }
+
+    /// Returns policy and requirements information for a given tool
+    func policyInfo(for name: String) -> ToolPolicyInfo? {
+        guard let tool = toolsByName[name] else { return nil }
+        let isPermissioned = (tool as? PermissionedTool) != nil
+        let defaultPolicy: ToolPermissionPolicy
+        let requirements: [String]
+        if let p = tool as? PermissionedTool {
+            defaultPolicy = p.defaultPermissionPolicy
+            requirements = p.requirements
+        } else {
+            defaultPolicy = .auto
+            requirements = []
+        }
+        let configured = configuration.policy[name]
+        let effective = configured ?? defaultPolicy
+        var grants: [String: Bool] = [:]
+        for r in requirements {
+            grants[r] = configuration.isGranted(name: name, requirement: r)
+        }
+        return ToolPolicyInfo(
+            isPermissioned: isPermissioned,
+            defaultPolicy: defaultPolicy,
+            configuredPolicy: configured,
+            effectivePolicy: effective,
+            requirements: requirements,
+            grantsByRequirement: grants
+        )
     }
 
     // MARK: - Unregister

@@ -86,6 +86,9 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegat
         // Initialize directory access early so security-scoped bookmark is active
         let _ = DirectoryPickerService.shared
 
+        // Load external tool plugins at launch (after core is initialized)
+        PluginManager.shared.loadAll()
+
         // Auto-start server on app launch
         Task { @MainActor in
             await serverController.startServer()

@@ -60,6 +60,11 @@ struct ToolConfiguration: Codable, Equatable, Sendable {
         policy[name] = value
     }
 
+    /// Clear the configured permission policy override for a tool
+    mutating func clearPolicy(for name: String) {
+        policy.removeValue(forKey: name)
+    }
+
     // MARK: - Requirement grants
     /// Returns true if all requirements are granted for the tool
     func hasGrants(for name: String, requirements: [String]) -> Bool {
@@ -69,6 +74,11 @@ struct ToolConfiguration: Codable, Equatable, Sendable {
             if granted[req] != true { return false }
         }
         return true
+    }
+
+    /// Returns individual grant value for a specific requirement
+    func isGranted(name: String, requirement: String) -> Bool {
+        return grants[name]?[requirement] ?? false
     }
 
     /// Set grant value for a requirement of a tool
