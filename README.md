@@ -114,7 +114,7 @@ The following are 20-run averages from our batch benchmark suite. See raw result
 
 ### MCP (Model Context Protocol)
 
-- Stdio transport auto-starts with the app. Connect using an MCP client that supports stdio.
+- Stdio transport is provided by the CLI. Connect using an MCP client that executes `osaurus mcp` over stdio.
 - HTTP endpoints (same port):
   - `GET /mcp/health` → MCP availability probe
   - `GET /mcp/tools` → List active tools (name, description)
@@ -338,7 +338,7 @@ Tip: Model names are lower‑cased with hyphens (derived from the friendly name)
 
 ### Integrate with native or Electron apps
 
-If you're building a macOS app (Swift/Objective‑C/SwiftUI/Electron) and want to discover and connect to a running Osaurus instance, see the Shared Configuration guide: [SHARED_CONFIGURATION_GUIDE.md](SHARED_CONFIGURATION_GUIDE.md).
+If you're building a macOS app (Swift/Objective‑C/SwiftUI/Electron) and want to discover and connect to a running Osaurus instance, see the Shared Configuration guide: [SHARED_CONFIGURATION_GUIDE.md](docs/SHARED_CONFIGURATION_GUIDE.md).
 
 ### Function/Tool Calling (OpenAI‑compatible)
 
@@ -560,9 +560,9 @@ Foundation Models:
 
 - 📚 Browse our [Documentation](https://docs.osaurus.ai/) for guides and tutorials
 - 💬 Join us on [Discord](https://discord.gg/dinoki)
-- 📖 Read the [Contributing Guide](CONTRIBUTING.md) and our [Code of Conduct](CODE_OF_CONDUCT.md)
-- 🔒 See our [Security Policy](SECURITY.md) for reporting vulnerabilities
-- ❓ Get help in [Support](SUPPORT.md)
+- 📖 Read the [Contributing Guide](docs/CONTRIBUTING.md) and our [Code of Conduct](docs/CODE_OF_CONDUCT.md)
+- 🔒 See our [Security Policy](docs/SECURITY.md) for reporting vulnerabilities
+- ❓ Get help in [Support](docs/SUPPORT.md)
 - 🚀 Pick up a [good first issue](https://github.com/dinoki-ai/osaurus/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22) or [help wanted](https://github.com/dinoki-ai/osaurus/issues?q=is%3Aissue+is%3Aopen+label%3A%22help+wanted%22)
 
 If you find Osaurus useful, please ⭐ the repo and share it!

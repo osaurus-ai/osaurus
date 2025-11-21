@@ -1,17 +1,17 @@
 //
-//  ChatTool.swift
+//  OsaurusTool.swift
 //  osaurus
 //
-//  Defines a minimal tool protocol and helpers to expose OpenAI-compatible tool specs.
+//  Defines the standardized tool protocol and helpers to expose OpenAI-compatible tool specs.
 //
 
 import Foundation
 
-protocol ChatTool: Sendable {
+protocol OsaurusTool: Sendable {
     /// Unique tool name exposed to the model
     var name: String { get }
     /// Human description for the model and UI
-    var toolDescription: String { get }
+    var description: String { get }
     /// JSON schema for function parameters (OpenAI-compatible minimal subset)
     var parameters: JSONValue? { get }
 
@@ -19,12 +19,12 @@ protocol ChatTool: Sendable {
     func execute(argumentsJSON: String) async throws -> String
 }
 
-extension ChatTool {
+extension OsaurusTool {
     /// Build OpenAI-compatible Tool specification
     func asOpenAITool() -> Tool {
         return Tool(
             type: "function",
-            function: ToolFunction(name: name, description: toolDescription, parameters: parameters)
+            function: ToolFunction(name: name, description: description, parameters: parameters)
         )
     }
 }

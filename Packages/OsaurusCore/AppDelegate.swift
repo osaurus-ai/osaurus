@@ -30,7 +30,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegat
         NSApp.setActivationPolicy(.accessory)
 
         // App has launched
-        print("Osaurus server app launched")
+        NSLog("Osaurus server app launched")
 
         // Configure local notifications
         NotificationService.shared.configureOnLaunch()
@@ -91,11 +91,6 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegat
             await serverController.startServer()
         }
 
-        // Auto-start MCP stdio transport
-        Task { @MainActor in
-            try? await MCPServerManager.shared.startStdio()
-        }
-
         // Setup global hotkey for Chat overlay (configured)
         applyChatHotkey()
     }
@@ -122,7 +117,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegat
     }
 
     public func applicationWillTerminate(_ notification: Notification) {
-        print("Osaurus server app terminating")
+        NSLog("Osaurus server app terminating")
         Task { @MainActor in
             await MCPServerManager.shared.stopAll()
         }
@@ -278,6 +273,9 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegat
 
 // MARK: - Distributed Control (Local Only)
 extension AppDelegate {
+    fileprivate static let controlToolsReloadNotification = Notification.Name(
+        "com.dinoki.osaurus.control.toolsReload"
+    )
     fileprivate static let controlServeNotification = Notification.Name(
         "com.dinoki.osaurus.control.serve"
     )
@@ -306,6 +304,12 @@ extension AppDelegate {
             self,
             selector: #selector(handleShowUICommand(_:)),
             name: Self.controlShowUINotification,
+            object: nil
+        )
+        center.addObserver(
+            self,
+            selector: #selector(handleToolsReloadCommand(_:)),
+            name: Self.controlToolsReloadNotification,
             object: nil
         )
     }
@@ -350,6 +354,12 @@ extension AppDelegate {
     @objc private func handleShowUICommand(_ note: Notification) {
         Task { @MainActor in
             self.showPopover()
+        }
+    }
+
+    @objc private func handleToolsReloadCommand(_ note: Notification) {
+        Task { @MainActor in
+            PluginManager.shared.loadAll()
         }
     }
 }
@@ -503,6 +513,7 @@ extension AppDelegate {
 
 extension Notification.Name {
     static let chatOverlayActivated = Notification.Name("chatOverlayActivated")
+    static let toolsListChanged = Notification.Name("toolsListChanged")
 }
 
 // MARK: Management Window

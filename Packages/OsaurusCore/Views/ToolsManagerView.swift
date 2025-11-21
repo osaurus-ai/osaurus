@@ -27,6 +27,9 @@ struct ToolsManagerView: View {
         .environment(\.theme, themeManager.currentTheme)
         .onAppear { reload() }
         .onChange(of: searchText) { _, _ in reload() }
+        .onReceive(NotificationCenter.default.publisher(for: .toolsListChanged)) { _ in
+            reload()
+        }
     }
 
     private var contentView: some View {
@@ -37,6 +40,14 @@ struct ToolsManagerView: View {
 
                 Spacer()
 
+                Button(action: {
+                    PluginManager.shared.loadAll()
+                    reload()
+                }) {
+                    Text("Reload")
+                        .font(.system(size: 12, weight: .medium))
+                }
+                .buttonStyle(.bordered)
                 SearchField(text: $searchText, placeholder: "Search tools")
             }
             .padding(.horizontal, 24)

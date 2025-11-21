@@ -138,17 +138,14 @@ struct MCPHTTPHandlerTests {
 
 // MARK: - Test tool
 
-private struct EchoTool: ChatTool {
-    static let nameStatic = "echo"
-    var name: String { Self.nameStatic }
-    var toolDescription: String { "Echo back the input JSON arguments" }
-    var parameters: JSONValue? {
-        .object([
-            "type": .string("object"),
-            "properties": .object(["text": .object(["type": .string("string")])]),
-            "required": .array([.string("text")]),
-        ])
-    }
+private struct EchoTool: OsaurusTool {
+    let name: String = "echo"
+    let description: String = "Echo back the input JSON arguments"
+    let parameters: JSONValue? = .object([
+        "type": .string("object"),
+        "properties": .object(["text": .object(["type": .string("string")])]),
+        "required": .array([.string("text")]),
+    ])
     func execute(argumentsJSON: String) async throws -> String {
         return argumentsJSON
     }
