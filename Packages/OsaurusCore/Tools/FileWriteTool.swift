@@ -7,9 +7,9 @@
 
 import Foundation
 
-struct FileWriteTool: ChatTool {
+struct FileWriteTool: OsaurusTool {
     let name: String = "file_write"
-    let toolDescription: String =
+    let description: String =
         "Write content to a file. Requires explicit overwrite or append when target exists. Supports utf8/base64 and optional directory creation."
 
     var parameters: JSONValue? {

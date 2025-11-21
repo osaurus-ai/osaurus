@@ -7,9 +7,9 @@
 
 import Foundation
 
-struct FileReadTool: ChatTool {
+struct FileReadTool: OsaurusTool {
     let name: String = "file_read"
-    let toolDescription: String =
+    let description: String =
         "Read file contents from disk. Supports start/max_bytes window and utf8/base64 encoding. Returns a summary plus JSON payload."
 
     var parameters: JSONValue? {
