@@ -12,22 +12,30 @@ public struct MCPCommand: Command {
     public static let name = "mcp"
 
     public static func execute(args: [String]) async {
+        fputs("[MCP] Starting MCP command...\n", stderr)
         // Ensure app server is up; auto-launch only if not already running
         let port = await ServerControl.ensureServerReadyOrExit(pollSeconds: 5.0)
+        fputs("[MCP] Server ready on port \(port)\n", stderr)
         let baseURL = "http://127.0.0.1:\(port)"
+
+        let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "cli"
+        fputs("[MCP] Creating server with version: \(version)\n", stderr)
 
         // Build MCP server
         let server = MCP.Server(
             name: "Osaurus MCP Proxy",
-            version: Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "cli",
+            version: version,
             capabilities: .init(tools: .init(listChanged: true))
         )
 
         // Register ListTools -> GET /mcp/tools
         await server.withMethodHandler(MCP.ListTools.self) { _ in
+            fputs("[MCP] Handling ListTools\n", stderr)
             guard let url = URL(string: "\(baseURL)/mcp/tools") else {
+                fputs("[MCP] Invalid tools URL\n", stderr)
                 return .init(tools: [])
             }
+            fputs("[MCP] Fetching tools from \(url)\n", stderr)
             var request = URLRequest(url: url)
             request.httpMethod = "GET"
             request.setValue("application/json", forHTTPHeaderField: "Accept")
@@ -35,8 +43,10 @@ public struct MCPCommand: Command {
             do {
                 let (data, response) = try await URLSession.shared.data(for: request)
                 guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
+                    fputs("[MCP] Failed to list tools: HTTP \((response as? HTTPURLResponse)?.statusCode ?? 0)\n", stderr)
                     return .init(tools: [])
                 }
+                fputs("[MCP] Tools fetched successfully\n", stderr)
                 let tools: [MCP.Tool]
                 if let obj = try JSONSerialization.jsonObject(with: data) as? [String: Any],
                     let arr = obj["tools"] as? [[String: Any]]
@@ -53,12 +63,14 @@ public struct MCPCommand: Command {
                 }
                 return .init(tools: tools)
             } catch {
+                fputs("[MCP] Error fetching tools: \(error)\n", stderr)
                 return .init(tools: [])
             }
         }
 
         // Register CallTool -> POST /mcp/call
         await server.withMethodHandler(MCP.CallTool.self) { params in
+            fputs("[MCP] Handling CallTool: \(params.name)\n", stderr)
             struct CallBody: Encodable {
                 let name: String
                 let arguments: MCP.Value?
@@ -105,14 +117,17 @@ public struct MCPCommand: Command {
                     return .init(content: [.text(text)], isError: decoded.isError)
                 }
             } catch {
+                fputs("[MCP] Error calling tool: \(error)\n", stderr)
                 return .init(content: [.text(error.localizedDescription)], isError: true)
             }
         }
 
         // Start stdio transport
         do {
+            fputs("[MCP] Starting Stdio transport...\n", stderr)
             let transport = MCP.StdioTransport()
             try await server.start(transport: transport)
+            fputs("[MCP] Server started. If 'start' is non-blocking, we are now in the loop.\n", stderr)
 
             // Keep the process alive
             while true {
