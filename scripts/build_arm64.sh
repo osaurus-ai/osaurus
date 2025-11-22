@@ -34,6 +34,7 @@ xcodebuild -project App/osaurus.xcodeproj \
   ONLY_ACTIVE_ARCH=NO \
   CODE_SIGN_IDENTITY="${CODE_SIGN_IDENTITY_VALUE}" \
   DEVELOPMENT_TEAM="${DEVELOPMENT_TEAM}" \
+  CODE_SIGN_STYLE=Manual \
   clean build
 
 # 2. Archive the App (which doesn't have the CLI embedded yet via Xcode)
