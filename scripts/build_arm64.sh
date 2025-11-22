@@ -26,7 +26,7 @@ xcodebuild -resolvePackageDependencies -project App/osaurus.xcodeproj -scheme os
 # 1. Build the CLI first (as a separate scheme)
 echo "Building CLI (OsaurusCLI)..."
 xcodebuild -project App/osaurus.xcodeproj \
-  -scheme OsaurusCLI \
+  -scheme osaurus-cli \
   -configuration Release \
   -derivedDataPath build \
   ARCHS=arm64 \

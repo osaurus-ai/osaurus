@@ -20,9 +20,8 @@ public final class CentralRepositoryManager: @unchecked Sendable {
     public static let shared = CentralRepositoryManager()
     private init() {}
 
-    // Default central repo (replace with your actual URL)
     public var central: CentralRepository = .init(
-        url: "https://github.com/osaurus-ai/plugins-index.git",
+        url: "https://github.com/dinoki-ai/osaurus-tools.git",
         branch: nil
     )
 
