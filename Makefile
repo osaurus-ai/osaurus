@@ -1,6 +1,7 @@
 SHELL := /bin/bash
 
 # Default configuration
+# The scheme for the CLI package is typically "osaurus-cli" (the package name)
 SCHEME_CLI := osaurus-cli
 SCHEME_APP := osaurus
 CONFIG := Release
@@ -12,7 +13,7 @@ DERIVED := build/DerivedData
 help:
 	@echo "Targets:"
 	@echo "  cli          Build CLI ($(SCHEME_CLI)) into $(DERIVED)"
-	@echo "  app          Build app ($(SCHEME_APP))"
+	@echo "  app          Build app ($(SCHEME_APP)) and embed CLI"
 	@echo "  install-cli  Install/update /usr/local/bin/osaurus symlink"
 	@echo "  serve        Build CLI and start server (use PORT=XXXX, EXPOSE=1)"
 	@echo "  status       Check if server is running"
@@ -22,9 +23,13 @@ cli:
 	@echo "Building CLI ($(SCHEME_CLI))…"
 	xcodebuild -project $(PROJECT) -scheme $(SCHEME_CLI) -configuration $(CONFIG) -derivedDataPath $(DERIVED) build -quiet
 
-app:
+app: cli
 	@echo "Building app ($(SCHEME_APP))…"
 	xcodebuild -project $(PROJECT) -scheme $(SCHEME_APP) -configuration $(CONFIG) -derivedDataPath $(DERIVED) build -quiet
+	@echo "Embedding CLI into App Bundle…"
+	# Copy osaurus-cli to osaurus.app/Contents/MacOS/osaurus
+	cp "$(DERIVED)/Build/Products/$(CONFIG)/osaurus-cli" "$(DERIVED)/Build/Products/$(CONFIG)/osaurus.app/Contents/MacOS/osaurus"
+	chmod +x "$(DERIVED)/Build/Products/$(CONFIG)/osaurus.app/Contents/MacOS/osaurus"
 
 install-cli: cli
 	@echo "Installing CLI symlink…"

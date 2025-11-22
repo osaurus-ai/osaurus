@@ -5,7 +5,7 @@ let package = Package(
     name: "OsaurusCLI",
     platforms: [.macOS(.v15)],
     products: [
-        .executable(name: "osaurus", targets: ["OsaurusCLI"])
+        .executable(name: "osaurus-cli", targets: ["OsaurusCLI"])
     ],
     dependencies: [
         .package(url: "https://github.com/modelcontextprotocol/swift-sdk.git", from: "0.10.0"),
