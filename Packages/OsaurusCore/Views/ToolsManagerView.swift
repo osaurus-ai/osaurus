@@ -369,10 +369,10 @@ private struct InstalledPluginsSummaryView: View {
             let sha = Data(digest).map { String(format: "%02x", $0) }.joined()
             if sha.lowercased() != receipt.dylib_sha256.lowercased() {
                 // Show a non-blocking alert via notification center
-                let note = NSUserNotification()
-                note.title = "Plugin verification failed"
-                note.informativeText = "\(receipt.plugin_id) @ \(receipt.version)"
-                NSUserNotificationCenter.default.deliver(note)
+                NotificationService.shared.postPluginVerificationFailed(
+                    name: receipt.plugin_id,
+                    version: receipt.version.description
+                )
             }
         }
         refreshSummary()
