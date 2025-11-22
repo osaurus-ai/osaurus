@@ -39,7 +39,22 @@ final class NotificationService: NSObject, UNUserNotificationCenterDelegate {
         center.setNotificationCategories([category])
 
         // Request authorization (best-effort; user may have already granted/denied)
-        center.requestAuthorization(options: [.alert, .sound, .badge]) { _, _ in }
+        Task.detached {
+            try? await UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge])
+        }
+    }
+
+    func postPluginVerificationFailed(name: String, version: String) {
+        let content = UNMutableNotificationContent()
+        content.title = "Plugin verification failed"
+        content.body = "\(name) @ \(version)"
+
+        let request = UNNotificationRequest(
+            identifier: "plugin-verify-fail-\(UUID().uuidString)",
+            content: content,
+            trigger: nil
+        )
+        center.add(request, withCompletionHandler: nil)
     }
 
     func postModelReady(modelId: String, modelName: String) {

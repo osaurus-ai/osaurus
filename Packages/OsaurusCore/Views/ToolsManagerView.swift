@@ -8,6 +8,8 @@
 import AppKit
 import Foundation
 import SwiftUI
+import CryptoKit
+import OsaurusRepository
 
 struct ToolsManagerView: View {
     @StateObject private var themeManager = ThemeManager.shared
@@ -39,6 +41,10 @@ struct ToolsManagerView: View {
                 TabPill(title: "All Tools", isSelected: true, count: filteredEntries.count)
 
                 Spacer()
+
+                // Installed Plugins quick actions
+                InstalledPluginsSummaryView()
+                    .frame(maxWidth: 360)
 
                 Button(action: {
                     PluginManager.shared.loadAll()
@@ -285,5 +291,90 @@ private struct ToolSettingsRow: View {
         case .deny:
             return theme.errorColor
         }
+    }
+}
+
+// MARK: - Installed Plugins Summary
+private struct InstalledPluginsSummaryView: View {
+    @Environment(\.theme) private var theme
+    @State private var summaryText: String = ""
+    @State private var isVerifying: Bool = false
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "puzzlepiece.extension")
+                .foregroundColor(theme.accentColor)
+            Text(summaryText.isEmpty ? "No plugins" : summaryText)
+                .font(.system(size: 12))
+                .foregroundColor(theme.secondaryText)
+                .lineLimit(1)
+                .truncationMode(.middle)
+            Button(action: { Task { await verifyAll() } }) {
+                Text(isVerifying ? "Verifying..." : "Verify")
+                    .font(.system(size: 11, weight: .medium))
+            }
+            .disabled(isVerifying)
+            .buttonStyle(.bordered)
+        }
+        .onAppear { refreshSummary() }
+    }
+
+    private func refreshSummary() {
+        let fm = FileManager.default
+        let supportDir = fm.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+        let bundleId = Bundle.main.bundleIdentifier ?? "osaurus"
+        let url =
+            supportDir
+            .appendingPathComponent(bundleId, isDirectory: true)
+            .appendingPathComponent("Plugins", isDirectory: true)
+            .appendingPathComponent("receipts.json", isDirectory: false)
+        guard let data = try? Data(contentsOf: url) else {
+            summaryText = ""
+            return
+        }
+        struct IndexDump: Decodable { let receipts: [String: [String: PluginReceipt]] }
+        if let index = try? JSONDecoder().decode(IndexDump.self, from: data) {
+            let count = index.receipts.count
+            let ids = index.receipts.keys.sorted()
+            summaryText = count == 0 ? "" : "\(count) plugin\(count == 1 ? "" : "s"): \(ids.joined(separator: ", "))"
+        } else {
+            summaryText = ""
+        }
+    }
+
+    private func verifyAll() async {
+        isVerifying = true
+        defer { isVerifying = false }
+        let fm = FileManager.default
+        let root = ToolsPaths.toolsRootDirectory()
+        guard let pluginDirs = try? fm.contentsOfDirectory(at: root, includingPropertiesForKeys: nil) else {
+            return
+        }
+        for pluginDir in pluginDirs where pluginDir.hasDirectoryPath {
+            let currentLink = pluginDir.appendingPathComponent("current")
+            let versionDir: URL?
+            if let dest = try? fm.destinationOfSymbolicLink(atPath: currentLink.path) {
+                versionDir = pluginDir.appendingPathComponent(dest, isDirectory: true)
+            } else {
+                versionDir = nil
+            }
+            guard let vdir = versionDir else { continue }
+            let receiptURL = vdir.appendingPathComponent("receipt.json")
+            guard let rdata = try? Data(contentsOf: receiptURL),
+                let receipt = try? JSONDecoder().decode(PluginReceipt.self, from: rdata)
+            else { continue }
+            let dylibURL = vdir.appendingPathComponent(receipt.dylib_filename)
+            guard let dylibData = try? Data(contentsOf: dylibURL) else { continue }
+            let digest = CryptoKit.SHA256.hash(data: dylibData)
+            let sha = Data(digest).map { String(format: "%02x", $0) }.joined()
+            if sha.lowercased() != receipt.dylib_sha256.lowercased() {
+                // Show a non-blocking alert via notification center
+                NotificationService.shared.postPluginVerificationFailed(
+                    name: receipt.plugin_id,
+                    version: receipt.version.description
+                )
+            }
+        }
+        refreshSummary()
     }
 }
