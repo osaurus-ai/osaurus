@@ -1,14 +1,14 @@
 //
-//  PluginsSearch.swift
+//  ToolsSearch.swift
 //  osaurus
 //
-//  Command to search for plugins in the central repository by ID or name.
+//  Command to search for tools in the central repository by ID or name.
 //
 
 import Foundation
 import OsaurusRepository
 
-public struct PluginsSearch {
+public struct ToolsSearch {
     public static func execute(args: [String]) {
         let query = args.first?.lowercased() ?? ""
         let specs = CentralRepositoryManager.shared.listAllSpecs()

@@ -43,7 +43,10 @@ public struct MCPCommand: Command {
             do {
                 let (data, response) = try await URLSession.shared.data(for: request)
                 guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
-                    fputs("[MCP] Failed to list tools: HTTP \((response as? HTTPURLResponse)?.statusCode ?? 0)\n", stderr)
+                    fputs(
+                        "[MCP] Failed to list tools: HTTP \((response as? HTTPURLResponse)?.statusCode ?? 0)\n",
+                        stderr
+                    )
                     return .init(tools: [])
                 }
                 fputs("[MCP] Tools fetched successfully\n", stderr)

@@ -1,17 +1,17 @@
 //
-//  PluginsRollback.swift
+//  ToolsRollback.swift
 //  osaurus
 //
-//  Command to roll back a plugin to its previous installed version by updating the current symlink.
+//  Command to roll back a tool to its previous installed version by updating the current symlink.
 //
 
 import Foundation
 import OsaurusRepository
 
-public struct PluginsRollback {
+public struct ToolsRollback {
     public static func execute(args: [String]) {
         guard let pluginId = args.first, !pluginId.isEmpty else {
-            fputs("Usage: osaurus plugins rollback <plugin_id>\n", stderr)
+            fputs("Usage: osaurus tools rollback <plugin_id>\n", stderr)
             exit(EXIT_FAILURE)
         }
         let versions = InstalledPluginsStore.shared.installedVersions(pluginId: pluginId)

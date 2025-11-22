@@ -2,20 +2,59 @@
 //  ToolsInstall.swift
 //  osaurus
 //
-//  Command to install a plugin from a URL or local path (zip file or directory).
+//  Command to install a plugin from a URL, local path, or registry.
 //
 
 import Foundation
+import OsaurusRepository
 
 public struct ToolsInstall {
     public static func execute(args: [String]) async {
         guard let src = args.first, !src.isEmpty else {
-            fputs("Usage: osaurus tools install <url-or-path>\n", stderr)
+            fputs("Usage: osaurus tools install <plugin_id|url-or-path> [--version <semver>]\n", stderr)
             exit(EXIT_FAILURE)
         }
+
+        // Check if argument is a local path or URL
+        if src.hasPrefix("/") || src.hasPrefix("./") || src.hasPrefix("http://") || src.hasPrefix("https://") {
+            await installManual(src: src)
+        } else {
+            await installFromRegistry(pluginId: src, args: args)
+        }
+    }
+
+    private static func installFromRegistry(pluginId: String, args: [String]) async {
+        var preferredVersion: SemanticVersion? = nil
+        if let idx = args.firstIndex(of: "--version"), idx + 1 < args.count {
+            let vstr = args[idx + 1]
+            preferredVersion = SemanticVersion.parse(vstr)
+            if preferredVersion == nil {
+                fputs("Invalid semver: \(vstr)\n", stderr)
+                exit(EXIT_FAILURE)
+            }
+        }
+        do {
+            let result = try await PluginInstallManager.shared.install(
+                pluginId: pluginId,
+                preferredVersion: preferredVersion
+            )
+            print(
+                "Installed \(result.receipt.plugin_id) @ \(result.receipt.version) to \(result.installDirectory.path)"
+            )
+            // Notify app to reload tools
+            AppControl.postDistributedNotification(name: "com.dinoki.osaurus.control.toolsReload", userInfo: [:])
+            exit(EXIT_SUCCESS)
+        } catch {
+            fputs("Install failed: \(error)\n", stderr)
+            exit(EXIT_FAILURE)
+        }
+    }
+
+    private static func installManual(src: String) async {
         let fm = FileManager.default
         let tmp = URL(fileURLWithPath: NSTemporaryDirectory())
         var zipURL: URL
+
         if src.hasPrefix("http://") || src.hasPrefix("https://") {
             // Download
             guard let url = URL(string: src) else {
@@ -52,6 +91,11 @@ public struct ToolsInstall {
                         if fm.fileExists(atPath: dest.path) { try fm.removeItem(at: dest) }
                         try fm.copyItem(at: pathURL, to: dest)
                         print("Installed \(pathURL.lastPathComponent)")
+                        // Notify app to reload tools
+                        AppControl.postDistributedNotification(
+                            name: "com.dinoki.osaurus.control.toolsReload",
+                            userInfo: [:]
+                        )
                         exit(EXIT_SUCCESS)
                     } catch {
                         fputs("Install failed: \(error)\n", stderr)
@@ -68,6 +112,7 @@ public struct ToolsInstall {
                 exit(EXIT_FAILURE)
             }
         }
+
         // Unzip into Tools/<basename>/
         let destRoot = Configuration.toolsRootDirectory()
         let baseName = zipURL.deletingPathExtension().lastPathComponent

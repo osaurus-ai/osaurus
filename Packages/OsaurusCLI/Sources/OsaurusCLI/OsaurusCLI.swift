@@ -19,7 +19,6 @@ struct OsaurusCLI {
         case mcp
         case ui
         case tools([String])
-        case plugins([String])
         case version
         case help
     }
@@ -38,7 +37,6 @@ struct OsaurusCLI {
         case "mcp": return .mcp
         case "ui": return .ui
         case "tools": return .tools(rest)
-        case "plugins": return .plugins(rest)
         case "version", "--version", "-v": return .version
         case "help", "-h", "--help": return .help
         default: return nil
@@ -70,8 +68,6 @@ struct OsaurusCLI {
             await UICommand.execute(args: [])
         case .tools(let args):
             await ToolsCommand.execute(args: args)
-        case .plugins(let args):
-            await PluginsCommand.execute(args: args)
         case .version:
             await VersionCommand.execute(args: [])
         case .help:
@@ -95,18 +91,20 @@ struct OsaurusCLI {
               osaurus list            List available model IDs
               osaurus run <model_id>  Chat with a downloaded model (interactive)
               osaurus ui              Show the Osaurus menu popover in the menu bar
+              osaurus tools list      List installed tools
+              osaurus tools install <plugin_id|url-or-path>
+                                      Install a tool from registry or local/URL
+              osaurus tools search <query>
+                                      Search for tools in the registry
+              osaurus tools outdated  Check for outdated tools
+              osaurus tools upgrade   Upgrade installed tools
+              osaurus tools uninstall <tool_name>
+                                      Uninstall a tool
+              osaurus tools verify    Verify installed tools
               osaurus tools create <name> [--language swift|rust]
-                                      Scaffold a plugin project
-              osaurus tools package   Build and zip the current plugin (requires manifest.json)
-              osaurus tools install <url-or-path>
-                                      Install a plugin zip or unpacked directory
-              osaurus tools list      List installed plugins
-              osaurus tools reload    Ask the app to rescan plugins
-              osaurus plugins list    List installed plugins (versioned)
-              osaurus plugins install <plugin_id> [--version <semver>]
-                                     Install a plugin from configured taps
-              osaurus plugins verify [<plugin_id>]
-                                     Re-verify installed plugin(s)
+                                      Scaffold a tool project
+              osaurus tools package   Build and zip the current tool
+              osaurus tools reload    Ask the app to rescan tools
               osaurus help            Show this help
 
             """

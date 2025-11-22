@@ -1,20 +1,20 @@
 //
-//  PluginsVerify.swift
+//  ToolsVerify.swift
 //  osaurus
 //
-//  Command to verify installed plugins by checking SHA256 hashes against receipt data.
+//  Command to verify installed tools by checking SHA256 hashes against receipt data.
 //
 
 import Foundation
 import CryptoKit
 import OsaurusRepository
 
-public struct PluginsVerify {
+public struct ToolsVerify {
     public static func execute(args: [String]) {
         let fm = FileManager.default
         let root = PluginInstallManager.toolsRootDirectory()
         guard let pluginDirs = try? fm.contentsOfDirectory(at: root, includingPropertiesForKeys: nil) else {
-            print("(no plugins installed)")
+            print("(no tools installed)")
             exit(EXIT_SUCCESS)
         }
         var failures = 0

@@ -1,20 +1,20 @@
 //
-//  PluginsOutdated.swift
+//  ToolsOutdated.swift
 //  osaurus
 //
-//  Command to check which installed plugins have newer versions available in the repository.
+//  Command to check which installed tools have newer versions available in the repository.
 //
 
 import Foundation
 import OsaurusRepository
 
-public struct PluginsOutdated {
+public struct ToolsOutdated {
     public static func execute(args: [String]) {
         let specs = CentralRepositoryManager.shared.listAllSpecs()
         let fm = FileManager.default
         let root = PluginInstallManager.toolsRootDirectory()
         guard let pluginDirs = try? fm.contentsOfDirectory(at: root, includingPropertiesForKeys: nil) else {
-            print("(no plugins installed)")
+            print("(no tools installed)")
             exit(EXIT_SUCCESS)
         }
         var any = false
