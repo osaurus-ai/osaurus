@@ -1,14 +1,14 @@
 //
-//  PluginsUpgrade.swift
+//  ToolsUpgrade.swift
 //  osaurus
 //
-//  Command to upgrade one or all plugins to their latest available versions from the repository.
+//  Command to upgrade one or all tools to their latest available versions from the repository.
 //
 
 import Foundation
 import OsaurusRepository
 
-public struct PluginsUpgrade {
+public struct ToolsUpgrade {
     public static func execute(args: [String]) async {
         let targetId = args.first
         let specs = CentralRepositoryManager.shared.listAllSpecs()
