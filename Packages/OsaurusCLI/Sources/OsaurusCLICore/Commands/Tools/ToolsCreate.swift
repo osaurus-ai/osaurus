@@ -135,13 +135,16 @@ public struct ToolsCreate {
             """
         try? pluginSwift.write(to: pluginDir.appendingPathComponent("Plugin.swift"), atomically: true, encoding: .utf8)
 
-        // manifest.json (example)
+        // manifest.json (enhanced)
         let manifest = """
             {
               "id": "dev.example.\(name)",
               "name": "\(name)",
               "version": "0.1.0",
               "min_osaurus": "0.9.0",
+              "homepage": "https://github.com/example/\(name)",
+              "license": "MIT",
+              "authors": ["Your Name"],
               "dylib": "lib\(name).dylib",
               "tools": [
                 {
@@ -155,6 +158,65 @@ public struct ToolsCreate {
             }
             """
         try? manifest.write(to: dir.appendingPathComponent("manifest.json"), atomically: true, encoding: .utf8)
+
+        // README.md (with publishing instructions)
+        let readme = """
+            # \(name)
+
+            An Osaurus plugin.
+
+            ## Development
+
+            1. Build:
+               ```bash
+               swift build -c release
+               cp .build/release/lib\(name).dylib ./lib\(name).dylib
+               ```
+               
+            2. Install:
+               ```bash
+               # Installs directly from this directory
+               osaurus tools install .
+               ```
+               
+            ## Publishing
+
+            To publish this plugin to the central registry:
+
+            1. Package it:
+               ```bash
+               osaurus tools package
+               ```
+               This creates `dev.example.\(name).zip`.
+               
+            2. Host the zip file (e.g. GitHub Releases).
+
+            3. Create a registry entry JSON file using metadata from `manifest.json`:
+               ```json
+               {
+                 "plugin_id": "dev.example.\(name)",
+                 "name": "\(name)",
+                 "homepage": "...",
+                 "license": "MIT",
+                 "versions": [
+                   {
+                     "version": "0.1.0",
+                     "artifacts": [
+                       {
+                         "os": "macos",
+                         "arch": "arm64",
+                         "url": "https://...",
+                         "sha256": "<sha256_of_zip>"
+                       }
+                     ]
+                   }
+                 ]
+               }
+               ```
+
+            4. Submit to the Osaurus Registry.
+            """
+        try? readme.write(to: dir.appendingPathComponent("README.md"), atomically: true, encoding: .utf8)
     }
 
     private static func createRustPlugin(name: String) {

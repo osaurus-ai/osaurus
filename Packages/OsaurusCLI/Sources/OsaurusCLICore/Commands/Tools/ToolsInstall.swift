@@ -52,57 +52,60 @@ public struct ToolsInstall {
 
     private static func installManual(src: String) async {
         let fm = FileManager.default
-        let tmp = URL(fileURLWithPath: NSTemporaryDirectory())
-        var zipURL: URL
+        // Create a temporary staging directory
+        let tmpDir = fm.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        do {
+            try fm.createDirectory(at: tmpDir, withIntermediateDirectories: true)
+        } catch {
+            fputs("Failed to create temp directory: \(error)\n", stderr)
+            exit(EXIT_FAILURE)
+        }
 
+        defer {
+            try? fm.removeItem(at: tmpDir)
+        }
+
+        // 1. Unpack/Copy to staging
         if src.hasPrefix("http://") || src.hasPrefix("https://") {
-            // Download
             guard let url = URL(string: src) else {
                 fputs("Invalid URL: \(src)\n", stderr)
                 exit(EXIT_FAILURE)
             }
-            zipURL = tmp.appendingPathComponent("osaurus-plugin-\(UUID().uuidString).zip")
+            let zipFile = tmpDir.appendingPathComponent("download.zip")
             do {
                 let (data, resp) = try await URLSession.shared.data(from: url)
                 guard let http = resp as? HTTPURLResponse, (200 ... 299).contains(http.statusCode) else {
                     fputs("Download failed (status \((resp as? HTTPURLResponse)?.statusCode ?? -1))\n", stderr)
                     exit(EXIT_FAILURE)
                 }
-                try data.write(to: zipURL)
+                try data.write(to: zipFile)
+                try unzip(zipURL: zipFile, to: tmpDir)
             } catch {
-                fputs("Download error: \(error)\n", stderr)
+                fputs("Download/Unzip error: \(error)\n", stderr)
                 exit(EXIT_FAILURE)
             }
         } else {
-            var isDir: ObjCBool = false
             let pathURL = URL(fileURLWithPath: src)
+            var isDir: ObjCBool = false
             if fm.fileExists(atPath: pathURL.path, isDirectory: &isDir) {
                 if isDir.boolValue {
-                    // Install directory directly by copying
+                    // Copy contents to tmpDir
                     do {
-                        let dest = Configuration.toolsRootDirectory().appendingPathComponent(
-                            pathURL.lastPathComponent,
-                            isDirectory: true
-                        )
-                        try fm.createDirectory(
-                            at: Configuration.toolsRootDirectory(),
-                            withIntermediateDirectories: true
-                        )
-                        if fm.fileExists(atPath: dest.path) { try fm.removeItem(at: dest) }
-                        try fm.copyItem(at: pathURL, to: dest)
-                        print("Installed \(pathURL.lastPathComponent)")
-                        // Notify app to reload tools
-                        AppControl.postDistributedNotification(
-                            name: "com.dinoki.osaurus.control.toolsReload",
-                            userInfo: [:]
-                        )
-                        exit(EXIT_SUCCESS)
+                        let contents = try fm.contentsOfDirectory(at: pathURL, includingPropertiesForKeys: nil)
+                        for item in contents {
+                            try fm.copyItem(at: item, to: tmpDir.appendingPathComponent(item.lastPathComponent))
+                        }
                     } catch {
-                        fputs("Install failed: \(error)\n", stderr)
+                        fputs("Failed to copy directory: \(error)\n", stderr)
                         exit(EXIT_FAILURE)
                     }
                 } else if pathURL.pathExtension.lowercased() == "zip" {
-                    zipURL = pathURL
+                    do {
+                        try unzip(zipURL: pathURL, to: tmpDir)
+                    } catch {
+                        fputs("Unzip error: \(error)\n", stderr)
+                        exit(EXIT_FAILURE)
+                    }
                 } else {
                     fputs("Unsupported file type: \(src)\n", stderr)
                     exit(EXIT_FAILURE)
@@ -113,32 +116,99 @@ public struct ToolsInstall {
             }
         }
 
-        // Unzip into Tools/<basename>/
-        let destRoot = Configuration.toolsRootDirectory()
-        let baseName = zipURL.deletingPathExtension().lastPathComponent
-        let destDir = destRoot.appendingPathComponent(baseName, isDirectory: true)
-        do {
-            try fm.createDirectory(at: destRoot, withIntermediateDirectories: true)
-        } catch {
-            // ignore
-        }
-        let unzip = Process()
-        unzip.executableURL = URL(fileURLWithPath: "/usr/bin/unzip")
-        unzip.arguments = ["-o", zipURL.path, "-d", destDir.path]
-        do {
-            try unzip.run()
-            unzip.waitUntilExit()
-            if unzip.terminationStatus != 0 {
-                fputs("unzip failed; ensure /usr/bin/unzip is available.\n", stderr)
-                exit(EXIT_FAILURE)
+        // 2. Read manifest.json to get ID and Version
+        // Note: unzip might create a wrapper directory (e.g. MyPlugin/manifest.json)
+        // We need to find where manifest.json is.
+        var pluginRoot: URL = tmpDir
+
+        if !fm.fileExists(atPath: pluginRoot.appendingPathComponent("manifest.json").path) {
+            // Check if there is a single subdirectory containing manifest.json
+            do {
+                let contents = try fm.contentsOfDirectory(
+                    at: tmpDir,
+                    includingPropertiesForKeys: nil,
+                    options: [.skipsHiddenFiles]
+                )
+                if contents.count == 1, contents[0].hasDirectoryPath {
+                    let sub = contents[0]
+                    if fm.fileExists(atPath: sub.appendingPathComponent("manifest.json").path) {
+                        pluginRoot = sub
+                    }
+                }
+            } catch {
+                // ignore
             }
-        } catch {
-            fputs("Failed to run unzip: \(error)\n", stderr)
+        }
+
+        let manifestURL = pluginRoot.appendingPathComponent("manifest.json")
+        guard fm.fileExists(atPath: manifestURL.path) else {
+            fputs("manifest.json not found in source\n", stderr)
             exit(EXIT_FAILURE)
         }
-        print("Installed plugin to \(destDir.path)")
-        // Best-effort notify the app to reload tools
-        AppControl.postDistributedNotification(name: "com.dinoki.osaurus.control.toolsReload", userInfo: [:])
-        exit(EXIT_SUCCESS)
+
+        struct Manifest: Decodable {
+            let id: String?
+            let plugin_id: String?
+            let version: String
+
+            var effectiveId: String? { id ?? plugin_id }
+        }
+
+        let manifest: Manifest
+        do {
+            let data = try Data(contentsOf: manifestURL)
+            manifest = try JSONDecoder().decode(Manifest.self, from: data)
+        } catch {
+            fputs("Invalid manifest.json: \(error)\n", stderr)
+            exit(EXIT_FAILURE)
+        }
+
+        guard let pluginId = manifest.effectiveId, !pluginId.isEmpty else {
+            fputs("manifest.json missing 'id' or 'plugin_id'\n", stderr)
+            exit(EXIT_FAILURE)
+        }
+        guard let semver = SemanticVersion.parse(manifest.version) else {
+            fputs("Invalid version in manifest.json: \(manifest.version)\n", stderr)
+            exit(EXIT_FAILURE)
+        }
+
+        // 3. Install to Tools/<id>/<version>
+        let installDir = PluginInstallManager.toolsVersionDirectory(pluginId: pluginId, version: semver)
+
+        do {
+            if fm.fileExists(atPath: installDir.path) {
+                try fm.removeItem(at: installDir)
+            }
+            try fm.createDirectory(at: installDir.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try fm.moveItem(at: pluginRoot, to: installDir)
+
+            // 4. Update Current Symlink
+            try PluginInstallManager.updateCurrentSymlink(pluginId: pluginId, version: semver)
+
+            print("Installed \(pluginId) @ \(semver) to \(installDir.path)")
+
+            // Notify app
+            AppControl.postDistributedNotification(name: "com.dinoki.osaurus.control.toolsReload", userInfo: [:])
+            exit(EXIT_SUCCESS)
+
+        } catch {
+            fputs("Installation failed: \(error)\n", stderr)
+            exit(EXIT_FAILURE)
+        }
+    }
+
+    private static func unzip(zipURL: URL, to destDir: URL) throws {
+        let unzip = Process()
+        unzip.executableURL = URL(fileURLWithPath: "/usr/bin/unzip")
+        unzip.arguments = ["-o", "-q", zipURL.path, "-d", destDir.path]
+        try unzip.run()
+        unzip.waitUntilExit()
+        if unzip.terminationStatus != 0 {
+            throw NSError(
+                domain: "ToolsInstall",
+                code: 1,
+                userInfo: [NSLocalizedDescriptionKey: "unzip command failed"]
+            )
+        }
     }
 }
