@@ -23,11 +23,12 @@ osaurus tools package
 3. Install:
 
 ```bash
-osaurus tools install ./MyPlugin.zip
+# Install the local directory directly (must contain manifest.json)
+osaurus tools install .
 ```
 
 The plugin will be unpacked into:
-`~/Library/Application Support/com.dinoki.osaurus/Tools/<MyPlugin>/`
+`~/Library/Application Support/com.dinoki.osaurus/Tools/<plugin_id>/<version>/`
 
 ## ABI Overview
 
@@ -69,7 +70,8 @@ Reload tools: `osaurus tools reload`
 Notes
 
 - Ad‑hoc signatures may still be rejected under Hardened Runtime; prefer a real Apple signing identity.
-- If you install via `osaurus tools install <zip>`, the app will auto‑rescan. You can also press Reload in Tools UI.
+- If you install via `osaurus tools install <zip>` or `osaurus tools install .`, the app will auto‑rescan. You can also press Reload in Tools UI.
+- `install` will always override the installed version with the one provided.
 
 ## Rust Authors
 
@@ -79,17 +81,20 @@ Create a `cdylib` exposing `osaurus_plugin_entry_v1` and return the v1 function 
 
 Osaurus uses a single, git-backed central plugin index maintained by the Osaurus team. Users cannot add custom taps.
 
-1. Publish release artifacts (.zip containing your `.dylib` and optionally `artifact.json`) on GitHub Releases (or any HTTPS URL).
-2. Generate a SHA256 checksum of the zip.
-3. Sign the zip with Minisign (recommended).
-4. Submit a PR to the central index repo adding `plugins/<your.plugin.id>.json` with your metadata.
+1. Ensure your `manifest.json` contains publishing metadata (`homepage`, `license`, `authors`).
+2. Publish release artifacts (.zip containing your `.dylib` and `manifest.json`) on GitHub Releases (or any HTTPS URL).
+3. Generate a SHA256 checksum of the zip.
+4. Sign the zip with Minisign (recommended).
+5. Submit a PR to the central index repo adding `plugins/<your.plugin.id>.json` with your metadata.
 
-Example spec (abbreviated):
+Example registry entry (abbreviated):
 
 ```json
 {
   "plugin_id": "com.acme.echo",
   "name": "Echo Tools",
+  "homepage": "https://github.com/acme/echo",
+  "license": "MIT",
   "public_keys": { "minisign": "RWQ..." },
   "abi": { "min": 2, "max": 2 },
   "versions": [
