@@ -54,7 +54,7 @@ xcodebuild -project App/osaurus.xcodeproj \
   archive -archivePath build/osaurus.xcarchive
 
 # 3. Manually Embed the CLI into the Archive
-echo "Embedding CLI into Archive..."
+echo "Embedding CLI into Archive (Helpers)..."
 CLI_SRC="build/Build/Products/Release/osaurus-cli"
 ARCHIVE_APP="build/osaurus.xcarchive/Products/Applications/Osaurus.app"
 
@@ -63,9 +63,10 @@ if [[ ! -f "$CLI_SRC" ]]; then
   exit 1
 fi
 
-# Copy to MacOS folder as 'osaurus'
-cp "$CLI_SRC" "$ARCHIVE_APP/Contents/MacOS/osaurus"
-chmod +x "$ARCHIVE_APP/Contents/MacOS/osaurus"
+# Copy to Helpers folder as 'osaurus'
+mkdir -p "$ARCHIVE_APP/Contents/Helpers"
+cp "$CLI_SRC" "$ARCHIVE_APP/Contents/Helpers/osaurus"
+chmod +x "$ARCHIVE_APP/Contents/Helpers/osaurus"
 
 # Re-sign the modified app bundle inside the archive
 # (Use --deep to sign the nested CLI binary as well)

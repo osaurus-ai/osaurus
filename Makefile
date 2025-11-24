@@ -26,10 +26,11 @@ cli:
 app: cli
 	@echo "Building app ($(SCHEME_APP))…"
 	xcodebuild -project $(PROJECT) -scheme $(SCHEME_APP) -configuration $(CONFIG) -derivedDataPath $(DERIVED) build -quiet
-	@echo "Embedding CLI into App Bundle…"
-	# Copy osaurus-cli to osaurus.app/Contents/MacOS/osaurus
-	cp "$(DERIVED)/Build/Products/$(CONFIG)/osaurus-cli" "$(DERIVED)/Build/Products/$(CONFIG)/osaurus.app/Contents/MacOS/osaurus"
-	chmod +x "$(DERIVED)/Build/Products/$(CONFIG)/osaurus.app/Contents/MacOS/osaurus"
+	@echo "Embedding CLI into App Bundle (Helpers)…"
+	# Copy osaurus-cli to osaurus.app/Contents/Helpers/osaurus
+	mkdir -p "$(DERIVED)/Build/Products/$(CONFIG)/osaurus.app/Contents/Helpers"
+	cp "$(DERIVED)/Build/Products/$(CONFIG)/osaurus-cli" "$(DERIVED)/Build/Products/$(CONFIG)/osaurus.app/Contents/Helpers/osaurus"
+	chmod +x "$(DERIVED)/Build/Products/$(CONFIG)/osaurus.app/Contents/Helpers/osaurus"
 
 install-cli: cli
 	@echo "Installing CLI symlink…"
