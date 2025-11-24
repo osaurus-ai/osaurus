@@ -22,7 +22,27 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
     }
     struct EngineError: Error {}
 
+    private func enrichMessagesWithSystemPrompt(_ messages: [ChatMessage]) async -> [ChatMessage] {
+        // Check if a system prompt is already present
+        if messages.contains(where: { $0.role == "system" }) {
+            return messages
+        }
+
+        // If not, fetch the global system prompt
+        let systemPrompt = await MainActor.run {
+            ChatConfigurationStore.load().systemPrompt
+        }
+
+        let trimmed = systemPrompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return messages }
+
+        // Prepend the system prompt
+        let systemMessage = ChatMessage(role: "system", content: trimmed)
+        return [systemMessage] + messages
+    }
+
     func streamChat(request: ChatCompletionRequest) async throws -> AsyncThrowingStream<String, Error> {
+        let messages = await enrichMessagesWithSystemPrompt(request.messages)
         let temperature = request.temperature ?? 1.0
         let maxTokens = request.max_tokens ?? 512
         let repPenalty: Float? = {
@@ -51,7 +71,7 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
             if let tools = request.tools, !tools.isEmpty, let toolSvc = service as? ToolCapableService {
                 let stopSequences = request.stop ?? []
                 return try await toolSvc.streamWithTools(
-                    messages: request.messages,
+                    messages: messages,
                     parameters: params,
                     stopSequences: stopSequences,
                     tools: tools,
@@ -61,7 +81,7 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
             }
 
             return try await service.streamDeltas(
-                messages: request.messages,
+                messages: messages,
                 parameters: params,
                 requestedModel: request.model,
                 stopSequences: request.stop ?? []
@@ -72,6 +92,7 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
     }
 
     func completeChat(request: ChatCompletionRequest) async throws -> ChatCompletionResponse {
+        let messages = await enrichMessagesWithSystemPrompt(request.messages)
         let temperature = request.temperature ?? 1.0
         let maxTokens = request.max_tokens ?? 512
         let repPenalty2: Float? = {
@@ -103,7 +124,7 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
                 let stopSequences = request.stop ?? []
                 do {
                     let text = try await toolSvc.respondWithTools(
-                        messages: request.messages,
+                        messages: messages,
                         parameters: params,
                         stopSequences: stopSequences,
                         tools: tools,
@@ -159,7 +180,7 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
 
             // Fallback to plain generation (no tools)
             let text = try await service.generateOneShot(
-                messages: request.messages,
+                messages: messages,
                 parameters: params,
                 requestedModel: request.model
             )
