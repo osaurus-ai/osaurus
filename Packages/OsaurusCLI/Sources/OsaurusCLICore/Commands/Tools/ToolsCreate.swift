@@ -67,69 +67,121 @@ public struct ToolsCreate {
             private struct HelloTool {
                 let name = "hello_world"
                 let description = "Return a friendly greeting"
-                let parameters: String = "{\\"type\\":\\"object\\",\\"properties\\":{\\"name\\":{\\"type\\":\\"string\\"}},\\"required\\":[\\"name\\"]}"
-                let requirements: String = "[]"
-                let policy: String = "ask"
+                let parameters = "{\\"type\\":\\"object\\",\\"properties\\":{\\"name\\":{\\"type\\":\\"string\\"}},\\"required\\":[\\"name\\"]}"
+                
+                func run(args: String) -> String {
+                    struct Args: Decodable {
+                        let name: String
+                    }
+                    guard let data = args.data(using: .utf8),
+                          let input = try? JSONDecoder().decode(Args.self, from: data)
+                    else {
+                        return "{\\"error\\": \\"Invalid arguments\\"}"
+                    }
+                    return "{\\"message\\": \\"Hello, \\(input.name)!\\"}"
+                }
             }
 
             // MARK: - C ABI surface
-            private struct osr_tool_spec_v1 {
-                var name: UnsafePointer<CChar>?
-                var description: UnsafePointer<CChar>?
-                var parameters_json: UnsafePointer<CChar>?
-                var requirements_json: UnsafePointer<CChar>?
-                var permission_policy: UnsafePointer<CChar>?
-            }
+
+            // Opaque context
+            private typealias osr_plugin_ctx_t = UnsafeMutableRawPointer
+
+            // Function pointers
             private typealias osr_free_string_t = @convention(c) (UnsafePointer<CChar>?) -> Void
-            private typealias osr_tool_count_t = @convention(c) () -> Int32
-            private typealias osr_get_tool_spec_t = @convention(c) (Int32, UnsafeMutableRawPointer?) -> Int32
-            private typealias osr_execute_t = @convention(c) (UnsafePointer<CChar>?, UnsafePointer<CChar>?) -> UnsafePointer<CChar>?
+            private typealias osr_init_t = @convention(c) () -> osr_plugin_ctx_t?
+            private typealias osr_destroy_t = @convention(c) (osr_plugin_ctx_t?) -> Void
+            private typealias osr_get_manifest_t = @convention(c) (osr_plugin_ctx_t?) -> UnsafePointer<CChar>?
+            private typealias osr_invoke_t = @convention(c) (
+                osr_plugin_ctx_t?,
+                UnsafePointer<CChar>?,  // type
+                UnsafePointer<CChar>?,  // id
+                UnsafePointer<CChar>?   // payload
+            ) -> UnsafePointer<CChar>?
 
-            private struct osr_plugin_api_v1 {
+            private struct osr_plugin_api {
                 var free_string: osr_free_string_t?
-                var tool_count: osr_tool_count_t?
-                var get_tool_spec: osr_get_tool_spec_t?
-                var execute: osr_execute_t?
+                var `init`: osr_init_t?
+                var destroy: osr_destroy_t?
+                var get_manifest: osr_get_manifest_t?
+                var invoke: osr_invoke_t?
             }
 
+            // Context state (simple wrapper class to hold state)
+            private class PluginContext {
+                let tool = HelloTool()
+            }
+
+            // Helper to return C strings
             private func makeCString(_ s: String) -> UnsafePointer<CChar>? {
-                return (s as NSString).utf8String
+                return strdup(s)
             }
 
-            // Persistent toolkit
-            private let tool = HelloTool()
-            private var api: osr_plugin_api_v1 = {
-                var api = osr_plugin_api_v1()
-                api.free_string = { ptr in if let p = ptr { free(UnsafeMutableRawPointer(mutating: p)) } }
-                api.tool_count = { 1 }
-                api.get_tool_spec = { (index: Int32, outPtr: UnsafeMutableRawPointer?) -> Int32 in
-                    guard index == 0, let outPtr else { return 1 }
-                    let out = outPtr.assumingMemoryBound(to: osr_tool_spec_v1.self)
-                    out.pointee = osr_tool_spec_v1(
-                        name: makeCString(tool.name),
-                        description: makeCString(tool.description),
-                        parameters_json: makeCString(tool.parameters),
-                        requirements_json: makeCString(tool.requirements),
-                        permission_policy: makeCString(tool.policy)
-                    )
-                    return 0
+            // API Implementation
+            private var api: osr_plugin_api = {
+                var api = osr_plugin_api()
+                
+                api.free_string = { ptr in
+                    if let p = ptr { free(UnsafeMutableRawPointer(mutating: p)) }
                 }
-                api.execute = { toolNamePtr, argsPtr in
-                    guard let argsPtr else { return nil }
-                    let args = String(cString: argsPtr)
-                    let name = (try? JSONSerialization.jsonObject(with: args.data(using: .utf8) ?? Data())) as? [String: Any]
-                    let who = (name?["name"] as? String) ?? "world"
-                    let summary = "Hello, \\(who)!"
-                    let payload = "{\\"message\\":\\"\\(summary)\\"}"
-                    let combined = summary + "\\n" + payload
-                    let buf = strdup(combined)
-                    return UnsafePointer<CChar>(buf)
+                
+                api.`init` = {
+                    let ctx = PluginContext()
+                    return Unmanaged.passRetained(ctx).toOpaque()
                 }
+                
+                api.destroy = { ctxPtr in
+                    guard let ctxPtr = ctxPtr else { return }
+                    Unmanaged<PluginContext>.fromOpaque(ctxPtr).release()
+                }
+                
+                api.get_manifest = { ctxPtr in
+                    // Manifest JSON matching new spec
+                    let manifest = \"\"\"
+                    {
+                      "plugin_id": "dev.example.\(name)",
+                      "version": "0.1.0",
+                      "description": "An example plugin",
+                      "capabilities": {
+                        "tools": [
+                          {
+                            "id": "hello_world",
+                            "description": "Return a friendly greeting",
+                            "parameters": {"type":"object","properties":{"name":{"type":"string"}},"required":["name"]},
+                            "requirements": [],
+                            "permission_policy": "ask"
+                          }
+                        ]
+                      }
+                    }
+                    \"\"\"
+                    return makeCString(manifest)
+                }
+                
+                api.invoke = { ctxPtr, typePtr, idPtr, payloadPtr in
+                    guard let ctxPtr = ctxPtr,
+                          let typePtr = typePtr,
+                          let idPtr = idPtr,
+                          let payloadPtr = payloadPtr else { return nil }
+                    
+                    let ctx = Unmanaged<PluginContext>.fromOpaque(ctxPtr).takeUnretainedValue()
+                    let type = String(cString: typePtr)
+                    let id = String(cString: idPtr)
+                    let payload = String(cString: payloadPtr)
+                    
+                    if type == "tool" && id == ctx.tool.name {
+                         let result = ctx.tool.run(args: payload)
+                         return makeCString(result)
+                    }
+                    
+                    return makeCString("{\\"error\\": \\"Unknown capability\\"}")
+                }
+                
                 return api
             }()
 
-            @_cdecl("osaurus_plugin_entry_v1")
-            public func osaurus_plugin_entry_v1() -> UnsafeRawPointer? {
+            @_cdecl("osaurus_plugin_entry")
+            public func osaurus_plugin_entry() -> UnsafeRawPointer? {
                 return UnsafeRawPointer(&api)
             }
             """
@@ -138,23 +190,20 @@ public struct ToolsCreate {
         // manifest.json (enhanced)
         let manifest = """
             {
-              "id": "dev.example.\(name)",
-              "name": "\(name)",
+              "plugin_id": "dev.example.\(name)",
               "version": "0.1.0",
-              "min_osaurus": "0.9.0",
-              "homepage": "https://github.com/example/\(name)",
-              "license": "MIT",
-              "authors": ["Your Name"],
-              "dylib": "lib\(name).dylib",
-              "tools": [
-                {
-                  "name": "hello_world",
-                  "description": "Return a friendly greeting",
-                  "parameters": {"type":"object","properties":{"name":{"type":"string"}},"required":["name"]},
-                  "requirements": [],
-                  "permissionPolicy": "ask"
-                }
-              ]
+              "description": "An example plugin",
+              "capabilities": {
+                "tools": [
+                  {
+                    "id": "hello_world",
+                    "description": "Return a friendly greeting",
+                    "parameters": {"type":"object","properties":{"name":{"type":"string"}},"required":["name"]},
+                    "requirements": [],
+                    "permission_policy": "ask"
+                  }
+                ]
+              }
             }
             """
         try? manifest.write(to: dir.appendingPathComponent("manifest.json"), atomically: true, encoding: .utf8)
@@ -191,30 +240,7 @@ public struct ToolsCreate {
                
             2. Host the zip file (e.g. GitHub Releases).
 
-            3. Create a registry entry JSON file using metadata from `manifest.json`:
-               ```json
-               {
-                 "plugin_id": "dev.example.\(name)",
-                 "name": "\(name)",
-                 "homepage": "...",
-                 "license": "MIT",
-                 "versions": [
-                   {
-                     "version": "0.1.0",
-                     "artifacts": [
-                       {
-                         "os": "macos",
-                         "arch": "arm64",
-                         "url": "https://...",
-                         "sha256": "<sha256_of_zip>"
-                       }
-                     ]
-                   }
-                 ]
-               }
-               ```
-
-            4. Submit to the Osaurus Registry.
+            3. Create a registry entry JSON file using metadata from `manifest.json`.
             """
         try? readme.write(to: dir.appendingPathComponent("README.md"), atomically: true, encoding: .utf8)
     }
@@ -228,7 +254,7 @@ public struct ToolsCreate {
             # \(name)
 
             This is a placeholder for a Rust-based Osaurus plugin. Build a cdylib exposing
-            `osaurus_plugin_entry_v1` that returns the C ABI v1 table.
+            `osaurus_plugin_entry` that returns the generic ABI table.
             """
         try? readme.write(to: dir.appendingPathComponent("README.md"), atomically: true, encoding: .utf8)
     }

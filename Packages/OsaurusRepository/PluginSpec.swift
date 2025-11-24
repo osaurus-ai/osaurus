@@ -7,11 +7,6 @@
 
 import Foundation
 
-public struct PluginABIConstraint: Codable, Equatable {
-    public let min: Int
-    public let max: Int
-}
-
 public struct MinisignInfo: Codable, Equatable {
     public let signature: String
     public let key_id: String?
@@ -39,14 +34,25 @@ public struct PluginVersionEntry: Codable, Equatable {
     public let requires: PluginRequirements?
 }
 
+// Registry-side capabilities summary (informational)
+public struct RegistryCapabilities: Codable, Equatable {
+    public struct ToolSummary: Codable, Equatable {
+        public let name: String
+        public let description: String
+    }
+    public let tools: [ToolSummary]?
+}
+
 public struct PluginSpec: Codable, Equatable {
     public let plugin_id: String
     public let name: String?
+    public let description: String?
     public let homepage: String?
     public let license: String?
     public let authors: [String]?
     public let public_keys: [String: String]?
-    public let abi: PluginABIConstraint?
+    public let capabilities: RegistryCapabilities?
+
     public let versions: [PluginVersionEntry]
 }
 
