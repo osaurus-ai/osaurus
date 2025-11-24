@@ -1,6 +1,6 @@
-# Osaurus Plugin Authoring (v1)
+# Osaurus Plugin Authoring
 
-This document describes how to build external tools (plugins) for Osaurus using the C ABI. Plugins are distributed as `.dylib` plus a `manifest.json` in a zip.
+This document describes how to build external plugins for Osaurus using the Generic C ABI. Plugins are distributed as `.dylib` plus a `manifest.json` in a zip.
 
 ## TL;DR (Swift)
 
@@ -32,90 +32,70 @@ The plugin will be unpacked into:
 
 ## ABI Overview
 
-Header is shipped at:
-`Packages/OsaurusCore/Tools/PluginABI/osaurus_plugin_v1.h`
+The header is available at:
+`Packages/OsaurusCore/Tools/PluginABI/osaurus_plugin.h`
 
 Key points:
 
-- JSON-in/JSON-out boundary (UTF-8 strings), no Swift symbols.
-- Plugin exposes a single entry symbol `osaurus_plugin_entry_v1`.
-- Host calls `tool_count`, `get_tool_spec`, and `execute`.
-- Plugin returns malloc'ed strings; host frees via `free_string`.
+- **Entry Point**: Plugin exposes a single symbol `osaurus_plugin_entry` returning a pointer to `osr_plugin_api`.
+- **Lifecycle**:
+  - `init()`: Called once on load. Returns an opaque `context` pointer.
+  - `destroy(ctx)`: Called on unload.
+  - `get_manifest(ctx)`: Returns a JSON string describing capabilities.
+  - `invoke(ctx, type, id, payload)`: Generic invocation function.
 
-Tool spec fields:
+### Manifest Format
 
-- `name`: unique id
-- `description`: human readable
-- `parameters_json`: JSON Schema for arguments
-- `requirements_json`: JSON array like `["permission:web", "permission:folder"]`
-- `permission_policy`: `"auto" | "ask" | "deny"`
-
-## Permissions (v1)
-
-- Policy defaults to `"ask"` unless configured by the user.
-- `"deny"` blocks execution.
-- `"ask"` requires approval (v1 returns a friendly error).
-- `"auto"` executes if required grants are present; otherwise returns an error.
-
-Users can manage enablement and policies via the Osaurus UI/config. Plugins should declare only the minimum requirements they need.
-
-If downloaded from the web, clear quarantine:
-
-```bash
-xattr -dr com.apple.quarantine "/path/to/libYour.dylib"
-```
-
-Reload tools: `osaurus tools reload`
-
-Notes
-
-- Ad‑hoc signatures may still be rejected under Hardened Runtime; prefer a real Apple signing identity.
-- If you install via `osaurus tools install <zip>` or `osaurus tools install .`, the app will auto‑rescan. You can also press Reload in Tools UI.
-- `install` will always override the installed version with the one provided.
-
-## Rust Authors
-
-Create a `cdylib` exposing `osaurus_plugin_entry_v1` and return the v1 function table. See the Swift scaffold for the struct layout to mirror.
-
-## Distribution via Central Registry
-
-Osaurus uses a single, git-backed central plugin index maintained by the Osaurus team. Users cannot add custom taps.
-
-1. Ensure your `manifest.json` contains publishing metadata (`homepage`, `license`, `authors`).
-2. Publish release artifacts (.zip containing your `.dylib` and `manifest.json`) on GitHub Releases (or any HTTPS URL).
-3. Generate a SHA256 checksum of the zip.
-4. Sign the zip with Minisign (recommended).
-5. Submit a PR to the central index repo adding `plugins/<your.plugin.id>.json` with your metadata.
-
-Example registry entry (abbreviated):
+The manifest JSON returned by `get_manifest` (and stored on disk as `manifest.json` for indexing) looks like this:
 
 ```json
 {
   "plugin_id": "com.acme.echo",
-  "name": "Echo Tools",
-  "homepage": "https://github.com/acme/echo",
-  "license": "MIT",
-  "public_keys": { "minisign": "RWQ..." },
-  "abi": { "min": 2, "max": 2 },
-  "versions": [
-    {
-      "version": "1.2.0",
-      "artifacts": [
-        {
-          "os": "macos",
-          "arch": "arm64",
-          "url": "https://github.com/acme/echo/releases/download/v1.2.0/echo-macos-arm64.zip",
-          "sha256": "<sha256-of-zip>",
-          "minisign": {
-            "signature": "untrusted comment: signature...\\nRWQ...",
-            "key_id": "acme-echo"
-          }
-        }
-      ]
-    }
-  ]
+  "version": "1.0.0",
+  "description": "Echo plugin",
+  "capabilities": {
+    "tools": [
+      {
+        "id": "echo_tool",
+        "description": "Echoes back input",
+        "parameters": { ... },
+        "requirements": [],
+        "permission_policy": "ask"
+      }
+    ]
+    // Future: "providers": [...], "agents": [...]
+  }
 }
 ```
+
+### Invocation
+
+When Osaurus needs to execute a capability, it calls `invoke`:
+
+- `type`: e.g. `"tool"`
+- `id`: e.g. `"echo_tool"`
+- `payload`: JSON string arguments (e.g. `{"message": "hello"}`)
+
+The plugin returns a JSON string response (allocated; host frees it).
+
+## Permissions
+
+- Policy defaults to `"ask"` unless configured by the user.
+- `"deny"` blocks execution.
+- `"ask"` requires approval (returns a friendly error if denied).
+- `"auto"` executes if required grants are present.
+
+Users can manage enablement and policies via the Osaurus UI/config.
+
+## Distribution via Central Registry
+
+Osaurus uses a single, git-backed central plugin index maintained by the Osaurus team.
+
+1. Ensure your `manifest.json` contains publishing metadata (`homepage`, `license`, `authors`).
+2. Publish release artifacts (.zip containing your `.dylib` and `manifest.json`) on GitHub Releases.
+3. Generate a SHA256 checksum of the zip.
+4. Sign the zip with Minisign (recommended).
+5. Submit a PR to the central index repo adding `plugins/<your.plugin.id>.json` with your metadata.
 
 ## Minisign Signing
 
@@ -126,19 +106,6 @@ Example registry entry (abbreviated):
   - The public key (contents of `minisign.pub`) in your spec under `public_keys.minisign`
   - The signature (contents of `.minisig`) in the spec under `versions[].artifacts[].minisign.signature`
 
-Osaurus verifies the SHA256 and Minisign signature during install, and rechecks the on-disk `.dylib` hash at load time.
+## Rust Authors
 
-## ABI v2 Manifest (optional but recommended)
-
-Plugins may implement `osaurus_plugin_entry_v2()` and provide `get_plugin_manifest_json()` returning:
-
-```json
-{ "plugin_id": "com.acme.echo", "version": "1.2.0", "abi": 2 }
-```
-
-The host will cross-check this against the installed directory layout to detect mismatches.
-
-## Versioning and Rollbacks
-
-- Publish new versions by adding entries to your spec’s `versions[]`. Use semantic versioning.
-- Users can upgrade with `osaurus plugins upgrade` and rollback with `osaurus plugins rollback <plugin_id>`.
+Create a `cdylib` exposing `osaurus_plugin_entry` that returns the generic function table. Implement `init`, `destroy`, `get_manifest`, and `invoke`.

@@ -66,7 +66,7 @@ extension ChatMessage {
         case tool_call_id
     }
 
-    init(from decoder: Decoder) throws {
+    public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         self.role = try container.decode(String.self, forKey: .role)
         self.tool_calls = try? container.decode([ToolCall].self, forKey: .tool_calls)
@@ -82,7 +82,7 @@ extension ChatMessage {
         }
     }
 
-    func encode(to encoder: Encoder) throws {
+    public func encode(to encoder: Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
         try container.encode(role, forKey: .role)
         try container.encodeIfPresent(content, forKey: .content)
@@ -308,7 +308,7 @@ struct DeltaToolCallFunction: Codable, Sendable {
 // MARK: - Generic JSON value for tool parameters
 
 /// Simple JSON value representation to carry arbitrary JSON schema/arguments
-enum JSONValue: Codable, Sendable {
+public enum JSONValue: Codable, Sendable {
     case string(String)
     case number(Double)
     case bool(Bool)
@@ -316,7 +316,7 @@ enum JSONValue: Codable, Sendable {
     case array([JSONValue])
     case null
 
-    init(from decoder: Decoder) throws {
+    public init(from decoder: Decoder) throws {
         let container = try decoder.singleValueContainer()
         if container.decodeNil() {
             self = .null
@@ -338,7 +338,7 @@ enum JSONValue: Codable, Sendable {
         }
     }
 
-    func encode(to encoder: Encoder) throws {
+    public func encode(to encoder: Encoder) throws {
         var container = encoder.singleValueContainer()
         switch self {
         case .null:
