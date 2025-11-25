@@ -19,6 +19,10 @@ protocol ThemeProtocol {
     var secondaryBackground: Color { get }
     var tertiaryBackground: Color { get }
 
+    // Sidebar colors
+    var sidebarBackground: Color { get }
+    var sidebarSelectedBackground: Color { get }
+
     // Accent colors
     var accentColor: Color { get }
     var accentColorLight: Color { get }
@@ -52,6 +56,12 @@ protocol ThemeProtocol {
     var glassBlurRadius: Double { get }
     var glassEdgeLight: Color { get }
 
+    // Card shadows (enhanced)
+    var cardShadowRadius: Double { get }
+    var cardShadowRadiusHover: Double { get }
+    var cardShadowY: Double { get }
+    var cardShadowYHover: Double { get }
+
     // Animation timing
     var animationDurationQuick: Double { get }
     var animationDurationMedium: Double { get }
@@ -74,6 +84,10 @@ struct LightTheme: ThemeProtocol {
     let primaryBackground = Color(hex: "ffffff")
     let secondaryBackground = Color(hex: "f9fafb")
     let tertiaryBackground = Color(hex: "f3f4f6")
+
+    // Sidebar colors
+    let sidebarBackground = Color(hex: "f5f5f7")
+    let sidebarSelectedBackground = Color(hex: "e8e8ed")
 
     // Accent colors
     let accentColor = Color(hex: "3b82f6")
@@ -107,6 +121,12 @@ struct LightTheme: ThemeProtocol {
     let glassBlurRadius: Double = 20
     let glassEdgeLight = Color.white.opacity(0.3)
 
+    // Card shadows (enhanced)
+    let cardShadowRadius: Double = 8
+    let cardShadowRadiusHover: Double = 16
+    let cardShadowY: Double = 2
+    let cardShadowYHover: Double = 6
+
     // Animation timing
     let animationDurationQuick: Double = 0.2
     let animationDurationMedium: Double = 0.3
@@ -129,6 +149,10 @@ struct DarkTheme: ThemeProtocol {
     let primaryBackground = Color(hex: "0f0f10")
     let secondaryBackground = Color(hex: "18181b")
     let tertiaryBackground = Color(hex: "27272a")
+
+    // Sidebar colors
+    let sidebarBackground = Color(hex: "141416")
+    let sidebarSelectedBackground = Color(hex: "2a2a2e")
 
     // Accent colors
     let accentColor = Color(hex: "3b82f6")
@@ -161,6 +185,12 @@ struct DarkTheme: ThemeProtocol {
     let glassOpacityTertiary: Double = 0.05
     let glassBlurRadius: Double = 30
     let glassEdgeLight = Color.white.opacity(0.2)
+
+    // Card shadows (enhanced)
+    let cardShadowRadius: Double = 12
+    let cardShadowRadiusHover: Double = 20
+    let cardShadowY: Double = 4
+    let cardShadowYHover: Double = 8
 
     // Animation timing
     let animationDurationQuick: Double = 0.2
