@@ -32,6 +32,9 @@ struct ModelDownloadView: View {
     /// Model to show in the detail sheet
     @State private var modelToShowDetails: MLXModel? = nil
 
+    /// Whether content has appeared (for entrance animation)
+    @State private var hasAppeared = false
+
     // MARK: - Deep Link Support
 
     /// Optional model ID for deep linking (e.g., from URL schemes)
@@ -42,19 +45,17 @@ struct ModelDownloadView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            // Header
-            ManagerHeader(
-                title: "Models",
-                subtitle:
-                    "\(completedDownloadedModelsCount) downloaded • \(modelManager.totalDownloadedSizeString)"
-            )
-
-            Divider()
+            // Header with search and tabs
+            headerView
+                .opacity(hasAppeared ? 1 : 0)
+                .offset(y: hasAppeared ? 0 : -10)
+                .animation(.spring(response: 0.4, dampingFraction: 0.8), value: hasAppeared)
 
             // Model list
             modelListView
+                .opacity(hasAppeared ? 1 : 0)
         }
-        .frame(minWidth: 720, minHeight: 600)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(theme.primaryBackground)
         .environment(\.theme, themeManager.currentTheme)
         .onAppear {
@@ -63,8 +64,17 @@ struct ModelDownloadView: View {
                 searchText = modelId.split(separator: "/").last.map(String.init) ?? modelId
                 _ = modelManager.resolveModel(byRepoId: modelId)
             }
-            // Kick off initial remote fetch to augment curated list
-            modelManager.fetchRemoteMLXModels(searchText: searchText)
+
+            // Animate content appearance before heavy operations
+            withAnimation(.easeOut(duration: 0.25).delay(0.05)) {
+                hasAppeared = true
+            }
+
+            // Defer heavy fetch operation to prevent initial jank
+            Task {
+                try? await Task.sleep(nanoseconds: 150_000_000)  // 150ms delay
+                modelManager.fetchRemoteMLXModels(searchText: searchText)
+            }
         }
         .onChange(of: searchText) { _, newValue in
             // If input looks like a Hugging Face repo, switch to All so it's visible
@@ -87,70 +97,134 @@ struct ModelDownloadView: View {
 
     // MARK: - Header View
 
-    /// Header section now provided by ManagerHeader
+    private var headerView: some View {
+        VStack(spacing: 16) {
+            // Title row
+            HStack {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Models")
+                        .font(.system(size: 28, weight: .bold, design: .rounded))
+                        .foregroundColor(theme.primaryText)
 
-    // MARK: - Model List View
-
-    /// Main content area with tabs, search, and scrollable model list
-    private var modelListView: some View {
-        VStack(spacing: 0) {
-            // Search and filter bar
-            HStack(spacing: 12) {
-                // Tabs
-                HStack(spacing: 4) {
-                    ForEach(ModelListTab.allCases, id: \.self) { tab in
-                        TabPill(title: tab.title, isSelected: selectedTab == tab, count: tabCount(tab)) {
-                            selectedTab = tab
-                        }
-                    }
+                    Text("\(completedDownloadedModelsCount) downloaded • \(modelManager.totalDownloadedSizeString)")
+                        .font(.system(size: 14))
+                        .foregroundColor(theme.secondaryText)
                 }
 
                 Spacer()
-
-                // Search field
-                SearchField(text: $searchText, placeholder: "Search models")
-
             }
-            .padding(.horizontal, 24)
-            .padding(.vertical, 16)
-            .background(theme.secondaryBackground)
 
-            if modelManager.isLoadingModels {
-                VStack(spacing: 12) {
-                    ProgressView()
-                        .progressViewStyle(CircularProgressViewStyle())
-                    Text("Loading models…")
-                        .font(.system(size: 13))
-                        .foregroundColor(theme.secondaryText)
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .padding(40)
+            // Tabs + Search row
+            HStack(spacing: 16) {
+                AnimatedTabSelector(
+                    selection: $selectedTab,
+                    counts: [
+                        .all: filteredModels.count,
+                        .suggested: filteredSuggestedModels.count,
+                        .downloaded: completedDownloadedModelsCount,
+                    ]
+                )
+
+                Spacer()
+
+                SearchField(text: $searchText, placeholder: "Search models")
+            }
+        }
+        .padding(.horizontal, 24)
+        .padding(.top, 24)
+        .padding(.bottom, 16)
+        .background(theme.secondaryBackground)
+    }
+
+    // MARK: - Model List View
+
+    /// Main content area with scrollable model list
+    private var modelListView: some View {
+        Group {
+            if modelManager.isLoadingModels && displayedModels.isEmpty {
+                loadingState
             } else {
                 ScrollView {
                     LazyVStack(spacing: 12) {
                         if displayedModels.isEmpty {
-                            EmptyStateView(
-                                selectedTab: selectedTab,
-                                searchText: searchText,
-                                onClearSearch: { searchText = "" }
-                            )
-                            .padding(.vertical, 40)
+                            emptyState
                         } else {
-                            ForEach(displayedModels) { model in
+                            ForEach(Array(displayedModels.enumerated()), id: \.element.id) { index, model in
                                 ModelRowView(
                                     model: model,
                                     downloadState: modelManager.effectiveDownloadState(for: model),
                                     metrics: modelManager.downloadMetrics[model.id],
                                     onViewDetails: { modelToShowDetails = model },
-                                    onCancel: { modelManager.cancelDownload(model.id) }
+                                    onCancel: { modelManager.cancelDownload(model.id) },
+                                    animationIndex: index
                                 )
-                                .onAppear { /* no-op */  }
                             }
                         }
                     }
                     .padding(24)
                 }
             }
+        }
+    }
+
+    // MARK: - Loading State
+
+    private var loadingState: some View {
+        VStack(spacing: 20) {
+            // Skeleton cards
+            ForEach(0 ..< 4) { index in
+                SkeletonCard(animationDelay: Double(index) * 0.1)
+            }
+        }
+        .padding(24)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+    }
+
+    // MARK: - Empty State
+
+    private var emptyState: some View {
+        VStack(spacing: 12) {
+            Image(systemName: emptyStateIcon)
+                .font(.system(size: 40, weight: .light))
+                .foregroundColor(theme.tertiaryText)
+
+            Text(emptyStateTitle)
+                .font(.system(size: 15, weight: .medium))
+                .foregroundColor(theme.secondaryText)
+
+            if !searchText.isEmpty {
+                Button(action: { searchText = "" }) {
+                    Text("Clear search")
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundColor(theme.accentColor)
+                }
+                .buttonStyle(PlainButtonStyle())
+            }
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 60)
+    }
+
+    private var emptyStateIcon: String {
+        switch selectedTab {
+        case .all, .suggested:
+            return "cube.box"
+        case .downloaded:
+            return "arrow.down.circle"
+        }
+    }
+
+    private var emptyStateTitle: String {
+        if !searchText.isEmpty {
+            return "No models match your search"
+        }
+        switch selectedTab {
+        case .all:
+            return "No models available"
+        case .suggested:
+            return "No suggested models"
+        case .downloaded:
+            return "No downloaded models"
         }
     }
 
@@ -261,18 +335,64 @@ struct ModelDownloadView: View {
 
         return baseModels
     }
+}
 
-    /// Count for a given tab that respects current search filter
-    private func tabCount(_ tab: ModelListTab) -> Int {
-        switch tab {
-        case .all:
-            return filteredModels.count
-        case .suggested:
-            return filteredSuggestedModels.count
-        case .downloaded:
-            // Count completed-only for tab label
-            return completedDownloadedModelsCount
+// MARK: - Skeleton Loading Card
+
+private struct SkeletonCard: View {
+    @Environment(\.theme) private var theme
+    let animationDelay: Double
+
+    @State private var isAnimating = false
+
+    var body: some View {
+        HStack(spacing: 16) {
+            // Icon placeholder
+            RoundedRectangle(cornerRadius: 10)
+                .fill(shimmerGradient)
+                .frame(width: 44, height: 44)
+
+            VStack(alignment: .leading, spacing: 8) {
+                // Title placeholder
+                RoundedRectangle(cornerRadius: 4)
+                    .fill(shimmerGradient)
+                    .frame(width: 180, height: 16)
+
+                // Description placeholder
+                RoundedRectangle(cornerRadius: 4)
+                    .fill(shimmerGradient)
+                    .frame(width: 280, height: 12)
+
+                // Link placeholder
+                RoundedRectangle(cornerRadius: 4)
+                    .fill(shimmerGradient)
+                    .frame(width: 140, height: 10)
+            }
+
+            Spacer()
         }
+        .padding(16)
+        .background(
+            RoundedRectangle(cornerRadius: 12)
+                .fill(theme.cardBackground)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 12)
+                        .stroke(theme.cardBorder, lineWidth: 1)
+                )
+        )
+        .onAppear {
+            withAnimation(
+                .easeInOut(duration: 1.2)
+                    .repeatForever(autoreverses: true)
+                    .delay(animationDelay)
+            ) {
+                isAnimating = true
+            }
+        }
+    }
+
+    private var shimmerGradient: some ShapeStyle {
+        theme.tertiaryBackground.opacity(isAnimating ? 0.8 : 0.4)
     }
 }
 

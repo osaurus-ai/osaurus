@@ -11,11 +11,6 @@ import Foundation
 import OsaurusRepository
 import SwiftUI
 
-private enum ToolsTab: String, CaseIterable {
-    case installed = "Installed"
-    case browse = "Browse"
-}
-
 struct ToolsManagerView: View {
     @StateObject private var themeManager = ThemeManager.shared
     @StateObject private var repoService = PluginRepositoryService.shared
@@ -24,21 +19,28 @@ struct ToolsManagerView: View {
     @State private var selectedTab: ToolsTab = .installed
     @State private var searchText: String = ""
     @State private var toolEntries: [ToolRegistry.ToolEntry] = []
+    @State private var hasAppeared = false
 
     var body: some View {
         VStack(spacing: 0) {
-            ManagerHeader(title: "Tools", subtitle: "Manage and discover tools for chat")
-            Divider()
             contentView
         }
-        .frame(minWidth: 720, minHeight: 600)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(theme.primaryBackground)
         .environment(\.theme, themeManager.currentTheme)
         .onAppear {
             reload()
             // Trigger initial refresh if repository is empty
             if repoService.plugins.isEmpty {
-                Task { await repoService.refresh() }
+                Task {
+                    // Small delay to prevent initial jank
+                    try? await Task.sleep(nanoseconds: 100_000_000)
+                    await repoService.refresh()
+                }
+            }
+            // Animate content appearance
+            withAnimation(.easeOut(duration: 0.25).delay(0.1)) {
+                hasAppeared = true
             }
         }
         .onChange(of: searchText) { _, _ in reload() }
@@ -49,64 +51,109 @@ struct ToolsManagerView: View {
 
     private var contentView: some View {
         VStack(spacing: 0) {
-            // Tabs + Search bar
-            HStack(spacing: 12) {
-                ForEach(ToolsTab.allCases, id: \.self) { tab in
-                    TabPill(
-                        title: tab.rawValue,
-                        isSelected: selectedTab == tab,
-                        count: countForTab(tab),
-                        badge: badgeForTab(tab),
-                        action: { selectedTab = tab }
-                    )
+            // Header with tabs and search
+            headerBar
+                .opacity(hasAppeared ? 1 : 0)
+                .offset(y: hasAppeared ? 0 : -10)
+                .animation(.spring(response: 0.4, dampingFraction: 0.8), value: hasAppeared)
+
+            // Content area
+            Group {
+                switch selectedTab {
+                case .installed:
+                    installedTabContent
+                case .browse:
+                    browseTabContent
+                }
+            }
+            .opacity(hasAppeared ? 1 : 0)
+        }
+    }
+
+    // MARK: - Header Bar
+
+    private var headerBar: some View {
+        VStack(spacing: 16) {
+            // Title row
+            HStack {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Tools")
+                        .font(.system(size: 28, weight: .bold, design: .rounded))
+                        .foregroundColor(theme.primaryText)
+
+                    Text("Manage and discover tools for chat")
+                        .font(.system(size: 14))
+                        .foregroundColor(theme.secondaryText)
                 }
 
                 Spacer()
+            }
 
+            // Tabs + Actions row - simplified
+            HStack(spacing: 12) {
+                AnimatedTabSelector(
+                    selection: $selectedTab,
+                    counts: [
+                        .installed: filteredEntries.count,
+                        .browse: filteredPlugins.count,
+                    ],
+                    badges: repoService.updatesAvailableCount > 0
+                        ? [.installed: repoService.updatesAvailableCount]
+                        : nil
+                )
+
+                Spacer()
+
+                // Contextual action button
                 if selectedTab == .browse {
                     Button(action: {
                         Task { await repoService.refresh() }
                     }) {
-                        HStack(spacing: 4) {
+                        Group {
                             if repoService.isRefreshing {
                                 ProgressView()
                                     .scaleEffect(0.6)
-                                    .frame(width: 12, height: 12)
+                                    .frame(width: 16, height: 16)
+                            } else {
+                                Image(systemName: "arrow.clockwise")
+                                    .font(.system(size: 13, weight: .medium))
                             }
-                            Text(repoService.isRefreshing ? "Refreshing..." : "Refresh")
-                                .font(.system(size: 12, weight: .medium))
                         }
+                        .foregroundColor(theme.secondaryText)
+                        .frame(width: 32, height: 32)
+                        .background(
+                            RoundedRectangle(cornerRadius: 8)
+                                .fill(theme.tertiaryBackground)
+                        )
                     }
+                    .buttonStyle(PlainButtonStyle())
                     .disabled(repoService.isRefreshing)
-                    .buttonStyle(.bordered)
+                    .help(repoService.isRefreshing ? "Refreshing..." : "Refresh repository")
                 } else {
-                    // Installed Plugins quick actions
-                    InstalledPluginsSummaryView()
-                        .frame(maxWidth: 360)
-
                     Button(action: {
                         PluginManager.shared.loadAll()
                         reload()
                     }) {
-                        Text("Reload")
-                            .font(.system(size: 12, weight: .medium))
+                        Image(systemName: "arrow.clockwise")
+                            .font(.system(size: 13, weight: .medium))
+                            .foregroundColor(theme.secondaryText)
+                            .frame(width: 32, height: 32)
+                            .background(
+                                RoundedRectangle(cornerRadius: 8)
+                                    .fill(theme.tertiaryBackground)
+                            )
                     }
-                    .buttonStyle(.bordered)
+                    .buttonStyle(PlainButtonStyle())
+                    .help("Reload tools")
                 }
 
                 SearchField(text: $searchText, placeholder: "Search tools")
             }
-            .padding(.horizontal, 24)
-            .padding(.vertical, 16)
-            .background(theme.secondaryBackground)
-
-            switch selectedTab {
-            case .installed:
-                installedTabContent
-            case .browse:
-                browseTabContent
-            }
         }
+        .padding(.horizontal, 24)
+        .padding(.top, 24)
+        .padding(.bottom, 16)
+        .background(theme.secondaryBackground)
     }
 
     // MARK: - Installed Tab
@@ -115,13 +162,18 @@ struct ToolsManagerView: View {
         ScrollView {
             LazyVStack(spacing: 12) {
                 if filteredEntries.isEmpty {
-                    Text("No tools match your search")
-                        .font(.system(size: 13))
-                        .foregroundColor(theme.secondaryText)
-                        .padding(.vertical, 40)
+                    emptyState(
+                        icon: "wrench.and.screwdriver",
+                        title: "No tools match your search",
+                        subtitle: searchText.isEmpty ? nil : "Try a different search term"
+                    )
                 } else {
-                    ForEach(filteredEntries) { entry in
-                        ToolSettingsRow(entry: entry, repoService: repoService) {
+                    ForEach(Array(filteredEntries.enumerated()), id: \.element.id) { index, entry in
+                        ToolSettingsRow(
+                            entry: entry,
+                            repoService: repoService,
+                            animationIndex: index
+                        ) {
                             reload()
                         }
                     }
@@ -137,30 +189,20 @@ struct ToolsManagerView: View {
         ScrollView {
             LazyVStack(spacing: 12) {
                 if repoService.isRefreshing && repoService.plugins.isEmpty {
-                    VStack(spacing: 12) {
-                        ProgressView()
-                        Text("Loading repository...")
-                            .font(.system(size: 13))
-                            .foregroundColor(theme.secondaryText)
-                    }
-                    .padding(.vertical, 60)
+                    loadingState
                 } else if filteredPlugins.isEmpty {
-                    VStack(spacing: 8) {
-                        Image(systemName: "puzzlepiece.extension")
-                            .font(.system(size: 32))
-                            .foregroundColor(theme.tertiaryText)
-                        Text(
-                            searchText.isEmpty
-                                ? "No plugins available"
-                                : "No plugins match your search"
-                        )
-                        .font(.system(size: 13))
-                        .foregroundColor(theme.secondaryText)
-                    }
-                    .padding(.vertical, 60)
+                    emptyState(
+                        icon: "puzzlepiece.extension",
+                        title: searchText.isEmpty ? "No plugins available" : "No plugins match your search",
+                        subtitle: searchText.isEmpty ? nil : "Try a different search term"
+                    )
                 } else {
-                    ForEach(filteredPlugins) { plugin in
-                        PluginRow(plugin: plugin, repoService: repoService)
+                    ForEach(Array(filteredPlugins.enumerated()), id: \.element.id) { index, plugin in
+                        PluginRow(
+                            plugin: plugin,
+                            repoService: repoService,
+                            animationIndex: index
+                        )
                     }
                 }
             }
@@ -168,25 +210,41 @@ struct ToolsManagerView: View {
         }
     }
 
+    // MARK: - Empty / Loading States
+
+    private func emptyState(icon: String, title: String, subtitle: String?) -> some View {
+        VStack(spacing: 12) {
+            Image(systemName: icon)
+                .font(.system(size: 40, weight: .light))
+                .foregroundColor(theme.tertiaryText)
+
+            Text(title)
+                .font(.system(size: 15, weight: .medium))
+                .foregroundColor(theme.secondaryText)
+
+            if let subtitle = subtitle {
+                Text(subtitle)
+                    .font(.system(size: 13))
+                    .foregroundColor(theme.tertiaryText)
+            }
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 60)
+    }
+
+    private var loadingState: some View {
+        VStack(spacing: 16) {
+            ProgressView()
+                .scaleEffect(1.2)
+            Text("Loading repository...")
+                .font(.system(size: 14))
+                .foregroundColor(theme.secondaryText)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 60)
+    }
+
     // MARK: - Helpers
-
-    private func countForTab(_ tab: ToolsTab) -> Int {
-        switch tab {
-        case .installed:
-            return filteredEntries.count
-        case .browse:
-            return filteredPlugins.count
-        }
-    }
-
-    private func badgeForTab(_ tab: ToolsTab) -> Int? {
-        switch tab {
-        case .installed:
-            return repoService.updatesAvailableCount > 0 ? repoService.updatesAvailableCount : nil
-        case .browse:
-            return nil
-        }
-    }
 
     private var filteredEntries: [ToolRegistry.ToolEntry] {
         let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -227,103 +285,126 @@ private struct PluginRow: View {
     @Environment(\.theme) private var theme
     let plugin: PluginState
     @ObservedObject var repoService: PluginRepositoryService
+    var animationIndex: Int = 0
+
     @State private var errorMessage: String?
     @State private var showError: Bool = false
+    @State private var isHovering = false
+    @State private var hasAppeared = false
 
     var body: some View {
-        GlassListRow {
-            VStack(alignment: .leading, spacing: 12) {
-                HStack(alignment: .top, spacing: 12) {
-                    // Plugin icon
-                    ZStack {
-                        RoundedRectangle(cornerRadius: 8)
-                            .fill(theme.accentColor.opacity(0.15))
-                        Image(systemName: "puzzlepiece.extension.fill")
-                            .font(.system(size: 18))
-                            .foregroundColor(theme.accentColor)
-                    }
-                    .frame(width: 40, height: 40)
-
-                    // Plugin info
-                    VStack(alignment: .leading, spacing: 4) {
-                        HStack(spacing: 8) {
-                            Text(plugin.spec.name ?? plugin.spec.plugin_id)
-                                .font(.system(size: 14, weight: .semibold))
-                                .foregroundColor(theme.primaryText)
-
-                            if let version = plugin.latestVersion {
-                                Text("v\(version.description)")
-                                    .font(.system(size: 11))
-                                    .foregroundColor(theme.tertiaryText)
-                            }
-
-                            if plugin.hasUpdate {
-                                updateBadge
-                            }
-                        }
-
-                        if let description = plugin.spec.description {
-                            Text(description)
-                                .font(.system(size: 12))
-                                .foregroundColor(theme.secondaryText)
-                                .lineLimit(2)
-                        }
-
-                        // Metadata row
-                        HStack(spacing: 12) {
-                            if let authors = plugin.spec.authors, !authors.isEmpty {
-                                Label(authors.joined(separator: ", "), systemImage: "person")
-                                    .font(.system(size: 10))
-                                    .foregroundColor(theme.tertiaryText)
-                            }
-
-                            if let license = plugin.spec.license {
-                                Label(license, systemImage: "doc.text")
-                                    .font(.system(size: 10))
-                                    .foregroundColor(theme.tertiaryText)
-                            }
-
-                            if let tools = plugin.spec.capabilities?.tools, !tools.isEmpty {
-                                Label("\(tools.count) tool\(tools.count == 1 ? "" : "s")", systemImage: "wrench")
-                                    .font(.system(size: 10))
-                                    .foregroundColor(theme.tertiaryText)
-                            }
-                        }
-                    }
-
-                    Spacer()
-
-                    // Action button
-                    actionButton
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .top, spacing: 14) {
+                // Plugin icon
+                ZStack {
+                    RoundedRectangle(cornerRadius: 10)
+                        .fill(theme.accentColor.opacity(0.12))
+                    Image(systemName: "puzzlepiece.extension.fill")
+                        .font(.system(size: 20))
+                        .foregroundColor(theme.accentColor)
                 }
+                .frame(width: 44, height: 44)
 
-                // Show tools provided
-                if let tools = plugin.spec.capabilities?.tools, !tools.isEmpty {
-                    Divider()
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text("Provides:")
-                            .font(.system(size: 11, weight: .medium))
-                            .foregroundColor(theme.secondaryText)
+                // Plugin info
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack(spacing: 8) {
+                        Text(plugin.spec.name ?? plugin.spec.plugin_id)
+                            .font(.system(size: 15, weight: .semibold, design: .rounded))
+                            .foregroundColor(theme.primaryText)
 
-                        FlowLayout(spacing: 6) {
-                            ForEach(tools, id: \.name) { tool in
-                                HStack(spacing: 4) {
-                                    Image(systemName: "function")
-                                        .font(.system(size: 9))
-                                    Text(tool.name)
-                                        .font(.system(size: 11, weight: .medium))
-                                }
-                                .padding(.horizontal, 8)
-                                .padding(.vertical, 4)
+                        if let version = plugin.latestVersion {
+                            Text("v\(version.description)")
+                                .font(.system(size: 11, weight: .medium))
+                                .foregroundColor(theme.tertiaryText)
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 2)
                                 .background(
                                     Capsule()
-                                        .fill(theme.secondaryBackground)
+                                        .fill(theme.tertiaryBackground)
                                 )
-                                .foregroundColor(theme.primaryText)
-                            }
+                        }
+
+                        if plugin.hasUpdate {
+                            updateBadge
+                        }
+                    }
+
+                    if let description = plugin.spec.description {
+                        Text(description)
+                            .font(.system(size: 13))
+                            .foregroundColor(theme.secondaryText)
+                            .lineLimit(2)
+                    }
+
+                    // Metadata row
+                    HStack(spacing: 12) {
+                        if let authors = plugin.spec.authors, !authors.isEmpty {
+                            Label(authors.joined(separator: ", "), systemImage: "person")
+                                .font(.system(size: 11))
+                                .foregroundColor(theme.tertiaryText)
+                        }
+
+                        if let license = plugin.spec.license {
+                            Label(license, systemImage: "doc.text")
+                                .font(.system(size: 11))
+                                .foregroundColor(theme.tertiaryText)
+                        }
+
+                        if let tools = plugin.spec.capabilities?.tools, !tools.isEmpty {
+                            Label("\(tools.count) tool\(tools.count == 1 ? "" : "s")", systemImage: "wrench")
+                                .font(.system(size: 11))
+                                .foregroundColor(theme.tertiaryText)
                         }
                     }
                 }
+
+                Spacer()
+
+                // Action button
+                actionButton
+            }
+
+            // Show tools provided
+            if let tools = plugin.spec.capabilities?.tools, !tools.isEmpty {
+                Divider()
+                    .padding(.vertical, 4)
+
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Provides:")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundColor(theme.secondaryText)
+
+                    FlowLayout(spacing: 6) {
+                        ForEach(tools, id: \.name) { tool in
+                            HStack(spacing: 4) {
+                                Image(systemName: "function")
+                                    .font(.system(size: 9))
+                                Text(tool.name)
+                                    .font(.system(size: 11, weight: .medium))
+                            }
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 5)
+                            .background(
+                                Capsule()
+                                    .fill(theme.tertiaryBackground)
+                            )
+                            .foregroundColor(theme.primaryText)
+                        }
+                    }
+                }
+            }
+        }
+        .padding(16)
+        .background(cardBackground)
+        .animation(.easeOut(duration: 0.15), value: isHovering)
+        .onHover { hovering in
+            isHovering = hovering
+        }
+        .opacity(hasAppeared ? 1 : 0)
+        .onAppear {
+            let delay = Double(animationIndex) * 0.02
+            withAnimation(.easeOut(duration: 0.2).delay(delay)) {
+                hasAppeared = true
             }
         }
         .alert("Installation Error", isPresented: $showError) {
@@ -333,18 +414,38 @@ private struct PluginRow: View {
         }
     }
 
+    private var cardBackground: some View {
+        RoundedRectangle(cornerRadius: 12)
+            .fill(theme.cardBackground)
+            .overlay(
+                RoundedRectangle(cornerRadius: 12)
+                    .stroke(
+                        isHovering ? theme.accentColor.opacity(0.2) : theme.cardBorder,
+                        lineWidth: 1
+                    )
+            )
+            .shadow(
+                color: theme.shadowColor.opacity(
+                    isHovering ? theme.shadowOpacity * 1.5 : theme.shadowOpacity
+                ),
+                radius: isHovering ? 12 : theme.cardShadowRadius,
+                x: 0,
+                y: isHovering ? 4 : theme.cardShadowY
+            )
+    }
+
     private var updateBadge: some View {
-        HStack(spacing: 3) {
+        HStack(spacing: 4) {
             Image(systemName: "arrow.up.circle.fill")
                 .font(.system(size: 10))
             Text("Update")
-                .font(.system(size: 10, weight: .medium))
+                .font(.system(size: 10, weight: .semibold))
         }
-        .padding(.horizontal, 6)
-        .padding(.vertical, 2)
+        .padding(.horizontal, 8)
+        .padding(.vertical, 3)
         .background(
             Capsule()
-                .fill(Color.orange.opacity(0.2))
+                .fill(Color.orange.opacity(0.15))
         )
         .foregroundColor(.orange)
     }
@@ -353,19 +454,25 @@ private struct PluginRow: View {
     private var actionButton: some View {
         if plugin.isInstalling {
             ProgressView()
-                .scaleEffect(0.7)
-                .frame(width: 80)
+                .scaleEffect(0.8)
+                .frame(width: 90, height: 32)
         } else if plugin.hasUpdate {
             Button(action: { upgrade() }) {
-                HStack(spacing: 4) {
-                    Image(systemName: "arrow.up.circle")
-                        .font(.system(size: 11))
+                HStack(spacing: 5) {
+                    Image(systemName: "arrow.up.circle.fill")
+                        .font(.system(size: 12))
                     Text("Update")
-                        .font(.system(size: 12, weight: .medium))
+                        .font(.system(size: 13, weight: .semibold))
                 }
+                .foregroundColor(.white)
+                .padding(.horizontal, 14)
+                .padding(.vertical, 8)
+                .background(
+                    RoundedRectangle(cornerRadius: 8)
+                        .fill(Color.orange)
+                )
             }
-            .buttonStyle(.borderedProminent)
-            .tint(.orange)
+            .buttonStyle(PlainButtonStyle())
         } else if plugin.isInstalled {
             Menu {
                 Button(role: .destructive) {
@@ -374,25 +481,41 @@ private struct PluginRow: View {
                     Label("Uninstall", systemImage: "trash")
                 }
             } label: {
-                HStack(spacing: 4) {
+                HStack(spacing: 5) {
                     Image(systemName: "checkmark.circle.fill")
-                        .font(.system(size: 11))
+                        .font(.system(size: 12))
                     Text("Installed")
-                        .font(.system(size: 12, weight: .medium))
+                        .font(.system(size: 13, weight: .medium))
+                    Image(systemName: "chevron.down")
+                        .font(.system(size: 9, weight: .semibold))
                 }
+                .foregroundColor(theme.successColor)
+                .padding(.horizontal, 14)
+                .padding(.vertical, 8)
+                .background(
+                    RoundedRectangle(cornerRadius: 8)
+                        .fill(theme.successColor.opacity(0.1))
+                )
             }
             .menuStyle(.borderlessButton)
-            .frame(width: 90)
+            .fixedSize()
         } else {
             Button(action: { install() }) {
-                HStack(spacing: 4) {
-                    Image(systemName: "arrow.down.circle")
-                        .font(.system(size: 11))
+                HStack(spacing: 5) {
+                    Image(systemName: "arrow.down.circle.fill")
+                        .font(.system(size: 12))
                     Text("Install")
-                        .font(.system(size: 12, weight: .medium))
+                        .font(.system(size: 13, weight: .semibold))
                 }
+                .foregroundColor(.white)
+                .padding(.horizontal, 14)
+                .padding(.vertical, 8)
+                .background(
+                    RoundedRectangle(cornerRadius: 8)
+                        .fill(theme.accentColor)
+                )
             }
-            .buttonStyle(.borderedProminent)
+            .buttonStyle(PlainButtonStyle())
         }
     }
 
@@ -479,9 +602,13 @@ private struct ToolSettingsRow: View {
     @Environment(\.theme) private var theme
     let entry: ToolRegistry.ToolEntry
     @ObservedObject var repoService: PluginRepositoryService
+    var animationIndex: Int = 0
     let onChange: () -> Void
+
     @State private var isExpanded: Bool = false
     @State private var refreshToken: Int = 0
+    @State private var isHovering = false
+    @State private var hasAppeared = false
 
     // Check if this tool's plugin has an update
     private var pluginState: PluginState? {
@@ -502,187 +629,234 @@ private struct ToolSettingsRow: View {
 
     var body: some View {
         let info = ToolRegistry.shared.policyInfo(for: entry.name)
-        GlassListRow {
-            VStack(alignment: .leading, spacing: 12) {
-                // Main row content
-                HStack(spacing: 12) {
-                    // Tool info and expand button combined
-                    Button(action: {
-                        withAnimation(.easeInOut(duration: 0.2)) {
-                            isExpanded.toggle()
-                        }
-                    }) {
-                        HStack(spacing: 10) {
-                            VStack(alignment: .leading, spacing: 2) {
-                                HStack(spacing: 6) {
-                                    Text(entry.name)
-                                        .font(.system(size: 14, weight: .medium))
-                                        .foregroundColor(theme.primaryText)
 
-                                    // Show update badge if plugin has update
-                                    if let plugin = pluginState, plugin.hasUpdate {
-                                        updateBadge
-                                    }
+        VStack(alignment: .leading, spacing: 12) {
+            // Main row content
+            HStack(spacing: 12) {
+                // Tool icon
+                ZStack {
+                    RoundedRectangle(cornerRadius: 8)
+                        .fill(theme.accentColor.opacity(0.1))
+                    Image(systemName: "function")
+                        .font(.system(size: 14, weight: .medium))
+                        .foregroundColor(theme.accentColor)
+                }
+                .frame(width: 36, height: 36)
+
+                // Tool info and expand button combined
+                Button(action: {
+                    withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+                        isExpanded.toggle()
+                    }
+                }) {
+                    HStack(spacing: 10) {
+                        VStack(alignment: .leading, spacing: 3) {
+                            HStack(spacing: 6) {
+                                Text(entry.name)
+                                    .font(.system(size: 14, weight: .semibold, design: .rounded))
+                                    .foregroundColor(theme.primaryText)
+
+                                // Show update badge if plugin has update
+                                if let plugin = pluginState, plugin.hasUpdate {
+                                    updateBadge
                                 }
-                                Text(entry.description)
-                                    .font(.system(size: 12))
+                            }
+                            Text(entry.description)
+                                .font(.system(size: 12))
+                                .foregroundColor(theme.secondaryText)
+                                .lineLimit(1)
+                        }
+
+                        Spacer()
+
+                        // Update button if available
+                        if let plugin = pluginState, plugin.hasUpdate {
+                            Button(action: {
+                                Task {
+                                    try? await repoService.upgrade(pluginId: plugin.spec.plugin_id)
+                                }
+                            }) {
+                                Text("Update")
+                                    .font(.system(size: 11, weight: .semibold))
+                                    .foregroundColor(.white)
+                                    .padding(.horizontal, 10)
+                                    .padding(.vertical, 5)
+                                    .background(
+                                        RoundedRectangle(cornerRadius: 6)
+                                            .fill(Color.orange)
+                                    )
+                            }
+                            .buttonStyle(PlainButtonStyle())
+                        }
+
+                        // Permission indicator
+                        if let info = info {
+                            HStack(spacing: 5) {
+                                Image(systemName: iconForPolicy(info.effectivePolicy))
+                                    .font(.system(size: 10))
+                                    .foregroundColor(colorForPolicy(info.effectivePolicy))
+                                Text(info.effectivePolicy.rawValue.capitalized)
+                                    .font(.system(size: 11, weight: .medium))
                                     .foregroundColor(theme.secondaryText)
                             }
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 5)
+                            .background(
+                                Capsule()
+                                    .fill(theme.tertiaryBackground)
+                            )
+                        }
+
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundColor(theme.tertiaryText)
+                            .rotationEffect(.degrees(isExpanded ? 90 : 0))
+                    }
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(PlainButtonStyle())
+
+                // Enable toggle - separate from expand area
+                Toggle(
+                    "",
+                    isOn: Binding(
+                        get: { entry.enabled },
+                        set: { newValue in
+                            ToolRegistry.shared.setEnabled(newValue, for: entry.name)
+                            onChange()
+                        }
+                    )
+                )
+                .toggleStyle(SwitchToggleStyle())
+                .labelsHidden()
+            }
+
+            // Expanded permissions section
+            if isExpanded, let info {
+                VStack(alignment: .leading, spacing: 12) {
+                    Divider()
+                        .padding(.vertical, 4)
+
+                    // Permission policy section
+                    VStack(alignment: .leading, spacing: 10) {
+                        HStack {
+                            Text("Permission Policy")
+                                .font(.system(size: 13, weight: .semibold))
+                                .foregroundColor(theme.primaryText)
 
                             Spacer()
 
-                            // Update button if available
-                            if let plugin = pluginState, plugin.hasUpdate {
-                                Button(action: {
-                                    Task {
-                                        try? await repoService.upgrade(pluginId: plugin.spec.plugin_id)
-                                    }
-                                }) {
-                                    Text("Update")
-                                        .font(.system(size: 11, weight: .medium))
+                            if info.configuredPolicy != nil {
+                                Button("Use Default") {
+                                    ToolRegistry.shared.clearPolicy(for: entry.name)
+                                    bump()
                                 }
-                                .buttonStyle(.borderedProminent)
-                                .tint(.orange)
-                                .controlSize(.small)
+                                .font(.system(size: 11, weight: .medium))
+                                .buttonStyle(.plain)
+                                .foregroundColor(theme.accentColor)
                             }
+                        }
 
-                            // Permission indicator
-                            if let info = info {
-                                HStack(spacing: 6) {
-                                    Image(systemName: iconForPolicy(info.effectivePolicy))
-                                        .font(.system(size: 11))
-                                        .foregroundColor(colorForPolicy(info.effectivePolicy))
-                                    Text(info.effectivePolicy.rawValue.capitalized)
-                                        .font(.system(size: 11, weight: .medium))
-                                        .foregroundColor(theme.secondaryText)
+                        // Simple segmented picker
+                        Picker(
+                            "",
+                            selection: Binding(
+                                get: { info.configuredPolicy ?? info.effectivePolicy },
+                                set: { newValue in
+                                    ToolRegistry.shared.setPolicy(newValue, for: entry.name)
+                                    bump()
                                 }
-                                .padding(.horizontal, 10)
-                                .padding(.vertical, 4)
-                                .background(
-                                    Capsule()
-                                        .fill(theme.secondaryBackground)
-                                )
-                            }
+                            )
+                        ) {
+                            Label("Auto", systemImage: "sparkles").tag(ToolPermissionPolicy.auto)
+                            Label("Ask", systemImage: "questionmark.circle").tag(ToolPermissionPolicy.ask)
+                            Label("Deny", systemImage: "xmark.circle").tag(ToolPermissionPolicy.deny)
+                        }
+                        .pickerStyle(.segmented)
+                        .labelsHidden()
 
-                            Image(systemName: "chevron.right")
-                                .font(.system(size: 10, weight: .semibold))
+                        if let configured = info.configuredPolicy, configured != info.defaultPolicy {
+                            Text("Default is \(info.defaultPolicy.rawValue)")
+                                .font(.system(size: 11))
                                 .foregroundColor(theme.tertiaryText)
-                                .rotationEffect(.degrees(isExpanded ? 90 : 0))
                         }
-                        .contentShape(Rectangle())
                     }
-                    .buttonStyle(PlainButtonStyle())
 
-                    // Enable toggle - separate from expand area
-                    Toggle(
-                        "",
-                        isOn: Binding(
-                            get: { entry.enabled },
-                            set: { newValue in
-                                ToolRegistry.shared.setEnabled(newValue, for: entry.name)
-                                onChange()
-                            }
-                        )
-                    )
-                    .toggleStyle(SwitchToggleStyle())
-                    .labelsHidden()
-                }
-
-                // Expanded permissions section
-                if isExpanded, let info {
-                    VStack(alignment: .leading, spacing: 12) {
+                    // Required permissions section (if applicable)
+                    if info.isPermissioned, !info.requirements.isEmpty {
                         Divider()
+                            .padding(.vertical, 4)
 
-                        // Permission policy section
-                        VStack(alignment: .leading, spacing: 10) {
-                            HStack {
-                                Text("Permission Policy")
-                                    .font(.system(size: 12, weight: .medium))
-                                    .foregroundColor(theme.primaryText)
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("Required Permissions")
+                                .font(.system(size: 13, weight: .semibold))
+                                .foregroundColor(theme.primaryText)
 
-                                Spacer()
-
-                                if info.configuredPolicy != nil {
-                                    Button("Use Default") {
-                                        ToolRegistry.shared.clearPolicy(for: entry.name)
-                                        bump()
+                            VStack(alignment: .leading, spacing: 6) {
+                                ForEach(info.requirements, id: \.self) { req in
+                                    Toggle(
+                                        isOn: Binding(
+                                            get: { info.grantsByRequirement[req] ?? false },
+                                            set: { val in
+                                                ToolRegistry.shared.setGrant(val, requirement: req, for: entry.name)
+                                                bump()
+                                            }
+                                        )
+                                    ) {
+                                        Text(req)
+                                            .font(.system(size: 12))
+                                            .foregroundColor(theme.primaryText)
                                     }
-                                    .font(.system(size: 10))
-                                    .buttonStyle(.plain)
-                                    .foregroundColor(theme.accentColor)
+                                    .toggleStyle(.checkbox)
                                 }
                             }
-
-                            // Simple segmented picker
-                            Picker(
-                                "",
-                                selection: Binding(
-                                    get: { info.configuredPolicy ?? info.effectivePolicy },
-                                    set: { newValue in
-                                        ToolRegistry.shared.setPolicy(newValue, for: entry.name)
-                                        bump()
-                                    }
-                                )
-                            ) {
-                                Label("Auto", systemImage: "sparkles").tag(ToolPermissionPolicy.auto)
-                                Label("Ask", systemImage: "questionmark.circle").tag(ToolPermissionPolicy.ask)
-                                Label("Deny", systemImage: "xmark.circle").tag(ToolPermissionPolicy.deny)
-                            }
-                            .pickerStyle(.segmented)
-                            .labelsHidden()
-
-                            if let configured = info.configuredPolicy, configured != info.defaultPolicy {
-                                Text("Default is \(info.defaultPolicy.rawValue)")
-                                    .font(.system(size: 10))
-                                    .foregroundColor(theme.tertiaryText)
-                            }
-                        }
-
-                        // Required permissions section (if applicable)
-                        if info.isPermissioned, !info.requirements.isEmpty {
-                            Divider()
-
-                            VStack(alignment: .leading, spacing: 8) {
-                                Text("Required Permissions")
-                                    .font(.system(size: 12, weight: .medium))
-                                    .foregroundColor(theme.primaryText)
-
-                                VStack(alignment: .leading, spacing: 6) {
-                                    ForEach(info.requirements, id: \.self) { req in
-                                        Toggle(
-                                            isOn: Binding(
-                                                get: { info.grantsByRequirement[req] ?? false },
-                                                set: { val in
-                                                    ToolRegistry.shared.setGrant(val, requirement: req, for: entry.name)
-                                                    bump()
-                                                }
-                                            )
-                                        ) {
-                                            Text(req)
-                                                .font(.system(size: 11))
-                                                .foregroundColor(theme.primaryText)
-                                        }
-                                        .toggleStyle(.checkbox)
-                                    }
-                                }
-                                .padding(.leading, 2)
-                            }
+                            .padding(.leading, 2)
                         }
                     }
-                    .padding(.top, 4)
-                    .transition(.opacity.combined(with: .scale(scale: 0.98)))
-                    .id(refreshToken)
                 }
+                .transition(.opacity.combined(with: .move(edge: .top)))
+                .id(refreshToken)
+            }
+        }
+        .padding(16)
+        .background(cardBackground)
+        .animation(.easeOut(duration: 0.15), value: isHovering)
+        .onHover { hovering in
+            isHovering = hovering
+        }
+        .opacity(hasAppeared ? 1 : 0)
+        .onAppear {
+            let delay = Double(animationIndex) * 0.02
+            withAnimation(.easeOut(duration: 0.2).delay(delay)) {
+                hasAppeared = true
             }
         }
     }
 
+    private var cardBackground: some View {
+        RoundedRectangle(cornerRadius: 12)
+            .fill(theme.cardBackground)
+            .overlay(
+                RoundedRectangle(cornerRadius: 12)
+                    .stroke(
+                        isHovering ? theme.accentColor.opacity(0.2) : theme.cardBorder,
+                        lineWidth: 1
+                    )
+            )
+            .shadow(
+                color: theme.shadowColor.opacity(
+                    isHovering ? theme.shadowOpacity * 1.5 : theme.shadowOpacity
+                ),
+                radius: isHovering ? 12 : theme.cardShadowRadius,
+                x: 0,
+                y: isHovering ? 4 : theme.cardShadowY
+            )
+    }
+
     private var updateBadge: some View {
-        HStack(spacing: 3) {
-            Image(systemName: "arrow.up.circle.fill")
-                .font(.system(size: 9))
-        }
-        .foregroundColor(.orange)
+        Image(systemName: "arrow.up.circle.fill")
+            .font(.system(size: 10))
+            .foregroundColor(.orange)
     }
 
     private func bump() {
@@ -723,18 +897,34 @@ private struct InstalledPluginsSummaryView: View {
     var body: some View {
         HStack(spacing: 8) {
             Image(systemName: "puzzlepiece.extension")
+                .font(.system(size: 12))
                 .foregroundColor(theme.accentColor)
             Text(summaryText.isEmpty ? "No plugins" : summaryText)
                 .font(.system(size: 12))
                 .foregroundColor(theme.secondaryText)
                 .lineLimit(1)
                 .truncationMode(.middle)
+
             Button(action: { Task { await verifyAll() } }) {
-                Text(isVerifying ? "Verifying..." : "Verify")
-                    .font(.system(size: 11, weight: .medium))
+                HStack(spacing: 4) {
+                    if isVerifying {
+                        ProgressView()
+                            .scaleEffect(0.5)
+                            .frame(width: 12, height: 12)
+                    }
+                    Text(isVerifying ? "Verifying..." : "Verify")
+                        .font(.system(size: 11, weight: .medium))
+                }
+                .foregroundColor(theme.secondaryText)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 5)
+                .background(
+                    RoundedRectangle(cornerRadius: 6)
+                        .fill(theme.tertiaryBackground)
+                )
             }
+            .buttonStyle(PlainButtonStyle())
             .disabled(isVerifying)
-            .buttonStyle(.bordered)
         }
         .onAppear { refreshSummary() }
     }

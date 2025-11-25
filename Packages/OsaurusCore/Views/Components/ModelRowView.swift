@@ -2,8 +2,8 @@
 //  ModelRowView.swift
 //  osaurus
 //
-//  Reusable component for displaying a single model in the model list.
-//  Includes download progress, actions, and hover effects.
+//  Card-based model row with polished hover animations.
+//  Includes download progress, actions, and smooth transitions.
 //
 
 import AppKit
@@ -34,98 +34,173 @@ struct ModelRowView: View {
     /// Optional cancel action when downloading
     let onCancel: (() -> Void)?
 
+    /// Index for staggered animation
+    var animationIndex: Int = 0
+
     // MARK: - State
 
     /// Whether the user is currently hovering over this row
     @State private var isHovering = false
 
+    /// Whether the card has appeared (for entrance animation)
+    @State private var hasAppeared = false
+
     var body: some View {
         Button(action: onViewDetails) {
-            VStack(spacing: 0) {
-                HStack(spacing: 16) {
-                    // Model info
-                    VStack(alignment: .leading, spacing: 6) {
-                        HStack(alignment: .center, spacing: 8) {
-                            Text(model.name)
-                                .font(.system(size: 15, weight: .medium))
-                                .foregroundColor(theme.primaryText)
-                                .lineLimit(1)
-                                .truncationMode(.tail)
+            HStack(spacing: 16) {
+                // Model icon
+                modelIcon
 
-                            if model.isDownloaded {
-                                Image(systemName: "checkmark.circle.fill")
-                                    .font(.system(size: 12))
-                                    .foregroundColor(theme.successColor)
-                            }
-                        }
+                // Model info
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack(alignment: .center, spacing: 8) {
+                        Text(model.name)
+                            .font(.system(size: 15, weight: .semibold, design: .rounded))
+                            .foregroundColor(theme.primaryText)
+                            .lineLimit(1)
+                            .truncationMode(.tail)
 
-                        if !model.description.isEmpty {
-                            Text(model.description)
+                        if model.isDownloaded {
+                            Image(systemName: "checkmark.circle.fill")
                                 .font(.system(size: 13))
-                                .foregroundColor(theme.secondaryText)
-                                .lineLimit(2)
-                                .truncationMode(.tail)
+                                .foregroundColor(theme.successColor)
                         }
+                    }
 
-                        // Repository link (non-interactive to allow full-row tap)
-                        if let url = URL(string: model.downloadURL) {
+                    if !model.description.isEmpty {
+                        Text(model.description)
+                            .font(.system(size: 13))
+                            .foregroundColor(theme.secondaryText)
+                            .lineLimit(2)
+                            .truncationMode(.tail)
+                    }
+
+                    // Repository link
+                    if let url = URL(string: model.downloadURL) {
+                        HStack(spacing: 4) {
+                            Image(systemName: "link")
+                                .font(.system(size: 10))
                             Link(repositoryName(from: model.downloadURL), destination: url)
                                 .font(.system(size: 12))
-                                .foregroundColor(theme.tertiaryText)
                                 .lineLimit(1)
                                 .truncationMode(.middle)
                                 .allowsHitTesting(false)
                         }
-
-                        // Download progress
-                        if case .downloading(let progress) = downloadState {
-                            VStack(alignment: .leading, spacing: 6) {
-                                HStack(spacing: 8) {
-                                    SimpleProgressBar(progress: progress)
-                                        .frame(height: 4)
-                                        .frame(maxWidth: .infinity)
-                                    if let onCancel = onCancel {
-                                        CircularIconButton(
-                                            systemName: "xmark",
-                                            help: "Cancel download",
-                                            action: onCancel
-                                        )
-                                    }
-                                }
-
-                                if let line = formattedMetricsLine() {
-                                    Text(line)
-                                        .font(.system(size: 11))
-                                        .foregroundColor(theme.tertiaryText)
-                                }
-                            }
-                            .padding(.top, 4)
-                        }
+                        .foregroundColor(theme.tertiaryText)
                     }
 
-                    Spacer(minLength: 0)
-
-                    // Chevron indicator
-                    Image(systemName: "chevron.right")
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundColor(theme.tertiaryText)
+                    // Download progress
+                    if case .downloading(let progress) = downloadState {
+                        downloadProgressView(progress: progress)
+                            .padding(.top, 4)
+                    }
                 }
-                .padding(.vertical, 16)
-                .padding(.horizontal, 20)
 
-                Divider()
-                    .padding(.leading, 20)
+                Spacer(minLength: 0)
+
+                // Chevron indicator
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundColor(theme.tertiaryText)
+                    .opacity(isHovering ? 1 : 0.5)
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .contentShape(Rectangle())
-            .background(isHovering ? theme.secondaryBackground : Color.clear)
+            .padding(16)
+            .background(cardBackground)
+            .contentShape(RoundedRectangle(cornerRadius: 12))
         }
         .buttonStyle(PlainButtonStyle())
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .contentShape(Rectangle())
+        .animation(.easeOut(duration: 0.15), value: isHovering)
         .onHover { hovering in
-            withAnimation(.easeInOut(duration: 0.15)) {
-                isHovering = hovering
+            isHovering = hovering
+        }
+        .opacity(hasAppeared ? 1 : 0)
+        .onAppear {
+            let delay = Double(animationIndex) * 0.02
+            withAnimation(.easeOut(duration: 0.2).delay(delay)) {
+                hasAppeared = true
+            }
+        }
+    }
+
+    // MARK: - Model Icon
+
+    private var modelIcon: some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: 10)
+                .fill(
+                    model.isDownloaded
+                        ? theme.successColor.opacity(0.12)
+                        : theme.accentColor.opacity(0.12)
+                )
+
+            Image(systemName: model.isDownloaded ? "cube.fill" : "cube")
+                .font(.system(size: 20, weight: .medium))
+                .foregroundColor(
+                    model.isDownloaded
+                        ? theme.successColor
+                        : theme.accentColor
+                )
+        }
+        .frame(width: 44, height: 44)
+    }
+
+    // MARK: - Card Background
+
+    private var cardBackground: some View {
+        RoundedRectangle(cornerRadius: 12)
+            .fill(theme.cardBackground)
+            .overlay(
+                RoundedRectangle(cornerRadius: 12)
+                    .stroke(
+                        isHovering ? theme.accentColor.opacity(0.2) : theme.cardBorder,
+                        lineWidth: 1
+                    )
+            )
+            .shadow(
+                color: theme.shadowColor.opacity(
+                    isHovering ? theme.shadowOpacity * 1.5 : theme.shadowOpacity
+                ),
+                radius: isHovering ? 12 : theme.cardShadowRadius,
+                x: 0,
+                y: isHovering ? 4 : theme.cardShadowY
+            )
+    }
+
+    // MARK: - Download Progress View
+
+    private func downloadProgressView(progress: Double) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 8) {
+                // Progress bar
+                GeometryReader { geometry in
+                    ZStack(alignment: .leading) {
+                        RoundedRectangle(cornerRadius: 3)
+                            .fill(theme.tertiaryBackground)
+
+                        RoundedRectangle(cornerRadius: 3)
+                            .fill(theme.accentColor)
+                            .frame(width: geometry.size.width * progress)
+                            .animation(.easeOut(duration: 0.3), value: progress)
+                    }
+                }
+                .frame(height: 6)
+
+                // Cancel button
+                if let onCancel = onCancel {
+                    Button(action: onCancel) {
+                        Image(systemName: "xmark.circle.fill")
+                            .font(.system(size: 16))
+                            .foregroundColor(theme.tertiaryText)
+                    }
+                    .buttonStyle(PlainButtonStyle())
+                    .help("Cancel download")
+                }
+            }
+
+            if let line = formattedMetricsLine() {
+                Text(line)
+                    .font(.system(size: 11, design: .monospaced))
+                    .foregroundColor(theme.tertiaryText)
             }
         }
     }
