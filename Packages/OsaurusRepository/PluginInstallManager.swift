@@ -34,7 +34,7 @@ public final class PluginInstallManager: @unchecked Sendable {
     public static let shared = PluginInstallManager()
     private init() {}
 
-    public struct InstallResult {
+    public struct InstallResult: Sendable {
         public let receipt: PluginReceipt
         public let installDirectory: URL
         public let dylibURL: URL
@@ -82,9 +82,16 @@ public final class PluginInstallManager: @unchecked Sendable {
             throw PluginInstallError.checksumMismatch
         }
 
+        // Verify minisign signature if provided (ensures plugin is from trusted author)
         if let ms = artifact.minisign, let pubKey = spec.public_keys?["minisign"] {
-            let ok = try MinisignVerifier.verify(publicKey: pubKey, signature: ms.signature, data: bytes)
-            if !ok {
+            do {
+                let ok = try MinisignVerifier.verify(publicKey: pubKey, signature: ms.signature, data: bytes)
+                if !ok {
+                    throw PluginInstallError.signatureInvalid
+                }
+                NSLog("[Osaurus] Minisign signature verified for \(pluginId)")
+            } catch let error as MinisignVerifyError {
+                NSLog("[Osaurus] Minisign verification failed for \(pluginId): \(error)")
                 throw PluginInstallError.signatureInvalid
             }
         }

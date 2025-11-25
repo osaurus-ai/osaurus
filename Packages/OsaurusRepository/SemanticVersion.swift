@@ -7,7 +7,7 @@
 
 import Foundation
 
-public struct SemanticVersion: Codable, Hashable, Comparable, CustomStringConvertible {
+public struct SemanticVersion: Codable, Hashable, Comparable, CustomStringConvertible, Sendable {
     public let major: Int
     public let minor: Int
     public let patch: Int

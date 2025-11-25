@@ -12,6 +12,7 @@ struct TabPill: View {
     let title: String
     let isSelected: Bool
     let count: Int?
+    var badge: Int? = nil
     var action: () -> Void = {}
 
     var body: some View {
@@ -20,6 +21,19 @@ struct TabPill: View {
                 Text(title + (count.map { " (\($0))" } ?? ""))
                     .font(.system(size: 14, weight: isSelected ? .medium : .regular))
                     .foregroundColor(isSelected ? theme.primaryText : theme.secondaryText)
+
+                // Update badge
+                if let badge = badge, badge > 0 {
+                    Text("\(badge)")
+                        .font(.system(size: 10, weight: .bold))
+                        .foregroundColor(.white)
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 2)
+                        .background(
+                            Capsule()
+                                .fill(Color.orange)
+                        )
+                }
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 6)

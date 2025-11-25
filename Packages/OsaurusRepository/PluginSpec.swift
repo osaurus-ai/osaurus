@@ -7,12 +7,12 @@
 
 import Foundation
 
-public struct MinisignInfo: Codable, Equatable {
+public struct MinisignInfo: Codable, Equatable, Sendable {
     public let signature: String
     public let key_id: String?
 }
 
-public struct PluginArtifact: Codable, Equatable {
+public struct PluginArtifact: Codable, Equatable, Sendable {
     public let os: String
     public let arch: String
     public let min_macos: String?
@@ -22,11 +22,11 @@ public struct PluginArtifact: Codable, Equatable {
     public let size: Int?
 }
 
-public struct PluginRequirements: Codable, Equatable {
+public struct PluginRequirements: Codable, Equatable, Sendable {
     public let osaurus_min_version: SemanticVersion?
 }
 
-public struct PluginVersionEntry: Codable, Equatable {
+public struct PluginVersionEntry: Codable, Equatable, Sendable {
     public let version: SemanticVersion
     public let release_date: String?
     public let notes: String?
@@ -35,15 +35,15 @@ public struct PluginVersionEntry: Codable, Equatable {
 }
 
 // Registry-side capabilities summary (informational)
-public struct RegistryCapabilities: Codable, Equatable {
-    public struct ToolSummary: Codable, Equatable {
+public struct RegistryCapabilities: Codable, Equatable, Sendable {
+    public struct ToolSummary: Codable, Equatable, Sendable {
         public let name: String
         public let description: String
     }
     public let tools: [ToolSummary]?
 }
 
-public struct PluginSpec: Codable, Equatable {
+public struct PluginSpec: Codable, Equatable, Sendable {
     public let plugin_id: String
     public let name: String?
     public let description: String?
