@@ -89,6 +89,9 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegat
         // Load external tool plugins at launch (after core is initialized)
         PluginManager.shared.loadAll()
 
+        // Start plugin repository background refresh for update checking
+        PluginRepositoryService.shared.startBackgroundRefresh()
+
         // Auto-start server on app launch
         Task { @MainActor in
             await serverController.startServer()
@@ -121,6 +124,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegat
 
     public func applicationWillTerminate(_ notification: Notification) {
         NSLog("Osaurus server app terminating")
+        PluginRepositoryService.shared.stopBackgroundRefresh()
         Task { @MainActor in
             await MCPServerManager.shared.stopAll()
         }

@@ -74,6 +74,26 @@ final class NotificationService: NSObject, UNUserNotificationCenterDelegate {
         center.add(request, withCompletionHandler: nil)
     }
 
+    func postPluginUpdatesAvailable(count: Int, pluginNames: [String]) {
+        guard count > 0 else { return }
+
+        let content = UNMutableNotificationContent()
+        content.title = "Plugin updates available"
+        if count == 1 {
+            content.body = "\(pluginNames.first ?? "1 plugin") has an update available."
+        } else {
+            content.body = "\(count) plugins have updates available."
+        }
+        content.userInfo = ["pluginCount": count]
+
+        let request = UNNotificationRequest(
+            identifier: "plugin-updates-\(UUID().uuidString)",
+            content: content,
+            trigger: nil
+        )
+        center.add(request, withCompletionHandler: nil)
+    }
+
     // MARK: - UNUserNotificationCenterDelegate
 
     nonisolated func userNotificationCenter(

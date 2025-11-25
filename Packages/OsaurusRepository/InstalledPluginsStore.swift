@@ -7,8 +7,8 @@
 
 import Foundation
 
-public struct PluginReceipt: Codable, Equatable {
-    public struct ArtifactInfo: Codable, Equatable {
+public struct PluginReceipt: Codable, Equatable, Sendable {
+    public struct ArtifactInfo: Codable, Equatable, Sendable {
         public let url: String
         public let sha256: String
         public let minisign: MinisignInfo?
