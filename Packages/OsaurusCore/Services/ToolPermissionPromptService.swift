@@ -2,84 +2,123 @@
 //  ToolPermissionPromptService.swift
 //  osaurus
 //
-//  Presents a confirmation dialog when a tool requires user approval.
+//  Presents a modern confirmation dialog when a tool requires user approval.
 //
 
 import AppKit
 import Foundation
+import SwiftUI
 
 @MainActor
 enum ToolPermissionPromptService {
+    private static var permissionWindow: NSPanel?
+    private static var keyMonitor: Any?
+
     static func requestApproval(
         toolName: String,
         description: String,
         argumentsJSON: String
     ) async -> Bool {
-        let prettyArguments = prettyPrintedJSON(argumentsJSON) ?? argumentsJSON
+        return await withCheckedContinuation { continuation in
+            var hasResumed = false
 
-        // Build a monospaced, non-editable text view for JSON arguments
-        let textView = NSTextView(frame: NSRect(x: 0, y: 0, width: 520, height: 220))
-        textView.isEditable = false
-        textView.isSelectable = true
-        textView.font = NSFont.monospacedSystemFont(ofSize: 12, weight: .regular)
-        textView.textColor = NSColor.labelColor
-        textView.backgroundColor = NSColor.textBackgroundColor
-        textView.string = prettyArguments
-        textView.textContainerInset = NSSize(width: 8, height: 8)
-        if let container = textView.textContainer {
-            container.lineFragmentPadding = 4
-            container.widthTracksTextView = true
-        }
-
-        let scrollView = NSScrollView(frame: NSRect(x: 0, y: 0, width: 540, height: 240))
-        scrollView.hasVerticalScroller = true
-        scrollView.hasHorizontalScroller = true
-        scrollView.autohidesScrollers = true
-        scrollView.borderType = .bezelBorder
-        scrollView.documentView = textView
-
-        let alert = NSAlert()
-        alert.alertStyle = .warning
-        alert.messageText = "Run tool: \(toolName)?"
-        if description.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            alert.informativeText = "This action requires your approval."
-        } else {
-            alert.informativeText = description
-        }
-        alert.addButton(withTitle: "Allow")
-        alert.addButton(withTitle: "Deny")
-        alert.accessoryView = scrollView
-
-        // Try to attach as a sheet to a visible window; otherwise, show app-modal
-        if let parent =
-            NSApp.keyWindow
-            ?? NSApp.mainWindow
-            ?? NSApp.windows.first(where: { $0.isVisible })
-        {
-            NSApp.activate(ignoringOtherApps: true)
-            return await withCheckedContinuation { continuation in
-                alert.beginSheetModal(for: parent) { response in
-                    continuation.resume(returning: response == .alertFirstButtonReturn)
-                }
+            let onAllow = {
+                guard !hasResumed else { return }
+                hasResumed = true
+                dismissWindow()
+                continuation.resume(returning: true)
             }
-        } else {
+
+            let onDeny = {
+                guard !hasResumed else { return }
+                hasResumed = true
+                dismissWindow()
+                continuation.resume(returning: false)
+            }
+
+            // Create the SwiftUI view
+            let themeManager = ThemeManager.shared
+            let permissionView = ToolPermissionView(
+                toolName: toolName,
+                description: description.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                    ? "This action requires your approval."
+                    : description,
+                argumentsJSON: argumentsJSON,
+                onAllow: onAllow,
+                onDeny: onDeny
+            )
+            .environment(\.theme, themeManager.currentTheme)
+
+            let hostingController = NSHostingController(rootView: permissionView)
+
+            // Calculate window size based on content
+            let fittingSize = hostingController.view.fittingSize
+            let windowSize = NSSize(
+                width: max(fittingSize.width, 480),
+                height: max(fittingSize.height, 300)
+            )
+
+            // Center on active screen
+            let mouse = NSEvent.mouseLocation
+            let screen = NSScreen.screens.first { NSMouseInRect(mouse, $0.frame, false) } ?? NSScreen.main
+            let initialRect: NSRect
+            if let s = screen {
+                let x = s.visibleFrame.midX - windowSize.width / 2
+                let y = s.visibleFrame.midY - windowSize.height / 2
+                initialRect = NSRect(x: x, y: y, width: windowSize.width, height: windowSize.height)
+            } else {
+                initialRect = NSRect(x: 0, y: 0, width: windowSize.width, height: windowSize.height)
+            }
+
+            // Create custom panel
+            let panel = NSPanel(
+                contentRect: initialRect,
+                styleMask: [.titled, .fullSizeContentView],
+                backing: .buffered,
+                defer: false
+            )
+            panel.isOpaque = false
+            panel.backgroundColor = .clear
+            panel.hasShadow = true
+            panel.level = .modalPanel
+            panel.hidesOnDeactivate = false
+            panel.titleVisibility = .hidden
+            panel.titlebarAppearsTransparent = true
+            panel.isMovableByWindowBackground = true
+            panel.standardWindowButton(.closeButton)?.isHidden = true
+            panel.standardWindowButton(.miniaturizeButton)?.isHidden = true
+            panel.standardWindowButton(.zoomButton)?.isHidden = true
+            panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
+            panel.animationBehavior = .alertPanel
+            panel.contentViewController = hostingController
+
+            permissionWindow = panel
+
+            // Add keyboard shortcuts
+            keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+                if event.keyCode == 36 {  // Enter key
+                    onAllow()
+                    return nil
+                } else if event.keyCode == 53 {  // Escape key
+                    onDeny()
+                    return nil
+                }
+                return event
+            }
+
+            // Pre-layout and show
+            hostingController.view.layoutSubtreeIfNeeded()
             NSApp.activate(ignoringOtherApps: true)
-            let response = alert.runModal()
-            return response == .alertFirstButtonReturn
+            panel.makeKeyAndOrderFront(nil)
         }
     }
 
-    private static func prettyPrintedJSON(_ raw: String) -> String? {
-        guard let data = raw.data(using: .utf8) else { return nil }
-        do {
-            let object = try JSONSerialization.jsonObject(with: data, options: [])
-            let pretty = try JSONSerialization.data(
-                withJSONObject: object,
-                options: [.prettyPrinted, .sortedKeys]
-            )
-            return String(decoding: pretty, as: UTF8.self)
-        } catch {
-            return nil
+    private static func dismissWindow() {
+        if let monitor = keyMonitor {
+            NSEvent.removeMonitor(monitor)
+            keyMonitor = nil
         }
+        permissionWindow?.orderOut(nil)
+        permissionWindow = nil
     }
 }
