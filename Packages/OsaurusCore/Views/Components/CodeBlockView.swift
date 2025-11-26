@@ -3,6 +3,7 @@
 //  osaurus
 //
 //  Syntax highlighted code block with copy functionality
+//  Optimized for streaming with Equatable conformance
 //
 
 import AppKit
@@ -17,23 +18,52 @@ struct CodeBlockView: View {
     @State private var copied = false
     @State private var isHovered = false
 
+    // Precompute line count for efficiency
+    private var lineCount: Int {
+        code.isEmpty ? 1 : code.components(separatedBy: "\n").count
+    }
+
+    private var isMultiLine: Bool {
+        lineCount > 1
+    }
+
+    private var languageIcon: String {
+        switch language?.lowercased() {
+        case "swift": return "swift"
+        case "python", "py": return "chevron.left.forwardslash.chevron.right"
+        case "javascript", "js", "typescript", "ts": return "curlybraces"
+        case "json": return "doc.text"
+        case "bash", "sh", "shell", "zsh": return "terminal"
+        case "html", "xml": return "chevron.left.forwardslash.chevron.right"
+        case "css", "scss", "sass": return "paintbrush"
+        case "sql": return "cylinder"
+        case "rust", "go", "java", "kotlin", "c", "cpp", "c++": return "chevron.left.forwardslash.chevron.right"
+        case "markdown", "md": return "doc.richtext"
+        default: return "doc.text"
+        }
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            // Header bar
             headerBar
-
-            // Code content
             codeContent
         }
         .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .strokeBorder(theme.primaryBorder.opacity(0.3), lineWidth: 0.5)
+                .strokeBorder(
+                    isHovered ? theme.primaryBorder.opacity(0.5) : theme.primaryBorder.opacity(0.25),
+                    lineWidth: 0.5
+                )
+        )
+        .shadow(
+            color: theme.shadowColor.opacity(isHovered ? 0.12 : 0.06),
+            radius: isHovered ? 8 : 4,
+            x: 0,
+            y: isHovered ? 4 : 2
         )
         .onHover { hovering in
-            withAnimation(.easeInOut(duration: 0.15)) {
-                isHovered = hovering
-            }
+            isHovered = hovering
         }
     }
 
@@ -41,11 +71,23 @@ struct CodeBlockView: View {
 
     private var headerBar: some View {
         HStack(spacing: 8) {
-            // Language tag
+            // Language tag with icon
             if let language, !language.isEmpty {
-                Text(language.lowercased())
-                    .font(.system(size: 11, weight: .medium, design: .monospaced))
-                    .foregroundColor(theme.secondaryText)
+                HStack(spacing: 5) {
+                    Image(systemName: languageIcon)
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundColor(theme.tertiaryText)
+
+                    Text(language.lowercased())
+                        .font(.system(size: 11, weight: .medium, design: .monospaced))
+                        .foregroundColor(theme.secondaryText)
+                }
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
+                .background(
+                    Capsule()
+                        .fill(theme.tertiaryBackground.opacity(0.6))
+                )
             }
 
             Spacer()
@@ -57,42 +99,86 @@ struct CodeBlockView: View {
                         .font(.system(size: 10, weight: .medium))
 
                     if copied {
-                        Text("Copied")
+                        Text("Copied!")
                             .font(.system(size: 10, weight: .medium))
                     }
                 }
                 .foregroundColor(copied ? theme.successColor : theme.tertiaryText)
-                .padding(.horizontal, 8)
-                .padding(.vertical, 4)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 5)
                 .background(
                     Capsule()
-                        .fill(theme.tertiaryBackground.opacity(isHovered ? 1 : 0))
+                        .fill(
+                            copied
+                                ? theme.successColor.opacity(0.15)
+                                : theme.tertiaryBackground.opacity(isHovered ? 0.8 : 0)
+                        )
                 )
             }
             .buttonStyle(.plain)
             .opacity(isHovered || copied ? 1 : 0)
-            .animation(.easeInOut(duration: 0.15), value: isHovered)
-            .animation(.easeInOut(duration: 0.15), value: copied)
             .help("Copy code")
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
-        .background(theme.codeBlockBackground.opacity(0.7))
+        .background(
+            theme.codeBlockBackground.opacity(0.6)
+                .overlay(
+                    LinearGradient(
+                        colors: [
+                            theme.primaryBorder.opacity(0.05),
+                            Color.clear,
+                        ],
+                        startPoint: .top,
+                        endPoint: .bottom
+                    )
+                )
+        )
     }
 
     // MARK: - Code Content
 
     private var codeContent: some View {
         ScrollView(.horizontal, showsIndicators: false) {
-            Text(code)
-                .font(Typography.code(baseWidth))
-                .foregroundColor(theme.primaryText.opacity(0.95))
-                .textSelection(.enabled)
-                .padding(.horizontal, 12)
-                .padding(.vertical, 12)
-                .frame(maxWidth: .infinity, alignment: .leading)
+            HStack(alignment: .top, spacing: 0) {
+                // Line numbers (for multi-line code)
+                if isMultiLine {
+                    lineNumbersView
+                }
+
+                // Code text
+                Text(code)
+                    .font(Typography.code(baseWidth))
+                    .foregroundColor(theme.primaryText.opacity(0.95))
+                    .textSelection(.enabled)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 12)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
         }
         .background(theme.codeBlockBackground)
+    }
+
+    private var lineNumbersView: some View {
+        // Use a simple Text with joined line numbers for better performance
+        let numbers = (1 ... lineCount).map { String($0) }.joined(separator: "\n")
+        return Text(numbers)
+            .font(.system(size: 12 * Typography.scale(for: baseWidth), weight: .regular, design: .monospaced))
+            .foregroundColor(theme.tertiaryText.opacity(0.5))
+            .multilineTextAlignment(.trailing)
+            .padding(.leading, 12)
+            .padding(.trailing, 8)
+            .padding(.vertical, 12)
+            .background(
+                Rectangle()
+                    .fill(theme.codeBlockBackground.opacity(0.3))
+            )
+            .overlay(
+                Rectangle()
+                    .fill(theme.primaryBorder.opacity(0.15))
+                    .frame(width: 1),
+                alignment: .trailing
+            )
     }
 
     // MARK: - Actions
@@ -132,10 +218,11 @@ struct CodeBlockView: View {
             VStack(spacing: 20) {
                 CodeBlockView(code: sampleCode, language: "swift", baseWidth: 600)
                 CodeBlockView(code: "npm install osaurus", language: "bash", baseWidth: 600)
-                CodeBlockView(code: "print('Hello, World!')", language: nil, baseWidth: 600)
+                CodeBlockView(code: "print('Hello, World!')", language: "python", baseWidth: 600)
+                CodeBlockView(code: "SELECT * FROM users WHERE id = 1;", language: "sql", baseWidth: 600)
             }
             .padding()
-            .frame(width: 600)
+            .frame(width: 700)
             .background(Color(hex: "0f0f10"))
         }
     }

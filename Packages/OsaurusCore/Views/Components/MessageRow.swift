@@ -49,6 +49,7 @@ struct MessageRow: View {
             .padding(.vertical, 16)
         }
         .background(messageBackground)
+        .contentShape(RoundedRectangle(cornerRadius: 12, style: .continuous))  // Ensure entire area is hoverable
         .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
         .onHover { hovering in
             withAnimation(.easeInOut(duration: 0.15)) {
@@ -89,13 +90,10 @@ struct MessageRow: View {
 
             // Action buttons (visible on hover)
             if !turn.content.isEmpty {
-                HStack(spacing: 4) {
-                    copyButton
-                }
-                .opacity(isHovered ? 1 : 0)
-                .animation(.easeInOut(duration: 0.15), value: isHovered)
+                copyButton
             }
         }
+        .contentShape(Rectangle())  // Ensure entire header row is hoverable
     }
 
     private var copyButton: some View {
@@ -106,10 +104,13 @@ struct MessageRow: View {
                 .padding(6)
                 .background(
                     Circle()
-                        .fill(theme.secondaryBackground.opacity(0.8))
+                        .fill(theme.secondaryBackground.opacity(isHovered ? 0.8 : 0))
                 )
         }
         .buttonStyle(.plain)
+        .opacity(isHovered ? 1 : 0)
+        .animation(.easeInOut(duration: 0.15), value: isHovered)
+        .allowsHitTesting(isHovered)  // Only allow clicks when visible
         .help("Copy message")
     }
 

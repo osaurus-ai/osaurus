@@ -15,80 +15,122 @@ struct GroupedToolResponseView: View {
     @State private var isHovered: Bool = false
     @Environment(\.theme) private var theme
 
+    private var completedCount: Int {
+        resultsById.count
+    }
+
+    private var isRunning: Bool {
+        completedCount < calls.count
+    }
+
     var body: some View {
         VStack(spacing: 0) {
             header
 
             if isExpanded {
-                Divider()
-                    .background(theme.primaryBorder.opacity(0.3))
-                    .padding(.horizontal, 12)
+                Rectangle()
+                    .fill(
+                        LinearGradient(
+                            colors: [
+                                theme.primaryBorder.opacity(0.0),
+                                theme.primaryBorder.opacity(0.3),
+                                theme.primaryBorder.opacity(0.0),
+                            ],
+                            startPoint: .leading,
+                            endPoint: .trailing
+                        )
+                    )
+                    .frame(height: 1)
+                    .padding(.horizontal, 16)
 
                 content
-                    .padding(.top, 8)
+                    .padding(.top, 12)
+                    .transition(.opacity.combined(with: .move(edge: .top)))
             }
         }
-        .padding(.vertical, 10)
-        .padding(.horizontal, 12)
+        .padding(.vertical, 12)
+        .padding(.horizontal, 14)
         .background(
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .fill(theme.secondaryBackground.opacity(isHovered ? 0.8 : 0.5))
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .fill(theme.secondaryBackground.opacity(isHovered ? 0.85 : 0.6))
                 .overlay(
-                    RoundedRectangle(cornerRadius: 10, style: .continuous)
-                        .strokeBorder(theme.primaryBorder.opacity(0.3), lineWidth: 0.5)
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .strokeBorder(
+                            isHovered ? theme.primaryBorder.opacity(0.4) : theme.primaryBorder.opacity(0.25),
+                            lineWidth: 0.5
+                        )
                 )
         )
+        .shadow(
+            color: theme.shadowColor.opacity(isHovered ? 0.08 : 0.04),
+            radius: isHovered ? 6 : 3,
+            x: 0,
+            y: isHovered ? 3 : 1
+        )
+        .animation(.easeInOut(duration: 0.2), value: isHovered)
         .onHover { hovering in
-            withAnimation(.easeInOut(duration: 0.15)) {
-                isHovered = hovering
-            }
+            isHovered = hovering
         }
     }
 
     private var header: some View {
         Button(action: {
-            withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+            withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) {
                 isExpanded.toggle()
             }
         }) {
-            HStack(spacing: 8) {
-                // Tool icon with count badge
-                ZStack(alignment: .topTrailing) {
-                    Image(systemName: "hammer.fill")
+            HStack(spacing: 10) {
+                // Tool icon with animated background
+                ZStack {
+                    Circle()
+                        .fill(
+                            isRunning
+                                ? theme.accentColor.opacity(0.15)
+                                : theme.successColor.opacity(0.12)
+                        )
+                        .frame(width: 28, height: 28)
+
+                    Image(systemName: "wrench.and.screwdriver.fill")
                         .font(.system(size: 12, weight: .medium))
-                        .foregroundColor(theme.secondaryText)
+                        .foregroundColor(isRunning ? theme.accentColor : theme.successColor)
                 }
 
-                Text("Tool \(calls.count == 1 ? "call" : "calls")")
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(theme.secondaryText)
+                // Title and status
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Tool \(calls.count == 1 ? "call" : "calls")")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundColor(theme.primaryText)
 
-                // Status indicator
-                if resultsById.count < calls.count {
-                    HStack(spacing: 4) {
-                        ProgressView()
-                            .scaleEffect(0.5)
-                        Text("Running...")
-                            .font(.system(size: 11))
-                            .foregroundColor(theme.tertiaryText)
-                    }
-                } else {
-                    HStack(spacing: 4) {
-                        Image(systemName: "checkmark.circle.fill")
-                            .font(.system(size: 10))
-                            .foregroundColor(theme.successColor.opacity(0.8))
-                        Text("\(calls.count) completed")
-                            .font(.system(size: 11))
-                            .foregroundColor(theme.tertiaryText)
+                    // Status indicator
+                    HStack(spacing: 5) {
+                        if isRunning {
+                            ProgressView()
+                                .scaleEffect(0.45)
+                                .frame(width: 12, height: 12)
+
+                            Text("\(completedCount)/\(calls.count) running...")
+                                .font(.system(size: 11, weight: .medium))
+                                .foregroundColor(theme.accentColor)
+                        } else {
+                            Image(systemName: "checkmark.circle.fill")
+                                .font(.system(size: 10))
+                                .foregroundColor(theme.successColor)
+
+                            Text("\(calls.count) completed")
+                                .font(.system(size: 11, weight: .medium))
+                                .foregroundColor(theme.successColor)
+                        }
                     }
                 }
 
                 Spacer()
 
+                // Expand/collapse chevron
                 Image(systemName: "chevron.right")
-                    .font(.system(size: 10, weight: .semibold))
+                    .font(.system(size: 11, weight: .semibold))
                     .foregroundColor(theme.tertiaryText)
                     .rotationEffect(.degrees(isExpanded ? 90 : 0))
+                    .animation(.spring(response: 0.3, dampingFraction: 0.7), value: isExpanded)
             }
             .contentShape(Rectangle())
         }
@@ -96,16 +138,17 @@ struct GroupedToolResponseView: View {
     }
 
     private var content: some View {
-        VStack(spacing: 6) {
-            ForEach(Array(calls.enumerated()), id: \.0) { (index, call) in
+        VStack(spacing: 8) {
+            ForEach(Array(calls.enumerated()), id: \.0) { index, call in
                 ToolCallRow(
                     call: call,
                     result: resultsById[call.id],
-                    index: index + 1
+                    index: index + 1,
+                    animationDelay: Double(index) * 0.05
                 )
             }
         }
-        .padding(.bottom, 4)
+        .padding(.bottom, 6)
     }
 }
 
@@ -115,59 +158,106 @@ private struct ToolCallRow: View {
     let call: ToolCall
     let result: String?
     let index: Int
+    let animationDelay: Double
+
     @State private var showArgs: Bool = false
     @State private var showResult: Bool = false
     @State private var isHovered: Bool = false
+    @State private var hasAppeared: Bool = false
     @Environment(\.theme) private var theme
 
+    private var isComplete: Bool {
+        result != nil
+    }
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 10) {
             // Header with function name
-            HStack(spacing: 8) {
-                // Index badge
-                Text("\(index)")
-                    .font(.system(size: 10, weight: .bold, design: .rounded))
-                    .foregroundColor(theme.tertiaryText)
-                    .frame(width: 18, height: 18)
-                    .background(
-                        Circle()
-                            .fill(theme.tertiaryBackground)
-                    )
+            HStack(spacing: 10) {
+                // Index badge with status ring
+                ZStack {
+                    Circle()
+                        .strokeBorder(
+                            isComplete ? theme.successColor.opacity(0.5) : theme.accentColor.opacity(0.5),
+                            lineWidth: 1.5
+                        )
+                        .frame(width: 22, height: 22)
+
+                    Text("\(index)")
+                        .font(.system(size: 10, weight: .bold, design: .rounded))
+                        .foregroundColor(isComplete ? theme.successColor : theme.accentColor)
+                }
 
                 // Function name
-                Text(call.function.name)
-                    .font(.system(size: 12, weight: .semibold, design: .monospaced))
-                    .foregroundColor(theme.primaryText)
+                HStack(spacing: 6) {
+                    Image(systemName: "function")
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundColor(theme.tertiaryText)
+
+                    Text(call.function.name)
+                        .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                        .foregroundColor(theme.primaryText)
+                }
 
                 Spacer()
 
-                // Status
-                if result == nil {
-                    ProgressView()
-                        .scaleEffect(0.5)
+                // Status indicator
+                if !isComplete {
+                    HStack(spacing: 4) {
+                        ProgressView()
+                            .scaleEffect(0.5)
+                            .frame(width: 14, height: 14)
+
+                        Text("Running")
+                            .font(.system(size: 10, weight: .medium))
+                            .foregroundColor(theme.accentColor)
+                    }
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(
+                        Capsule()
+                            .fill(theme.accentColor.opacity(0.1))
+                    )
                 } else {
-                    Image(systemName: "checkmark")
-                        .font(.system(size: 10, weight: .semibold))
-                        .foregroundColor(theme.successColor)
+                    HStack(spacing: 4) {
+                        Image(systemName: "checkmark")
+                            .font(.system(size: 9, weight: .bold))
+
+                        Text("Done")
+                            .font(.system(size: 10, weight: .medium))
+                    }
+                    .foregroundColor(theme.successColor)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(
+                        Capsule()
+                            .fill(theme.successColor.opacity(0.1))
+                    )
                 }
             }
 
             // Toggle buttons
-            HStack(spacing: 12) {
+            HStack(spacing: 8) {
                 ToolToggleButton(
                     label: "Arguments",
                     icon: "curlybraces",
-                    isActive: showArgs,
-                    action: { withAnimation(.easeInOut(duration: 0.2)) { showArgs.toggle() } }
-                )
+                    isActive: showArgs
+                ) {
+                    withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+                        showArgs.toggle()
+                    }
+                }
 
-                if result != nil {
+                if isComplete {
                     ToolToggleButton(
                         label: "Result",
-                        icon: "text.alignleft",
-                        isActive: showResult,
-                        action: { withAnimation(.easeInOut(duration: 0.2)) { showResult.toggle() } }
-                    )
+                        icon: "doc.text",
+                        isActive: showResult
+                    ) {
+                        withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+                            showResult.toggle()
+                        }
+                    }
                 }
 
                 Spacer()
@@ -177,26 +267,49 @@ private struct ToolCallRow: View {
             if showArgs {
                 ToolCodeBlock(
                     title: "Arguments",
-                    text: prettyJSON(call.function.arguments)
+                    text: prettyJSON(call.function.arguments),
+                    language: "json"
                 )
-                .transition(.opacity.combined(with: .move(edge: .top)))
+                .transition(
+                    .asymmetric(
+                        insertion: .opacity.combined(with: .scale(scale: 0.98, anchor: .top)),
+                        removal: .opacity
+                    )
+                )
             }
 
             if showResult, let result {
                 ToolCodeBlock(
                     title: "Result",
-                    text: result
+                    text: result,
+                    language: nil
                 )
-                .transition(.opacity.combined(with: .move(edge: .top)))
+                .transition(
+                    .asymmetric(
+                        insertion: .opacity.combined(with: .scale(scale: 0.98, anchor: .top)),
+                        removal: .opacity
+                    )
+                )
             }
         }
-        .padding(10)
+        .padding(12)
         .background(
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .fill(theme.primaryBackground.opacity(isHovered ? 0.6 : 0.4))
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(theme.primaryBackground.opacity(isHovered ? 0.7 : 0.5))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .strokeBorder(theme.primaryBorder.opacity(isHovered ? 0.2 : 0.1), lineWidth: 0.5)
+                )
         )
+        .opacity(hasAppeared ? 1 : 0)
+        .offset(y: hasAppeared ? 0 : 8)
+        .onAppear {
+            withAnimation(.spring(response: 0.4, dampingFraction: 0.8).delay(animationDelay)) {
+                hasAppeared = true
+            }
+        }
         .onHover { hovering in
-            withAnimation(.easeInOut(duration: 0.1)) {
+            withAnimation(.easeInOut(duration: 0.15)) {
                 isHovered = hovering
             }
         }
@@ -205,7 +318,7 @@ private struct ToolCallRow: View {
     private func prettyJSON(_ raw: String) -> String {
         guard let data = raw.data(using: .utf8),
             let obj = try? JSONSerialization.jsonObject(with: data),
-            let pretty = try? JSONSerialization.data(withJSONObject: obj, options: [.prettyPrinted])
+            let pretty = try? JSONSerialization.data(withJSONObject: obj, options: [.prettyPrinted, .sortedKeys])
         else { return raw }
         return String(data: pretty, encoding: .utf8) ?? raw
     }
@@ -224,21 +337,37 @@ private struct ToolToggleButton: View {
 
     var body: some View {
         Button(action: action) {
-            HStack(spacing: 4) {
+            HStack(spacing: 5) {
                 Image(systemName: icon)
                     .font(.system(size: 10, weight: .medium))
+                    .foregroundColor(isActive ? theme.accentColor : theme.tertiaryText)
+
                 Text(label)
                     .font(.system(size: 11, weight: .medium))
+                    .foregroundColor(isActive ? theme.accentColor : theme.secondaryText)
+
+                if isActive {
+                    Image(systemName: "chevron.down")
+                        .font(.system(size: 8, weight: .bold))
+                        .foregroundColor(theme.accentColor)
+                }
             }
-            .foregroundColor(isActive ? Color.accentColor : theme.tertiaryText)
-            .padding(.horizontal, 8)
-            .padding(.vertical, 4)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
             .background(
-                Capsule()
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
                     .fill(
                         isActive
-                            ? Color.accentColor.opacity(0.15)
-                            : (isHovered ? theme.tertiaryBackground : Color.clear)
+                            ? theme.accentColor.opacity(0.12)
+                            : (isHovered
+                                ? theme.tertiaryBackground.opacity(0.8) : theme.tertiaryBackground.opacity(0.4))
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 6, style: .continuous)
+                            .strokeBorder(
+                                isActive ? theme.accentColor.opacity(0.3) : Color.clear,
+                                lineWidth: 0.5
+                            )
                     )
             )
         }
@@ -256,61 +385,155 @@ private struct ToolToggleButton: View {
 private struct ToolCodeBlock: View {
     let title: String
     let text: String
+    let language: String?
 
     @State private var isCopied = false
+    @State private var isHovered = false
     @Environment(\.theme) private var theme
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             // Header
             HStack {
-                Text(title.uppercased())
-                    .font(.system(size: 9, weight: .semibold, design: .rounded))
-                    .foregroundColor(theme.tertiaryText)
-                    .tracking(0.5)
+                HStack(spacing: 6) {
+                    if let language {
+                        Image(systemName: languageIcon(for: language))
+                            .font(.system(size: 9, weight: .medium))
+                            .foregroundColor(theme.tertiaryText)
+                    }
+
+                    Text(title.uppercased())
+                        .font(.system(size: 9, weight: .bold, design: .rounded))
+                        .foregroundColor(theme.tertiaryText)
+                        .tracking(0.8)
+                }
 
                 Spacer()
 
                 Button(action: copyToClipboard) {
-                    Image(systemName: isCopied ? "checkmark" : "doc.on.doc")
-                        .font(.system(size: 10, weight: .medium))
-                        .foregroundColor(isCopied ? theme.successColor : theme.tertiaryText)
+                    HStack(spacing: 4) {
+                        Image(systemName: isCopied ? "checkmark" : "doc.on.doc")
+                            .font(.system(size: 9, weight: .medium))
+                            .contentTransition(.symbolEffect(.replace))
+
+                        if isCopied {
+                            Text("Copied!")
+                                .font(.system(size: 9, weight: .medium))
+                                .transition(.opacity.combined(with: .move(edge: .leading)))
+                        }
+                    }
+                    .foregroundColor(isCopied ? theme.successColor : theme.tertiaryText)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 3)
+                    .background(
+                        Capsule()
+                            .fill(isCopied ? theme.successColor.opacity(0.12) : Color.clear)
+                    )
                 }
                 .buttonStyle(.plain)
-                .help("Copy")
+                .opacity(isHovered || isCopied ? 1 : 0.5)
+                .animation(.easeInOut(duration: 0.15), value: isHovered)
+                .animation(.easeInOut(duration: 0.2), value: isCopied)
             }
             .padding(.horizontal, 10)
-            .padding(.vertical, 6)
-            .background(theme.codeBlockBackground.opacity(0.5))
+            .padding(.vertical, 7)
+            .background(
+                theme.codeBlockBackground.opacity(0.5)
+                    .overlay(
+                        LinearGradient(
+                            colors: [
+                                theme.primaryBorder.opacity(0.04),
+                                Color.clear,
+                            ],
+                            startPoint: .top,
+                            endPoint: .bottom
+                        )
+                    )
+            )
 
-            // Code content
+            // Code content with line numbers for multi-line
             ScrollView(.horizontal, showsIndicators: false) {
-                Text(text)
-                    .font(.system(size: 11, weight: .regular, design: .monospaced))
-                    .foregroundColor(theme.primaryText.opacity(0.9))
-                    .textSelection(.enabled)
-                    .padding(10)
+                HStack(alignment: .top, spacing: 0) {
+                    // Line numbers for multi-line content
+                    if text.contains("\n") {
+                        lineNumbers
+                    }
+
+                    Text(text)
+                        .font(.system(size: 11, weight: .regular, design: .monospaced))
+                        .foregroundColor(theme.primaryText.opacity(0.9))
+                        .textSelection(.enabled)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 10)
+                }
             }
             .background(theme.codeBlockBackground)
         }
-        .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
         .overlay(
-            RoundedRectangle(cornerRadius: 6, style: .continuous)
-                .strokeBorder(theme.primaryBorder.opacity(0.2), lineWidth: 0.5)
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .strokeBorder(
+                    isHovered ? theme.primaryBorder.opacity(0.3) : theme.primaryBorder.opacity(0.15),
+                    lineWidth: 0.5
+                )
         )
+        .shadow(
+            color: theme.shadowColor.opacity(0.04),
+            radius: 2,
+            x: 0,
+            y: 1
+        )
+        .onHover { hovering in
+            withAnimation(.easeInOut(duration: 0.15)) {
+                isHovered = hovering
+            }
+        }
+    }
+
+    private var lineNumbers: some View {
+        let lines = text.components(separatedBy: "\n")
+        return VStack(alignment: .trailing, spacing: 0) {
+            ForEach(1 ... lines.count, id: \.self) { lineNum in
+                Text("\(lineNum)")
+                    .font(.system(size: 10, weight: .regular, design: .monospaced))
+                    .foregroundColor(theme.tertiaryText.opacity(0.4))
+                    .frame(height: 15)
+            }
+        }
+        .padding(.leading, 8)
+        .padding(.trailing, 6)
+        .padding(.vertical, 10)
+        .background(
+            Rectangle()
+                .fill(theme.codeBlockBackground.opacity(0.3))
+        )
+        .overlay(
+            Rectangle()
+                .fill(theme.primaryBorder.opacity(0.1))
+                .frame(width: 1),
+            alignment: .trailing
+        )
+    }
+
+    private func languageIcon(for lang: String) -> String {
+        switch lang.lowercased() {
+        case "json": return "curlybraces"
+        case "xml": return "chevron.left.forwardslash.chevron.right"
+        default: return "doc.text"
+        }
     }
 
     private func copyToClipboard() {
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(text, forType: .string)
 
-        withAnimation {
+        withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
             isCopied = true
         }
 
         Task { @MainActor in
-            try? await Task.sleep(nanoseconds: 1_500_000_000)
-            withAnimation {
+            try? await Task.sleep(nanoseconds: 1_800_000_000)
+            withAnimation(.easeInOut(duration: 0.2)) {
                 isCopied = false
             }
         }
@@ -336,20 +559,33 @@ private struct ToolCodeBlock: View {
                     type: "function",
                     function: ToolCallFunction(
                         name: "search_web",
-                        arguments: "{\"query\": \"Swift programming\"}"
+                        arguments: "{\"query\": \"Swift programming\", \"limit\": 10}"
+                    )
+                ),
+                ToolCall(
+                    id: "call_3",
+                    type: "function",
+                    function: ToolCallFunction(
+                        name: "read_file",
+                        arguments: "{\"path\": \"/Users/example/document.txt\"}"
                     )
                 ),
             ]
 
             let results = [
-                "call_1": "Temperature: 18°C, Conditions: Partly cloudy",
-                "call_2": "Found 10 results for 'Swift programming'...",
+                "call_1": "Temperature: 18°C, Conditions: Partly cloudy with a gentle breeze from the west.",
+                "call_2":
+                    "Found 10 results for 'Swift programming':\n1. Swift.org - Official Swift Language\n2. Swift Programming Guide\n3. Learn Swift in 30 days",
             ]
 
-            GroupedToolResponseView(calls: calls, resultsById: results)
-                .frame(width: 400)
-                .padding()
-                .background(Color(hex: "0f0f10"))
+            VStack(spacing: 20) {
+                GroupedToolResponseView(calls: calls, resultsById: results)
+
+                GroupedToolResponseView(calls: [calls[0]], resultsById: ["call_1": results["call_1"]!])
+            }
+            .frame(width: 500)
+            .padding()
+            .background(Color(hex: "0f0f10"))
         }
     }
 #endif
