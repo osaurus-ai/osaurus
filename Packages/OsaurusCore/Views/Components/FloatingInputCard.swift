@@ -161,8 +161,7 @@ struct FloatingInputCard: View {
                 Text("Message...")
                     .font(.system(size: 15))
                     .foregroundColor(theme.tertiaryText)
-                    .padding(.horizontal, 5)
-                    .padding(.vertical, 8)
+                    .padding(.leading, 6)
                     .allowsHitTesting(false)
             }
         }
