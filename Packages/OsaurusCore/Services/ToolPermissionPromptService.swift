@@ -36,6 +36,15 @@ enum ToolPermissionPromptService {
                 continuation.resume(returning: false)
             }
 
+            let onAlwaysAllow = {
+                guard !hasResumed else { return }
+                hasResumed = true
+                // Set the policy to auto so it won't prompt again
+                ToolRegistry.shared.setPolicy(.auto, for: toolName)
+                dismissWindow()
+                continuation.resume(returning: true)
+            }
+
             // Create the SwiftUI view
             let themeManager = ThemeManager.shared
             let permissionView = ToolPermissionView(
@@ -45,7 +54,8 @@ enum ToolPermissionPromptService {
                     : description,
                 argumentsJSON: argumentsJSON,
                 onAllow: onAllow,
-                onDeny: onDeny
+                onDeny: onDeny,
+                onAlwaysAllow: onAlwaysAllow
             )
             .environment(\.theme, themeManager.currentTheme)
 

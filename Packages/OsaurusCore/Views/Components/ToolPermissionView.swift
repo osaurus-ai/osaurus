@@ -14,10 +14,12 @@ struct ToolPermissionView: View {
     let argumentsJSON: String
     let onAllow: () -> Void
     let onDeny: () -> Void
+    let onAlwaysAllow: () -> Void
 
     @StateObject private var themeManager = ThemeManager.shared
     @State private var copied = false
     @State private var iconPulse = false
+    @State private var showAlwaysAllowConfirm = false
 
     private var theme: ThemeProtocol {
         themeManager.currentTheme
@@ -31,6 +33,21 @@ struct ToolPermissionView: View {
             return argumentsJSON
         }
         return String(decoding: pretty, as: UTF8.self)
+    }
+
+    private var hasArguments: Bool {
+        guard let data = argumentsJSON.data(using: .utf8),
+            let object = try? JSONSerialization.jsonObject(with: data, options: [])
+        else {
+            return !argumentsJSON.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }
+        if let dict = object as? [String: Any] {
+            return !dict.isEmpty
+        }
+        if let array = object as? [Any] {
+            return !array.isEmpty
+        }
+        return true
     }
 
     var body: some View {
@@ -55,10 +72,12 @@ struct ToolPermissionView: View {
                         .padding(.horizontal, 24)
                 }
 
-                // JSON arguments code block
-                argumentsBlock
-                    .padding(.top, 16)
-                    .padding(.horizontal, 24)
+                // JSON arguments code block (only show if there are arguments)
+                if hasArguments {
+                    argumentsBlock
+                        .padding(.top, 16)
+                        .padding(.horizontal, 24)
+                }
 
                 // Action buttons
                 actionButtons
@@ -74,6 +93,16 @@ struct ToolPermissionView: View {
             withAnimation(.easeInOut(duration: 1.2).repeatForever(autoreverses: true)) {
                 iconPulse = true
             }
+        }
+        .alert("Always Allow \"\(toolName)\"?", isPresented: $showAlwaysAllowConfirm) {
+            Button("Cancel", role: .cancel) {}
+            Button("Always Allow") {
+                onAlwaysAllow()
+            }
+        } message: {
+            Text(
+                "This tool will be automatically allowed to run without prompting in the future. You can change this in the Tools settings."
+            )
         }
     }
 
@@ -170,26 +199,43 @@ struct ToolPermissionView: View {
     // MARK: - Action Buttons
 
     private var actionButtons: some View {
-        HStack(spacing: 12) {
-            // Deny button (secondary)
-            PermissionButton(
-                title: "Deny",
-                icon: "xmark",
-                isPrimary: false,
-                color: theme.errorColor,
-                theme: theme,
-                action: onDeny
-            )
+        VStack(spacing: 12) {
+            HStack(spacing: 12) {
+                // Deny button (secondary)
+                PermissionButton(
+                    title: "Deny",
+                    icon: "xmark",
+                    isPrimary: false,
+                    color: theme.errorColor,
+                    theme: theme,
+                    action: onDeny
+                )
 
-            // Allow button (primary)
-            PermissionButton(
-                title: "Allow",
-                icon: "checkmark",
-                isPrimary: true,
-                color: theme.successColor,
-                theme: theme,
-                action: onAllow
-            )
+                // Allow button (primary)
+                PermissionButton(
+                    title: "Allow",
+                    icon: "checkmark",
+                    isPrimary: true,
+                    color: theme.successColor,
+                    theme: theme,
+                    action: onAllow
+                )
+            }
+
+            // Always Allow button (tertiary)
+            Button(action: { showAlwaysAllowConfirm = true }) {
+                Text("Always Allow")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundColor(theme.secondaryText)
+            }
+            .buttonStyle(PlainButtonStyle())
+            .onHover { hovering in
+                if hovering {
+                    NSCursor.pointingHand.push()
+                } else {
+                    NSCursor.pop()
+                }
+            }
         }
     }
 
