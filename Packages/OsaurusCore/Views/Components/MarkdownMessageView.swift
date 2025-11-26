@@ -2,6 +2,8 @@
 //  MarkdownMessageView.swift
 //  osaurus
 //
+//  Renders markdown text with proper typography and code blocks
+//
 
 import SwiftUI
 
@@ -9,18 +11,14 @@ struct MarkdownMessageView: View {
     let text: String
     let baseWidth: CGFloat
 
+    @Environment(\.theme) private var theme
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 12) {
             ForEach(parseBlocks(text), id: \.id) { block in
                 switch block.kind {
                 case .paragraph(let md):
-                    if let attributed = try? AttributedString(markdown: md) {
-                        Text(attributed)
-                            .font(Typography.body(baseWidth))
-                    } else {
-                        Text(md)
-                            .font(Typography.body(baseWidth))
-                    }
+                    paragraphView(md)
                 case .code(let code, let lang):
                     CodeBlockView(code: code, language: lang, baseWidth: baseWidth)
                 }
@@ -28,9 +26,29 @@ struct MarkdownMessageView: View {
         }
         .textSelection(.enabled)
     }
+
+    @ViewBuilder
+    private func paragraphView(_ md: String) -> some View {
+        if let attributed = try? AttributedString(
+            markdown: md,
+            options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)
+        ) {
+            Text(attributed)
+                .font(Typography.body(baseWidth))
+                .lineSpacing(4)
+                .foregroundColor(theme.primaryText)
+        } else {
+            Text(md)
+                .font(Typography.body(baseWidth))
+                .lineSpacing(4)
+                .foregroundColor(theme.primaryText)
+        }
+    }
 }
 
-private struct MessageBlock {
+// MARK: - Message Block
+
+private struct MessageBlock: Identifiable {
     enum Kind {
         case paragraph(String)
         case code(String, String?)
@@ -38,6 +56,8 @@ private struct MessageBlock {
     let id = UUID()
     let kind: Kind
 }
+
+// MARK: - Parser
 
 private func parseBlocks(_ input: String) -> [MessageBlock] {
     var blocks: [MessageBlock] = []
@@ -94,6 +114,38 @@ private func parseBlocks(_ input: String) -> [MessageBlock] {
     return blocks
 }
 
+// MARK: - String Extension
+
 extension String {
     fileprivate var nilIfEmpty: String? { self.isEmpty ? nil : self }
 }
+
+// MARK: - Preview
+
+#if DEBUG
+    struct MarkdownMessageView_Previews: PreviewProvider {
+        static let sampleMarkdown = """
+            Here's a **bold** statement and some *italic* text.
+
+            This is a code example:
+
+            ```swift
+            func greet(name: String) -> String {
+                return "Hello, \\(name)!"
+            }
+            ```
+
+            And here's a list:
+            - First item
+            - Second item
+            - Third item
+            """
+
+        static var previews: some View {
+            MarkdownMessageView(text: sampleMarkdown, baseWidth: 600)
+                .padding()
+                .frame(width: 600)
+                .background(Color(hex: "0f0f10"))
+        }
+    }
+#endif
