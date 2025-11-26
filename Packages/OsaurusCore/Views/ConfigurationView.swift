@@ -2,17 +2,17 @@ import SwiftUI
 
 // MARK: - Configuration View
 struct ConfigurationView: View {
-    @EnvironmentObject var server: ServerController
+    @StateObject private var themeManager = ThemeManager.shared
     @Environment(\.theme) private var theme
-    @Binding var portString: String
-    @Binding var configuration: ServerConfiguration
-    @Environment(\.dismiss) private var dismiss
+
     @State private var tempPortString: String = ""
     @State private var tempExposeToNetwork: Bool = false
     @State private var tempStartAtLogin: Bool = false
     @State private var showAdvancedSettings: Bool = false
     @State private var cliInstallMessage: String? = nil
     @State private var cliInstallSuccess: Bool = false
+    @State private var hasAppeared = false
+    @State private var showSaveConfirmation = false
 
     // Chat settings state
     @State private var tempChatHotkey: Hotkey? = nil
@@ -33,74 +33,65 @@ struct ConfigurationView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            // Fixed header
-            VStack(spacing: 2) {
-                Text("Server Configuration")
-                    .font(.system(size: 15, weight: .semibold, design: .rounded))
-                    .foregroundColor(theme.primaryText)
-
-                Text("Configure your local server settings")
-                    .font(.system(size: 11))
-                    .foregroundColor(theme.secondaryText)
-            }
-            .padding(.vertical, 12)
-
-            Divider()
-                .background(theme.primaryBorder)
+            // Header
+            headerView
+                .opacity(hasAppeared ? 1 : 0)
+                .offset(y: hasAppeared ? 0 : -10)
+                .animation(.spring(response: 0.4, dampingFraction: 0.8), value: hasAppeared)
 
             // Scrollable content area
             ScrollView {
-                VStack(alignment: .leading, spacing: 16) {
+                VStack(alignment: .leading, spacing: 20) {
                     // Chat settings section
-                    VStack(alignment: .leading, spacing: 12) {
+                    VStack(alignment: .leading, spacing: 16) {
                         Label("Chat", systemImage: "message")
-                            .font(.system(size: 13, weight: .semibold))
+                            .font(.system(size: 14, weight: .semibold))
                             .foregroundColor(theme.primaryText)
 
                         // Global Hotkey
-                        VStack(alignment: .leading, spacing: 6) {
+                        VStack(alignment: .leading, spacing: 8) {
                             Text("Global Hotkey")
-                                .font(.system(size: 11, weight: .medium))
+                                .font(.system(size: 12, weight: .medium))
                                 .foregroundColor(theme.secondaryText)
                             HotkeyRecorder(value: $tempChatHotkey)
                         }
 
                         // System Prompt
-                        VStack(alignment: .leading, spacing: 6) {
+                        VStack(alignment: .leading, spacing: 8) {
                             Text("System Prompt")
-                                .font(.system(size: 11, weight: .medium))
+                                .font(.system(size: 12, weight: .medium))
                                 .foregroundColor(theme.secondaryText)
                             ZStack(alignment: .topLeading) {
                                 TextEditor(text: $tempSystemPrompt)
-                                    .font(.system(size: 12, design: .monospaced))
+                                    .font(.system(size: 13, design: .monospaced))
                                     .frame(minHeight: 80, maxHeight: 140)
-                                    .padding(6)
+                                    .padding(8)
                                     .background(
-                                        RoundedRectangle(cornerRadius: 6)
+                                        RoundedRectangle(cornerRadius: 8)
                                             .fill(theme.inputBackground)
                                             .overlay(
-                                                RoundedRectangle(cornerRadius: 6)
+                                                RoundedRectangle(cornerRadius: 8)
                                                     .stroke(theme.inputBorder, lineWidth: 1)
                                             )
                                     )
                                     .foregroundColor(theme.primaryText)
                                 if tempSystemPrompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                                     Text("Optional. Shown as a system message for all chats.")
-                                        .font(.system(size: 10))
+                                        .font(.system(size: 11))
                                         .foregroundColor(theme.tertiaryText)
-                                        .padding(.top, 10)
-                                        .padding(.leading, 12)
+                                        .padding(.top, 12)
+                                        .padding(.leading, 14)
                                 }
                             }
                         }
 
                         // Chat Generation (per-chat overrides)
-                        VStack(alignment: .leading, spacing: 8) {
+                        VStack(alignment: .leading, spacing: 10) {
                             Text("Generation")
-                                .font(.system(size: 11, weight: .medium))
+                                .font(.system(size: 12, weight: .medium))
                                 .foregroundColor(theme.secondaryText)
 
-                            VStack(spacing: 10) {
+                            VStack(spacing: 12) {
                                 advancedField(
                                     "Temperature",
                                     text: $tempChatTemperature,
@@ -123,12 +114,12 @@ struct ConfigurationView: View {
                         }
 
                         // Tools (per-chat overrides)
-                        VStack(alignment: .leading, spacing: 8) {
+                        VStack(alignment: .leading, spacing: 10) {
                             Text("Tools")
-                                .font(.system(size: 11, weight: .medium))
+                                .font(.system(size: 12, weight: .medium))
                                 .foregroundColor(theme.secondaryText)
 
-                            VStack(spacing: 10) {
+                            VStack(spacing: 12) {
                                 advancedField(
                                     "Max Tool Attempts",
                                     text: $tempChatMaxToolAttempts,
@@ -138,50 +129,50 @@ struct ConfigurationView: View {
                             }
                         }
                     }
-                    .padding(12)
+                    .padding(16)
                     .background(
-                        RoundedRectangle(cornerRadius: 8)
+                        RoundedRectangle(cornerRadius: 12)
                             .fill(theme.secondaryBackground)
                     )
                     // Port configuration section
-                    VStack(alignment: .leading, spacing: 12) {
+                    VStack(alignment: .leading, spacing: 16) {
                         Label("Network Settings", systemImage: "network")
-                            .font(.system(size: 13, weight: .semibold))
+                            .font(.system(size: 14, weight: .semibold))
                             .foregroundColor(theme.primaryText)
 
-                        VStack(alignment: .leading, spacing: 6) {
+                        VStack(alignment: .leading, spacing: 8) {
                             Text("Port")
-                                .font(.system(size: 11, weight: .medium))
+                                .font(.system(size: 12, weight: .medium))
                                 .foregroundColor(theme.secondaryText)
 
                             TextField("1337", text: $tempPortString)
                                 .textFieldStyle(.plain)
                                 .font(.system(size: 13, weight: .medium, design: .monospaced))
-                                .padding(.horizontal, 10)
-                                .padding(.vertical, 7)
+                                .padding(.horizontal, 12)
+                                .padding(.vertical, 8)
                                 .background(
-                                    RoundedRectangle(cornerRadius: 6)
+                                    RoundedRectangle(cornerRadius: 8)
                                         .fill(theme.inputBackground)
                                         .overlay(
-                                            RoundedRectangle(cornerRadius: 6)
+                                            RoundedRectangle(cornerRadius: 8)
                                                 .stroke(theme.inputBorder, lineWidth: 1)
                                         )
                                 )
                                 .foregroundColor(theme.primaryText)
 
                             Text("Enter a port number between 1 and 65535")
-                                .font(.system(size: 10))
+                                .font(.system(size: 11))
                                 .foregroundColor(theme.tertiaryText)
                         }
 
                         // Network exposure toggle
                         HStack {
-                            VStack(alignment: .leading, spacing: 2) {
+                            VStack(alignment: .leading, spacing: 3) {
                                 Text("Expose to network")
-                                    .font(.system(size: 12, weight: .medium))
+                                    .font(.system(size: 13, weight: .medium))
                                     .foregroundStyle(theme.primaryText)
                                 Text("Allow devices on your network to connect")
-                                    .font(.system(size: 10))
+                                    .font(.system(size: 11))
                                     .foregroundStyle(theme.tertiaryText)
                             }
 
@@ -192,25 +183,25 @@ struct ConfigurationView: View {
                                 .labelsHidden()
                         }
                     }
-                    .padding(12)
+                    .padding(16)
                     .background(
-                        RoundedRectangle(cornerRadius: 8)
+                        RoundedRectangle(cornerRadius: 12)
                             .fill(theme.secondaryBackground)
                     )
 
                     // System settings section
-                    VStack(alignment: .leading, spacing: 12) {
+                    VStack(alignment: .leading, spacing: 16) {
                         Label("System", systemImage: "gear")
-                            .font(.system(size: 13, weight: .semibold))
+                            .font(.system(size: 14, weight: .semibold))
                             .foregroundColor(theme.primaryText)
 
                         HStack {
-                            VStack(alignment: .leading, spacing: 2) {
+                            VStack(alignment: .leading, spacing: 3) {
                                 Text("Start at Login")
-                                    .font(.system(size: 12, weight: .medium))
+                                    .font(.system(size: 13, weight: .medium))
                                     .foregroundStyle(theme.primaryText)
                                 Text("Launch Osaurus when you sign in")
-                                    .font(.system(size: 10))
+                                    .font(.system(size: 11))
                                     .foregroundStyle(theme.tertiaryText)
                             }
 
@@ -221,34 +212,34 @@ struct ConfigurationView: View {
                                 .labelsHidden()
                         }
                     }
-                    .padding(12)
+                    .padding(16)
                     .background(
-                        RoundedRectangle(cornerRadius: 8)
+                        RoundedRectangle(cornerRadius: 12)
                             .fill(theme.secondaryBackground)
                     )
 
                     // Command Line Tool section
-                    VStack(alignment: .leading, spacing: 12) {
+                    VStack(alignment: .leading, spacing: 16) {
                         Label("Command Line Tool", systemImage: "terminal")
-                            .font(.system(size: 13, weight: .semibold))
+                            .font(.system(size: 14, weight: .semibold))
                             .foregroundColor(theme.primaryText)
 
-                        VStack(alignment: .leading, spacing: 6) {
+                        VStack(alignment: .leading, spacing: 8) {
                             Text("Install the `osaurus` CLI into your PATH.")
-                                .font(.system(size: 11))
+                                .font(.system(size: 12))
                                 .foregroundColor(theme.secondaryText)
 
                             HStack(spacing: 8) {
                                 Button(action: { installCLI() }) {
                                     Text("Install CLI")
-                                        .font(.system(size: 12, weight: .medium))
-                                        .padding(.horizontal, 10)
-                                        .padding(.vertical, 6)
+                                        .font(.system(size: 13, weight: .medium))
+                                        .padding(.horizontal, 12)
+                                        .padding(.vertical, 8)
                                         .background(
-                                            RoundedRectangle(cornerRadius: 6)
+                                            RoundedRectangle(cornerRadius: 8)
                                                 .fill(theme.buttonBackground)
                                                 .overlay(
-                                                    RoundedRectangle(cornerRadius: 6)
+                                                    RoundedRectangle(cornerRadius: 8)
                                                         .stroke(theme.buttonBorder, lineWidth: 1)
                                                 )
                                         )
@@ -258,34 +249,34 @@ struct ConfigurationView: View {
 
                                 if let message = cliInstallMessage {
                                     Text(message)
-                                        .font(.system(size: 10))
+                                        .font(.system(size: 11))
                                         .foregroundColor(cliInstallSuccess ? .green : .red)
                                         .lineLimit(2)
                                 }
                             }
 
                             Text("If installed to ~/.local/bin, ensure it's in your PATH.")
-                                .font(.system(size: 10))
+                                .font(.system(size: 11))
                                 .foregroundColor(theme.tertiaryText)
                         }
                     }
-                    .padding(12)
+                    .padding(16)
                     .background(
-                        RoundedRectangle(cornerRadius: 8)
+                        RoundedRectangle(cornerRadius: 12)
                             .fill(theme.secondaryBackground)
                     )
 
                     // Models directory section
-                    VStack(alignment: .leading, spacing: 12) {
+                    VStack(alignment: .leading, spacing: 16) {
                         Label("Storage", systemImage: "folder")
-                            .font(.system(size: 13, weight: .semibold))
+                            .font(.system(size: 14, weight: .semibold))
                             .foregroundColor(theme.primaryText)
 
                         DirectoryPickerView()
                     }
-                    .padding(12)
+                    .padding(16)
                     .background(
-                        RoundedRectangle(cornerRadius: 8)
+                        RoundedRectangle(cornerRadius: 12)
                             .fill(theme.secondaryBackground)
                     )
 
@@ -297,28 +288,28 @@ struct ConfigurationView: View {
                     }) {
                         HStack(spacing: 8) {
                             Image(systemName: "chevron.right")
-                                .font(.system(size: 11, weight: .medium))
+                                .font(.system(size: 12, weight: .medium))
                                 .rotationEffect(.degrees(showAdvancedSettings ? 90 : 0))
                                 .animation(.easeInOut(duration: 0.2), value: showAdvancedSettings)
 
                             Text("Advanced Settings")
-                                .font(.system(size: 12, weight: .medium))
+                                .font(.system(size: 13, weight: .medium))
 
                             Spacer()
 
                             if !showAdvancedSettings {
                                 Text("Show more options")
-                                    .font(.system(size: 10))
+                                    .font(.system(size: 11))
                                     .foregroundColor(theme.tertiaryText)
                             }
                         }
                         .foregroundColor(theme.primaryText)
-                        .padding(12)
+                        .padding(16)
                         .background(
-                            RoundedRectangle(cornerRadius: 8)
+                            RoundedRectangle(cornerRadius: 12)
                                 .fill(theme.secondaryBackground)
                                 .overlay(
-                                    RoundedRectangle(cornerRadius: 8)
+                                    RoundedRectangle(cornerRadius: 12)
                                         .stroke(theme.primaryBorder, lineWidth: 0.5)
                                 )
                         )
@@ -327,51 +318,51 @@ struct ConfigurationView: View {
                     .buttonStyle(PlainButtonStyle())
 
                     if showAdvancedSettings {
-                        VStack(alignment: .leading, spacing: 16) {
+                        VStack(alignment: .leading, spacing: 20) {
                             // Networking Section
-                            VStack(alignment: .leading, spacing: 12) {
+                            VStack(alignment: .leading, spacing: 16) {
                                 Label("CORS Settings", systemImage: "lock.shield")
-                                    .font(.system(size: 13, weight: .semibold))
+                                    .font(.system(size: 14, weight: .semibold))
                                     .foregroundColor(theme.primaryText)
 
-                                VStack(alignment: .leading, spacing: 6) {
+                                VStack(alignment: .leading, spacing: 8) {
                                     Text("Allowed Origins")
-                                        .font(.system(size: 11, weight: .medium))
+                                        .font(.system(size: 12, weight: .medium))
                                         .foregroundColor(theme.secondaryText)
 
                                     TextField("https://example.com, https://app.localhost", text: $tempAllowedOrigins)
                                         .textFieldStyle(.plain)
-                                        .font(.system(size: 12, design: .monospaced))
-                                        .padding(.horizontal, 10)
-                                        .padding(.vertical, 6)
+                                        .font(.system(size: 13, design: .monospaced))
+                                        .padding(.horizontal, 12)
+                                        .padding(.vertical, 8)
                                         .background(
-                                            RoundedRectangle(cornerRadius: 6)
+                                            RoundedRectangle(cornerRadius: 8)
                                                 .fill(theme.inputBackground)
                                                 .overlay(
-                                                    RoundedRectangle(cornerRadius: 6)
+                                                    RoundedRectangle(cornerRadius: 8)
                                                         .stroke(theme.inputBorder, lineWidth: 1)
                                                 )
                                         )
                                         .foregroundColor(theme.primaryText)
 
                                     Text("Comma-separated list. Use * for any origin, or leave empty to disable CORS")
-                                        .font(.system(size: 10))
+                                        .font(.system(size: 11))
                                         .foregroundColor(theme.tertiaryText)
                                 }
                             }
-                            .padding(12)
+                            .padding(16)
                             .background(
-                                RoundedRectangle(cornerRadius: 8)
+                                RoundedRectangle(cornerRadius: 12)
                                     .fill(theme.secondaryBackground)
                             )
 
                             // AI Parameters Section
-                            VStack(alignment: .leading, spacing: 12) {
+                            VStack(alignment: .leading, spacing: 16) {
                                 Label("AI Parameters", systemImage: "cpu")
-                                    .font(.system(size: 13, weight: .semibold))
+                                    .font(.system(size: 14, weight: .semibold))
                                     .foregroundColor(theme.primaryText)
 
-                                VStack(spacing: 10) {
+                                VStack(spacing: 12) {
                                     advancedField(
                                         "Top P",
                                         text: $tempTopP,
@@ -410,188 +401,218 @@ struct ConfigurationView: View {
                                     )
                                 }
                             }
-                            .padding(12)
+                            .padding(16)
                             .background(
-                                RoundedRectangle(cornerRadius: 8)
+                                RoundedRectangle(cornerRadius: 12)
                                     .fill(theme.secondaryBackground)
                             )
                         }
                         .transition(.opacity.combined(with: .move(edge: .top)))
                     }
                 }
-                .padding(16)
+                .padding(.horizontal, 24)
+                .padding(.vertical, 20)
+                .frame(maxWidth: 700)
             }
-            .frame(maxHeight: 310)
-
-            // Fixed bottom action bar
-            VStack(spacing: 0) {
-                Divider()
-                    .background(theme.primaryBorder)
-
-                HStack(spacing: 12) {
-                    Button("Cancel") {
-                        dismiss()
-                    }
-                    .buttonStyle(PlainButtonStyle())
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 8)
-                    .background(
-                        RoundedRectangle(cornerRadius: 6)
-                            .fill(theme.secondaryBackground)
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 6)
-                                    .stroke(theme.secondaryBorder, lineWidth: 1)
-                            )
-                    )
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundColor(theme.primaryText)
-
-                    Spacer()
-
-                    Button(action: {
-                        if let port = Int(tempPortString), (1 ..< 65536).contains(port) {
-                            portString = tempPortString
-                            configuration.port = port
-                            configuration.exposeToNetwork = tempExposeToNetwork
-                            configuration.startAtLogin = tempStartAtLogin
-
-                            // Save advanced settings if they were modified
-                            let defaults = ServerConfiguration.default
-                            let trimmedTopP = tempTopP.trimmingCharacters(in: .whitespacesAndNewlines)
-                            if trimmedTopP.isEmpty {
-                                configuration.genTopP = defaults.genTopP
-                            } else {
-                                configuration.genTopP = Float(trimmedTopP) ?? defaults.genTopP
-                            }
-
-                            configuration.genKVBits = Int(tempKVBits)
-
-                            let trimmedKVGroup = tempKVGroup.trimmingCharacters(in: .whitespacesAndNewlines)
-                            if trimmedKVGroup.isEmpty {
-                                configuration.genKVGroupSize = defaults.genKVGroupSize
-                            } else {
-                                configuration.genKVGroupSize = Int(trimmedKVGroup) ?? defaults.genKVGroupSize
-                            }
-
-                            let trimmedQuantStart = tempQuantStart.trimmingCharacters(in: .whitespacesAndNewlines)
-                            if trimmedQuantStart.isEmpty {
-                                configuration.genQuantizedKVStart = defaults.genQuantizedKVStart
-                            } else {
-                                configuration.genQuantizedKVStart =
-                                    Int(trimmedQuantStart) ?? defaults.genQuantizedKVStart
-                            }
-
-                            configuration.genMaxKVSize = Int(tempMaxKV)
-
-                            let trimmedPrefill = tempPrefillStep.trimmingCharacters(in: .whitespacesAndNewlines)
-                            if trimmedPrefill.isEmpty {
-                                configuration.genPrefillStepSize = defaults.genPrefillStepSize
-                            } else {
-                                configuration.genPrefillStepSize =
-                                    Int(trimmedPrefill) ?? defaults.genPrefillStepSize
-                            }
-
-                            // Save CORS allowed origins
-                            let parsedOrigins: [String] =
-                                tempAllowedOrigins
-                                .split(separator: ",")
-                                .map { String($0).trimmingCharacters(in: .whitespacesAndNewlines) }
-                                .filter { !$0.isEmpty }
-                            configuration.allowedOrigins = parsedOrigins
-
-                            // Persist to disk
-                            ServerConfigurationStore.save(configuration)
-                            // Save Chat configuration (per-chat overrides)
-                            let trimmedTemp = tempChatTemperature.trimmingCharacters(in: .whitespacesAndNewlines)
-                            let parsedTemp: Float? = {
-                                guard !trimmedTemp.isEmpty, let v = Float(trimmedTemp) else { return nil }
-                                return max(0.0, min(2.0, v))
-                            }()
-
-                            let trimmedMax = tempChatMaxTokens.trimmingCharacters(in: .whitespacesAndNewlines)
-                            let parsedMax: Int? = {
-                                guard !trimmedMax.isEmpty, let v = Int(trimmedMax) else { return nil }
-                                return max(1, v)
-                            }()
-
-                            let trimmedTopPChat = tempChatTopP.trimmingCharacters(in: .whitespacesAndNewlines)
-                            let parsedTopP: Float? = {
-                                guard !trimmedTopPChat.isEmpty, let v = Float(trimmedTopPChat) else { return nil }
-                                return max(0.0, min(1.0, v))
-                            }()
-
-                            let parsedMaxToolAttempts: Int? = {
-                                let s = tempChatMaxToolAttempts.trimmingCharacters(in: .whitespacesAndNewlines)
-                                guard !s.isEmpty, let v = Int(s) else { return nil }
-                                return max(1, min(10, v))
-                            }()
-
-                            let chatCfg = ChatConfiguration(
-                                hotkey: tempChatHotkey,
-                                systemPrompt: tempSystemPrompt,
-                                temperature: parsedTemp,
-                                maxTokens: parsedMax,
-                                topPOverride: parsedTopP,
-                                maxToolAttempts: parsedMaxToolAttempts
-                            )
-                            ChatConfigurationStore.save(chatCfg)
-                            // Apply hotkey without relaunch
-                            AppDelegate.shared?.applyChatHotkey()
-                            // Apply login item state
-                            LoginItemService.shared.applyStartAtLogin(configuration.startAtLogin)
-
-                            // Restart server immediately to apply changes
-                            Task { @MainActor in
-                                await server.restartServer()
-                            }
-
-                            dismiss()
-                        }
-                    }) {
-                        Text("Save")
-                            .font(.system(size: 13, weight: .medium))
-                            .foregroundColor(.white)
-                            .padding(.horizontal, 20)
-                            .padding(.vertical, 8)
-                            .background(
-                                RoundedRectangle(cornerRadius: 6)
-                                    .fill(theme.accentColor)
-                            )
-                    }
-                    .buttonStyle(PlainButtonStyle())
-                }
-                .padding(.horizontal, 16)
-                .padding(.vertical, 12)
-            }
-            .background(theme.primaryBackground)
+            .opacity(hasAppeared ? 1 : 0)
         }
-        .frame(width: 380, height: 460)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(theme.primaryBackground)
+        .environment(\.theme, themeManager.currentTheme)
         .onAppear {
-            tempPortString = portString
-            tempExposeToNetwork = configuration.exposeToNetwork
-            tempStartAtLogin = configuration.startAtLogin
-            let chat = ChatConfigurationStore.load()
-            tempChatHotkey = chat.hotkey
-            tempSystemPrompt = chat.systemPrompt
-            tempChatTemperature = chat.temperature.map { String($0) } ?? ""
-            tempChatMaxTokens = chat.maxTokens.map(String.init) ?? ""
-            tempChatTopP = chat.topPOverride.map { String($0) } ?? ""
-            tempChatMaxToolAttempts = chat.maxToolAttempts.map(String.init) ?? ""
-            let defaults = ServerConfiguration.default
-            tempTopP = configuration.genTopP == defaults.genTopP ? "" : String(configuration.genTopP)
-            tempKVBits = configuration.genKVBits.map(String.init) ?? ""
-            tempKVGroup =
-                configuration.genKVGroupSize == defaults.genKVGroupSize
-                ? "" : String(configuration.genKVGroupSize)
-            tempQuantStart =
-                configuration.genQuantizedKVStart == defaults.genQuantizedKVStart
-                ? "" : String(configuration.genQuantizedKVStart)
-            tempMaxKV = configuration.genMaxKVSize.map(String.init) ?? ""
-            tempPrefillStep =
-                configuration.genPrefillStepSize == defaults.genPrefillStepSize
-                ? "" : String(configuration.genPrefillStepSize)
-            tempAllowedOrigins = configuration.allowedOrigins.joined(separator: ", ")
+            loadConfiguration()
+            withAnimation(.easeOut(duration: 0.25).delay(0.05)) {
+                hasAppeared = true
+            }
+        }
+    }
+
+    // MARK: - Header View
+
+    private var headerView: some View {
+        VStack(spacing: 16) {
+            HStack {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Settings")
+                        .font(.system(size: 28, weight: .bold, design: .rounded))
+                        .foregroundColor(theme.primaryText)
+
+                    Text("Configure your server and chat settings")
+                        .font(.system(size: 14))
+                        .foregroundColor(theme.secondaryText)
+                }
+
+                Spacer()
+
+                Button(action: saveConfiguration) {
+                    HStack(spacing: 6) {
+                        if showSaveConfirmation {
+                            Image(systemName: "checkmark")
+                                .font(.system(size: 12, weight: .semibold))
+                        }
+                        Text(showSaveConfirmation ? "Saved" : "Save Changes")
+                            .font(.system(size: 13, weight: .medium))
+                    }
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 10)
+                    .background(
+                        RoundedRectangle(cornerRadius: 8)
+                            .fill(showSaveConfirmation ? Color.green : theme.accentColor)
+                    )
+                }
+                .buttonStyle(PlainButtonStyle())
+            }
+        }
+        .padding(.horizontal, 24)
+        .padding(.top, 24)
+        .padding(.bottom, 16)
+        .background(theme.secondaryBackground)
+    }
+
+    // MARK: - Configuration Loading
+
+    private func loadConfiguration() {
+        let configuration = ServerConfigurationStore.load() ?? ServerConfiguration.default
+        tempPortString = String(configuration.port)
+        tempExposeToNetwork = configuration.exposeToNetwork
+        tempStartAtLogin = configuration.startAtLogin
+
+        let chat = ChatConfigurationStore.load()
+        tempChatHotkey = chat.hotkey
+        tempSystemPrompt = chat.systemPrompt
+        tempChatTemperature = chat.temperature.map { String($0) } ?? ""
+        tempChatMaxTokens = chat.maxTokens.map(String.init) ?? ""
+        tempChatTopP = chat.topPOverride.map { String($0) } ?? ""
+        tempChatMaxToolAttempts = chat.maxToolAttempts.map(String.init) ?? ""
+
+        let defaults = ServerConfiguration.default
+        tempTopP = configuration.genTopP == defaults.genTopP ? "" : String(configuration.genTopP)
+        tempKVBits = configuration.genKVBits.map(String.init) ?? ""
+        tempKVGroup =
+            configuration.genKVGroupSize == defaults.genKVGroupSize
+            ? "" : String(configuration.genKVGroupSize)
+        tempQuantStart =
+            configuration.genQuantizedKVStart == defaults.genQuantizedKVStart
+            ? "" : String(configuration.genQuantizedKVStart)
+        tempMaxKV = configuration.genMaxKVSize.map(String.init) ?? ""
+        tempPrefillStep =
+            configuration.genPrefillStepSize == defaults.genPrefillStepSize
+            ? "" : String(configuration.genPrefillStepSize)
+        tempAllowedOrigins = configuration.allowedOrigins.joined(separator: ", ")
+    }
+
+    // MARK: - Configuration Saving
+
+    private func saveConfiguration() {
+        guard let port = Int(tempPortString), (1 ..< 65536).contains(port) else { return }
+
+        var configuration = ServerConfigurationStore.load() ?? ServerConfiguration.default
+        configuration.port = port
+        configuration.exposeToNetwork = tempExposeToNetwork
+        configuration.startAtLogin = tempStartAtLogin
+
+        // Save advanced settings if they were modified
+        let defaults = ServerConfiguration.default
+        let trimmedTopP = tempTopP.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmedTopP.isEmpty {
+            configuration.genTopP = defaults.genTopP
+        } else {
+            configuration.genTopP = Float(trimmedTopP) ?? defaults.genTopP
+        }
+
+        configuration.genKVBits = Int(tempKVBits)
+
+        let trimmedKVGroup = tempKVGroup.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmedKVGroup.isEmpty {
+            configuration.genKVGroupSize = defaults.genKVGroupSize
+        } else {
+            configuration.genKVGroupSize = Int(trimmedKVGroup) ?? defaults.genKVGroupSize
+        }
+
+        let trimmedQuantStart = tempQuantStart.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmedQuantStart.isEmpty {
+            configuration.genQuantizedKVStart = defaults.genQuantizedKVStart
+        } else {
+            configuration.genQuantizedKVStart =
+                Int(trimmedQuantStart) ?? defaults.genQuantizedKVStart
+        }
+
+        configuration.genMaxKVSize = Int(tempMaxKV)
+
+        let trimmedPrefill = tempPrefillStep.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmedPrefill.isEmpty {
+            configuration.genPrefillStepSize = defaults.genPrefillStepSize
+        } else {
+            configuration.genPrefillStepSize =
+                Int(trimmedPrefill) ?? defaults.genPrefillStepSize
+        }
+
+        // Save CORS allowed origins
+        let parsedOrigins: [String] =
+            tempAllowedOrigins
+            .split(separator: ",")
+            .map { String($0).trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        configuration.allowedOrigins = parsedOrigins
+
+        // Persist to disk
+        ServerConfigurationStore.save(configuration)
+
+        // Save Chat configuration (per-chat overrides)
+        let trimmedTemp = tempChatTemperature.trimmingCharacters(in: .whitespacesAndNewlines)
+        let parsedTemp: Float? = {
+            guard !trimmedTemp.isEmpty, let v = Float(trimmedTemp) else { return nil }
+            return max(0.0, min(2.0, v))
+        }()
+
+        let trimmedMax = tempChatMaxTokens.trimmingCharacters(in: .whitespacesAndNewlines)
+        let parsedMax: Int? = {
+            guard !trimmedMax.isEmpty, let v = Int(trimmedMax) else { return nil }
+            return max(1, v)
+        }()
+
+        let trimmedTopPChat = tempChatTopP.trimmingCharacters(in: .whitespacesAndNewlines)
+        let parsedTopP: Float? = {
+            guard !trimmedTopPChat.isEmpty, let v = Float(trimmedTopPChat) else { return nil }
+            return max(0.0, min(1.0, v))
+        }()
+
+        let parsedMaxToolAttempts: Int? = {
+            let s = tempChatMaxToolAttempts.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !s.isEmpty, let v = Int(s) else { return nil }
+            return max(1, min(10, v))
+        }()
+
+        let chatCfg = ChatConfiguration(
+            hotkey: tempChatHotkey,
+            systemPrompt: tempSystemPrompt,
+            temperature: parsedTemp,
+            maxTokens: parsedMax,
+            topPOverride: parsedTopP,
+            maxToolAttempts: parsedMaxToolAttempts
+        )
+        ChatConfigurationStore.save(chatCfg)
+
+        // Apply hotkey without relaunch
+        AppDelegate.shared?.applyChatHotkey()
+
+        // Apply login item state
+        LoginItemService.shared.applyStartAtLogin(configuration.startAtLogin)
+
+        // Restart server to apply changes
+        Task { @MainActor in
+            await AppDelegate.shared?.serverController.restartServer()
+        }
+
+        // Show confirmation
+        withAnimation(.easeInOut(duration: 0.2)) {
+            showSaveConfirmation = true
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+            withAnimation(.easeInOut(duration: 0.2)) {
+                showSaveConfirmation = false
+            }
         }
     }
 
@@ -604,29 +625,29 @@ struct ConfigurationView: View {
     )
         -> some View
     {
-        VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: 6) {
             HStack {
                 Text(label)
-                    .font(.system(size: 11, weight: .medium))
+                    .font(.system(size: 12, weight: .medium))
                     .foregroundColor(theme.primaryText)
 
                 Spacer()
 
                 Text(help)
-                    .font(.system(size: 9))
+                    .font(.system(size: 10))
                     .foregroundColor(theme.tertiaryText)
             }
 
             TextField(placeholder, text: text)
                 .textFieldStyle(.plain)
-                .font(.system(size: 12, design: .monospaced))
-                .padding(.horizontal, 10)
-                .padding(.vertical, 6)
+                .font(.system(size: 13, design: .monospaced))
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
                 .background(
-                    RoundedRectangle(cornerRadius: 6)
+                    RoundedRectangle(cornerRadius: 8)
                         .fill(theme.inputBackground)
                         .overlay(
-                            RoundedRectangle(cornerRadius: 6)
+                            RoundedRectangle(cornerRadius: 8)
                                 .stroke(theme.inputBorder, lineWidth: 1)
                         )
                 )

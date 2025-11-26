@@ -203,7 +203,6 @@ private struct BottomActionBar: View {
     @EnvironmentObject var server: ServerController
     @EnvironmentObject private var updater: UpdaterViewModel
     @Binding var portString: String
-    @State private var showConfiguration = false
 
     var body: some View {
         VStack(spacing: 4) {
@@ -218,18 +217,6 @@ private struct BottomActionBar: View {
 
                 CircularIconButton(systemName: "square.grid.2x2", help: "Management") {
                     AppDelegate.shared?.showManagementWindow()
-                }
-
-                CircularIconButton(systemName: "gearshape", help: "Configure server") {
-                    showConfiguration = true
-                }
-                .popover(
-                    isPresented: $showConfiguration,
-                    attachmentAnchor: .point(.bottom),
-                    arrowEdge: .top
-                ) {
-                    ConfigurationView(portString: $portString, configuration: $server.configuration)
-                        .environmentObject(server)
                 }
 
                 CircularIconButton(systemName: "arrow.up.circle", help: "Check for Updates…") {
