@@ -38,13 +38,13 @@ struct GlassBackground: NSViewRepresentable {
         baseGlassView.layer?.cornerRadius = cornerRadius
         baseGlassView.layer?.masksToBounds = true
 
-        // Edge lighting layer
+        // Edge lighting layer (disabled - using single clean edge)
         let edgeLightingView = NSView()
         edgeLightingView.wantsLayer = true
         edgeLightingView.layer?.cornerRadius = cornerRadius
         edgeLightingView.layer?.masksToBounds = true
-        edgeLightingView.layer?.borderWidth = 1.0
-        edgeLightingView.layer?.borderColor = NSColor.white.withAlphaComponent(0.5).cgColor
+        edgeLightingView.layer?.borderWidth = 0
+        edgeLightingView.layer?.borderColor = nil
 
         let containerView = GlassContainerView(
             baseGlassView: baseGlassView,
@@ -88,10 +88,8 @@ struct GlassBackground: NSViewRepresentable {
             container.edgeLightingView.layer?.cornerRadius = cornerRadius
             container.edgeLightingView.layer?.masksToBounds = true
         }
-        // Ensure edge lighting is visible
-        if container.edgeLightingView.layer?.borderWidth == 0 {
-            container.edgeLightingView.layer?.borderWidth = 1.0
-        }
+        // Edge lighting disabled for clean look
+        container.edgeLightingView.layer?.borderWidth = 0
     }
 }
 
@@ -103,7 +101,7 @@ struct GlassSurface: View {
 
     var body: some View {
         ZStack {
-            // Base AppKit-backed glass layer
+            // Base AppKit-backed glass layer (includes edge lighting)
             GlassBackground(cornerRadius: cornerRadius, material: material)
 
             // Subtle gradient overlay to tune perceived brightness/contrast
@@ -111,26 +109,12 @@ struct GlassSurface: View {
                 .fill(
                     LinearGradient(
                         gradient: Gradient(colors: [
-                            Color.white.opacity(colorScheme == .dark ? 0.15 : 0.25),
                             Color.white.opacity(colorScheme == .dark ? 0.08 : 0.15),
+                            Color.white.opacity(colorScheme == .dark ? 0.03 : 0.08),
                         ]),
                         startPoint: .topLeading,
                         endPoint: .bottomTrailing
                     )
-                )
-
-            // Edge lighting stroke
-            RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                .strokeBorder(
-                    LinearGradient(
-                        gradient: Gradient(colors: [
-                            Color.white.opacity(0.6),
-                            Color.white.opacity(0.2),
-                        ]),
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
-                    ),
-                    lineWidth: 1.0
                 )
         }
         .allowsHitTesting(false)

@@ -435,8 +435,8 @@ extension AppDelegate {
 
             let controller = NSHostingController(rootView: root)
             // Create already centered on the active screen to avoid any reposition jank
-            // Start with compact size since chat is initially empty
-            let defaultSize = NSSize(width: 720, height: 250)
+            // Match the empty state ideal height for proper centering
+            let defaultSize = NSSize(width: 720, height: 500)
             let mouse = NSEvent.mouseLocation
             let screen = NSScreen.screens.first { NSMouseInRect(mouse, $0.frame, false) } ?? NSScreen.main
             let initialRect: NSRect
@@ -447,23 +447,23 @@ extension AppDelegate {
             }
             let win = NSPanel(
                 contentRect: initialRect,
-                styleMask: [.titled, .fullSizeContentView],
+                styleMask: [.titled, .resizable, .fullSizeContentView],
                 backing: .buffered,
                 defer: false
             )
-            // Enable resizing and glass-style translucency
-            win.styleMask.insert(.resizable)
+            // Enable glass-style translucency
             win.isOpaque = false
             win.backgroundColor = .clear
+            win.hasShadow = true
             win.hidesOnDeactivate = false
             win.isExcludedFromWindowsMenu = true
             win.standardWindowButton(.miniaturizeButton)?.isHidden = true
             win.standardWindowButton(.zoomButton)?.isHidden = true
+            win.standardWindowButton(.closeButton)?.isHidden = true
             win.titleVisibility = .hidden
             win.titlebarAppearsTransparent = true
             win.isMovableByWindowBackground = true
-            win.standardWindowButton(.closeButton)?.isHidden = true
-            win.level = .modalPanel
+            win.level = .floating
             win.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
             win.contentViewController = controller
             win.delegate = self
