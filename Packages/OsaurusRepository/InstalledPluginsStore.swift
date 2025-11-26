@@ -80,4 +80,11 @@ public final class InstalledPluginsStore: @unchecked Sendable {
     public func latestInstalledVersion(pluginId: String) -> SemanticVersion? {
         installedVersions(pluginId: pluginId).first
     }
+
+    /// Remove all receipts for a plugin (used during uninstall)
+    public func removeAll(pluginId: String) {
+        var idx = loadIndex()
+        idx.receipts.removeValue(forKey: pluginId)
+        saveIndex(idx)
+    }
 }
