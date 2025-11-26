@@ -134,6 +134,9 @@ final class PluginRepositoryService: ObservableObject {
             // Reload plugins in the app
             PluginManager.shared.loadAll()
 
+            // Post notification synchronously to ensure all views update
+            NotificationCenter.default.post(name: .toolsListChanged, object: nil)
+
             updateUpdatesCount()
         } catch {
             plugins[index].isInstalling = false
@@ -162,6 +165,9 @@ final class PluginRepositoryService: ObservableObject {
             // Reload plugins in the app
             PluginManager.shared.loadAll()
 
+            // Post notification synchronously to ensure all views update
+            NotificationCenter.default.post(name: .toolsListChanged, object: nil)
+
             updateUpdatesCount()
         } catch {
             plugins[index].isInstalling = false
@@ -178,13 +184,19 @@ final class PluginRepositoryService: ObservableObject {
             try fm.removeItem(at: pluginDir)
         }
 
-        // Reload plugins
-        PluginManager.shared.loadAll()
+        // Remove the receipt from the store (prevents stale data on re-query)
+        InstalledPluginsStore.shared.removeAll(pluginId: pluginId)
 
-        // Update state
+        // Update state to ensure UI reflects uninstallation immediately
         if let index = plugins.firstIndex(where: { $0.spec.plugin_id == pluginId }) {
             plugins[index].installedVersion = nil
         }
+
+        // Reload plugins (this will unregister tools from ToolRegistry)
+        PluginManager.shared.loadAll()
+
+        // Post notification synchronously to ensure all views update
+        NotificationCenter.default.post(name: .toolsListChanged, object: nil)
 
         updateUpdatesCount()
     }
