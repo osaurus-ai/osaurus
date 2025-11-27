@@ -147,7 +147,7 @@ struct FloatingInputCard: View {
                         .font(.system(size: 15))
                         .foregroundColor(theme.tertiaryText)
                         .padding(.leading, 6)
-                        .padding(.top, 10)
+                        .padding(.top, 2)
                         .allowsHitTesting(false)
                 }
             }
