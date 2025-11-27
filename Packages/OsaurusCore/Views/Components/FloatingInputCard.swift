@@ -17,9 +17,7 @@ struct FloatingInputCard: View {
 
     @FocusState private var isFocused: Bool
     @Environment(\.theme) private var theme
-    @State private var textHeight: CGFloat = 44
 
-    private let minHeight: CGFloat = 44
     private let maxHeight: CGFloat = 200
 
     private var canSend: Bool {
@@ -133,43 +131,26 @@ struct FloatingInputCard: View {
     }
 
     private var textInputArea: some View {
-        ZStack(alignment: .topLeading) {
-            // Hidden text for height calculation
-            Text(text.isEmpty ? " " : text)
-                .font(.system(size: 15))
-                .padding(.horizontal, 4)
-                .padding(.vertical, 8)
-                .opacity(0)
-                .background(
-                    GeometryReader { geo in
-                        Color.clear
-                            .preference(key: TextHeightKey.self, value: geo.size.height)
-                    }
-                )
-
-            // Actual text editor
-            TextEditor(text: $text)
-                .font(.system(size: 15))
-                .foregroundColor(theme.primaryText)
-                .scrollContentBackground(.hidden)
-                .background(Color.clear)
-                .focused($isFocused)
-                .frame(height: min(max(textHeight, minHeight), maxHeight))
-
-            // Placeholder
-            if text.isEmpty {
-                Text("Message...")
-                    .font(.system(size: 15))
-                    .foregroundColor(theme.tertiaryText)
-                    .padding(.leading, 6)
-                    .allowsHitTesting(false)
+        TextEditor(text: $text)
+            .font(.system(size: 15))
+            .foregroundColor(theme.primaryText)
+            .scrollContentBackground(.hidden)
+            .background(Color.clear)
+            .focused($isFocused)
+            .frame(minHeight: 44, maxHeight: maxHeight)
+            .fixedSize(horizontal: false, vertical: true)
+            .padding(.vertical, 2)
+            .overlay(alignment: .topLeading) {
+                // Placeholder
+                if text.isEmpty {
+                    Text("Message...")
+                        .font(.system(size: 15))
+                        .foregroundColor(theme.tertiaryText)
+                        .padding(.leading, 6)
+                        .padding(.top, 10)
+                        .allowsHitTesting(false)
+                }
             }
-        }
-        .onPreferenceChange(TextHeightKey.self) { height in
-            withAnimation(.easeInOut(duration: 0.15)) {
-                textHeight = height
-            }
-        }
     }
 
     // MARK: - Action Button
@@ -267,15 +248,6 @@ struct FloatingInputCard: View {
 
     private var shadowColor: Color {
         isFocused ? Color.accentColor.opacity(0.15) : Color.black.opacity(0.15)
-    }
-}
-
-// MARK: - Height Preference Key
-
-private struct TextHeightKey: PreferenceKey {
-    static let defaultValue: CGFloat = 44
-    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
-        value = nextValue()
     }
 }
 
