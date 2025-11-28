@@ -138,7 +138,6 @@ public final class PluginInstallManager: @unchecked Sendable {
         let receiptURL = installDir.appendingPathComponent("receipt.json", isDirectory: false)
         let receiptData = try JSONEncoder().encode(receipt)
         try receiptData.write(to: receiptURL)
-        InstalledPluginsStore.shared.record(receipt)
 
         try Self.updateCurrentSymlink(pluginId: spec.plugin_id, version: resolution.version.version)
 

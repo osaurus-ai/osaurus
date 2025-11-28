@@ -184,9 +184,6 @@ final class PluginRepositoryService: ObservableObject {
             try fm.removeItem(at: pluginDir)
         }
 
-        // Remove the receipt from the store (prevents stale data on re-query)
-        InstalledPluginsStore.shared.removeAll(pluginId: pluginId)
-
         // Update state to ensure UI reflects uninstallation immediately
         if let index = plugins.firstIndex(where: { $0.spec.plugin_id == pluginId }) {
             plugins[index].installedVersion = nil

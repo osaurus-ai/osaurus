@@ -1451,25 +1451,28 @@ private struct InstalledPluginsSummaryView: View {
 
     private func refreshSummary() {
         let fm = FileManager.default
-        let supportDir = fm.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
-        let bundleId = Bundle.main.bundleIdentifier ?? "osaurus"
-        let url =
-            supportDir
-            .appendingPathComponent(bundleId, isDirectory: true)
-            .appendingPathComponent("Plugins", isDirectory: true)
-            .appendingPathComponent("receipts.json", isDirectory: false)
-        guard let data = try? Data(contentsOf: url) else {
+        let root = ToolsPaths.toolsRootDirectory()
+        guard let pluginDirs = try? fm.contentsOfDirectory(at: root, includingPropertiesForKeys: nil) else {
             summaryText = ""
             return
         }
-        struct IndexDump: Decodable { let receipts: [String: [String: PluginReceipt]] }
-        if let index = try? JSONDecoder().decode(IndexDump.self, from: data) {
-            let count = index.receipts.count
-            let ids = index.receipts.keys.sorted()
-            summaryText = count == 0 ? "" : "\(count) plugin\(count == 1 ? "" : "s"): \(ids.joined(separator: ", "))"
-        } else {
-            summaryText = ""
+
+        // Find installed plugins by looking for directories with a "current" symlink
+        var installedIds: [String] = []
+        for pluginDir in pluginDirs where pluginDir.hasDirectoryPath {
+            let currentLink = pluginDir.appendingPathComponent("current")
+            if let dest = try? fm.destinationOfSymbolicLink(atPath: currentLink.path) {
+                let versionDir = pluginDir.appendingPathComponent(dest, isDirectory: true)
+                let receiptURL = versionDir.appendingPathComponent("receipt.json")
+                if fm.fileExists(atPath: receiptURL.path) {
+                    installedIds.append(pluginDir.lastPathComponent)
+                }
+            }
         }
+
+        let count = installedIds.count
+        let ids = installedIds.sorted()
+        summaryText = count == 0 ? "" : "\(count) plugin\(count == 1 ? "" : "s"): \(ids.joined(separator: ", "))"
     }
 
     private func verifyAll() async {
