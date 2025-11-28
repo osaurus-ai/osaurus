@@ -23,11 +23,4 @@ public enum ToolsPaths {
         appSupportRoot().appendingPathComponent("PluginSpecs", isDirectory: true)
     }
 
-    public static func pluginsStateRoot() -> URL {
-        appSupportRoot().appendingPathComponent("Plugins", isDirectory: true)
-    }
-
-    public static func receiptsIndexURL() -> URL {
-        pluginsStateRoot().appendingPathComponent("receipts.json", isDirectory: false)
-    }
 }
