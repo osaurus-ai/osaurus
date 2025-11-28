@@ -13,12 +13,14 @@ import SwiftUI
 enum ManagementTab: String, CaseIterable {
     case models
     case tools
+    case insights
     case settings
 
     var icon: String {
         switch self {
         case .models: return "cube.box.fill"
         case .tools: return "wrench.and.screwdriver.fill"
+        case .insights: return "chart.bar.doc.horizontal"
         case .settings: return "gearshape.fill"
         }
     }
@@ -27,6 +29,7 @@ enum ManagementTab: String, CaseIterable {
         switch self {
         case .models: return "Models"
         case .tools: return "Tools"
+        case .insights: return "Insights"
         case .settings: return "Settings"
         }
     }
@@ -67,6 +70,11 @@ struct ManagementView: View {
                 badge: repoService.updatesAvailableCount > 0 ? repoService.updatesAvailableCount : nil
             ),
             SidebarItemData(
+                id: ManagementTab.insights.rawValue,
+                icon: ManagementTab.insights.icon,
+                label: ManagementTab.insights.label
+            ),
+            SidebarItemData(
                 id: ManagementTab.settings.rawValue,
                 icon: ManagementTab.settings.icon,
                 label: ManagementTab.settings.label
@@ -88,6 +96,8 @@ struct ManagementView: View {
                     )
                 case ManagementTab.tools.rawValue:
                     ToolsManagerView()
+                case ManagementTab.insights.rawValue:
+                    InsightsView()
                 case ManagementTab.settings.rawValue:
                     ConfigurationView()
                 default:

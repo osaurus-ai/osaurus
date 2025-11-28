@@ -11,14 +11,19 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
     private let services: [ModelService]
     private let installedModelsProvider: @Sendable () -> [String]
 
+    /// Source of the inference (for logging purposes)
+    private var inferenceSource: InferenceSource = .httpAPI
+
     init(
         services: [ModelService] = [FoundationModelService(), MLXService()],
         installedModelsProvider: @escaping @Sendable () -> [String] = {
             MLXService.getAvailableModels()
-        }
+        },
+        source: InferenceSource = .httpAPI
     ) {
         self.services = services
         self.installedModelsProvider = installedModelsProvider
+        self.inferenceSource = source
     }
     struct EngineError: Error {}
 
@@ -39,6 +44,14 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
         // Prepend the system prompt
         let systemMessage = ChatMessage(role: "system", content: trimmed)
         return [systemMessage] + messages
+    }
+
+    /// Estimate input tokens from messages (rough heuristic: ~4 chars per token)
+    private func estimateInputTokens(_ messages: [ChatMessage]) -> Int {
+        let totalChars = messages.reduce(0) { sum, msg in
+            sum + (msg.content?.count ?? 0)
+        }
+        return max(1, totalChars / 4)
     }
 
     func streamChat(request: ChatCompletionRequest) async throws -> AsyncThrowingStream<String, Error> {
@@ -66,11 +79,13 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
         )
 
         switch route {
-        case .service(let service, _):
+        case .service(let service, let effectiveModel):
+            let innerStream: AsyncThrowingStream<String, Error>
+
             // If tools were provided and supported, use message-based tool streaming
             if let tools = request.tools, !tools.isEmpty, let toolSvc = service as? ToolCapableService {
                 let stopSequences = request.stop ?? []
-                return try await toolSvc.streamWithTools(
+                innerStream = try await toolSvc.streamWithTools(
                     messages: messages,
                     parameters: params,
                     stopSequences: stopSequences,
@@ -78,21 +93,100 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
                     toolChoice: request.tool_choice,
                     requestedModel: request.model
                 )
+            } else {
+                innerStream = try await service.streamDeltas(
+                    messages: messages,
+                    parameters: params,
+                    requestedModel: request.model,
+                    stopSequences: request.stop ?? []
+                )
             }
 
-            return try await service.streamDeltas(
-                messages: messages,
-                parameters: params,
-                requestedModel: request.model,
-                stopSequences: request.stop ?? []
+            // Wrap stream to count tokens and log when complete
+            let source = self.inferenceSource
+            let inputTokens = estimateInputTokens(messages)
+            let model = effectiveModel
+            let temp = temperature
+            let maxTok = maxTokens
+
+            return wrapStreamWithLogging(
+                innerStream,
+                source: source,
+                model: model,
+                inputTokens: inputTokens,
+                temperature: temp,
+                maxTokens: maxTok
             )
+
         case .none:
             throw EngineError()
         }
     }
 
+    /// Wraps an async stream to count output tokens and log on completion
+    private func wrapStreamWithLogging(
+        _ inner: AsyncThrowingStream<String, Error>,
+        source: InferenceSource,
+        model: String,
+        inputTokens: Int,
+        temperature: Float,
+        maxTokens: Int
+    ) -> AsyncThrowingStream<String, Error> {
+        let (stream, continuation) = AsyncThrowingStream<String, Error>.makeStream()
+
+        Task {
+            let startTime = Date()
+            var outputTokenCount = 0
+            var finishReason: InferenceLog.FinishReason = .stop
+            var errorMsg: String? = nil
+            var toolInvocation: (name: String, args: String)? = nil
+
+            do {
+                for try await delta in inner {
+                    // Estimate tokens: each delta chunk is roughly proportional to tokens
+                    // More accurate: count whitespace-separated words, or use tokenizer
+                    outputTokenCount += max(1, delta.count / 4)
+                    continuation.yield(delta)
+                }
+                continuation.finish()
+            } catch let inv as ServiceToolInvocation {
+                toolInvocation = (inv.toolName, inv.jsonArguments)
+                finishReason = .toolCalls
+                continuation.finish(throwing: inv)
+            } catch {
+                finishReason = .error
+                errorMsg = error.localizedDescription
+                continuation.finish(throwing: error)
+            }
+
+            // Log the completed inference
+            let durationMs = Date().timeIntervalSince(startTime) * 1000
+            var toolCalls: [ToolCallLog]? = nil
+            if let (name, args) = toolInvocation {
+                toolCalls = [ToolCallLog(name: name, arguments: args)]
+            }
+
+            InsightsService.logInference(
+                source: source,
+                model: model,
+                inputTokens: inputTokens,
+                outputTokens: outputTokenCount,
+                durationMs: durationMs,
+                temperature: temperature,
+                maxTokens: maxTokens,
+                toolCalls: toolCalls,
+                finishReason: finishReason,
+                errorMessage: errorMsg
+            )
+        }
+
+        return stream
+    }
+
     func completeChat(request: ChatCompletionRequest) async throws -> ChatCompletionResponse {
+        let startTime = Date()
         let messages = await enrichMessagesWithSystemPrompt(request.messages)
+        let inputTokens = estimateInputTokens(messages)
         let temperature = request.temperature ?? 1.0
         let maxTokens = request.max_tokens ?? 512
         let repPenalty2: Float? = {
@@ -131,6 +225,7 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
                         toolChoice: request.tool_choice,
                         requestedModel: request.model
                     )
+                    let outputTokens = max(1, text.count / 4)
                     let choice = ChatChoice(
                         index: 0,
                         message: ChatMessage(
@@ -141,7 +236,25 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
                         ),
                         finish_reason: "stop"
                     )
-                    let usage = Usage(prompt_tokens: 0, completion_tokens: 0, total_tokens: 0)
+                    let usage = Usage(
+                        prompt_tokens: inputTokens,
+                        completion_tokens: outputTokens,
+                        total_tokens: inputTokens + outputTokens
+                    )
+
+                    // Log the inference
+                    let durationMs = Date().timeIntervalSince(startTime) * 1000
+                    InsightsService.logInference(
+                        source: inferenceSource,
+                        model: effectiveModel,
+                        inputTokens: inputTokens,
+                        outputTokens: outputTokens,
+                        durationMs: durationMs,
+                        temperature: temperature,
+                        maxTokens: maxTokens,
+                        finishReason: .stop
+                    )
+
                     return ChatCompletionResponse(
                         id: responseId,
                         created: created,
@@ -166,7 +279,22 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
                         tool_call_id: nil
                     )
                     let choice = ChatChoice(index: 0, message: assistant, finish_reason: "tool_calls")
-                    let usage = Usage(prompt_tokens: 0, completion_tokens: 0, total_tokens: 0)
+                    let usage = Usage(prompt_tokens: inputTokens, completion_tokens: 0, total_tokens: inputTokens)
+
+                    // Log the inference
+                    let durationMs = Date().timeIntervalSince(startTime) * 1000
+                    InsightsService.logInference(
+                        source: inferenceSource,
+                        model: effectiveModel,
+                        inputTokens: inputTokens,
+                        outputTokens: 0,
+                        durationMs: durationMs,
+                        temperature: temperature,
+                        maxTokens: maxTokens,
+                        toolCalls: [ToolCallLog(name: inv.toolName, arguments: inv.jsonArguments)],
+                        finishReason: .toolCalls
+                    )
+
                     return ChatCompletionResponse(
                         id: responseId,
                         created: created,
@@ -184,12 +312,31 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
                 parameters: params,
                 requestedModel: request.model
             )
+            let outputTokens = max(1, text.count / 4)
             let choice = ChatChoice(
                 index: 0,
                 message: ChatMessage(role: "assistant", content: text, tool_calls: nil, tool_call_id: nil),
                 finish_reason: "stop"
             )
-            let usage = Usage(prompt_tokens: 0, completion_tokens: 0, total_tokens: 0)
+            let usage = Usage(
+                prompt_tokens: inputTokens,
+                completion_tokens: outputTokens,
+                total_tokens: inputTokens + outputTokens
+            )
+
+            // Log the inference
+            let durationMs = Date().timeIntervalSince(startTime) * 1000
+            InsightsService.logInference(
+                source: inferenceSource,
+                model: effectiveModel,
+                inputTokens: inputTokens,
+                outputTokens: outputTokens,
+                durationMs: durationMs,
+                temperature: temperature,
+                maxTokens: maxTokens,
+                finishReason: .stop
+            )
+
             return ChatCompletionResponse(
                 id: responseId,
                 created: created,
