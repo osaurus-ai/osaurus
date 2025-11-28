@@ -21,6 +21,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         var requestHead: HTTPRequestHead?
         var requestBodyBuffer: ByteBuffer?
         var corsHeaders: [(String, String)] = []
+        var requestStartTime: Date = Date()
+        var normalizedPath: String = ""
     }
     private let stateRef: NIOLoopBound<RequestState>
 
@@ -40,6 +42,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         switch part {
         case .head(let head):
             stateRef.value.requestHead = head
+            stateRef.value.requestStartTime = Date()
             // Compute CORS headers for this request
             stateRef.value.corsHeaders = computeCORSHeaders(for: head, isPreflight: false)
             // Pre-size body buffer if Content-Length is available
@@ -72,6 +75,12 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             // Extract and normalize path (support /, /v1, /api, /v1/api)
             let pathOnly = extractPath(from: head.uri)
             let path = normalize(pathOnly)
+            stateRef.value.normalizedPath = path
+
+            // Extract metadata for logging
+            let startTime = stateRef.value.requestStartTime
+            let method = head.method.rawValue
+            let userAgent = head.headers.first(name: "User-Agent")
 
             // Handle CORS preflight (OPTIONS)
             if head.method == .OPTIONS {
@@ -83,6 +92,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     headers: cors,
                     body: ""
                 )
+                // Skip logging for preflight requests
                 stateRef.value.requestHead = nil
                 stateRef.value.requestBodyBuffer = nil
                 return
@@ -99,6 +109,14 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     headers: headers,
                     body: ""
                 )
+                logRequest(
+                    method: method,
+                    path: path,
+                    userAgent: userAgent,
+                    requestBody: nil,
+                    responseStatus: 204,
+                    startTime: startTime
+                )
             }
             // Handle core endpoints directly; fall back to Router only for legacy coverage
             else if head.method == .GET, path == "/" {
@@ -110,6 +128,14 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     status: .ok,
                     headers: headers,
                     body: "Osaurus Server is running! 🦕"
+                )
+                logRequest(
+                    method: method,
+                    path: path,
+                    userAgent: userAgent,
+                    requestBody: nil,
+                    responseStatus: 200,
+                    startTime: startTime
                 )
             } else if head.method == .GET, path == "/health" {
                 let obj: [String: Any] = ["status": "healthy", "timestamp": Date().ISO8601Format()]
@@ -123,6 +149,14 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     status: .ok,
                     headers: headers,
                     body: body
+                )
+                logRequest(
+                    method: method,
+                    path: path,
+                    userAgent: userAgent,
+                    requestBody: nil,
+                    responseStatus: 200,
+                    startTime: startTime
                 )
             } else if head.method == .GET, path == "/models" {
                 var models = MLXService.getAvailableModels().map { OpenAIModel(from: $0) }
@@ -140,6 +174,14 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     status: .ok,
                     headers: headers,
                     body: json
+                )
+                logRequest(
+                    method: method,
+                    path: path,
+                    userAgent: userAgent,
+                    requestBody: nil,
+                    responseStatus: 200,
+                    startTime: startTime
                 )
             } else if head.method == .GET, path == "/tags" {
                 let now = Date().ISO8601Format()
@@ -189,10 +231,18 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     headers: headers,
                     body: json
                 )
+                logRequest(
+                    method: method,
+                    path: path,
+                    userAgent: userAgent,
+                    requestBody: nil,
+                    responseStatus: 200,
+                    startTime: startTime
+                )
             } else if head.method == .POST, path == "/chat/completions" || path == "/v1/chat/completions" {
-                handleChatCompletions(head: head, context: context)
+                handleChatCompletions(head: head, context: context, startTime: startTime, userAgent: userAgent)
             } else if head.method == .POST, path == "/chat" {
-                handleChatNDJSON(head: head, context: context)
+                handleChatNDJSON(head: head, context: context, startTime: startTime, userAgent: userAgent)
             } else if head.method == .GET, path == "/mcp/health" {
                 var headers = [("Content-Type", "application/json; charset=utf-8")]
                 headers.append(contentsOf: stateRef.value.corsHeaders)
@@ -204,10 +254,18 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     headers: headers,
                     body: body
                 )
+                logRequest(
+                    method: method,
+                    path: path,
+                    userAgent: userAgent,
+                    requestBody: nil,
+                    responseStatus: 200,
+                    startTime: startTime
+                )
             } else if head.method == .GET, path == "/mcp/tools" {
-                handleMCPListTools(head: head, context: context)
+                handleMCPListTools(head: head, context: context, startTime: startTime, userAgent: userAgent)
             } else if head.method == .POST, path == "/mcp/call" {
-                handleMCPCallTool(head: head, context: context)
+                handleMCPCallTool(head: head, context: context, startTime: startTime, userAgent: userAgent)
             } else {
                 var headers = [("Content-Type", "text/plain; charset=utf-8")]
                 headers.append(contentsOf: stateRef.value.corsHeaders)
@@ -217,6 +275,14 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     status: .notFound,
                     headers: headers,
                     body: "Not Found"
+                )
+                logRequest(
+                    method: method,
+                    path: path,
+                    userAgent: userAgent,
+                    requestBody: nil,
+                    responseStatus: 404,
+                    startTime: startTime
                 )
             }
 
@@ -371,14 +437,22 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
 
     // MARK: - Chat handlers
 
-    private func handleChatCompletions(head: HTTPRequestHead, context: ChannelHandlerContext) {
+    private func handleChatCompletions(
+        head: HTTPRequestHead,
+        context: ChannelHandlerContext,
+        startTime: Date,
+        userAgent: String?
+    ) {
         let data: Data
+        let requestBodyString: String?
         if let body = stateRef.value.requestBodyBuffer {
             var bodyCopy = body
             let bytes = bodyCopy.readBytes(length: bodyCopy.readableBytes) ?? []
             data = Data(bytes)
+            requestBodyString = String(decoding: data, as: UTF8.self)
         } else {
             data = Data()
+            requestBodyString = nil
         }
 
         guard let req = try? JSONDecoder().decode(ChatCompletionRequest.self, from: data) else {
@@ -388,6 +462,15 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 status: .badRequest,
                 headers: [("Content-Type", "text/plain; charset=utf-8")],
                 body: "Invalid request format"
+            )
+            logRequest(
+                method: "POST",
+                path: "/chat/completions",
+                userAgent: userAgent,
+                requestBody: requestBodyString,
+                responseStatus: 400,
+                startTime: startTime,
+                errorMessage: "Invalid request format"
             )
             return
         }
@@ -420,6 +503,12 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     context: ctx.value
                 )
             }
+            // Capture for logging
+            let logStartTime = startTime
+            let logUserAgent = userAgent
+            let logRequestBody = requestBodyString
+            let logModel = model
+            let logSelf = self
             Task(priority: .userInitiated) {
                 do {
                     let stream = try await chatEngine.streamChat(request: req)
@@ -443,6 +532,15 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                         )
                         writerBound.value.writeEnd(ctx.value)
                     }
+                    logSelf.logRequest(
+                        method: "POST",
+                        path: "/chat/completions",
+                        userAgent: logUserAgent,
+                        requestBody: logRequestBody,
+                        responseStatus: 200,
+                        startTime: logStartTime,
+                        model: logModel
+                    )
                 } catch let inv as ServiceToolInvocation {
                     // Translate tool invocation to OpenAI-style streaming tool_calls deltas
                     let raw = UUID().uuidString.replacingOccurrences(of: "-", with: "")
@@ -487,11 +585,33 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                         )
                         writerBound.value.writeEnd(ctx.value)
                     }
+                    // Log tool call
+                    let toolLog = ToolCallLog(name: inv.toolName, arguments: inv.jsonArguments)
+                    logSelf.logRequest(
+                        method: "POST",
+                        path: "/chat/completions",
+                        userAgent: logUserAgent,
+                        requestBody: logRequestBody,
+                        responseStatus: 200,
+                        startTime: logStartTime,
+                        model: logModel,
+                        toolCalls: [toolLog]
+                    )
                 } catch {
                     hop {
                         writerBound.value.writeError(error.localizedDescription, context: ctx.value)
                         writerBound.value.writeEnd(ctx.value)
                     }
+                    logSelf.logRequest(
+                        method: "POST",
+                        path: "/chat/completions",
+                        userAgent: logUserAgent,
+                        requestBody: logRequestBody,
+                        responseStatus: 500,
+                        startTime: logStartTime,
+                        model: logModel,
+                        errorMessage: error.localizedDescription
+                    )
                 }
             }
         } else {
@@ -502,6 +622,12 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             let hop: (@escaping @Sendable () -> Void) -> Void = { block in
                 if loop.inEventLoop { block() } else { loop.execute { block() } }
             }
+            // Capture for logging
+            let logStartTime = startTime
+            let logUserAgent = userAgent
+            let logRequestBody = requestBodyString
+            let logModel = model
+            let logSelf = self
             Task(priority: .userInitiated) {
                 do {
                     let resp = try await chatEngine.completeChat(request: req)
@@ -527,6 +653,20 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                             ctx.value.close(promise: nil)
                         }
                     }
+                    // Extract token counts from response
+                    let tokensIn = resp.usage.prompt_tokens
+                    let tokensOut = resp.usage.completion_tokens
+                    logSelf.logRequest(
+                        method: "POST",
+                        path: "/chat/completions",
+                        userAgent: logUserAgent,
+                        requestBody: logRequestBody,
+                        responseStatus: 200,
+                        startTime: logStartTime,
+                        model: logModel,
+                        tokensInput: tokensIn,
+                        tokensOutput: tokensOut
+                    )
                 } catch {
                     let body = "Internal error: \(error.localizedDescription)"
                     let headers: [(String, String)] = [("Content-Type", "text/plain; charset=utf-8")]
@@ -548,19 +688,37 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                             ctx.value.close(promise: nil)
                         }
                     }
+                    logSelf.logRequest(
+                        method: "POST",
+                        path: "/chat/completions",
+                        userAgent: logUserAgent,
+                        requestBody: logRequestBody,
+                        responseStatus: 500,
+                        startTime: logStartTime,
+                        model: logModel,
+                        errorMessage: error.localizedDescription
+                    )
                 }
             }
         }
     }
 
-    private func handleChatNDJSON(head: HTTPRequestHead, context: ChannelHandlerContext) {
+    private func handleChatNDJSON(
+        head: HTTPRequestHead,
+        context: ChannelHandlerContext,
+        startTime: Date,
+        userAgent: String?
+    ) {
         let data: Data
+        let requestBodyString: String?
         if let body = stateRef.value.requestBodyBuffer {
             var bodyCopy = body
             let bytes = bodyCopy.readBytes(length: bodyCopy.readableBytes) ?? []
             data = Data(bytes)
+            requestBodyString = String(decoding: data, as: UTF8.self)
         } else {
             data = Data()
+            requestBodyString = nil
         }
 
         guard let req = try? JSONDecoder().decode(ChatCompletionRequest.self, from: data) else {
@@ -570,6 +728,15 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 status: .badRequest,
                 headers: [("Content-Type", "text/plain; charset=utf-8")],
                 body: "Invalid request format"
+            )
+            logRequest(
+                method: "POST",
+                path: "/chat",
+                userAgent: userAgent,
+                requestBody: requestBodyString,
+                responseStatus: 400,
+                startTime: startTime,
+                errorMessage: "Invalid request format"
             )
             return
         }
@@ -586,6 +753,12 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         hop {
             writerBound.value.writeHeaders(ctx.value, extraHeaders: cors)
         }
+        // Capture for logging
+        let logStartTime = startTime
+        let logUserAgent = userAgent
+        let logRequestBody = requestBodyString
+        let logModel = req.model
+        let logSelf = self
         Task(priority: .userInitiated) {
             do {
                 let stream = try await chatEngine.streamChat(request: req)
@@ -609,23 +782,51 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     )
                     writerBound.value.writeEnd(ctx.value)
                 }
+                logSelf.logRequest(
+                    method: "POST",
+                    path: "/chat",
+                    userAgent: logUserAgent,
+                    requestBody: logRequestBody,
+                    responseStatus: 200,
+                    startTime: logStartTime,
+                    model: logModel
+                )
             } catch {
                 hop {
                     writerBound.value.writeError(error.localizedDescription, context: ctx.value)
                     writerBound.value.writeEnd(ctx.value)
                 }
+                logSelf.logRequest(
+                    method: "POST",
+                    path: "/chat",
+                    userAgent: logUserAgent,
+                    requestBody: logRequestBody,
+                    responseStatus: 500,
+                    startTime: logStartTime,
+                    model: logModel,
+                    errorMessage: error.localizedDescription
+                )
             }
         }
     }
 
     // MARK: - Minimal MCP-style endpoints (same port)
-    private func handleMCPListTools(head: HTTPRequestHead, context: ChannelHandlerContext) {
+    private func handleMCPListTools(
+        head: HTTPRequestHead,
+        context: ChannelHandlerContext,
+        startTime: Date,
+        userAgent: String?
+    ) {
         let loop = context.eventLoop
         let ctx = NIOLoopBound(context, eventLoop: loop)
         let cors = stateRef.value.corsHeaders
         let hop: (@escaping @Sendable () -> Void) -> Void = { block in
             if loop.inEventLoop { block() } else { loop.execute { block() } }
         }
+        // Capture for logging
+        let logStartTime = startTime
+        let logUserAgent = userAgent
+        let logSelf = self
         Task(priority: .userInitiated) {
             let entries = await MainActor.run {
                 ToolRegistry.shared.listTools().filter { $0.enabled }
@@ -654,17 +855,33 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     body: body
                 )
             }
+            logSelf.logRequest(
+                method: "GET",
+                path: "/mcp/tools",
+                userAgent: logUserAgent,
+                requestBody: nil,
+                responseStatus: 200,
+                startTime: logStartTime
+            )
         }
     }
 
-    private func handleMCPCallTool(head: HTTPRequestHead, context: ChannelHandlerContext) {
+    private func handleMCPCallTool(
+        head: HTTPRequestHead,
+        context: ChannelHandlerContext,
+        startTime: Date,
+        userAgent: String?
+    ) {
         let data: Data
+        let requestBodyString: String?
         if let body = stateRef.value.requestBodyBuffer {
             var bodyCopy = body
             let bytes = bodyCopy.readBytes(length: bodyCopy.readableBytes) ?? []
             data = Data(bytes)
+            requestBodyString = String(decoding: data, as: UTF8.self)
         } else {
             data = Data()
+            requestBodyString = nil
         }
 
         struct CallBody: Codable {
@@ -715,6 +932,15 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 headers: [("Content-Type", "text/plain; charset=utf-8")],
                 body: "Invalid request format"
             )
+            logRequest(
+                method: "POST",
+                path: "/mcp/call",
+                userAgent: userAgent,
+                requestBody: requestBodyString,
+                responseStatus: 400,
+                startTime: startTime,
+                errorMessage: "Invalid request format"
+            )
             return
         }
 
@@ -734,7 +960,13 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             if loop.inEventLoop { block() } else { loop.execute { block() } }
         }
         let toolName = req.name
+        // Capture for logging
+        let logStartTime = startTime
+        let logUserAgent = userAgent
+        let logRequestBody = requestBodyString
+        let logSelf = self
         Task(priority: .userInitiated) {
+            let toolCallStartTime = Date()
             do {
                 // Validate against schema if available
                 if let schema = await MainActor.run(body: { ToolRegistry.shared.parametersForTool(name: toolName) }) {
@@ -760,6 +992,22 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                                 body: body
                             )
                         }
+                        let toolLog = ToolCallLog(
+                            name: toolName,
+                            arguments: argsJSON,
+                            result: message,
+                            durationMs: Date().timeIntervalSince(toolCallStartTime) * 1000,
+                            isError: true
+                        )
+                        logSelf.logRequest(
+                            method: "POST",
+                            path: "/mcp/call",
+                            userAgent: logUserAgent,
+                            requestBody: logRequestBody,
+                            responseStatus: 200,
+                            startTime: logStartTime,
+                            toolCalls: [toolLog]
+                        )
                         return
                     }
                 }
@@ -782,6 +1030,22 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                         body: body
                     )
                 }
+                let toolLog = ToolCallLog(
+                    name: toolName,
+                    arguments: argsJSON,
+                    result: result,
+                    durationMs: Date().timeIntervalSince(toolCallStartTime) * 1000,
+                    isError: false
+                )
+                logSelf.logRequest(
+                    method: "POST",
+                    path: "/mcp/call",
+                    userAgent: logUserAgent,
+                    requestBody: logRequestBody,
+                    responseStatus: 200,
+                    startTime: logStartTime,
+                    toolCalls: [toolLog]
+                )
             } catch {
                 let payload: [String: Any] = [
                     "content": [["type": "text", "text": error.localizedDescription]],
@@ -800,6 +1064,23 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                         body: body
                     )
                 }
+                let toolLog = ToolCallLog(
+                    name: toolName,
+                    arguments: argsJSON,
+                    result: error.localizedDescription,
+                    durationMs: Date().timeIntervalSince(toolCallStartTime) * 1000,
+                    isError: true
+                )
+                logSelf.logRequest(
+                    method: "POST",
+                    path: "/mcp/call",
+                    userAgent: logUserAgent,
+                    requestBody: logRequestBody,
+                    responseStatus: 200,
+                    startTime: logStartTime,
+                    toolCalls: [toolLog],
+                    errorMessage: error.localizedDescription
+                )
             }
         }
     }
@@ -807,5 +1088,37 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
     @inline(__always)
     private func executeOnLoop(_ loop: EventLoop, _ block: @escaping @Sendable () -> Void) {
         if loop.inEventLoop { block() } else { loop.execute { block() } }
+    }
+
+    // MARK: - Request Logging
+
+    /// Log a completed request to InsightsService
+    private func logRequest(
+        method: String,
+        path: String,
+        userAgent: String?,
+        requestBody: String?,
+        responseStatus: Int,
+        startTime: Date,
+        model: String? = nil,
+        tokensInput: Int? = nil,
+        tokensOutput: Int? = nil,
+        toolCalls: [ToolCallLog]? = nil,
+        errorMessage: String? = nil
+    ) {
+        let durationMs = Date().timeIntervalSince(startTime) * 1000
+        InsightsService.logAsync(
+            method: method,
+            path: path,
+            userAgent: userAgent,
+            requestBody: requestBody,
+            responseStatus: responseStatus,
+            durationMs: durationMs,
+            model: model,
+            tokensInput: tokensInput,
+            tokensOutput: tokensOutput,
+            toolCalls: toolCalls,
+            errorMessage: errorMessage
+        )
     }
 }

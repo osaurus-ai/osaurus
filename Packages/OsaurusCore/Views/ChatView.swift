@@ -81,7 +81,7 @@ final class ChatSession: ObservableObject {
             let assistantTurn = ChatTurn(role: .assistant, content: "")
             turns.append(assistantTurn)
             do {
-                let engine = ChatEngine()
+                let engine = ChatEngine(source: .chatUI)
                 let chatCfg = ChatConfigurationStore.load()
                 let sys = chatCfg.systemPrompt.trimmingCharacters(in: .whitespacesAndNewlines)
                 let toolSpecs = ToolRegistry.shared.specs()
