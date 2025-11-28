@@ -67,68 +67,44 @@ struct InsightsView: View {
     // MARK: - Header View
 
     private var headerView: some View {
-        HStack(alignment: .center, spacing: 16) {
-            // Icon and title
-            HStack(spacing: 12) {
-                ZStack {
-                    RoundedRectangle(cornerRadius: 10)
-                        .fill(
-                            LinearGradient(
-                                colors: [Color.blue.opacity(0.7), Color.blue],
-                                startPoint: .topLeading,
-                                endPoint: .bottomTrailing
-                            )
-                        )
-                        .frame(width: 40, height: 40)
-
-                    Image(systemName: "waveform.path.ecg")
-                        .font(.system(size: 18, weight: .semibold))
-                        .foregroundColor(.white)
-                }
-
-                VStack(alignment: .leading, spacing: 2) {
+        VStack(spacing: 16) {
+            HStack {
+                VStack(alignment: .leading, spacing: 4) {
                     Text("Insights")
-                        .font(.system(size: 20, weight: .bold, design: .rounded))
+                        .font(.system(size: 28, weight: .bold, design: .rounded))
                         .foregroundColor(theme.primaryText)
 
                     Text("Monitor model inference and performance")
-                        .font(.system(size: 12))
-                        .foregroundColor(theme.tertiaryText)
+                        .font(.system(size: 14))
+                        .foregroundColor(theme.secondaryText)
                 }
-            }
 
-            Spacer()
+                Spacer()
 
-            // Clear button
-            Button(action: { showClearConfirmation = true }) {
-                HStack(spacing: 5) {
-                    Image(systemName: "trash")
-                        .font(.system(size: 11, weight: .medium))
-                    Text("Clear")
-                        .font(.system(size: 12, weight: .medium))
+                // Clear button
+                Button(action: { showClearConfirmation = true }) {
+                    HStack(spacing: 5) {
+                        Image(systemName: "trash")
+                            .font(.system(size: 11, weight: .medium))
+                        Text("Clear")
+                            .font(.system(size: 12, weight: .medium))
+                    }
+                    .foregroundColor(insightsService.logs.isEmpty ? theme.tertiaryText : theme.secondaryText)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 7)
+                    .background(
+                        RoundedRectangle(cornerRadius: 6)
+                            .fill(theme.tertiaryBackground.opacity(0.5))
+                    )
                 }
-                .foregroundColor(insightsService.logs.isEmpty ? theme.tertiaryText : theme.secondaryText)
-                .padding(.horizontal, 12)
-                .padding(.vertical, 7)
-                .background(
-                    RoundedRectangle(cornerRadius: 6)
-                        .fill(theme.tertiaryBackground.opacity(0.5))
-                )
+                .buttonStyle(PlainButtonStyle())
+                .disabled(insightsService.logs.isEmpty)
             }
-            .buttonStyle(PlainButtonStyle())
-            .disabled(insightsService.logs.isEmpty)
         }
         .padding(.horizontal, 24)
-        .padding(.vertical, 16)
-        .background(
-            theme.secondaryBackground
-                .overlay(
-                    Rectangle()
-                        .fill(theme.primaryBorder.opacity(0.5))
-                        .frame(height: 1),
-                    alignment: .bottom
-                )
-        )
+        .padding(.top, 24)
+        .padding(.bottom, 16)
+        .background(theme.secondaryBackground)
     }
 
     // MARK: - Filter Bar
