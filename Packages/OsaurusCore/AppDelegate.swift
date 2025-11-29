@@ -436,7 +436,7 @@ extension AppDelegate {
             let controller = NSHostingController(rootView: root)
             // Create already centered on the active screen to avoid any reposition jank
             // Match the empty state ideal height for proper centering
-            let defaultSize = NSSize(width: 720, height: 500)
+            let defaultSize = NSSize(width: 720, height: 550)
             let mouse = NSEvent.mouseLocation
             let screen = NSScreen.screens.first { NSMouseInRect(mouse, $0.frame, false) } ?? NSScreen.main
             let initialRect: NSRect

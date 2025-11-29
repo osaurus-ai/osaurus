@@ -289,8 +289,8 @@ struct ChatView: View {
             minWidth: 700,
             idealWidth: 900,
             maxWidth: .infinity,
-            minHeight: session.turns.isEmpty ? 440 : 550,
-            idealHeight: session.turns.isEmpty ? 500 : 700,
+            minHeight: session.turns.isEmpty ? 490 : 550,
+            idealHeight: session.turns.isEmpty ? 550 : 700,
             maxHeight: .infinity
         )
         .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))

@@ -32,6 +32,10 @@ struct FloatingInputCard: View {
         return (hasText || hasImages) && !isStreaming
     }
 
+    private var showPlaceholder: Bool {
+        text.isEmpty && pendingImages.isEmpty
+    }
+
     var body: some View {
         VStack(spacing: 12) {
             // Model selector chip (when multiple models available)
@@ -39,12 +43,7 @@ struct FloatingInputCard: View {
                 modelSelector
             }
 
-            // Pending images preview
-            if !pendingImages.isEmpty {
-                pendingImagesPreview
-            }
-
-            // Main input card
+            // Main input card (with inline images)
             inputCard
         }
         .padding(.horizontal, 20)
@@ -54,27 +53,26 @@ struct FloatingInputCard: View {
         }
     }
 
-    // MARK: - Pending Images Preview
+    // MARK: - Pending Images Preview (Inline)
 
-    private var pendingImagesPreview: some View {
+    private var inlinePendingImagesPreview: some View {
         ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 8) {
+            HStack(spacing: 6) {
                 ForEach(Array(pendingImages.enumerated()), id: \.offset) { index, imageData in
-                    imagePreviewThumbnail(imageData: imageData, index: index)
+                    imagePreviewThumbnail(imageData: imageData, index: index, size: 40)
                 }
             }
-            .padding(.horizontal, 4)
         }
-        .frame(height: 72)
+        .frame(height: 48)
     }
 
-    private func imagePreviewThumbnail(imageData: Data, index: Int) -> some View {
+    private func imagePreviewThumbnail(imageData: Data, index: Int, size: CGFloat = 64) -> some View {
         ZStack(alignment: .topTrailing) {
             if let nsImage = NSImage(data: imageData) {
                 Image(nsImage: nsImage)
                     .resizable()
                     .aspectRatio(contentMode: .fill)
-                    .frame(width: 64, height: 64)
+                    .frame(width: size, height: size)
                     .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
                     .overlay(
                         RoundedRectangle(cornerRadius: 8, style: .continuous)
@@ -100,6 +98,8 @@ struct FloatingInputCard: View {
             .buttonStyle(.plain)
             .offset(x: 4, y: -4)
         }
+        .padding(.top, 4)
+        .padding(.trailing, 4)
     }
 
     // MARK: - Model Selector
@@ -171,17 +171,17 @@ struct FloatingInputCard: View {
     // MARK: - Input Card
 
     private var inputCard: some View {
-        HStack(alignment: .bottom, spacing: 12) {
-            // Image attachment button (only for VLM models)
-            if supportsImages {
-                imageAttachButton
+        VStack(alignment: .leading, spacing: 8) {
+            // Inline pending images (compact, inside the card)
+            if !pendingImages.isEmpty {
+                inlinePendingImagesPreview
             }
 
-            // Text input area
-            textInputArea
-
-            // Action button (send/stop)
-            actionButton
+            // Input row with text and action button
+            HStack(alignment: .bottom, spacing: 12) {
+                textInputArea
+                actionButton
+            }
         }
         .padding(12)
         .background(cardBackground)
@@ -190,6 +190,13 @@ struct FloatingInputCard: View {
             RoundedRectangle(cornerRadius: 20, style: .continuous)
                 .strokeBorder(effectiveBorderStyle, lineWidth: isDragOver ? 2 : (isFocused ? 1.5 : 0.5))
         )
+        .overlay(alignment: .bottomLeading) {
+            // Floating image attachment button (only for VLM models)
+            if supportsImages {
+                imageAttachButton
+                    .offset(x: 10, y: -10)
+            }
+        }
         .shadow(
             color: shadowColor,
             radius: isFocused ? 24 : 12,
@@ -211,6 +218,7 @@ struct FloatingInputCard: View {
                 .background(
                     Circle()
                         .fill(theme.secondaryBackground.opacity(0.8))
+                        .shadow(color: .black.opacity(0.2), radius: 4, x: 0, y: 2)
                 )
         }
         .buttonStyle(.plain)
@@ -270,12 +278,12 @@ struct FloatingInputCard: View {
             .scrollContentBackground(.hidden)
             .background(Color.clear)
             .focused($isFocused)
-            .frame(minHeight: 44, maxHeight: maxHeight)
+            .frame(minHeight: 60, maxHeight: maxHeight)
             .fixedSize(horizontal: false, vertical: true)
             .padding(.vertical, 2)
             .overlay(alignment: .topLeading) {
                 // Placeholder
-                if text.isEmpty && pendingImages.isEmpty {
+                if showPlaceholder {
                     Text(supportsImages ? "Message or paste image..." : "Message...")
                         .font(.system(size: 15))
                         .foregroundColor(theme.tertiaryText)
