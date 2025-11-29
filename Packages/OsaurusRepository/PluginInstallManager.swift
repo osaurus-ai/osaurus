@@ -115,6 +115,9 @@ public final class PluginInstallManager: @unchecked Sendable {
         }
         try FileManager.default.copyItem(at: dylibURL, to: finalDylibURL)
 
+        // Remove quarantine attribute so macOS allows loading the dylib
+        Self.removeQuarantineAttribute(from: finalDylibURL)
+
         let dylibData = try Data(contentsOf: finalDylibURL)
         let dylibDigest = SHA256.hash(data: dylibData)
         let dylibSha = Data(dylibDigest).map { String(format: "%02x", $0) }.joined()
@@ -233,5 +236,28 @@ public final class PluginInstallManager: @unchecked Sendable {
             }
         }
         return nil
+    }
+
+    // MARK: - Quarantine removal
+
+    /// Removes the com.apple.quarantine extended attribute from a file.
+    /// This is necessary because downloaded files are quarantined by macOS,
+    /// and dlopen() may fail to load quarantined dylibs even with disable-library-validation.
+    private static func removeQuarantineAttribute(from url: URL) {
+        let task = Process()
+        task.executableURL = URL(fileURLWithPath: "/usr/bin/xattr")
+        task.arguments = ["-d", "com.apple.quarantine", url.path]
+        task.standardOutput = FileHandle.nullDevice
+        task.standardError = FileHandle.nullDevice
+        do {
+            try task.run()
+            task.waitUntilExit()
+            if task.terminationStatus == 0 {
+                NSLog("[Osaurus] Removed quarantine attribute from \(url.lastPathComponent)")
+            }
+            // Exit status non-zero is fine - means attribute wasn't present
+        } catch {
+            // Silently ignore - quarantine removal is best-effort
+        }
     }
 }
