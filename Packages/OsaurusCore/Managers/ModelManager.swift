@@ -54,6 +54,7 @@ final class ModelManager: NSObject, ObservableObject {
         "special_tokens_map.json",
         "generation_config.json",
         "chat_template.jinja",
+        "preprocessor_config.json",  // Required for VLM models
         "*.safetensors",
     ]
     /// Current models directory (uses DirectoryPickerService for user selection)
@@ -801,13 +802,117 @@ extension ModelManager {
             downloadURL: "https://huggingface.co/lmstudio-community/gpt-oss-120b-MLX-8bit"
         ),
 
-        // Kimi
+        // MARK: Vision Language Models (VLM)
+
+        // Kimi VL — versatile VLM with reasoning
         MLXModel(
             id: "mlx-community/Kimi-VL-A3B-Thinking-4bit",
             name: friendlyName(from: "mlx-community/Kimi-VL-A3B-Thinking-4bit"),
             description:
-                "Kimi VL A3B thinking variant (4-bit). Versatile assistant with strong reasoning.",
+                "Vision Language Model (VLM). Kimi VL A3B thinking variant with strong reasoning and image understanding.",
             downloadURL: "https://huggingface.co/mlx-community/Kimi-VL-A3B-Thinking-4bit"
+        ),
+
+        // Qwen VL family — excellent vision models
+        MLXModel(
+            id: "lmstudio-community/Qwen3-VL-4B-Instruct-MLX-4bit",
+            name: friendlyName(from: "lmstudio-community/Qwen3-VL-4B-Instruct-MLX-4bit"),
+            description:
+                "Vision Language Model (VLM). Qwen3-VL 4B (4-bit). Latest generation multimodal model with excellent image understanding.",
+            downloadURL: "https://huggingface.co/lmstudio-community/Qwen3-VL-4B-Instruct-MLX-4bit"
+        ),
+        MLXModel(
+            id: "mlx-community/Qwen3-VL-4B-Instruct-8bit",
+            name: friendlyName(from: "mlx-community/Qwen3-VL-4B-Instruct-8bit"),
+            description:
+                "Vision Language Model (VLM). Qwen3-VL 4B (8-bit). Higher precision variant for better quality image understanding.",
+            downloadURL: "https://huggingface.co/mlx-community/Qwen3-VL-4B-Instruct-8bit"
+        ),
+        MLXModel(
+            id: "mlx-community/Qwen2.5-VL-3B-Instruct-4bit",
+            name: friendlyName(from: "mlx-community/Qwen2.5-VL-3B-Instruct-4bit"),
+            description:
+                "Vision Language Model (VLM). Qwen2.5-VL 3B (4-bit). Compact and efficient multimodal model with strong vision capabilities.",
+            downloadURL: "https://huggingface.co/mlx-community/Qwen2.5-VL-3B-Instruct-4bit"
+        ),
+        MLXModel(
+            id: "mlx-community/Qwen2-VL-2B-Instruct-4bit",
+            name: friendlyName(from: "mlx-community/Qwen2-VL-2B-Instruct-4bit"),
+            description:
+                "Vision Language Model (VLM). Qwen2-VL 2B (4-bit). Compact multimodal model for image understanding and visual Q&A.",
+            downloadURL: "https://huggingface.co/mlx-community/Qwen2-VL-2B-Instruct-4bit"
+        ),
+        MLXModel(
+            id: "mlx-community/Qwen2-VL-7B-Instruct-4bit",
+            name: friendlyName(from: "mlx-community/Qwen2-VL-7B-Instruct-4bit"),
+            description:
+                "Vision Language Model (VLM). Qwen2-VL 7B (4-bit). Strong multimodal capabilities for image analysis, OCR, and visual reasoning.",
+            downloadURL: "https://huggingface.co/mlx-community/Qwen2-VL-7B-Instruct-4bit"
+        ),
+
+        // SmolVLM — tiny but capable VLMs
+        MLXModel(
+            id: "mlx-community/SmolVLM-Instruct-4bit",
+            name: friendlyName(from: "mlx-community/SmolVLM-Instruct-4bit"),
+            description:
+                "Vision Language Model (VLM). SmolVLM (4-bit). Tiny and fast VLM for lightweight image understanding tasks.",
+            downloadURL: "https://huggingface.co/mlx-community/SmolVLM-Instruct-4bit"
+        ),
+        MLXModel(
+            id: "HuggingFaceTB/SmolVLM2-500M-Video-Instruct-mlx",
+            name: friendlyName(from: "HuggingFaceTB/SmolVLM2-500M-Video-Instruct-mlx"),
+            description:
+                "Vision Language Model (VLM). SmolVLM2 500M Video. Ultra-compact VLM with video understanding capabilities.",
+            downloadURL: "https://huggingface.co/HuggingFaceTB/SmolVLM2-500M-Video-Instruct-mlx"
+        ),
+
+        // PaliGemma — Google's VLM
+        MLXModel(
+            id: "mlx-community/paligemma-3b-mix-448-8bit",
+            name: friendlyName(from: "mlx-community/paligemma-3b-mix-448-8bit"),
+            description:
+                "Vision Language Model (VLM). PaliGemma 3B (8-bit). Google's versatile VLM for image captioning, VQA, and detection.",
+            downloadURL: "https://huggingface.co/mlx-community/paligemma-3b-mix-448-8bit"
+        ),
+
+        // LLaVA — popular open VLM
+        MLXModel(
+            id: "mlx-community/llava-1.5-7b-4bit",
+            name: friendlyName(from: "mlx-community/llava-1.5-7b-4bit"),
+            description:
+                "Vision Language Model (VLM). LLaVA 1.5 7B (4-bit). Popular open-source VLM for image captioning and visual conversations.",
+            downloadURL: "https://huggingface.co/mlx-community/llava-1.5-7b-4bit"
+        ),
+
+        // Pixtral — Mistral's vision model
+        MLXModel(
+            id: "mlx-community/pixtral-12b-4bit",
+            name: friendlyName(from: "mlx-community/pixtral-12b-4bit"),
+            description:
+                "Vision Language Model (VLM). Pixtral 12B (4-bit) by Mistral. Excellent image understanding with strong text generation.",
+            downloadURL: "https://huggingface.co/mlx-community/pixtral-12b-4bit"
+        ),
+
+        // MARK: Text-only LLMs
+
+        // Gemma 3 QAT family — Google's efficient models
+        MLXModel(
+            id: "mlx-community/gemma-3-4b-it-qat-4bit",
+            name: friendlyName(from: "mlx-community/gemma-3-4b-it-qat-4bit"),
+            description: "Gemma 3 4B QAT (4-bit). Compact and efficient model with great quality for its size.",
+            downloadURL: "https://huggingface.co/mlx-community/gemma-3-4b-it-qat-4bit"
+        ),
+        MLXModel(
+            id: "mlx-community/gemma-3-12b-it-qat-4bit",
+            name: friendlyName(from: "mlx-community/gemma-3-12b-it-qat-4bit"),
+            description: "Gemma 3 12B QAT (4-bit). Strong mid-size model with excellent instruction following.",
+            downloadURL: "https://huggingface.co/mlx-community/gemma-3-12b-it-qat-4bit"
+        ),
+        MLXModel(
+            id: "mlx-community/gemma-3-27b-it-qat-4bit",
+            name: friendlyName(from: "mlx-community/gemma-3-27b-it-qat-4bit"),
+            description: "Gemma 3 27B QAT (4-bit). High-quality large model with excellent reasoning capabilities.",
+            downloadURL: "https://huggingface.co/mlx-community/gemma-3-27b-it-qat-4bit"
         ),
 
         // Llama family
@@ -1081,5 +1186,118 @@ extension ModelManager {
             }
         }
         return unique
+    }
+}
+
+// MARK: - Vision Language Model (VLM) Detection
+
+extension ModelManager {
+    /// Check if a model supports vision/multimodal input by examining its config.json
+    /// VLM models typically have vision_config, image_processor, or vision_encoder fields
+    nonisolated static func isVisionModel(modelId: String) -> Bool {
+        guard let localDir = findLocalModelDirectory(forModelId: modelId) else {
+            return false
+        }
+        return isVisionModel(at: localDir)
+    }
+
+    /// Check if a model at the given directory supports vision input
+    nonisolated static func isVisionModel(at directory: URL) -> Bool {
+        let configURL = directory.appendingPathComponent("config.json")
+        guard let data = try? Data(contentsOf: configURL),
+            let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        else {
+            return false
+        }
+
+        // Check for common VLM indicators in config.json
+        let visionIndicators = [
+            "vision_config",
+            "image_processor",
+            "vision_encoder",
+            "vision_tower",
+            "image_encoder",
+            "visual_encoder",
+            "image_size",
+            "patch_size",
+            "num_image_tokens",
+            "vision_feature_layer",
+            "image_aspect_ratio",
+        ]
+
+        for key in visionIndicators {
+            if json[key] != nil {
+                return true
+            }
+        }
+
+        // Check model_type for known VLM architectures
+        if let modelType = json["model_type"] as? String {
+            let vlmModelTypes = [
+                "llava",
+                "llava_next",
+                "qwen2_vl",
+                "qwen_vl",
+                "pixtral",
+                "paligemma",
+                "idefics",
+                "idefics2",
+                "internvl",
+                "cogvlm",
+                "minicpm_v",
+                "phi3_v",
+                "mllama",
+                "florence",
+                "blip",
+                "git",
+                "instructblip",
+            ]
+            if vlmModelTypes.contains(modelType.lowercased()) {
+                return true
+            }
+        }
+
+        // Check for preprocessor_config.json which often indicates VLM
+        let preprocessorURL = directory.appendingPathComponent("preprocessor_config.json")
+        if FileManager.default.fileExists(atPath: preprocessorURL.path) {
+            if let prepData = try? Data(contentsOf: preprocessorURL),
+                let prepJson = try? JSONSerialization.jsonObject(with: prepData) as? [String: Any]
+            {
+                // Check for image processor type
+                if let processorClass = prepJson["processor_class"] as? String,
+                    processorClass.lowercased().contains("image")
+                {
+                    return true
+                }
+                if let imageProcessorType = prepJson["image_processor_type"] as? String {
+                    return !imageProcessorType.isEmpty
+                }
+            }
+        }
+
+        return false
+    }
+
+    /// Find the local directory for a model id
+    nonisolated private static func findLocalModelDirectory(forModelId id: String) -> URL? {
+        let parts = id.split(separator: "/").map(String.init)
+        let base = DirectoryPickerService.effectiveModelsDirectory()
+        let url = parts.reduce(base) { partial, component in
+            partial.appendingPathComponent(component, isDirectory: true)
+        }
+        let fm = FileManager.default
+        let hasConfig = fm.fileExists(atPath: url.appendingPathComponent("config.json").path)
+        if hasConfig {
+            return url
+        }
+        return nil
+    }
+
+    /// Check if the currently selected model (by name) supports vision
+    nonisolated static func isVisionModel(named name: String) -> Bool {
+        guard let found = findInstalledModel(named: name) else {
+            return false
+        }
+        return isVisionModel(modelId: found.id)
     }
 }

@@ -6,22 +6,34 @@
 //
 
 import SwiftUI
+import UniformTypeIdentifiers
+import AppKit
 
 struct FloatingInputCard: View {
     @Binding var text: String
     @Binding var selectedModel: String?
+    @Binding var pendingImages: [Data]
     let modelOptions: [String]
     let isStreaming: Bool
+    let supportsImages: Bool
     let onSend: () -> Void
     let onStop: () -> Void
 
     @FocusState private var isFocused: Bool
     @Environment(\.theme) private var theme
+    @State private var isDragOver = false
 
     private let maxHeight: CGFloat = 200
+    private let maxImageSize: Int = 10 * 1024 * 1024  // 10MB limit
 
     private var canSend: Bool {
-        !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !isStreaming
+        let hasText = !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        let hasImages = !pendingImages.isEmpty
+        return (hasText || hasImages) && !isStreaming
+    }
+
+    private var showPlaceholder: Bool {
+        text.isEmpty && pendingImages.isEmpty
     }
 
     var body: some View {
@@ -31,11 +43,63 @@ struct FloatingInputCard: View {
                 modelSelector
             }
 
-            // Main input card
+            // Main input card (with inline images)
             inputCard
         }
         .padding(.horizontal, 20)
         .padding(.bottom, 20)
+        .onDrop(of: [UTType.image], isTargeted: $isDragOver) { providers in
+            handleImageDrop(providers)
+        }
+    }
+
+    // MARK: - Pending Images Preview (Inline)
+
+    private var inlinePendingImagesPreview: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 6) {
+                ForEach(Array(pendingImages.enumerated()), id: \.offset) { index, imageData in
+                    imagePreviewThumbnail(imageData: imageData, index: index, size: 40)
+                }
+            }
+        }
+        .frame(height: 48)
+    }
+
+    private func imagePreviewThumbnail(imageData: Data, index: Int, size: CGFloat = 64) -> some View {
+        ZStack(alignment: .topTrailing) {
+            if let nsImage = NSImage(data: imageData) {
+                Image(nsImage: nsImage)
+                    .resizable()
+                    .aspectRatio(contentMode: .fill)
+                    .frame(width: size, height: size)
+                    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 8, style: .continuous)
+                            .strokeBorder(theme.primaryBorder.opacity(0.3), lineWidth: 1)
+                    )
+            }
+
+            // Remove button
+            Button(action: {
+                withAnimation(.spring(response: 0.25, dampingFraction: 0.8)) {
+                    _ = pendingImages.remove(at: index)
+                }
+            }) {
+                Image(systemName: "xmark.circle.fill")
+                    .font(.system(size: 16))
+                    .foregroundColor(.white)
+                    .background(
+                        Circle()
+                            .fill(Color.black.opacity(0.6))
+                            .frame(width: 18, height: 18)
+                    )
+            }
+            .buttonStyle(.plain)
+            .offset(x: 4, y: -4)
+        }
+        .padding(.top, 4)
+        .padding(.trailing, 4)
     }
 
     // MARK: - Model Selector
@@ -107,20 +171,32 @@ struct FloatingInputCard: View {
     // MARK: - Input Card
 
     private var inputCard: some View {
-        HStack(alignment: .bottom, spacing: 12) {
-            // Text input area
-            textInputArea
+        VStack(alignment: .leading, spacing: 8) {
+            // Inline pending images (compact, inside the card)
+            if !pendingImages.isEmpty {
+                inlinePendingImagesPreview
+            }
 
-            // Action button (send/stop)
-            actionButton
+            // Input row with text and action button
+            HStack(alignment: .bottom, spacing: 12) {
+                textInputArea
+                actionButton
+            }
         }
         .padding(12)
         .background(cardBackground)
         .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: 20, style: .continuous)
-                .strokeBorder(borderGradient, lineWidth: isFocused ? 1.5 : 0.5)
+                .strokeBorder(effectiveBorderStyle, lineWidth: isDragOver ? 2 : (isFocused ? 1.5 : 0.5))
         )
+        .overlay(alignment: .bottomLeading) {
+            // Floating image attachment button (only for VLM models)
+            if supportsImages {
+                imageAttachButton
+                    .offset(x: 10, y: -10)
+            }
+        }
         .shadow(
             color: shadowColor,
             radius: isFocused ? 24 : 12,
@@ -128,6 +204,71 @@ struct FloatingInputCard: View {
             y: isFocused ? 8 : 4
         )
         .animation(.spring(response: 0.3, dampingFraction: 0.8), value: isFocused)
+        .animation(.easeInOut(duration: 0.2), value: isDragOver)
+    }
+
+    // MARK: - Image Attachment Button
+
+    private var imageAttachButton: some View {
+        Button(action: pickImage) {
+            Image(systemName: "photo.badge.plus")
+                .font(.system(size: 16, weight: .medium))
+                .foregroundColor(theme.secondaryText)
+                .frame(width: 32, height: 32)
+                .background(
+                    Circle()
+                        .fill(theme.secondaryBackground.opacity(0.8))
+                        .shadow(color: .black.opacity(0.2), radius: 4, x: 0, y: 2)
+                )
+        }
+        .buttonStyle(.plain)
+        .help("Attach image (or paste/drag)")
+    }
+
+    private func pickImage() {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [UTType.image]
+        panel.allowsMultipleSelection = true
+        panel.canChooseDirectories = false
+        panel.canChooseFiles = true
+        panel.message = "Select images to attach"
+
+        if panel.runModal() == .OK {
+            for url in panel.urls {
+                if let data = try? Data(contentsOf: url), data.count <= maxImageSize {
+                    // Convert to PNG for consistency
+                    if let nsImage = NSImage(data: data),
+                        let pngData = nsImage.pngData()
+                    {
+                        withAnimation(.spring(response: 0.25, dampingFraction: 0.8)) {
+                            pendingImages.append(pngData)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private func handleImageDrop(_ providers: [NSItemProvider]) -> Bool {
+        guard supportsImages else { return false }
+
+        for provider in providers {
+            if provider.hasItemConformingToTypeIdentifier(UTType.image.identifier) {
+                provider.loadDataRepresentation(forTypeIdentifier: UTType.image.identifier) { data, error in
+                    guard let data = data, error == nil, data.count <= maxImageSize else { return }
+                    DispatchQueue.main.async {
+                        if let nsImage = NSImage(data: data),
+                            let pngData = nsImage.pngData()
+                        {
+                            withAnimation(.spring(response: 0.25, dampingFraction: 0.8)) {
+                                pendingImages.append(pngData)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        return true
     }
 
     private var textInputArea: some View {
@@ -137,13 +278,13 @@ struct FloatingInputCard: View {
             .scrollContentBackground(.hidden)
             .background(Color.clear)
             .focused($isFocused)
-            .frame(minHeight: 44, maxHeight: maxHeight)
+            .frame(minHeight: 60, maxHeight: maxHeight)
             .fixedSize(horizontal: false, vertical: true)
             .padding(.vertical, 2)
             .overlay(alignment: .topLeading) {
                 // Placeholder
-                if text.isEmpty {
-                    Text("Message...")
+                if showPlaceholder {
+                    Text(supportsImages ? "Message or paste image..." : "Message...")
                         .font(.system(size: 15))
                         .foregroundColor(theme.tertiaryText)
                         .padding(.leading, 6)
@@ -151,6 +292,16 @@ struct FloatingInputCard: View {
                         .allowsHitTesting(false)
                 }
             }
+            .background(
+                PasteboardImageMonitor(
+                    supportsImages: supportsImages,
+                    onImagePaste: { imageData in
+                        withAnimation(.spring(response: 0.25, dampingFraction: 0.8)) {
+                            pendingImages.append(imageData)
+                        }
+                    }
+                )
+            )
     }
 
     // MARK: - Action Button
@@ -226,7 +377,14 @@ struct FloatingInputCard: View {
         }
     }
 
-    private var borderGradient: some ShapeStyle {
+    private var effectiveBorderStyle: AnyShapeStyle {
+        if isDragOver && supportsImages {
+            return AnyShapeStyle(Color.accentColor)
+        }
+        return borderGradient
+    }
+
+    private var borderGradient: AnyShapeStyle {
         if isFocused {
             return AnyShapeStyle(
                 LinearGradient(
@@ -251,6 +409,116 @@ struct FloatingInputCard: View {
     }
 }
 
+// MARK: - Pasteboard Image Monitor
+
+/// Monitors for Cmd+V paste events and checks if the pasteboard contains an image
+struct PasteboardImageMonitor: NSViewRepresentable {
+    let supportsImages: Bool
+    let onImagePaste: (Data) -> Void
+
+    func makeNSView(context: Context) -> NSView {
+        let view = PasteMonitorView()
+        view.supportsImages = supportsImages
+        view.onImagePaste = onImagePaste
+        return view
+    }
+
+    func updateNSView(_ nsView: NSView, context: Context) {
+        if let view = nsView as? PasteMonitorView {
+            view.supportsImages = supportsImages
+            view.onImagePaste = onImagePaste
+        }
+    }
+}
+
+class PasteMonitorView: NSView {
+    var supportsImages: Bool = false
+    var onImagePaste: ((Data) -> Void)?
+    private var monitor: Any?
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        if window != nil && monitor == nil {
+            monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+                guard let self = self else { return event }
+                // Check for Cmd+V
+                if event.modifierFlags.contains(.command) && event.charactersIgnoringModifiers == "v" {
+                    if self.handlePasteIfImage() {
+                        return nil  // Consume the event
+                    }
+                }
+                return event
+            }
+        }
+    }
+
+    override func removeFromSuperview() {
+        if let monitor = monitor {
+            NSEvent.removeMonitor(monitor)
+            self.monitor = nil
+        }
+        super.removeFromSuperview()
+    }
+
+    private func handlePasteIfImage() -> Bool {
+        guard supportsImages else { return false }
+
+        let pasteboard = NSPasteboard.general
+
+        // Check if pasteboard contains an image
+        guard let types = pasteboard.types,
+            types.contains(where: { $0 == .png || $0 == .tiff || $0 == .fileURL })
+        else {
+            return false
+        }
+
+        // Try to get image data directly
+        if let imageData = pasteboard.data(forType: .png) {
+            onImagePaste?(imageData)
+            return true
+        }
+
+        if let imageData = pasteboard.data(forType: .tiff),
+            let nsImage = NSImage(data: imageData),
+            let pngData = nsImage.pngData()
+        {
+            onImagePaste?(pngData)
+            return true
+        }
+
+        // Try file URL (for copied files)
+        if let urls = pasteboard.readObjects(forClasses: [NSURL.self], options: nil) as? [URL] {
+            for url in urls {
+                if let uti = try? url.resourceValues(forKeys: [.typeIdentifierKey]).typeIdentifier,
+                    UTType(uti)?.conforms(to: .image) == true,
+                    let data = try? Data(contentsOf: url),
+                    let nsImage = NSImage(data: data),
+                    let pngData = nsImage.pngData()
+                {
+                    onImagePaste?(pngData)
+                    return true
+                }
+            }
+        }
+
+        return false
+    }
+}
+
+// MARK: - NSImage PNG Conversion
+
+extension NSImage {
+    /// Convert NSImage to PNG data
+    func pngData() -> Data? {
+        guard let tiffData = self.tiffRepresentation,
+            let bitmap = NSBitmapImageRep(data: tiffData)
+        else {
+            return nil
+        }
+        return bitmap.representation(using: .png, properties: [:])
+    }
+}
+
 // MARK: - Preview
 
 #if DEBUG
@@ -258,6 +526,7 @@ struct FloatingInputCard: View {
         struct PreviewWrapper: View {
             @State private var text = ""
             @State private var model: String? = "foundation"
+            @State private var images: [Data] = []
 
             var body: some View {
                 VStack {
@@ -265,8 +534,10 @@ struct FloatingInputCard: View {
                     FloatingInputCard(
                         text: $text,
                         selectedModel: $model,
+                        pendingImages: $images,
                         modelOptions: ["foundation", "mlx-community/Llama-3.2-3B-Instruct"],
                         isStreaming: false,
+                        supportsImages: true,
                         onSend: {},
                         onStop: {}
                     )

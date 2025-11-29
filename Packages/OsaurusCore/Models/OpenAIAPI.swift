@@ -41,24 +41,100 @@ struct ModelsResponse: Codable, Sendable {
     let data: [OpenAIModel]
 }
 
+// MARK: - Multimodal Content Parts
+
+/// OpenAI-compatible content part for multimodal messages
+enum MessageContentPart: Codable, Sendable {
+    case text(String)
+    case imageUrl(url: String, detail: String?)
+
+    private enum CodingKeys: String, CodingKey {
+        case type
+        case text
+        case input_text
+        case image_url
+    }
+
+    private struct ImageUrlContent: Codable {
+        let url: String
+        let detail: String?
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        let type = try container.decode(String.self, forKey: .type)
+
+        switch type {
+        case "text":
+            if let text = try? container.decode(String.self, forKey: .text) {
+                self = .text(text)
+            } else if let inputText = try? container.decode(String.self, forKey: .input_text) {
+                self = .text(inputText)
+            } else {
+                self = .text("")
+            }
+        case "image_url":
+            let imageUrl = try container.decode(ImageUrlContent.self, forKey: .image_url)
+            self = .imageUrl(url: imageUrl.url, detail: imageUrl.detail)
+        default:
+            // Fallback to text for unknown types
+            if let text = try? container.decode(String.self, forKey: .text) {
+                self = .text(text)
+            } else {
+                self = .text("")
+            }
+        }
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        switch self {
+        case .text(let text):
+            try container.encode("text", forKey: .type)
+            try container.encode(text, forKey: .text)
+        case .imageUrl(let url, let detail):
+            try container.encode("image_url", forKey: .type)
+            try container.encode(ImageUrlContent(url: url, detail: detail), forKey: .image_url)
+        }
+    }
+}
+
 /// Chat message in OpenAI format
 struct ChatMessage: Codable, Sendable {
     let role: String
     let content: String?
+    /// Multimodal content parts (images, text) - populated when content is an array
+    let contentParts: [MessageContentPart]?
     /// Present when assistant requests tool invocations
     let tool_calls: [ToolCall]?
     /// Required for role=="tool" messages to associate with a prior tool call
     let tool_call_id: String?
+
+    /// Extract image URLs from content parts (supports both data URLs and http URLs)
+    var imageUrls: [String] {
+        guard let parts = contentParts else { return [] }
+        return parts.compactMap { part in
+            if case .imageUrl(let url, _) = part {
+                return url
+            }
+            return nil
+        }
+    }
+
+    /// Extract base64 image data from data URLs in content parts
+    var imageDataFromParts: [Data] {
+        imageUrls.compactMap { url in
+            // Parse data URL: data:image/png;base64,<base64data>
+            guard url.hasPrefix("data:image/") else { return nil }
+            guard let commaIndex = url.firstIndex(of: ",") else { return nil }
+            let base64String = String(url[url.index(after: commaIndex)...])
+            return Data(base64Encoded: base64String)
+        }
+    }
 }
 
 // Allow decoding OpenAI-style array-of-parts content while preserving string encoding
 extension ChatMessage {
-    private struct ContentPart: Codable {
-        let type: String
-        let text: String?
-        let input_text: String?
-    }
-
     private enum CodingKeys: String, CodingKey {
         case role
         case content
@@ -74,18 +150,36 @@ extension ChatMessage {
 
         if let stringContent = try? container.decode(String.self, forKey: .content) {
             self.content = stringContent
-        } else if let parts = try? container.decode([ContentPart].self, forKey: .content) {
-            let texts = parts.compactMap { $0.text ?? $0.input_text }
-            self.content = texts.isEmpty ? nil : texts.joined()
+            self.contentParts = nil
+        } else if let parts = try? container.decode([MessageContentPart].self, forKey: .content) {
+            // Store the parts for multimodal access
+            self.contentParts = parts
+            // Also extract text for backward compatibility
+            let texts = parts.compactMap { part -> String? in
+                if case .text(let text) = part { return text }
+                return nil
+            }
+            self.content = texts.isEmpty ? nil : texts.joined(separator: "\n")
         } else {
             self.content = nil
+            self.contentParts = nil
         }
     }
 
     public func encode(to encoder: Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
         try container.encode(role, forKey: .role)
-        try container.encodeIfPresent(content, forKey: .content)
+        // If we have content parts with images, encode as array; otherwise as string
+        if let parts = contentParts,
+            parts.contains(where: {
+                if case .imageUrl = $0 { return true }
+                return false
+            })
+        {
+            try container.encode(parts, forKey: .content)
+        } else {
+            try container.encodeIfPresent(content, forKey: .content)
+        }
         try container.encodeIfPresent(tool_calls, forKey: .tool_calls)
         try container.encodeIfPresent(tool_call_id, forKey: .tool_call_id)
     }
@@ -95,6 +189,39 @@ extension ChatMessage {
     init(role: String, content: String) {
         self.role = role
         self.content = content
+        self.contentParts = nil
+        self.tool_calls = nil
+        self.tool_call_id = nil
+    }
+
+    /// Initialize with optional tool calls and tool call id
+    init(role: String, content: String?, tool_calls: [ToolCall]?, tool_call_id: String?) {
+        self.role = role
+        self.content = content
+        self.contentParts = nil
+        self.tool_calls = tool_calls
+        self.tool_call_id = tool_call_id
+    }
+
+    /// Initialize with multimodal content (text and images)
+    init(role: String, text: String, imageData: [Data]) {
+        self.role = role
+        var parts: [MessageContentPart] = []
+
+        // Add text part
+        if !text.isEmpty {
+            parts.append(.text(text))
+        }
+
+        // Add image parts as base64 data URLs
+        for data in imageData {
+            let base64 = data.base64EncodedString()
+            let dataUrl = "data:image/png;base64,\(base64)"
+            parts.append(.imageUrl(url: dataUrl, detail: nil))
+        }
+
+        self.contentParts = parts.isEmpty ? nil : parts
+        self.content = text.isEmpty ? nil : text
         self.tool_calls = nil
         self.tool_call_id = nil
     }

@@ -37,6 +37,12 @@ struct ModelDetailView: View, Identifiable {
     /// Error message if size estimation fails
     @State private var estimateError: String? = nil
 
+    /// Hugging Face model details (loaded asynchronously)
+    @State private var hfDetails: HuggingFaceService.ModelDetails? = nil
+
+    /// Whether HF details are currently loading
+    @State private var isLoadingHFDetails = false
+
     var body: some View {
         VStack(spacing: 0) {
             header
@@ -49,18 +55,34 @@ struct ModelDetailView: View, Identifiable {
 
             footer
         }
-        .frame(width: 560, height: 480)
+        .frame(width: 560, height: 520)
         .background(theme.primaryBackground)
         .environment(\.theme, themeManager.currentTheme)
-        .onAppear { Task { await estimateIfNeeded() } }
+        .onAppear {
+            Task {
+                await estimateIfNeeded()
+                await loadHFDetails()
+            }
+        }
+    }
+
+    /// Load Hugging Face model details
+    private func loadHFDetails() async {
+        guard !isLoadingHFDetails else { return }
+        isLoadingHFDetails = true
+        let details = await HuggingFaceService.shared.fetchModelDetails(repoId: model.id)
+        await MainActor.run {
+            self.hfDetails = details
+            self.isLoadingHFDetails = false
+        }
     }
 
     // MARK: - Header
 
     /// Top section with model name, description, and close button
     private var header: some View {
-        HStack {
-            VStack(alignment: .leading, spacing: 6) {
+        HStack(alignment: .top) {
+            VStack(alignment: .leading, spacing: 8) {
                 HStack(spacing: 8) {
                     Text(model.name)
                         .font(.system(size: 18, weight: .semibold))
@@ -73,9 +95,25 @@ struct ModelDetailView: View, Identifiable {
                     }
                 }
 
+                // Metadata badges row
+                HStack(spacing: 6) {
+                    // Model type badge (LLM/VLM)
+                    modelTypeBadge
+
+                    // Parameter count
+                    if let params = model.parameterCount {
+                        DetailMetadataPill(text: params, icon: "cpu")
+                    }
+
+                    // Quantization
+                    if let quant = model.quantization {
+                        DetailMetadataPill(text: quant, icon: "gauge.with.dots.needle.bottom.50percent")
+                    }
+                }
+
                 if !model.description.isEmpty {
                     Text(model.description)
-                        .font(.system(size: 14))
+                        .font(.system(size: 13))
                         .foregroundColor(theme.secondaryText)
                         .lineLimit(2)
                 }
@@ -93,81 +131,247 @@ struct ModelDetailView: View, Identifiable {
         .padding(20)
     }
 
+    /// Badge showing whether model is LLM or VLM
+    private var modelTypeBadge: some View {
+        let isVLM: Bool = {
+            // For downloaded models, check config.json for accurate detection
+            if model.isDownloaded {
+                return ModelManager.isVisionModel(modelId: model.id)
+            }
+            // Check HF metadata if available
+            if let details = hfDetails {
+                return details.isVLM
+            }
+            // Fall back to name heuristics
+            return model.isLikelyVLM
+        }()
+
+        let type = isVLM ? MLXModel.ModelType.vlm : MLXModel.ModelType.llm
+        let color: Color = isVLM ? .purple : theme.accentColor
+        let icon = isVLM ? "eye" : "text.bubble"
+
+        return HStack(spacing: 4) {
+            Image(systemName: icon)
+                .font(.system(size: 10, weight: .semibold))
+            Text(type.rawValue)
+                .font(.system(size: 11, weight: .semibold))
+        }
+        .foregroundColor(color)
+        .padding(.horizontal, 8)
+        .padding(.vertical, 4)
+        .background(
+            Capsule()
+                .fill(color.opacity(0.12))
+        )
+    }
+
     // MARK: - Content
 
     /// Scrollable content area with model information and download size estimation
     private var content: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
-                // Basic info
-                VStack(alignment: .leading, spacing: 12) {
-                    InfoRow(label: "Repository", value: repositoryName(from: model.downloadURL))
+                // Hugging Face Stats
+                huggingFaceStatsSection
 
-                    if model.isDownloaded, let downloadedAt = model.downloadedAt {
-                        InfoRow(
-                            label: "Downloaded",
-                            value: RelativeDateTimeFormatter().localizedString(
-                                for: downloadedAt,
-                                relativeTo: Date()
-                            )
+                Divider()
+
+                // Model Information
+                modelInfoSection
+
+                Divider()
+
+                // Download Information
+                downloadInfoSection
+
+                Divider()
+
+                // Repository URL
+                CopyableURLField(label: "Repository URL", url: model.downloadURL)
+            }
+            .padding(20)
+        }
+    }
+
+    // MARK: - Hugging Face Stats Section
+
+    private var huggingFaceStatsSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Text("Hugging Face")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundColor(theme.primaryText)
+
+                if isLoadingHFDetails {
+                    ProgressView()
+                        .progressViewStyle(CircularProgressViewStyle())
+                        .scaleEffect(0.6)
+                }
+            }
+
+            if let details = hfDetails {
+                // Stats row with icons
+                HStack(spacing: 20) {
+                    // Downloads
+                    if let downloads = details.downloads {
+                        StatItem(
+                            icon: "arrow.down.circle.fill",
+                            value: formatNumber(downloads),
+                            label: "Downloads",
+                            color: theme.accentColor
+                        )
+                    }
+
+                    // Likes
+                    if let likes = details.likes {
+                        StatItem(
+                            icon: "heart.fill",
+                            value: formatNumber(likes),
+                            label: "Likes",
+                            color: .pink
+                        )
+                    }
+
+                    // License
+                    if let license = details.license {
+                        StatItem(
+                            icon: "doc.text.fill",
+                            value: license.uppercased(),
+                            label: "License",
+                            color: .orange
                         )
                     }
                 }
 
-                // Estimated download size
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("Estimated download size")
-                        .font(.system(size: 13, weight: .medium))
-                        .foregroundColor(theme.secondaryText)
-
-                    HStack(spacing: 8) {
-                        if isEstimating {
-                            ProgressView()
-                                .progressViewStyle(CircularProgressViewStyle())
-                                .scaleEffect(0.7)
-                        }
-
-                        Text(estimatedSizeString)
-                            .font(.system(size: 14, weight: .medium))
-                            .foregroundColor(theme.primaryText)
-
-                        if !isEstimating {
-                            Button(action: { Task { await estimateIfNeeded(force: true) } }) {
-                                Text("Recalculate")
-                                    .font(.system(size: 12))
-                                    .foregroundColor(theme.accentColor)
-                            }
-                            .buttonStyle(PlainButtonStyle())
-                        }
+                // Last updated
+                if let lastModified = details.lastModified {
+                    HStack(spacing: 4) {
+                        Image(systemName: "clock")
+                            .font(.system(size: 10))
+                        Text(
+                            "Updated \(RelativeDateTimeFormatter().localizedString(for: lastModified, relativeTo: Date()))"
+                        )
+                        .font(.system(size: 12))
                     }
+                    .foregroundColor(theme.tertiaryText)
+                }
+            } else if !isLoadingHFDetails {
+                Text("Could not load Hugging Face data")
+                    .font(.system(size: 12))
+                    .foregroundColor(theme.tertiaryText)
+            }
+        }
+    }
 
-                    if let err = estimateError {
-                        Text(err)
-                            .font(.system(size: 12))
-                            .foregroundColor(theme.errorColor)
-                    }
+    // MARK: - Model Information Section
+
+    private var modelInfoSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Model Information")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundColor(theme.primaryText)
+
+            VStack(alignment: .leading, spacing: 8) {
+                InfoRow(label: "Repository", value: repositoryName(from: model.downloadURL))
+
+                if let details = hfDetails, let author = details.author {
+                    InfoRow(label: "Author", value: author)
                 }
 
-                // Repository URL
-                CopyableURLField(label: "Repository URL", url: model.downloadURL)
+                if let details = hfDetails, let modelType = details.modelType {
+                    InfoRow(label: "Architecture", value: modelType)
+                }
 
-                // Required files
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("Required files")
-                        .font(.system(size: 13, weight: .medium))
-                        .foregroundColor(theme.secondaryText)
+                if let details = hfDetails, let pipelineTag = details.pipelineTag {
+                    InfoRow(label: "Task", value: pipelineTag.replacingOccurrences(of: "-", with: " ").capitalized)
+                }
 
-                    VStack(alignment: .leading, spacing: 4) {
-                        ForEach(ModelManager.snapshotDownloadPatterns, id: \.self) { pattern in
-                            Text(pattern)
-                                .font(.system(size: 12, design: .monospaced))
-                                .foregroundColor(theme.tertiaryText)
-                        }
-                    }
+                if model.isDownloaded, let downloadedAt = model.downloadedAt {
+                    InfoRow(
+                        label: "Downloaded",
+                        value: RelativeDateTimeFormatter().localizedString(
+                            for: downloadedAt,
+                            relativeTo: Date()
+                        )
+                    )
                 }
             }
-            .padding(20)
         }
+    }
+
+    // MARK: - Download Information Section
+
+    private var downloadInfoSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Download")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundColor(theme.primaryText)
+
+            // Estimated download size
+            HStack(spacing: 8) {
+                Image(systemName: "internaldrive")
+                    .font(.system(size: 12))
+                    .foregroundColor(theme.secondaryText)
+
+                Text("Size:")
+                    .font(.system(size: 13))
+                    .foregroundColor(theme.secondaryText)
+
+                if isEstimating {
+                    ProgressView()
+                        .progressViewStyle(CircularProgressViewStyle())
+                        .scaleEffect(0.6)
+                }
+
+                Text(estimatedSizeString)
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundColor(theme.primaryText)
+
+                if !isEstimating {
+                    Button(action: { Task { await estimateIfNeeded(force: true) } }) {
+                        Image(systemName: "arrow.clockwise")
+                            .font(.system(size: 11))
+                            .foregroundColor(theme.accentColor)
+                    }
+                    .buttonStyle(PlainButtonStyle())
+                    .help("Recalculate size")
+                }
+            }
+
+            if let err = estimateError {
+                Text(err)
+                    .font(.system(size: 12))
+                    .foregroundColor(theme.errorColor)
+            }
+
+            // Required files (collapsed by default)
+            DisclosureGroup {
+                VStack(alignment: .leading, spacing: 4) {
+                    ForEach(ModelManager.snapshotDownloadPatterns, id: \.self) { pattern in
+                        Text(pattern)
+                            .font(.system(size: 11, design: .monospaced))
+                            .foregroundColor(theme.tertiaryText)
+                    }
+                }
+                .padding(.top, 4)
+            } label: {
+                Text("Required files")
+                    .font(.system(size: 12))
+                    .foregroundColor(theme.secondaryText)
+            }
+        }
+    }
+
+    // MARK: - Helper Functions
+
+    /// Format large numbers with K/M suffixes
+    private func formatNumber(_ number: Int) -> String {
+        if number >= 1_000_000 {
+            return String(format: "%.1fM", Double(number) / 1_000_000)
+        } else if number >= 1_000 {
+            return String(format: "%.1fK", Double(number) / 1_000)
+        }
+        return "\(number)"
     }
 
     // MARK: - Helper Properties
@@ -359,5 +563,66 @@ struct ModelDetailView: View, Identifiable {
         } else {
             return String(format: "%d:%02d", minutes, secs)
         }
+    }
+}
+
+// MARK: - Helper Components
+
+/// Stat item for displaying HF stats (downloads, likes, etc.)
+private struct StatItem: View {
+    @Environment(\.theme) private var theme
+
+    let icon: String
+    let value: String
+    let label: String
+    let color: Color
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 4) {
+                Image(systemName: icon)
+                    .font(.system(size: 12))
+                    .foregroundColor(color)
+
+                Text(value)
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundColor(theme.primaryText)
+            }
+
+            Text(label)
+                .font(.system(size: 10))
+                .foregroundColor(theme.tertiaryText)
+        }
+    }
+}
+
+/// Small pill-shaped badge for displaying model metadata in detail view
+private struct DetailMetadataPill: View {
+    @Environment(\.theme) private var theme
+
+    let text: String
+    let icon: String?
+
+    init(text: String, icon: String? = nil) {
+        self.text = text
+        self.icon = icon
+    }
+
+    var body: some View {
+        HStack(spacing: 3) {
+            if let icon {
+                Image(systemName: icon)
+                    .font(.system(size: 9, weight: .medium))
+            }
+            Text(text)
+                .font(.system(size: 11, weight: .medium))
+        }
+        .foregroundColor(theme.secondaryText)
+        .padding(.horizontal, 8)
+        .padding(.vertical, 4)
+        .background(
+            Capsule()
+                .fill(theme.tertiaryBackground)
+        )
     }
 }

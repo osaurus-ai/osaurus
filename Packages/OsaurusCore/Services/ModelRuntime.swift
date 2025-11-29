@@ -5,9 +5,15 @@
 //  Holds MLX runtime state (containers, gates, caches) behind an actor.
 //
 
+import CoreImage
 import Foundation
 import MLXLLM
 import MLXLMCommon
+import MLXVLM
+
+// Force MLXVLM to be linked by referencing VLMModelFactory
+// This ensures VLM models can be loaded via the ModelFactoryRegistry
+private let _vlmFactory = MLXVLM.VLMModelFactory.shared
 
 actor ModelRuntime {
     // MARK: - Types
@@ -160,7 +166,20 @@ actor ModelRuntime {
                 userInfo: [NSLocalizedDescriptionKey: "Model not downloaded: \(name)"]
             )
         }
-        let container = try await loadModelContainer(directory: localURL)
+
+        // Check if this is a VLM model and use the appropriate factory
+        let isVLM = ModelManager.isVisionModel(at: localURL)
+        let container: ModelContainer
+
+        if isVLM {
+            // Use VLMModelFactory explicitly for vision models
+            let configuration = ModelConfiguration(directory: localURL)
+            container = try await VLMModelFactory.shared.loadContainer(configuration: configuration)
+        } else {
+            // Use default loading for LLM models
+            container = try await loadModelContainer(directory: localURL)
+        }
+
         let weightsBytes = computeWeightsSizeBytes(at: localURL)
         let holder = SessionHolder(name: name, container: container, weightsSizeBytes: weightsBytes)
         modelCache.setObject(holder, forKey: name as NSString)
@@ -328,6 +347,7 @@ actor ModelRuntime {
 
     // Map OpenAI ChatMessage history to MLX Chat.Message array, preserving tool results
     // by converting them into user-labeled text so the model can reason over outputs.
+    // Also extracts images from multimodal content parts for VLM support.
     nonisolated static func mapOpenAIChatToMLX(
         _ msgs: [ChatMessage]
     ) -> [MLXLMCommon.Chat.Message] {
@@ -341,14 +361,17 @@ actor ModelRuntime {
         var out: [MLXLMCommon.Chat.Message] = []
         out.reserveCapacity(max(6, msgs.count))
         for m in msgs {
+            // Extract images from content parts for VLM support
+            let images = extractImageSources(from: m)
+
             switch m.role {
             case "system":
                 out.append(
-                    MLXLMCommon.Chat.Message(role: .system, content: m.content ?? "", images: [], videos: [])
+                    MLXLMCommon.Chat.Message(role: .system, content: m.content ?? "", images: images, videos: [])
                 )
             case "user":
                 out.append(
-                    MLXLMCommon.Chat.Message(role: .user, content: m.content ?? "", images: [], videos: [])
+                    MLXLMCommon.Chat.Message(role: .user, content: m.content ?? "", images: images, videos: [])
                 )
             case "assistant":
                 // If assistant only signaled tool calls without textual content, drop it.
@@ -359,22 +382,51 @@ actor ModelRuntime {
                         MLXLMCommon.Chat.Message(
                             role: .assistant,
                             content: m.content ?? "",
-                            images: [],
+                            images: images,
                             videos: []
                         )
                     )
                 }
             case "tool":
                 out.append(
-                    MLXLMCommon.Chat.Message(role: .tool, content: m.content ?? "", images: [], videos: [])
+                    MLXLMCommon.Chat.Message(role: .tool, content: m.content ?? "", images: images, videos: [])
                 )
             default:
                 out.append(
-                    MLXLMCommon.Chat.Message(role: .user, content: m.content ?? "", images: [], videos: [])
+                    MLXLMCommon.Chat.Message(role: .user, content: m.content ?? "", images: images, videos: [])
                 )
             }
         }
         return out
+    }
+
+    /// Extract image sources from ChatMessage content parts for VLM models
+    nonisolated private static func extractImageSources(
+        from message: ChatMessage
+    ) -> [MLXLMCommon.UserInput.Image] {
+        // Get image URLs from content parts
+        let imageUrls = message.imageUrls
+        guard !imageUrls.isEmpty else { return [] }
+
+        var sources: [MLXLMCommon.UserInput.Image] = []
+        for urlString in imageUrls {
+            // Handle data URLs (base64-encoded images)
+            if urlString.hasPrefix("data:image/") {
+                // Parse data URL: data:image/png;base64,<base64data>
+                if let commaIndex = urlString.firstIndex(of: ",") {
+                    let base64String = String(urlString[urlString.index(after: commaIndex)...])
+                    if let imageData = Data(base64Encoded: base64String),
+                        let ciImage = CIImage(data: imageData)
+                    {
+                        sources.append(.ciImage(ciImage))
+                    }
+                }
+            } else if let url = URL(string: urlString) {
+                // Handle regular URLs
+                sources.append(.url(url))
+            }
+        }
+        return sources
     }
 
     // MARK: - Inline tool-call fallback detection moved to ToolDetection.swift

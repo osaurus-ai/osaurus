@@ -23,6 +23,44 @@ actor HuggingFaceService {
         let siblings: [RepoFile]?
     }
 
+    // MARK: - Rich Model Details
+
+    /// Comprehensive model details from Hugging Face API
+    struct ModelDetails {
+        let id: String
+        let author: String?
+        let downloads: Int?
+        let likes: Int?
+        let lastModified: Date?
+        let license: String?
+        let pipelineTag: String?
+        let modelType: String?
+        let tags: [String]
+        let isVLM: Bool
+    }
+
+    /// Raw API response for detailed model info
+    private struct ModelDetailsResponse: Decodable {
+        let id: String
+        let author: String?
+        let downloads: Int?
+        let likes: Int?
+        let lastModified: String?
+        let tags: [String]?
+        let pipeline_tag: String?
+        let config: ConfigInfo?
+        let cardData: CardData?
+
+        struct ConfigInfo: Decodable {
+            let model_type: String?
+        }
+
+        struct CardData: Decodable {
+            let license: String?
+            let model_type: String?
+        }
+    }
+
     private init() {}
 
     /// Estimate the total size for files matching provided patterns.
@@ -99,6 +137,111 @@ actor HuggingFaceService {
         // As a last resort, trust curated org with required files
         if lower.hasPrefix("mlx-community/") && hasRequiredFiles(meta: meta) {
             return true
+        }
+
+        return false
+    }
+
+    /// Fetch comprehensive model details from Hugging Face
+    /// Returns rich metadata including downloads, likes, license, etc.
+    func fetchModelDetails(repoId: String) async -> ModelDetails? {
+        var comps = URLComponents()
+        comps.scheme = "https"
+        comps.host = "huggingface.co"
+        comps.path = "/api/models/\(repoId)"
+        comps.queryItems = [URLQueryItem(name: "full", value: "1")]
+        guard let url = comps.url else { return nil }
+
+        var req = URLRequest(url: url)
+        req.setValue("application/json", forHTTPHeaderField: "Accept")
+
+        do {
+            let (data, response) = try await URLSession.shared.data(for: req)
+            guard let http = response as? HTTPURLResponse, (200 ..< 300).contains(http.statusCode) else {
+                return nil
+            }
+
+            let decoder = JSONDecoder()
+            let raw = try decoder.decode(ModelDetailsResponse.self, from: data)
+
+            // Parse lastModified date
+            var lastModified: Date?
+            if let dateStr = raw.lastModified {
+                let formatter = ISO8601DateFormatter()
+                formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+                lastModified = formatter.date(from: dateStr)
+                // Try without fractional seconds if failed
+                if lastModified == nil {
+                    formatter.formatOptions = [.withInternetDateTime]
+                    lastModified = formatter.date(from: dateStr)
+                }
+            }
+
+            // Extract license from tags or cardData
+            let tags = raw.tags ?? []
+            let license = raw.cardData?.license ?? extractLicenseFromTags(tags)
+
+            // Determine if VLM based on tags or pipeline
+            let isVLM = detectVLMFromMetadata(tags: tags, pipelineTag: raw.pipeline_tag)
+
+            // Extract model type from config or cardData
+            let modelType = raw.config?.model_type ?? raw.cardData?.model_type
+
+            return ModelDetails(
+                id: raw.id,
+                author: raw.author,
+                downloads: raw.downloads,
+                likes: raw.likes,
+                lastModified: lastModified,
+                license: license,
+                pipelineTag: raw.pipeline_tag,
+                modelType: modelType,
+                tags: tags,
+                isVLM: isVLM
+            )
+        } catch {
+            return nil
+        }
+    }
+
+    /// Extract license identifier from HF tags
+    private func extractLicenseFromTags(_ tags: [String]) -> String? {
+        // HF tags often include license: prefix
+        for tag in tags {
+            let lower = tag.lowercased()
+            if lower.hasPrefix("license:") {
+                return String(tag.dropFirst("license:".count))
+            }
+        }
+        // Check for common license identifiers directly in tags
+        let knownLicenses = ["mit", "apache-2.0", "gpl-3.0", "cc-by-4.0", "cc-by-nc-4.0", "llama2", "llama3", "gemma"]
+        for tag in tags {
+            if knownLicenses.contains(tag.lowercased()) {
+                return tag
+            }
+        }
+        return nil
+    }
+
+    /// Detect if model is a VLM based on HF metadata
+    private func detectVLMFromMetadata(tags: [String], pipelineTag: String?) -> Bool {
+        // Check pipeline tag
+        if let pipeline = pipelineTag?.lowercased() {
+            let vlmPipelines = [
+                "image-to-text", "visual-question-answering", "image-text-to-text", "document-question-answering",
+            ]
+            if vlmPipelines.contains(pipeline) {
+                return true
+            }
+        }
+
+        // Check tags for VLM indicators
+        let lowerTags = tags.map { $0.lowercased() }
+        let vlmTags = ["vision", "multimodal", "vlm", "image-text", "llava", "vqa", "image-to-text"]
+        for vlmTag in vlmTags {
+            if lowerTags.contains(where: { $0.contains(vlmTag) }) {
+                return true
+            }
         }
 
         return false
