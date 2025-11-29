@@ -67,6 +67,9 @@ struct ModelRowView: View {
                         }
                     }
 
+                    // Metadata pills row
+                    metadataPillsRow
+
                     if !model.description.isEmpty {
                         Text(model.description)
                             .font(.system(size: 13))
@@ -120,6 +123,56 @@ struct ModelRowView: View {
                 hasAppeared = true
             }
         }
+    }
+
+    // MARK: - Metadata Pills Row
+
+    /// Row of small pills showing model type, parameters, and quantization
+    private var metadataPillsRow: some View {
+        HStack(spacing: 6) {
+            // Model type badge (LLM/VLM)
+            modelTypeBadge
+
+            // Parameter count pill
+            if let params = model.parameterCount {
+                MetadataPill(text: params, icon: "cpu")
+            }
+
+            // Quantization pill
+            if let quant = model.quantization {
+                MetadataPill(text: quant, icon: "gauge.with.dots.needle.bottom.50percent")
+            }
+        }
+    }
+
+    /// Badge showing whether model is LLM or VLM
+    private var modelTypeBadge: some View {
+        let isVLM: Bool = {
+            // For downloaded models, check config.json for accurate detection
+            if model.isDownloaded {
+                return ModelManager.isVisionModel(modelId: model.id)
+            }
+            // For non-downloaded models, use name heuristics
+            return model.isLikelyVLM
+        }()
+
+        let type = isVLM ? MLXModel.ModelType.vlm : MLXModel.ModelType.llm
+        let color: Color = isVLM ? .purple : theme.accentColor
+        let icon = isVLM ? "eye" : "text.bubble"
+
+        return HStack(spacing: 3) {
+            Image(systemName: icon)
+                .font(.system(size: 8, weight: .semibold))
+            Text(type.rawValue)
+                .font(.system(size: 10, weight: .semibold))
+        }
+        .foregroundColor(color)
+        .padding(.horizontal, 6)
+        .padding(.vertical, 3)
+        .background(
+            Capsule()
+                .fill(color.opacity(0.12))
+        )
     }
 
     // MARK: - Model Icon
@@ -254,6 +307,39 @@ struct ModelRowView: View {
         } else {
             return String(format: "%d:%02d", minutes, secs)
         }
+    }
+}
+
+// MARK: - Metadata Pill Component
+
+/// Small pill-shaped badge for displaying model metadata
+private struct MetadataPill: View {
+    @Environment(\.theme) private var theme
+
+    let text: String
+    let icon: String?
+
+    init(text: String, icon: String? = nil) {
+        self.text = text
+        self.icon = icon
+    }
+
+    var body: some View {
+        HStack(spacing: 3) {
+            if let icon {
+                Image(systemName: icon)
+                    .font(.system(size: 8, weight: .medium))
+            }
+            Text(text)
+                .font(.system(size: 10, weight: .medium))
+        }
+        .foregroundColor(theme.secondaryText)
+        .padding(.horizontal, 6)
+        .padding(.vertical, 3)
+        .background(
+            Capsule()
+                .fill(theme.tertiaryBackground)
+        )
     }
 }
 

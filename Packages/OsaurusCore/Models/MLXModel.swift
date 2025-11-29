@@ -87,6 +87,94 @@ struct MLXModel: Identifiable, Codable {
         ])
         return values?.creationDate ?? values?.contentModificationDate
     }
+
+    // MARK: - Metadata Extraction
+
+    /// Extracts parameter count from model name/id (e.g., "1.7B", "7B", "30B", "235B")
+    var parameterCount: String? {
+        let text = id.lowercased()
+        // Match patterns like: 1.7b, 7b, 30b, 235b, 270m, 120b, etc.
+        // Also handles formats like "3n-E4B" (Gemma 3n) or "A22B" (MoE active params)
+        let patterns = [
+            #"(\d+\.?\d*)[bm](?:-|$|\s|[^a-z])"#,  // Standard: 7b, 1.7b, 270m
+            #"(\d+\.?\d*)b-"#,  // With suffix: 7b-instruct
+            #"-(\d+\.?\d*)[bm]-"#,  // Middle: llama-7b-instruct
+            #"[- ](\d+\.?\d*)[bm]$"#,  // End: model-7b
+            #"e(\d+)[bm]"#,  // Gemma style: E4B
+            #"a(\d+)[bm]"#,  // MoE active: A22B
+        ]
+
+        for pattern in patterns {
+            if let regex = try? NSRegularExpression(pattern: pattern, options: .caseInsensitive) {
+                let range = NSRange(text.startIndex..., in: text)
+                if let match = regex.firstMatch(in: text, options: [], range: range) {
+                    if let numRange = Range(match.range(at: 1), in: text) {
+                        let number = String(text[numRange])
+                        // Determine unit (B or M)
+                        let fullMatch = String(text[Range(match.range, in: text)!]).uppercased()
+                        let unit = fullMatch.contains("M") ? "M" : "B"
+                        return "\(number)\(unit)"
+                    }
+                }
+            }
+        }
+        return nil
+    }
+
+    /// Extracts quantization level from model name/id (e.g., "4-bit", "8-bit", "fp16")
+    var quantization: String? {
+        let text = id.lowercased()
+
+        // Check for bit patterns: 4bit, 4-bit, 8bit, 8-bit, etc.
+        if let regex = try? NSRegularExpression(pattern: #"(\d+)-?bit"#, options: .caseInsensitive) {
+            let range = NSRange(text.startIndex..., in: text)
+            if let match = regex.firstMatch(in: text, options: [], range: range) {
+                if let numRange = Range(match.range(at: 1), in: text) {
+                    return "\(text[numRange])-bit"
+                }
+            }
+        }
+
+        // Check for precision formats: fp16, bf16, fp32
+        if text.contains("fp16") { return "FP16" }
+        if text.contains("bf16") { return "BF16" }
+        if text.contains("fp32") { return "FP32" }
+
+        return nil
+    }
+
+    /// Determines if this model is a Vision Language Model (VLM) based on name heuristics
+    /// For downloaded models, use ModelManager.isVisionModel() for accurate detection
+    var isLikelyVLM: Bool {
+        let lowerId = id.lowercased()
+        let vlmIndicators = [
+            "-vl-", "-vl", "vl-",  // Qwen2-VL, Kimi-VL
+            "llava",  // LLaVA family
+            "pixtral",  // Mistral's vision model
+            "paligemma",  // Google's VLM
+            "idefics",  // HF's VLM
+            "internvl",  // InternVL
+            "cogvlm",  // CogVLM
+            "minicpm-v",  // MiniCPM-V
+            "phi3-v", "phi-3-v",  // Phi-3-Vision
+            "florence",  // Florence
+            "blip",  // BLIP family
+            "instructblip",  // InstructBLIP
+            "vision",  // Generic vision indicator
+        ]
+        return vlmIndicators.contains { lowerId.contains($0) }
+    }
+
+    /// Model type enum for display purposes
+    enum ModelType: String {
+        case llm = "LLM"
+        case vlm = "VLM"
+    }
+
+    /// Returns the model type based on heuristics
+    var modelType: ModelType {
+        isLikelyVLM ? .vlm : .llm
+    }
 }
 
 /// Download state for tracking progress

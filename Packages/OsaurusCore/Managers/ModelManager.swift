@@ -802,13 +802,117 @@ extension ModelManager {
             downloadURL: "https://huggingface.co/lmstudio-community/gpt-oss-120b-MLX-8bit"
         ),
 
-        // Kimi
+        // MARK: Vision Language Models (VLM)
+
+        // Kimi VL — versatile VLM with reasoning
         MLXModel(
             id: "mlx-community/Kimi-VL-A3B-Thinking-4bit",
             name: friendlyName(from: "mlx-community/Kimi-VL-A3B-Thinking-4bit"),
             description:
-                "Kimi VL A3B thinking variant (4-bit). Versatile assistant with strong reasoning.",
+                "Vision Language Model (VLM). Kimi VL A3B thinking variant with strong reasoning and image understanding.",
             downloadURL: "https://huggingface.co/mlx-community/Kimi-VL-A3B-Thinking-4bit"
+        ),
+
+        // Qwen VL family — excellent vision models
+        MLXModel(
+            id: "lmstudio-community/Qwen3-VL-4B-Instruct-MLX-4bit",
+            name: friendlyName(from: "lmstudio-community/Qwen3-VL-4B-Instruct-MLX-4bit"),
+            description:
+                "Vision Language Model (VLM). Qwen3-VL 4B (4-bit). Latest generation multimodal model with excellent image understanding.",
+            downloadURL: "https://huggingface.co/lmstudio-community/Qwen3-VL-4B-Instruct-MLX-4bit"
+        ),
+        MLXModel(
+            id: "mlx-community/Qwen3-VL-4B-Instruct-8bit",
+            name: friendlyName(from: "mlx-community/Qwen3-VL-4B-Instruct-8bit"),
+            description:
+                "Vision Language Model (VLM). Qwen3-VL 4B (8-bit). Higher precision variant for better quality image understanding.",
+            downloadURL: "https://huggingface.co/mlx-community/Qwen3-VL-4B-Instruct-8bit"
+        ),
+        MLXModel(
+            id: "mlx-community/Qwen2.5-VL-3B-Instruct-4bit",
+            name: friendlyName(from: "mlx-community/Qwen2.5-VL-3B-Instruct-4bit"),
+            description:
+                "Vision Language Model (VLM). Qwen2.5-VL 3B (4-bit). Compact and efficient multimodal model with strong vision capabilities.",
+            downloadURL: "https://huggingface.co/mlx-community/Qwen2.5-VL-3B-Instruct-4bit"
+        ),
+        MLXModel(
+            id: "mlx-community/Qwen2-VL-2B-Instruct-4bit",
+            name: friendlyName(from: "mlx-community/Qwen2-VL-2B-Instruct-4bit"),
+            description:
+                "Vision Language Model (VLM). Qwen2-VL 2B (4-bit). Compact multimodal model for image understanding and visual Q&A.",
+            downloadURL: "https://huggingface.co/mlx-community/Qwen2-VL-2B-Instruct-4bit"
+        ),
+        MLXModel(
+            id: "mlx-community/Qwen2-VL-7B-Instruct-4bit",
+            name: friendlyName(from: "mlx-community/Qwen2-VL-7B-Instruct-4bit"),
+            description:
+                "Vision Language Model (VLM). Qwen2-VL 7B (4-bit). Strong multimodal capabilities for image analysis, OCR, and visual reasoning.",
+            downloadURL: "https://huggingface.co/mlx-community/Qwen2-VL-7B-Instruct-4bit"
+        ),
+
+        // SmolVLM — tiny but capable VLMs
+        MLXModel(
+            id: "mlx-community/SmolVLM-Instruct-4bit",
+            name: friendlyName(from: "mlx-community/SmolVLM-Instruct-4bit"),
+            description:
+                "Vision Language Model (VLM). SmolVLM (4-bit). Tiny and fast VLM for lightweight image understanding tasks.",
+            downloadURL: "https://huggingface.co/mlx-community/SmolVLM-Instruct-4bit"
+        ),
+        MLXModel(
+            id: "HuggingFaceTB/SmolVLM2-500M-Video-Instruct-mlx",
+            name: friendlyName(from: "HuggingFaceTB/SmolVLM2-500M-Video-Instruct-mlx"),
+            description:
+                "Vision Language Model (VLM). SmolVLM2 500M Video. Ultra-compact VLM with video understanding capabilities.",
+            downloadURL: "https://huggingface.co/HuggingFaceTB/SmolVLM2-500M-Video-Instruct-mlx"
+        ),
+
+        // PaliGemma — Google's VLM
+        MLXModel(
+            id: "mlx-community/paligemma-3b-mix-448-8bit",
+            name: friendlyName(from: "mlx-community/paligemma-3b-mix-448-8bit"),
+            description:
+                "Vision Language Model (VLM). PaliGemma 3B (8-bit). Google's versatile VLM for image captioning, VQA, and detection.",
+            downloadURL: "https://huggingface.co/mlx-community/paligemma-3b-mix-448-8bit"
+        ),
+
+        // LLaVA — popular open VLM
+        MLXModel(
+            id: "mlx-community/llava-1.5-7b-4bit",
+            name: friendlyName(from: "mlx-community/llava-1.5-7b-4bit"),
+            description:
+                "Vision Language Model (VLM). LLaVA 1.5 7B (4-bit). Popular open-source VLM for image captioning and visual conversations.",
+            downloadURL: "https://huggingface.co/mlx-community/llava-1.5-7b-4bit"
+        ),
+
+        // Pixtral — Mistral's vision model
+        MLXModel(
+            id: "mlx-community/pixtral-12b-4bit",
+            name: friendlyName(from: "mlx-community/pixtral-12b-4bit"),
+            description:
+                "Vision Language Model (VLM). Pixtral 12B (4-bit) by Mistral. Excellent image understanding with strong text generation.",
+            downloadURL: "https://huggingface.co/mlx-community/pixtral-12b-4bit"
+        ),
+
+        // MARK: Text-only LLMs
+
+        // Gemma 3 QAT family — Google's efficient models
+        MLXModel(
+            id: "mlx-community/gemma-3-4b-it-qat-4bit",
+            name: friendlyName(from: "mlx-community/gemma-3-4b-it-qat-4bit"),
+            description: "Gemma 3 4B QAT (4-bit). Compact and efficient model with great quality for its size.",
+            downloadURL: "https://huggingface.co/mlx-community/gemma-3-4b-it-qat-4bit"
+        ),
+        MLXModel(
+            id: "mlx-community/gemma-3-12b-it-qat-4bit",
+            name: friendlyName(from: "mlx-community/gemma-3-12b-it-qat-4bit"),
+            description: "Gemma 3 12B QAT (4-bit). Strong mid-size model with excellent instruction following.",
+            downloadURL: "https://huggingface.co/mlx-community/gemma-3-12b-it-qat-4bit"
+        ),
+        MLXModel(
+            id: "mlx-community/gemma-3-27b-it-qat-4bit",
+            name: friendlyName(from: "mlx-community/gemma-3-27b-it-qat-4bit"),
+            description: "Gemma 3 27B QAT (4-bit). High-quality large model with excellent reasoning capabilities.",
+            downloadURL: "https://huggingface.co/mlx-community/gemma-3-27b-it-qat-4bit"
         ),
 
         // Llama family
