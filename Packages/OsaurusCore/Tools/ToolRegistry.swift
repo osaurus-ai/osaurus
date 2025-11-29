@@ -21,6 +21,10 @@ final class ToolRegistry {
         let effectivePolicy: ToolPermissionPolicy
         let requirements: [String]
         let grantsByRequirement: [String: Bool]
+        /// System permissions required by this tool (e.g., automation, accessibility)
+        let systemPermissions: [SystemPermission]
+        /// Which system permissions are currently granted at the OS level
+        let systemPermissionStates: [SystemPermission: Bool]
     }
 
     struct ToolEntry: Identifiable, Sendable {
@@ -62,6 +66,22 @@ final class ToolRegistry {
         }
         // Permission gating
         if let permissioned = tool as? PermissionedTool {
+            let requirements = permissioned.requirements
+
+            // First, check system permissions (automation, accessibility)
+            let missingSystemPermissions = SystemPermissionService.shared.missingPermissions(from: requirements)
+            if !missingSystemPermissions.isEmpty {
+                let missingNames = missingSystemPermissions.map { $0.displayName }.joined(separator: ", ")
+                throw NSError(
+                    domain: "ToolRegistry",
+                    code: 7,
+                    userInfo: [
+                        NSLocalizedDescriptionKey:
+                            "Missing system permissions for tool: \(name). Required: \(missingNames). Please grant these permissions in System Settings."
+                    ]
+                )
+            }
+
             let defaultPolicy = permissioned.defaultPermissionPolicy
             let effectivePolicy = configuration.policy[name] ?? defaultPolicy
             switch effectivePolicy {
@@ -85,14 +105,15 @@ final class ToolRegistry {
                     )
                 }
             case .auto:
-                let requirements = permissioned.requirements
-                if !configuration.hasGrants(for: name, requirements: requirements) {
+                // Filter out system permissions from per-tool grant requirements
+                let nonSystemRequirements = requirements.filter { !SystemPermissionService.isSystemPermission($0) }
+                if !configuration.hasGrants(for: name, requirements: nonSystemRequirements) {
                     throw NSError(
                         domain: "ToolRegistry",
                         code: 5,
                         userInfo: [
                             NSLocalizedDescriptionKey:
-                                "Missing grants for tool: \(name). Requirements: \(requirements.joined(separator: ", "))"
+                                "Missing grants for tool: \(name). Requirements: \(nonSystemRequirements.joined(separator: ", "))"
                         ]
                     )
                 }
@@ -185,16 +206,27 @@ final class ToolRegistry {
         let configured = configuration.policy[name]
         let effective = configured ?? defaultPolicy
         var grants: [String: Bool] = [:]
-        for r in requirements {
+        // Only track grants for non-system requirements
+        for r in requirements where !SystemPermissionService.isSystemPermission(r) {
             grants[r] = configuration.isGranted(name: name, requirement: r)
         }
+
+        // Extract system permissions from requirements
+        let systemPermissions = requirements.compactMap { SystemPermission(rawValue: $0) }
+        var systemPermissionStates: [SystemPermission: Bool] = [:]
+        for perm in systemPermissions {
+            systemPermissionStates[perm] = SystemPermissionService.shared.isGranted(perm)
+        }
+
         return ToolPolicyInfo(
             isPermissioned: isPermissioned,
             defaultPolicy: defaultPolicy,
             configuredPolicy: configured,
             effectivePolicy: effective,
             requirements: requirements,
-            grantsByRequirement: grants
+            grantsByRequirement: grants,
+            systemPermissions: systemPermissions,
+            systemPermissionStates: systemPermissionStates
         )
     }
 

@@ -218,6 +218,9 @@ struct ConfigurationView: View {
                             .fill(theme.secondaryBackground)
                     )
 
+                    // System Permissions section
+                    SystemPermissionsSection()
+
                     // Command Line Tool section
                     VStack(alignment: .leading, spacing: 16) {
                         Label("Command Line Tool", systemImage: "terminal")
@@ -790,5 +793,147 @@ extension ConfigurationView {
     private func isDirInPATH(_ dir: String) -> Bool {
         let path = ProcessInfo.processInfo.environment["PATH"] ?? ""
         return path.split(separator: ":").map(String.init).contains { $0 == dir }
+    }
+}
+
+// MARK: - System Permissions Section
+
+private struct SystemPermissionsSection: View {
+    @Environment(\.theme) private var theme
+    @ObservedObject private var permissionService = SystemPermissionService.shared
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Label("System Permissions", systemImage: "lock.shield")
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundColor(theme.primaryText)
+
+            Text(
+                "Some plugins require additional system permissions to function. Grant permissions below to enable advanced features."
+            )
+            .font(.system(size: 12))
+            .foregroundColor(theme.secondaryText)
+            .fixedSize(horizontal: false, vertical: true)
+
+            VStack(spacing: 12) {
+                ForEach(SystemPermission.allCases, id: \.rawValue) { permission in
+                    SystemPermissionRow(permission: permission)
+                }
+            }
+        }
+        .padding(16)
+        .background(
+            RoundedRectangle(cornerRadius: 12)
+                .fill(theme.secondaryBackground)
+        )
+        .onAppear {
+            permissionService.startPeriodicRefresh(interval: 2.0)
+        }
+        .onDisappear {
+            permissionService.stopPeriodicRefresh()
+        }
+    }
+}
+
+// MARK: - System Permission Row
+
+private struct SystemPermissionRow: View {
+    @Environment(\.theme) private var theme
+    @ObservedObject private var permissionService = SystemPermissionService.shared
+    let permission: SystemPermission
+
+    private var isGranted: Bool {
+        permissionService.permissionStates[permission] ?? false
+    }
+
+    var body: some View {
+        HStack(spacing: 12) {
+            // Permission icon
+            ZStack {
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(isGranted ? theme.successColor.opacity(0.1) : theme.tertiaryBackground)
+                Image(systemName: permission.systemIconName)
+                    .font(.system(size: 16, weight: .medium))
+                    .foregroundColor(isGranted ? theme.successColor : theme.secondaryText)
+            }
+            .frame(width: 36, height: 36)
+
+            // Permission info
+            VStack(alignment: .leading, spacing: 3) {
+                HStack(spacing: 6) {
+                    Text(permission.displayName)
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundColor(theme.primaryText)
+
+                    // Status badge
+                    Text(isGranted ? "Granted" : "Not Granted")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundColor(isGranted ? theme.successColor : theme.warningColor)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(
+                            Capsule()
+                                .fill(isGranted ? theme.successColor.opacity(0.1) : theme.warningColor.opacity(0.1))
+                        )
+                }
+
+                Text(permission.description)
+                    .font(.system(size: 11))
+                    .foregroundColor(theme.tertiaryText)
+                    .lineLimit(2)
+            }
+
+            Spacer()
+
+            // Action button
+            if isGranted {
+                Button(action: {
+                    permissionService.openSystemSettings(for: permission)
+                }) {
+                    HStack(spacing: 4) {
+                        Image(systemName: "gear")
+                            .font(.system(size: 11))
+                        Text("Settings")
+                            .font(.system(size: 12, weight: .medium))
+                    }
+                    .foregroundColor(theme.secondaryText)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 6)
+                    .background(
+                        RoundedRectangle(cornerRadius: 6)
+                            .fill(theme.tertiaryBackground)
+                    )
+                }
+                .buttonStyle(PlainButtonStyle())
+            } else {
+                Button(action: {
+                    permissionService.requestPermission(permission)
+                }) {
+                    HStack(spacing: 4) {
+                        Image(systemName: "hand.raised")
+                            .font(.system(size: 11))
+                        Text("Grant")
+                            .font(.system(size: 12, weight: .medium))
+                    }
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 6)
+                    .background(
+                        RoundedRectangle(cornerRadius: 6)
+                            .fill(theme.accentColor)
+                    )
+                }
+                .buttonStyle(PlainButtonStyle())
+            }
+        }
+        .padding(12)
+        .background(
+            RoundedRectangle(cornerRadius: 10)
+                .fill(theme.inputBackground)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 10)
+                        .stroke(isGranted ? theme.successColor.opacity(0.3) : theme.inputBorder, lineWidth: 1)
+                )
+        )
     }
 }

@@ -68,6 +68,53 @@ The manifest JSON returned by `get_manifest` (and stored on disk as `manifest.js
 }
 ```
 
+#### Tool Requirements
+
+The `requirements` array specifies what permissions or capabilities the tool needs. There are two types:
+
+1. **System Permissions** - macOS system-level permissions that users grant at the app level
+2. **Custom Permissions** - Plugin-specific permissions that users grant per-tool
+
+**System Permissions:**
+
+| Requirement     | Description                                                                          |
+| --------------- | ------------------------------------------------------------------------------------ |
+| `automation`    | AppleScript/Apple Events automation - allows controlling other applications          |
+| `accessibility` | Accessibility API access - allows UI interaction, input simulation, computer control |
+
+Example tool requiring automation:
+
+```json
+{
+  "id": "run_applescript",
+  "description": "Execute AppleScript commands",
+  "parameters": {
+    "type": "object",
+    "properties": { "script": { "type": "string" } }
+  },
+  "requirements": ["automation"],
+  "permission_policy": "ask"
+}
+```
+
+Example tool requiring both automation and accessibility (e.g., for computer use):
+
+```json
+{
+  "id": "computer_control",
+  "description": "Control the computer via UI automation",
+  "parameters": { ... },
+  "requirements": ["automation", "accessibility"],
+  "permission_policy": "ask"
+}
+```
+
+When a tool with system permission requirements is executed:
+
+1. Osaurus checks if the required permissions are granted at the OS level
+2. If any are missing, execution fails with a clear error message
+3. Users can grant permissions via Settings → System Permissions or when prompted by the tool
+
 ### Invocation
 
 When Osaurus needs to execute a capability, it calls `invoke`:
@@ -80,12 +127,41 @@ The plugin returns a JSON string response (allocated; host frees it).
 
 ## Permissions
 
-- Policy defaults to `"ask"` unless configured by the user.
-- `"deny"` blocks execution.
-- `"ask"` requires approval (returns a friendly error if denied).
-- `"auto"` executes if required grants are present.
+### Permission Policies
 
-Users can manage enablement and policies via the Osaurus UI/config.
+Each tool can specify a `permission_policy`:
+
+- `"ask"` (default) - Prompts user for approval before each execution
+- `"auto"` - Executes automatically if all requirements are granted
+- `"deny"` - Blocks execution entirely
+
+Users can override these defaults per-tool via the Osaurus UI.
+
+### System Permissions
+
+Some tools require macOS system permissions that must be granted at the app level:
+
+| Permission        | How to Grant                                         | Use Case                                          |
+| ----------------- | ---------------------------------------------------- | ------------------------------------------------- |
+| **Automation**    | System Settings → Privacy & Security → Automation    | AppleScript, controlling other apps               |
+| **Accessibility** | System Settings → Privacy & Security → Accessibility | UI automation, input simulation, computer control |
+
+**User Experience:**
+
+- The Tools UI shows a warning badge on plugins/tools that need permissions
+- Users see exactly which permissions are missing
+- One-click buttons to grant permissions or open System Settings
+- Settings → System Permissions shows all available permissions with status
+
+**Runtime Behavior:**
+
+- System permissions are checked before tool execution
+- If missing, execution fails with a clear error message indicating which permissions are needed
+- Users don't need to restart the app after granting permissions
+
+### Custom Requirements
+
+Beyond system permissions, tools can declare custom requirements (e.g., `"permission:web"`, `"tool:browser"`). These are managed per-tool and users grant them individually via the tool's settings panel.
 
 ## Distribution via Central Registry
 
