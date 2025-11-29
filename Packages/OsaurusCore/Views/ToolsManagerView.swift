@@ -158,6 +158,22 @@ struct ToolsManagerView: View {
 
     // MARK: - Installed Tab
 
+    /// Count of plugins that have tools with missing system permissions
+    private var pluginsWithMissingPermissions: Int {
+        var count = 0
+        for (_, tools) in installedPluginsWithTools {
+            for tool in tools {
+                if let info = ToolRegistry.shared.policyInfo(for: tool.name) {
+                    if info.systemPermissionStates.values.contains(false) {
+                        count += 1
+                        break
+                    }
+                }
+            }
+        }
+        return count
+    }
+
     private var installedTabContent: some View {
         ScrollView {
             LazyVStack(spacing: 16) {
@@ -170,6 +186,11 @@ struct ToolsManagerView: View {
                         subtitle: searchText.isEmpty ? nil : "Try a different search term"
                     )
                 } else {
+                    // Permission status banner
+                    if pluginsWithMissingPermissions > 0 {
+                        PermissionStatusBanner(count: pluginsWithMissingPermissions)
+                    }
+
                     // Installed plugins section
                     InstalledSectionHeader(title: "Plugins", icon: "puzzlepiece.extension")
 
@@ -326,6 +347,71 @@ struct ToolsManagerView: View {
     ToolsManagerView()
 }
 
+// MARK: - Permission Status Banner
+
+private struct PermissionStatusBanner: View {
+    @Environment(\.theme) private var theme
+    let count: Int
+
+    var body: some View {
+        HStack(spacing: 12) {
+            // Icon
+            ZStack {
+                Circle()
+                    .fill(theme.warningColor.opacity(0.15))
+                    .frame(width: 36, height: 36)
+                Image(systemName: "lock.shield.fill")
+                    .font(.system(size: 16))
+                    .foregroundColor(theme.warningColor)
+            }
+
+            // Text
+            VStack(alignment: .leading, spacing: 2) {
+                Text("\(count) plugin\(count == 1 ? "" : "s") need\(count == 1 ? "s" : "") system permissions")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundColor(theme.primaryText)
+                Text("Expand each plugin to grant the required permissions")
+                    .font(.system(size: 11))
+                    .foregroundColor(theme.secondaryText)
+            }
+
+            Spacer()
+
+            // Action button
+            Button(action: {
+                // Open System Settings to the Privacy & Security pane
+                if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy") {
+                    NSWorkspace.shared.open(url)
+                }
+            }) {
+                HStack(spacing: 4) {
+                    Image(systemName: "gear")
+                        .font(.system(size: 11))
+                    Text("System Settings")
+                        .font(.system(size: 12, weight: .medium))
+                }
+                .foregroundColor(theme.accentColor)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+                .background(
+                    RoundedRectangle(cornerRadius: 8)
+                        .fill(theme.accentColor.opacity(0.1))
+                )
+            }
+            .buttonStyle(PlainButtonStyle())
+        }
+        .padding(14)
+        .background(
+            RoundedRectangle(cornerRadius: 12)
+                .fill(theme.warningColor.opacity(0.08))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 12)
+                        .stroke(theme.warningColor.opacity(0.2), lineWidth: 1)
+                )
+        )
+    }
+}
+
 // MARK: - Installed Section Header
 
 private struct InstalledSectionHeader: View {
@@ -364,6 +450,25 @@ private struct InstalledPluginCard: View {
     @State private var errorMessage: String?
     @State private var showError: Bool = false
 
+    /// Check if any tools in this plugin have missing system permissions
+    private var missingSystemPermissions: [SystemPermission] {
+        var missing = Set<SystemPermission>()
+        for tool in tools {
+            if let info = ToolRegistry.shared.policyInfo(for: tool.name) {
+                for (perm, granted) in info.systemPermissionStates {
+                    if !granted {
+                        missing.insert(perm)
+                    }
+                }
+            }
+        }
+        return Array(missing).sorted { $0.rawValue < $1.rawValue }
+    }
+
+    private var hasMissingPermissions: Bool {
+        !missingSystemPermissions.isEmpty
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             // Plugin header
@@ -375,16 +480,38 @@ private struct InstalledPluginCard: View {
                     }
                 }) {
                     HStack(spacing: 14) {
-                        // Plugin icon (shows error state when load failed)
+                        // Plugin icon (shows error/warning state)
                         ZStack {
                             RoundedRectangle(cornerRadius: 10)
-                                .fill(plugin.hasLoadError ? Color.red.opacity(0.12) : theme.accentColor.opacity(0.12))
+                                .fill(
+                                    plugin.hasLoadError
+                                        ? Color.red.opacity(0.12)
+                                        : hasMissingPermissions
+                                            ? theme.warningColor.opacity(0.12)
+                                            : theme.accentColor.opacity(0.12)
+                                )
                             Image(
                                 systemName: plugin.hasLoadError
-                                    ? "exclamationmark.triangle.fill" : "puzzlepiece.extension.fill"
+                                    ? "exclamationmark.triangle.fill"
+                                    : "puzzlepiece.extension.fill"
                             )
                             .font(.system(size: 20))
-                            .foregroundColor(plugin.hasLoadError ? .red : theme.accentColor)
+                            .foregroundColor(
+                                plugin.hasLoadError
+                                    ? .red
+                                    : hasMissingPermissions
+                                        ? theme.warningColor
+                                        : theme.accentColor
+                            )
+
+                            // Warning overlay badge for missing permissions
+                            if hasMissingPermissions && !plugin.hasLoadError {
+                                Image(systemName: "exclamationmark.circle.fill")
+                                    .font(.system(size: 14))
+                                    .foregroundColor(theme.warningColor)
+                                    .background(Circle().fill(theme.cardBackground).padding(-2))
+                                    .offset(x: 16, y: -16)
+                            }
                         }
                         .frame(width: 44, height: 44)
 
@@ -409,6 +536,8 @@ private struct InstalledPluginCard: View {
 
                                 if plugin.hasLoadError {
                                     loadErrorBadge
+                                } else if hasMissingPermissions {
+                                    permissionWarningBadge
                                 } else if plugin.hasUpdate {
                                     updateBadge
                                 }
@@ -535,6 +664,89 @@ private struct InstalledPluginCard: View {
                 .transition(.opacity.combined(with: .move(edge: .top)))
             }
 
+            // Permission warning banner
+            if isExpanded && hasMissingPermissions && !plugin.hasLoadError {
+                Divider()
+                    .padding(.vertical, 4)
+
+                VStack(alignment: .leading, spacing: 10) {
+                    HStack(spacing: 10) {
+                        Image(systemName: "lock.shield.fill")
+                            .font(.system(size: 16))
+                            .foregroundColor(theme.warningColor)
+
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("System Permissions Required")
+                                .font(.system(size: 13, weight: .semibold))
+                                .foregroundColor(theme.primaryText)
+                            Text("Grant the following permissions to use all features of this plugin:")
+                                .font(.system(size: 11))
+                                .foregroundColor(theme.secondaryText)
+                        }
+
+                        Spacer()
+                    }
+
+                    // Permission buttons
+                    HStack(spacing: 8) {
+                        ForEach(missingSystemPermissions, id: \.rawValue) { perm in
+                            Button(action: {
+                                SystemPermissionService.shared.requestPermission(perm)
+                                onChange()
+                            }) {
+                                HStack(spacing: 6) {
+                                    Image(systemName: perm.systemIconName)
+                                        .font(.system(size: 11))
+                                    Text("Grant \(perm.displayName)")
+                                        .font(.system(size: 11, weight: .medium))
+                                }
+                                .foregroundColor(.white)
+                                .padding(.horizontal, 12)
+                                .padding(.vertical, 8)
+                                .background(
+                                    RoundedRectangle(cornerRadius: 6)
+                                        .fill(theme.accentColor)
+                                )
+                            }
+                            .buttonStyle(PlainButtonStyle())
+                        }
+
+                        Spacer()
+
+                        Button(action: {
+                            if let firstPerm = missingSystemPermissions.first {
+                                SystemPermissionService.shared.openSystemSettings(for: firstPerm)
+                            }
+                        }) {
+                            HStack(spacing: 4) {
+                                Image(systemName: "gear")
+                                    .font(.system(size: 10))
+                                Text("Open Settings")
+                                    .font(.system(size: 11, weight: .medium))
+                            }
+                            .foregroundColor(theme.secondaryText)
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 6)
+                            .background(
+                                RoundedRectangle(cornerRadius: 6)
+                                    .fill(theme.tertiaryBackground)
+                            )
+                        }
+                        .buttonStyle(PlainButtonStyle())
+                    }
+                }
+                .padding(12)
+                .background(
+                    RoundedRectangle(cornerRadius: 10)
+                        .fill(theme.warningColor.opacity(0.08))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 10)
+                                .stroke(theme.warningColor.opacity(0.2), lineWidth: 1)
+                        )
+                )
+                .transition(.opacity.combined(with: .move(edge: .top)))
+            }
+
             // Tools list (expandable) - only show when there's no load error
             if isExpanded && !tools.isEmpty && !plugin.hasLoadError {
                 Divider()
@@ -620,6 +832,22 @@ private struct InstalledPluginCard: View {
         .foregroundColor(.red)
     }
 
+    private var permissionWarningBadge: some View {
+        HStack(spacing: 4) {
+            Image(systemName: "lock.shield")
+                .font(.system(size: 10))
+            Text("Needs Permission")
+                .font(.system(size: 10, weight: .semibold))
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 3)
+        .background(
+            Capsule()
+                .fill(theme.warningColor.opacity(0.15))
+        )
+        .foregroundColor(theme.warningColor)
+    }
+
     private func retryLoad() {
         PluginManager.shared.loadAll()
         onChange()
@@ -656,18 +884,34 @@ private struct InstalledToolRow: View {
     @State private var isExpanded: Bool = false
     @State private var refreshToken: Int = 0
 
+    private var hasMissingSystemPermissions: Bool {
+        guard let info = ToolRegistry.shared.policyInfo(for: entry.name) else { return false }
+        return info.systemPermissionStates.values.contains(false)
+    }
+
     var body: some View {
         let info = ToolRegistry.shared.policyInfo(for: entry.name)
 
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 10) {
-                // Tool icon
+                // Tool icon with warning overlay if system permissions missing
                 ZStack {
                     RoundedRectangle(cornerRadius: 6)
-                        .fill(theme.accentColor.opacity(0.08))
+                        .fill(
+                            hasMissingSystemPermissions
+                                ? theme.warningColor.opacity(0.1) : theme.accentColor.opacity(0.08)
+                        )
                     Image(systemName: "function")
                         .font(.system(size: 11, weight: .medium))
-                        .foregroundColor(theme.accentColor)
+                        .foregroundColor(hasMissingSystemPermissions ? theme.warningColor : theme.accentColor)
+
+                    // Warning badge
+                    if hasMissingSystemPermissions {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .font(.system(size: 8))
+                            .foregroundColor(theme.warningColor)
+                            .offset(x: 10, y: -10)
+                    }
                 }
                 .frame(width: 28, height: 28)
 
@@ -679,9 +923,24 @@ private struct InstalledToolRow: View {
                 }) {
                     HStack(spacing: 8) {
                         VStack(alignment: .leading, spacing: 2) {
-                            Text(entry.name)
-                                .font(.system(size: 13, weight: .medium, design: .rounded))
-                                .foregroundColor(theme.primaryText)
+                            HStack(spacing: 4) {
+                                Text(entry.name)
+                                    .font(.system(size: 13, weight: .medium, design: .rounded))
+                                    .foregroundColor(theme.primaryText)
+
+                                // Warning badge for missing system permissions
+                                if hasMissingSystemPermissions {
+                                    Text("Needs Permission")
+                                        .font(.system(size: 9, weight: .medium))
+                                        .foregroundColor(theme.warningColor)
+                                        .padding(.horizontal, 5)
+                                        .padding(.vertical, 2)
+                                        .background(
+                                            Capsule()
+                                                .fill(theme.warningColor.opacity(0.12))
+                                        )
+                                }
+                            }
                             Text(entry.description)
                                 .font(.system(size: 11))
                                 .foregroundColor(theme.tertiaryText)
@@ -776,15 +1035,84 @@ private struct InstalledToolRow: View {
                         .labelsHidden()
                     }
 
-                    // Required permissions section
-                    if info.isPermissioned, !info.requirements.isEmpty {
+                    // System permissions section
+                    if !info.systemPermissions.isEmpty {
                         VStack(alignment: .leading, spacing: 6) {
-                            Text("Required Permissions")
+                            Text("System Permissions")
+                                .font(.system(size: 12, weight: .semibold))
+                                .foregroundColor(theme.primaryText)
+
+                            VStack(alignment: .leading, spacing: 6) {
+                                ForEach(info.systemPermissions, id: \.rawValue) { perm in
+                                    let isGranted = info.systemPermissionStates[perm] ?? false
+                                    HStack(spacing: 8) {
+                                        Image(systemName: perm.systemIconName)
+                                            .font(.system(size: 11))
+                                            .foregroundColor(isGranted ? theme.successColor : theme.warningColor)
+                                            .frame(width: 16)
+
+                                        Text(perm.displayName)
+                                            .font(.system(size: 11))
+                                            .foregroundColor(theme.primaryText)
+
+                                        Spacer()
+
+                                        if isGranted {
+                                            HStack(spacing: 4) {
+                                                Image(systemName: "checkmark.circle.fill")
+                                                    .font(.system(size: 10))
+                                                Text("Granted")
+                                                    .font(.system(size: 10, weight: .medium))
+                                            }
+                                            .foregroundColor(theme.successColor)
+                                        } else {
+                                            Button(action: {
+                                                SystemPermissionService.shared.requestPermission(perm)
+                                                bump()
+                                            }) {
+                                                HStack(spacing: 4) {
+                                                    Image(systemName: "hand.raised")
+                                                        .font(.system(size: 9))
+                                                    Text("Grant")
+                                                        .font(.system(size: 10, weight: .medium))
+                                                }
+                                                .foregroundColor(.white)
+                                                .padding(.horizontal, 8)
+                                                .padding(.vertical, 3)
+                                                .background(
+                                                    RoundedRectangle(cornerRadius: 4)
+                                                        .fill(theme.accentColor)
+                                                )
+                                            }
+                                            .buttonStyle(PlainButtonStyle())
+                                        }
+                                    }
+                                    .padding(8)
+                                    .background(
+                                        RoundedRectangle(cornerRadius: 6)
+                                            .fill(
+                                                isGranted
+                                                    ? theme.successColor.opacity(0.08)
+                                                    : theme.warningColor.opacity(0.08)
+                                            )
+                                    )
+                                }
+                            }
+                        }
+                    }
+
+                    // Required permissions section (non-system grants)
+                    let nonSystemRequirements = info.requirements.filter {
+                        !SystemPermissionService.isSystemPermission($0)
+                    }
+                    if info.isPermissioned, !nonSystemRequirements.isEmpty {
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text("Other Permissions")
                                 .font(.system(size: 12, weight: .semibold))
                                 .foregroundColor(theme.primaryText)
 
                             VStack(alignment: .leading, spacing: 4) {
-                                ForEach(info.requirements, id: \.self) { req in
+                                ForEach(nonSystemRequirements, id: \.self) { req in
                                     Toggle(
                                         isOn: Binding(
                                             get: { info.grantsByRequirement[req] ?? false },
