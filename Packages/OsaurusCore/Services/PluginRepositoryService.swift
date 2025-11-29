@@ -16,6 +16,8 @@ struct PluginState: Identifiable, Equatable {
     var installedVersion: SemanticVersion?
     var latestVersion: SemanticVersion?
     var isInstalling: Bool = false
+    /// Error message if the plugin failed to load (installed but not functional)
+    var loadError: String?
 
     var hasUpdate: Bool {
         guard let installed = installedVersion, let latest = latestVersion else { return false }
@@ -24,6 +26,11 @@ struct PluginState: Identifiable, Equatable {
 
     var isInstalled: Bool {
         installedVersion != nil
+    }
+
+    /// Returns true if the plugin is installed but failed to load
+    var hasLoadError: Bool {
+        isInstalled && loadError != nil
     }
 }
 
@@ -134,6 +141,9 @@ final class PluginRepositoryService: ObservableObject {
             // Reload plugins in the app
             PluginManager.shared.loadAll()
 
+            // Update load error state from PluginManager
+            plugins[index].loadError = PluginManager.shared.loadError(for: pluginId)
+
             // Post notification synchronously to ensure all views update
             NotificationCenter.default.post(name: .toolsListChanged, object: nil)
 
@@ -165,6 +175,9 @@ final class PluginRepositoryService: ObservableObject {
             // Reload plugins in the app
             PluginManager.shared.loadAll()
 
+            // Update load error state from PluginManager
+            plugins[index].loadError = PluginManager.shared.loadError(for: pluginId)
+
             // Post notification synchronously to ensure all views update
             NotificationCenter.default.post(name: .toolsListChanged, object: nil)
 
@@ -187,6 +200,7 @@ final class PluginRepositoryService: ObservableObject {
         // Update state to ensure UI reflects uninstallation immediately
         if let index = plugins.firstIndex(where: { $0.spec.plugin_id == pluginId }) {
             plugins[index].installedVersion = nil
+            plugins[index].loadError = nil
         }
 
         // Reload plugins (this will unregister tools from ToolRegistry)
@@ -204,12 +218,14 @@ final class PluginRepositoryService: ObservableObject {
         plugins = specs.map { spec in
             let installedVersion = InstalledPluginsStore.shared.latestInstalledVersion(pluginId: spec.plugin_id)
             let latestVersion = spec.versions.map(\.version).sorted(by: >).first
+            let loadError = PluginManager.shared.loadError(for: spec.plugin_id)
 
             return PluginState(
                 spec: spec,
                 installedVersion: installedVersion,
                 latestVersion: latestVersion,
-                isInstalling: false
+                isInstalling: false,
+                loadError: loadError
             )
         }.sorted { ($0.spec.name ?? $0.spec.plugin_id) < ($1.spec.name ?? $1.spec.plugin_id) }
 
@@ -220,6 +236,7 @@ final class PluginRepositoryService: ObservableObject {
         for i in plugins.indices {
             let pluginId = plugins[i].spec.plugin_id
             plugins[i].installedVersion = InstalledPluginsStore.shared.latestInstalledVersion(pluginId: pluginId)
+            plugins[i].loadError = PluginManager.shared.loadError(for: pluginId)
         }
         updateUpdatesCount()
     }

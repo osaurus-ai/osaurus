@@ -298,14 +298,14 @@ struct ToolsManagerView: View {
         }
     }
 
-    /// Installed plugins with their tool entries
+    /// Installed plugins with their tool entries (includes plugins with load errors)
     private var installedPluginsWithTools: [(plugin: PluginState, tools: [ToolRegistry.ToolEntry])] {
         let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
 
         return repoService.plugins
             .filter { $0.isInstalled }
             .compactMap { plugin -> (plugin: PluginState, tools: [ToolRegistry.ToolEntry])? in
-                guard let specTools = plugin.spec.capabilities?.tools else { return nil }
+                let specTools = plugin.spec.capabilities?.tools ?? []
                 let toolNames = Set(specTools.map { $0.name })
                 var matchedTools = toolEntries.filter { toolNames.contains($0.name) }
 
@@ -324,10 +324,15 @@ struct ToolsManagerView: View {
                         }
                     }
 
-                    if matchedTools.isEmpty && !pluginMatches { return nil }
+                    // Exclude only if no search match and not a failed plugin
+                    if matchedTools.isEmpty && !pluginMatches && !plugin.hasLoadError { return nil }
                 }
 
-                return matchedTools.isEmpty ? nil : (plugin, matchedTools)
+                // Include plugins with load errors even if no tools are registered
+                // This allows users to see and troubleshoot failed plugins
+                if matchedTools.isEmpty && !plugin.hasLoadError { return nil }
+
+                return (plugin, matchedTools)
             }
             .sorted {
                 ($0.plugin.spec.name ?? $0.plugin.spec.plugin_id) < ($1.plugin.spec.name ?? $1.plugin.spec.plugin_id)
@@ -416,13 +421,16 @@ private struct InstalledPluginCard: View {
                     }
                 }) {
                     HStack(spacing: 14) {
-                        // Plugin icon
+                        // Plugin icon (shows error state when load failed)
                         ZStack {
                             RoundedRectangle(cornerRadius: 10)
-                                .fill(theme.accentColor.opacity(0.12))
-                            Image(systemName: "puzzlepiece.extension.fill")
-                                .font(.system(size: 20))
-                                .foregroundColor(theme.accentColor)
+                                .fill(plugin.hasLoadError ? Color.red.opacity(0.12) : theme.accentColor.opacity(0.12))
+                            Image(
+                                systemName: plugin.hasLoadError
+                                    ? "exclamationmark.triangle.fill" : "puzzlepiece.extension.fill"
+                            )
+                            .font(.system(size: 20))
+                            .foregroundColor(plugin.hasLoadError ? .red : theme.accentColor)
                         }
                         .frame(width: 44, height: 44)
 
@@ -445,7 +453,9 @@ private struct InstalledPluginCard: View {
                                         )
                                 }
 
-                                if plugin.hasUpdate {
+                                if plugin.hasLoadError {
+                                    loadErrorBadge
+                                } else if plugin.hasUpdate {
                                     updateBadge
                                 }
                             }
@@ -476,6 +486,23 @@ private struct InstalledPluginCard: View {
                         ProgressView()
                             .scaleEffect(0.8)
                             .frame(width: 32, height: 32)
+                    } else if plugin.hasLoadError {
+                        Button(action: { retryLoad() }) {
+                            HStack(spacing: 4) {
+                                Image(systemName: "arrow.clockwise")
+                                    .font(.system(size: 11))
+                                Text("Retry")
+                                    .font(.system(size: 12, weight: .semibold))
+                            }
+                            .foregroundColor(.white)
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 6)
+                            .background(
+                                RoundedRectangle(cornerRadius: 6)
+                                    .fill(Color.blue)
+                            )
+                        }
+                        .buttonStyle(PlainButtonStyle())
                     } else if plugin.hasUpdate {
                         Button(action: { upgrade() }) {
                             HStack(spacing: 4) {
@@ -496,6 +523,13 @@ private struct InstalledPluginCard: View {
                     }
 
                     Menu {
+                        if plugin.hasLoadError {
+                            Button {
+                                retryLoad()
+                            } label: {
+                                Label("Retry Loading", systemImage: "arrow.clockwise")
+                            }
+                        }
                         Button(role: .destructive) {
                             uninstall()
                             onChange()  // Trigger immediate reload after uninstall
@@ -517,8 +551,38 @@ private struct InstalledPluginCard: View {
                 }
             }
 
-            // Tools list (expandable)
-            if isExpanded && !tools.isEmpty {
+            // Error message (when plugin failed to load)
+            if isExpanded, let loadError = plugin.loadError {
+                Divider()
+                    .padding(.vertical, 4)
+
+                HStack(spacing: 10) {
+                    Image(systemName: "exclamationmark.circle.fill")
+                        .font(.system(size: 14))
+                        .foregroundColor(.red)
+
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Failed to load plugin")
+                            .font(.system(size: 13, weight: .medium))
+                            .foregroundColor(.red)
+                        Text(loadError)
+                            .font(.system(size: 12))
+                            .foregroundColor(theme.secondaryText)
+                            .lineLimit(3)
+                    }
+
+                    Spacer()
+                }
+                .padding(12)
+                .background(
+                    RoundedRectangle(cornerRadius: 8)
+                        .fill(Color.red.opacity(0.08))
+                )
+                .transition(.opacity.combined(with: .move(edge: .top)))
+            }
+
+            // Tools list (expandable) - only show when there's no load error
+            if isExpanded && !tools.isEmpty && !plugin.hasLoadError {
                 Divider()
                     .padding(.vertical, 4)
 
@@ -584,6 +648,27 @@ private struct InstalledPluginCard: View {
                 .fill(Color.orange.opacity(0.15))
         )
         .foregroundColor(.orange)
+    }
+
+    private var loadErrorBadge: some View {
+        HStack(spacing: 4) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .font(.system(size: 10))
+            Text("Error")
+                .font(.system(size: 10, weight: .semibold))
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 3)
+        .background(
+            Capsule()
+                .fill(Color.red.opacity(0.15))
+        )
+        .foregroundColor(.red)
+    }
+
+    private func retryLoad() {
+        PluginManager.shared.loadAll()
+        onChange()
     }
 
     private func upgrade() {

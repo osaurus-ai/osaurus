@@ -20,15 +20,38 @@ final class PluginManager {
         let tools: [ExternalTool]  // Keep track of tools to unregister later
     }
 
+    /// Represents a plugin that failed to load
+    struct FailedPlugin: Sendable {
+        let pluginId: String
+        let error: String
+    }
+
     private(set) var plugins: [LoadedPlugin] = []
     private var loadedPluginPaths: Set<String> = []
 
+    /// Plugins that failed to load, keyed by plugin ID
+    private(set) var failedPlugins: [String: FailedPlugin] = [:]
+
     private init() {}
+
+    /// Returns the load error for a specific plugin, if any
+    func loadError(for pluginId: String) -> String? {
+        return failedPlugins[pluginId]?.error
+    }
 
     /// Scans the tools directory and loads all plugins found.
     func loadAll() {
         Self.ensureToolsDirectoryExists()
-        let urls = Self.toolsDirectoryURLs()
+
+        // Clear previous failures before scanning
+        failedPlugins.removeAll()
+
+        // Get dylib URLs and track verification failures
+        let (urls, verificationFailures) = Self.toolsDirectoryURLsWithFailures()
+        for (pluginId, error) in verificationFailures {
+            failedPlugins[pluginId] = FailedPlugin(pluginId: pluginId, error: error)
+        }
+
         let currentPaths = Set(urls.map { $0.path })
 
         // Unload removed plugins
@@ -56,7 +79,9 @@ final class PluginManager {
         for url in urls {
             if loadedPluginPaths.contains(url.path) { continue }
 
-            if let loaded = loadPlugin(at: url) {
+            let result = loadPluginWithError(at: url)
+            switch result {
+            case .success(let loaded):
                 plugins.append(loaded)
                 loadedPluginPaths.insert(url.path)
                 loadedNew = true
@@ -65,10 +90,17 @@ final class PluginManager {
                 for tool in loaded.tools {
                     ToolRegistry.shared.register(tool)
                 }
+
+                // Clear any previous failure for this plugin
+                failedPlugins.removeValue(forKey: loaded.plugin.id)
+
+            case .failure(let error):
+                let pluginId = Self.extractPluginId(from: url)
+                failedPlugins[pluginId] = FailedPlugin(pluginId: pluginId, error: error)
             }
         }
 
-        if loadedNew || removedSomething {
+        if loadedNew || removedSomething || !failedPlugins.isEmpty {
             Task { @MainActor in
                 await MCPServerManager.shared.notifyToolsListChanged()
                 NotificationCenter.default.post(name: .toolsListChanged, object: nil)
@@ -76,27 +108,42 @@ final class PluginManager {
         }
     }
 
-    private func loadPlugin(at url: URL) -> LoadedPlugin? {
+    /// Extracts the plugin ID from a dylib URL path
+    /// Expected path: .../Tools/{pluginId}/{version}/plugin.dylib
+    private static func extractPluginId(from url: URL) -> String {
+        // Go up from dylib -> version dir -> plugin dir
+        let versionDir = url.deletingLastPathComponent()
+        let pluginDir = versionDir.deletingLastPathComponent()
+        return pluginDir.lastPathComponent
+    }
+
+    private func loadPluginWithError(at url: URL) -> Result<LoadedPlugin, String> {
         let flags = RTLD_NOW | RTLD_LOCAL
         guard let handle = dlopen(url.path, Int32(flags)) else {
+            let errorMsg: String
             if let err = dlerror() {
-                print("[Osaurus] dlopen failed: \(String(cString: err)) for \(url.path)")
+                errorMsg = "Failed to load library: \(String(cString: err))"
+            } else {
+                errorMsg = "Failed to load library (unknown error)"
             }
-            return nil
+            print("[Osaurus] dlopen failed for \(url.path): \(errorMsg)")
+            return .failure(errorMsg)
         }
 
         // Look for the entry point
         guard let sym = dlsym(handle, "osaurus_plugin_entry") else {
-            print("[Osaurus] Missing osaurus_plugin_entry in \(url.lastPathComponent)")
+            let errorMsg = "Missing plugin entry point (osaurus_plugin_entry)"
+            print("[Osaurus] \(errorMsg) in \(url.lastPathComponent)")
             dlclose(handle)
-            return nil
+            return .failure(errorMsg)
         }
 
         let entryFn = unsafeBitCast(sym, to: osr_plugin_entry_t.self)
         guard let apiRawPtr = entryFn() else {
-            print("[Osaurus] Plugin entry returned null API in \(url.lastPathComponent)")
+            let errorMsg = "Plugin entry returned null API"
+            print("[Osaurus] \(errorMsg) in \(url.lastPathComponent)")
             dlclose(handle)
-            return nil
+            return .failure(errorMsg)
         }
 
         let apiPtr = apiRawPtr.assumingMemoryBound(to: osr_plugin_api.self)
@@ -104,24 +151,26 @@ final class PluginManager {
 
         // Initialize Plugin
         guard let initFn = api.`init` else {
-            print("[Osaurus] Plugin missing init function in \(url.lastPathComponent)")
+            let errorMsg = "Plugin missing init function"
+            print("[Osaurus] \(errorMsg) in \(url.lastPathComponent)")
             dlclose(handle)
-            return nil
+            return .failure(errorMsg)
         }
 
         guard let ctx = initFn() else {
-            print("[Osaurus] Plugin init returned null context in \(url.lastPathComponent)")
+            let errorMsg = "Plugin initialization failed"
+            print("[Osaurus] \(errorMsg) in \(url.lastPathComponent)")
             dlclose(handle)
-            return nil
+            return .failure(errorMsg)
         }
 
         // Get Manifest
         guard let getManifest = api.get_manifest, let jsonPtr = getManifest(ctx) else {
-            print("[Osaurus] Plugin failed to return manifest in \(url.lastPathComponent)")
-            // cleanup
+            let errorMsg = "Plugin failed to return manifest"
+            print("[Osaurus] \(errorMsg) in \(url.lastPathComponent)")
             api.destroy?(ctx)
             dlclose(handle)
-            return nil
+            return .failure(errorMsg)
         }
         let jsonString = String(cString: jsonPtr)
         api.free_string?(jsonPtr)
@@ -130,10 +179,11 @@ final class PluginManager {
         guard let data = jsonString.data(using: String.Encoding.utf8),
             let manifest = try? JSONDecoder().decode(PluginManifest.self, from: data)
         else {
-            print("[Osaurus] Failed to parse manifest in \(url.lastPathComponent)")
+            let errorMsg = "Failed to parse plugin manifest"
+            print("[Osaurus] \(errorMsg) in \(url.lastPathComponent)")
             api.destroy?(ctx)
             dlclose(handle)
-            return nil
+            return .failure(errorMsg)
         }
 
         // Create ExternalPlugin wrapper
@@ -148,7 +198,7 @@ final class PluginManager {
             }
         }
 
-        return LoadedPlugin(plugin: plugin, handle: handle, tools: tools)
+        return .success(LoadedPlugin(plugin: plugin, handle: handle, tools: tools))
     }
 
     // MARK: - Tools directory helpers
@@ -165,9 +215,15 @@ final class PluginManager {
     }
 
     static func toolsDirectoryURLs() -> [URL] {
+        return toolsDirectoryURLsWithFailures().urls
+    }
+
+    /// Returns dylib URLs to load and a dictionary of verification failures (pluginId -> error message)
+    static func toolsDirectoryURLsWithFailures() -> (urls: [URL], failures: [String: String]) {
         let fm = FileManager.default
         let root = toolsRootDirectory()
         var dylibURLs: [URL] = []
+        var failures: [String: String] = [:]
 
         guard
             let pluginDirs = try? fm.contentsOfDirectory(
@@ -176,10 +232,11 @@ final class PluginManager {
                 options: [.skipsHiddenFiles]
             )
         else {
-            return dylibURLs
+            return (dylibURLs, failures)
         }
 
         for pluginDir in pluginDirs where pluginDir.hasDirectoryPath {
+            let pluginId = pluginDir.lastPathComponent
             let currentLink = pluginDir.appendingPathComponent("current", isDirectory: false)
             var versionDir: URL?
             if let dest = try? fm.destinationOfSymbolicLink(atPath: currentLink.path) {
@@ -200,8 +257,13 @@ final class PluginManager {
                 }
             }
 
-            guard let vdir = versionDir else { continue }
+            guard let vdir = versionDir else {
+                // No valid version directory found
+                failures[pluginId] = "No valid version directory found"
+                continue
+            }
 
+            var foundDylib = false
             if let enumerator = fm.enumerator(
                 at: vdir,
                 includingPropertiesForKeys: [.isRegularFileKey],
@@ -209,36 +271,57 @@ final class PluginManager {
             ) {
                 for case let fileURL as URL in enumerator {
                     if fileURL.pathExtension == "dylib" {
-                        if verifyDylibBeforeLoad(fileURL) {
+                        foundDylib = true
+                        let verifyResult = verifyDylibBeforeLoadWithError(fileURL)
+                        switch verifyResult {
+                        case .success:
                             dylibURLs.append(fileURL)
+                        case .failure(let error):
+                            failures[pluginId] = error
                         }
                     }
                 }
             }
+
+            if !foundDylib {
+                failures[pluginId] = "No dylib file found in plugin directory"
+            }
         }
-        return dylibURLs
+        return (dylibURLs, failures)
     }
 
-    private static func verifyDylibBeforeLoad(_ dylibURL: URL) -> Bool {
+    /// Verifies a dylib before loading, returning success or an error message
+    private static func verifyDylibBeforeLoadWithError(_ dylibURL: URL) -> Result<Void, String> {
         let fm = FileManager.default
         let receiptURL = dylibURL.deletingLastPathComponent().appendingPathComponent("receipt.json", isDirectory: false)
 
         // Development mode: if no receipt, allow it
-        guard fm.fileExists(atPath: receiptURL.path) else { return true }
+        guard fm.fileExists(atPath: receiptURL.path) else { return .success(()) }
 
-        guard let data = try? Data(contentsOf: receiptURL),
-            let receipt = try? JSONDecoder().decode(PluginReceipt.self, from: data),
-            let dylibData = try? Data(contentsOf: dylibURL)
-        else { return false }
+        guard let data = try? Data(contentsOf: receiptURL) else {
+            return .failure("Failed to read receipt.json")
+        }
+
+        guard let receipt = try? JSONDecoder().decode(PluginReceipt.self, from: data) else {
+            return .failure("Failed to parse receipt.json")
+        }
+
+        guard let dylibData = try? Data(contentsOf: dylibURL) else {
+            return .failure("Failed to read plugin library file")
+        }
 
         let sha: String
         if #available(macOS 10.15, *) {
             let digest = CryptoKit.SHA256.hash(data: dylibData)
             sha = Data(digest).map { String(format: "%02x", $0) }.joined()
         } else {
-            sha = ""
+            return .failure("SHA256 verification requires macOS 10.15+")
         }
 
-        return !sha.isEmpty && sha.lowercased() == receipt.dylib_sha256.lowercased()
+        if sha.lowercased() != receipt.dylib_sha256.lowercased() {
+            return .failure("Checksum verification failed - plugin file may be corrupted or tampered with")
+        }
+
+        return .success(())
     }
 }
