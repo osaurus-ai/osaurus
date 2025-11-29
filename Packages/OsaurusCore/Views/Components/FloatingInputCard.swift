@@ -6,22 +6,30 @@
 //
 
 import SwiftUI
+import UniformTypeIdentifiers
+import AppKit
 
 struct FloatingInputCard: View {
     @Binding var text: String
     @Binding var selectedModel: String?
+    @Binding var pendingImages: [Data]
     let modelOptions: [String]
     let isStreaming: Bool
+    let supportsImages: Bool
     let onSend: () -> Void
     let onStop: () -> Void
 
     @FocusState private var isFocused: Bool
     @Environment(\.theme) private var theme
+    @State private var isDragOver = false
 
     private let maxHeight: CGFloat = 200
+    private let maxImageSize: Int = 10 * 1024 * 1024  // 10MB limit
 
     private var canSend: Bool {
-        !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !isStreaming
+        let hasText = !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        let hasImages = !pendingImages.isEmpty
+        return (hasText || hasImages) && !isStreaming
     }
 
     var body: some View {
@@ -31,11 +39,67 @@ struct FloatingInputCard: View {
                 modelSelector
             }
 
+            // Pending images preview
+            if !pendingImages.isEmpty {
+                pendingImagesPreview
+            }
+
             // Main input card
             inputCard
         }
         .padding(.horizontal, 20)
         .padding(.bottom, 20)
+        .onDrop(of: [UTType.image], isTargeted: $isDragOver) { providers in
+            handleImageDrop(providers)
+        }
+    }
+
+    // MARK: - Pending Images Preview
+
+    private var pendingImagesPreview: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
+                ForEach(Array(pendingImages.enumerated()), id: \.offset) { index, imageData in
+                    imagePreviewThumbnail(imageData: imageData, index: index)
+                }
+            }
+            .padding(.horizontal, 4)
+        }
+        .frame(height: 72)
+    }
+
+    private func imagePreviewThumbnail(imageData: Data, index: Int) -> some View {
+        ZStack(alignment: .topTrailing) {
+            if let nsImage = NSImage(data: imageData) {
+                Image(nsImage: nsImage)
+                    .resizable()
+                    .aspectRatio(contentMode: .fill)
+                    .frame(width: 64, height: 64)
+                    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 8, style: .continuous)
+                            .strokeBorder(theme.primaryBorder.opacity(0.3), lineWidth: 1)
+                    )
+            }
+
+            // Remove button
+            Button(action: {
+                withAnimation(.spring(response: 0.25, dampingFraction: 0.8)) {
+                    _ = pendingImages.remove(at: index)
+                }
+            }) {
+                Image(systemName: "xmark.circle.fill")
+                    .font(.system(size: 16))
+                    .foregroundColor(.white)
+                    .background(
+                        Circle()
+                            .fill(Color.black.opacity(0.6))
+                            .frame(width: 18, height: 18)
+                    )
+            }
+            .buttonStyle(.plain)
+            .offset(x: 4, y: -4)
+        }
     }
 
     // MARK: - Model Selector
@@ -108,6 +172,11 @@ struct FloatingInputCard: View {
 
     private var inputCard: some View {
         HStack(alignment: .bottom, spacing: 12) {
+            // Image attachment button (only for VLM models)
+            if supportsImages {
+                imageAttachButton
+            }
+
             // Text input area
             textInputArea
 
@@ -119,7 +188,7 @@ struct FloatingInputCard: View {
         .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: 20, style: .continuous)
-                .strokeBorder(borderGradient, lineWidth: isFocused ? 1.5 : 0.5)
+                .strokeBorder(effectiveBorderStyle, lineWidth: isDragOver ? 2 : (isFocused ? 1.5 : 0.5))
         )
         .shadow(
             color: shadowColor,
@@ -128,6 +197,70 @@ struct FloatingInputCard: View {
             y: isFocused ? 8 : 4
         )
         .animation(.spring(response: 0.3, dampingFraction: 0.8), value: isFocused)
+        .animation(.easeInOut(duration: 0.2), value: isDragOver)
+    }
+
+    // MARK: - Image Attachment Button
+
+    private var imageAttachButton: some View {
+        Button(action: pickImage) {
+            Image(systemName: "photo.badge.plus")
+                .font(.system(size: 16, weight: .medium))
+                .foregroundColor(theme.secondaryText)
+                .frame(width: 32, height: 32)
+                .background(
+                    Circle()
+                        .fill(theme.secondaryBackground.opacity(0.8))
+                )
+        }
+        .buttonStyle(.plain)
+        .help("Attach image (or paste/drag)")
+    }
+
+    private func pickImage() {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [UTType.image]
+        panel.allowsMultipleSelection = true
+        panel.canChooseDirectories = false
+        panel.canChooseFiles = true
+        panel.message = "Select images to attach"
+
+        if panel.runModal() == .OK {
+            for url in panel.urls {
+                if let data = try? Data(contentsOf: url), data.count <= maxImageSize {
+                    // Convert to PNG for consistency
+                    if let nsImage = NSImage(data: data),
+                        let pngData = nsImage.pngData()
+                    {
+                        withAnimation(.spring(response: 0.25, dampingFraction: 0.8)) {
+                            pendingImages.append(pngData)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private func handleImageDrop(_ providers: [NSItemProvider]) -> Bool {
+        guard supportsImages else { return false }
+
+        for provider in providers {
+            if provider.hasItemConformingToTypeIdentifier(UTType.image.identifier) {
+                provider.loadDataRepresentation(forTypeIdentifier: UTType.image.identifier) { data, error in
+                    guard let data = data, error == nil, data.count <= maxImageSize else { return }
+                    DispatchQueue.main.async {
+                        if let nsImage = NSImage(data: data),
+                            let pngData = nsImage.pngData()
+                        {
+                            withAnimation(.spring(response: 0.25, dampingFraction: 0.8)) {
+                                pendingImages.append(pngData)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        return true
     }
 
     private var textInputArea: some View {
@@ -142,8 +275,8 @@ struct FloatingInputCard: View {
             .padding(.vertical, 2)
             .overlay(alignment: .topLeading) {
                 // Placeholder
-                if text.isEmpty {
-                    Text("Message...")
+                if text.isEmpty && pendingImages.isEmpty {
+                    Text(supportsImages ? "Message or paste image..." : "Message...")
                         .font(.system(size: 15))
                         .foregroundColor(theme.tertiaryText)
                         .padding(.leading, 6)
@@ -151,6 +284,30 @@ struct FloatingInputCard: View {
                         .allowsHitTesting(false)
                 }
             }
+            .onPasteCommand(of: [UTType.image]) { providers in
+                handleImagePaste(providers)
+            }
+    }
+
+    private func handleImagePaste(_ providers: [NSItemProvider]) {
+        guard supportsImages else { return }
+
+        for provider in providers {
+            if provider.hasItemConformingToTypeIdentifier(UTType.image.identifier) {
+                provider.loadDataRepresentation(forTypeIdentifier: UTType.image.identifier) { data, error in
+                    guard let data = data, error == nil, data.count <= maxImageSize else { return }
+                    DispatchQueue.main.async {
+                        if let nsImage = NSImage(data: data),
+                            let pngData = nsImage.pngData()
+                        {
+                            withAnimation(.spring(response: 0.25, dampingFraction: 0.8)) {
+                                pendingImages.append(pngData)
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 
     // MARK: - Action Button
@@ -226,7 +383,14 @@ struct FloatingInputCard: View {
         }
     }
 
-    private var borderGradient: some ShapeStyle {
+    private var effectiveBorderStyle: AnyShapeStyle {
+        if isDragOver {
+            return AnyShapeStyle(Color.accentColor)
+        }
+        return borderGradient
+    }
+
+    private var borderGradient: AnyShapeStyle {
         if isFocused {
             return AnyShapeStyle(
                 LinearGradient(
@@ -251,6 +415,20 @@ struct FloatingInputCard: View {
     }
 }
 
+// MARK: - NSImage PNG Conversion
+
+extension NSImage {
+    /// Convert NSImage to PNG data
+    func pngData() -> Data? {
+        guard let tiffData = self.tiffRepresentation,
+            let bitmap = NSBitmapImageRep(data: tiffData)
+        else {
+            return nil
+        }
+        return bitmap.representation(using: .png, properties: [:])
+    }
+}
+
 // MARK: - Preview
 
 #if DEBUG
@@ -258,6 +436,7 @@ struct FloatingInputCard: View {
         struct PreviewWrapper: View {
             @State private var text = ""
             @State private var model: String? = "foundation"
+            @State private var images: [Data] = []
 
             var body: some View {
                 VStack {
@@ -265,8 +444,10 @@ struct FloatingInputCard: View {
                     FloatingInputCard(
                         text: $text,
                         selectedModel: $model,
+                        pendingImages: $images,
                         modelOptions: ["foundation", "mlx-community/Llama-3.2-3B-Instruct"],
                         isStreaming: false,
+                        supportsImages: true,
                         onSend: {},
                         onStop: {}
                     )

@@ -15,6 +15,7 @@ final class ChatSession: ObservableObject {
     @Published var turns: [ChatTurn] = []
     @Published var isStreaming: Bool = false
     @Published var input: String = ""
+    @Published var pendingImages: [Data] = []
     @Published var selectedModel: String? = nil
     @Published var modelOptions: [String] = []
     @Published var scrollTick: Int = 0
@@ -47,11 +48,21 @@ final class ChatSession: ObservableObject {
         selectedModel = newSelected
     }
 
+    /// Check if the currently selected model supports images (VLM)
+    var selectedModelSupportsImages: Bool {
+        guard let model = selectedModel else { return false }
+        // Foundation models don't support images yet
+        if model.lowercased() == "foundation" { return false }
+        return ModelManager.isVisionModel(named: model)
+    }
+
     func sendCurrent() {
         guard !isStreaming else { return }
         let text = input
+        let images = pendingImages
         input = ""
-        send(text)
+        pendingImages = []
+        send(text, images: images)
     }
 
     func stop() {
@@ -63,12 +74,14 @@ final class ChatSession: ObservableObject {
         stop()
         turns.removeAll()
         input = ""
+        pendingImages = []
     }
 
-    func send(_ text: String) {
+    func send(_ text: String, images: [Data] = []) {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return }
-        turns.append(ChatTurn(role: .user, content: trimmed))
+        // Allow sending with just images
+        guard !trimmed.isEmpty || !images.isEmpty else { return }
+        turns.append(ChatTurn(role: .user, content: trimmed, images: images))
 
         currentTask = Task { @MainActor in
             isStreaming = true
@@ -110,6 +123,13 @@ final class ChatSession: ObservableObject {
                                     tool_call_id: t.toolCallId
                                 )
                             )
+                        case .user:
+                            // Include images if present
+                            if t.hasImages {
+                                msgs.append(ChatMessage(role: "user", text: t.content, imageData: t.attachedImages))
+                            } else {
+                                msgs.append(ChatMessage(role: t.role.rawValue, content: t.content))
+                            }
                         default:
                             msgs.append(ChatMessage(role: t.role.rawValue, content: t.content))
                         }
@@ -239,8 +259,10 @@ struct ChatView: View {
                         FloatingInputCard(
                             text: $session.input,
                             selectedModel: $session.selectedModel,
+                            pendingImages: $session.pendingImages,
                             modelOptions: session.modelOptions,
                             isStreaming: session.isStreaming,
+                            supportsImages: session.selectedModelSupportsImages,
                             onSend: { session.sendCurrent() },
                             onStop: { session.stop() }
                         )

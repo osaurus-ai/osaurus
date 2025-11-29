@@ -6,6 +6,7 @@
 //
 
 import SwiftUI
+import AppKit
 
 struct MessageRow: View {
     @ObservedObject var turn: ChatTurn
@@ -35,6 +36,11 @@ struct MessageRow: View {
                 // Header row with role and actions
                 headerRow
 
+                // Attached images (if any)
+                if turn.hasImages {
+                    attachedImagesView
+                }
+
                 // Message content or typing indicator
                 contentView
 
@@ -56,6 +62,30 @@ struct MessageRow: View {
                 isHovered = hovering
             }
         }
+    }
+
+    // MARK: - Attached Images View
+
+    private var attachedImagesView: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
+                ForEach(Array(turn.attachedImages.enumerated()), id: \.offset) { _, imageData in
+                    if let nsImage = NSImage(data: imageData) {
+                        Image(nsImage: nsImage)
+                            .resizable()
+                            .aspectRatio(contentMode: .fit)
+                            .frame(maxWidth: 200, maxHeight: 150)
+                            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                    .strokeBorder(theme.primaryBorder.opacity(0.2), lineWidth: 1)
+                            )
+                            .shadow(color: Color.black.opacity(0.1), radius: 4, x: 0, y: 2)
+                    }
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     // MARK: - Accent Bar
