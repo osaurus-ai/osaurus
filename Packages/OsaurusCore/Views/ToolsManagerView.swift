@@ -162,9 +162,8 @@ struct ToolsManagerView: View {
         ScrollView {
             LazyVStack(spacing: 16) {
                 let plugins = installedPluginsWithTools
-                let builtIn = builtInTools
 
-                if plugins.isEmpty && builtIn.isEmpty {
+                if plugins.isEmpty {
                     emptyState(
                         icon: "wrench.and.screwdriver",
                         title: "No tools match your search",
@@ -172,37 +171,16 @@ struct ToolsManagerView: View {
                     )
                 } else {
                     // Installed plugins section
-                    if !plugins.isEmpty {
-                        InstalledSectionHeader(title: "Plugins", icon: "puzzlepiece.extension")
+                    InstalledSectionHeader(title: "Plugins", icon: "puzzlepiece.extension")
 
-                        ForEach(Array(plugins.enumerated()), id: \.element.plugin.id) { index, item in
-                            InstalledPluginCard(
-                                plugin: item.plugin,
-                                tools: item.tools,
-                                repoService: repoService,
-                                animationIndex: index
-                            ) {
-                                reload()
-                            }
-                        }
-                    }
-
-                    // Built-in tools section
-                    if !builtIn.isEmpty {
-                        if !plugins.isEmpty {
-                            Spacer().frame(height: 8)
-                        }
-
-                        InstalledSectionHeader(title: "Built-in Tools", icon: "hammer")
-
-                        ForEach(Array(builtIn.enumerated()), id: \.element.id) { index, entry in
-                            ToolSettingsRow(
-                                entry: entry,
-                                repoService: repoService,
-                                animationIndex: plugins.count + index
-                            ) {
-                                reload()
-                            }
+                    ForEach(Array(plugins.enumerated()), id: \.element.plugin.id) { index, item in
+                        InstalledPluginCard(
+                            plugin: item.plugin,
+                            tools: item.tools,
+                            repoService: repoService,
+                            animationIndex: index
+                        ) {
+                            reload()
                         }
                     }
                 }
@@ -337,30 +315,6 @@ struct ToolsManagerView: View {
             .sorted {
                 ($0.plugin.spec.name ?? $0.plugin.spec.plugin_id) < ($1.plugin.spec.name ?? $1.plugin.spec.plugin_id)
             }
-    }
-
-    /// Built-in tools (not from any plugin)
-    private var builtInTools: [ToolRegistry.ToolEntry] {
-        let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-
-        // Collect all tool names from installed plugins
-        let pluginToolNames = Set(
-            repoService.plugins
-                .filter { $0.isInstalled }
-                .flatMap { $0.spec.capabilities?.tools?.map { $0.name } ?? [] }
-        )
-
-        var tools = toolEntries.filter { !pluginToolNames.contains($0.name) }
-
-        // Apply search filter
-        if !query.isEmpty {
-            tools = tools.filter { tool in
-                let candidates = [tool.name.lowercased(), tool.description.lowercased()]
-                return candidates.contains { SearchService.fuzzyMatch(query: query, in: $0) }
-            }
-        }
-
-        return tools
     }
 
     private func reload() {

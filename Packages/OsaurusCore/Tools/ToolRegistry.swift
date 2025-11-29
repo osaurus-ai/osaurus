@@ -31,11 +31,7 @@ final class ToolRegistry {
         let parameters: JSONValue?
     }
 
-    private init() {
-        // Register built-in tools
-        register(FileReadTool())
-        register(FileWriteTool())
-    }
+    private init() {}
 
     func register(_ tool: OsaurusTool) {
         toolsByName[tool.name] = tool
@@ -102,7 +98,7 @@ final class ToolRegistry {
                 }
             }
         } else {
-            // Default for built-in tools without requirements: auto-run unless explicitly denied
+            // Default for tools without requirements: auto-run unless explicitly denied
             let effectivePolicy = configuration.policy[name] ?? .auto
             if effectivePolicy == .deny {
                 throw NSError(

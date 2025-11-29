@@ -26,6 +26,12 @@ final class PluginManager {
         let error: String
     }
 
+    /// Error type for plugin loading failures
+    struct PluginLoadError: Error, CustomStringConvertible {
+        let message: String
+        var description: String { message }
+    }
+
     private(set) var plugins: [LoadedPlugin] = []
     private var loadedPluginPaths: Set<String> = []
 
@@ -96,7 +102,7 @@ final class PluginManager {
 
             case .failure(let error):
                 let pluginId = Self.extractPluginId(from: url)
-                failedPlugins[pluginId] = FailedPlugin(pluginId: pluginId, error: error)
+                failedPlugins[pluginId] = FailedPlugin(pluginId: pluginId, error: error.message)
             }
         }
 
@@ -117,7 +123,7 @@ final class PluginManager {
         return pluginDir.lastPathComponent
     }
 
-    private func loadPluginWithError(at url: URL) -> Result<LoadedPlugin, String> {
+    private func loadPluginWithError(at url: URL) -> Result<LoadedPlugin, PluginLoadError> {
         let flags = RTLD_NOW | RTLD_LOCAL
         guard let handle = dlopen(url.path, Int32(flags)) else {
             let errorMsg: String
@@ -127,7 +133,7 @@ final class PluginManager {
                 errorMsg = "Failed to load library (unknown error)"
             }
             print("[Osaurus] dlopen failed for \(url.path): \(errorMsg)")
-            return .failure(errorMsg)
+            return .failure(PluginLoadError(message: errorMsg))
         }
 
         // Look for the entry point
@@ -135,7 +141,7 @@ final class PluginManager {
             let errorMsg = "Missing plugin entry point (osaurus_plugin_entry)"
             print("[Osaurus] \(errorMsg) in \(url.lastPathComponent)")
             dlclose(handle)
-            return .failure(errorMsg)
+            return .failure(PluginLoadError(message: errorMsg))
         }
 
         let entryFn = unsafeBitCast(sym, to: osr_plugin_entry_t.self)
@@ -143,7 +149,7 @@ final class PluginManager {
             let errorMsg = "Plugin entry returned null API"
             print("[Osaurus] \(errorMsg) in \(url.lastPathComponent)")
             dlclose(handle)
-            return .failure(errorMsg)
+            return .failure(PluginLoadError(message: errorMsg))
         }
 
         let apiPtr = apiRawPtr.assumingMemoryBound(to: osr_plugin_api.self)
@@ -154,14 +160,14 @@ final class PluginManager {
             let errorMsg = "Plugin missing init function"
             print("[Osaurus] \(errorMsg) in \(url.lastPathComponent)")
             dlclose(handle)
-            return .failure(errorMsg)
+            return .failure(PluginLoadError(message: errorMsg))
         }
 
         guard let ctx = initFn() else {
             let errorMsg = "Plugin initialization failed"
             print("[Osaurus] \(errorMsg) in \(url.lastPathComponent)")
             dlclose(handle)
-            return .failure(errorMsg)
+            return .failure(PluginLoadError(message: errorMsg))
         }
 
         // Get Manifest
@@ -170,7 +176,7 @@ final class PluginManager {
             print("[Osaurus] \(errorMsg) in \(url.lastPathComponent)")
             api.destroy?(ctx)
             dlclose(handle)
-            return .failure(errorMsg)
+            return .failure(PluginLoadError(message: errorMsg))
         }
         let jsonString = String(cString: jsonPtr)
         api.free_string?(jsonPtr)
@@ -183,7 +189,7 @@ final class PluginManager {
             print("[Osaurus] \(errorMsg) in \(url.lastPathComponent)")
             api.destroy?(ctx)
             dlclose(handle)
-            return .failure(errorMsg)
+            return .failure(PluginLoadError(message: errorMsg))
         }
 
         // Create ExternalPlugin wrapper
@@ -277,7 +283,7 @@ final class PluginManager {
                         case .success:
                             dylibURLs.append(fileURL)
                         case .failure(let error):
-                            failures[pluginId] = error
+                            failures[pluginId] = error.message
                         }
                     }
                 }
@@ -291,7 +297,7 @@ final class PluginManager {
     }
 
     /// Verifies a dylib before loading, returning success or an error message
-    private static func verifyDylibBeforeLoadWithError(_ dylibURL: URL) -> Result<Void, String> {
+    private static func verifyDylibBeforeLoadWithError(_ dylibURL: URL) -> Result<Void, PluginLoadError> {
         let fm = FileManager.default
         let receiptURL = dylibURL.deletingLastPathComponent().appendingPathComponent("receipt.json", isDirectory: false)
 
@@ -299,15 +305,15 @@ final class PluginManager {
         guard fm.fileExists(atPath: receiptURL.path) else { return .success(()) }
 
         guard let data = try? Data(contentsOf: receiptURL) else {
-            return .failure("Failed to read receipt.json")
+            return .failure(PluginLoadError(message: "Failed to read receipt.json"))
         }
 
         guard let receipt = try? JSONDecoder().decode(PluginReceipt.self, from: data) else {
-            return .failure("Failed to parse receipt.json")
+            return .failure(PluginLoadError(message: "Failed to parse receipt.json"))
         }
 
         guard let dylibData = try? Data(contentsOf: dylibURL) else {
-            return .failure("Failed to read plugin library file")
+            return .failure(PluginLoadError(message: "Failed to read plugin library file"))
         }
 
         let sha: String
@@ -315,11 +321,13 @@ final class PluginManager {
             let digest = CryptoKit.SHA256.hash(data: dylibData)
             sha = Data(digest).map { String(format: "%02x", $0) }.joined()
         } else {
-            return .failure("SHA256 verification requires macOS 10.15+")
+            return .failure(PluginLoadError(message: "SHA256 verification requires macOS 10.15+"))
         }
 
         if sha.lowercased() != receipt.dylib_sha256.lowercased() {
-            return .failure("Checksum verification failed - plugin file may be corrupted or tampered with")
+            return .failure(
+                PluginLoadError(message: "Checksum verification failed - plugin file may be corrupted or tampered with")
+            )
         }
 
         return .success(())
