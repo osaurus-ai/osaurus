@@ -292,30 +292,16 @@ struct FloatingInputCard: View {
                         .allowsHitTesting(false)
                 }
             }
-            .onPasteCommand(of: [UTType.image]) { providers in
-                handleImagePaste(providers)
-            }
-    }
-
-    private func handleImagePaste(_ providers: [NSItemProvider]) {
-        guard supportsImages else { return }
-
-        for provider in providers {
-            if provider.hasItemConformingToTypeIdentifier(UTType.image.identifier) {
-                provider.loadDataRepresentation(forTypeIdentifier: UTType.image.identifier) { data, error in
-                    guard let data = data, error == nil, data.count <= maxImageSize else { return }
-                    DispatchQueue.main.async {
-                        if let nsImage = NSImage(data: data),
-                            let pngData = nsImage.pngData()
-                        {
-                            withAnimation(.spring(response: 0.25, dampingFraction: 0.8)) {
-                                pendingImages.append(pngData)
-                            }
+            .background(
+                PasteboardImageMonitor(
+                    supportsImages: supportsImages,
+                    onImagePaste: { imageData in
+                        withAnimation(.spring(response: 0.25, dampingFraction: 0.8)) {
+                            pendingImages.append(imageData)
                         }
                     }
-                }
-            }
-        }
+                )
+            )
     }
 
     // MARK: - Action Button
@@ -392,7 +378,7 @@ struct FloatingInputCard: View {
     }
 
     private var effectiveBorderStyle: AnyShapeStyle {
-        if isDragOver {
+        if isDragOver && supportsImages {
             return AnyShapeStyle(Color.accentColor)
         }
         return borderGradient
@@ -420,6 +406,102 @@ struct FloatingInputCard: View {
 
     private var shadowColor: Color {
         isFocused ? Color.accentColor.opacity(0.15) : Color.black.opacity(0.15)
+    }
+}
+
+// MARK: - Pasteboard Image Monitor
+
+/// Monitors for Cmd+V paste events and checks if the pasteboard contains an image
+struct PasteboardImageMonitor: NSViewRepresentable {
+    let supportsImages: Bool
+    let onImagePaste: (Data) -> Void
+
+    func makeNSView(context: Context) -> NSView {
+        let view = PasteMonitorView()
+        view.supportsImages = supportsImages
+        view.onImagePaste = onImagePaste
+        return view
+    }
+
+    func updateNSView(_ nsView: NSView, context: Context) {
+        if let view = nsView as? PasteMonitorView {
+            view.supportsImages = supportsImages
+            view.onImagePaste = onImagePaste
+        }
+    }
+}
+
+class PasteMonitorView: NSView {
+    var supportsImages: Bool = false
+    var onImagePaste: ((Data) -> Void)?
+    private var monitor: Any?
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        if window != nil && monitor == nil {
+            monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+                guard let self = self else { return event }
+                // Check for Cmd+V
+                if event.modifierFlags.contains(.command) && event.charactersIgnoringModifiers == "v" {
+                    if self.handlePasteIfImage() {
+                        return nil  // Consume the event
+                    }
+                }
+                return event
+            }
+        }
+    }
+
+    override func removeFromSuperview() {
+        if let monitor = monitor {
+            NSEvent.removeMonitor(monitor)
+            self.monitor = nil
+        }
+        super.removeFromSuperview()
+    }
+
+    private func handlePasteIfImage() -> Bool {
+        guard supportsImages else { return false }
+
+        let pasteboard = NSPasteboard.general
+
+        // Check if pasteboard contains an image
+        guard let types = pasteboard.types,
+            types.contains(where: { $0 == .png || $0 == .tiff || $0 == .fileURL })
+        else {
+            return false
+        }
+
+        // Try to get image data directly
+        if let imageData = pasteboard.data(forType: .png) {
+            onImagePaste?(imageData)
+            return true
+        }
+
+        if let imageData = pasteboard.data(forType: .tiff),
+            let nsImage = NSImage(data: imageData),
+            let pngData = nsImage.pngData()
+        {
+            onImagePaste?(pngData)
+            return true
+        }
+
+        // Try file URL (for copied files)
+        if let urls = pasteboard.readObjects(forClasses: [NSURL.self], options: nil) as? [URL] {
+            for url in urls {
+                if let uti = try? url.resourceValues(forKeys: [.typeIdentifierKey]).typeIdentifier,
+                    UTType(uti)?.conforms(to: .image) == true,
+                    let data = try? Data(contentsOf: url),
+                    let nsImage = NSImage(data: data),
+                    let pngData = nsImage.pngData()
+                {
+                    onImagePaste?(pngData)
+                    return true
+                }
+            }
+        }
+
+        return false
     }
 }
 
