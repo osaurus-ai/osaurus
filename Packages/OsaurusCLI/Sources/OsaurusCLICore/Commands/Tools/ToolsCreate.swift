@@ -35,7 +35,9 @@ public struct ToolsCreate {
         let root = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
         let dir = root.appendingPathComponent(name, isDirectory: true)
         let sources = dir.appendingPathComponent("Sources", isDirectory: true)
-        let pluginDir = sources.appendingPathComponent("Plugin", isDirectory: true)
+        // Use plugin name as module name to avoid duplicate Objective-C class names across plugins
+        let moduleName = name.replacingOccurrences(of: "-", with: "_")
+        let pluginDir = sources.appendingPathComponent(moduleName, isDirectory: true)
         try? fm.createDirectory(at: pluginDir, withIntermediateDirectories: true)
 
         // Package.swift
@@ -47,12 +49,12 @@ public struct ToolsCreate {
                 name: "\(name)",
                 platforms: [.macOS(.v13)],
                 products: [
-                    .library(name: "\(name)", type: .dynamic, targets: ["Plugin"])
+                    .library(name: "\(name)", type: .dynamic, targets: ["\(moduleName)"])
                 ],
                 targets: [
                     .target(
-                        name: "Plugin",
-                        path: "Sources/Plugin"
+                        name: "\(moduleName)",
+                        path: "Sources/\(moduleName)"
                     )
                 ]
             )
