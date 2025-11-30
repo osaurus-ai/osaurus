@@ -68,7 +68,6 @@ The manifest JSON returned by `get_manifest` (and stored on disk as `manifest.js
         "permission_policy": "ask"
       }
     ]
-    // Future: "providers": [...], "agents": [...]
   }
 }
 ```
@@ -163,10 +162,6 @@ Some tools require macOS system permissions that must be granted at the app leve
 - System permissions are checked before tool execution
 - If missing, execution fails with a clear error message indicating which permissions are needed
 - Users don't need to restart the app after granting permissions
-
-### Custom Requirements
-
-Beyond system permissions, tools can declare custom requirements (e.g., `"permission:web"`, `"tool:browser"`). These are managed per-tool and users grant them individually via the tool's settings panel.
 
 ## Code Signing
 
