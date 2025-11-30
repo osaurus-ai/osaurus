@@ -17,6 +17,10 @@ cd MyPlugin
 swift build -c release
 # Copy the built dylib next to manifest.json (or rename to match manifest.dylib)
 cp .build/release/libMyPlugin.dylib ./libMyPlugin.dylib
+
+# Sign the dylib (REQUIRED for downloaded plugins)
+codesign -s "Developer ID Application: Your Name (TEAMID)" ./libMyPlugin.dylib
+
 osaurus tools package
 ```
 
@@ -43,6 +47,7 @@ Key points:
   - `destroy(ctx)`: Called on unload.
   - `get_manifest(ctx)`: Returns a JSON string describing capabilities.
   - `invoke(ctx, type, id, payload)`: Generic invocation function.
+  - `free_string(s)`: Called by host to free strings returned by the plugin.
 
 ### Manifest Format
 
@@ -163,6 +168,21 @@ Some tools require macOS system permissions that must be granted at the app leve
 
 Beyond system permissions, tools can declare custom requirements (e.g., `"permission:web"`, `"tool:browser"`). These are managed per-tool and users grant them individually via the tool's settings panel.
 
+## Code Signing
+
+**Crucial:** macOS plugins (`.dylib`) must be code-signed with a valid **Developer ID Application** certificate. If they are not signed, macOS Gatekeeper will block them from loading when downloaded from the internet, and users will see an error.
+
+To sign your plugin:
+
+1.  Obtain a "Developer ID Application" certificate from the [Apple Developer](https://developer.apple.com) portal.
+2.  Run the `codesign` tool on your `.dylib` before packaging:
+
+```bash
+codesign --force --options runtime --timestamp --sign "Developer ID Application: Your Name (TEAMID)" libMyPlugin.dylib
+```
+
+> **Note:** For local development/testing, ad-hoc signing (or no signing) might work if you haven't quarantined the file, but for distribution, a real certificate is required.
+
 ## Distribution via Central Registry
 
 Osaurus uses a single, git-backed central plugin index maintained by the Osaurus team.
@@ -173,7 +193,9 @@ Osaurus uses a single, git-backed central plugin index maintained by the Osaurus
 4. Sign the zip with Minisign (recommended).
 5. Submit a PR to the central index repo adding `plugins/<your.plugin.id>.json` with your metadata.
 
-## Minisign Signing
+## Artifact Signing (Minisign)
+
+This step ensures the integrity and authenticity of the distributed ZIP file. It is distinct from the **Code Signing** step above (which authenticates the binary for macOS).
 
 - Install Minisign: `brew install minisign`
 - Generate a key pair (once): `minisign -G -p minisign.pub -s minisign.key`
