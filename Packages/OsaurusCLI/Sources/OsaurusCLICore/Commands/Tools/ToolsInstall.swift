@@ -5,6 +5,7 @@
 //  Command to install a plugin from a URL, local path, or registry.
 //
 
+import CryptoKit
 import Foundation
 import OsaurusRepository
 
@@ -65,12 +66,17 @@ public struct ToolsInstall {
             try? fm.removeItem(at: tmpDir)
         }
 
+        // Track the source name for parsing plugin_id and version
+        var sourceName: String = ""
+
         // 1. Unpack/Copy to staging
         if src.hasPrefix("http://") || src.hasPrefix("https://") {
             guard let url = URL(string: src) else {
                 fputs("Invalid URL: \(src)\n", stderr)
                 exit(EXIT_FAILURE)
             }
+            // Extract filename from URL path
+            sourceName = url.lastPathComponent
             let zipFile = tmpDir.appendingPathComponent("download.zip")
             do {
                 let (data, resp) = try await URLSession.shared.data(from: url)
@@ -86,6 +92,7 @@ public struct ToolsInstall {
             }
         } else {
             let pathURL = URL(fileURLWithPath: src)
+            sourceName = pathURL.deletingPathExtension().lastPathComponent
             var isDir: ObjCBool = false
             if fm.fileExists(atPath: pathURL.path, isDirectory: &isDir) {
                 if isDir.boolValue {
@@ -116,60 +123,27 @@ public struct ToolsInstall {
             }
         }
 
-        // 2. Read manifest.json to get ID and Version
-        // Note: unzip might create a wrapper directory (e.g. MyPlugin/manifest.json)
-        // We need to find where manifest.json is.
+        // 2. Parse plugin_id and version from source name
+        // Expected format: <plugin_id>-<version> (e.g., my-plugin-1.0.0)
+        guard let (pluginId, semver) = parsePluginIdAndVersion(from: sourceName) else {
+            fputs("Invalid naming format. Expected: <plugin_id>-<version>.zip (e.g., my-plugin-1.0.0.zip)\n", stderr)
+            exit(EXIT_FAILURE)
+        }
+
+        // Find the plugin root (unzip might create a wrapper directory)
         var pluginRoot: URL = tmpDir
-
-        if !fm.fileExists(atPath: pluginRoot.appendingPathComponent("manifest.json").path) {
-            // Check if there is a single subdirectory containing manifest.json
-            do {
-                let contents = try fm.contentsOfDirectory(
-                    at: tmpDir,
-                    includingPropertiesForKeys: nil,
-                    options: [.skipsHiddenFiles]
-                )
-                if contents.count == 1, contents[0].hasDirectoryPath {
-                    let sub = contents[0]
-                    if fm.fileExists(atPath: sub.appendingPathComponent("manifest.json").path) {
-                        pluginRoot = sub
-                    }
-                }
-            } catch {
-                // ignore
-            }
-        }
-
-        let manifestURL = pluginRoot.appendingPathComponent("manifest.json")
-        guard fm.fileExists(atPath: manifestURL.path) else {
-            fputs("manifest.json not found in source\n", stderr)
-            exit(EXIT_FAILURE)
-        }
-
-        struct Manifest: Decodable {
-            let id: String?
-            let plugin_id: String?
-            let version: String
-
-            var effectiveId: String? { id ?? plugin_id }
-        }
-
-        let manifest: Manifest
         do {
-            let data = try Data(contentsOf: manifestURL)
-            manifest = try JSONDecoder().decode(Manifest.self, from: data)
+            let contents = try fm.contentsOfDirectory(
+                at: tmpDir,
+                includingPropertiesForKeys: nil,
+                options: [.skipsHiddenFiles]
+            )
+            // If there's a single subdirectory, use it as the plugin root
+            if contents.count == 1, contents[0].hasDirectoryPath {
+                pluginRoot = contents[0]
+            }
         } catch {
-            fputs("Invalid manifest.json: \(error)\n", stderr)
-            exit(EXIT_FAILURE)
-        }
-
-        guard let pluginId = manifest.effectiveId, !pluginId.isEmpty else {
-            fputs("manifest.json missing 'id' or 'plugin_id'\n", stderr)
-            exit(EXIT_FAILURE)
-        }
-        guard let semver = SemanticVersion.parse(manifest.version) else {
-            fputs("Invalid version in manifest.json: \(manifest.version)\n", stderr)
-            exit(EXIT_FAILURE)
+            // ignore - use tmpDir as root
         }
 
         // 3. Install to Tools/<id>/<version>
@@ -182,7 +156,10 @@ public struct ToolsInstall {
             try fm.createDirectory(at: installDir.deletingLastPathComponent(), withIntermediateDirectories: true)
             try fm.moveItem(at: pluginRoot, to: installDir)
 
-            // 4. Update Current Symlink
+            // 4. Create receipt.json for manual installs
+            try createManualInstallReceipt(pluginId: pluginId, version: semver, installDir: installDir)
+
+            // 5. Update Current Symlink
             try PluginInstallManager.updateCurrentSymlink(pluginId: pluginId, version: semver)
 
             print("Installed \(pluginId) @ \(semver) to \(installDir.path)")
@@ -195,6 +172,83 @@ public struct ToolsInstall {
             fputs("Installation failed: \(error)\n", stderr)
             exit(EXIT_FAILURE)
         }
+    }
+
+    /// Parses plugin_id and version from a filename like "my-plugin-1.0.0" or "my-plugin-1.0.0.zip"
+    /// Returns nil if the format is invalid.
+    private static func parsePluginIdAndVersion(from name: String) -> (pluginId: String, version: SemanticVersion)? {
+        // Remove .zip extension if present
+        var baseName = name
+        if baseName.lowercased().hasSuffix(".zip") {
+            baseName = String(baseName.dropLast(4))
+        }
+
+        // Find the last occurrence of a version pattern (e.g., -1.0.0, -1.2.3-beta)
+        // We scan from the end to find where the version starts
+        let parts = baseName.split(separator: "-", omittingEmptySubsequences: false).map(String.init)
+        guard parts.count >= 2 else { return nil }
+
+        // Try to find a valid semver by joining parts from the end
+        // Version could be "1.0.0" or "1.0.0-beta" etc.
+        for i in (1 ..< parts.count).reversed() {
+            let potentialVersion = parts[i...].joined(separator: "-")
+            if let semver = SemanticVersion.parse(potentialVersion) {
+                let pluginId = parts[0 ..< i].joined(separator: "-")
+                if !pluginId.isEmpty {
+                    return (pluginId, semver)
+                }
+            }
+        }
+
+        return nil
+    }
+
+    /// Creates a receipt.json for manual installations
+    private static func createManualInstallReceipt(pluginId: String, version: SemanticVersion, installDir: URL) throws {
+        // Find the dylib in the install directory
+        guard let dylibURL = findFirstDylib(in: installDir) else {
+            // No dylib found - skip receipt creation (plugin might not be fully built)
+            return
+        }
+
+        // Calculate SHA256 of the dylib
+        let dylibData = try Data(contentsOf: dylibURL)
+        let digest = SHA256.hash(data: dylibData)
+        let dylibSha = Data(digest).map { String(format: "%02x", $0) }.joined()
+
+        // Create receipt structure matching PluginReceipt
+        let receipt: [String: Any] = [
+            "plugin_id": pluginId,
+            "version": version.description,
+            "installed_at": ISO8601DateFormatter().string(from: Date()),
+            "dylib_filename": dylibURL.lastPathComponent,
+            "dylib_sha256": dylibSha,
+            "platform": "macos",
+            "arch": "arm64",
+        ]
+
+        let receiptURL = installDir.appendingPathComponent("receipt.json")
+        let receiptData = try JSONSerialization.data(withJSONObject: receipt, options: [.prettyPrinted, .sortedKeys])
+        try receiptData.write(to: receiptURL)
+    }
+
+    private static func findFirstDylib(in directory: URL) -> URL? {
+        let fm = FileManager.default
+        guard
+            let enumerator = fm.enumerator(
+                at: directory,
+                includingPropertiesForKeys: [.isRegularFileKey],
+                options: [.skipsHiddenFiles]
+            )
+        else {
+            return nil
+        }
+        for case let fileURL as URL in enumerator {
+            if fileURL.pathExtension == "dylib" {
+                return fileURL
+            }
+        }
+        return nil
     }
 
     private static func unzip(zipURL: URL, to destDir: URL) throws {

@@ -2,7 +2,7 @@
 //  ToolsCreate.swift
 //  osaurus
 //
-//  Command to scaffold a new plugin project with Swift or Rust template code and manifest.json.
+//  Command to scaffold a new plugin project with Swift or Rust template code.
 //
 
 import Foundation
@@ -189,27 +189,6 @@ public struct ToolsCreate {
             """
         try? pluginSwift.write(to: pluginDir.appendingPathComponent("Plugin.swift"), atomically: true, encoding: .utf8)
 
-        // manifest.json (enhanced)
-        let manifest = """
-            {
-              "plugin_id": "dev.example.\(name)",
-              "version": "0.1.0",
-              "description": "An example plugin",
-              "capabilities": {
-                "tools": [
-                  {
-                    "id": "hello_world",
-                    "description": "Return a friendly greeting",
-                    "parameters": {"type":"object","properties":{"name":{"type":"string"}},"required":["name"]},
-                    "requirements": [],
-                    "permission_policy": "ask"
-                  }
-                ]
-              }
-            }
-            """
-        try? manifest.write(to: dir.appendingPathComponent("manifest.json"), atomically: true, encoding: .utf8)
-
         // README.md (with publishing instructions)
         let readme = """
             # \(name)
@@ -224,25 +203,36 @@ public struct ToolsCreate {
                cp .build/release/lib\(name).dylib ./lib\(name).dylib
                ```
                
-            2. Install:
+            2. Package (for distribution):
                ```bash
-               # Installs directly from this directory
-               osaurus tools install .
+               osaurus tools package dev.example.\(name) 0.1.0
+               ```
+               This creates `dev.example.\(name)-0.1.0.zip`.
+               
+            3. Install locally:
+               ```bash
+               osaurus tools install ./dev.example.\(name)-0.1.0.zip
                ```
                
             ## Publishing
 
             To publish this plugin to the central registry:
 
-            1. Package it:
+            1. Package it with the correct naming convention:
                ```bash
-               osaurus tools package
+               osaurus tools package <plugin_id> <version>
                ```
-               This creates `dev.example.\(name).zip`.
+               The zip file MUST be named `<plugin_id>-<version>.zip`.
                
             2. Host the zip file (e.g. GitHub Releases).
 
-            3. Create a registry entry JSON file using metadata from `manifest.json`.
+            3. Create a registry entry JSON file for the central repository.
+
+            ## Important Notes
+
+            - Plugin metadata (id, version, capabilities) is defined in `get_manifest()` in Plugin.swift
+            - The zip filename determines the plugin_id and version during installation
+            - Ensure the version in `get_manifest()` matches your zip filename
             """
         try? readme.write(to: dir.appendingPathComponent("README.md"), atomically: true, encoding: .utf8)
     }

@@ -2,43 +2,69 @@
 //  ToolsPackage.swift
 //  osaurus
 //
-//  Command to package a plugin by creating a zip file containing manifest.json and the dylib.
+//  Command to package a plugin by creating a zip file containing the dylib.
+//  Output format: <plugin_id>-<version>.zip
 //
 
 import Foundation
 
 public struct ToolsPackage {
     public static func execute(args: [String]) {
-        let cwd = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
-        let manifestURL = cwd.appendingPathComponent("manifest.json")
-        guard FileManager.default.fileExists(atPath: manifestURL.path) else {
-            fputs("manifest.json not found in current directory\n", stderr)
+        // Parse arguments: osaurus tools package <plugin_id> <version> [dylib_path]
+        guard args.count >= 2 else {
+            fputs("Usage: osaurus tools package <plugin_id> <version> [dylib_path]\n", stderr)
+            fputs("  If dylib_path is omitted, auto-detects .dylib files in current directory.\n", stderr)
             exit(EXIT_FAILURE)
         }
-        // Read manifest to find dylib filename
-        struct Manifest: Decodable { let name: String?; let id: String?; let dylib: String }
-        let manifest: Manifest
-        do {
-            let data = try Data(contentsOf: manifestURL)
-            manifest = try JSONDecoder().decode(Manifest.self, from: data)
-        } catch {
-            fputs("Failed to parse manifest.json: \(error)\n", stderr)
-            exit(EXIT_FAILURE)
+
+        let pluginId = args[0]
+        let version = args[1]
+
+        let fm = FileManager.default
+        let cwd = URL(fileURLWithPath: fm.currentDirectoryPath)
+
+        // Find dylib file(s) to include
+        var dylibPaths: [String] = []
+
+        if args.count >= 3 {
+            // Use specified dylib path
+            let dylibPath = args[2]
+            guard fm.fileExists(atPath: cwd.appendingPathComponent(dylibPath).path) else {
+                fputs("Dylib not found: \(dylibPath)\n", stderr)
+                exit(EXIT_FAILURE)
+            }
+            dylibPaths.append(dylibPath)
+        } else {
+            // Auto-detect .dylib files in current directory
+            do {
+                let contents = try fm.contentsOfDirectory(atPath: cwd.path)
+                dylibPaths = contents.filter { $0.hasSuffix(".dylib") }
+            } catch {
+                fputs("Failed to read current directory: \(error)\n", stderr)
+                exit(EXIT_FAILURE)
+            }
+
+            guard !dylibPaths.isEmpty else {
+                fputs("No .dylib files found in current directory.\n", stderr)
+                fputs("Build your plugin first, or specify the dylib path explicitly.\n", stderr)
+                exit(EXIT_FAILURE)
+            }
         }
-        let dylibURL = cwd.appendingPathComponent(manifest.dylib)
-        guard FileManager.default.fileExists(atPath: dylibURL.path) else {
-            fputs(
-                "Dylib \(manifest.dylib) not found. Build your plugin and place the dylib alongside manifest.json.\n",
-                stderr
-            )
-            exit(EXIT_FAILURE)
-        }
-        // Zip manifest.json and dylib into <id or name>.zip
-        let zipName = (manifest.id ?? manifest.name ?? "plugin") + ".zip"
+
+        // Create zip file with naming convention: <plugin_id>-<version>.zip
+        let zipName = "\(pluginId)-\(version).zip"
         let zipURL = cwd.appendingPathComponent(zipName)
+
+        // Remove existing zip if present
+        if fm.fileExists(atPath: zipURL.path) {
+            try? fm.removeItem(at: zipURL)
+        }
+
         let proc = Process()
         proc.executableURL = URL(fileURLWithPath: "/usr/bin/zip")
-        proc.arguments = ["-q", "-r", zipURL.path, "manifest.json", manifest.dylib]
+        proc.currentDirectoryURL = cwd
+        proc.arguments = ["-q", "-r", zipURL.path] + dylibPaths
+
         do {
             try proc.run()
             proc.waitUntilExit()
@@ -50,7 +76,9 @@ public struct ToolsPackage {
             fputs("Failed to run zip: \(error)\n", stderr)
             exit(EXIT_FAILURE)
         }
+
         print("Created \(zipName)")
+        print("Install with: osaurus tools install ./\(zipName)")
         exit(EXIT_SUCCESS)
     }
 }
