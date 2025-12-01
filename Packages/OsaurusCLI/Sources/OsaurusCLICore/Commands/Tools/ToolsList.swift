@@ -2,7 +2,7 @@
 //  ToolsList.swift
 //  osaurus
 //
-//  Command to list all installed plugins with their IDs, names, and available tools.
+//  Command to list all installed plugins with their IDs and versions.
 //
 
 import Foundation
@@ -21,18 +21,34 @@ public struct ToolsList {
                 print("(no plugins installed)")
             } else {
                 for entry in contents.sorted() {
-                    let dir = root.appendingPathComponent(entry, isDirectory: true)
-                    let manifestURL = dir.appendingPathComponent("manifest.json")
-                    if let data = try? Data(contentsOf: manifestURL),
+                    // Skip hidden files
+                    if entry.hasPrefix(".") { continue }
+
+                    let pluginDir = root.appendingPathComponent(entry, isDirectory: true)
+
+                    // Check for "current" symlink to find active version
+                    let currentLink = pluginDir.appendingPathComponent("current")
+                    guard let versionName = try? fm.destinationOfSymbolicLink(atPath: currentLink.path) else {
+                        // No current symlink - just print the directory name
+                        print("\(entry)  (no active version)")
+                        continue
+                    }
+
+                    // Read receipt.json from the current version directory
+                    let receiptURL =
+                        pluginDir
+                        .appendingPathComponent(versionName, isDirectory: true)
+                        .appendingPathComponent("receipt.json")
+
+                    if let data = try? Data(contentsOf: receiptURL),
                         let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
                     {
-                        let id = (obj["id"] as? String) ?? entry
-                        let name = (obj["name"] as? String) ?? entry
-                        let tools = ((obj["tools"] as? [[String: Any]]) ?? []).compactMap { $0["name"] as? String }
-                        let toolList = tools.isEmpty ? "" : " tools: \(tools.joined(separator: ", "))"
-                        print("\(entry)  id=\(id)  name=\(name)\(toolList)")
+                        let pluginId = (obj["plugin_id"] as? String) ?? entry
+                        let version = (obj["version"] as? String) ?? versionName
+                        print("\(pluginId)  version=\(version)")
                     } else {
-                        print(entry)
+                        // Receipt not found - print basic info from directory structure
+                        print("\(entry)  version=\(versionName)")
                     }
                 }
             }

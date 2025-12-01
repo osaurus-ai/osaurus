@@ -1,6 +1,6 @@
 # Osaurus Plugin Authoring
 
-This document describes how to build external plugins for Osaurus using the Generic C ABI. Plugins are distributed as `.dylib` plus a `manifest.json` in a zip.
+This document describes how to build external plugins for Osaurus using the Generic C ABI. Plugins are distributed as a `.dylib` in a zip file with a specific naming convention.
 
 ## TL;DR (Swift)
 
@@ -15,24 +15,39 @@ osaurus tools create MyPlugin --language swift
 ```bash
 cd MyPlugin
 swift build -c release
-# Copy the built dylib next to manifest.json (or rename to match manifest.dylib)
 cp .build/release/libMyPlugin.dylib ./libMyPlugin.dylib
 
 # Sign the dylib (REQUIRED for downloaded plugins)
 codesign -s "Developer ID Application: Your Name (TEAMID)" ./libMyPlugin.dylib
 
-osaurus tools package
+# Package with the naming convention: <plugin_id>-<version>.zip
+osaurus tools package dev.example.MyPlugin 0.1.0
 ```
 
 3. Install:
 
 ```bash
-# Install the local directory directly (must contain manifest.json)
-osaurus tools install .
+# Install from the packaged zip (filename determines plugin_id and version)
+osaurus tools install ./dev.example.MyPlugin-0.1.0.zip
 ```
 
 The plugin will be unpacked into:
 `~/Library/Application Support/com.dinoki.osaurus/Tools/<plugin_id>/<version>/`
+
+## Packaging Convention
+
+**Important:** Plugin zip files MUST follow the naming convention:
+
+```
+<plugin_id>-<version>.zip
+```
+
+Examples:
+- `com.acme.echo-1.0.0.zip`
+- `dev.example.MyPlugin-0.1.0.zip`
+- `my-plugin-2.3.1-beta.zip`
+
+The plugin_id and version are extracted from the filename during installation. The version must be valid semver.
 
 ## ABI Overview
 
@@ -51,7 +66,7 @@ Key points:
 
 ### Manifest Format
 
-The manifest JSON returned by `get_manifest` (and stored on disk as `manifest.json` for indexing) looks like this:
+The manifest JSON returned by `get_manifest` describes the plugin's capabilities. This is the source of truth for plugin metadata at runtime:
 
 ```json
 {
@@ -182,11 +197,13 @@ codesign --force --options runtime --timestamp --sign "Developer ID Application:
 
 Osaurus uses a single, git-backed central plugin index maintained by the Osaurus team.
 
-1. Ensure your `manifest.json` contains publishing metadata (`homepage`, `license`, `authors`).
-2. Publish release artifacts (.zip containing your `.dylib` and `manifest.json`) on GitHub Releases.
+1. Package your plugin with the correct naming convention: `<plugin_id>-<version>.zip`
+2. Publish release artifacts (.zip containing your `.dylib`) on GitHub Releases.
 3. Generate a SHA256 checksum of the zip.
 4. Sign the zip with Minisign (recommended).
 5. Submit a PR to the central index repo adding `plugins/<your.plugin.id>.json` with your metadata.
+
+The registry entry should include publishing metadata (`homepage`, `license`, `authors`) and artifact information.
 
 ## Artifact Signing (Minisign)
 
