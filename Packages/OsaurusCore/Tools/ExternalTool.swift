@@ -21,9 +21,7 @@ final class ExternalTool: OsaurusTool, PermissionedTool, @unchecked Sendable {
     init(plugin: ExternalPlugin, spec: PluginManifest.ToolSpec) {
         self.plugin = plugin
         self.toolId = spec.id
-        // If the tool ID in manifest is "my_tool", we might want to namespacing it?
-        // For now, assume the spec.id is unique enough or the plugin_id + spec.id combination is used.
-        // The previous implementation used the name directly from the C spec.
+
         self.name = spec.id
         self.description = spec.description
         self.parameters = spec.parameters
