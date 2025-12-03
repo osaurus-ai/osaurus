@@ -20,6 +20,7 @@ struct ToolsManagerView: View {
     @State private var searchText: String = ""
     @State private var toolEntries: [ToolRegistry.ToolEntry] = []
     @State private var hasAppeared = false
+    @State private var isRefreshingInstalled = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -131,20 +132,34 @@ struct ToolsManagerView: View {
                     .help(repoService.isRefreshing ? "Refreshing..." : "Refresh repository")
                 } else {
                     Button(action: {
-                        PluginManager.shared.loadAll()
-                        reload()
+                        Task {
+                            isRefreshingInstalled = true
+                            await repoService.refresh()
+                            PluginManager.shared.loadAll()
+                            reload()
+                            isRefreshingInstalled = false
+                        }
                     }) {
-                        Image(systemName: "arrow.clockwise")
-                            .font(.system(size: 13, weight: .medium))
-                            .foregroundColor(theme.secondaryText)
-                            .frame(width: 32, height: 32)
-                            .background(
-                                RoundedRectangle(cornerRadius: 8)
-                                    .fill(theme.tertiaryBackground)
-                            )
+                        Group {
+                            if isRefreshingInstalled {
+                                ProgressView()
+                                    .scaleEffect(0.6)
+                                    .frame(width: 16, height: 16)
+                            } else {
+                                Image(systemName: "arrow.clockwise")
+                                    .font(.system(size: 13, weight: .medium))
+                            }
+                        }
+                        .foregroundColor(theme.secondaryText)
+                        .frame(width: 32, height: 32)
+                        .background(
+                            RoundedRectangle(cornerRadius: 8)
+                                .fill(theme.tertiaryBackground)
+                        )
                     }
                     .buttonStyle(PlainButtonStyle())
-                    .help("Reload tools")
+                    .disabled(isRefreshingInstalled)
+                    .help(isRefreshingInstalled ? "Refreshing..." : "Reload tools")
                 }
 
                 SearchField(text: $searchText, placeholder: "Search tools")
@@ -881,9 +896,6 @@ private struct InstalledToolRow: View {
     let entry: ToolRegistry.ToolEntry
     let onChange: () -> Void
 
-    @State private var isExpanded: Bool = false
-    @State private var refreshToken: Int = 0
-
     private var hasMissingSystemPermissions: Bool {
         guard let info = ToolRegistry.shared.policyInfo(for: entry.name) else { return false }
         return info.systemPermissionStates.values.contains(false)
@@ -892,261 +904,135 @@ private struct InstalledToolRow: View {
     var body: some View {
         let info = ToolRegistry.shared.policyInfo(for: entry.name)
 
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 10) {
-                // Tool icon with warning overlay if system permissions missing
-                ZStack {
-                    RoundedRectangle(cornerRadius: 6)
-                        .fill(
-                            hasMissingSystemPermissions
-                                ? theme.warningColor.opacity(0.1) : theme.accentColor.opacity(0.08)
-                        )
-                    Image(systemName: "function")
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundColor(hasMissingSystemPermissions ? theme.warningColor : theme.accentColor)
+        HStack(spacing: 10) {
+            // Tool icon with warning overlay if system permissions missing
+            ZStack {
+                RoundedRectangle(cornerRadius: 6)
+                    .fill(
+                        hasMissingSystemPermissions
+                            ? theme.warningColor.opacity(0.1) : theme.accentColor.opacity(0.08)
+                    )
+                Image(systemName: "function")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundColor(hasMissingSystemPermissions ? theme.warningColor : theme.accentColor)
 
-                    // Warning badge
-                    if hasMissingSystemPermissions {
-                        Image(systemName: "exclamationmark.triangle.fill")
-                            .font(.system(size: 8))
-                            .foregroundColor(theme.warningColor)
-                            .offset(x: 10, y: -10)
-                    }
+                // Warning badge
+                if hasMissingSystemPermissions {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .font(.system(size: 8))
+                        .foregroundColor(theme.warningColor)
+                        .offset(x: 10, y: -10)
                 }
-                .frame(width: 28, height: 28)
+            }
+            .frame(width: 28, height: 28)
 
-                // Tool info
-                Button(action: {
-                    withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
-                        isExpanded.toggle()
-                    }
-                }) {
-                    HStack(spacing: 8) {
-                        VStack(alignment: .leading, spacing: 2) {
-                            HStack(spacing: 4) {
-                                Text(entry.name)
-                                    .font(.system(size: 13, weight: .medium, design: .rounded))
-                                    .foregroundColor(theme.primaryText)
+            // Tool info
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(spacing: 4) {
+                    Text(entry.name)
+                        .font(.system(size: 13, weight: .medium, design: .rounded))
+                        .foregroundColor(theme.primaryText)
 
-                                // Warning badge for missing system permissions
-                                if hasMissingSystemPermissions {
-                                    Text("Needs Permission")
-                                        .font(.system(size: 9, weight: .medium))
-                                        .foregroundColor(theme.warningColor)
-                                        .padding(.horizontal, 5)
-                                        .padding(.vertical, 2)
-                                        .background(
-                                            Capsule()
-                                                .fill(theme.warningColor.opacity(0.12))
-                                        )
-                                }
-                            }
-                            Text(entry.description)
-                                .font(.system(size: 11))
-                                .foregroundColor(theme.tertiaryText)
-                                .lineLimit(1)
-                        }
-
-                        Spacer()
-
-                        // Permission indicator
-                        if let info = info {
-                            HStack(spacing: 4) {
-                                Image(systemName: iconForPolicy(info.effectivePolicy))
-                                    .font(.system(size: 9))
-                                    .foregroundColor(colorForPolicy(info.effectivePolicy))
-                                Text(info.effectivePolicy.rawValue.capitalized)
-                                    .font(.system(size: 10, weight: .medium))
-                                    .foregroundColor(theme.tertiaryText)
-                            }
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 4)
+                    // Warning badge for missing system permissions
+                    if hasMissingSystemPermissions {
+                        Text("Needs Permission")
+                            .font(.system(size: 9, weight: .medium))
+                            .foregroundColor(theme.warningColor)
+                            .padding(.horizontal, 5)
+                            .padding(.vertical, 2)
                             .background(
                                 Capsule()
-                                    .fill(theme.tertiaryBackground)
+                                    .fill(theme.warningColor.opacity(0.12))
                             )
-                        }
-
-                        Image(systemName: "chevron.right")
-                            .font(.system(size: 9, weight: .semibold))
-                            .foregroundColor(theme.tertiaryText)
-                            .rotationEffect(.degrees(isExpanded ? 90 : 0))
                     }
-                    .contentShape(Rectangle())
                 }
-                .buttonStyle(PlainButtonStyle())
-
-                // Enable toggle
-                Toggle(
-                    "",
-                    isOn: Binding(
-                        get: { entry.enabled },
-                        set: { newValue in
-                            ToolRegistry.shared.setEnabled(newValue, for: entry.name)
-                            onChange()
-                        }
-                    )
-                )
-                .toggleStyle(SwitchToggleStyle())
-                .labelsHidden()
-                .scaleEffect(0.85)
+                Text(entry.description)
+                    .font(.system(size: 11))
+                    .foregroundColor(theme.tertiaryText)
+                    .lineLimit(1)
             }
 
-            // Expanded permissions section
-            if isExpanded, let info {
-                VStack(alignment: .leading, spacing: 10) {
-                    Divider()
+            Spacer()
 
-                    // Permission policy section
-                    VStack(alignment: .leading, spacing: 8) {
+            // Permission policy dropdown
+            if let info = info {
+                Menu {
+                    Button {
+                        ToolRegistry.shared.setPolicy(.auto, for: entry.name)
+                        onChange()
+                    } label: {
                         HStack {
-                            Text("Permission Policy")
-                                .font(.system(size: 12, weight: .semibold))
-                                .foregroundColor(theme.primaryText)
-
-                            Spacer()
-
-                            if info.configuredPolicy != nil {
-                                Button("Use Default") {
-                                    ToolRegistry.shared.clearPolicy(for: entry.name)
-                                    bump()
-                                }
-                                .font(.system(size: 10, weight: .medium))
-                                .buttonStyle(.plain)
-                                .foregroundColor(theme.accentColor)
-                            }
-                        }
-
-                        Picker(
-                            "",
-                            selection: Binding(
-                                get: { info.configuredPolicy ?? info.effectivePolicy },
-                                set: { newValue in
-                                    ToolRegistry.shared.setPolicy(newValue, for: entry.name)
-                                    bump()
-                                }
-                            )
-                        ) {
-                            Label("Auto", systemImage: "sparkles").tag(ToolPermissionPolicy.auto)
-                            Label("Ask", systemImage: "questionmark.circle").tag(ToolPermissionPolicy.ask)
-                            Label("Deny", systemImage: "xmark.circle").tag(ToolPermissionPolicy.deny)
-                        }
-                        .pickerStyle(.segmented)
-                        .labelsHidden()
-                    }
-
-                    // System permissions section
-                    if !info.systemPermissions.isEmpty {
-                        VStack(alignment: .leading, spacing: 6) {
-                            Text("System Permissions")
-                                .font(.system(size: 12, weight: .semibold))
-                                .foregroundColor(theme.primaryText)
-
-                            VStack(alignment: .leading, spacing: 6) {
-                                ForEach(info.systemPermissions, id: \.rawValue) { perm in
-                                    let isGranted = info.systemPermissionStates[perm] ?? false
-                                    HStack(spacing: 8) {
-                                        Image(systemName: perm.systemIconName)
-                                            .font(.system(size: 11))
-                                            .foregroundColor(isGranted ? theme.successColor : theme.warningColor)
-                                            .frame(width: 16)
-
-                                        Text(perm.displayName)
-                                            .font(.system(size: 11))
-                                            .foregroundColor(theme.primaryText)
-
-                                        Spacer()
-
-                                        if isGranted {
-                                            HStack(spacing: 4) {
-                                                Image(systemName: "checkmark.circle.fill")
-                                                    .font(.system(size: 10))
-                                                Text("Granted")
-                                                    .font(.system(size: 10, weight: .medium))
-                                            }
-                                            .foregroundColor(theme.successColor)
-                                        } else {
-                                            Button(action: {
-                                                SystemPermissionService.shared.requestPermission(perm)
-                                                bump()
-                                            }) {
-                                                HStack(spacing: 4) {
-                                                    Image(systemName: "hand.raised")
-                                                        .font(.system(size: 9))
-                                                    Text("Grant")
-                                                        .font(.system(size: 10, weight: .medium))
-                                                }
-                                                .foregroundColor(.white)
-                                                .padding(.horizontal, 8)
-                                                .padding(.vertical, 3)
-                                                .background(
-                                                    RoundedRectangle(cornerRadius: 4)
-                                                        .fill(theme.accentColor)
-                                                )
-                                            }
-                                            .buttonStyle(PlainButtonStyle())
-                                        }
-                                    }
-                                    .padding(8)
-                                    .background(
-                                        RoundedRectangle(cornerRadius: 6)
-                                            .fill(
-                                                isGranted
-                                                    ? theme.successColor.opacity(0.08)
-                                                    : theme.warningColor.opacity(0.08)
-                                            )
-                                    )
-                                }
-                            }
+                            Image(systemName: "sparkles")
+                                .foregroundColor(colorForPolicy(.auto))
+                            Text("Auto")
+                                .foregroundColor(colorForPolicy(.auto))
                         }
                     }
-
-                    // Required permissions section (non-system grants)
-                    let nonSystemRequirements = info.requirements.filter {
-                        !SystemPermissionService.isSystemPermission($0)
-                    }
-                    if info.isPermissioned, !nonSystemRequirements.isEmpty {
-                        VStack(alignment: .leading, spacing: 6) {
-                            Text("Other Permissions")
-                                .font(.system(size: 12, weight: .semibold))
-                                .foregroundColor(theme.primaryText)
-
-                            VStack(alignment: .leading, spacing: 4) {
-                                ForEach(nonSystemRequirements, id: \.self) { req in
-                                    Toggle(
-                                        isOn: Binding(
-                                            get: { info.grantsByRequirement[req] ?? false },
-                                            set: { val in
-                                                ToolRegistry.shared.setGrant(val, requirement: req, for: entry.name)
-                                                bump()
-                                            }
-                                        )
-                                    ) {
-                                        Text(req)
-                                            .font(.system(size: 11))
-                                            .foregroundColor(theme.primaryText)
-                                    }
-                                    .toggleStyle(.checkbox)
-                                }
-                            }
+                    Button {
+                        ToolRegistry.shared.setPolicy(.ask, for: entry.name)
+                        onChange()
+                    } label: {
+                        HStack {
+                            Image(systemName: "questionmark.circle")
+                                .foregroundColor(colorForPolicy(.ask))
+                            Text("Ask")
+                                .foregroundColor(colorForPolicy(.ask))
                         }
                     }
+                    Button {
+                        ToolRegistry.shared.setPolicy(.deny, for: entry.name)
+                        onChange()
+                    } label: {
+                        HStack {
+                            Image(systemName: "xmark.circle")
+                                .foregroundColor(colorForPolicy(.deny))
+                            Text("Deny")
+                                .foregroundColor(colorForPolicy(.deny))
+                        }
+                    }
+                } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: iconForPolicy(info.effectivePolicy))
+                            .font(.system(size: 9))
+                            .foregroundColor(colorForPolicy(info.effectivePolicy))
+                        Text(info.effectivePolicy.rawValue.capitalized)
+                            .font(.system(size: 10, weight: .medium))
+                            .foregroundColor(colorForPolicy(info.effectivePolicy))
+                        Image(systemName: "chevron.up.chevron.down")
+                            .font(.system(size: 8))
+                            .foregroundColor(theme.tertiaryText)
+                    }
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(
+                        Capsule()
+                            .fill(colorForPolicy(info.effectivePolicy).opacity(0.12))
+                    )
                 }
-                .padding(.leading, 38)
-                .transition(.opacity.combined(with: .move(edge: .top)))
-                .id(refreshToken)
+                .menuStyle(.borderlessButton)
+                .fixedSize()
             }
+
+            // Enable toggle
+            Toggle(
+                "",
+                isOn: Binding(
+                    get: { entry.enabled },
+                    set: { newValue in
+                        ToolRegistry.shared.setEnabled(newValue, for: entry.name)
+                        onChange()
+                    }
+                )
+            )
+            .toggleStyle(SwitchToggleStyle())
+            .labelsHidden()
+            .scaleEffect(0.85)
         }
         .padding(10)
         .background(
             RoundedRectangle(cornerRadius: 8)
                 .fill(theme.tertiaryBackground.opacity(0.5))
         )
-    }
-
-    private func bump() {
-        refreshToken &+= 1
-        onChange()
     }
 
     private func iconForPolicy(_ policy: ToolPermissionPolicy) -> String {
@@ -1276,6 +1162,7 @@ private struct PluginRow: View {
                                     .fill(theme.tertiaryBackground)
                             )
                             .foregroundColor(theme.primaryText)
+                            .help(tool.description)
                         }
                     }
                 }
