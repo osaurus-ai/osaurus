@@ -12,6 +12,7 @@ struct ConfigurationView: View {
     @State private var cliInstallSuccess: Bool = false
     @State private var hasAppeared = false
     @State private var showSaveConfirmation = false
+    @State private var showResetConfirmation = false
 
     // Chat settings state
     @State private var tempChatHotkey: Hotkey? = nil
@@ -85,7 +86,7 @@ struct ConfigurationView: View {
                                         label: "Temperature",
                                         text: $tempChatTemperature,
                                         placeholder: "0.7",
-                                        help: "Controls randomness (0–2). Empty uses default 0.7"
+                                        help: "Randomness (0–2). Values > 0.8 may cause erratic output"
                                     )
                                     settingsTextField(
                                         label: "Max Tokens",
@@ -320,24 +321,53 @@ struct ConfigurationView: View {
 
                 Spacer()
 
-                Button(action: saveConfiguration) {
-                    HStack(spacing: 6) {
-                        if showSaveConfirmation {
-                            Image(systemName: "checkmark")
-                                .font(.system(size: 12, weight: .semibold))
+                HStack(spacing: 12) {
+                    Button(action: resetToDefaults) {
+                        HStack(spacing: 6) {
+                            if showResetConfirmation {
+                                Image(systemName: "checkmark")
+                                    .font(.system(size: 12, weight: .semibold))
+                            } else {
+                                Image(systemName: "arrow.counterclockwise")
+                                    .font(.system(size: 12, weight: .medium))
+                            }
+                            Text(showResetConfirmation ? "Reset" : "Reset to Defaults")
+                                .font(.system(size: 13, weight: .medium))
                         }
-                        Text(showSaveConfirmation ? "Saved" : "Save Changes")
-                            .font(.system(size: 13, weight: .medium))
+                        .foregroundColor(showResetConfirmation ? .white : theme.secondaryText)
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 10)
+                        .background(
+                            RoundedRectangle(cornerRadius: 8)
+                                .fill(showResetConfirmation ? theme.warningColor : theme.tertiaryBackground)
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 8)
+                                        .stroke(theme.inputBorder, lineWidth: showResetConfirmation ? 0 : 1)
+                                )
+                        )
                     }
-                    .foregroundColor(.white)
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 10)
-                    .background(
-                        RoundedRectangle(cornerRadius: 8)
-                            .fill(showSaveConfirmation ? Color.green : theme.accentColor)
-                    )
+                    .buttonStyle(PlainButtonStyle())
+                    .help("Reset all settings to recommended defaults")
+
+                    Button(action: saveConfiguration) {
+                        HStack(spacing: 6) {
+                            if showSaveConfirmation {
+                                Image(systemName: "checkmark")
+                                    .font(.system(size: 12, weight: .semibold))
+                            }
+                            Text(showSaveConfirmation ? "Saved" : "Save Changes")
+                                .font(.system(size: 13, weight: .medium))
+                        }
+                        .foregroundColor(.white)
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 10)
+                        .background(
+                            RoundedRectangle(cornerRadius: 8)
+                                .fill(showSaveConfirmation ? Color.green : theme.accentColor)
+                        )
+                    }
+                    .buttonStyle(PlainButtonStyle())
                 }
-                .buttonStyle(PlainButtonStyle())
             }
         }
         .padding(.horizontal, 24)
@@ -416,6 +446,46 @@ struct ConfigurationView: View {
             configuration.genPrefillStepSize == defaults.genPrefillStepSize
             ? "" : String(configuration.genPrefillStepSize)
         tempAllowedOrigins = configuration.allowedOrigins.joined(separator: ", ")
+    }
+
+    // MARK: - Reset to Defaults
+
+    private func resetToDefaults() {
+        // Reset all fields to default values
+        let serverDefaults = ServerConfiguration.default
+        let chatDefaults = ChatConfiguration.default
+
+        // Server settings
+        tempPortString = String(serverDefaults.port)
+        tempExposeToNetwork = serverDefaults.exposeToNetwork
+        tempStartAtLogin = serverDefaults.startAtLogin
+        tempAllowedOrigins = ""
+
+        // Chat settings - clear overrides to use defaults
+        tempChatHotkey = chatDefaults.hotkey
+        tempSystemPrompt = ""
+        tempChatTemperature = ""
+        tempChatMaxTokens = ""
+        tempChatTopP = ""
+        tempChatMaxToolAttempts = ""
+
+        // Performance settings - clear to use defaults
+        tempTopP = ""
+        tempKVBits = ""
+        tempKVGroup = ""
+        tempQuantStart = ""
+        tempMaxKV = ""
+        tempPrefillStep = ""
+
+        // Show confirmation
+        withAnimation(.easeInOut(duration: 0.2)) {
+            showResetConfirmation = true
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+            withAnimation(.easeInOut(duration: 0.2)) {
+                showResetConfirmation = false
+            }
+        }
     }
 
     // MARK: - Configuration Saving
