@@ -14,6 +14,7 @@ import SwiftUI
 struct ToolsManagerView: View {
     @StateObject private var themeManager = ThemeManager.shared
     @ObservedObject private var repoService = PluginRepositoryService.shared
+    @ObservedObject private var providerManager = MCPProviderManager.shared
     @Environment(\.theme) private var theme
 
     @State private var selectedTab: ToolsTab = .installed
@@ -65,6 +66,8 @@ struct ToolsManagerView: View {
                     installedTabContent
                 case .available:
                     availableTabContent
+                case .providers:
+                    ProvidersView()
                 }
             }
             .opacity(hasAppeared ? 1 : 0)
@@ -97,6 +100,7 @@ struct ToolsManagerView: View {
                     counts: [
                         .installed: filteredEntries.count,
                         .available: filteredPlugins.count,
+                        .providers: providerManager.configuration.providers.count,
                     ],
                     badges: repoService.updatesAvailableCount > 0
                         ? [.installed: repoService.updatesAvailableCount]

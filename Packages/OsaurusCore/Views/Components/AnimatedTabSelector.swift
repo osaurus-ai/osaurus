@@ -133,6 +133,7 @@ private struct AnimatedTabButton<Tab: AnimatedTabItem>: View {
 enum ToolsTab: String, CaseIterable, AnimatedTabItem {
     case installed = "Installed"
     case available = "Available"
+    case providers = "Providers"
 
     var title: String { rawValue }
 }
