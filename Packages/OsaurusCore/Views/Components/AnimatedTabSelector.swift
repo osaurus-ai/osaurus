@@ -131,9 +131,9 @@ private struct AnimatedTabButton<Tab: AnimatedTabItem>: View {
 // MARK: - Tools Tab (for ToolsManagerView)
 
 enum ToolsTab: String, CaseIterable, AnimatedTabItem {
-    case installed = "Installed"
     case available = "Available"
-    case providers = "Providers"
+    case plugins = "Plugins"
+    case remote = "Remote"
 
     var title: String { rawValue }
 }
@@ -143,7 +143,7 @@ enum ToolsTab: String, CaseIterable, AnimatedTabItem {
 #Preview {
     struct PreviewWrapper: View {
         @State private var modelTab: ModelListTab = .all
-        @State private var toolsTab: ToolsTab = .installed
+        @State private var toolsTab: ToolsTab = .available
 
         var body: some View {
             VStack(spacing: 40) {
@@ -154,8 +154,8 @@ enum ToolsTab: String, CaseIterable, AnimatedTabItem {
 
                 AnimatedTabSelector(
                     selection: $toolsTab,
-                    counts: [.installed: 8, .available: 24],
-                    badges: [.installed: 2]
+                    counts: [.available: 8, .plugins: 24, .remote: 2],
+                    badges: [.available: 2]
                 )
             }
             .padding(40)

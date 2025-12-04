@@ -15,6 +15,7 @@ enum MCPProviderKeychain {
     // MARK: - Token Management
 
     /// Save a token for a provider ID
+    @discardableResult
     static func saveToken(_ token: String, for providerId: UUID) -> Bool {
         let account = "\(providerId.uuidString).token"
         guard let tokenData = token.data(using: .utf8) else { return false }
@@ -82,6 +83,7 @@ enum MCPProviderKeychain {
     // MARK: - Header Secret Management
 
     /// Save a secret header value for a provider
+    @discardableResult
     static func saveHeaderSecret(_ value: String, key: String, for providerId: UUID) -> Bool {
         let account = "\(providerId.uuidString).header.\(key)"
         guard let valueData = value.data(using: .utf8) else { return false }

@@ -168,14 +168,17 @@ public final class MCPProviderManager: ObservableObject {
             // Discover tools
             try await discoverTools(for: providerId, client: client, provider: provider)
 
-            // Update state to connected
-            state.isConnecting = false
-            state.isConnected = true
-            state.lastConnectedAt = Date()
-            state.lastError = nil
-            providerStates[providerId] = state
-
-            print("[Osaurus] MCP Provider '\(provider.name)': Connected with \(state.discoveredToolCount) tools")
+            // Update state to connected (re-read state since discoverTools modified it)
+            if var updatedState = providerStates[providerId] {
+                updatedState.isConnecting = false
+                updatedState.isConnected = true
+                updatedState.lastConnectedAt = Date()
+                updatedState.lastError = nil
+                providerStates[providerId] = updatedState
+                print(
+                    "[Osaurus] MCP Provider '\(provider.name)': Connected with \(updatedState.discoveredToolCount) tools"
+                )
+            }
             notifyStatusChanged()
 
         } catch {
