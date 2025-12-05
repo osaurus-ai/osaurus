@@ -1451,105 +1451,136 @@ private struct PluginRow: View {
     @State private var showError: Bool = false
     @State private var isHovering = false
     @State private var hasAppeared = false
+    @State private var isExpanded = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            HStack(alignment: .top, spacing: 14) {
-                // Plugin icon
-                ZStack {
-                    RoundedRectangle(cornerRadius: 10)
-                        .fill(theme.accentColor.opacity(0.12))
-                    Image(systemName: "puzzlepiece.extension.fill")
-                        .font(.system(size: 20))
-                        .foregroundColor(theme.accentColor)
-                }
-                .frame(width: 44, height: 44)
-
-                // Plugin info
-                VStack(alignment: .leading, spacing: 6) {
-                    HStack(spacing: 8) {
-                        Text(plugin.spec.name ?? plugin.spec.plugin_id)
-                            .font(.system(size: 15, weight: .semibold, design: .rounded))
-                            .foregroundColor(theme.primaryText)
-
-                        if let version = plugin.latestVersion {
-                            Text("v\(version.description)")
-                                .font(.system(size: 11, weight: .medium))
-                                .foregroundColor(theme.tertiaryText)
-                                .padding(.horizontal, 6)
-                                .padding(.vertical, 2)
-                                .background(
-                                    Capsule()
-                                        .fill(theme.tertiaryBackground)
-                                )
-                        }
-
-                        if plugin.hasUpdate {
-                            updateBadge
-                        }
+            // Header row
+            HStack(spacing: 14) {
+                // Clickable area for expand/collapse
+                Button(action: {
+                    withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+                        isExpanded.toggle()
                     }
+                }) {
+                    HStack(spacing: 14) {
+                        // Plugin icon
+                        ZStack {
+                            RoundedRectangle(cornerRadius: 10)
+                                .fill(theme.accentColor.opacity(0.12))
+                            Image(systemName: "puzzlepiece.extension.fill")
+                                .font(.system(size: 20))
+                                .foregroundColor(theme.accentColor)
+                        }
+                        .frame(width: 44, height: 44)
 
-                    if let description = plugin.spec.description {
-                        Text(description)
-                            .font(.system(size: 13))
-                            .foregroundColor(theme.secondaryText)
-                            .lineLimit(2)
-                    }
+                        // Plugin info
+                        VStack(alignment: .leading, spacing: 4) {
+                            HStack(spacing: 8) {
+                                Text(plugin.spec.name ?? plugin.spec.plugin_id)
+                                    .font(.system(size: 15, weight: .semibold, design: .rounded))
+                                    .foregroundColor(theme.primaryText)
 
-                    // Metadata row
-                    HStack(spacing: 12) {
-                        if let authors = plugin.spec.authors, !authors.isEmpty {
-                            Label(authors.joined(separator: ", "), systemImage: "person")
-                                .font(.system(size: 11))
-                                .foregroundColor(theme.tertiaryText)
+                                if let version = plugin.latestVersion {
+                                    Text("v\(version.description)")
+                                        .font(.system(size: 11, weight: .medium))
+                                        .foregroundColor(theme.tertiaryText)
+                                        .padding(.horizontal, 6)
+                                        .padding(.vertical, 2)
+                                        .background(
+                                            Capsule()
+                                                .fill(theme.tertiaryBackground)
+                                        )
+                                }
+
+                                if plugin.hasUpdate {
+                                    updateBadge
+                                }
+                            }
+
+                            if let description = plugin.spec.description {
+                                Text(description)
+                                    .font(.system(size: 13))
+                                    .foregroundColor(theme.secondaryText)
+                                    .lineLimit(isExpanded ? nil : 1)
+                            }
                         }
 
-                        if let license = plugin.spec.license {
-                            Label(license, systemImage: "doc.text")
-                                .font(.system(size: 11))
-                                .foregroundColor(theme.tertiaryText)
-                        }
+                        Spacer()
 
+                        // Tool count badge
                         if let tools = plugin.spec.capabilities?.tools, !tools.isEmpty {
-                            Label("\(tools.count) tool\(tools.count == 1 ? "" : "s")", systemImage: "wrench")
-                                .font(.system(size: 11))
-                                .foregroundColor(theme.tertiaryText)
+                            HStack(spacing: 4) {
+                                Image(systemName: "wrench.and.screwdriver")
+                                    .font(.system(size: 10))
+                                Text("\(tools.count) tool\(tools.count == 1 ? "" : "s")")
+                                    .font(.system(size: 11, weight: .medium))
+                            }
+                            .foregroundColor(theme.secondaryText)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 4)
+                            .background(Capsule().fill(theme.tertiaryBackground))
                         }
-                    }
-                }
 
-                Spacer()
+                        // Chevron indicator
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundColor(theme.tertiaryText)
+                            .rotationEffect(.degrees(isExpanded ? 90 : 0))
+                    }
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(PlainButtonStyle())
 
                 // Action button
                 actionButton
             }
 
-            // Show tools provided
-            if let tools = plugin.spec.capabilities?.tools, !tools.isEmpty {
-                Divider()
-                    .padding(.vertical, 4)
+            // Expanded content
+            if isExpanded {
+                // Metadata row
+                HStack(spacing: 12) {
+                    if let authors = plugin.spec.authors, !authors.isEmpty {
+                        Label(authors.joined(separator: ", "), systemImage: "person")
+                            .font(.system(size: 11))
+                            .foregroundColor(theme.tertiaryText)
+                    }
 
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("Provides:")
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundColor(theme.secondaryText)
+                    if let license = plugin.spec.license {
+                        Label(license, systemImage: "doc.text")
+                            .font(.system(size: 11))
+                            .foregroundColor(theme.tertiaryText)
+                    }
+                }
+                .padding(.leading, 58)
 
-                    FlowLayout(spacing: 6) {
-                        ForEach(tools, id: \.name) { tool in
-                            HStack(spacing: 4) {
-                                Image(systemName: "function")
-                                    .font(.system(size: 9))
-                                Text(tool.name)
-                                    .font(.system(size: 11, weight: .medium))
+                // Show tools provided
+                if let tools = plugin.spec.capabilities?.tools, !tools.isEmpty {
+                    Divider()
+                        .padding(.vertical, 4)
+
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Provides:")
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundColor(theme.secondaryText)
+
+                        FlowLayout(spacing: 6) {
+                            ForEach(tools, id: \.name) { tool in
+                                HStack(spacing: 4) {
+                                    Image(systemName: "function")
+                                        .font(.system(size: 9))
+                                    Text(tool.name)
+                                        .font(.system(size: 11, weight: .medium))
+                                }
+                                .padding(.horizontal, 10)
+                                .padding(.vertical, 5)
+                                .background(
+                                    Capsule()
+                                        .fill(theme.tertiaryBackground)
+                                )
+                                .foregroundColor(theme.primaryText)
+                                .help(tool.description)
                             }
-                            .padding(.horizontal, 10)
-                            .padding(.vertical, 5)
-                            .background(
-                                Capsule()
-                                    .fill(theme.tertiaryBackground)
-                            )
-                            .foregroundColor(theme.primaryText)
-                            .help(tool.description)
                         }
                     }
                 }
