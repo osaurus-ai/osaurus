@@ -14,9 +14,10 @@ import SwiftUI
 struct ToolsManagerView: View {
     @StateObject private var themeManager = ThemeManager.shared
     @ObservedObject private var repoService = PluginRepositoryService.shared
+    @ObservedObject private var providerManager = MCPProviderManager.shared
     @Environment(\.theme) private var theme
 
-    @State private var selectedTab: ToolsTab = .installed
+    @State private var selectedTab: ToolsTab = .available
     @State private var searchText: String = ""
     @State private var toolEntries: [ToolRegistry.ToolEntry] = []
     @State private var hasAppeared = false
@@ -48,6 +49,10 @@ struct ToolsManagerView: View {
         .onReceive(NotificationCenter.default.publisher(for: .toolsListChanged)) { _ in
             reload()
         }
+        .onReceive(NotificationCenter.default.publisher(for: Foundation.Notification.Name.mcpProviderStatusChanged)) {
+            _ in
+            reload()
+        }
     }
 
     private var contentView: some View {
@@ -61,10 +66,12 @@ struct ToolsManagerView: View {
             // Content area
             Group {
                 switch selectedTab {
-                case .installed:
-                    installedTabContent
                 case .available:
-                    availableTabContent
+                    availableToolsTabContent
+                case .plugins:
+                    pluginsTabContent
+                case .remote:
+                    ProvidersView()
                 }
             }
             .opacity(hasAppeared ? 1 : 0)
@@ -95,11 +102,12 @@ struct ToolsManagerView: View {
                 AnimatedTabSelector(
                     selection: $selectedTab,
                     counts: [
-                        .installed: filteredEntries.count,
-                        .available: filteredPlugins.count,
+                        .available: filteredEntries.count,
+                        .plugins: filteredPlugins.count,
+                        .remote: providerManager.configuration.providers.count,
                     ],
                     badges: repoService.updatesAvailableCount > 0
-                        ? [.installed: repoService.updatesAvailableCount]
+                        ? [.available: repoService.updatesAvailableCount]
                         : nil
                 )
 
@@ -171,7 +179,7 @@ struct ToolsManagerView: View {
         .background(theme.secondaryBackground)
     }
 
-    // MARK: - Installed Tab
+    // MARK: - Available Tools Tab (shows all tools from plugins and providers)
 
     /// Count of plugins that have tools with missing system permissions
     private var pluginsWithMissingPermissions: Int {
@@ -189,16 +197,62 @@ struct ToolsManagerView: View {
         return count
     }
 
-    private var installedTabContent: some View {
+    /// Remote provider tools grouped by provider
+    private var remoteProviderTools: [(provider: MCPProvider, tools: [ToolRegistry.ToolEntry])] {
+        let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+
+        return providerManager.configuration.providers
+            .filter { provider in
+                // Only include connected providers
+                providerManager.providerStates[provider.id]?.isConnected == true
+            }
+            .compactMap { provider -> (provider: MCPProvider, tools: [ToolRegistry.ToolEntry])? in
+                // Get the tool name prefix for this provider
+                let safeProviderName = provider.name
+                    .lowercased()
+                    .replacingOccurrences(of: " ", with: "_")
+                    .replacingOccurrences(of: "-", with: "_")
+                    .filter { $0.isLetter || $0.isNumber || $0 == "_" }
+                let prefix = "\(safeProviderName)_"
+
+                // Filter tools that belong to this provider
+                var matchedTools = toolEntries.filter { $0.name.hasPrefix(prefix) }
+
+                // Apply search filter
+                if !query.isEmpty {
+                    let providerMatches =
+                        provider.name.lowercased().contains(query)
+                        || provider.url.lowercased().contains(query)
+
+                    if !providerMatches {
+                        matchedTools = matchedTools.filter { tool in
+                            tool.name.lowercased().contains(query)
+                                || tool.description.lowercased().contains(query)
+                        }
+                    }
+
+                    if matchedTools.isEmpty && !providerMatches { return nil }
+                }
+
+                if matchedTools.isEmpty { return nil }
+                return (provider, matchedTools)
+            }
+            .sorted { $0.provider.name < $1.provider.name }
+    }
+
+    private var availableToolsTabContent: some View {
         ScrollView {
             LazyVStack(spacing: 16) {
                 let plugins = installedPluginsWithTools
+                let remoteTools = remoteProviderTools
 
-                if plugins.isEmpty {
+                if plugins.isEmpty && remoteTools.isEmpty {
                     emptyState(
                         icon: "wrench.and.screwdriver",
-                        title: "No tools match your search",
-                        subtitle: searchText.isEmpty ? nil : "Try a different search term"
+                        title: "No tools available",
+                        subtitle: searchText.isEmpty
+                            ? "Install plugins or connect to remote providers to add tools"
+                            : "Try a different search term"
                     )
                 } else {
                     // Permission status banner
@@ -206,17 +260,39 @@ struct ToolsManagerView: View {
                         PermissionStatusBanner(count: pluginsWithMissingPermissions)
                     }
 
-                    // Installed plugins section
-                    InstalledSectionHeader(title: "Plugins", icon: "puzzlepiece.extension")
+                    // Plugin tools section
+                    if !plugins.isEmpty {
+                        InstalledSectionHeader(title: "Plugin Tools", icon: "puzzlepiece.extension")
 
-                    ForEach(Array(plugins.enumerated()), id: \.element.plugin.id) { index, item in
-                        InstalledPluginCard(
-                            plugin: item.plugin,
-                            tools: item.tools,
-                            repoService: repoService,
-                            animationIndex: index
-                        ) {
-                            reload()
+                        ForEach(Array(plugins.enumerated()), id: \.element.plugin.id) { index, item in
+                            InstalledPluginCard(
+                                plugin: item.plugin,
+                                tools: item.tools,
+                                repoService: repoService,
+                                animationIndex: index
+                            ) {
+                                reload()
+                            }
+                        }
+                    }
+
+                    // Remote provider tools section
+                    if !remoteTools.isEmpty {
+                        InstalledSectionHeader(title: "Remote Tools", icon: "server.rack")
+
+                        ForEach(Array(remoteTools.enumerated()), id: \.element.provider.id) { index, item in
+                            RemoteProviderToolsCard(
+                                provider: item.provider,
+                                tools: item.tools,
+                                providerState: providerManager.providerStates[item.provider.id],
+                                animationIndex: index,
+                                onDisconnect: {
+                                    providerManager.disconnect(providerId: item.provider.id)
+                                },
+                                onChange: {
+                                    reload()
+                                }
+                            )
                         }
                     }
                 }
@@ -225,9 +301,9 @@ struct ToolsManagerView: View {
         }
     }
 
-    // MARK: - Available Tab
+    // MARK: - Plugins Tab (browse and install plugins)
 
-    private var availableTabContent: some View {
+    private var pluginsTabContent: some View {
         ScrollView {
             LazyVStack(spacing: 12) {
                 if repoService.isRefreshing && repoService.plugins.isEmpty {
@@ -449,6 +525,303 @@ private struct InstalledSectionHeader: View {
     }
 }
 
+// MARK: - Remote Provider Tools Card
+
+private struct RemoteProviderToolsCard: View {
+    @Environment(\.theme) private var theme
+    let provider: MCPProvider
+    let tools: [ToolRegistry.ToolEntry]
+    let providerState: MCPProviderState?
+    var animationIndex: Int = 0
+    let onDisconnect: () -> Void
+    let onChange: () -> Void
+
+    @State private var isExpanded: Bool = true
+    @State private var isHovering = false
+    @State private var hasAppeared = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            // Provider header
+            HStack(spacing: 14) {
+                // Clickable area for expand/collapse
+                Button(action: {
+                    withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+                        isExpanded.toggle()
+                    }
+                }) {
+                    HStack(spacing: 14) {
+                        // Provider icon
+                        ZStack {
+                            RoundedRectangle(cornerRadius: 10)
+                                .fill(theme.accentColor.opacity(0.12))
+                            Image(systemName: "server.rack")
+                                .font(.system(size: 20))
+                                .foregroundColor(theme.accentColor)
+                        }
+                        .frame(width: 44, height: 44)
+
+                        // Provider info
+                        VStack(alignment: .leading, spacing: 4) {
+                            HStack(spacing: 8) {
+                                Text(provider.name)
+                                    .font(.system(size: 15, weight: .semibold, design: .rounded))
+                                    .foregroundColor(theme.primaryText)
+
+                                // Connected badge
+                                HStack(spacing: 4) {
+                                    Circle()
+                                        .fill(theme.successColor)
+                                        .frame(width: 6, height: 6)
+                                    Text("Connected")
+                                        .font(.system(size: 10, weight: .medium))
+                                        .foregroundColor(theme.successColor)
+                                }
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 2)
+                                .background(Capsule().fill(theme.successColor.opacity(0.12)))
+                            }
+
+                            Text(provider.url)
+                                .font(.system(size: 12, design: .monospaced))
+                                .foregroundColor(theme.tertiaryText)
+                                .lineLimit(1)
+                        }
+
+                        Spacer()
+
+                        // Tool count
+                        HStack(spacing: 4) {
+                            Image(systemName: "wrench.and.screwdriver")
+                                .font(.system(size: 10))
+                            Text("\(tools.count) tool\(tools.count == 1 ? "" : "s")")
+                                .font(.system(size: 11, weight: .medium))
+                        }
+                        .foregroundColor(theme.secondaryText)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .background(Capsule().fill(theme.tertiaryBackground))
+
+                        // Chevron
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundColor(theme.tertiaryText)
+                            .rotationEffect(.degrees(isExpanded ? 90 : 0))
+                    }
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(PlainButtonStyle())
+
+                // Accessory menu
+                Menu {
+                    Button(action: onDisconnect) {
+                        Label("Disconnect", systemImage: "bolt.slash")
+                    }
+                } label: {
+                    Image(systemName: "ellipsis.circle")
+                        .font(.system(size: 16))
+                        .foregroundColor(theme.secondaryText)
+                        .frame(width: 28, height: 28)
+                        .background(
+                            RoundedRectangle(cornerRadius: 6)
+                                .fill(theme.tertiaryBackground.opacity(isHovering ? 1 : 0))
+                        )
+                }
+                .menuStyle(.borderlessButton)
+                .fixedSize()
+            }
+
+            // Tools list (expandable)
+            if isExpanded && !tools.isEmpty {
+                Divider()
+                    .padding(.vertical, 4)
+
+                VStack(spacing: 8) {
+                    ForEach(tools, id: \.id) { entry in
+                        RemoteToolRow(entry: entry, providerName: provider.name, onChange: onChange)
+                    }
+                }
+                .transition(.opacity.combined(with: .move(edge: .top)))
+            }
+        }
+        .padding(16)
+        .background(cardBackground)
+        .animation(.easeOut(duration: 0.15), value: isHovering)
+        .onHover { hovering in
+            isHovering = hovering
+        }
+        .opacity(hasAppeared ? 1 : 0)
+        .onAppear {
+            let delay = Double(animationIndex) * 0.03
+            withAnimation(.easeOut(duration: 0.25).delay(delay)) {
+                hasAppeared = true
+            }
+        }
+    }
+
+    private var cardBackground: some View {
+        RoundedRectangle(cornerRadius: 12)
+            .fill(theme.cardBackground)
+            .overlay(
+                RoundedRectangle(cornerRadius: 12)
+                    .stroke(
+                        isHovering ? theme.accentColor.opacity(0.2) : theme.cardBorder,
+                        lineWidth: 1
+                    )
+            )
+            .shadow(
+                color: theme.shadowColor.opacity(
+                    isHovering ? theme.shadowOpacity * 1.5 : theme.shadowOpacity
+                ),
+                radius: isHovering ? 12 : theme.cardShadowRadius,
+                x: 0,
+                y: isHovering ? 4 : theme.cardShadowY
+            )
+    }
+}
+
+// MARK: - Remote Tool Row
+
+private struct RemoteToolRow: View {
+    @Environment(\.theme) private var theme
+    let entry: ToolRegistry.ToolEntry
+    let providerName: String
+    let onChange: () -> Void
+
+    /// Display name without provider prefix
+    private var displayName: String {
+        let safeProviderName =
+            providerName
+            .lowercased()
+            .replacingOccurrences(of: " ", with: "_")
+            .replacingOccurrences(of: "-", with: "_")
+            .filter { $0.isLetter || $0.isNumber || $0 == "_" }
+        let prefix = "\(safeProviderName)_"
+        if entry.name.hasPrefix(prefix) {
+            return String(entry.name.dropFirst(prefix.count))
+        }
+        return entry.name
+    }
+
+    var body: some View {
+        let info = ToolRegistry.shared.policyInfo(for: entry.name)
+
+        HStack(spacing: 10) {
+            // Tool icon
+            ZStack {
+                RoundedRectangle(cornerRadius: 6)
+                    .fill(theme.accentColor.opacity(0.08))
+                Image(systemName: "function")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundColor(theme.accentColor)
+            }
+            .frame(width: 28, height: 28)
+
+            // Tool info
+            VStack(alignment: .leading, spacing: 2) {
+                Text(displayName)
+                    .font(.system(size: 13, weight: .medium, design: .rounded))
+                    .foregroundColor(theme.primaryText)
+                Text(entry.description)
+                    .font(.system(size: 11))
+                    .foregroundColor(theme.tertiaryText)
+                    .lineLimit(1)
+            }
+
+            Spacer()
+
+            // Permission policy dropdown
+            if let info = info {
+                Menu {
+                    Button {
+                        ToolRegistry.shared.setPolicy(.auto, for: entry.name)
+                        onChange()
+                    } label: {
+                        HStack {
+                            Image(systemName: "sparkles")
+                            Text("Auto")
+                        }
+                    }
+                    Button {
+                        ToolRegistry.shared.setPolicy(.ask, for: entry.name)
+                        onChange()
+                    } label: {
+                        HStack {
+                            Image(systemName: "questionmark.circle")
+                            Text("Ask")
+                        }
+                    }
+                    Button {
+                        ToolRegistry.shared.setPolicy(.deny, for: entry.name)
+                        onChange()
+                    } label: {
+                        HStack {
+                            Image(systemName: "xmark.circle")
+                            Text("Deny")
+                        }
+                    }
+                } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: iconForPolicy(info.effectivePolicy))
+                            .font(.system(size: 9))
+                            .foregroundColor(colorForPolicy(info.effectivePolicy))
+                        Text(info.effectivePolicy.rawValue.capitalized)
+                            .font(.system(size: 10, weight: .medium))
+                            .foregroundColor(colorForPolicy(info.effectivePolicy))
+                        Image(systemName: "chevron.up.chevron.down")
+                            .font(.system(size: 8))
+                            .foregroundColor(theme.tertiaryText)
+                    }
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(
+                        Capsule()
+                            .fill(colorForPolicy(info.effectivePolicy).opacity(0.12))
+                    )
+                }
+                .menuStyle(.borderlessButton)
+                .fixedSize()
+            }
+
+            // Enable toggle
+            Toggle(
+                "",
+                isOn: Binding(
+                    get: { entry.enabled },
+                    set: { newValue in
+                        ToolRegistry.shared.setEnabled(newValue, for: entry.name)
+                        onChange()
+                    }
+                )
+            )
+            .toggleStyle(SwitchToggleStyle())
+            .labelsHidden()
+            .scaleEffect(0.85)
+        }
+        .padding(10)
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(theme.tertiaryBackground.opacity(0.5))
+        )
+    }
+
+    private func iconForPolicy(_ policy: ToolPermissionPolicy) -> String {
+        switch policy {
+        case .auto: return "sparkles"
+        case .ask: return "questionmark.circle"
+        case .deny: return "xmark.circle"
+        }
+    }
+
+    private func colorForPolicy(_ policy: ToolPermissionPolicy) -> Color {
+        switch policy {
+        case .auto: return ThemeManager.shared.currentTheme.accentColor
+        case .ask: return .orange
+        case .deny: return ThemeManager.shared.currentTheme.errorColor
+        }
+    }
+}
+
 // MARK: - Installed Plugin Card
 
 private struct InstalledPluginCard: View {
@@ -567,6 +940,20 @@ private struct InstalledPluginCard: View {
                         }
 
                         Spacer()
+
+                        // Tool count badge
+                        if !tools.isEmpty {
+                            HStack(spacing: 4) {
+                                Image(systemName: "wrench.and.screwdriver")
+                                    .font(.system(size: 10))
+                                Text("\(tools.count) tool\(tools.count == 1 ? "" : "s")")
+                                    .font(.system(size: 11, weight: .medium))
+                            }
+                            .foregroundColor(theme.secondaryText)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 4)
+                            .background(Capsule().fill(theme.tertiaryBackground))
+                        }
 
                         // Chevron indicator
                         Image(systemName: "chevron.right")
@@ -1064,105 +1451,136 @@ private struct PluginRow: View {
     @State private var showError: Bool = false
     @State private var isHovering = false
     @State private var hasAppeared = false
+    @State private var isExpanded = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            HStack(alignment: .top, spacing: 14) {
-                // Plugin icon
-                ZStack {
-                    RoundedRectangle(cornerRadius: 10)
-                        .fill(theme.accentColor.opacity(0.12))
-                    Image(systemName: "puzzlepiece.extension.fill")
-                        .font(.system(size: 20))
-                        .foregroundColor(theme.accentColor)
-                }
-                .frame(width: 44, height: 44)
-
-                // Plugin info
-                VStack(alignment: .leading, spacing: 6) {
-                    HStack(spacing: 8) {
-                        Text(plugin.spec.name ?? plugin.spec.plugin_id)
-                            .font(.system(size: 15, weight: .semibold, design: .rounded))
-                            .foregroundColor(theme.primaryText)
-
-                        if let version = plugin.latestVersion {
-                            Text("v\(version.description)")
-                                .font(.system(size: 11, weight: .medium))
-                                .foregroundColor(theme.tertiaryText)
-                                .padding(.horizontal, 6)
-                                .padding(.vertical, 2)
-                                .background(
-                                    Capsule()
-                                        .fill(theme.tertiaryBackground)
-                                )
-                        }
-
-                        if plugin.hasUpdate {
-                            updateBadge
-                        }
+            // Header row
+            HStack(spacing: 14) {
+                // Clickable area for expand/collapse
+                Button(action: {
+                    withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+                        isExpanded.toggle()
                     }
+                }) {
+                    HStack(spacing: 14) {
+                        // Plugin icon
+                        ZStack {
+                            RoundedRectangle(cornerRadius: 10)
+                                .fill(theme.accentColor.opacity(0.12))
+                            Image(systemName: "puzzlepiece.extension.fill")
+                                .font(.system(size: 20))
+                                .foregroundColor(theme.accentColor)
+                        }
+                        .frame(width: 44, height: 44)
 
-                    if let description = plugin.spec.description {
-                        Text(description)
-                            .font(.system(size: 13))
-                            .foregroundColor(theme.secondaryText)
-                            .lineLimit(2)
-                    }
+                        // Plugin info
+                        VStack(alignment: .leading, spacing: 4) {
+                            HStack(spacing: 8) {
+                                Text(plugin.spec.name ?? plugin.spec.plugin_id)
+                                    .font(.system(size: 15, weight: .semibold, design: .rounded))
+                                    .foregroundColor(theme.primaryText)
 
-                    // Metadata row
-                    HStack(spacing: 12) {
-                        if let authors = plugin.spec.authors, !authors.isEmpty {
-                            Label(authors.joined(separator: ", "), systemImage: "person")
-                                .font(.system(size: 11))
-                                .foregroundColor(theme.tertiaryText)
+                                if let version = plugin.latestVersion {
+                                    Text("v\(version.description)")
+                                        .font(.system(size: 11, weight: .medium))
+                                        .foregroundColor(theme.tertiaryText)
+                                        .padding(.horizontal, 6)
+                                        .padding(.vertical, 2)
+                                        .background(
+                                            Capsule()
+                                                .fill(theme.tertiaryBackground)
+                                        )
+                                }
+
+                                if plugin.hasUpdate {
+                                    updateBadge
+                                }
+                            }
+
+                            if let description = plugin.spec.description {
+                                Text(description)
+                                    .font(.system(size: 13))
+                                    .foregroundColor(theme.secondaryText)
+                                    .lineLimit(isExpanded ? nil : 1)
+                            }
                         }
 
-                        if let license = plugin.spec.license {
-                            Label(license, systemImage: "doc.text")
-                                .font(.system(size: 11))
-                                .foregroundColor(theme.tertiaryText)
-                        }
+                        Spacer()
 
+                        // Tool count badge
                         if let tools = plugin.spec.capabilities?.tools, !tools.isEmpty {
-                            Label("\(tools.count) tool\(tools.count == 1 ? "" : "s")", systemImage: "wrench")
-                                .font(.system(size: 11))
-                                .foregroundColor(theme.tertiaryText)
+                            HStack(spacing: 4) {
+                                Image(systemName: "wrench.and.screwdriver")
+                                    .font(.system(size: 10))
+                                Text("\(tools.count) tool\(tools.count == 1 ? "" : "s")")
+                                    .font(.system(size: 11, weight: .medium))
+                            }
+                            .foregroundColor(theme.secondaryText)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 4)
+                            .background(Capsule().fill(theme.tertiaryBackground))
                         }
-                    }
-                }
 
-                Spacer()
+                        // Chevron indicator
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundColor(theme.tertiaryText)
+                            .rotationEffect(.degrees(isExpanded ? 90 : 0))
+                    }
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(PlainButtonStyle())
 
                 // Action button
                 actionButton
             }
 
-            // Show tools provided
-            if let tools = plugin.spec.capabilities?.tools, !tools.isEmpty {
-                Divider()
-                    .padding(.vertical, 4)
+            // Expanded content
+            if isExpanded {
+                // Metadata row
+                HStack(spacing: 12) {
+                    if let authors = plugin.spec.authors, !authors.isEmpty {
+                        Label(authors.joined(separator: ", "), systemImage: "person")
+                            .font(.system(size: 11))
+                            .foregroundColor(theme.tertiaryText)
+                    }
 
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("Provides:")
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundColor(theme.secondaryText)
+                    if let license = plugin.spec.license {
+                        Label(license, systemImage: "doc.text")
+                            .font(.system(size: 11))
+                            .foregroundColor(theme.tertiaryText)
+                    }
+                }
+                .padding(.leading, 58)
 
-                    FlowLayout(spacing: 6) {
-                        ForEach(tools, id: \.name) { tool in
-                            HStack(spacing: 4) {
-                                Image(systemName: "function")
-                                    .font(.system(size: 9))
-                                Text(tool.name)
-                                    .font(.system(size: 11, weight: .medium))
+                // Show tools provided
+                if let tools = plugin.spec.capabilities?.tools, !tools.isEmpty {
+                    Divider()
+                        .padding(.vertical, 4)
+
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Provides:")
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundColor(theme.secondaryText)
+
+                        FlowLayout(spacing: 6) {
+                            ForEach(tools, id: \.name) { tool in
+                                HStack(spacing: 4) {
+                                    Image(systemName: "function")
+                                        .font(.system(size: 9))
+                                    Text(tool.name)
+                                        .font(.system(size: 11, weight: .medium))
+                                }
+                                .padding(.horizontal, 10)
+                                .padding(.vertical, 5)
+                                .background(
+                                    Capsule()
+                                        .fill(theme.tertiaryBackground)
+                                )
+                                .foregroundColor(theme.primaryText)
+                                .help(tool.description)
                             }
-                            .padding(.horizontal, 10)
-                            .padding(.vertical, 5)
-                            .background(
-                                Capsule()
-                                    .fill(theme.tertiaryBackground)
-                            )
-                            .foregroundColor(theme.primaryText)
-                            .help(tool.description)
                         }
                     }
                 }
