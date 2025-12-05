@@ -285,10 +285,14 @@ struct ToolsManagerView: View {
                                 provider: item.provider,
                                 tools: item.tools,
                                 providerState: providerManager.providerStates[item.provider.id],
-                                animationIndex: index
-                            ) {
-                                reload()
-                            }
+                                animationIndex: index,
+                                onDisconnect: {
+                                    providerManager.disconnect(providerId: item.provider.id)
+                                },
+                                onChange: {
+                                    reload()
+                                }
+                            )
                         }
                     }
                 }
@@ -529,6 +533,7 @@ private struct RemoteProviderToolsCard: View {
     let tools: [ToolRegistry.ToolEntry]
     let providerState: MCPProviderState?
     var animationIndex: Int = 0
+    let onDisconnect: () -> Void
     let onChange: () -> Void
 
     @State private var isExpanded: Bool = true
@@ -606,6 +611,24 @@ private struct RemoteProviderToolsCard: View {
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(PlainButtonStyle())
+
+                // Accessory menu
+                Menu {
+                    Button(action: onDisconnect) {
+                        Label("Disconnect", systemImage: "bolt.slash")
+                    }
+                } label: {
+                    Image(systemName: "ellipsis.circle")
+                        .font(.system(size: 16))
+                        .foregroundColor(theme.secondaryText)
+                        .frame(width: 28, height: 28)
+                        .background(
+                            RoundedRectangle(cornerRadius: 6)
+                                .fill(theme.tertiaryBackground.opacity(isHovering ? 1 : 0))
+                        )
+                }
+                .menuStyle(.borderlessButton)
+                .fixedSize()
             }
 
             // Tools list (expandable)
@@ -917,6 +940,20 @@ private struct InstalledPluginCard: View {
                         }
 
                         Spacer()
+
+                        // Tool count badge
+                        if !tools.isEmpty {
+                            HStack(spacing: 4) {
+                                Image(systemName: "wrench.and.screwdriver")
+                                    .font(.system(size: 10))
+                                Text("\(tools.count) tool\(tools.count == 1 ? "" : "s")")
+                                    .font(.system(size: 11, weight: .medium))
+                            }
+                            .foregroundColor(theme.secondaryText)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 4)
+                            .background(Capsule().fill(theme.tertiaryBackground))
+                        }
 
                         // Chevron indicator
                         Image(systemName: "chevron.right")

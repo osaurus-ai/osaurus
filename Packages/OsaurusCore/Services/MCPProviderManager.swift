@@ -182,14 +182,18 @@ public final class MCPProviderManager: ObservableObject {
             notifyStatusChanged()
 
         } catch {
-            // Update state with error
+            // Update state with error - reset tool discovery state to match disconnect behavior
             state.isConnecting = false
             state.isConnected = false
             state.lastError = error.localizedDescription
+            state.discoveredToolCount = 0
+            state.discoveredToolNames = []
             providerStates[providerId] = state
 
-            // Clean up
+            // Clean up (same as disconnect)
             clients.removeValue(forKey: providerId)
+            discoveredTools.removeValue(forKey: providerId)
+            registeredTools.removeValue(forKey: providerId)
 
             print("[Osaurus] MCP Provider '\(provider.name)': Connection failed - \(error)")
             notifyStatusChanged()

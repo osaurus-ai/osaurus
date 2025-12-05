@@ -216,39 +216,37 @@ private struct ProviderCard: View {
 
                 // Actions
                 HStack(spacing: 8) {
-                    if isConnecting {
-                        ProgressView()
-                            .scaleEffect(0.7)
-                            .frame(width: 28, height: 28)
-                    } else if isConnected {
-                        Button(action: onDisconnect) {
-                            Text("Disconnect")
-                                .font(.system(size: 12, weight: .medium))
-                                .foregroundColor(theme.errorColor)
-                                .padding(.horizontal, 10)
-                                .padding(.vertical, 6)
-                                .background(
-                                    RoundedRectangle(cornerRadius: 6)
-                                        .fill(theme.errorColor.opacity(0.1))
-                                )
+                    // Connection button with fixed size to prevent jiggling
+                    Group {
+                        if isConnecting {
+                            ProgressView()
+                                .scaleEffect(0.6)
+                        } else if isConnected {
+                            Button(action: onDisconnect) {
+                                Text("Disconnect")
+                                    .font(.system(size: 12, weight: .medium))
+                                    .foregroundColor(theme.errorColor)
+                            }
+                            .buttonStyle(PlainButtonStyle())
+                        } else {
+                            Button(action: onConnect) {
+                                Text("Connect")
+                                    .font(.system(size: 12, weight: .semibold))
+                                    .foregroundColor(.white)
+                            }
+                            .buttonStyle(PlainButtonStyle())
+                            .disabled(!provider.enabled)
+                            .opacity(provider.enabled ? 1 : 0.5)
                         }
-                        .buttonStyle(PlainButtonStyle())
-                    } else {
-                        Button(action: onConnect) {
-                            Text("Connect")
-                                .font(.system(size: 12, weight: .semibold))
-                                .foregroundColor(.white)
-                                .padding(.horizontal, 10)
-                                .padding(.vertical, 6)
-                                .background(
-                                    RoundedRectangle(cornerRadius: 6)
-                                        .fill(theme.accentColor)
-                                )
-                        }
-                        .buttonStyle(PlainButtonStyle())
-                        .disabled(!provider.enabled)
-                        .opacity(provider.enabled ? 1 : 0.5)
                     }
+                    .frame(width: 80, height: 28)
+                    .background(
+                        RoundedRectangle(cornerRadius: 6)
+                            .fill(
+                                isConnected
+                                    ? theme.errorColor.opacity(0.1) : (isConnecting ? Color.clear : theme.accentColor)
+                            )
+                    )
 
                     Menu {
                         Button(action: onEdit) {
@@ -362,7 +360,9 @@ private struct ProviderCard: View {
             .background(Capsule().fill(theme.successColor.opacity(0.12)))
         } else if isConnecting {
             HStack(spacing: 4) {
-                ProgressView().scaleEffect(0.5)
+                ProgressView()
+                    .scaleEffect(0.4)
+                    .frame(width: 6, height: 6)
                 Text("Connecting...")
                     .font(.system(size: 10, weight: .medium))
                     .foregroundColor(theme.accentColor)
@@ -414,21 +414,27 @@ private struct ProviderCard: View {
             // Discovered tools list
             if isConnected, let toolNames = state?.discoveredToolNames, !toolNames.isEmpty {
                 VStack(alignment: .leading, spacing: 8) {
-                    Text("Discovered Tools")
-                        .font(.system(size: 12, weight: .semibold))
+                    Text("Provides:")
+                        .font(.system(size: 12, weight: .medium))
                         .foregroundColor(theme.secondaryText)
 
-                    FlowLayoutView(items: toolNames) { name in
-                        HStack(spacing: 4) {
-                            Image(systemName: "function")
-                                .font(.system(size: 9))
-                            Text(name)
-                                .font(.system(size: 11, weight: .medium))
+                    ToolPillsFlowLayout(spacing: 6) {
+                        ForEach(toolNames, id: \.self) { name in
+                            HStack(spacing: 4) {
+                                Image(systemName: "function")
+                                    .font(.system(size: 9))
+                                Text(name)
+                                    .font(.system(size: 11, weight: .medium))
+                            }
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 5)
+                            .background(
+                                Capsule()
+                                    .fill(theme.tertiaryBackground)
+                            )
+                            .foregroundColor(theme.primaryText)
+                            .help(name)
                         }
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 5)
-                        .background(Capsule().fill(theme.tertiaryBackground))
-                        .foregroundColor(theme.primaryText)
                     }
                 }
             }
@@ -565,36 +571,68 @@ private struct ProviderEditSheet: View {
                     }
 
                     // Advanced section
-                    DisclosureGroup(isExpanded: $showAdvanced) {
-                        VStack(alignment: .leading, spacing: 16) {
-                            Toggle("Enable Streaming", isOn: $streamingEnabled)
-                                .toggleStyle(SwitchToggleStyle())
-
-                            Toggle("Auto-connect on Launch", isOn: $autoConnect)
-                                .toggleStyle(SwitchToggleStyle())
-
-                            FormField(label: "Discovery Timeout: \(Int(discoveryTimeout))s") {
-                                Slider(value: $discoveryTimeout, in: 5 ... 60, step: 5)
+                    VStack(alignment: .leading, spacing: 0) {
+                        Button(action: {
+                            withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+                                showAdvanced.toggle()
                             }
-
-                            FormField(label: "Tool Call Timeout: \(Int(toolCallTimeout))s") {
-                                Slider(value: $toolCallTimeout, in: 10 ... 120, step: 5)
+                        }) {
+                            HStack {
+                                Image(systemName: "gearshape")
+                                    .font(.system(size: 12))
+                                Text("Advanced Settings")
+                                    .font(.system(size: 13, weight: .medium))
+                                Spacer()
+                                Image(systemName: "chevron.right")
+                                    .font(.system(size: 11, weight: .semibold))
+                                    .rotationEffect(.degrees(showAdvanced ? 90 : 0))
                             }
+                            .foregroundColor(theme.secondaryText)
+                            .contentShape(Rectangle())
                         }
-                        .padding(.top, 12)
-                    } label: {
-                        HStack {
-                            Image(systemName: "gearshape")
-                                .font(.system(size: 12))
-                            Text("Advanced Settings")
-                                .font(.system(size: 13, weight: .medium))
-                        }
-                        .foregroundColor(theme.secondaryText)
-                    }
+                        .buttonStyle(PlainButtonStyle())
 
-                    // Test result
-                    if let result = testResult {
-                        testResultView(result)
+                        if showAdvanced {
+                            VStack(alignment: .leading, spacing: 20) {
+                                // Connection options
+                                VStack(spacing: 12) {
+                                    HStack {
+                                        Text("Enable Streaming")
+                                            .font(.system(size: 13))
+                                            .foregroundColor(theme.primaryText)
+                                        Spacer()
+                                        Toggle("", isOn: $streamingEnabled)
+                                            .toggleStyle(SwitchToggleStyle())
+                                            .labelsHidden()
+                                    }
+
+                                    HStack {
+                                        Text("Auto-connect on Launch")
+                                            .font(.system(size: 13))
+                                            .foregroundColor(theme.primaryText)
+                                        Spacer()
+                                        Toggle("", isOn: $autoConnect)
+                                            .toggleStyle(SwitchToggleStyle())
+                                            .labelsHidden()
+                                    }
+                                }
+
+                                Divider()
+
+                                // Timeout settings
+                                VStack(alignment: .leading, spacing: 16) {
+                                    FormField(label: "Discovery Timeout: \(Int(discoveryTimeout))s") {
+                                        Slider(value: $discoveryTimeout, in: 5 ... 60, step: 5)
+                                    }
+
+                                    FormField(label: "Tool Call Timeout: \(Int(toolCallTimeout))s") {
+                                        Slider(value: $toolCallTimeout, in: 10 ... 120, step: 5)
+                                    }
+                                }
+                            }
+                            .padding(.top, 12)
+                            .transition(.opacity.combined(with: .move(edge: .top)))
+                        }
                     }
                 }
                 .padding(20)
@@ -604,21 +642,52 @@ private struct ProviderEditSheet: View {
 
             // Footer
             HStack(spacing: 12) {
-                Button(action: testConnection) {
-                    HStack(spacing: 6) {
-                        if isTesting {
-                            ProgressView().scaleEffect(0.7)
-                        } else {
-                            Image(systemName: "antenna.radiowaves.left.and.right")
-                                .font(.system(size: 12))
-                        }
-                        Text("Test Connection")
-                            .font(.system(size: 13, weight: .medium))
+                Button(action: {
+                    if testResult != nil {
+                        // Reset state on tap if there's a result
+                        testResult = nil
+                    } else {
+                        testConnection()
                     }
-                    .foregroundColor(theme.secondaryText)
+                }) {
+                    HStack(spacing: 6) {
+                        Group {
+                            if isTesting {
+                                ProgressView().scaleEffect(0.6)
+                            } else if let result = testResult {
+                                switch result {
+                                case .success:
+                                    Image(systemName: "checkmark.circle.fill")
+                                        .font(.system(size: 12))
+                                case .failure:
+                                    Image(systemName: "xmark.circle.fill")
+                                        .font(.system(size: 12))
+                                }
+                            } else {
+                                Image(systemName: "antenna.radiowaves.left.and.right")
+                                    .font(.system(size: 12))
+                            }
+                        }
+                        .frame(width: 16, height: 16)
+
+                        if let result = testResult {
+                            switch result {
+                            case .success(let count):
+                                Text("Connected! (\(count) tools)")
+                                    .font(.system(size: 13, weight: .medium))
+                            case .failure:
+                                Text("Failed - Tap to retry")
+                                    .font(.system(size: 13, weight: .medium))
+                            }
+                        } else {
+                            Text("Test Connection")
+                                .font(.system(size: 13, weight: .medium))
+                        }
+                    }
+                    .foregroundColor(testResultColor)
                     .padding(.horizontal, 14)
                     .padding(.vertical, 10)
-                    .background(RoundedRectangle(cornerRadius: 8).fill(theme.tertiaryBackground))
+                    .background(RoundedRectangle(cornerRadius: 8).fill(testResultBackground))
                 }
                 .buttonStyle(PlainButtonStyle())
                 .disabled(url.isEmpty || isTesting)
@@ -669,32 +738,20 @@ private struct ProviderEditSheet: View {
         .buttonStyle(PlainButtonStyle())
     }
 
-    @ViewBuilder
-    private func testResultView(_ result: TestResult) -> some View {
-        HStack(spacing: 10) {
-            switch result {
-            case .success(let count):
-                Image(systemName: "checkmark.circle.fill")
-                    .foregroundColor(theme.successColor)
-                Text("Connection successful! Found \(count) tools.")
-                    .foregroundColor(theme.successColor)
-            case .failure(let error):
-                Image(systemName: "xmark.circle.fill")
-                    .foregroundColor(theme.errorColor)
-                Text(error)
-                    .foregroundColor(theme.errorColor)
-                    .lineLimit(2)
-            }
+    private var testResultColor: Color {
+        guard let result = testResult else { return theme.secondaryText }
+        switch result {
+        case .success: return theme.successColor
+        case .failure: return theme.errorColor
         }
-        .font(.system(size: 13))
-        .padding(12)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(
-            RoundedRectangle(cornerRadius: 8)
-                .fill(
-                    (result.isSuccess ? theme.successColor : theme.errorColor).opacity(0.1)
-                )
-        )
+    }
+
+    private var testResultBackground: Color {
+        guard let result = testResult else { return theme.tertiaryBackground }
+        switch result {
+        case .success: return theme.successColor.opacity(0.12)
+        case .failure: return theme.errorColor.opacity(0.12)
+        }
     }
 
     private var canSave: Bool {
@@ -905,16 +962,46 @@ private struct FormField<Content: View>: View {
 
 // MARK: - Flow Layout for Tool Tags
 
-private struct FlowLayoutView<Item: Hashable, Content: View>: View {
-    let items: [Item]
-    let content: (Item) -> Content
+private struct ToolPillsFlowLayout: Layout {
+    var spacing: CGFloat = 8
 
-    var body: some View {
-        LazyVGrid(columns: [GridItem(.adaptive(minimum: 100, maximum: 200), spacing: 6)], spacing: 6) {
-            ForEach(Array(items.enumerated()), id: \.element) { _, item in
-                content(item)
-            }
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let result = arrange(proposal: proposal, subviews: subviews)
+        return result.size
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        let result = arrange(proposal: proposal, subviews: subviews)
+        for (index, position) in result.positions.enumerated() {
+            subviews[index].place(
+                at: CGPoint(x: bounds.minX + position.x, y: bounds.minY + position.y),
+                proposal: .unspecified
+            )
         }
+    }
+
+    private func arrange(proposal: ProposedViewSize, subviews: Subviews) -> (size: CGSize, positions: [CGPoint]) {
+        let maxWidth = proposal.width ?? .infinity
+        var positions: [CGPoint] = []
+        var currentX: CGFloat = 0
+        var currentY: CGFloat = 0
+        var lineHeight: CGFloat = 0
+
+        for subview in subviews {
+            let size = subview.sizeThatFits(.unspecified)
+
+            if currentX + size.width > maxWidth && currentX > 0 {
+                currentX = 0
+                currentY += lineHeight + spacing
+                lineHeight = 0
+            }
+
+            positions.append(CGPoint(x: currentX, y: currentY))
+            lineHeight = max(lineHeight, size.height)
+            currentX += size.width + spacing
+        }
+
+        return (CGSize(width: maxWidth, height: currentY + lineHeight), positions)
     }
 }
 
