@@ -732,9 +732,9 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             }
         }
     }
-    
+
     // MARK: - Models Endpoints
-    
+
     private func handleModelsEndpoint(
         head: HTTPRequestHead,
         context: ChannelHandlerContext,
@@ -750,23 +750,23 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         let logStartTime = startTime
         let logUserAgent = userAgent
         let logSelf = self
-        
+
         Task(priority: .userInitiated) {
             // Get local models
             var models = MLXService.getAvailableModels().map { OpenAIModel(modelName: $0) }
             if FoundationModelService.isDefaultModelAvailable() {
                 models.insert(OpenAIModel(modelName: "foundation"), at: 0)
             }
-            
+
             // Get remote provider models
             let remoteModels = await MainActor.run {
                 RemoteProviderManager.shared.getOpenAIModels()
             }
             models.append(contentsOf: remoteModels)
-            
+
             let response = ModelsResponse(data: models)
             let json = (try? JSONEncoder().encode(response)).map { String(decoding: $0, as: UTF8.self) } ?? "{}"
-            
+
             hop {
                 var headers = [("Content-Type", "application/json; charset=utf-8")]
                 headers.append(contentsOf: cors)
@@ -788,7 +788,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             )
         }
     }
-    
+
     private func handleTagsEndpoint(
         head: HTTPRequestHead,
         context: ChannelHandlerContext,
@@ -804,10 +804,10 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         let logStartTime = startTime
         let logUserAgent = userAgent
         let logSelf = self
-        
+
         Task(priority: .userInitiated) {
             let now = Date().ISO8601Format()
-            
+
             // Get local models
             var models = MLXService.getAvailableModels().map { name -> OpenAIModel in
                 var m = OpenAIModel(from: name)
@@ -826,7 +826,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 )
                 return m
             }
-            
+
             if FoundationModelService.isDefaultModelAvailable() {
                 var fm = OpenAIModel(modelName: "foundation")
                 fm.name = "foundation"
@@ -844,7 +844,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 )
                 models.insert(fm, at: 0)
             }
-            
+
             // Get remote provider models
             let remoteModels = await MainActor.run {
                 RemoteProviderManager.shared.getOpenAIModels()
@@ -865,10 +865,10 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 )
                 models.append(remoteModel)
             }
-            
+
             let payload = ["models": models]
             let json = (try? JSONEncoder().encode(payload)).map { String(decoding: $0, as: UTF8.self) } ?? "{}"
-            
+
             hop {
                 var headers = [("Content-Type", "application/json; charset=utf-8")]
                 headers.append(contentsOf: cors)

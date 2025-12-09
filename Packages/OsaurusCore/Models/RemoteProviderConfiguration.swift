@@ -13,7 +13,7 @@ import Foundation
 public enum RemoteProviderProtocol: String, Codable, Sendable, CaseIterable {
     case http = "http"
     case https = "https"
-    
+
     public var defaultPort: Int {
         switch self {
         case .http: return 80
@@ -45,16 +45,16 @@ public struct RemoteProvider: Codable, Identifiable, Sendable, Equatable {
     public var enabled: Bool
     public var autoConnect: Bool
     public var timeout: TimeInterval
-    
+
     // Keys for headers that should be stored in Keychain (not persisted in config)
     public var secretHeaderKeys: [String]
-    
+
     private enum CodingKeys: String, CodingKey {
         case id, name, host, providerProtocol, port, basePath
         case customHeaders, authType, enabled, autoConnect, timeout
         case secretHeaderKeys
     }
-    
+
     public init(
         id: UUID = UUID(),
         name: String,
@@ -82,23 +82,23 @@ public struct RemoteProvider: Codable, Identifiable, Sendable, Equatable {
         self.timeout = timeout
         self.secretHeaderKeys = secretHeaderKeys
     }
-    
+
     /// Get the effective port (uses protocol default if not specified)
     public var effectivePort: Int {
         port ?? providerProtocol.defaultPort
     }
-    
+
     /// Build the base URL for this provider
     public var baseURL: URL? {
         var components = URLComponents()
         components.scheme = providerProtocol.rawValue
         components.host = host
-        
+
         // Only include port if it differs from the protocol default
         if let port = port, port != providerProtocol.defaultPort {
             components.port = port
         }
-        
+
         // Normalize base path
         var normalizedPath = basePath.trimmingCharacters(in: .whitespaces)
         if !normalizedPath.hasPrefix("/") {
@@ -108,17 +108,17 @@ public struct RemoteProvider: Codable, Identifiable, Sendable, Equatable {
             normalizedPath = String(normalizedPath.dropLast())
         }
         components.path = normalizedPath
-        
+
         return components.url
     }
-    
+
     /// Build URL for a specific endpoint
     public func url(for endpoint: String) -> URL? {
         guard let base = baseURL else { return nil }
         let normalizedEndpoint = endpoint.hasPrefix("/") ? endpoint : "/" + endpoint
         return URL(string: base.absoluteString + normalizedEndpoint)
     }
-    
+
     /// Display string for the endpoint
     public var displayEndpoint: String {
         var result = "\(providerProtocol.rawValue)://\(host)"
@@ -128,31 +128,31 @@ public struct RemoteProvider: Codable, Identifiable, Sendable, Equatable {
         result += basePath
         return result
     }
-    
+
     /// Get all headers including secret headers from Keychain
     public func resolvedHeaders() -> [String: String] {
         var headers = customHeaders
-        
+
         // Add secret headers from Keychain
         for key in secretHeaderKeys {
             if let value = RemoteProviderKeychain.getHeaderSecret(key: key, for: id) {
                 headers[key] = value
             }
         }
-        
+
         // Add API key if configured
         if authType == .apiKey, let apiKey = getAPIKey(), !apiKey.isEmpty {
             headers["Authorization"] = "Bearer \(apiKey)"
         }
-        
+
         return headers
     }
-    
+
     /// Check if provider has an API key stored in Keychain
     public var hasAPIKey: Bool {
         RemoteProviderKeychain.hasAPIKey(for: id)
     }
-    
+
     /// Get API key from Keychain
     public func getAPIKey() -> String? {
         RemoteProviderKeychain.getAPIKey(for: id)
@@ -169,7 +169,7 @@ public struct RemoteProviderState: Sendable {
     public var lastError: String?
     public var discoveredModels: [String]
     public var lastConnectedAt: Date?
-    
+
     public init(providerId: UUID) {
         self.providerId = providerId
         self.isConnected = false
@@ -178,7 +178,7 @@ public struct RemoteProviderState: Sendable {
         self.discoveredModels = []
         self.lastConnectedAt = nil
     }
-    
+
     public var modelCount: Int {
         discoveredModels.count
     }
@@ -189,45 +189,45 @@ public struct RemoteProviderState: Sendable {
 /// Collection of remote provider configurations
 public struct RemoteProviderConfiguration: Codable, Sendable {
     public var providers: [RemoteProvider]
-    
+
     public init(providers: [RemoteProvider] = []) {
         self.providers = providers
     }
-    
+
     /// Get provider by ID
     public func provider(id: UUID) -> RemoteProvider? {
         providers.first { $0.id == id }
     }
-    
+
     /// Get enabled providers
     public var enabledProviders: [RemoteProvider] {
         providers.filter { $0.enabled }
     }
-    
+
     /// Get providers that should auto-connect
     public var autoConnectProviders: [RemoteProvider] {
         providers.filter { $0.enabled && $0.autoConnect }
     }
-    
+
     /// Add a provider
     public mutating func add(_ provider: RemoteProvider) {
         providers.append(provider)
     }
-    
+
     /// Update a provider
     public mutating func update(_ provider: RemoteProvider) {
         if let index = providers.firstIndex(where: { $0.id == provider.id }) {
             providers[index] = provider
         }
     }
-    
+
     /// Remove a provider by ID
     public mutating func remove(id: UUID) {
         // Clean up Keychain secrets
         RemoteProviderKeychain.deleteAllSecrets(for: id)
         providers.removeAll { $0.id == id }
     }
-    
+
     /// Set enabled state for a provider
     public mutating func setEnabled(_ enabled: Bool, for id: UUID) {
         if let index = providers.firstIndex(where: { $0.id == id }) {
@@ -242,7 +242,7 @@ public struct RemoteProviderConfiguration: Codable, Sendable {
 @MainActor
 public enum RemoteProviderConfigurationStore {
     static var overrideDirectory: URL?
-    
+
     public static func load() -> RemoteProviderConfiguration {
         let url = configurationFileURL()
         if FileManager.default.fileExists(atPath: url.path) {
@@ -259,7 +259,7 @@ public enum RemoteProviderConfigurationStore {
         save(defaults)
         return defaults
     }
-    
+
     public static func save(_ configuration: RemoteProviderConfiguration) {
         let url = configurationFileURL()
         do {
@@ -272,9 +272,9 @@ public enum RemoteProviderConfigurationStore {
             print("[Osaurus] Failed to save RemoteProviderConfiguration: \(error)")
         }
     }
-    
+
     // MARK: - Private
-    
+
     private static func configurationFileURL() -> URL {
         if let overrideDirectory {
             return overrideDirectory.appendingPathComponent("RemoteProviderConfiguration.json")
@@ -285,7 +285,7 @@ public enum RemoteProviderConfigurationStore {
         return supportDir.appendingPathComponent(bundleId, isDirectory: true)
             .appendingPathComponent("RemoteProviderConfiguration.json")
     }
-    
+
     private static func ensureDirectoryExists(_ url: URL) throws {
         let fm = FileManager.default
         if !fm.fileExists(atPath: url.path) {
@@ -293,4 +293,3 @@ public enum RemoteProviderConfigurationStore {
         }
     }
 }
-

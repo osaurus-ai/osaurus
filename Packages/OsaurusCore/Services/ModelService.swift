@@ -87,7 +87,7 @@ struct ModelServiceRouter {
     ) -> ModelRoute {
         let trimmed = requestedModel?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         let isDefault = trimmed.isEmpty || trimmed.caseInsensitiveCompare("default") == .orderedSame
-        
+
         // First, check remote provider services (they use prefixed model names like "openai/gpt-4")
         // These take priority for explicit model requests with provider prefixes
         if !isDefault {

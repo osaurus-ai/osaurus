@@ -73,10 +73,10 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
 
         // Candidate services and installed models (injected for testability)
         let services = self.services
-        
+
         // Get remote provider services
         let remoteServices = await getRemoteProviderServices()
-        
+
         let route = ModelServiceRouter.resolve(
             requestedModel: request.model,
             services: services,
@@ -207,10 +207,10 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
         )
 
         let services = self.services
-        
+
         // Get remote provider services
         let remoteServices = await getRemoteProviderServices()
-        
+
         let route = ModelServiceRouter.resolve(
             requestedModel: request.model,
             services: services,
@@ -359,9 +359,9 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
             throw EngineError()
         }
     }
-    
+
     // MARK: - Remote Provider Services
-    
+
     /// Fetch connected remote provider services from the manager
     private func getRemoteProviderServices() async -> [ModelService] {
         return await MainActor.run {

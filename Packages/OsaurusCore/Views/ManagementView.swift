@@ -60,10 +60,10 @@ struct ManagementView: View {
     }
 
     @StateObject private var remoteProviderManager = RemoteProviderManager.shared
-    
+
     private var sidebarItems: [SidebarItemData] {
         let connectedProviders = remoteProviderManager.providerStates.values.filter { $0.isConnected }.count
-        
+
         return [
             SidebarItemData(
                 id: ManagementTab.models.rawValue,

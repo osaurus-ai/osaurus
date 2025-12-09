@@ -24,7 +24,7 @@ struct OpenAIModel: Codable, Sendable {
     var size: Int? = nil
     var digest: String? = nil
     var details: ModelDetails? = nil
-    
+
     /// Initialize from a model name (for local models)
     init(modelName: String) {
         self.id = modelName
@@ -33,7 +33,7 @@ struct OpenAIModel: Codable, Sendable {
         self.owned_by = "osaurus"
         self.root = modelName
     }
-    
+
     /// Full initializer
     init(
         id: String,
@@ -64,7 +64,7 @@ struct OpenAIModel: Codable, Sendable {
         self.digest = digest
         self.details = details
     }
-    
+
     // Explicit Codable implementation to avoid ambiguity
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
@@ -82,7 +82,7 @@ struct OpenAIModel: Codable, Sendable {
         digest = try container.decodeIfPresent(String.self, forKey: .digest)
         details = try container.decodeIfPresent(ModelDetails.self, forKey: .details)
     }
-    
+
     private enum CodingKeys: String, CodingKey {
         case id, object, created, owned_by, permission, root, parent
         case name, model, modified_at, size, digest, details

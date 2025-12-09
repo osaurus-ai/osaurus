@@ -36,7 +36,7 @@ final class ChatSession: ObservableObject {
         }
         modelOptions = opts
         selectedModel = opts.first
-        
+
         // Listen for remote provider model changes
         remoteModelsObserver = NotificationCenter.default.addObserver(
             forName: .remoteProviderModelsChanged,
@@ -51,22 +51,22 @@ final class ChatSession: ObservableObject {
 
     func refreshModelOptions() {
         var opts: [String] = []
-        
+
         // Add foundation model first if available
         if FoundationModelService.isDefaultModelAvailable() {
             opts.append("foundation")
         }
-        
+
         // Add local MLX models
         let mlx = MLXService.getAvailableModels()
         opts.append(contentsOf: mlx)
-        
+
         // Add remote provider models
         let remoteModels = RemoteProviderManager.shared.cachedAvailableModels()
         for providerModels in remoteModels {
             opts.append(contentsOf: providerModels.models)
         }
-        
+
         let prev = selectedModel
         let newSelected = (prev != nil && opts.contains(prev!)) ? prev : opts.first
         if modelOptions == opts && selectedModel == newSelected { return }
@@ -248,7 +248,7 @@ struct ChatView: View {
     private var theme: ThemeProtocol { themeManager.currentTheme }
 
     private var hasAnyModel: Bool {
-        FoundationModelService.isDefaultModelAvailable() 
+        FoundationModelService.isDefaultModelAvailable()
             || !MLXService.getAvailableModels().isEmpty
             || !RemoteProviderManager.shared.cachedAvailableModels().isEmpty
     }

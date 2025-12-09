@@ -15,7 +15,7 @@ public enum RemoteProviderServiceError: LocalizedError {
     case invalidResponse
     case streamingError(String)
     case noModelsAvailable
-    
+
     public var errorDescription: String? {
         switch self {
         case .invalidURL:
@@ -36,16 +36,16 @@ public enum RemoteProviderServiceError: LocalizedError {
 
 /// Service that proxies requests to a remote OpenAI-compatible API provider
 public actor RemoteProviderService: ToolCapableService {
-    
+
     public let provider: RemoteProvider
     private let providerPrefix: String
     private var availableModels: [String]
     private var session: URLSession
-    
+
     public nonisolated var id: String {
         "remote-\(provider.id.uuidString)"
     }
-    
+
     public init(provider: RemoteProvider, models: [String]) {
         self.provider = provider
         self.availableModels = models
@@ -54,66 +54,68 @@ public actor RemoteProviderService: ToolCapableService {
             .lowercased()
             .replacingOccurrences(of: " ", with: "-")
             .replacingOccurrences(of: "/", with: "-")
-        
+
         // Configure URLSession with provider timeout
         let config = URLSessionConfiguration.default
         config.timeoutIntervalForRequest = provider.timeout
         config.timeoutIntervalForResource = provider.timeout * 2
         self.session = URLSession(configuration: config)
     }
-    
+
     /// Update available models (called when connection refreshes)
     public func updateModels(_ models: [String]) {
         self.availableModels = models
     }
-    
+
     /// Get the prefixed model names for this provider
     public func getPrefixedModels() -> [String] {
         availableModels.map { "\(providerPrefix)/\($0)" }
     }
-    
+
     /// Get the raw model names without prefix
     public func getRawModels() -> [String] {
         availableModels
     }
-    
+
     // MARK: - ModelService Protocol
-    
+
     public nonisolated func isAvailable() -> Bool {
         return provider.enabled
     }
-    
+
     public nonisolated func handles(requestedModel: String?) -> Bool {
         guard let model = requestedModel?.trimmingCharacters(in: .whitespacesAndNewlines),
-              !model.isEmpty else {
+            !model.isEmpty
+        else {
             return false
         }
-        
+
         // Check if model starts with our provider prefix
         let prefix = provider.name
             .lowercased()
             .replacingOccurrences(of: " ", with: "-")
             .replacingOccurrences(of: "/", with: "-")
-        
+
         return model.lowercased().hasPrefix(prefix + "/")
     }
-    
+
     /// Extract the actual model name without provider prefix
     private func extractModelName(_ requestedModel: String?) -> String? {
         guard let model = requestedModel?.trimmingCharacters(in: .whitespacesAndNewlines),
-              !model.isEmpty else {
+            !model.isEmpty
+        else {
             return nil
         }
-        
+
         // Remove provider prefix if present
         if model.lowercased().hasPrefix(providerPrefix + "/") {
             let startIndex = model.index(model.startIndex, offsetBy: providerPrefix.count + 1)
             return String(model[startIndex...])
         }
-        
+
         return model
     }
-    
+
     func generateOneShot(
         messages: [ChatMessage],
         parameters: GenerationParameters,
@@ -122,7 +124,7 @@ public actor RemoteProviderService: ToolCapableService {
         guard let modelName = extractModelName(requestedModel) else {
             throw RemoteProviderServiceError.noModelsAvailable
         }
-        
+
         let request = buildChatRequest(
             messages: messages,
             parameters: parameters,
@@ -131,22 +133,22 @@ public actor RemoteProviderService: ToolCapableService {
             tools: nil,
             toolChoice: nil
         )
-        
+
         let (data, response) = try await session.data(for: try buildURLRequest(for: request))
-        
+
         guard let httpResponse = response as? HTTPURLResponse else {
             throw RemoteProviderServiceError.invalidResponse
         }
-        
+
         if httpResponse.statusCode >= 400 {
             let errorMessage = String(data: data, encoding: .utf8) ?? "Unknown error"
             throw RemoteProviderServiceError.requestFailed("HTTP \(httpResponse.statusCode): \(errorMessage)")
         }
-        
+
         let chatResponse = try JSONDecoder().decode(ChatCompletionResponse.self, from: data)
         return chatResponse.choices.first?.message.content ?? ""
     }
-    
+
     func streamDeltas(
         messages: [ChatMessage],
         parameters: GenerationParameters,
@@ -156,7 +158,7 @@ public actor RemoteProviderService: ToolCapableService {
         guard let modelName = extractModelName(requestedModel) else {
             throw RemoteProviderServiceError.noModelsAvailable
         }
-        
+
         var request = buildChatRequest(
             messages: messages,
             parameters: parameters,
@@ -165,59 +167,63 @@ public actor RemoteProviderService: ToolCapableService {
             tools: nil,
             toolChoice: nil
         )
-        
+
         // Add stop sequences if provided
         if !stopSequences.isEmpty {
             request.stop = stopSequences
         }
-        
+
         let urlRequest = try buildURLRequest(for: request)
-        
+
         return AsyncThrowingStream { continuation in
             Task {
                 do {
                     let (bytes, response) = try await session.bytes(for: urlRequest)
-                    
+
                     guard let httpResponse = response as? HTTPURLResponse else {
                         continuation.finish(throwing: RemoteProviderServiceError.invalidResponse)
                         return
                     }
-                    
+
                     if httpResponse.statusCode >= 400 {
                         var errorData = Data()
                         for try await byte in bytes {
                             errorData.append(byte)
                         }
                         let errorMessage = String(data: errorData, encoding: .utf8) ?? "Unknown error"
-                        continuation.finish(throwing: RemoteProviderServiceError.requestFailed("HTTP \(httpResponse.statusCode): \(errorMessage)"))
+                        continuation.finish(
+                            throwing: RemoteProviderServiceError.requestFailed(
+                                "HTTP \(httpResponse.statusCode): \(errorMessage)"
+                            )
+                        )
                         return
                     }
-                    
+
                     // Parse SSE stream
                     var buffer = ""
                     for try await byte in bytes {
                         buffer.append(Character(UnicodeScalar(byte)))
-                        
+
                         // Process complete lines
                         while let newlineIndex = buffer.firstIndex(of: "\n") {
                             let line = String(buffer[..<newlineIndex])
                             buffer = String(buffer[buffer.index(after: newlineIndex)...])
-                            
+
                             // Skip empty lines
                             guard !line.trimmingCharacters(in: .whitespaces).isEmpty else {
                                 continue
                             }
-                            
+
                             // Parse SSE data line
                             if line.hasPrefix("data: ") {
                                 let dataContent = String(line.dropFirst(6))
-                                
+
                                 // Check for stream end
                                 if dataContent.trimmingCharacters(in: .whitespaces) == "[DONE]" {
                                     continuation.finish()
                                     return
                                 }
-                                
+
                                 // Parse JSON chunk
                                 if let jsonData = dataContent.data(using: .utf8) {
                                     do {
@@ -235,17 +241,21 @@ public actor RemoteProviderService: ToolCapableService {
                                             }
                                             continuation.yield(output)
                                         }
-                                        
+
                                         // Check for finish reason
                                         if let finishReason = chunk.choices.first?.finish_reason,
-                                           !finishReason.isEmpty {
+                                            !finishReason.isEmpty
+                                        {
                                             // Handle tool calls if present
                                             if finishReason == "tool_calls",
-                                               let toolCalls = chunk.choices.first?.delta.tool_calls,
-                                               let firstCall = toolCalls.first,
-                                               let name = firstCall.function?.name,
-                                               let args = firstCall.function?.arguments {
-                                                continuation.finish(throwing: ServiceToolInvocation(toolName: name, jsonArguments: args))
+                                                let toolCalls = chunk.choices.first?.delta.tool_calls,
+                                                let firstCall = toolCalls.first,
+                                                let name = firstCall.function?.name,
+                                                let args = firstCall.function?.arguments
+                                            {
+                                                continuation.finish(
+                                                    throwing: ServiceToolInvocation(toolName: name, jsonArguments: args)
+                                                )
                                                 return
                                             }
                                         }
@@ -256,7 +266,7 @@ public actor RemoteProviderService: ToolCapableService {
                             }
                         }
                     }
-                    
+
                     continuation.finish()
                 } catch {
                     continuation.finish(throwing: error)
@@ -264,9 +274,9 @@ public actor RemoteProviderService: ToolCapableService {
             }
         }
     }
-    
+
     // MARK: - ToolCapableService Protocol
-    
+
     func respondWithTools(
         messages: [ChatMessage],
         parameters: GenerationParameters,
@@ -278,7 +288,7 @@ public actor RemoteProviderService: ToolCapableService {
         guard let modelName = extractModelName(requestedModel) else {
             throw RemoteProviderServiceError.noModelsAvailable
         }
-        
+
         var request = buildChatRequest(
             messages: messages,
             parameters: parameters,
@@ -287,36 +297,37 @@ public actor RemoteProviderService: ToolCapableService {
             tools: tools.isEmpty ? nil : tools,
             toolChoice: toolChoice
         )
-        
+
         if !stopSequences.isEmpty {
             request.stop = stopSequences
         }
-        
+
         let (data, response) = try await session.data(for: try buildURLRequest(for: request))
-        
+
         guard let httpResponse = response as? HTTPURLResponse else {
             throw RemoteProviderServiceError.invalidResponse
         }
-        
+
         if httpResponse.statusCode >= 400 {
             let errorMessage = String(data: data, encoding: .utf8) ?? "Unknown error"
             throw RemoteProviderServiceError.requestFailed("HTTP \(httpResponse.statusCode): \(errorMessage)")
         }
-        
+
         let chatResponse = try JSONDecoder().decode(ChatCompletionResponse.self, from: data)
-        
+
         // Check for tool calls
         if let toolCalls = chatResponse.choices.first?.message.tool_calls,
-           let firstCall = toolCalls.first {
+            let firstCall = toolCalls.first
+        {
             throw ServiceToolInvocation(
                 toolName: firstCall.function.name,
                 jsonArguments: firstCall.function.arguments
             )
         }
-        
+
         return chatResponse.choices.first?.message.content ?? ""
     }
-    
+
     func streamWithTools(
         messages: [ChatMessage],
         parameters: GenerationParameters,
@@ -328,7 +339,7 @@ public actor RemoteProviderService: ToolCapableService {
         guard let modelName = extractModelName(requestedModel) else {
             throw RemoteProviderServiceError.noModelsAvailable
         }
-        
+
         var request = buildChatRequest(
             messages: messages,
             parameters: parameters,
@@ -337,70 +348,76 @@ public actor RemoteProviderService: ToolCapableService {
             tools: tools.isEmpty ? nil : tools,
             toolChoice: toolChoice
         )
-        
+
         if !stopSequences.isEmpty {
             request.stop = stopSequences
         }
-        
+
         let urlRequest = try buildURLRequest(for: request)
-        
+
         return AsyncThrowingStream { continuation in
             Task {
                 do {
                     let (bytes, response) = try await session.bytes(for: urlRequest)
-                    
+
                     guard let httpResponse = response as? HTTPURLResponse else {
                         continuation.finish(throwing: RemoteProviderServiceError.invalidResponse)
                         return
                     }
-                    
+
                     if httpResponse.statusCode >= 400 {
                         var errorData = Data()
                         for try await byte in bytes {
                             errorData.append(byte)
                         }
                         let errorMessage = String(data: errorData, encoding: .utf8) ?? "Unknown error"
-                        continuation.finish(throwing: RemoteProviderServiceError.requestFailed("HTTP \(httpResponse.statusCode): \(errorMessage)"))
+                        continuation.finish(
+                            throwing: RemoteProviderServiceError.requestFailed(
+                                "HTTP \(httpResponse.statusCode): \(errorMessage)"
+                            )
+                        )
                         return
                     }
-                    
+
                     // Track accumulated tool call data
                     var accumulatedToolName: String?
                     var accumulatedToolArgs = ""
-                    
+
                     // Parse SSE stream
                     var buffer = ""
                     for try await byte in bytes {
                         buffer.append(Character(UnicodeScalar(byte)))
-                        
+
                         while let newlineIndex = buffer.firstIndex(of: "\n") {
                             let line = String(buffer[..<newlineIndex])
                             buffer = String(buffer[buffer.index(after: newlineIndex)...])
-                            
+
                             guard !line.trimmingCharacters(in: .whitespaces).isEmpty else {
                                 continue
                             }
-                            
+
                             if line.hasPrefix("data: ") {
                                 let dataContent = String(line.dropFirst(6))
-                                
+
                                 if dataContent.trimmingCharacters(in: .whitespaces) == "[DONE]" {
                                     // If we accumulated a tool call, emit it
                                     if let toolName = accumulatedToolName {
-                                        continuation.finish(throwing: ServiceToolInvocation(
-                                            toolName: toolName,
-                                            jsonArguments: accumulatedToolArgs
-                                        ))
+                                        continuation.finish(
+                                            throwing: ServiceToolInvocation(
+                                                toolName: toolName,
+                                                jsonArguments: accumulatedToolArgs
+                                            )
+                                        )
                                         return
                                     }
                                     continuation.finish()
                                     return
                                 }
-                                
+
                                 if let jsonData = dataContent.data(using: .utf8) {
                                     do {
                                         let chunk = try JSONDecoder().decode(ChatCompletionChunk.self, from: jsonData)
-                                        
+
                                         // Handle content delta
                                         if let delta = chunk.choices.first?.delta.content, !delta.isEmpty {
                                             var output = delta
@@ -414,7 +431,7 @@ public actor RemoteProviderService: ToolCapableService {
                                             }
                                             continuation.yield(output)
                                         }
-                                        
+
                                         // Handle tool call deltas
                                         if let toolCalls = chunk.choices.first?.delta.tool_calls {
                                             for toolCall in toolCalls {
@@ -426,15 +443,18 @@ public actor RemoteProviderService: ToolCapableService {
                                                 }
                                             }
                                         }
-                                        
+
                                         // Check finish reason
                                         if let finishReason = chunk.choices.first?.finish_reason,
-                                           finishReason == "tool_calls",
-                                           let toolName = accumulatedToolName {
-                                            continuation.finish(throwing: ServiceToolInvocation(
-                                                toolName: toolName,
-                                                jsonArguments: accumulatedToolArgs
-                                            ))
+                                            finishReason == "tool_calls",
+                                            let toolName = accumulatedToolName
+                                        {
+                                            continuation.finish(
+                                                throwing: ServiceToolInvocation(
+                                                    toolName: toolName,
+                                                    jsonArguments: accumulatedToolArgs
+                                                )
+                                            )
                                             return
                                         }
                                     } catch {
@@ -444,16 +464,18 @@ public actor RemoteProviderService: ToolCapableService {
                             }
                         }
                     }
-                    
+
                     // If we have accumulated tool call data at stream end
                     if let toolName = accumulatedToolName {
-                        continuation.finish(throwing: ServiceToolInvocation(
-                            toolName: toolName,
-                            jsonArguments: accumulatedToolArgs
-                        ))
+                        continuation.finish(
+                            throwing: ServiceToolInvocation(
+                                toolName: toolName,
+                                jsonArguments: accumulatedToolArgs
+                            )
+                        )
                         return
                     }
-                    
+
                     continuation.finish()
                 } catch {
                     continuation.finish(throwing: error)
@@ -461,9 +483,9 @@ public actor RemoteProviderService: ToolCapableService {
             }
         }
     }
-    
+
     // MARK: - Private Helpers
-    
+
     /// Build a chat completion request structure
     private func buildChatRequest(
         messages: [ChatMessage],
@@ -487,33 +509,33 @@ public actor RemoteProviderService: ToolCapableService {
             tool_choice: toolChoice
         )
     }
-    
+
     /// Build a URLRequest for the chat completions endpoint
     private func buildURLRequest(for request: RemoteChatRequest) throws -> URLRequest {
         guard let url = provider.url(for: "/chat/completions") else {
             throw RemoteProviderServiceError.invalidURL
         }
-        
+
         var urlRequest = URLRequest(url: url)
         urlRequest.httpMethod = "POST"
         urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        
+
         // Add provider headers (including auth)
         for (key, value) in provider.resolvedHeaders() {
             urlRequest.setValue(value, forHTTPHeaderField: key)
         }
-        
+
         // Encode request body
         let encoder = JSONEncoder()
         encoder.outputFormatting = .prettyPrinted
         let bodyData = try encoder.encode(request)
         urlRequest.httpBody = bodyData
-        
+
         // Debug: print the request body
         if let jsonString = String(data: bodyData, encoding: .utf8) {
             print("[Osaurus] Remote Provider Request Body:\n\(jsonString)")
         }
-        
+
         return urlRequest
     }
 }
@@ -543,34 +565,33 @@ extension RemoteProviderService {
         guard let url = provider.url(for: "/models") else {
             throw RemoteProviderServiceError.invalidURL
         }
-        
+
         var request = URLRequest(url: url)
         request.httpMethod = "GET"
         request.setValue("application/json", forHTTPHeaderField: "Accept")
-        
+
         // Add provider headers
         for (key, value) in provider.resolvedHeaders() {
             request.setValue(value, forHTTPHeaderField: key)
         }
-        
+
         let config = URLSessionConfiguration.default
         config.timeoutIntervalForRequest = min(provider.timeout, 30)
         let session = URLSession(configuration: config)
-        
+
         let (data, response) = try await session.data(for: request)
-        
+
         guard let httpResponse = response as? HTTPURLResponse else {
             throw RemoteProviderServiceError.invalidResponse
         }
-        
+
         if httpResponse.statusCode >= 400 {
             let errorMessage = String(data: data, encoding: .utf8) ?? "Unknown error"
             throw RemoteProviderServiceError.requestFailed("HTTP \(httpResponse.statusCode): \(errorMessage)")
         }
-        
+
         // Parse models response
         let modelsResponse = try JSONDecoder().decode(ModelsResponse.self, from: data)
         return modelsResponse.data.map { $0.id }
     }
 }
-
