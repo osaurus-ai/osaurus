@@ -79,13 +79,27 @@ struct ModelServiceRouter {
     /// - Parameters:
     ///   - requestedModel: Model string requested by client. "default" or empty means system default.
     ///   - services: Candidate services to consider (default includes FoundationModels service when present).
+    ///   - remoteServices: Optional array of remote provider services to also consider.
     static func resolve(
         requestedModel: String?,
-        services: [ModelService]
+        services: [ModelService],
+        remoteServices: [ModelService] = []
     ) -> ModelRoute {
         let trimmed = requestedModel?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         let isDefault = trimmed.isEmpty || trimmed.caseInsensitiveCompare("default") == .orderedSame
 
+        // First, check remote provider services (they use prefixed model names like "openai/gpt-4")
+        // These take priority for explicit model requests with provider prefixes
+        if !isDefault {
+            for svc in remoteServices {
+                guard svc.isAvailable() else { continue }
+                if svc.handles(requestedModel: trimmed) {
+                    return .service(service: svc, effectiveModel: trimmed)
+                }
+            }
+        }
+
+        // Then check local services
         for svc in services {
             guard svc.isAvailable() else { continue }
             // Route default to a service that handles it
