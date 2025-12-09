@@ -73,9 +73,14 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
 
         // Candidate services and installed models (injected for testability)
         let services = self.services
+        
+        // Get remote provider services
+        let remoteServices = await getRemoteProviderServices()
+        
         let route = ModelServiceRouter.resolve(
             requestedModel: request.model,
-            services: services
+            services: services,
+            remoteServices: remoteServices
         )
 
         switch route {
@@ -202,9 +207,14 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
         )
 
         let services = self.services
+        
+        // Get remote provider services
+        let remoteServices = await getRemoteProviderServices()
+        
         let route = ModelServiceRouter.resolve(
             requestedModel: request.model,
-            services: services
+            services: services,
+            remoteServices: remoteServices
         )
 
         let created = Int(Date().timeIntervalSince1970)
@@ -347,6 +357,15 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
             )
         case .none:
             throw EngineError()
+        }
+    }
+    
+    // MARK: - Remote Provider Services
+    
+    /// Fetch connected remote provider services from the manager
+    private func getRemoteProviderServices() async -> [ModelService] {
+        return await MainActor.run {
+            RemoteProviderManager.shared.connectedServices()
         }
     }
 }

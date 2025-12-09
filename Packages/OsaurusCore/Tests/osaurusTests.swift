@@ -90,7 +90,7 @@ struct osaurusTests {
 
     @Test func openAIModel_initFromName_setsFields() async throws {
         let name = "mlx-model"
-        let model = OpenAIModel(from: name)
+        let model = OpenAIModel(modelName: name)
         #expect(model.id == name)
         #expect(model.root == name)
         #expect(model.object == "model")

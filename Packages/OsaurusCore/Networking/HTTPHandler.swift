@@ -159,86 +159,9 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     startTime: startTime
                 )
             } else if head.method == .GET, path == "/models" {
-                var models = MLXService.getAvailableModels().map { OpenAIModel(from: $0) }
-                if FoundationModelService.isDefaultModelAvailable() {
-                    models.insert(OpenAIModel(from: "foundation"), at: 0)
-                }
-                let response = ModelsResponse(data: models)
-                let json =
-                    (try? JSONEncoder().encode(response)).map { String(decoding: $0, as: UTF8.self) } ?? "{}"
-                var headers = [("Content-Type", "application/json; charset=utf-8")]
-                headers.append(contentsOf: stateRef.value.corsHeaders)
-                sendResponse(
-                    context: context,
-                    version: head.version,
-                    status: .ok,
-                    headers: headers,
-                    body: json
-                )
-                logRequest(
-                    method: method,
-                    path: path,
-                    userAgent: userAgent,
-                    requestBody: nil,
-                    responseStatus: 200,
-                    startTime: startTime
-                )
+                handleModelsEndpoint(head: head, context: context, startTime: startTime, userAgent: userAgent)
             } else if head.method == .GET, path == "/tags" {
-                let now = Date().ISO8601Format()
-                var models = MLXService.getAvailableModels().map { name -> OpenAIModel in
-                    var m = OpenAIModel(from: name)
-                    m.name = name
-                    m.model = name
-                    m.modified_at = now
-                    m.size = 0
-                    m.digest = ""
-                    m.details = ModelDetails(
-                        parent_model: "",
-                        format: "safetensors",
-                        family: "unknown",
-                        families: ["unknown"],
-                        parameter_size: "",
-                        quantization_level: ""
-                    )
-                    return m
-                }
-                if FoundationModelService.isDefaultModelAvailable() {
-                    var fm = OpenAIModel(from: "foundation")
-                    fm.name = "foundation"
-                    fm.model = "foundation"
-                    fm.modified_at = now
-                    fm.size = 0
-                    fm.digest = ""
-                    fm.details = ModelDetails(
-                        parent_model: "",
-                        format: "native",
-                        family: "foundation",
-                        families: ["foundation"],
-                        parameter_size: "",
-                        quantization_level: ""
-                    )
-                    models.insert(fm, at: 0)
-                }
-                let payload = ["models": models]
-                let json =
-                    (try? JSONEncoder().encode(payload)).map { String(decoding: $0, as: UTF8.self) } ?? "{}"
-                var headers = [("Content-Type", "application/json; charset=utf-8")]
-                headers.append(contentsOf: stateRef.value.corsHeaders)
-                sendResponse(
-                    context: context,
-                    version: head.version,
-                    status: .ok,
-                    headers: headers,
-                    body: json
-                )
-                logRequest(
-                    method: method,
-                    path: path,
-                    userAgent: userAgent,
-                    requestBody: nil,
-                    responseStatus: 200,
-                    startTime: startTime
-                )
+                handleTagsEndpoint(head: head, context: context, startTime: startTime, userAgent: userAgent)
             } else if head.method == .POST, path == "/chat/completions" || path == "/v1/chat/completions" {
                 handleChatCompletions(head: head, context: context, startTime: startTime, userAgent: userAgent)
             } else if head.method == .POST, path == "/chat" {
@@ -807,6 +730,164 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     errorMessage: error.localizedDescription
                 )
             }
+        }
+    }
+    
+    // MARK: - Models Endpoints
+    
+    private func handleModelsEndpoint(
+        head: HTTPRequestHead,
+        context: ChannelHandlerContext,
+        startTime: Date,
+        userAgent: String?
+    ) {
+        let loop = context.eventLoop
+        let ctx = NIOLoopBound(context, eventLoop: loop)
+        let cors = stateRef.value.corsHeaders
+        let hop: (@escaping @Sendable () -> Void) -> Void = { block in
+            if loop.inEventLoop { block() } else { loop.execute { block() } }
+        }
+        let logStartTime = startTime
+        let logUserAgent = userAgent
+        let logSelf = self
+        
+        Task(priority: .userInitiated) {
+            // Get local models
+            var models = MLXService.getAvailableModels().map { OpenAIModel(modelName: $0) }
+            if FoundationModelService.isDefaultModelAvailable() {
+                models.insert(OpenAIModel(modelName: "foundation"), at: 0)
+            }
+            
+            // Get remote provider models
+            let remoteModels = await MainActor.run {
+                RemoteProviderManager.shared.getOpenAIModels()
+            }
+            models.append(contentsOf: remoteModels)
+            
+            let response = ModelsResponse(data: models)
+            let json = (try? JSONEncoder().encode(response)).map { String(decoding: $0, as: UTF8.self) } ?? "{}"
+            
+            hop {
+                var headers = [("Content-Type", "application/json; charset=utf-8")]
+                headers.append(contentsOf: cors)
+                self.sendResponse(
+                    context: ctx.value,
+                    version: head.version,
+                    status: .ok,
+                    headers: headers,
+                    body: json
+                )
+            }
+            logSelf.logRequest(
+                method: "GET",
+                path: "/models",
+                userAgent: logUserAgent,
+                requestBody: nil,
+                responseStatus: 200,
+                startTime: logStartTime
+            )
+        }
+    }
+    
+    private func handleTagsEndpoint(
+        head: HTTPRequestHead,
+        context: ChannelHandlerContext,
+        startTime: Date,
+        userAgent: String?
+    ) {
+        let loop = context.eventLoop
+        let ctx = NIOLoopBound(context, eventLoop: loop)
+        let cors = stateRef.value.corsHeaders
+        let hop: (@escaping @Sendable () -> Void) -> Void = { block in
+            if loop.inEventLoop { block() } else { loop.execute { block() } }
+        }
+        let logStartTime = startTime
+        let logUserAgent = userAgent
+        let logSelf = self
+        
+        Task(priority: .userInitiated) {
+            let now = Date().ISO8601Format()
+            
+            // Get local models
+            var models = MLXService.getAvailableModels().map { name -> OpenAIModel in
+                var m = OpenAIModel(from: name)
+                m.name = name
+                m.model = name
+                m.modified_at = now
+                m.size = 0
+                m.digest = ""
+                m.details = ModelDetails(
+                    parent_model: "",
+                    format: "safetensors",
+                    family: "unknown",
+                    families: ["unknown"],
+                    parameter_size: "",
+                    quantization_level: ""
+                )
+                return m
+            }
+            
+            if FoundationModelService.isDefaultModelAvailable() {
+                var fm = OpenAIModel(modelName: "foundation")
+                fm.name = "foundation"
+                fm.model = "foundation"
+                fm.modified_at = now
+                fm.size = 0
+                fm.digest = ""
+                fm.details = ModelDetails(
+                    parent_model: "",
+                    format: "native",
+                    family: "foundation",
+                    families: ["foundation"],
+                    parameter_size: "",
+                    quantization_level: ""
+                )
+                models.insert(fm, at: 0)
+            }
+            
+            // Get remote provider models
+            let remoteModels = await MainActor.run {
+                RemoteProviderManager.shared.getOpenAIModels()
+            }
+            for var remoteModel in remoteModels {
+                remoteModel.modified_at = now
+                remoteModel.size = 0
+                remoteModel.digest = ""
+                remoteModel.name = remoteModel.id
+                remoteModel.model = remoteModel.id
+                remoteModel.details = ModelDetails(
+                    parent_model: "",
+                    format: "remote",
+                    family: remoteModel.owned_by,
+                    families: [remoteModel.owned_by],
+                    parameter_size: "",
+                    quantization_level: ""
+                )
+                models.append(remoteModel)
+            }
+            
+            let payload = ["models": models]
+            let json = (try? JSONEncoder().encode(payload)).map { String(decoding: $0, as: UTF8.self) } ?? "{}"
+            
+            hop {
+                var headers = [("Content-Type", "application/json; charset=utf-8")]
+                headers.append(contentsOf: cors)
+                self.sendResponse(
+                    context: ctx.value,
+                    version: head.version,
+                    status: .ok,
+                    headers: headers,
+                    body: json
+                )
+            }
+            logSelf.logRequest(
+                method: "GET",
+                path: "/tags",
+                userAgent: logUserAgent,
+                requestBody: nil,
+                responseStatus: 200,
+                startTime: logStartTime
+            )
         }
     }
 

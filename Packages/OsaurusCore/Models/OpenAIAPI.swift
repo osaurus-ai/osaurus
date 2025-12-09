@@ -13,10 +13,10 @@ import Foundation
 struct OpenAIModel: Codable, Sendable {
     let id: String
     var object: String = "model"
-    let created: Int
+    var created: Int = 0
     var owned_by: String = "osaurus"
-    var permission: [String] = []
-    let root: String
+    var permission: [ModelPermission]? = nil
+    var root: String? = nil
     var parent: String? = nil
     var name: String? = nil
     var model: String? = nil
@@ -24,6 +24,85 @@ struct OpenAIModel: Codable, Sendable {
     var size: Int? = nil
     var digest: String? = nil
     var details: ModelDetails? = nil
+    
+    /// Initialize from a model name (for local models)
+    init(modelName: String) {
+        self.id = modelName
+        self.object = "model"
+        self.created = Int(Date().timeIntervalSince1970)
+        self.owned_by = "osaurus"
+        self.root = modelName
+    }
+    
+    /// Full initializer
+    init(
+        id: String,
+        object: String = "model",
+        created: Int = 0,
+        owned_by: String = "osaurus",
+        permission: [ModelPermission]? = nil,
+        root: String? = nil,
+        parent: String? = nil,
+        name: String? = nil,
+        model: String? = nil,
+        modified_at: String? = nil,
+        size: Int? = nil,
+        digest: String? = nil,
+        details: ModelDetails? = nil
+    ) {
+        self.id = id
+        self.object = object
+        self.created = created
+        self.owned_by = owned_by
+        self.permission = permission
+        self.root = root
+        self.parent = parent
+        self.name = name
+        self.model = model
+        self.modified_at = modified_at
+        self.size = size
+        self.digest = digest
+        self.details = details
+    }
+    
+    // Explicit Codable implementation to avoid ambiguity
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(String.self, forKey: .id)
+        object = try container.decodeIfPresent(String.self, forKey: .object) ?? "model"
+        created = try container.decodeIfPresent(Int.self, forKey: .created) ?? 0
+        owned_by = try container.decodeIfPresent(String.self, forKey: .owned_by) ?? "unknown"
+        permission = try container.decodeIfPresent([ModelPermission].self, forKey: .permission)
+        root = try container.decodeIfPresent(String.self, forKey: .root)
+        parent = try container.decodeIfPresent(String.self, forKey: .parent)
+        name = try container.decodeIfPresent(String.self, forKey: .name)
+        model = try container.decodeIfPresent(String.self, forKey: .model)
+        modified_at = try container.decodeIfPresent(String.self, forKey: .modified_at)
+        size = try container.decodeIfPresent(Int.self, forKey: .size)
+        digest = try container.decodeIfPresent(String.self, forKey: .digest)
+        details = try container.decodeIfPresent(ModelDetails.self, forKey: .details)
+    }
+    
+    private enum CodingKeys: String, CodingKey {
+        case id, object, created, owned_by, permission, root, parent
+        case name, model, modified_at, size, digest, details
+    }
+}
+
+/// Model permission object (OpenAI format)
+struct ModelPermission: Codable, Sendable {
+    var id: String?
+    var object: String?
+    var created: Int?
+    var allow_create_engine: Bool?
+    var allow_sampling: Bool?
+    var allow_logprobs: Bool?
+    var allow_search_indices: Bool?
+    var allow_view: Bool?
+    var allow_fine_tuning: Bool?
+    var organization: String?
+    var group: String?
+    var is_blocking: Bool?
 }
 
 struct ModelDetails: Codable, Sendable {
@@ -177,9 +256,11 @@ extension ChatMessage {
             })
         {
             try container.encode(parts, forKey: .content)
-        } else {
-            try container.encodeIfPresent(content, forKey: .content)
+        } else if let content = content {
+            // Only encode content if it's not nil (OpenAI rejects null content)
+            try container.encode(content, forKey: .content)
         }
+        // Note: content is intentionally omitted when nil (e.g., assistant messages with tool_calls)
         try container.encodeIfPresent(tool_calls, forKey: .tool_calls)
         try container.encodeIfPresent(tool_call_id, forKey: .tool_call_id)
     }

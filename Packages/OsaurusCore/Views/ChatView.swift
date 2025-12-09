@@ -20,27 +20,53 @@ final class ChatSession: ObservableObject {
     @Published var modelOptions: [String] = []
     @Published var scrollTick: Int = 0
     private var currentTask: Task<Void, Never>?
+    private var remoteModelsObserver: NSObjectProtocol?
 
     init() {
-        // Build options list (foundation first if available)
+        // Build initial options list
         var opts: [String] = []
         if FoundationModelService.isDefaultModelAvailable() {
             opts.append("foundation")
         }
-        let mlx = MLXService.getAvailableModels()
-        opts.append(contentsOf: mlx)
+        opts.append(contentsOf: MLXService.getAvailableModels())
+        // Add remote provider models
+        let remoteModels = RemoteProviderManager.shared.cachedAvailableModels()
+        for providerModels in remoteModels {
+            opts.append(contentsOf: providerModels.models)
+        }
         modelOptions = opts
-        // Set default selectedModel to first available
         selectedModel = opts.first
+        
+        // Listen for remote provider model changes
+        remoteModelsObserver = NotificationCenter.default.addObserver(
+            forName: .remoteProviderModelsChanged,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in
+                self?.refreshModelOptions()
+            }
+        }
     }
 
     func refreshModelOptions() {
         var opts: [String] = []
+        
+        // Add foundation model first if available
         if FoundationModelService.isDefaultModelAvailable() {
             opts.append("foundation")
         }
+        
+        // Add local MLX models
         let mlx = MLXService.getAvailableModels()
         opts.append(contentsOf: mlx)
+        
+        // Add remote provider models
+        let remoteModels = RemoteProviderManager.shared.cachedAvailableModels()
+        for providerModels in remoteModels {
+            opts.append(contentsOf: providerModels.models)
+        }
+        
         let prev = selectedModel
         let newSelected = (prev != nil && opts.contains(prev!)) ? prev : opts.first
         if modelOptions == opts && selectedModel == newSelected { return }
@@ -103,13 +129,21 @@ final class ChatSession: ObservableObject {
                 func buildMessages() -> [ChatMessage] {
                     var msgs: [ChatMessage] = []
                     if !sys.isEmpty { msgs.append(ChatMessage(role: "system", content: sys)) }
-                    for t in turns {
+                    for (index, t) in turns.enumerated() {
                         switch t.role {
                         case .assistant:
+                            // Skip the last assistant turn if it's empty (it's the streaming placeholder)
+                            let isLastTurn = index == turns.count - 1
+                            if isLastTurn && t.content.isEmpty && t.toolCalls == nil {
+                                continue
+                            }
+                            // For assistant messages with tool_calls but no content, use empty string
+                            // OpenAI API rejects null content
+                            let content = t.content.isEmpty ? (t.toolCalls != nil ? "" : nil) : t.content
                             msgs.append(
                                 ChatMessage(
                                     role: "assistant",
-                                    content: t.content.isEmpty ? nil : t.content,
+                                    content: content,
                                     tool_calls: t.toolCalls,
                                     tool_call_id: nil
                                 )
@@ -214,7 +248,9 @@ struct ChatView: View {
     private var theme: ThemeProtocol { themeManager.currentTheme }
 
     private var hasAnyModel: Bool {
-        FoundationModelService.isDefaultModelAvailable() || !MLXService.getAvailableModels().isEmpty
+        FoundationModelService.isDefaultModelAvailable() 
+            || !MLXService.getAvailableModels().isEmpty
+            || !RemoteProviderManager.shared.cachedAvailableModels().isEmpty
     }
 
     var body: some View {

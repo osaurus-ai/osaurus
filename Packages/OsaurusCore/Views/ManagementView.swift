@@ -12,6 +12,7 @@ import SwiftUI
 
 enum ManagementTab: String, CaseIterable {
     case models
+    case providers
     case tools
     case insights
     case settings
@@ -19,6 +20,7 @@ enum ManagementTab: String, CaseIterable {
     var icon: String {
         switch self {
         case .models: return "cube.box.fill"
+        case .providers: return "cloud.fill"
         case .tools: return "wrench.and.screwdriver.fill"
         case .insights: return "chart.bar.doc.horizontal"
         case .settings: return "gearshape.fill"
@@ -28,6 +30,7 @@ enum ManagementTab: String, CaseIterable {
     var label: String {
         switch self {
         case .models: return "Models"
+        case .providers: return "Providers"
         case .tools: return "Tools"
         case .insights: return "Insights"
         case .settings: return "Settings"
@@ -56,12 +59,22 @@ struct ManagementView: View {
         self.deeplinkFile = deeplinkFile
     }
 
+    @StateObject private var remoteProviderManager = RemoteProviderManager.shared
+    
     private var sidebarItems: [SidebarItemData] {
-        [
+        let connectedProviders = remoteProviderManager.providerStates.values.filter { $0.isConnected }.count
+        
+        return [
             SidebarItemData(
                 id: ManagementTab.models.rawValue,
                 icon: ManagementTab.models.icon,
                 label: ManagementTab.models.label
+            ),
+            SidebarItemData(
+                id: ManagementTab.providers.rawValue,
+                icon: ManagementTab.providers.icon,
+                label: ManagementTab.providers.label,
+                badge: connectedProviders > 0 ? connectedProviders : nil
             ),
             SidebarItemData(
                 id: ManagementTab.tools.rawValue,
@@ -94,6 +107,8 @@ struct ManagementView: View {
                         deeplinkModelId: deeplinkModelId,
                         deeplinkFile: deeplinkFile
                     )
+                case ManagementTab.providers.rawValue:
+                    RemoteProvidersView()
                 case ManagementTab.tools.rawValue:
                     ToolsManagerView()
                 case ManagementTab.insights.rawValue:
