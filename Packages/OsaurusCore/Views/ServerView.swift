@@ -323,27 +323,28 @@ struct ServerView: View {
                     (data, response) = try await URLSession.shared.data(from: url)
                 }
 
-                let duration = Date().timeIntervalSince(startTime)
+                let durationMs = Date().timeIntervalSince(startTime) * 1000
                 let statusCode = (response as? HTTPURLResponse)?.statusCode ?? 0
+                let responseBody = String(data: data, encoding: .utf8)
 
                 await MainActor.run {
                     endpointResponses[endpoint.path] = EndpointTestResult(
                         endpoint: endpoint,
                         statusCode: statusCode,
                         body: data,
-                        duration: duration,
+                        duration: durationMs / 1000,
                         error: nil
                     )
                     loadingEndpoints.remove(endpoint.path)
                 }
             } catch {
-                let duration = Date().timeIntervalSince(startTime)
+                let durationMs = Date().timeIntervalSince(startTime) * 1000
                 await MainActor.run {
                     endpointResponses[endpoint.path] = EndpointTestResult(
                         endpoint: endpoint,
                         statusCode: 0,
                         body: Data(),
-                        duration: duration,
+                        duration: durationMs / 1000,
                         error: error.localizedDescription
                     )
                     loadingEndpoints.remove(endpoint.path)
