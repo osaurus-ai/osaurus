@@ -58,7 +58,7 @@ public final class MCPProviderManager: ObservableObject {
         providerStates[provider.id] = MCPProviderState(providerId: provider.id)
 
         // Auto-connect if enabled
-        if provider.enabled && provider.autoConnect {
+        if provider.enabled {
             Task {
                 try? await connect(providerId: provider.id)
             }
@@ -114,15 +114,16 @@ public final class MCPProviderManager: ObservableObject {
     }
 
     /// Set enabled state for a provider
+    /// When enabled is true, automatically connects to the provider
+    /// When enabled is false, disconnects from the provider
     public func setEnabled(_ enabled: Bool, for providerId: UUID) {
         configuration.setEnabled(enabled, for: providerId)
         MCPProviderConfigurationStore.save(configuration)
 
         if enabled {
-            if let provider = configuration.provider(id: providerId), provider.autoConnect {
-                Task {
-                    try? await connect(providerId: providerId)
-                }
+            // Always auto-connect when toggled ON
+            Task {
+                try? await connect(providerId: providerId)
             }
         } else {
             disconnect(providerId: providerId)
@@ -236,9 +237,9 @@ public final class MCPProviderManager: ObservableObject {
         try await connect(providerId: providerId)
     }
 
-    /// Connect to all auto-connect providers
-    public func connectAutoConnectProviders() async {
-        for provider in configuration.autoConnectProviders {
+    /// Connect to all enabled providers on app launch
+    public func connectEnabledProviders() async {
+        for provider in configuration.enabledProviders {
             do {
                 try await connect(providerId: provider.id)
             } catch {
