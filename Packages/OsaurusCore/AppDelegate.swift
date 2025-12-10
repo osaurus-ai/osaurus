@@ -545,6 +545,7 @@ extension AppDelegate {
                 deeplinkModelId: deeplinkModelId,
                 deeplinkFile: deeplinkFile
             )
+            .environmentObject(self.serverController)
             .environment(\.theme, themeManager.currentTheme)
 
             let hostingController = NSHostingController(rootView: root)
