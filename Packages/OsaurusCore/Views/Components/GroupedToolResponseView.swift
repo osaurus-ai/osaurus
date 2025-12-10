@@ -19,15 +19,39 @@ struct GroupedToolResponseView: View {
         resultsById.count
     }
 
+    private var rejectedCount: Int {
+        resultsById.values.filter { $0.hasPrefix("[REJECTED]") }.count
+    }
+
+    private var successCount: Int {
+        completedCount - rejectedCount
+    }
+
+    private var hasRejections: Bool {
+        rejectedCount > 0
+    }
+
     private var isRunning: Bool {
         completedCount < calls.count
+    }
+
+    /// Header status color based on state
+    private var statusColor: Color {
+        if isRunning {
+            return theme.accentColor
+        } else if hasRejections {
+            return theme.errorColor
+        } else {
+            return theme.successColor
+        }
     }
 
     var body: some View {
         VStack(spacing: 0) {
             header
 
-            if isExpanded {
+            // Expandable content with smooth height animation
+            VStack(spacing: 0) {
                 Rectangle()
                     .fill(
                         LinearGradient(
@@ -45,8 +69,11 @@ struct GroupedToolResponseView: View {
 
                 content
                     .padding(.top, 12)
-                    .transition(.opacity.combined(with: .move(edge: .top)))
             }
+            .frame(maxHeight: isExpanded ? nil : 0, alignment: .top)
+            .clipped()
+            .opacity(isExpanded ? 1 : 0)
+            .animation(.spring(response: 0.35, dampingFraction: 0.85), value: isExpanded)
         }
         .padding(.vertical, 12)
         .padding(.horizontal, 14)
@@ -83,16 +110,12 @@ struct GroupedToolResponseView: View {
                 // Tool icon with animated background
                 ZStack {
                     Circle()
-                        .fill(
-                            isRunning
-                                ? theme.accentColor.opacity(0.15)
-                                : theme.successColor.opacity(0.12)
-                        )
+                        .fill(statusColor.opacity(isRunning ? 0.15 : 0.12))
                         .frame(width: 28, height: 28)
 
                     Image(systemName: "wrench.and.screwdriver.fill")
                         .font(.system(size: 12, weight: .medium))
-                        .foregroundColor(isRunning ? theme.accentColor : theme.successColor)
+                        .foregroundColor(statusColor)
                 }
 
                 // Title and status
@@ -111,6 +134,18 @@ struct GroupedToolResponseView: View {
                             Text("\(completedCount)/\(calls.count) running...")
                                 .font(.system(size: 11, weight: .medium))
                                 .foregroundColor(theme.accentColor)
+                        } else if hasRejections {
+                            Image(systemName: "xmark.circle.fill")
+                                .font(.system(size: 10))
+                                .foregroundColor(theme.errorColor)
+
+                            Text(
+                                rejectedCount == calls.count
+                                    ? "\(rejectedCount) rejected"
+                                    : "\(successCount) completed, \(rejectedCount) rejected"
+                            )
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundColor(theme.errorColor)
                         } else {
                             Image(systemName: "checkmark.circle.fill")
                                 .font(.system(size: 10))
@@ -143,8 +178,7 @@ struct GroupedToolResponseView: View {
                 ToolCallRow(
                     call: call,
                     result: resultsById[call.id],
-                    index: index + 1,
-                    animationDelay: Double(index) * 0.05
+                    index: index + 1
                 )
             }
         }
@@ -158,16 +192,29 @@ private struct ToolCallRow: View {
     let call: ToolCall
     let result: String?
     let index: Int
-    let animationDelay: Double
 
     @State private var showArgs: Bool = false
     @State private var showResult: Bool = false
     @State private var isHovered: Bool = false
-    @State private var hasAppeared: Bool = false
     @Environment(\.theme) private var theme
 
     private var isComplete: Bool {
         result != nil
+    }
+
+    private var isRejected: Bool {
+        result?.hasPrefix("[REJECTED]") == true
+    }
+
+    /// Status color based on completion state
+    private var statusColor: Color {
+        if !isComplete {
+            return theme.accentColor
+        } else if isRejected {
+            return theme.errorColor
+        } else {
+            return theme.successColor
+        }
     }
 
     var body: some View {
@@ -178,14 +225,14 @@ private struct ToolCallRow: View {
                 ZStack {
                     Circle()
                         .strokeBorder(
-                            isComplete ? theme.successColor.opacity(0.5) : theme.accentColor.opacity(0.5),
+                            statusColor.opacity(0.5),
                             lineWidth: 1.5
                         )
                         .frame(width: 22, height: 22)
 
                     Text("\(index)")
                         .font(.system(size: 10, weight: .bold, design: .rounded))
-                        .foregroundColor(isComplete ? theme.successColor : theme.accentColor)
+                        .foregroundColor(statusColor)
                 }
 
                 // Function name
@@ -217,6 +264,21 @@ private struct ToolCallRow: View {
                     .background(
                         Capsule()
                             .fill(theme.accentColor.opacity(0.1))
+                    )
+                } else if isRejected {
+                    HStack(spacing: 4) {
+                        Image(systemName: "xmark")
+                            .font(.system(size: 9, weight: .bold))
+
+                        Text("Rejected")
+                            .font(.system(size: 10, weight: .medium))
+                    }
+                    .foregroundColor(theme.errorColor)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(
+                        Capsule()
+                            .fill(theme.errorColor.opacity(0.1))
                     )
                 } else {
                     HStack(spacing: 4) {
@@ -301,13 +363,6 @@ private struct ToolCallRow: View {
                         .strokeBorder(theme.primaryBorder.opacity(isHovered ? 0.2 : 0.1), lineWidth: 0.5)
                 )
         )
-        .opacity(hasAppeared ? 1 : 0)
-        .offset(y: hasAppeared ? 0 : 8)
-        .onAppear {
-            withAnimation(.spring(response: 0.4, dampingFraction: 0.8).delay(animationDelay)) {
-                hasAppeared = true
-            }
-        }
         .onHover { hovering in
             withAnimation(.easeInOut(duration: 0.15)) {
                 isHovered = hovering
