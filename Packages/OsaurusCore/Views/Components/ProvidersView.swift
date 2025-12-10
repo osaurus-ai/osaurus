@@ -62,19 +62,10 @@ struct ProvidersView: View {
     }
 
     private var headerSection: some View {
-        HStack {
-            VStack(alignment: .leading, spacing: 4) {
-                Text("MCP Providers")
-                    .font(.system(size: 20, weight: .semibold, design: .rounded))
-                    .foregroundColor(theme.primaryText)
-
-                Text("Connect to remote MCP servers to access additional tools")
-                    .font(.system(size: 13))
-                    .foregroundColor(theme.secondaryText)
-            }
-
-            Spacer()
-
+        SectionHeader(
+            title: "MCP Providers",
+            description: "Connect to remote MCP servers to access additional tools"
+        ) {
             Button(action: { showAddSheet = true }) {
                 HStack(spacing: 6) {
                     Image(systemName: "plus")
