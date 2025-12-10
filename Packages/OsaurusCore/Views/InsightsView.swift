@@ -641,7 +641,7 @@ private struct RequestLogRow: View {
                 .foregroundColor(.purple.opacity(0.8))
 
             HStack(spacing: 24) {
-                if let model = log.model {
+                if log.model != nil {
                     DetailPill(label: "Model", value: log.shortModelName)
                 }
 
@@ -785,7 +785,6 @@ private struct SourceBadge: View {
         switch source {
         case .chatUI: return .pink
         case .httpAPI: return .blue
-        case .serverTest: return .orange
         }
     }
 }
@@ -795,7 +794,6 @@ extension RequestSource {
         switch self {
         case .chatUI: return "Chat"
         case .httpAPI: return "HTTP"
-        case .serverTest: return "Test"
         }
     }
 }

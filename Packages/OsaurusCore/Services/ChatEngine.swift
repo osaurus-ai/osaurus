@@ -164,25 +164,27 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
                 continuation.finish(throwing: error)
             }
 
-            // Log the completed inference
-            let durationMs = Date().timeIntervalSince(startTime) * 1000
-            var toolCalls: [ToolCallLog]? = nil
-            if let (name, args) = toolInvocation {
-                toolCalls = [ToolCallLog(name: name, arguments: args)]
-            }
+            // Log the completed inference (only for Chat UI - HTTP requests are logged by HTTPHandler)
+            if source == .chatUI {
+                let durationMs = Date().timeIntervalSince(startTime) * 1000
+                var toolCalls: [ToolCallLog]? = nil
+                if let (name, args) = toolInvocation {
+                    toolCalls = [ToolCallLog(name: name, arguments: args)]
+                }
 
-            InsightsService.logInference(
-                source: source,
-                model: model,
-                inputTokens: inputTokens,
-                outputTokens: outputTokenCount,
-                durationMs: durationMs,
-                temperature: temperature,
-                maxTokens: maxTokens,
-                toolCalls: toolCalls,
-                finishReason: finishReason,
-                errorMessage: errorMsg
-            )
+                InsightsService.logInference(
+                    source: source,
+                    model: model,
+                    inputTokens: inputTokens,
+                    outputTokens: outputTokenCount,
+                    durationMs: durationMs,
+                    temperature: temperature,
+                    maxTokens: maxTokens,
+                    toolCalls: toolCalls,
+                    finishReason: finishReason,
+                    errorMessage: errorMsg
+                )
+            }
         }
 
         return stream
@@ -252,18 +254,20 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
                         total_tokens: inputTokens + outputTokens
                     )
 
-                    // Log the inference
-                    let durationMs = Date().timeIntervalSince(startTime) * 1000
-                    InsightsService.logInference(
-                        source: inferenceSource,
-                        model: effectiveModel,
-                        inputTokens: inputTokens,
-                        outputTokens: outputTokens,
-                        durationMs: durationMs,
-                        temperature: temperature,
-                        maxTokens: maxTokens,
-                        finishReason: .stop
-                    )
+                    // Log the inference (only for Chat UI - HTTP requests are logged by HTTPHandler)
+                    if inferenceSource == .chatUI {
+                        let durationMs = Date().timeIntervalSince(startTime) * 1000
+                        InsightsService.logInference(
+                            source: inferenceSource,
+                            model: effectiveModel,
+                            inputTokens: inputTokens,
+                            outputTokens: outputTokens,
+                            durationMs: durationMs,
+                            temperature: temperature,
+                            maxTokens: maxTokens,
+                            finishReason: .stop
+                        )
+                    }
 
                     return ChatCompletionResponse(
                         id: responseId,
@@ -291,19 +295,21 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
                     let choice = ChatChoice(index: 0, message: assistant, finish_reason: "tool_calls")
                     let usage = Usage(prompt_tokens: inputTokens, completion_tokens: 0, total_tokens: inputTokens)
 
-                    // Log the inference
-                    let durationMs = Date().timeIntervalSince(startTime) * 1000
-                    InsightsService.logInference(
-                        source: inferenceSource,
-                        model: effectiveModel,
-                        inputTokens: inputTokens,
-                        outputTokens: 0,
-                        durationMs: durationMs,
-                        temperature: temperature,
-                        maxTokens: maxTokens,
-                        toolCalls: [ToolCallLog(name: inv.toolName, arguments: inv.jsonArguments)],
-                        finishReason: .toolCalls
-                    )
+                    // Log the inference (only for Chat UI - HTTP requests are logged by HTTPHandler)
+                    if inferenceSource == .chatUI {
+                        let durationMs = Date().timeIntervalSince(startTime) * 1000
+                        InsightsService.logInference(
+                            source: inferenceSource,
+                            model: effectiveModel,
+                            inputTokens: inputTokens,
+                            outputTokens: 0,
+                            durationMs: durationMs,
+                            temperature: temperature,
+                            maxTokens: maxTokens,
+                            toolCalls: [ToolCallLog(name: inv.toolName, arguments: inv.jsonArguments)],
+                            finishReason: .toolCalls
+                        )
+                    }
 
                     return ChatCompletionResponse(
                         id: responseId,
@@ -334,18 +340,20 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
                 total_tokens: inputTokens + outputTokens
             )
 
-            // Log the inference
-            let durationMs = Date().timeIntervalSince(startTime) * 1000
-            InsightsService.logInference(
-                source: inferenceSource,
-                model: effectiveModel,
-                inputTokens: inputTokens,
-                outputTokens: outputTokens,
-                durationMs: durationMs,
-                temperature: temperature,
-                maxTokens: maxTokens,
-                finishReason: .stop
-            )
+            // Log the inference (only for Chat UI - HTTP requests are logged by HTTPHandler)
+            if inferenceSource == .chatUI {
+                let durationMs = Date().timeIntervalSince(startTime) * 1000
+                InsightsService.logInference(
+                    source: inferenceSource,
+                    model: effectiveModel,
+                    inputTokens: inputTokens,
+                    outputTokens: outputTokens,
+                    durationMs: durationMs,
+                    temperature: temperature,
+                    maxTokens: maxTokens,
+                    finishReason: .stop
+                )
+            }
 
             return ChatCompletionResponse(
                 id: responseId,

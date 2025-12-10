@@ -59,8 +59,6 @@ final class InsightsService: ObservableObject {
                 if log.source != .chatUI { return false }
             case .httpAPI:
                 if log.source != .httpAPI { return false }
-            case .serverTest:
-                if log.source != .serverTest { return false }
             }
 
             // Method filter
@@ -144,7 +142,6 @@ enum SourceFilter: String, CaseIterable {
     case all = "All"
     case chatUI = "Chat"
     case httpAPI = "HTTP"
-    case serverTest = "Test"
 }
 
 enum MethodFilter: String, CaseIterable {
@@ -260,7 +257,7 @@ extension InsightsService {
         )
     }
 
-    /// Legacy compatibility - logs all requests now
+    /// Logs HTTP requests with optional inference data
     nonisolated static func logAsync(
         method: String,
         path: String,
@@ -273,12 +270,13 @@ extension InsightsService {
         model: String? = nil,
         tokensInput: Int? = nil,
         tokensOutput: Int? = nil,
+        temperature: Float? = nil,
+        maxTokens: Int? = nil,
         toolCalls: [ToolCallLog]? = nil,
+        finishReason: RequestLog.FinishReason? = nil,
         errorMessage: String? = nil
     ) {
         let source: RequestSource = method == "CHAT" ? .chatUI : .httpAPI
-        let finishReason: RequestLog.FinishReason? =
-            path.contains("chat") ? (errorMessage != nil ? .error : .stop) : nil
 
         logRequest(
             source: source,
@@ -292,8 +290,8 @@ extension InsightsService {
             model: model,
             inputTokens: tokensInput,
             outputTokens: tokensOutput,
-            temperature: path.contains("chat") ? 0.7 : nil,
-            maxTokens: path.contains("chat") ? 1024 : nil,
+            temperature: temperature,
+            maxTokens: maxTokens,
             toolCalls: toolCalls,
             finishReason: finishReason,
             errorMessage: errorMessage

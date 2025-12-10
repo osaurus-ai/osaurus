@@ -37,7 +37,6 @@ struct ToolCallLog: Identifiable, Sendable {
 enum RequestSource: String, Sendable, CaseIterable {
     case chatUI = "Chat UI"
     case httpAPI = "HTTP API"
-    case serverTest = "Test"
 }
 
 /// Represents a single request log entry with optional inference data

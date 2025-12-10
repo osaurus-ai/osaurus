@@ -438,6 +438,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             let logUserAgent = userAgent
             let logRequestBody = requestBodyString
             let logModel = model
+            let logTemperature = req.temperature ?? 0.7
+            let logMaxTokens = req.max_tokens ?? 1024
             let logSelf = self
             Task(priority: .userInitiated) {
                 do {
@@ -469,7 +471,10 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                         requestBody: logRequestBody,
                         responseStatus: 200,
                         startTime: logStartTime,
-                        model: logModel
+                        model: logModel,
+                        temperature: logTemperature,
+                        maxTokens: logMaxTokens,
+                        finishReason: .stop
                     )
                 } catch let inv as ServiceToolInvocation {
                     // Translate tool invocation to OpenAI-style streaming tool_calls deltas
@@ -525,7 +530,10 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                         responseStatus: 200,
                         startTime: logStartTime,
                         model: logModel,
-                        toolCalls: [toolLog]
+                        toolCalls: [toolLog],
+                        temperature: logTemperature,
+                        maxTokens: logMaxTokens,
+                        finishReason: .toolCalls
                     )
                 } catch {
                     hop {
@@ -540,6 +548,9 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                         responseStatus: 500,
                         startTime: logStartTime,
                         model: logModel,
+                        temperature: logTemperature,
+                        maxTokens: logMaxTokens,
+                        finishReason: .error,
                         errorMessage: error.localizedDescription
                     )
                 }
@@ -557,6 +568,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             let logUserAgent = userAgent
             let logRequestBody = requestBodyString
             let logModel = model
+            let logTemperature = req.temperature ?? 0.7
+            let logMaxTokens = req.max_tokens ?? 1024
             let logSelf = self
             Task(priority: .userInitiated) {
                 do {
@@ -583,19 +596,34 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                             ctx.value.close(promise: nil)
                         }
                     }
-                    // Extract token counts from response
+                    // Extract token counts and finish reason from response
                     let tokensIn = resp.usage.prompt_tokens
                     let tokensOut = resp.usage.completion_tokens
+                    let finishReason: RequestLog.FinishReason = {
+                        if let reason = resp.choices.first?.finish_reason {
+                            switch reason {
+                            case "stop": return .stop
+                            case "length": return .length
+                            case "tool_calls": return .toolCalls
+                            default: return .stop
+                            }
+                        }
+                        return .stop
+                    }()
                     logSelf.logRequest(
                         method: "POST",
                         path: "/chat/completions",
                         userAgent: logUserAgent,
                         requestBody: logRequestBody,
+                        responseBody: body,
                         responseStatus: 200,
                         startTime: logStartTime,
                         model: logModel,
                         tokensInput: tokensIn,
-                        tokensOutput: tokensOut
+                        tokensOutput: tokensOut,
+                        temperature: logTemperature,
+                        maxTokens: logMaxTokens,
+                        finishReason: finishReason
                     )
                 } catch {
                     let body = "Internal error: \(error.localizedDescription)"
@@ -688,6 +716,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         let logUserAgent = userAgent
         let logRequestBody = requestBodyString
         let logModel = req.model
+        let logTemperature = req.temperature ?? 0.7
+        let logMaxTokens = req.max_tokens ?? 1024
         let logSelf = self
         Task(priority: .userInitiated) {
             do {
@@ -719,7 +749,10 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     requestBody: logRequestBody,
                     responseStatus: 200,
                     startTime: logStartTime,
-                    model: logModel
+                    model: logModel,
+                    temperature: logTemperature,
+                    maxTokens: logMaxTokens,
+                    finishReason: .stop
                 )
             } catch {
                 hop {
@@ -734,6 +767,9 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     responseStatus: 500,
                     startTime: logStartTime,
                     model: logModel,
+                    temperature: logTemperature,
+                    maxTokens: logMaxTokens,
+                    finishReason: .error,
                     errorMessage: error.localizedDescription
                 )
             }
@@ -1196,6 +1232,9 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         tokensInput: Int? = nil,
         tokensOutput: Int? = nil,
         toolCalls: [ToolCallLog]? = nil,
+        temperature: Float? = nil,
+        maxTokens: Int? = nil,
+        finishReason: RequestLog.FinishReason? = nil,
         errorMessage: String? = nil
     ) {
         let durationMs = Date().timeIntervalSince(startTime) * 1000
@@ -1210,7 +1249,10 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             model: model,
             tokensInput: tokensInput,
             tokensOutput: tokensOutput,
+            temperature: temperature,
+            maxTokens: maxTokens,
             toolCalls: toolCalls,
+            finishReason: finishReason,
             errorMessage: errorMessage
         )
     }

@@ -337,17 +337,6 @@ struct ServerView: View {
                     )
                     loadingEndpoints.remove(endpoint.path)
                 }
-
-                // Log to InsightsService
-                InsightsService.logRequest(
-                    source: .serverTest,
-                    method: endpoint.method,
-                    path: endpoint.path,
-                    statusCode: statusCode,
-                    durationMs: durationMs,
-                    requestBody: endpoint.method == "POST" ? payload : nil,
-                    responseBody: responseBody
-                )
             } catch {
                 let durationMs = Date().timeIntervalSince(startTime) * 1000
                 await MainActor.run {
@@ -360,17 +349,6 @@ struct ServerView: View {
                     )
                     loadingEndpoints.remove(endpoint.path)
                 }
-
-                // Log error to InsightsService
-                InsightsService.logRequest(
-                    source: .serverTest,
-                    method: endpoint.method,
-                    path: endpoint.path,
-                    statusCode: 0,
-                    durationMs: durationMs,
-                    requestBody: endpoint.method == "POST" ? payload : nil,
-                    errorMessage: error.localizedDescription
-                )
             }
         }
     }
