@@ -222,10 +222,21 @@ final class ChatSession: ObservableObject {
                         assistantTurn.toolCalls!.append(call)
 
                         // Execute tool and append hidden tool result turn
-                        let resultText = try await ToolRegistry.shared.execute(
-                            name: inv.toolName,
-                            argumentsJSON: inv.jsonArguments
-                        )
+                        let resultText: String
+                        do {
+                            resultText = try await ToolRegistry.shared.execute(
+                                name: inv.toolName,
+                                argumentsJSON: inv.jsonArguments
+                            )
+                        } catch {
+                            // Store rejection/error as the result so UI shows "Rejected" instead of hanging
+                            let rejectionMessage = "[REJECTED] \(error.localizedDescription)"
+                            assistantTurn.toolResults[callId] = rejectionMessage
+                            let toolTurn = ChatTurn(role: .tool, content: rejectionMessage)
+                            toolTurn.toolCallId = callId
+                            turns.append(toolTurn)
+                            break  // Stop tool loop on rejection
+                        }
                         assistantTurn.toolResults[callId] = resultText
                         let toolTurn = ChatTurn(role: .tool, content: resultText)
                         toolTurn.toolCallId = callId
