@@ -19,10 +19,19 @@ struct SearchField: View {
                 .font(.system(size: 14))
                 .foregroundColor(theme.tertiaryText)
 
-            TextField(placeholder, text: $text)
-                .textFieldStyle(PlainTextFieldStyle())
-                .font(.system(size: 14))
-                .foregroundColor(theme.primaryText)
+            ZStack(alignment: .leading) {
+                // Custom placeholder for better visibility in light mode
+                if text.isEmpty {
+                    Text(placeholder)
+                        .font(.system(size: 14))
+                        .foregroundColor(theme.secondaryText)
+                        .allowsHitTesting(false)
+                }
+                TextField("", text: $text)
+                    .textFieldStyle(PlainTextFieldStyle())
+                    .font(.system(size: 14))
+                    .foregroundColor(theme.primaryText)
+            }
 
             if !text.isEmpty {
                 Button(action: { text = "" }) {

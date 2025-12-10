@@ -104,13 +104,13 @@ struct GlassSurface: View {
             // Base AppKit-backed glass layer (includes edge lighting)
             GlassBackground(cornerRadius: cornerRadius, material: material)
 
-            // Subtle gradient overlay to tune perceived brightness/contrast
+            // Gradient overlay for brightness/contrast - stronger in light mode for text readability
             RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
                 .fill(
                     LinearGradient(
                         gradient: Gradient(colors: [
-                            Color.white.opacity(colorScheme == .dark ? 0.08 : 0.15),
-                            Color.white.opacity(colorScheme == .dark ? 0.03 : 0.08),
+                            Color.white.opacity(colorScheme == .dark ? 0.08 : 0.5),
+                            Color.white.opacity(colorScheme == .dark ? 0.03 : 0.35),
                         ]),
                         startPoint: .topLeading,
                         endPoint: .bottomTrailing

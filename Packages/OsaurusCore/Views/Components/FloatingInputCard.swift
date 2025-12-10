@@ -23,6 +23,7 @@ struct FloatingInputCard: View {
     @State private var localText: String = ""
     @FocusState private var isFocused: Bool
     @Environment(\.theme) private var theme
+    @Environment(\.colorScheme) private var colorScheme
     @State private var isDragOver = false
     @State private var keyMonitor: Any?
 
@@ -420,9 +421,9 @@ struct FloatingInputCard: View {
                     .fill(theme.primaryBackground.opacity(0.95))
             }
 
-            // Subtle tint
+            // Tint overlay - stronger in light mode for contrast
             RoundedRectangle(cornerRadius: 20, style: .continuous)
-                .fill(theme.primaryBackground.opacity(0.6))
+                .fill(theme.primaryBackground.opacity(colorScheme == .dark ? 0.6 : 0.85))
         }
     }
 

@@ -258,6 +258,7 @@ struct ChatView: View {
     @EnvironmentObject var server: ServerController
     @StateObject private var themeManager = ThemeManager.shared
     @StateObject private var session = ChatSession()
+    @Environment(\.colorScheme) private var colorScheme
 
     @State private var focusTrigger: Int = 0
     @State private var isPinnedToBottom: Bool = true
@@ -377,11 +378,11 @@ struct ChatView: View {
             GlassSurface(cornerRadius: 24)
                 .allowsHitTesting(false)
 
-            // Subtle gradient overlay for depth
+            // Gradient overlay for depth - stronger in light mode for text contrast
             LinearGradient(
                 colors: [
-                    theme.primaryBackground.opacity(0.3),
-                    theme.primaryBackground.opacity(0.1),
+                    theme.primaryBackground.opacity(colorScheme == .dark ? 0.3 : 0.6),
+                    theme.primaryBackground.opacity(colorScheme == .dark ? 0.1 : 0.4),
                     Color.clear,
                 ],
                 startPoint: .top,
