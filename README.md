@@ -15,11 +15,11 @@
   <img width="372" height="222" alt="Screenshot 2025-11-04 at 3 15 54 PM" src="https://github.com/user-attachments/assets/9f0e9122-6092-4a63-9421-d9abb898c75b" />
 </p>
 
-**Native macOS LLM server with MCP support.** Run local language models on Apple Silicon with OpenAI-compatible APIs, tool calling, and a built-in plugin ecosystem.
+**Native macOS LLM server with MCP support.** Run local and remote language models on Apple Silicon with OpenAI-compatible APIs, tool calling, and a built-in plugin ecosystem.
 
 Created by Dinoki Labs ([dinoki.ai](https://dinoki.ai))
 
-**[Documentation](https://docs.osaurus.ai/)** · **[Discord](https://discord.gg/dinoki)** · **[Plugin Registry](https://github.com/dinoki-ai/osaurus-tools)**
+**[Documentation](https://docs.osaurus.ai/)** · **[Discord](https://discord.gg/dinoki)** · **[Plugin Registry](https://github.com/dinoki-ai/osaurus-tools)** · **[Contributing](docs/CONTRIBUTING.md)**
 
 ---
 
@@ -37,32 +37,46 @@ After installing, launch from Spotlight (`⌘ Space` → "osaurus") or run `osau
 
 ## What is Osaurus?
 
-Osaurus is an all-in-one local LLM server for macOS. It combines:
+Osaurus is an all-in-one LLM server for macOS. It combines:
 
-- **MLX Runtime** — Optimized inference for Apple Silicon using [MLX](https://github.com/ml-explore/mlx)
+- **MLX Runtime** — Optimized local inference for Apple Silicon using [MLX](https://github.com/ml-explore/mlx)
+- **Remote Providers** — Connect to OpenAI, OpenRouter, Ollama, LM Studio, or any OpenAI-compatible API
 - **OpenAI & Ollama APIs** — Drop-in compatible endpoints for existing tools
 - **MCP Server** — Expose tools to AI agents via Model Context Protocol
+- **Remote MCP Providers** — Connect to external MCP servers and aggregate their tools
 - **Plugin System** — Extend functionality with community and custom tools
+- **Developer Tools** — Built-in insights and server explorer for debugging
 - **Apple Foundation Models** — Use the system model on macOS 26+ (Tahoe)
 
 ### Highlights
 
-| Feature               | Description                                                |
-| --------------------- | ---------------------------------------------------------- |
-| **Local LLM Server**  | Run Llama, Qwen, Gemma, Mistral, and more locally          |
-| **OpenAI Compatible** | `/v1/chat/completions` with streaming and tool calling     |
-| **MCP Server**        | Connect to Cursor, Claude Desktop, and other MCP clients   |
-| **Tools & Plugins**   | Browser automation, file system, git, web search, and more |
-| **Menu Bar Chat**     | Built-in chat overlay with global hotkey (`⌘;`)            |
-| **Model Manager**     | Download and manage models from Hugging Face               |
+| Feature                  | Description                                                |
+| ------------------------ | ---------------------------------------------------------- |
+| **Local LLM Server**     | Run Llama, Qwen, Gemma, Mistral, and more locally          |
+| **Remote Providers**     | OpenAI, OpenRouter, Ollama, LM Studio, or custom endpoints |
+| **OpenAI Compatible**    | `/v1/chat/completions` with streaming and tool calling     |
+| **MCP Server**           | Connect to Cursor, Claude Desktop, and other MCP clients   |
+| **Remote MCP Providers** | Aggregate tools from external MCP servers                  |
+| **Tools & Plugins**      | Browser automation, file system, git, web search, and more |
+| **Developer Tools**      | Request insights, API explorer, and live endpoint testing  |
+| **Menu Bar Chat**        | Built-in chat overlay with global hotkey (`⌘;`)            |
+| **Model Manager**        | Download and manage models from Hugging Face               |
 
 ---
 
-## MCP Server
+## Quick Start
 
-Osaurus is a full MCP (Model Context Protocol) server. Connect it to any MCP client to give AI agents access to your installed tools.
+### 1. Start the Server
 
-### Setup for MCP Clients
+Launch Osaurus from Spotlight or run:
+
+```bash
+osaurus serve
+```
+
+The server starts on port `1337` by default.
+
+### 2. Connect an MCP Client
 
 Add to your MCP client configuration (e.g., Cursor, Claude Desktop):
 
@@ -77,11 +91,54 @@ Add to your MCP client configuration (e.g., Cursor, Claude Desktop):
 }
 ```
 
-The CLI proxies MCP over stdio to the running server. If Osaurus isn't running, it auto-launches.
+### 3. Add a Remote Provider (Optional)
 
-### HTTP Endpoints
+Open the Management window (`⌘ Shift M`) → **Providers** → **Add Provider**.
 
-MCP is also available over HTTP on the same port:
+Choose from presets (OpenAI, Ollama, LM Studio, OpenRouter) or configure a custom endpoint.
+
+---
+
+## Key Features
+
+### Local Models (MLX)
+
+Run models locally with optimized Apple Silicon inference:
+
+```bash
+# Download a model
+osaurus run llama-3.2-3b-instruct-4bit
+
+# Use via API
+curl http://127.0.0.1:1337/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{"model": "llama-3.2-3b-instruct-4bit", "messages": [{"role": "user", "content": "Hello!"}]}'
+```
+
+### Remote Providers
+
+Connect to any OpenAI-compatible API to access cloud models alongside local ones.
+
+**Supported presets:**
+
+- **OpenAI** — GPT-4o, o1, and other OpenAI models
+- **OpenRouter** — Access multiple providers through one API
+- **Ollama** — Connect to a local or remote Ollama instance
+- **LM Studio** — Use LM Studio as a backend
+- **Custom** — Any OpenAI-compatible endpoint
+
+Features:
+
+- Secure API key storage (macOS Keychain)
+- Custom headers for authentication
+- Auto-connect on launch
+- Connection health monitoring
+
+See [Remote Providers Guide](docs/REMOTE_PROVIDERS.md) for details.
+
+### MCP Server
+
+Osaurus is a full MCP (Model Context Protocol) server. Connect it to any MCP client to give AI agents access to your installed tools.
 
 | Endpoint          | Description            |
 | ----------------- | ---------------------- |
@@ -89,13 +146,22 @@ MCP is also available over HTTP on the same port:
 | `GET /mcp/tools`  | List active tools      |
 | `POST /mcp/call`  | Execute a tool         |
 
----
+### Remote MCP Providers
 
-## Tools & Plugins
+Connect to external MCP servers and aggregate their tools into Osaurus:
 
-Osaurus has a plugin system for extending functionality. Install tools from the [central registry](https://github.com/dinoki-ai/osaurus-tools) or create your own.
+- Discover and register tools from remote MCP endpoints
+- Configurable timeouts and streaming
+- Tools are namespaced by provider (e.g., `provider_toolname`)
+- Secure token storage
 
-### Official System Tools
+See [Remote MCP Providers Guide](docs/REMOTE_MCP_PROVIDERS.md) for details.
+
+### Tools & Plugins
+
+Install tools from the [central registry](https://github.com/dinoki-ai/osaurus-tools) or create your own.
+
+**Official System Tools:**
 
 | Plugin               | Tools                                                                     |
 | -------------------- | ------------------------------------------------------------------------- |
@@ -106,32 +172,40 @@ Osaurus has a plugin system for extending functionality. Install tools from the 
 | `osaurus.fetch`      | `fetch`, `fetch_json`, `fetch_html`, `download`                           |
 | `osaurus.time`       | `current_time`, `format_date`                                             |
 
-### Install Tools
-
 ```bash
 # Install from registry
 osaurus tools install osaurus.browser
-osaurus tools install osaurus.filesystem
-
-# Search available tools
-osaurus tools search browser
 
 # List installed tools
 osaurus tools list
-```
 
-### Create Your Own
-
-```bash
-# Scaffold a new plugin
+# Create your own plugin
 osaurus tools create MyPlugin --language swift
-
-# Build and install locally
-cd MyPlugin && swift build -c release
-osaurus tools install .
 ```
 
 See the [Plugin Authoring Guide](docs/PLUGIN_AUTHORING.md) for details.
+
+### Developer Tools
+
+Built-in tools for debugging and development:
+
+**Insights** — Monitor all API requests in real-time:
+
+- Request/response logging with full payloads
+- Filter by method (GET/POST) and source (Chat UI/HTTP API)
+- Performance stats: success rate, average latency, errors
+- Inference metrics: tokens, speed (tok/s), model used
+
+**Server Explorer** — Interactive API reference:
+
+- Live server status and health
+- Browse all available endpoints
+- Test endpoints directly with editable payloads
+- View formatted responses
+
+Access via Management window (`⌘ Shift M`) → **Insights** or **Server**.
+
+See [Developer Tools Guide](docs/DEVELOPER_TOOLS.md) for details.
 
 ---
 
@@ -167,20 +241,7 @@ Base URL: `http://127.0.0.1:1337` (or your configured port)
 
 All endpoints support `/v1`, `/api`, and `/v1/api` prefixes.
 
-### Quick Example
-
-```bash
-curl http://127.0.0.1:1337/v1/chat/completions \
-  -H "Content-Type: application/json" \
-  -d '{
-    "model": "llama-3.2-3b-instruct-4bit",
-    "messages": [{"role": "user", "content": "Hello!"}]
-  }'
-```
-
-For streaming, add `"stream": true`. For Apple Foundation Models, use `"model": "foundation"`.
-
-See the [full documentation](https://docs.osaurus.ai/) for more examples including tool calling, CORS configuration, and SDK integration.
+See the [OpenAI API Guide](docs/OpenAI_API_GUIDE.md) for tool calling, streaming, and SDK examples.
 
 ---
 
@@ -199,20 +260,6 @@ response = client.chat.completions.create(
 )
 print(response.choices[0].message.content)
 ```
-
----
-
-## Benchmarks
-
-20-run averages from our batch benchmark suite:
-
-| Server      | Model                      | TTFT (ms) | Total (ms) | Chars/s | Success |
-| ----------- | -------------------------- | --------- | ---------- | ------- | ------- |
-| **Osaurus** | llama-3.2-3b-instruct-4bit | 87        | 1237       | 554     | 100%    |
-| Ollama      | llama3.2                   | 33        | 1622       | 430     | 100%    |
-| LM Studio   | llama-3.2-3b-instruct      | 113       | 1221       | 588     | 100%    |
-
-TTFT = time to first token. See `results/` for raw data.
 
 ---
 
@@ -237,12 +284,31 @@ open osaurus.xcworkspace
 
 ---
 
+## Contributing
+
+**We're looking for contributors!** Osaurus is actively developed and we welcome help in many areas:
+
+- Bug fixes and performance improvements
+- New plugins and tool integrations
+- Documentation and tutorials
+- UI/UX enhancements
+- Testing and issue triage
+
+### Get Started
+
+1. Check out [Good First Issues](https://github.com/dinoki-ai/osaurus/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22)
+2. Read the [Contributing Guide](docs/CONTRIBUTING.md)
+3. Join our [Discord](https://discord.gg/dinoki) to connect with the team
+
+See [docs/FEATURES.md](docs/FEATURES.md) for a complete feature inventory and architecture overview.
+
+---
+
 ## Community
 
 - **[Documentation](https://docs.osaurus.ai/)** — Guides and tutorials
 - **[Discord](https://discord.gg/dinoki)** — Chat with the community
 - **[Plugin Registry](https://github.com/dinoki-ai/osaurus-tools)** — Browse and contribute tools
 - **[Contributing Guide](docs/CONTRIBUTING.md)** — How to contribute
-- **[Good First Issues](https://github.com/dinoki-ai/osaurus/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22)** — Start here
 
 If you find Osaurus useful, please star the repo and share it!
