@@ -78,4 +78,3 @@ struct SectionHeader<Trailing: View>: View {
     .background(Color.black.opacity(0.9))
     .environment(\.theme, DarkTheme())
 }
-

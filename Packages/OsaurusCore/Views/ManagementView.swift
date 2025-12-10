@@ -15,6 +15,7 @@ enum ManagementTab: String, CaseIterable {
     case providers
     case tools
     case insights
+    case server
     case settings
 
     var icon: String {
@@ -23,6 +24,7 @@ enum ManagementTab: String, CaseIterable {
         case .providers: return "cloud.fill"
         case .tools: return "wrench.and.screwdriver.fill"
         case .insights: return "chart.bar.doc.horizontal"
+        case .server: return "server.rack"
         case .settings: return "gearshape.fill"
         }
     }
@@ -33,6 +35,7 @@ enum ManagementTab: String, CaseIterable {
         case .providers: return "Providers"
         case .tools: return "Tools"
         case .insights: return "Insights"
+        case .server: return "Server"
         case .settings: return "Settings"
         }
     }
@@ -88,6 +91,11 @@ struct ManagementView: View {
                 label: ManagementTab.insights.label
             ),
             SidebarItemData(
+                id: ManagementTab.server.rawValue,
+                icon: ManagementTab.server.icon,
+                label: ManagementTab.server.label
+            ),
+            SidebarItemData(
                 id: ManagementTab.settings.rawValue,
                 icon: ManagementTab.settings.icon,
                 label: ManagementTab.settings.label
@@ -113,6 +121,8 @@ struct ManagementView: View {
                     ToolsManagerView()
                 case ManagementTab.insights.rawValue:
                     InsightsView()
+                case ManagementTab.server.rawValue:
+                    ServerView()
                 case ManagementTab.settings.rawValue:
                     ConfigurationView()
                 default:
