@@ -12,27 +12,40 @@ import SwiftUI
 struct HotkeyRecorder: View {
     @Binding var value: Hotkey?
     @State private var isRecording: Bool = false
+    @Environment(\.theme) private var theme
 
     var body: some View {
         HStack(spacing: 8) {
             if isRecording {
                 Text("Recording… Press new shortcut")
                     .font(.system(size: 11))
-                    .foregroundColor(.secondary)
+                    .foregroundColor(theme.secondaryText)
                 Button("Cancel") { isRecording = false }
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundColor(theme.accentColor)
                     .buttonStyle(.plain)
             } else {
                 Text(display(for: value))
                     .font(.system(size: 12, weight: .medium))
+                    .foregroundColor(theme.primaryText)
                     .padding(.vertical, 6)
                     .padding(.horizontal, 10)
                     .background(
-                        RoundedRectangle(cornerRadius: 6).fill(Color(nsColor: .windowBackgroundColor))
+                        RoundedRectangle(cornerRadius: 6)
+                            .fill(theme.inputBackground)
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 6)
+                                    .stroke(theme.inputBorder, lineWidth: 1)
+                            )
                     )
                 Button("Change…") { isRecording = true }
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundColor(theme.accentColor)
                     .buttonStyle(.plain)
                 if value != nil {
                     Button("Clear") { value = nil }
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundColor(theme.secondaryText)
                         .buttonStyle(.plain)
                 }
             }

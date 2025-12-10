@@ -60,6 +60,7 @@ struct ConfigurationView: View {
                                 ZStack(alignment: .topLeading) {
                                     TextEditor(text: $tempSystemPrompt)
                                         .font(.system(size: 13, design: .monospaced))
+                                        .scrollContentBackground(.hidden)
                                         .frame(minHeight: 80, maxHeight: 140)
                                         .padding(8)
                                         .background(
@@ -74,7 +75,7 @@ struct ConfigurationView: View {
                                     if tempSystemPrompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                                         Text("Optional. Shown as a system message for all chats.")
                                             .font(.system(size: 11))
-                                            .foregroundColor(theme.tertiaryText)
+                                            .foregroundColor(theme.secondaryText)
                                             .padding(.top, 12)
                                             .padding(.leading, 14)
                                             .allowsHitTesting(false)
@@ -123,20 +124,29 @@ struct ConfigurationView: View {
                         VStack(alignment: .leading, spacing: 20) {
                             // Port
                             SettingsField(label: "Port", hint: "Enter a port number between 1 and 65535") {
-                                TextField("1337", text: $tempPortString)
-                                    .textFieldStyle(.plain)
-                                    .font(.system(size: 13, weight: .medium, design: .monospaced))
-                                    .padding(.horizontal, 12)
-                                    .padding(.vertical, 8)
-                                    .background(
-                                        RoundedRectangle(cornerRadius: 8)
-                                            .fill(theme.inputBackground)
-                                            .overlay(
-                                                RoundedRectangle(cornerRadius: 8)
-                                                    .stroke(theme.inputBorder, lineWidth: 1)
-                                            )
-                                    )
-                                    .foregroundColor(theme.primaryText)
+                                ZStack(alignment: .leading) {
+                                    if tempPortString.isEmpty {
+                                        Text("1337")
+                                            .font(.system(size: 13, weight: .medium, design: .monospaced))
+                                            .foregroundColor(theme.secondaryText)
+                                            .padding(.leading, 12)
+                                            .allowsHitTesting(false)
+                                    }
+                                    TextField("", text: $tempPortString)
+                                        .textFieldStyle(.plain)
+                                        .font(.system(size: 13, weight: .medium, design: .monospaced))
+                                        .padding(.horizontal, 12)
+                                        .padding(.vertical, 8)
+                                        .foregroundColor(theme.primaryText)
+                                }
+                                .background(
+                                    RoundedRectangle(cornerRadius: 8)
+                                        .fill(theme.inputBackground)
+                                        .overlay(
+                                            RoundedRectangle(cornerRadius: 8)
+                                                .stroke(theme.inputBorder, lineWidth: 1)
+                                        )
+                                )
                             }
 
                             // Network Exposure Toggle
@@ -151,20 +161,29 @@ struct ConfigurationView: View {
                                 label: "Allowed Origins",
                                 hint: "Comma-separated list. Use * for any origin, or leave empty to disable CORS"
                             ) {
-                                TextField("https://example.com, https://app.localhost", text: $tempAllowedOrigins)
-                                    .textFieldStyle(.plain)
-                                    .font(.system(size: 13, design: .monospaced))
-                                    .padding(.horizontal, 12)
-                                    .padding(.vertical, 8)
-                                    .background(
-                                        RoundedRectangle(cornerRadius: 8)
-                                            .fill(theme.inputBackground)
-                                            .overlay(
-                                                RoundedRectangle(cornerRadius: 8)
-                                                    .stroke(theme.inputBorder, lineWidth: 1)
-                                            )
-                                    )
-                                    .foregroundColor(theme.primaryText)
+                                ZStack(alignment: .leading) {
+                                    if tempAllowedOrigins.isEmpty {
+                                        Text("https://example.com, https://app.localhost")
+                                            .font(.system(size: 13, design: .monospaced))
+                                            .foregroundColor(theme.secondaryText)
+                                            .padding(.leading, 12)
+                                            .allowsHitTesting(false)
+                                    }
+                                    TextField("", text: $tempAllowedOrigins)
+                                        .textFieldStyle(.plain)
+                                        .font(.system(size: 13, design: .monospaced))
+                                        .padding(.horizontal, 12)
+                                        .padding(.vertical, 8)
+                                        .foregroundColor(theme.primaryText)
+                                }
+                                .background(
+                                    RoundedRectangle(cornerRadius: 8)
+                                        .fill(theme.inputBackground)
+                                        .overlay(
+                                            RoundedRectangle(cornerRadius: 8)
+                                                .stroke(theme.inputBorder, lineWidth: 1)
+                                        )
+                                )
                             }
                         }
                     }
@@ -408,20 +427,30 @@ struct ConfigurationView: View {
                     .lineLimit(1)
             }
 
-            TextField(placeholder, text: text)
-                .textFieldStyle(.plain)
-                .font(.system(size: 13, design: .monospaced))
-                .padding(.horizontal, 12)
-                .padding(.vertical, 8)
-                .background(
-                    RoundedRectangle(cornerRadius: 8)
-                        .fill(theme.inputBackground)
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 8)
-                                .stroke(theme.inputBorder, lineWidth: 1)
-                        )
-                )
-                .foregroundColor(theme.primaryText)
+            ZStack(alignment: .leading) {
+                // Custom placeholder for better visibility in light mode
+                if text.wrappedValue.isEmpty && !placeholder.isEmpty {
+                    Text(placeholder)
+                        .font(.system(size: 13, design: .monospaced))
+                        .foregroundColor(theme.secondaryText)
+                        .padding(.leading, 12)
+                        .allowsHitTesting(false)
+                }
+                TextField("", text: text)
+                    .textFieldStyle(.plain)
+                    .font(.system(size: 13, design: .monospaced))
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
+                    .foregroundColor(theme.primaryText)
+            }
+            .background(
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(theme.inputBackground)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 8)
+                            .stroke(theme.inputBorder, lineWidth: 1)
+                    )
+            )
         }
     }
 

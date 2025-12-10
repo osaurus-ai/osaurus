@@ -20,6 +20,7 @@ struct ChatEmptyState: View {
     @State private var hasAppeared = false
     @State private var isVisible = false
     @Environment(\.theme) private var theme
+    @Environment(\.colorScheme) private var colorScheme
 
     private let quickActions = [
         QuickAction(icon: "lightbulb", text: "Explain a concept", prompt: "Explain "),
@@ -275,13 +276,13 @@ struct ChatEmptyState: View {
 
             Text("Using \(displayModelName(model))")
                 .font(.system(size: 12))
-                .foregroundColor(theme.tertiaryText)
+                .foregroundColor(theme.secondaryText)
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 6)
         .background(
             Capsule()
-                .fill(theme.secondaryBackground.opacity(0.5))
+                .fill(theme.secondaryBackground.opacity(colorScheme == .dark ? 0.5 : 0.8))
         )
     }
 
@@ -343,6 +344,7 @@ private struct QuickActionButton: View {
 
     @State private var isHovered = false
     @Environment(\.theme) private var theme
+    @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
         Button(action: { onTap(action.prompt) }) {
@@ -368,11 +370,17 @@ private struct QuickActionButton: View {
             .padding(.vertical, 14)
             .background(
                 RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .fill(isHovered ? theme.secondaryBackground : theme.secondaryBackground.opacity(0.5))
+                    .fill(
+                        isHovered
+                            ? theme.secondaryBackground
+                            : theme.secondaryBackground.opacity(colorScheme == .dark ? 0.5 : 0.8)
+                    )
                     .overlay(
                         RoundedRectangle(cornerRadius: 12, style: .continuous)
                             .strokeBorder(
-                                isHovered ? theme.primaryBorder : theme.primaryBorder.opacity(0.3),
+                                isHovered
+                                    ? theme.primaryBorder
+                                    : theme.primaryBorder.opacity(colorScheme == .dark ? 0.3 : 0.5),
                                 lineWidth: 1
                             )
                     )
@@ -397,6 +405,7 @@ private struct SuggestedModelCard: View {
 
     @State private var isHovered = false
     @Environment(\.theme) private var theme
+    @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
         Button(action: onDownload) {
@@ -475,11 +484,13 @@ private struct SuggestedModelCard: View {
             .padding(16)
             .background(
                 RoundedRectangle(cornerRadius: 16, style: .continuous)
-                    .fill(theme.secondaryBackground.opacity(isHovered ? 0.8 : 0.5))
+                    .fill(theme.secondaryBackground.opacity(isHovered ? 0.8 : (colorScheme == .dark ? 0.5 : 0.8)))
                     .overlay(
                         RoundedRectangle(cornerRadius: 16, style: .continuous)
                             .strokeBorder(
-                                isHovered ? Color.accentColor.opacity(0.3) : theme.primaryBorder.opacity(0.3),
+                                isHovered
+                                    ? Color.accentColor.opacity(0.3)
+                                    : theme.primaryBorder.opacity(colorScheme == .dark ? 0.3 : 0.5),
                                 lineWidth: 1
                             )
                     )
