@@ -82,7 +82,7 @@ struct ToolPermissionView: View {
                 if !description.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                     Text(description)
                         .font(.system(size: 13, weight: .regular))
-                        .foregroundColor(theme.secondaryText)
+                        .foregroundColor(theme.primaryText.opacity(0.8))
                         .multilineTextAlignment(.center)
                         .lineSpacing(2)
                         .padding(.top, 12)
@@ -214,7 +214,7 @@ struct ToolPermissionView: View {
             VStack(spacing: 6) {
                 Text("APPROVE ACTION")
                     .font(.system(size: 10, weight: .semibold, design: .rounded))
-                    .foregroundColor(theme.tertiaryText)
+                    .foregroundColor(theme.secondaryText)
                     .tracking(1.5)
 
                 Text(toolName)
@@ -335,25 +335,7 @@ struct ToolPermissionView: View {
             }
 
             // Always Allow button (tertiary)
-            Button(action: { showAlwaysAllowConfirm = true }) {
-                HStack(spacing: 4) {
-                    Image(systemName: "checkmark.circle")
-                        .font(.system(size: 11, weight: .medium))
-                    Text("Always Allow")
-                        .font(.system(size: 12, weight: .medium))
-                }
-                .foregroundColor(theme.secondaryText)
-                .padding(.vertical, 4)
-            }
-            .buttonStyle(PlainButtonStyle())
-            .opacity(0.8)
-            .onHover { hovering in
-                if hovering {
-                    NSCursor.pointingHand.push()
-                } else {
-                    NSCursor.pop()
-                }
-            }
+            AlwaysAllowButton(theme: theme, action: { showAlwaysAllowConfirm = true })
         }
     }
 
@@ -388,14 +370,9 @@ private struct PermissionButton: View {
     @State private var isPressed = false
     @State private var isHovering = false
 
-    // Softer color for secondary (deny) button
+    // Color for button text - full opacity for better visibility
     private var displayColor: Color {
-        if isPrimary {
-            return color
-        } else {
-            // Muted version of the color for a calmer appearance
-            return color.opacity(0.75)
-        }
+        return color
     }
 
     var body: some View {
@@ -443,14 +420,14 @@ private struct PermissionButton: View {
                                     )
                             )
                     } else {
-                        // Subtle tinted background for deny button
+                        // Visible tinted background for deny button
                         RoundedRectangle(cornerRadius: 12)
-                            .fill(color.opacity(isHovering ? 0.12 : 0.08))
+                            .fill(color.opacity(isHovering ? 0.18 : 0.12))
                             .overlay(
                                 RoundedRectangle(cornerRadius: 12)
                                     .stroke(
-                                        color.opacity(isPressed ? 0.4 : (isHovering ? 0.3 : 0.2)),
-                                        lineWidth: 1
+                                        color.opacity(isPressed ? 0.6 : (isHovering ? 0.5 : 0.4)),
+                                        lineWidth: 1.5
                                     )
                             )
                     }
@@ -504,6 +481,44 @@ private struct KeyboardShortcutBadge: View {
                 Capsule()
                     .fill(isPrimary ? Color.white.opacity(0.15) : color.opacity(0.1))
             )
+    }
+}
+
+// MARK: - Always Allow Button
+
+private struct AlwaysAllowButton: View {
+    let theme: ThemeProtocol
+    let action: () -> Void
+
+    @State private var isHovered = false
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 4) {
+                Image(systemName: "checkmark.circle")
+                    .font(.system(size: 11, weight: .medium))
+                Text("Always Allow")
+                    .font(.system(size: 12, weight: .medium))
+            }
+            .foregroundColor(isHovered ? theme.primaryText : theme.secondaryText)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 6)
+            .background(
+                Capsule()
+                    .fill(theme.secondaryBackground.opacity(isHovered ? 0.8 : 0.5))
+            )
+        }
+        .buttonStyle(PlainButtonStyle())
+        .onHover { hovering in
+            withAnimation(.easeInOut(duration: 0.1)) {
+                isHovered = hovering
+            }
+            if hovering {
+                NSCursor.pointingHand.push()
+            } else {
+                NSCursor.pop()
+            }
+        }
     }
 }
 
