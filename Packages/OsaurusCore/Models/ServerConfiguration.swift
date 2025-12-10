@@ -7,6 +7,21 @@
 
 import Foundation
 
+/// Appearance mode setting for the app
+public enum AppearanceMode: String, Codable, CaseIterable, Sendable {
+    case system = "system"
+    case light = "light"
+    case dark = "dark"
+
+    public var displayName: String {
+        switch self {
+        case .system: return "System"
+        case .light: return "Light"
+        case .dark: return "Dark"
+        }
+    }
+}
+
 /// Configuration settings for the server
 public struct ServerConfiguration: Codable, Equatable, Sendable {
     /// Server port (1-65535)
@@ -17,6 +32,9 @@ public struct ServerConfiguration: Codable, Equatable, Sendable {
 
     /// Start Osaurus automatically at login
     public var startAtLogin: Bool
+
+    /// Appearance mode (system, light, or dark)
+    public var appearanceMode: AppearanceMode
 
     /// Number of threads for the event loop group
     public let numberOfThreads: Int
@@ -45,6 +63,7 @@ public struct ServerConfiguration: Codable, Equatable, Sendable {
         case port
         case exposeToNetwork
         case startAtLogin
+        case appearanceMode
         case numberOfThreads
         case backlog
         case genTopP
@@ -64,6 +83,8 @@ public struct ServerConfiguration: Codable, Equatable, Sendable {
             try container.decodeIfPresent(Bool.self, forKey: .exposeToNetwork) ?? defaults.exposeToNetwork
         self.startAtLogin =
             try container.decodeIfPresent(Bool.self, forKey: .startAtLogin) ?? defaults.startAtLogin
+        self.appearanceMode =
+            try container.decodeIfPresent(AppearanceMode.self, forKey: .appearanceMode) ?? defaults.appearanceMode
         self.numberOfThreads =
             try container.decodeIfPresent(Int.self, forKey: .numberOfThreads) ?? defaults.numberOfThreads
         self.backlog = try container.decodeIfPresent(Int32.self, forKey: .backlog) ?? defaults.backlog
@@ -87,6 +108,7 @@ public struct ServerConfiguration: Codable, Equatable, Sendable {
         port: Int,
         exposeToNetwork: Bool,
         startAtLogin: Bool,
+        appearanceMode: AppearanceMode = .system,
         numberOfThreads: Int,
         backlog: Int32,
         genTopP: Float,
@@ -100,6 +122,7 @@ public struct ServerConfiguration: Codable, Equatable, Sendable {
         self.port = port
         self.exposeToNetwork = exposeToNetwork
         self.startAtLogin = startAtLogin
+        self.appearanceMode = appearanceMode
         self.numberOfThreads = numberOfThreads
         self.backlog = backlog
         self.genTopP = genTopP
@@ -117,6 +140,7 @@ public struct ServerConfiguration: Codable, Equatable, Sendable {
             port: 1337,
             exposeToNetwork: false,  // Default to false (localhost)
             startAtLogin: false,
+            appearanceMode: .system,  // Default to system appearance
             numberOfThreads: ProcessInfo.processInfo.activeProcessorCount,
             backlog: 256,
             genTopP: 1.0,

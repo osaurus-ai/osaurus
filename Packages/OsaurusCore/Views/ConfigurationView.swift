@@ -25,6 +25,9 @@ struct ConfigurationView: View {
     // Server settings state
     @State private var tempAllowedOrigins: String = ""
 
+    // Appearance settings state
+    @State private var tempAppearanceMode: AppearanceMode = .system
+
     // Performance settings state
     @State private var tempTopP: String = ""
     @State private var tempKVBits: String = ""
@@ -169,6 +172,12 @@ struct ConfigurationView: View {
                     // MARK: - System Section
                     SettingsSection(title: "System", icon: "gear") {
                         VStack(alignment: .leading, spacing: 20) {
+                            // Appearance Mode
+                            AppearanceModePicker(selection: $tempAppearanceMode)
+
+                            Divider()
+                                .background(theme.primaryBorder)
+
                             // Start at Login
                             SettingsToggle(
                                 title: "Start at Login",
@@ -423,6 +432,7 @@ struct ConfigurationView: View {
         tempPortString = String(configuration.port)
         tempExposeToNetwork = configuration.exposeToNetwork
         tempStartAtLogin = configuration.startAtLogin
+        tempAppearanceMode = configuration.appearanceMode
 
         let chat = ChatConfigurationStore.load()
         tempChatHotkey = chat.hotkey
@@ -459,6 +469,7 @@ struct ConfigurationView: View {
         tempPortString = String(serverDefaults.port)
         tempExposeToNetwork = serverDefaults.exposeToNetwork
         tempStartAtLogin = serverDefaults.startAtLogin
+        tempAppearanceMode = serverDefaults.appearanceMode
         tempAllowedOrigins = ""
 
         // Chat settings - clear overrides to use defaults
@@ -497,6 +508,7 @@ struct ConfigurationView: View {
         configuration.port = port
         configuration.exposeToNetwork = tempExposeToNetwork
         configuration.startAtLogin = tempStartAtLogin
+        configuration.appearanceMode = tempAppearanceMode
 
         // Save performance settings
         let defaults = ServerConfiguration.default
@@ -585,6 +597,9 @@ struct ConfigurationView: View {
 
         // Apply login item state
         LoginItemService.shared.applyStartAtLogin(configuration.startAtLogin)
+
+        // Apply appearance mode
+        ThemeManager.shared.setAppearanceMode(configuration.appearanceMode)
 
         // Restart server to apply changes
         Task { @MainActor in
@@ -879,6 +894,75 @@ private struct SystemPermissionsSection: View {
         .onDisappear {
             permissionService.stopPeriodicRefresh()
         }
+    }
+}
+
+// MARK: - Appearance Mode Picker
+
+private struct AppearanceModePicker: View {
+    @Environment(\.theme) private var theme
+    @Binding var selection: AppearanceMode
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Appearance")
+                .font(.system(size: 12, weight: .medium))
+                .foregroundColor(theme.secondaryText)
+
+            HStack(spacing: 8) {
+                ForEach(AppearanceMode.allCases, id: \.rawValue) { mode in
+                    AppearanceModeButton(
+                        mode: mode,
+                        isSelected: selection == mode,
+                        action: { selection = mode }
+                    )
+                }
+            }
+
+            Text("Choose how Osaurus appears. System follows your Mac's appearance.")
+                .font(.system(size: 11))
+                .foregroundColor(theme.tertiaryText)
+        }
+    }
+}
+
+// MARK: - Appearance Mode Button
+
+private struct AppearanceModeButton: View {
+    @Environment(\.theme) private var theme
+    let mode: AppearanceMode
+    let isSelected: Bool
+    let action: () -> Void
+
+    private var iconName: String {
+        switch mode {
+        case .system: return "circle.lefthalf.filled"
+        case .light: return "sun.max.fill"
+        case .dark: return "moon.fill"
+        }
+    }
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 6) {
+                Image(systemName: iconName)
+                    .font(.system(size: 12, weight: .medium))
+                Text(mode.displayName)
+                    .font(.system(size: 13, weight: .medium))
+            }
+            .foregroundColor(isSelected ? .white : theme.primaryText)
+            .padding(.horizontal, 14)
+            .padding(.vertical, 8)
+            .background(
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(isSelected ? theme.accentColor : theme.tertiaryBackground)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 8)
+                            .stroke(isSelected ? theme.accentColor : theme.inputBorder, lineWidth: 1)
+                    )
+            )
+        }
+        .buttonStyle(PlainButtonStyle())
     }
 }
 

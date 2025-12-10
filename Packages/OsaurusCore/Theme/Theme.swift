@@ -209,10 +209,15 @@ class ThemeManager: ObservableObject {
     static let shared = ThemeManager()
 
     @Published var currentTheme: ThemeProtocol
+    @Published private(set) var appearanceMode: AppearanceMode = .system
 
     private init() {
-        // Initialize currentTheme from system appearance
-        currentTheme = (NSApp.effectiveAppearance.name == .darkAqua) ? DarkTheme() : LightTheme()
+        // Load saved appearance mode
+        let config = ServerConfigurationStore.load() ?? ServerConfiguration.default
+        appearanceMode = config.appearanceMode
+
+        // Initialize currentTheme based on appearance mode
+        currentTheme = Self.resolveTheme(for: config.appearanceMode)
 
         // Observe system appearance changes (Distributed Notification)
         DistributedNotificationCenter.default().addObserver(
@@ -223,10 +228,32 @@ class ThemeManager: ObservableObject {
         )
     }
 
-    @objc private func systemAppearanceChanged() {
-        let useDark = NSApp.effectiveAppearance.name == .darkAqua
+    /// Update the appearance mode and apply the theme
+    func setAppearanceMode(_ mode: AppearanceMode) {
+        appearanceMode = mode
         withAnimation(.easeInOut(duration: 0.3)) {
-            currentTheme = useDark ? DarkTheme() : LightTheme()
+            currentTheme = Self.resolveTheme(for: mode)
+        }
+    }
+
+    /// Resolve the theme based on appearance mode
+    private static func resolveTheme(for mode: AppearanceMode) -> ThemeProtocol {
+        switch mode {
+        case .system:
+            return (NSApp.effectiveAppearance.name == .darkAqua) ? DarkTheme() : LightTheme()
+        case .light:
+            return LightTheme()
+        case .dark:
+            return DarkTheme()
+        }
+    }
+
+    @objc private func systemAppearanceChanged() {
+        // Only update if we're following system appearance
+        guard appearanceMode == .system else { return }
+
+        withAnimation(.easeInOut(duration: 0.3)) {
+            currentTheme = Self.resolveTheme(for: .system)
         }
     }
 }
