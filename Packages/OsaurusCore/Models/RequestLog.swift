@@ -1,8 +1,8 @@
 //
-//  InferenceLog.swift
+//  RequestLog.swift
 //  osaurus
 //
-//  Model for in-memory inference logging used by InsightsService.
+//  Model for in-memory request/response logging used by InsightsService.
 //
 
 import Foundation
@@ -33,56 +33,84 @@ struct ToolCallLog: Identifiable, Sendable {
     }
 }
 
-/// Source of the inference request
-enum InferenceSource: String, Sendable {
+/// Source of the request
+enum RequestSource: String, Sendable, CaseIterable {
     case chatUI = "Chat UI"
     case httpAPI = "HTTP API"
-    case sdk = "SDK"
+    case serverTest = "Test"
 }
 
-/// Represents a single inference log entry
-struct InferenceLog: Identifiable, Sendable {
+/// Represents a single request log entry with optional inference data
+struct RequestLog: Identifiable, Sendable {
     let id: UUID
     let timestamp: Date
-    let source: InferenceSource
-    let model: String
-    let inputTokens: Int  // Estimated from prompt
-    let outputTokens: Int  // Count of generated tokens
+    let source: RequestSource
+
+    // HTTP request/response fields
+    let method: String
+    let path: String
+    let statusCode: Int
     let durationMs: Double
-    let tokensPerSecond: Double  // Output tokens / duration
-    let temperature: Float
-    let maxTokens: Int
+    let requestBody: String?
+    let responseBody: String?
+    let userAgent: String?
+
+    // Optional inference fields (only for chat endpoints)
+    let model: String?
+    let inputTokens: Int?
+    let outputTokens: Int?
+    let tokensPerSecond: Double?
+    let temperature: Float?
+    let maxTokens: Int?
     let toolCalls: [ToolCallLog]?
-    let finishReason: FinishReason
+    let finishReason: FinishReason?
     let errorMessage: String?
 
     init(
         id: UUID = UUID(),
         timestamp: Date = Date(),
-        source: InferenceSource,
-        model: String,
-        inputTokens: Int,
-        outputTokens: Int,
+        source: RequestSource,
+        method: String,
+        path: String,
+        statusCode: Int,
         durationMs: Double,
-        temperature: Float,
-        maxTokens: Int,
+        requestBody: String? = nil,
+        responseBody: String? = nil,
+        userAgent: String? = nil,
+        model: String? = nil,
+        inputTokens: Int? = nil,
+        outputTokens: Int? = nil,
+        temperature: Float? = nil,
+        maxTokens: Int? = nil,
         toolCalls: [ToolCallLog]? = nil,
-        finishReason: FinishReason = .stop,
+        finishReason: FinishReason? = nil,
         errorMessage: String? = nil
     ) {
         self.id = id
         self.timestamp = timestamp
         self.source = source
+        self.method = method
+        self.path = path
+        self.statusCode = statusCode
+        self.durationMs = durationMs
+        self.requestBody = requestBody
+        self.responseBody = responseBody
+        self.userAgent = userAgent
         self.model = model
         self.inputTokens = inputTokens
         self.outputTokens = outputTokens
-        self.durationMs = durationMs
-        self.tokensPerSecond = durationMs > 0 ? Double(outputTokens) / (durationMs / 1000.0) : 0
         self.temperature = temperature
         self.maxTokens = maxTokens
         self.toolCalls = toolCalls
         self.finishReason = finishReason
         self.errorMessage = errorMessage
+
+        // Calculate tokens per second if we have inference data
+        if let outputTokens = outputTokens, durationMs > 0 {
+            self.tokensPerSecond = Double(outputTokens) / (durationMs / 1000.0)
+        } else {
+            self.tokensPerSecond = nil
+        }
     }
 
     enum FinishReason: String, Sendable {
@@ -91,6 +119,23 @@ struct InferenceLog: Identifiable, Sendable {
         case toolCalls = "tool_calls"
         case error = "error"
         case cancelled = "cancelled"
+    }
+
+    // MARK: - Computed Properties
+
+    /// Whether this is an inference request (chat endpoint)
+    var isInference: Bool {
+        path.contains("chat")
+    }
+
+    /// Whether the request was successful (2xx status)
+    var isSuccess: Bool {
+        statusCode >= 200 && statusCode < 300
+    }
+
+    /// Is this an error state?
+    var isError: Bool {
+        !isSuccess || finishReason == .error || errorMessage != nil
     }
 
     /// Formatted timestamp for display
@@ -111,14 +156,15 @@ struct InferenceLog: Identifiable, Sendable {
 
     /// Formatted tokens per second
     var formattedSpeed: String {
-        if tokensPerSecond > 0 {
-            return String(format: "%.1f tok/s", tokensPerSecond)
+        if let speed = tokensPerSecond, speed > 0 {
+            return String(format: "%.1f tok/s", speed)
         }
         return "-"
     }
 
     /// Short model name for display
     var shortModelName: String {
+        guard let model = model else { return "-" }
         if model.lowercased() == "foundation" { return "Foundation" }
         if let lastPart = model.split(separator: "/").last {
             return String(lastPart)
@@ -126,9 +172,46 @@ struct InferenceLog: Identifiable, Sendable {
         return model
     }
 
-    /// Is this an error state?
-    var isError: Bool {
-        finishReason == .error || errorMessage != nil
+    /// Truncated request body for display (max 500 chars)
+    var truncatedRequestBody: String? {
+        guard let body = requestBody else { return nil }
+        if body.count > 500 {
+            return String(body.prefix(500)) + "..."
+        }
+        return body
+    }
+
+    /// Truncated response body for display (max 1000 chars)
+    var truncatedResponseBody: String? {
+        guard let body = responseBody else { return nil }
+        if body.count > 1000 {
+            return String(body.prefix(1000)) + "..."
+        }
+        return body
+    }
+
+    /// Pretty-printed request body if JSON
+    var formattedRequestBody: String? {
+        guard let body = requestBody, let data = body.data(using: .utf8) else { return requestBody }
+        if let json = try? JSONSerialization.jsonObject(with: data, options: []),
+            let prettyData = try? JSONSerialization.data(withJSONObject: json, options: [.prettyPrinted, .sortedKeys]),
+            let prettyString = String(data: prettyData, encoding: .utf8)
+        {
+            return prettyString
+        }
+        return body
+    }
+
+    /// Pretty-printed response body if JSON
+    var formattedResponseBody: String? {
+        guard let body = responseBody, let data = body.data(using: .utf8) else { return responseBody }
+        if let json = try? JSONSerialization.jsonObject(with: data, options: []),
+            let prettyData = try? JSONSerialization.data(withJSONObject: json, options: [.prettyPrinted, .sortedKeys]),
+            let prettyString = String(data: prettyData, encoding: .utf8)
+        {
+            return prettyString
+        }
+        return body
     }
 }
 
@@ -136,7 +219,7 @@ struct InferenceLog: Identifiable, Sendable {
 struct PendingInference: Sendable {
     let id: UUID
     let startTime: Date
-    let source: InferenceSource
+    let source: RequestSource
     let model: String
     let inputTokens: Int
     let temperature: Float
@@ -145,7 +228,7 @@ struct PendingInference: Sendable {
     init(
         id: UUID = UUID(),
         startTime: Date = Date(),
-        source: InferenceSource,
+        source: RequestSource,
         model: String,
         inputTokens: Int,
         temperature: Float,
@@ -161,6 +244,7 @@ struct PendingInference: Sendable {
     }
 }
 
-// MARK: - Legacy aliases for HTTP logging compatibility
+// MARK: - Legacy type alias for backward compatibility
 
-typealias RequestLog = InferenceLog
+typealias InferenceLog = RequestLog
+typealias InferenceSource = RequestSource

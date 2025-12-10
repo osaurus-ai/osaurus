@@ -114,6 +114,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     path: path,
                     userAgent: userAgent,
                     requestBody: nil,
+                    responseBody: "",
                     responseStatus: 204,
                     startTime: startTime
                 )
@@ -122,18 +123,20 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             else if head.method == .GET, path == "/" {
                 var headers = [("Content-Type", "text/plain; charset=utf-8")]
                 headers.append(contentsOf: stateRef.value.corsHeaders)
+                let rootBody = "Osaurus Server is running! 🦕"
                 sendResponse(
                     context: context,
                     version: head.version,
                     status: .ok,
                     headers: headers,
-                    body: "Osaurus Server is running! 🦕"
+                    body: rootBody
                 )
                 logRequest(
                     method: method,
                     path: path,
                     userAgent: userAgent,
                     requestBody: nil,
+                    responseBody: rootBody,
                     responseStatus: 200,
                     startTime: startTime
                 )
@@ -142,19 +145,20 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 let data = try? JSONSerialization.data(withJSONObject: obj)
                 var headers = [("Content-Type", "application/json; charset=utf-8")]
                 headers.append(contentsOf: stateRef.value.corsHeaders)
-                let body = data.flatMap { String(decoding: $0, as: UTF8.self) } ?? "{}"
+                let healthBody = data.flatMap { String(decoding: $0, as: UTF8.self) } ?? "{}"
                 sendResponse(
                     context: context,
                     version: head.version,
                     status: .ok,
                     headers: headers,
-                    body: body
+                    body: healthBody
                 )
                 logRequest(
                     method: method,
                     path: path,
                     userAgent: userAgent,
                     requestBody: nil,
+                    responseBody: healthBody,
                     responseStatus: 200,
                     startTime: startTime
                 )
@@ -169,19 +173,20 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             } else if head.method == .GET, path == "/mcp/health" {
                 var headers = [("Content-Type", "application/json; charset=utf-8")]
                 headers.append(contentsOf: stateRef.value.corsHeaders)
-                let body = #"{"status":"ok"}"#
+                let mcpHealthBody = #"{"status":"ok"}"#
                 sendResponse(
                     context: context,
                     version: head.version,
                     status: .ok,
                     headers: headers,
-                    body: body
+                    body: mcpHealthBody
                 )
                 logRequest(
                     method: method,
                     path: path,
                     userAgent: userAgent,
                     requestBody: nil,
+                    responseBody: mcpHealthBody,
                     responseStatus: 200,
                     startTime: startTime
                 )
@@ -192,18 +197,20 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             } else {
                 var headers = [("Content-Type", "text/plain; charset=utf-8")]
                 headers.append(contentsOf: stateRef.value.corsHeaders)
+                let notFoundBody = "Not Found"
                 sendResponse(
                     context: context,
                     version: head.version,
                     status: .notFound,
                     headers: headers,
-                    body: "Not Found"
+                    body: notFoundBody
                 )
                 logRequest(
                     method: method,
                     path: path,
                     userAgent: userAgent,
                     requestBody: nil,
+                    responseBody: notFoundBody,
                     responseStatus: 404,
                     startTime: startTime
                 )
@@ -783,6 +790,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 path: "/models",
                 userAgent: logUserAgent,
                 requestBody: nil,
+                responseBody: json,
                 responseStatus: 200,
                 startTime: logStartTime
             )
@@ -885,6 +893,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 path: "/tags",
                 userAgent: logUserAgent,
                 requestBody: nil,
+                responseBody: json,
                 responseStatus: 200,
                 startTime: logStartTime
             )
@@ -924,7 +933,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             }
             let payload: [String: Any] = ["tools": tools]
             let data = (try? JSONSerialization.data(withJSONObject: payload)) ?? Data("{}".utf8)
-            let body = String(decoding: data, as: UTF8.self)
+            let mcpToolsBody = String(decoding: data, as: UTF8.self)
             hop {
                 var headers = [("Content-Type", "application/json; charset=utf-8")]
                 headers.append(contentsOf: cors)
@@ -933,7 +942,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     version: head.version,
                     status: .ok,
                     headers: headers,
-                    body: body
+                    body: mcpToolsBody
                 )
             }
             logSelf.logRequest(
@@ -941,6 +950,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 path: "/mcp/tools",
                 userAgent: logUserAgent,
                 requestBody: nil,
+                responseBody: mcpToolsBody,
                 responseStatus: 200,
                 startTime: logStartTime
             )
@@ -1179,6 +1189,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         path: String,
         userAgent: String?,
         requestBody: String?,
+        responseBody: String? = nil,
         responseStatus: Int,
         startTime: Date,
         model: String? = nil,
@@ -1193,6 +1204,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             path: path,
             userAgent: userAgent,
             requestBody: requestBody,
+            responseBody: responseBody,
             responseStatus: responseStatus,
             durationMs: durationMs,
             model: model,

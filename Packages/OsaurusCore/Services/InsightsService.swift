@@ -2,7 +2,7 @@
 //  InsightsService.swift
 //  osaurus
 //
-//  In-memory inference logging service for debugging and analytics.
+//  In-memory request/response logging service for debugging and analytics.
 //  Uses a ring buffer to limit memory usage.
 //
 
@@ -20,29 +20,33 @@ final class InsightsService: ObservableObject {
 
     // MARK: - Published State
 
-    /// All logged inferences (most recent first)
-    @Published private(set) var logs: [InferenceLog] = []
+    /// All logged requests (most recent first)
+    @Published private(set) var logs: [RequestLog] = []
 
-    /// Total inference count (may exceed logs.count due to ring buffer)
-    @Published private(set) var totalInferenceCount: Int = 0
+    /// Total request count (may exceed logs.count due to ring buffer)
+    @Published private(set) var totalRequestCount: Int = 0
 
-    /// Active filter for model name
-    @Published var modelFilter: String = ""
+    /// Active filter for path/model search
+    @Published var searchFilter: String = ""
 
     /// Active filter for source
     @Published var sourceFilter: SourceFilter = .all
 
+    /// Active filter for HTTP method
+    @Published var methodFilter: MethodFilter = .all
+
     // MARK: - Computed Properties
 
     /// Filtered logs based on current filter settings
-    var filteredLogs: [InferenceLog] {
+    var filteredLogs: [RequestLog] {
         logs.filter { log in
-            // Model filter
-            if !modelFilter.isEmpty {
-                let searchLower = modelFilter.lowercased()
-                if !log.model.lowercased().contains(searchLower)
-                    && !log.shortModelName.lowercased().contains(searchLower)
-                {
+            // Search filter (path or model)
+            if !searchFilter.isEmpty {
+                let searchLower = searchFilter.lowercased()
+                let matchesPath = log.path.lowercased().contains(searchLower)
+                let matchesModel = log.model?.lowercased().contains(searchLower) ?? false
+                let matchesShortModel = log.shortModelName.lowercased().contains(searchLower)
+                if !matchesPath && !matchesModel && !matchesShortModel {
                     return false
                 }
             }
@@ -50,33 +54,55 @@ final class InsightsService: ObservableObject {
             // Source filter
             switch sourceFilter {
             case .all:
-                return true
+                break
             case .chatUI:
-                return log.source == .chatUI
+                if log.source != .chatUI { return false }
             case .httpAPI:
-                return log.source == .httpAPI
-            case .sdk:
-                return log.source == .sdk
+                if log.source != .httpAPI { return false }
+            case .serverTest:
+                if log.source != .serverTest { return false }
             }
+
+            // Method filter
+            switch methodFilter {
+            case .all:
+                break
+            case .get:
+                if log.method != "GET" { return false }
+            case .post:
+                if log.method != "POST" { return false }
+            }
+
+            return true
         }
     }
 
     /// Summary statistics
     var stats: InsightsStats {
         let total = logs.count
-        let totalInputTokens = logs.reduce(0) { $0 + $1.inputTokens }
-        let totalOutputTokens = logs.reduce(0) { $0 + $1.outputTokens }
+        let successCount = logs.filter { $0.isSuccess }.count
+        let successRate = total > 0 ? Double(successCount) / Double(total) * 100 : 0
         let errors = logs.filter { $0.isError }.count
-        let avgSpeed = logs.isEmpty ? 0 : logs.map(\.tokensPerSecond).reduce(0, +) / Double(logs.count)
         let avgDuration = logs.isEmpty ? 0 : logs.map(\.durationMs).reduce(0, +) / Double(logs.count)
 
+        // Inference-specific stats (only from chat requests)
+        let inferenceLogs = logs.filter { $0.isInference }
+        let totalInputTokens = inferenceLogs.reduce(0) { $0 + ($1.inputTokens ?? 0) }
+        let totalOutputTokens = inferenceLogs.reduce(0) { $0 + ($1.outputTokens ?? 0) }
+        let avgSpeed: Double = {
+            let speeds = inferenceLogs.compactMap { $0.tokensPerSecond }
+            return speeds.isEmpty ? 0 : speeds.reduce(0, +) / Double(speeds.count)
+        }()
+
         return InsightsStats(
-            totalInferences: total,
+            totalRequests: total,
+            successRate: successRate,
+            errorCount: errors,
+            averageDurationMs: avgDuration,
+            inferenceCount: inferenceLogs.count,
             totalInputTokens: totalInputTokens,
             totalOutputTokens: totalOutputTokens,
-            errorCount: errors,
-            averageSpeed: avgSpeed,
-            averageDurationMs: avgDuration
+            averageSpeed: avgSpeed
         )
     }
 
@@ -86,11 +112,11 @@ final class InsightsService: ObservableObject {
 
     // MARK: - Logging Methods
 
-    /// Log a completed inference
-    func log(_ inference: InferenceLog) {
+    /// Log a completed request
+    func log(_ request: RequestLog) {
         // Insert at beginning (most recent first)
-        logs.insert(inference, at: 0)
-        totalInferenceCount += 1
+        logs.insert(request, at: 0)
+        totalRequestCount += 1
 
         // Enforce ring buffer limit
         if logs.count > maxLogCount {
@@ -101,13 +127,14 @@ final class InsightsService: ObservableObject {
     /// Clear all logs
     func clear() {
         logs.removeAll()
-        totalInferenceCount = 0
+        totalRequestCount = 0
     }
 
     /// Clear filters
     func clearFilters() {
-        modelFilter = ""
+        searchFilter = ""
         sourceFilter = .all
+        methodFilter = .all
     }
 }
 
@@ -115,18 +142,32 @@ final class InsightsService: ObservableObject {
 
 enum SourceFilter: String, CaseIterable {
     case all = "All"
-    case chatUI = "Chat UI"
+    case chatUI = "Chat"
     case httpAPI = "HTTP"
-    case sdk = "SDK"
+    case serverTest = "Test"
+}
+
+enum MethodFilter: String, CaseIterable {
+    case all = "All"
+    case get = "GET"
+    case post = "POST"
 }
 
 struct InsightsStats {
-    let totalInferences: Int
+    let totalRequests: Int
+    let successRate: Double
+    let errorCount: Int
+    let averageDurationMs: Double
+
+    // Inference-specific stats
+    let inferenceCount: Int
     let totalInputTokens: Int
     let totalOutputTokens: Int
-    let errorCount: Int
     let averageSpeed: Double
-    let averageDurationMs: Double
+
+    var formattedSuccessRate: String {
+        String(format: "%.0f%%", successRate)
+    }
 
     var formattedAvgSpeed: String {
         if averageSpeed > 0 {
@@ -147,26 +188,38 @@ struct InsightsStats {
 // MARK: - Nonisolated Logging Interface
 
 extension InsightsService {
-    /// Thread-safe logging from non-main-actor contexts (e.g., ChatEngine)
-    nonisolated static func logInference(
-        source: InferenceSource,
-        model: String,
-        inputTokens: Int,
-        outputTokens: Int,
+    /// Thread-safe logging from non-main-actor contexts
+    nonisolated static func logRequest(
+        source: RequestSource,
+        method: String,
+        path: String,
+        statusCode: Int,
         durationMs: Double,
-        temperature: Float,
-        maxTokens: Int,
+        requestBody: String? = nil,
+        responseBody: String? = nil,
+        userAgent: String? = nil,
+        model: String? = nil,
+        inputTokens: Int? = nil,
+        outputTokens: Int? = nil,
+        temperature: Float? = nil,
+        maxTokens: Int? = nil,
         toolCalls: [ToolCallLog]? = nil,
-        finishReason: InferenceLog.FinishReason = .stop,
+        finishReason: RequestLog.FinishReason? = nil,
         errorMessage: String? = nil
     ) {
         Task { @MainActor in
-            let log = InferenceLog(
+            let log = RequestLog(
                 source: source,
+                method: method,
+                path: path,
+                statusCode: statusCode,
+                durationMs: durationMs,
+                requestBody: requestBody,
+                responseBody: responseBody,
+                userAgent: userAgent,
                 model: model,
                 inputTokens: inputTokens,
                 outputTokens: outputTokens,
-                durationMs: durationMs,
                 temperature: temperature,
                 maxTokens: maxTokens,
                 toolCalls: toolCalls,
@@ -177,13 +230,44 @@ extension InsightsService {
         }
     }
 
-    // Legacy compatibility - will be removed after HTTPHandler cleanup
+    /// Legacy compatibility for ChatEngine inference logging
+    nonisolated static func logInference(
+        source: RequestSource,
+        model: String,
+        inputTokens: Int,
+        outputTokens: Int,
+        durationMs: Double,
+        temperature: Float,
+        maxTokens: Int,
+        toolCalls: [ToolCallLog]? = nil,
+        finishReason: RequestLog.FinishReason = .stop,
+        errorMessage: String? = nil
+    ) {
+        logRequest(
+            source: source,
+            method: "POST",
+            path: "/chat/completions",
+            statusCode: errorMessage != nil ? 500 : 200,
+            durationMs: durationMs,
+            model: model,
+            inputTokens: inputTokens,
+            outputTokens: outputTokens,
+            temperature: temperature,
+            maxTokens: maxTokens,
+            toolCalls: toolCalls,
+            finishReason: finishReason,
+            errorMessage: errorMessage
+        )
+    }
+
+    /// Legacy compatibility - logs all requests now
     nonisolated static func logAsync(
         method: String,
         path: String,
         clientIP: String = "127.0.0.1",
         userAgent: String? = nil,
         requestBody: String? = nil,
+        responseBody: String? = nil,
         responseStatus: Int,
         durationMs: Double,
         model: String? = nil,
@@ -192,20 +276,24 @@ extension InsightsService {
         toolCalls: [ToolCallLog]? = nil,
         errorMessage: String? = nil
     ) {
-        // Only log inference-related requests
-        guard path.contains("chat") || method == "CHAT" else { return }
+        let source: RequestSource = method == "CHAT" ? .chatUI : .httpAPI
+        let finishReason: RequestLog.FinishReason? =
+            path.contains("chat") ? (errorMessage != nil ? .error : .stop) : nil
 
-        let source: InferenceSource = method == "CHAT" ? .chatUI : .httpAPI
-        let finishReason: InferenceLog.FinishReason = errorMessage != nil ? .error : .stop
-
-        logInference(
+        logRequest(
             source: source,
-            model: model ?? "unknown",
-            inputTokens: tokensInput ?? 0,
-            outputTokens: tokensOutput ?? 0,
+            method: method == "CHAT" ? "POST" : method,
+            path: path,
+            statusCode: responseStatus,
             durationMs: durationMs,
-            temperature: 0.7,
-            maxTokens: 1024,
+            requestBody: requestBody,
+            responseBody: responseBody,
+            userAgent: userAgent,
+            model: model,
+            inputTokens: tokensInput,
+            outputTokens: tokensOutput,
+            temperature: path.contains("chat") ? 0.7 : nil,
+            maxTokens: path.contains("chat") ? 1024 : nil,
             toolCalls: toolCalls,
             finishReason: finishReason,
             errorMessage: errorMessage
