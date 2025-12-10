@@ -14,8 +14,10 @@ struct ServerView: View {
     @Environment(\.theme) private var theme
 
     @State private var hasAppeared = false
-    @State private var testResponse: EndpointTestResult?
-    @State private var isTestingEndpoint = false
+    @State private var expandedEndpoint: String?
+    @State private var editablePayloads: [String: String] = [:]
+    @State private var endpointResponses: [String: EndpointTestResult] = [:]
+    @State private var loadingEndpoints: Set<String> = []
 
     var body: some View {
         VStack(spacing: 0) {
@@ -34,17 +36,12 @@ struct ServerView: View {
                     // API Endpoints Section
                     endpointsSection
 
-                    // Response Viewer
-                    if testResponse != nil {
-                        responseViewer
-                    }
-
                     // Documentation Link
                     documentationSection
                 }
                 .padding(.horizontal, 24)
                 .padding(.vertical, 24)
-                .frame(maxWidth: 800)
+                .frame(maxWidth: .infinity)
             }
             .opacity(hasAppeared ? 1 : 0)
         }
@@ -158,14 +155,53 @@ struct ServerView: View {
                 .font(.system(size: 12))
                 .foregroundColor(theme.secondaryText)
 
-            VStack(spacing: 8) {
-                ForEach(APIEndpoint.allEndpoints, id: \.path) { endpoint in
-                    EndpointRow(
-                        endpoint: endpoint,
-                        serverURL: serverURL,
-                        isServerRunning: server.isRunning,
-                        onTest: { testEndpoint(endpoint) }
-                    )
+            VStack(spacing: 16) {
+                ForEach(APIEndpoint.groupedEndpoints, id: \.category.rawValue) { group in
+                    VStack(alignment: .leading, spacing: 8) {
+                        // Category header
+                        HStack(spacing: 6) {
+                            Image(systemName: categoryIcon(group.category))
+                                .font(.system(size: 10, weight: .semibold))
+                                .foregroundColor(categoryColor(group.category))
+                            Text(group.category.rawValue)
+                                .font(.system(size: 11, weight: .semibold))
+                                .foregroundColor(theme.secondaryText)
+                        }
+                        .padding(.leading, 4)
+
+                        VStack(spacing: 2) {
+                            ForEach(group.endpoints, id: \.path) { endpoint in
+                                EndpointRow(
+                                    endpoint: endpoint,
+                                    serverURL: serverURL,
+                                    isServerRunning: server.isRunning,
+                                    isExpanded: expandedEndpoint == endpoint.path,
+                                    isLoading: loadingEndpoints.contains(endpoint.path),
+                                    editablePayload: binding(for: endpoint),
+                                    response: endpointResponses[endpoint.path],
+                                    onToggleExpand: {
+                                        withAnimation(.easeInOut(duration: 0.2)) {
+                                            if expandedEndpoint == endpoint.path {
+                                                expandedEndpoint = nil
+                                            } else {
+                                                expandedEndpoint = endpoint.path
+                                                // Initialize payload if not set
+                                                if editablePayloads[endpoint.path] == nil {
+                                                    editablePayloads[endpoint.path] = endpoint.examplePayload ?? "{}"
+                                                }
+                                            }
+                                        }
+                                    },
+                                    onTest: {
+                                        runEndpointTest(endpoint)
+                                    },
+                                    onClearResponse: {
+                                        endpointResponses[endpoint.path] = nil
+                                    }
+                                )
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -176,75 +212,20 @@ struct ServerView: View {
         )
     }
 
-    // MARK: - Response Viewer
-
-    private var responseViewer: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack {
-                Label("Response", systemImage: "doc.text")
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundColor(theme.primaryText)
-
-                Spacer()
-
-                if let result = testResponse {
-                    // Status code badge
-                    Text("\(result.statusCode)")
-                        .font(.system(size: 11, weight: .bold, design: .monospaced))
-                        .foregroundColor(result.isSuccess ? .white : .white)
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 4)
-                        .background(
-                            RoundedRectangle(cornerRadius: 4)
-                                .fill(result.isSuccess ? Color.green : Color.red)
-                        )
-
-                    // Duration
-                    Text(String(format: "%.0fms", result.duration * 1000))
-                        .font(.system(size: 11, design: .monospaced))
-                        .foregroundColor(theme.tertiaryText)
-                }
-
-                Button(action: copyResponse) {
-                    Image(systemName: "doc.on.doc")
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundColor(theme.secondaryText)
-                }
-                .buttonStyle(PlainButtonStyle())
-                .help("Copy response")
-
-                Button(action: { testResponse = nil }) {
-                    Image(systemName: "xmark")
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundColor(theme.secondaryText)
-                }
-                .buttonStyle(PlainButtonStyle())
-                .help("Close")
-            }
-
-            if let result = testResponse {
-                ScrollView {
-                    Text(result.formattedBody)
-                        .font(.system(size: 12, design: .monospaced))
-                        .foregroundColor(theme.primaryText)
-                        .textSelection(.enabled)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(12)
-                }
-                .frame(maxHeight: 300)
-                .background(
-                    RoundedRectangle(cornerRadius: 8)
-                        .fill(theme.codeBlockBackground)
-                )
-            }
+    private func categoryIcon(_ category: APIEndpoint.EndpointCategory) -> String {
+        switch category {
+        case .core: return "server.rack"
+        case .chat: return "bubble.left.and.bubble.right"
+        case .mcp: return "wrench.and.screwdriver"
         }
-        .padding(16)
-        .background(
-            RoundedRectangle(cornerRadius: 12)
-                .fill(theme.secondaryBackground)
-        )
-        .transition(.opacity.combined(with: .move(edge: .top)))
-        .animation(.easeInOut(duration: 0.2), value: testResponse != nil)
+    }
+
+    private func categoryColor(_ category: APIEndpoint.EndpointCategory) -> Color {
+        switch category {
+        case .core: return .blue
+        case .chat: return .green
+        case .mcp: return .purple
+        }
     }
 
     // MARK: - Documentation Section
@@ -296,53 +277,76 @@ struct ServerView: View {
         NSPasteboard.general.setString(serverURL, forType: .string)
     }
 
-    private func copyResponse() {
-        guard let result = testResponse else { return }
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(result.formattedBody, forType: .string)
-    }
-
     private func openDocumentation() {
         if let url = URL(string: "https://docs.osaurus.ai/") {
             NSWorkspace.shared.open(url)
         }
     }
 
-    private func testEndpoint(_ endpoint: APIEndpoint) {
-        guard server.isRunning else { return }
-        guard endpoint.method == "GET" else { return }
+    private func binding(for endpoint: APIEndpoint) -> Binding<String> {
+        Binding(
+            get: { editablePayloads[endpoint.path] ?? endpoint.examplePayload ?? "{}" },
+            set: { editablePayloads[endpoint.path] = $0 }
+        )
+    }
 
-        isTestingEndpoint = true
+    private func runEndpointTest(_ endpoint: APIEndpoint) {
+        guard server.isRunning else { return }
+
+        // Expand the endpoint to show results
+        withAnimation(.easeInOut(duration: 0.2)) {
+            expandedEndpoint = endpoint.path
+            loadingEndpoints.insert(endpoint.path)
+        }
+
+        // Initialize payload if needed
+        if editablePayloads[endpoint.path] == nil {
+            editablePayloads[endpoint.path] = endpoint.examplePayload ?? "{}"
+        }
+
+        let payload = editablePayloads[endpoint.path] ?? endpoint.examplePayload ?? "{}"
 
         Task {
             let startTime = Date()
             do {
                 let url = URL(string: "\(serverURL)\(endpoint.path)")!
-                let (data, response) = try await URLSession.shared.data(from: url)
+                let data: Data
+                let response: URLResponse
+
+                if endpoint.method == "POST" {
+                    var request = URLRequest(url: url)
+                    request.httpMethod = "POST"
+                    request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+                    request.httpBody = payload.data(using: .utf8)
+                    (data, response) = try await URLSession.shared.data(for: request)
+                } else {
+                    (data, response) = try await URLSession.shared.data(from: url)
+                }
+
                 let duration = Date().timeIntervalSince(startTime)
                 let statusCode = (response as? HTTPURLResponse)?.statusCode ?? 0
 
                 await MainActor.run {
-                    testResponse = EndpointTestResult(
+                    endpointResponses[endpoint.path] = EndpointTestResult(
                         endpoint: endpoint,
                         statusCode: statusCode,
                         body: data,
                         duration: duration,
                         error: nil
                     )
-                    isTestingEndpoint = false
+                    loadingEndpoints.remove(endpoint.path)
                 }
             } catch {
                 let duration = Date().timeIntervalSince(startTime)
                 await MainActor.run {
-                    testResponse = EndpointTestResult(
+                    endpointResponses[endpoint.path] = EndpointTestResult(
                         endpoint: endpoint,
                         statusCode: 0,
                         body: Data(),
                         duration: duration,
                         error: error.localizedDescription
                     )
-                    isTestingEndpoint = false
+                    loadingEndpoints.remove(endpoint.path)
                 }
             }
         }
@@ -356,45 +360,119 @@ struct APIEndpoint {
     let path: String
     let description: String
     let compatibility: String?
+    let category: EndpointCategory
+    let examplePayload: String?
+
+    enum EndpointCategory: String {
+        case core = "Core"
+        case chat = "Chat"
+        case mcp = "MCP"
+    }
 
     static let allEndpoints: [APIEndpoint] = [
+        // Core endpoints
         APIEndpoint(
             method: "GET",
             path: "/",
             description: "Root endpoint - server status message",
-            compatibility: nil
+            compatibility: nil,
+            category: .core,
+            examplePayload: nil
         ),
         APIEndpoint(
             method: "GET",
             path: "/health",
             description: "Health check endpoint",
-            compatibility: nil
+            compatibility: nil,
+            category: .core,
+            examplePayload: nil
         ),
         APIEndpoint(
             method: "GET",
             path: "/models",
             description: "List available models",
-            compatibility: "OpenAI"
+            compatibility: "OpenAI",
+            category: .core,
+            examplePayload: nil
         ),
         APIEndpoint(
             method: "GET",
             path: "/tags",
             description: "List available models",
-            compatibility: "Ollama"
+            compatibility: "Ollama",
+            category: .core,
+            examplePayload: nil
         ),
+        // Chat endpoints
         APIEndpoint(
             method: "POST",
             path: "/chat/completions",
             description: "Chat completions with streaming support",
-            compatibility: "OpenAI"
+            compatibility: "OpenAI",
+            category: .chat,
+            examplePayload: """
+                {
+                  "model": "foundation",
+                  "messages": [
+                    {"role": "user", "content": "Hello!"}
+                  ],
+                  "stream": false
+                }
+                """
         ),
         APIEndpoint(
             method: "POST",
             path: "/chat",
-            description: "Chat endpoint",
-            compatibility: "Ollama"
+            description: "Chat endpoint (NDJSON streaming)",
+            compatibility: "Ollama",
+            category: .chat,
+            examplePayload: """
+                {
+                  "model": "foundation",
+                  "messages": [
+                    {"role": "user", "content": "Hello!"}
+                  ]
+                }
+                """
+        ),
+        // MCP endpoints
+        APIEndpoint(
+            method: "GET",
+            path: "/mcp/health",
+            description: "MCP server health check",
+            compatibility: "MCP",
+            category: .mcp,
+            examplePayload: nil
+        ),
+        APIEndpoint(
+            method: "GET",
+            path: "/mcp/tools",
+            description: "List available tools",
+            compatibility: "MCP",
+            category: .mcp,
+            examplePayload: nil
+        ),
+        APIEndpoint(
+            method: "POST",
+            path: "/mcp/call",
+            description: "Execute a tool by name",
+            compatibility: "MCP",
+            category: .mcp,
+            examplePayload: """
+                {
+                  "name": "example_tool",
+                  "arguments": {}
+                }
+                """
         ),
     ]
+
+    static var groupedEndpoints: [(category: EndpointCategory, endpoints: [APIEndpoint])] {
+        let categories: [EndpointCategory] = [.core, .chat, .mcp]
+        return categories.map { cat in
+            (category: cat, endpoints: allEndpoints.filter { $0.category == cat })
+        }
+    }
 }
 
 // MARK: - Endpoint Test Result
@@ -503,83 +581,298 @@ private struct EndpointRow: View {
     let endpoint: APIEndpoint
     let serverURL: String
     let isServerRunning: Bool
+    let isExpanded: Bool
+    let isLoading: Bool
+    @Binding var editablePayload: String
+    let response: EndpointTestResult?
+    let onToggleExpand: () -> Void
     let onTest: () -> Void
+    let onClearResponse: () -> Void
 
     @State private var isHovering = false
 
     var body: some View {
-        HStack(spacing: 12) {
-            // Method badge
-            Text(endpoint.method)
-                .font(.system(size: 10, weight: .bold, design: .monospaced))
-                .foregroundColor(methodColor)
-                .padding(.horizontal, 8)
-                .padding(.vertical, 4)
-                .background(
-                    RoundedRectangle(cornerRadius: 4)
-                        .fill(methodColor.opacity(0.15))
-                )
-                .frame(width: 50)
+        VStack(spacing: 0) {
+            // Main row - clickable header
+            Button(action: {
+                if isServerRunning {
+                    onToggleExpand()
+                }
+            }) {
+                HStack(spacing: 12) {
+                    // Method badge
+                    Text(endpoint.method)
+                        .font(.system(size: 10, weight: .bold, design: .monospaced))
+                        .foregroundColor(methodColor)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .background(
+                            RoundedRectangle(cornerRadius: 4)
+                                .fill(methodColor.opacity(0.15))
+                        )
+                        .frame(width: 50)
 
-            // Path
-            Text(endpoint.path)
-                .font(.system(size: 13, weight: .medium, design: .monospaced))
-                .foregroundColor(theme.primaryText)
+                    // Path
+                    Text(endpoint.path)
+                        .font(.system(size: 13, weight: .medium, design: .monospaced))
+                        .foregroundColor(theme.primaryText)
 
-            // Compatibility badge
-            if let compat = endpoint.compatibility {
-                Text(compat)
-                    .font(.system(size: 9, weight: .semibold))
-                    .foregroundColor(theme.accentColor)
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 2)
-                    .background(
-                        RoundedRectangle(cornerRadius: 4)
-                            .fill(theme.accentColor.opacity(0.1))
-                    )
+                    // Compatibility badge
+                    if let compat = endpoint.compatibility {
+                        Text(compat)
+                            .font(.system(size: 9, weight: .semibold))
+                            .foregroundColor(compatColor(compat))
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(
+                                RoundedRectangle(cornerRadius: 4)
+                                    .fill(compatColor(compat).opacity(0.1))
+                            )
+                    }
+
+                    Spacer()
+
+                    // Description
+                    Text(endpoint.description)
+                        .font(.system(size: 11))
+                        .foregroundColor(theme.tertiaryText)
+                        .lineLimit(1)
+
+                    // Status indicator
+                    if isLoading {
+                        ProgressView()
+                            .scaleEffect(0.6)
+                            .frame(width: 20, height: 20)
+                    } else if let resp = response {
+                        // Status code badge
+                        Text("\(resp.statusCode)")
+                            .font(.system(size: 10, weight: .bold, design: .monospaced))
+                            .foregroundColor(.white)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 3)
+                            .background(
+                                RoundedRectangle(cornerRadius: 4)
+                                    .fill(resp.isSuccess ? Color.green : Color.red)
+                            )
+                    }
+
+                    // Expand chevron
+                    Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundColor(theme.tertiaryText)
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 10)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(PlainButtonStyle())
+            .disabled(!isServerRunning)
+            .background(
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(isHovering || isExpanded ? theme.tertiaryBackground.opacity(0.5) : Color.clear)
+            )
+            .onHover { hovering in
+                withAnimation(.easeOut(duration: 0.15)) {
+                    isHovering = hovering
+                }
             }
 
-            Spacer()
+            // Expandable accordion with Request/Response panels
+            if isExpanded {
+                VStack(spacing: 0) {
+                    Divider()
+                        .background(theme.primaryBorder.opacity(0.3))
 
-            // Description
-            Text(endpoint.description)
-                .font(.system(size: 11))
-                .foregroundColor(theme.tertiaryText)
-                .lineLimit(1)
+                    HStack(alignment: .top, spacing: 16) {
+                        // LEFT: Request Panel
+                        VStack(alignment: .leading, spacing: 8) {
+                            HStack {
+                                Label("Request", systemImage: "arrow.up.circle.fill")
+                                    .font(.system(size: 11, weight: .semibold))
+                                    .foregroundColor(theme.secondaryText)
 
-            // Test button (only for GET endpoints)
-            if endpoint.method == "GET" {
-                Button(action: onTest) {
-                    HStack(spacing: 4) {
-                        Image(systemName: "play.fill")
-                            .font(.system(size: 9))
-                        Text("Test")
-                            .font(.system(size: 11, weight: .medium))
+                                Spacer()
+
+                                if endpoint.method == "POST" {
+                                    Button(action: {
+                                        editablePayload = endpoint.examplePayload ?? "{}"
+                                    }) {
+                                        Text("Reset")
+                                            .font(.system(size: 10, weight: .medium))
+                                            .foregroundColor(theme.tertiaryText)
+                                    }
+                                    .buttonStyle(PlainButtonStyle())
+                                }
+                            }
+
+                            if endpoint.method == "POST" {
+                                // Editable JSON for POST
+                                TextEditor(text: $editablePayload)
+                                    .font(.system(size: 11, design: .monospaced))
+                                    .frame(minHeight: 120, maxHeight: 200)
+                                    .padding(8)
+                                    .background(
+                                        RoundedRectangle(cornerRadius: 6)
+                                            .fill(theme.codeBlockBackground)
+                                            .overlay(
+                                                RoundedRectangle(cornerRadius: 6)
+                                                    .stroke(theme.inputBorder, lineWidth: 1)
+                                            )
+                                    )
+                                    .foregroundColor(theme.primaryText)
+                            } else {
+                                // GET request preview
+                                VStack(alignment: .leading, spacing: 4) {
+                                    Text("GET \(serverURL)\(endpoint.path)")
+                                        .font(.system(size: 11, design: .monospaced))
+                                        .foregroundColor(theme.primaryText)
+                                        .textSelection(.enabled)
+                                }
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(12)
+                                .background(
+                                    RoundedRectangle(cornerRadius: 6)
+                                        .fill(theme.codeBlockBackground)
+                                )
+                            }
+
+                            // Send button
+                            Button(action: onTest) {
+                                HStack(spacing: 6) {
+                                    if isLoading {
+                                        ProgressView()
+                                            .scaleEffect(0.7)
+                                    } else {
+                                        Image(systemName: "paperplane.fill")
+                                            .font(.system(size: 10))
+                                    }
+                                    Text(isLoading ? "Sending..." : "Send Request")
+                                        .font(.system(size: 11, weight: .semibold))
+                                }
+                                .foregroundColor(.white)
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, 8)
+                                .background(
+                                    RoundedRectangle(cornerRadius: 6)
+                                        .fill(isLoading ? theme.tertiaryText : theme.accentColor)
+                                )
+                            }
+                            .buttonStyle(PlainButtonStyle())
+                            .disabled(isLoading)
+                        }
+                        .frame(maxWidth: .infinity)
+
+                        // Divider between panels
+                        Rectangle()
+                            .fill(theme.primaryBorder.opacity(0.3))
+                            .frame(width: 1)
+
+                        // RIGHT: Response Panel
+                        VStack(alignment: .leading, spacing: 8) {
+                            HStack {
+                                Label("Response", systemImage: "arrow.down.circle.fill")
+                                    .font(.system(size: 11, weight: .semibold))
+                                    .foregroundColor(theme.secondaryText)
+
+                                Spacer()
+
+                                if let resp = response {
+                                    // Duration
+                                    Text(String(format: "%.0fms", resp.duration * 1000))
+                                        .font(.system(size: 10, design: .monospaced))
+                                        .foregroundColor(theme.tertiaryText)
+
+                                    // Copy button
+                                    Button(action: {
+                                        NSPasteboard.general.clearContents()
+                                        NSPasteboard.general.setString(resp.formattedBody, forType: .string)
+                                    }) {
+                                        Image(systemName: "doc.on.doc")
+                                            .font(.system(size: 10))
+                                            .foregroundColor(theme.tertiaryText)
+                                    }
+                                    .buttonStyle(PlainButtonStyle())
+                                    .help("Copy response")
+
+                                    // Clear button
+                                    Button(action: onClearResponse) {
+                                        Image(systemName: "xmark")
+                                            .font(.system(size: 10))
+                                            .foregroundColor(theme.tertiaryText)
+                                    }
+                                    .buttonStyle(PlainButtonStyle())
+                                    .help("Clear response")
+                                }
+                            }
+
+                            if isLoading {
+                                VStack {
+                                    ProgressView()
+                                        .scaleEffect(0.8)
+                                    Text("Waiting for response...")
+                                        .font(.system(size: 11))
+                                        .foregroundColor(theme.tertiaryText)
+                                }
+                                .frame(maxWidth: .infinity, minHeight: 120)
+                                .background(
+                                    RoundedRectangle(cornerRadius: 6)
+                                        .fill(theme.codeBlockBackground)
+                                )
+                            } else if let resp = response {
+                                ScrollView {
+                                    Text(resp.formattedBody)
+                                        .font(.system(size: 11, design: .monospaced))
+                                        .foregroundColor(resp.isSuccess ? theme.primaryText : theme.errorColor)
+                                        .textSelection(.enabled)
+                                        .frame(maxWidth: .infinity, alignment: .leading)
+                                        .padding(8)
+                                }
+                                .frame(minHeight: 120, maxHeight: 200)
+                                .background(
+                                    RoundedRectangle(cornerRadius: 6)
+                                        .fill(theme.codeBlockBackground)
+                                        .overlay(
+                                            RoundedRectangle(cornerRadius: 6)
+                                                .stroke(
+                                                    resp.isSuccess ? Color.green.opacity(0.3) : Color.red.opacity(0.3),
+                                                    lineWidth: 1
+                                                )
+                                        )
+                                )
+                            } else {
+                                VStack(spacing: 8) {
+                                    Image(systemName: "arrow.left.circle")
+                                        .font(.system(size: 24))
+                                        .foregroundColor(theme.tertiaryText.opacity(0.5))
+                                    Text("Click 'Send Request' to test")
+                                        .font(.system(size: 11))
+                                        .foregroundColor(theme.tertiaryText)
+                                }
+                                .frame(maxWidth: .infinity, minHeight: 120)
+                                .background(
+                                    RoundedRectangle(cornerRadius: 6)
+                                        .fill(theme.codeBlockBackground)
+                                )
+                            }
+                        }
+                        .frame(maxWidth: .infinity)
                     }
-                    .foregroundColor(isServerRunning ? theme.accentColor : theme.tertiaryText)
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 6)
-                    .background(
-                        RoundedRectangle(cornerRadius: 6)
-                            .fill(isServerRunning ? theme.accentColor.opacity(0.1) : theme.tertiaryBackground)
-                    )
+                    .padding(16)
                 }
-                .buttonStyle(PlainButtonStyle())
-                .disabled(!isServerRunning)
-                .help(isServerRunning ? "Test this endpoint" : "Start the server to test")
+                .background(theme.tertiaryBackground.opacity(0.3))
+                .clipShape(RoundedRectangle(cornerRadius: 8))
+                .transition(.opacity.combined(with: .scale(scale: 0.98, anchor: .top)))
             }
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 10)
         .background(
             RoundedRectangle(cornerRadius: 8)
-                .fill(isHovering ? theme.tertiaryBackground.opacity(0.5) : Color.clear)
+                .fill(isExpanded ? theme.secondaryBackground : Color.clear)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8)
+                        .stroke(isExpanded ? theme.primaryBorder.opacity(0.5) : Color.clear, lineWidth: 1)
+                )
         )
-        .onHover { hovering in
-            withAnimation(.easeOut(duration: 0.15)) {
-                isHovering = hovering
-            }
-        }
+        .animation(.easeInOut(duration: 0.2), value: isExpanded)
     }
 
     private var methodColor: Color {
@@ -589,6 +882,15 @@ private struct EndpointRow: View {
         case "PUT": return .orange
         case "DELETE": return .red
         default: return theme.tertiaryText
+        }
+    }
+
+    private func compatColor(_ compat: String) -> Color {
+        switch compat {
+        case "OpenAI": return .green
+        case "Ollama": return .orange
+        case "MCP": return .purple
+        default: return theme.accentColor
         }
     }
 }
