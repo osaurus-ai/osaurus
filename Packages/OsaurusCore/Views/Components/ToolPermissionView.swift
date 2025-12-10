@@ -18,7 +18,6 @@ struct ToolPermissionView: View {
 
     @StateObject private var themeManager = ThemeManager.shared
     @State private var copied = false
-    @State private var iconPulse = false
     @State private var showAlwaysAllowConfirm = false
     @State private var appeared = false
 
@@ -62,7 +61,7 @@ struct ToolPermissionView: View {
                 .fill(
                     LinearGradient(
                         colors: [
-                            theme.warningColor.opacity(0.03),
+                            theme.accentColor.opacity(0.03),
                             Color.clear,
                         ],
                         startPoint: .top,
@@ -128,10 +127,6 @@ struct ToolPermissionView: View {
                 )
         )
         .onAppear {
-            // Start subtle icon animation
-            withAnimation(.easeInOut(duration: 1.5).repeatForever(autoreverses: true)) {
-                iconPulse = true
-            }
             // Entrance animation
             withAnimation(.spring(response: 0.5, dampingFraction: 0.8).delay(0.05)) {
                 appeared = true
@@ -153,15 +148,15 @@ struct ToolPermissionView: View {
 
     private var header: some View {
         VStack(spacing: 14) {
-            // Animated warning icon with refined gradient treatment
+            // Calm icon with soft blue treatment
             ZStack {
-                // Outer glow ring
+                // Subtle outer glow
                 Circle()
                     .fill(
                         RadialGradient(
                             colors: [
-                                theme.warningColor.opacity(0.2),
-                                theme.warningColor.opacity(0.05),
+                                theme.accentColor.opacity(0.12),
+                                theme.accentColor.opacity(0.03),
                                 Color.clear,
                             ],
                             center: .center,
@@ -170,15 +165,14 @@ struct ToolPermissionView: View {
                         )
                     )
                     .frame(width: 72, height: 72)
-                    .scaleEffect(iconPulse ? 1.1 : 1.0)
 
                 // Inner filled circle
                 Circle()
                     .fill(
                         LinearGradient(
                             colors: [
-                                theme.warningColor.opacity(0.25),
-                                theme.warningColor.opacity(0.12),
+                                theme.accentColor.opacity(0.15),
+                                theme.accentColor.opacity(0.08),
                             ],
                             startPoint: .topLeading,
                             endPoint: .bottomTrailing
@@ -191,24 +185,24 @@ struct ToolPermissionView: View {
                     .stroke(
                         LinearGradient(
                             colors: [
-                                theme.warningColor.opacity(0.5),
-                                theme.warningColor.opacity(0.2),
+                                theme.accentColor.opacity(0.35),
+                                theme.accentColor.opacity(0.15),
                             ],
                             startPoint: .topLeading,
                             endPoint: .bottomTrailing
                         ),
-                        lineWidth: 1.5
+                        lineWidth: 1
                     )
                     .frame(width: 52, height: 52)
 
-                // Icon
-                Image(systemName: "exclamationmark.shield.fill")
-                    .font(.system(size: 24, weight: .semibold))
+                // Icon - neutral terminal icon
+                Image(systemName: "terminal.fill")
+                    .font(.system(size: 22, weight: .medium))
                     .foregroundStyle(
                         LinearGradient(
                             colors: [
-                                theme.warningColor,
-                                theme.warningColor.opacity(0.85),
+                                theme.accentColor,
+                                theme.accentColor.opacity(0.8),
                             ],
                             startPoint: .top,
                             endPoint: .bottom
@@ -218,7 +212,7 @@ struct ToolPermissionView: View {
 
             // Title
             VStack(spacing: 6) {
-                Text("TOOL PERMISSION")
+                Text("APPROVE ACTION")
                     .font(.system(size: 10, weight: .semibold, design: .rounded))
                     .foregroundColor(theme.tertiaryText)
                     .tracking(1.5)
@@ -394,19 +388,29 @@ private struct PermissionButton: View {
     @State private var isPressed = false
     @State private var isHovering = false
 
+    // Softer color for secondary (deny) button
+    private var displayColor: Color {
+        if isPrimary {
+            return color
+        } else {
+            // Muted version of the color for a calmer appearance
+            return color.opacity(0.75)
+        }
+    }
+
     var body: some View {
         Button(action: action) {
             VStack(spacing: 4) {
                 HStack(spacing: 6) {
                     Image(systemName: icon)
-                        .font(.system(size: 13, weight: .semibold))
+                        .font(.system(size: 13, weight: isPrimary ? .semibold : .medium))
                     Text(title)
-                        .font(.system(size: 13, weight: .semibold))
+                        .font(.system(size: 13, weight: isPrimary ? .semibold : .medium))
                 }
-                .foregroundColor(isPrimary ? .white : color)
+                .foregroundColor(isPrimary ? .white : displayColor)
 
                 // Keyboard shortcut hint
-                KeyboardShortcutBadge(shortcut: shortcutHint, isPrimary: isPrimary, color: color)
+                KeyboardShortcutBadge(shortcut: shortcutHint, isPrimary: isPrimary, color: displayColor)
             }
             .frame(maxWidth: .infinity)
             .padding(.vertical, 12)
@@ -439,13 +443,14 @@ private struct PermissionButton: View {
                                     )
                             )
                     } else {
+                        // Subtle tinted background for deny button
                         RoundedRectangle(cornerRadius: 12)
-                            .fill(theme.buttonBackground.opacity(0.8))
+                            .fill(color.opacity(isHovering ? 0.12 : 0.08))
                             .overlay(
                                 RoundedRectangle(cornerRadius: 12)
                                     .stroke(
-                                        isPressed ? color : (isHovering ? color.opacity(0.7) : color.opacity(0.4)),
-                                        lineWidth: 1.5
+                                        color.opacity(isPressed ? 0.4 : (isHovering ? 0.3 : 0.2)),
+                                        lineWidth: 1
                                     )
                             )
                     }
@@ -453,14 +458,14 @@ private struct PermissionButton: View {
             )
             .shadow(
                 color: isPrimary
-                    ? color.opacity(isHovering ? 0.4 : 0.25) : theme.shadowColor.opacity(theme.shadowOpacity * 0.5),
-                radius: isHovering ? 12 : 6,
+                    ? color.opacity(isHovering ? 0.3 : 0.2) : Color.clear,
+                radius: isHovering ? 10 : 5,
                 x: 0,
-                y: isHovering ? 4 : 2
+                y: isHovering ? 3 : 1
             )
         }
         .buttonStyle(PlainButtonStyle())
-        .scaleEffect(isPressed ? 0.97 : 1.0)
+        .scaleEffect(isPressed ? 0.98 : 1.0)
         .animation(.spring(response: 0.25, dampingFraction: 0.7), value: isPressed)
         .animation(.easeOut(duration: 0.2), value: isHovering)
         .onHover { hovering in
