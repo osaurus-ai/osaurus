@@ -12,7 +12,7 @@
 ![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen)
 
 <p align="center">
-  <img width="372" height="222" alt="Screenshot 2025-11-04 at 3 15 54 PM" src="https://github.com/user-attachments/assets/9f0e9122-6092-4a63-9421-d9abb898c75b" />
+<img width="372" height="222" alt="Screenshot 2025-12-10 at 2 50 04 PM" src="https://github.com/user-attachments/assets/a144d08d-5179-4cb1-9a01-29a8fb0b5493" />
 </p>
 
 **Native macOS LLM server with MCP support.** Run local and remote language models on Apple Silicon with OpenAI-compatible APIs, tool calling, and a built-in plugin ecosystem.
