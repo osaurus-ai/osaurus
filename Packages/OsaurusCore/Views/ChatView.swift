@@ -415,7 +415,7 @@ struct ChatView: View {
 
             Spacer()
 
-            // Actions (visible on hover)
+            // Actions
             HStack(spacing: 8) {
                 if !session.turns.isEmpty {
                     // New chat button
@@ -424,10 +424,8 @@ struct ChatView: View {
                         help: "New chat",
                         action: { session.reset() }
                     )
-                    .opacity(isHeaderHovered ? 1 : 0)
                 }
             }
-            .animation(.easeInOut(duration: 0.15), value: isHeaderHovered)
         }
         .padding(.leading, 20)
         .padding(.trailing, 56)  // Leave room for close button
@@ -440,21 +438,8 @@ struct ChatView: View {
     }
 
     private var closeButton: some View {
-        Button(action: { AppDelegate.shared?.closeChatOverlay() }) {
-            Image(systemName: "xmark")
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundColor(theme.tertiaryText)
-                .frame(width: 28, height: 28)
-                .background(
-                    Circle()
-                        .fill(theme.secondaryBackground.opacity(0.01))
-                )
-        }
-        .buttonStyle(.plain)
-        .opacity(isHeaderHovered ? 1 : 0.5)
-        .animation(.easeInOut(duration: 0.15), value: isHeaderHovered)
-        .padding(16)
-        .help("Close")
+        CloseButton(action: { AppDelegate.shared?.closeChatOverlay() })
+            .padding(16)
     }
 
     // MARK: - Message Thread
@@ -605,7 +590,7 @@ private struct HeaderActionButton: View {
                 .frame(width: 28, height: 28)
                 .background(
                     Circle()
-                        .fill(isHovered ? theme.secondaryBackground : Color.clear)
+                        .fill(theme.secondaryBackground.opacity(isHovered ? 0.8 : 0.5))
                 )
         }
         .buttonStyle(.plain)
@@ -615,6 +600,35 @@ private struct HeaderActionButton: View {
             }
         }
         .help(help)
+    }
+}
+
+// MARK: - Close Button
+
+private struct CloseButton: View {
+    let action: () -> Void
+
+    @State private var isHovered = false
+    @Environment(\.theme) private var theme
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: "xmark")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundColor(isHovered ? theme.primaryText : theme.secondaryText)
+                .frame(width: 28, height: 28)
+                .background(
+                    Circle()
+                        .fill(theme.secondaryBackground.opacity(isHovered ? 0.8 : 0.5))
+                )
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering in
+            withAnimation(.easeInOut(duration: 0.1)) {
+                isHovered = hovering
+            }
+        }
+        .help("Close")
     }
 }
 
