@@ -2,7 +2,7 @@
 //  ToolsManagerView.swift
 //  osaurus
 //
-//  Manage chat tools: search and toggle enablement, browse and install plugins.
+//  Manage tools: search and toggle enablement, browse and install plugins.
 //
 
 import AppKit
@@ -89,7 +89,7 @@ struct ToolsManagerView: View {
                         .font(.system(size: 28, weight: .bold, design: .rounded))
                         .foregroundColor(theme.primaryText)
 
-                    Text("Manage and discover tools for chat")
+                    Text("Manage and discover tools")
                         .font(.system(size: 14))
                         .foregroundColor(theme.secondaryText)
                 }
@@ -243,6 +243,12 @@ struct ToolsManagerView: View {
     private var availableToolsTabContent: some View {
         ScrollView {
             LazyVStack(spacing: 16) {
+                // Section header
+                SectionHeader(
+                    title: "Available Tools",
+                    description: "Tools from installed plugins and connected providers"
+                )
+
                 let plugins = installedPluginsWithTools
                 let remoteTools = remoteProviderTools
 
@@ -306,6 +312,13 @@ struct ToolsManagerView: View {
     private var pluginsTabContent: some View {
         ScrollView {
             LazyVStack(spacing: 12) {
+                // Section header
+                SectionHeader(
+                    title: "Plugin Repository",
+                    description: "Browse and install plugins to add new capabilities"
+                )
+                .padding(.bottom, 4)
+
                 if repoService.isRefreshing && repoService.plugins.isEmpty {
                     loadingState
                 } else if filteredPlugins.isEmpty {
