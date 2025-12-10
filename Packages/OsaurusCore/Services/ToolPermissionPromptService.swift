@@ -62,28 +62,9 @@ enum ToolPermissionPromptService {
 
             let hostingController = NSHostingController(rootView: permissionView)
 
-            // Calculate window size based on content
-            let fittingSize = hostingController.view.fittingSize
-            let windowSize = NSSize(
-                width: max(fittingSize.width, 480),
-                height: max(fittingSize.height, 300)
-            )
-
-            // Center on active screen
-            let mouse = NSEvent.mouseLocation
-            let screen = NSScreen.screens.first { NSMouseInRect(mouse, $0.frame, false) } ?? NSScreen.main
-            let initialRect: NSRect
-            if let s = screen {
-                let x = s.visibleFrame.midX - windowSize.width / 2
-                let y = s.visibleFrame.midY - windowSize.height / 2
-                initialRect = NSRect(x: x, y: y, width: windowSize.width, height: windowSize.height)
-            } else {
-                initialRect = NSRect(x: 0, y: 0, width: windowSize.width, height: windowSize.height)
-            }
-
-            // Create custom panel
+            // Create custom panel with a temporary rect (will be repositioned after content is set)
             let panel = NSPanel(
-                contentRect: initialRect,
+                contentRect: NSRect(x: 0, y: 0, width: 480, height: 300),
                 styleMask: [.titled, .fullSizeContentView],
                 backing: .buffered,
                 defer: false
@@ -102,6 +83,32 @@ enum ToolPermissionPromptService {
             panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
             panel.animationBehavior = .alertPanel
             panel.contentViewController = hostingController
+
+            // Layout the view to get accurate sizing
+            hostingController.view.layoutSubtreeIfNeeded()
+
+            // Calculate window size based on actual content
+            let fittingSize = hostingController.view.fittingSize
+            let windowSize = NSSize(
+                width: max(fittingSize.width, 480),
+                height: max(fittingSize.height, 300)
+            )
+
+            // Find the screen where the mouse is located (for multi-monitor support)
+            let mouse = NSEvent.mouseLocation
+            let targetScreen = NSScreen.screens.first { NSMouseInRect(mouse, $0.frame, false) } ?? NSScreen.main
+
+            // Center the window on the target screen
+            if let screen = targetScreen {
+                let visibleFrame = screen.visibleFrame
+                let x = visibleFrame.origin.x + (visibleFrame.width - windowSize.width) / 2
+                let y = visibleFrame.origin.y + (visibleFrame.height - windowSize.height) / 2
+                let centeredFrame = NSRect(x: x, y: y, width: windowSize.width, height: windowSize.height)
+                panel.setFrame(centeredFrame, display: false)
+            } else {
+                panel.setContentSize(windowSize)
+                panel.center()
+            }
 
             permissionWindow = panel
 
@@ -131,9 +138,6 @@ enum ToolPermissionPromptService {
                 guard permissionWindow?.isVisible == true else { return }
                 _ = handleKeyEvent(event)
             }
-
-            // Pre-layout and show
-            hostingController.view.layoutSubtreeIfNeeded()
 
             // Activate app and ensure window becomes key
             NSApp.activate(ignoringOtherApps: true)
