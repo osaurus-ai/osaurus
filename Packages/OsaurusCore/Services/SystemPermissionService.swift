@@ -120,7 +120,16 @@ final class SystemPermissionService: ObservableObject {
     }
 
     private func requestAutomationPermission() {
+        // First, check if we already have permission
+        let alreadyGranted = checkAutomationPermission()
+        if alreadyGranted {
+            refreshAllPermissions()
+            return
+        }
+
         // Execute a script that will trigger the permission prompt
+        // Note: macOS only shows the permission dialog ONCE. If it was previously
+        // dismissed or denied, this will fail silently and we need to open System Settings.
         let script = NSAppleScript(
             source: """
                 tell application "System Events"
@@ -132,10 +141,17 @@ final class SystemPermissionService: ObservableObject {
         var errorInfo: NSDictionary?
         script?.executeAndReturnError(&errorInfo)
 
-        // The system will show the permission dialog automatically
-        // After the user responds, we should refresh the permission state
+        // Check if permission was granted after the prompt
+        // Give a small delay for the system to register the permission change
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
-            self?.refreshAllPermissions()
+            guard let self = self else { return }
+            self.refreshAllPermissions()
+
+            // If still not granted, the dialog likely didn't appear (already shown before)
+            // Open System Settings so the user can manually grant the permission
+            if !self.checkAutomationPermission() {
+                self.openSystemSettings(for: .automation)
+            }
         }
     }
 
