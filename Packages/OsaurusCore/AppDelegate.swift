@@ -89,9 +89,10 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegat
         // Load external tool plugins at launch (after core is initialized)
         PluginManager.shared.loadAll()
 
-        // Auto-connect to MCP providers that have auto-connect enabled
+        // Auto-connect to enabled providers on launch
         Task { @MainActor in
-            await MCPProviderManager.shared.connectAutoConnectProviders()
+            await MCPProviderManager.shared.connectEnabledProviders()
+            await RemoteProviderManager.shared.connectEnabledProviders()
         }
 
         // Start plugin repository background refresh for update checking
