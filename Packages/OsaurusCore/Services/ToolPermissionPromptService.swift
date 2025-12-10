@@ -12,7 +12,8 @@ import SwiftUI
 @MainActor
 enum ToolPermissionPromptService {
     private static var permissionWindow: NSPanel?
-    private static var keyMonitor: Any?
+    private static var localKeyMonitor: Any?
+    private static var globalKeyMonitor: Any?
 
     static func requestApproval(
         toolName: String,
@@ -104,29 +105,58 @@ enum ToolPermissionPromptService {
 
             permissionWindow = panel
 
-            // Add keyboard shortcuts
-            keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+            // Handler for keyboard shortcuts
+            let handleKeyEvent: (NSEvent) -> Bool = { event in
                 if event.keyCode == 36 {  // Enter key
                     onAllow()
-                    return nil
+                    return true
                 } else if event.keyCode == 53 {  // Escape key
                     onDeny()
+                    return true
+                }
+                return false
+            }
+
+            // Local monitor for when app is active and window has focus
+            localKeyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+                if handleKeyEvent(event) {
                     return nil
                 }
                 return event
             }
 
+            // Global monitor as fallback when window might not have focus
+            globalKeyMonitor = NSEvent.addGlobalMonitorForEvents(matching: .keyDown) { event in
+                // Only handle if our permission window is visible
+                guard permissionWindow?.isVisible == true else { return }
+                _ = handleKeyEvent(event)
+            }
+
             // Pre-layout and show
             hostingController.view.layoutSubtreeIfNeeded()
+
+            // Activate app and ensure window becomes key
             NSApp.activate(ignoringOtherApps: true)
             panel.makeKeyAndOrderFront(nil)
+
+            // Ensure panel becomes first responder after a brief delay
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                panel.makeKey()
+                if let contentView = panel.contentView {
+                    panel.makeFirstResponder(contentView)
+                }
+            }
         }
     }
 
     private static func dismissWindow() {
-        if let monitor = keyMonitor {
+        if let monitor = localKeyMonitor {
             NSEvent.removeMonitor(monitor)
-            keyMonitor = nil
+            localKeyMonitor = nil
+        }
+        if let monitor = globalKeyMonitor {
+            NSEvent.removeMonitor(monitor)
+            globalKeyMonitor = nil
         }
         permissionWindow?.orderOut(nil)
         permissionWindow = nil
