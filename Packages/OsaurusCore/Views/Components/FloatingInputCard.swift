@@ -19,21 +19,24 @@ struct FloatingInputCard: View {
     let onSend: () -> Void
     let onStop: () -> Void
 
+    // Local state for text input to prevent parent re-renders on every keystroke
+    @State private var localText: String = ""
     @FocusState private var isFocused: Bool
     @Environment(\.theme) private var theme
     @State private var isDragOver = false
+    @State private var keyMonitor: Any?
 
     private let maxHeight: CGFloat = 200
     private let maxImageSize: Int = 10 * 1024 * 1024  // 10MB limit
 
     private var canSend: Bool {
-        let hasText = !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        let hasText = !localText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         let hasImages = !pendingImages.isEmpty
         return (hasText || hasImages) && !isStreaming
     }
 
     private var showPlaceholder: Bool {
-        text.isEmpty && pendingImages.isEmpty
+        localText.isEmpty && pendingImages.isEmpty
     }
 
     var body: some View {
@@ -50,6 +53,52 @@ struct FloatingInputCard: View {
         .padding(.bottom, 20)
         .onDrop(of: [UTType.image], isTargeted: $isDragOver) { providers in
             handleImageDrop(providers)
+        }
+        .onAppear {
+            // Sync initial value from binding
+            localText = text
+            setupKeyMonitor()
+        }
+        .onDisappear {
+            cleanupKeyMonitor()
+        }
+        .onChange(of: text) { _, newValue in
+            // Sync from binding when it changes externally (e.g., quick actions)
+            if newValue != localText {
+                localText = newValue
+            }
+        }
+    }
+
+    private func syncAndSend() {
+        guard canSend else { return }
+        text = localText
+        onSend()
+        // Clear local text after send
+        localText = ""
+    }
+
+    private func setupKeyMonitor() {
+        guard keyMonitor == nil else { return }
+        keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [self] event in
+            let kVK_Return: UInt16 = 0x24
+            let kVK_ANSI_KeypadEnter: UInt16 = 0x4C
+            let isReturn = (event.keyCode == kVK_Return || event.keyCode == kVK_ANSI_KeypadEnter)
+            if isReturn && isFocused {
+                let hasShift = event.modifierFlags.contains(.shift)
+                if !hasShift && canSend {
+                    syncAndSend()
+                    return nil  // consume the event
+                }
+            }
+            return event
+        }
+    }
+
+    private func cleanupKeyMonitor() {
+        if let monitor = keyMonitor {
+            NSEvent.removeMonitor(monitor)
+            keyMonitor = nil
         }
     }
 
@@ -272,7 +321,7 @@ struct FloatingInputCard: View {
     }
 
     private var textInputArea: some View {
-        TextEditor(text: $text)
+        TextEditor(text: $localText)
             .font(.system(size: 15))
             .foregroundColor(theme.primaryText)
             .scrollContentBackground(.hidden)
@@ -307,7 +356,7 @@ struct FloatingInputCard: View {
     // MARK: - Action Button
 
     private var actionButton: some View {
-        Button(action: isStreaming ? onStop : onSend) {
+        Button(action: isStreaming ? onStop : syncAndSend) {
             ZStack {
                 // Send icon
                 Image(systemName: "arrow.up")
