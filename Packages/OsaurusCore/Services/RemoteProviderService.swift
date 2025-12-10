@@ -199,10 +199,17 @@ public actor RemoteProviderService: ToolCapableService {
                         return
                     }
 
-                    // Parse SSE stream
+                    // Parse SSE stream with proper UTF-8 decoding
                     var buffer = ""
+                    var utf8Buffer = Data()
                     for try await byte in bytes {
-                        buffer.append(Character(UnicodeScalar(byte)))
+                        utf8Buffer.append(byte)
+                        // Try to decode accumulated bytes as UTF-8
+                        if let decoded = String(data: utf8Buffer, encoding: .utf8) {
+                            buffer.append(decoded)
+                            utf8Buffer.removeAll()
+                        }
+                        // If decoding fails, we have an incomplete multi-byte sequence - keep accumulating
 
                         // Process complete lines
                         while let newlineIndex = buffer.firstIndex(of: "\n") {
@@ -383,10 +390,17 @@ public actor RemoteProviderService: ToolCapableService {
                     var accumulatedToolName: String?
                     var accumulatedToolArgs = ""
 
-                    // Parse SSE stream
+                    // Parse SSE stream with proper UTF-8 decoding
                     var buffer = ""
+                    var utf8Buffer = Data()
                     for try await byte in bytes {
-                        buffer.append(Character(UnicodeScalar(byte)))
+                        utf8Buffer.append(byte)
+                        // Try to decode accumulated bytes as UTF-8
+                        if let decoded = String(data: utf8Buffer, encoding: .utf8) {
+                            buffer.append(decoded)
+                            utf8Buffer.removeAll()
+                        }
+                        // If decoding fails, we have an incomplete multi-byte sequence - keep accumulating
 
                         while let newlineIndex = buffer.firstIndex(of: "\n") {
                             let line = String(buffer[..<newlineIndex])
