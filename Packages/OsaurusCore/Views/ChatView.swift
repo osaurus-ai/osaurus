@@ -19,6 +19,7 @@ final class ChatSession: ObservableObject {
     @Published var selectedModel: String? = nil
     @Published var modelOptions: [String] = []
     @Published var scrollTick: Int = 0
+    @Published var hasAnyModel: Bool = false
     private var currentTask: Task<Void, Never>?
     private var remoteModelsObserver: NSObjectProtocol?
 
@@ -36,6 +37,7 @@ final class ChatSession: ObservableObject {
         }
         modelOptions = opts
         selectedModel = opts.first
+        hasAnyModel = !opts.isEmpty
 
         // Listen for remote provider model changes
         remoteModelsObserver = NotificationCenter.default.addObserver(
@@ -69,9 +71,11 @@ final class ChatSession: ObservableObject {
 
         let prev = selectedModel
         let newSelected = (prev != nil && opts.contains(prev!)) ? prev : opts.first
-        if modelOptions == opts && selectedModel == newSelected { return }
+        let newHasAnyModel = !opts.isEmpty
+        if modelOptions == opts && selectedModel == newSelected && hasAnyModel == newHasAnyModel { return }
         modelOptions = opts
         selectedModel = newSelected
+        hasAnyModel = newHasAnyModel
     }
 
     /// Check if the currently selected model supports images (VLM)
@@ -80,6 +84,11 @@ final class ChatSession: ObservableObject {
         // Foundation models don't support images yet
         if model.lowercased() == "foundation" { return false }
         return ModelManager.isVisionModel(named: model)
+    }
+
+    /// Filtered turns excluding tool messages (cached computation)
+    var visibleTurns: [ChatTurn] {
+        turns.filter { $0.role != .tool }
     }
 
     func sendCurrent() {
@@ -247,12 +256,6 @@ struct ChatView: View {
 
     private var theme: ThemeProtocol { themeManager.currentTheme }
 
-    private var hasAnyModel: Bool {
-        FoundationModelService.isDefaultModelAvailable()
-            || !MLXService.getAvailableModels().isEmpty
-            || !RemoteProviderManager.shared.cachedAvailableModels().isEmpty
-    }
-
     var body: some View {
         GeometryReader { proxy in
             let containerWidth = proxy.size.width
@@ -267,7 +270,7 @@ struct ChatView: View {
                     chatHeader
 
                     // Content area
-                    if hasAnyModel {
+                    if session.hasAnyModel {
                         if session.turns.isEmpty {
                             // Empty state
                             ChatEmptyState(
@@ -446,13 +449,12 @@ struct ChatView: View {
     // MARK: - Message Thread
 
     private func messageThread(_ width: CGFloat) -> some View {
-        ScrollViewReader { proxy in
+        let visible = session.visibleTurns
+        return ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(spacing: 2) {
-                    ForEach(Array(session.turns.filter { $0.role != .tool }.enumerated()), id: \.element.id) {
-                        index,
-                        turn in
-                        let isLatest = index == session.turns.filter { $0.role != .tool }.count - 1
+                    ForEach(Array(visible.enumerated()), id: \.element.id) { index, turn in
+                        let isLatest = index == visible.count - 1
 
                         MessageRow(
                             turn: turn,
@@ -561,20 +563,9 @@ struct ChatView: View {
         })
     }
 
+    // Key monitor for Enter to send is now handled by FloatingInputCard
     private func setupKeyMonitor() {
-        if keyMonitor == nil {
-            keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
-                let isReturn = (event.keyCode == kVK_Return || event.keyCode == kVK_ANSI_KeypadEnter)
-                if isReturn {
-                    let hasShift = event.modifierFlags.contains(.shift)
-                    if !hasShift {
-                        session.sendCurrent()
-                        return nil  // consume
-                    }
-                }
-                return event
-            }
-        }
+        // No-op: key handling moved to FloatingInputCard for proper local state sync
     }
 
     private func cleanupKeyMonitor() {

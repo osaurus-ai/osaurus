@@ -18,6 +18,7 @@ struct ChatEmptyState: View {
     @State private var shimmerPhase: CGFloat = 0
     @State private var glowIntensity: CGFloat = 0.6
     @State private var hasAppeared = false
+    @State private var isVisible = false
     @Environment(\.theme) private var theme
 
     private let quickActions = [
@@ -41,10 +42,16 @@ struct ChatEmptyState: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .onAppear {
+            isVisible = true
             withAnimation(.easeOut(duration: 0.6).delay(0.1)) {
                 hasAppeared = true
             }
             startGradientAnimation()
+        }
+        .onDisappear {
+            // Stop animations when view is hidden
+            isVisible = false
+            stopGradientAnimation()
         }
     }
 
@@ -297,6 +304,7 @@ struct ChatEmptyState: View {
     }
 
     private func startGradientAnimation() {
+        guard isVisible else { return }
         // Shimmer animation - smooth continuous flow
         withAnimation(.easeInOut(duration: 2).repeatForever(autoreverses: true)) {
             shimmerPhase = 1.5
@@ -306,6 +314,15 @@ struct ChatEmptyState: View {
         withAnimation(.easeInOut(duration: 1.5).repeatForever(autoreverses: true)) {
             glowIntensity = 1.0
         }
+    }
+
+    private func stopGradientAnimation() {
+        // Reset animation values without animation to stop the repeating animations
+        withAnimation(.linear(duration: 0)) {
+            shimmerPhase = 0
+            glowIntensity = 0.6
+        }
+        hasAppeared = false
     }
 }
 
