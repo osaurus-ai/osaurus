@@ -118,6 +118,29 @@ struct ModelDetails: Codable, Sendable {
 struct ModelsResponse: Codable, Sendable {
     var object: String = "list"
     let data: [OpenAIModel]
+
+    private enum CodingKeys: String, CodingKey {
+        case object, data
+    }
+
+    /// Memberwise initializer
+    init(object: String = "list", data: [OpenAIModel]) {
+        self.object = object
+        self.data = data
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        // Make object optional for providers like OpenRouter that don't include it
+        self.object = try container.decodeIfPresent(String.self, forKey: .object) ?? "list"
+        self.data = try container.decode([OpenAIModel].self, forKey: .data)
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(object, forKey: .object)
+        try container.encode(data, forKey: .data)
+    }
 }
 
 // MARK: - Multimodal Content Parts
