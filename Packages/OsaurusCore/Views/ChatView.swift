@@ -521,8 +521,8 @@ struct ChatView: View {
             }
         }
         .frame(
-            minWidth: showSidebar ? 940 : 700,
-            idealWidth: showSidebar ? 1140 : 900,
+            minWidth: 800,
+            idealWidth: 950,
             maxWidth: .infinity,
             minHeight: session.turns.isEmpty ? 490 : 550,
             idealHeight: session.turns.isEmpty ? 550 : 700,
@@ -565,9 +565,13 @@ struct ChatView: View {
 
     private var chatBackground: some View {
         ZStack {
-            // Base glass surface
-            GlassSurface(cornerRadius: 24)
-                .allowsHitTesting(false)
+            // Base glass surface with dynamic corners based on sidebar state
+            GlassSurface(
+                cornerRadius: 24,
+                topLeadingRadius: showSidebar ? 0 : nil,
+                bottomLeadingRadius: showSidebar ? 0 : nil
+            )
+            .allowsHitTesting(false)
 
             // Gradient overlay for depth - stronger in light mode for text contrast
             LinearGradient(

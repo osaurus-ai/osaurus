@@ -42,7 +42,7 @@ struct ChatSessionSidebar: View {
             }
         }
         .frame(width: 240)
-        .background(theme.secondaryBackground.opacity(colorScheme == .dark ? 0.3 : 0.5))
+        .background(theme.secondaryBackground.opacity(colorScheme == .dark ? 0.85 : 0.9))
     }
 
     private func dismissEditing() {
