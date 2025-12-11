@@ -20,6 +20,16 @@ final class ChatSession: ObservableObject {
     @Published var modelOptions: [String] = []
     @Published var scrollTick: Int = 0
     @Published var hasAnyModel: Bool = false
+
+    // MARK: - Persistence Properties
+    @Published var sessionId: UUID?
+    @Published var title: String = "New Chat"
+    var createdAt: Date = Date()
+    var updatedAt: Date = Date()
+
+    /// Callback when session needs to be saved (called after streaming completes)
+    var onSessionChanged: (() -> Void)?
+
     private var currentTask: Task<Void, Never>?
     private var remoteModelsObserver: NSObjectProtocol?
 
@@ -110,13 +120,97 @@ final class ChatSession: ObservableObject {
         turns.removeAll()
         input = ""
         pendingImages = []
+        // Clear session identity for new chat
+        sessionId = nil
+        title = "New Chat"
+        createdAt = Date()
+        updatedAt = Date()
+    }
+
+    // MARK: - Persistence Methods
+
+    /// Convert current state to persistable data
+    func toSessionData() -> ChatSessionData {
+        let turnData = turns.map { ChatTurnData(from: $0) }
+        return ChatSessionData(
+            id: sessionId ?? UUID(),
+            title: title,
+            createdAt: createdAt,
+            updatedAt: Date(),
+            selectedModel: selectedModel,
+            turns: turnData
+        )
+    }
+
+    /// Save current session state
+    func save() {
+        // Only save if there are turns
+        guard !turns.isEmpty else { return }
+
+        // Create session ID if this is a new session
+        if sessionId == nil {
+            sessionId = UUID()
+            createdAt = Date()
+        }
+        updatedAt = Date()
+
+        // Auto-generate title from first user message if still default
+        if title == "New Chat" {
+            let turnData = turns.map { ChatTurnData(from: $0) }
+            title = ChatSessionData.generateTitle(from: turnData)
+        }
+
+        let data = toSessionData()
+        ChatSessionStore.save(data)
+        onSessionChanged?()
+    }
+
+    /// Load session from persisted data
+    func load(from data: ChatSessionData) {
+        stop()
+        sessionId = data.id
+        title = data.title
+        createdAt = data.createdAt
+        updatedAt = data.updatedAt
+        selectedModel = data.selectedModel
+        turns = data.turns.map { ChatTurn(from: $0) }
+        input = ""
+        pendingImages = []
+    }
+
+    /// Edit a user message and regenerate from that point
+    func editAndRegenerate(turnId: UUID, newContent: String) {
+        guard let index = turns.firstIndex(where: { $0.id == turnId }) else { return }
+        guard turns[index].role == .user else { return }
+
+        // Update the content
+        turns[index].content = newContent
+
+        // Remove all turns after this one
+        turns = Array(turns.prefix(index + 1))
+
+        // Save and regenerate
+        save()
+        send("")  // Empty send to trigger regeneration with existing history
+    }
+
+    /// Delete a turn and all subsequent turns
+    func deleteTurn(id: UUID) {
+        guard let index = turns.firstIndex(where: { $0.id == id }) else { return }
+        turns = Array(turns.prefix(index))
+        save()
     }
 
     func send(_ text: String, images: [Data] = []) {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        // Allow sending with just images
-        guard !trimmed.isEmpty || !images.isEmpty else { return }
-        turns.append(ChatTurn(role: .user, content: trimmed, images: images))
+        // Allow sending with just images, or regenerating from existing history
+        let isRegeneration = trimmed.isEmpty && images.isEmpty && !turns.isEmpty
+        guard !trimmed.isEmpty || !images.isEmpty || isRegeneration else { return }
+
+        // Only append user turn if there's actual content
+        if !trimmed.isEmpty || !images.isEmpty {
+            turns.append(ChatTurn(role: .user, content: trimmed, images: images))
+        }
 
         currentTask = Task { @MainActor in
             isStreaming = true
@@ -124,6 +218,8 @@ final class ChatSession: ObservableObject {
             defer {
                 isStreaming = false
                 ServerController.signalGenerationEnd()
+                // Auto-save after streaming completes
+                save()
             }
 
             let assistantTurn = ChatTurn(role: .assistant, content: "")
@@ -258,6 +354,7 @@ struct ChatView: View {
     @EnvironmentObject var server: ServerController
     @StateObject private var themeManager = ThemeManager.shared
     @StateObject private var session = ChatSession()
+    @StateObject private var sessionsManager = ChatSessionsManager.shared
     @Environment(\.colorScheme) private var colorScheme
 
     @State private var focusTrigger: Int = 0
@@ -265,29 +362,101 @@ struct ChatView: View {
     @State private var hostWindow: NSWindow?
     @State private var keyMonitor: Any?
     @State private var isHeaderHovered: Bool = false
+    @State private var showSidebar: Bool = true
 
     private var theme: ThemeProtocol { themeManager.currentTheme }
 
     var body: some View {
         GeometryReader { proxy in
-            let containerWidth = proxy.size.width
+            let sidebarWidth: CGFloat = showSidebar ? 240 : 0
+            let chatWidth = proxy.size.width - sidebarWidth
 
-            ZStack {
-                // Background
-                chatBackground
+            HStack(spacing: 0) {
+                // Sidebar
+                if showSidebar {
+                    ChatSessionSidebar(
+                        manager: sessionsManager,
+                        currentSessionId: session.sessionId,
+                        onSelect: { data in
+                            // Save current session before switching
+                            if !session.turns.isEmpty {
+                                session.save()
+                            }
+                            session.load(from: data)
+                            isPinnedToBottom = true
+                        },
+                        onNewChat: {
+                            // Save current and create new
+                            if !session.turns.isEmpty {
+                                session.save()
+                            }
+                            session.reset()
+                        },
+                        onDelete: { id in
+                            sessionsManager.delete(id: id)
+                            // If we deleted the current session, reset
+                            if session.sessionId == id {
+                                session.reset()
+                            }
+                        },
+                        onRename: { id, title in
+                            sessionsManager.rename(id: id, title: title)
+                        }
+                    )
+                    .transition(.move(edge: .leading))
+                }
 
-                // Main content
-                VStack(spacing: 0) {
-                    // Header
-                    chatHeader
+                // Main chat area
+                ZStack {
+                    // Background
+                    chatBackground
 
-                    // Content area
-                    if session.hasAnyModel {
-                        if session.turns.isEmpty {
-                            // Empty state
+                    // Main content
+                    VStack(spacing: 0) {
+                        // Header
+                        chatHeader
+
+                        // Content area
+                        if session.hasAnyModel {
+                            if session.turns.isEmpty {
+                                // Empty state
+                                ChatEmptyState(
+                                    hasModels: true,
+                                    selectedModel: session.selectedModel,
+                                    onOpenModelManager: {
+                                        AppDelegate.shared?.showManagementWindow(initialTab: .models)
+                                    },
+                                    onUseFoundation: FoundationModelService.isDefaultModelAvailable()
+                                        ? {
+                                            session.selectedModel = "foundation"
+                                        } : nil,
+                                    onQuickAction: { prompt in
+                                        session.input = prompt
+                                    }
+                                )
+                                .transition(.opacity.combined(with: .scale(scale: 0.98)))
+                            } else {
+                                // Message thread
+                                messageThread(chatWidth)
+                                    .transition(.opacity.combined(with: .move(edge: .bottom)))
+                            }
+
+                            // Floating input card
+                            FloatingInputCard(
+                                text: $session.input,
+                                selectedModel: $session.selectedModel,
+                                pendingImages: $session.pendingImages,
+                                modelOptions: session.modelOptions,
+                                isStreaming: session.isStreaming,
+                                supportsImages: session.selectedModelSupportsImages,
+                                onSend: { session.sendCurrent() },
+                                onStop: { session.stop() }
+                            )
+                        } else {
+                            // No models empty state
                             ChatEmptyState(
-                                hasModels: true,
-                                selectedModel: session.selectedModel,
+                                hasModels: false,
+                                selectedModel: nil,
                                 onOpenModelManager: {
                                     AppDelegate.shared?.showManagementWindow(initialTab: .models)
                                 },
@@ -295,50 +464,17 @@ struct ChatView: View {
                                     ? {
                                         session.selectedModel = "foundation"
                                     } : nil,
-                                onQuickAction: { prompt in
-                                    session.input = prompt
-                                }
+                                onQuickAction: { _ in }
                             )
-                            .transition(.opacity.combined(with: .scale(scale: 0.98)))
-                        } else {
-                            // Message thread
-                            messageThread(containerWidth)
-                                .transition(.opacity.combined(with: .move(edge: .bottom)))
                         }
-
-                        // Floating input card
-                        FloatingInputCard(
-                            text: $session.input,
-                            selectedModel: $session.selectedModel,
-                            pendingImages: $session.pendingImages,
-                            modelOptions: session.modelOptions,
-                            isStreaming: session.isStreaming,
-                            supportsImages: session.selectedModelSupportsImages,
-                            onSend: { session.sendCurrent() },
-                            onStop: { session.stop() }
-                        )
-                    } else {
-                        // No models empty state
-                        ChatEmptyState(
-                            hasModels: false,
-                            selectedModel: nil,
-                            onOpenModelManager: {
-                                AppDelegate.shared?.showManagementWindow(initialTab: .models)
-                            },
-                            onUseFoundation: FoundationModelService.isDefaultModelAvailable()
-                                ? {
-                                    session.selectedModel = "foundation"
-                                } : nil,
-                            onQuickAction: { _ in }
-                        )
                     }
+                    .animation(.spring(response: 0.4, dampingFraction: 0.85), value: session.turns.isEmpty)
                 }
-                .animation(.spring(response: 0.4, dampingFraction: 0.85), value: session.turns.isEmpty)
             }
         }
         .frame(
-            minWidth: 700,
-            idealWidth: 900,
+            minWidth: showSidebar ? 940 : 700,
+            idealWidth: showSidebar ? 1140 : 900,
             maxWidth: .infinity,
             minHeight: session.turns.isEmpty ? 490 : 550,
             idealHeight: session.turns.isEmpty ? 550 : 700,
@@ -350,16 +486,23 @@ struct ChatView: View {
         }
         .ignoresSafeArea()
         .animation(.easeInOut(duration: 0.3), value: session.turns.isEmpty)
+        .animation(.easeInOut(duration: 0.2), value: showSidebar)
         .background(WindowAccessor(window: $hostWindow))
         .onExitCommand { AppDelegate.shared?.closeChatOverlay() }
         .onReceive(NotificationCenter.default.publisher(for: .chatOverlayActivated)) { _ in
             focusTrigger &+= 1
             isPinnedToBottom = true
             session.refreshModelOptions()
+            sessionsManager.refresh()
         }
         .onAppear {
             setupKeyMonitor()
             session.refreshModelOptions()
+            sessionsManager.refresh()
+            // Set up callback for session changes
+            session.onSessionChanged = { [weak sessionsManager] in
+                sessionsManager?.refresh()
+            }
         }
         .onDisappear {
             cleanupKeyMonitor()
@@ -396,6 +539,17 @@ struct ChatView: View {
 
     private var chatHeader: some View {
         HStack(spacing: 12) {
+            // Sidebar toggle
+            HeaderActionButton(
+                icon: showSidebar ? "sidebar.left" : "sidebar.left",
+                help: showSidebar ? "Hide sidebar" : "Show sidebar",
+                action: {
+                    withAnimation(.easeInOut(duration: 0.2)) {
+                        showSidebar.toggle()
+                    }
+                }
+            )
+
             // Model indicator
             if let model = session.selectedModel, session.modelOptions.count <= 1 {
                 HStack(spacing: 6) {
@@ -423,7 +577,11 @@ struct ChatView: View {
                     HeaderActionButton(
                         icon: "plus",
                         help: "New chat",
-                        action: { session.reset() }
+                        action: {
+                            // Save current session before creating new
+                            session.save()
+                            session.reset()
+                        }
                     )
                 }
             }
@@ -458,7 +616,10 @@ struct ChatView: View {
                             width: width,
                             isStreaming: session.isStreaming,
                             isLatest: isLatest,
-                            onCopy: copyToPasteboard
+                            onCopy: copyToPasteboard,
+                            onEdit: { turnId, newContent in
+                                session.editAndRegenerate(turnId: turnId, newContent: newContent)
+                            }
                         )
                         .padding(.horizontal, 16)
                     }

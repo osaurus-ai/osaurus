@@ -14,9 +14,12 @@ struct MessageRow: View {
     let isStreaming: Bool
     let isLatest: Bool
     let onCopy: (String) -> Void
+    var onEdit: ((UUID, String) -> Void)? = nil
 
     @Environment(\.theme) private var theme
     @State private var isHovered: Bool = false
+    @State private var isEditing: Bool = false
+    @State private var editingContent: String = ""
 
     private var accentBarColor: Color {
         turn.role == .user ? Color.accentColor : theme.tertiaryText.opacity(0.4)
@@ -119,11 +122,40 @@ struct MessageRow: View {
             Spacer()
 
             // Action buttons (visible on hover)
-            if !turn.content.isEmpty {
-                copyButton
+            if !isEditing {
+                HStack(spacing: 4) {
+                    // Edit button (only for user messages)
+                    if turn.role == .user && onEdit != nil {
+                        editButton
+                    }
+                    if !turn.content.isEmpty {
+                        copyButton
+                    }
+                }
             }
         }
         .contentShape(Rectangle())  // Ensure entire header row is hoverable
+    }
+
+    private var editButton: some View {
+        Button(action: {
+            editingContent = turn.content
+            isEditing = true
+        }) {
+            Image(systemName: "pencil")
+                .font(.system(size: 11, weight: .medium))
+                .foregroundColor(theme.tertiaryText)
+                .padding(6)
+                .background(
+                    Circle()
+                        .fill(theme.secondaryBackground.opacity(isHovered ? 0.8 : 0))
+                )
+        }
+        .buttonStyle(.plain)
+        .opacity(isHovered ? 1 : 0)
+        .animation(.easeInOut(duration: 0.15), value: isHovered)
+        .allowsHitTesting(isHovered)
+        .help("Edit message")
     }
 
     private var copyButton: some View {
@@ -148,7 +180,9 @@ struct MessageRow: View {
 
     @ViewBuilder
     private var contentView: some View {
-        if turn.content.isEmpty && turn.role == .assistant && isStreaming && isLatest {
+        if isEditing {
+            editingView
+        } else if turn.content.isEmpty && turn.role == .assistant && isStreaming && isLatest {
             TypingIndicator()
                 .padding(.vertical, 4)
         } else {
@@ -156,6 +190,52 @@ struct MessageRow: View {
                 .font(Typography.body(width))
                 .foregroundColor(theme.primaryText)
                 .textSelection(.enabled)
+        }
+    }
+
+    // MARK: - Editing View
+
+    private var editingView: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            TextEditor(text: $editingContent)
+                .font(Typography.body(width))
+                .foregroundColor(theme.primaryText)
+                .scrollContentBackground(.hidden)
+                .background(theme.primaryBackground.opacity(0.3))
+                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .strokeBorder(theme.primaryBorder.opacity(0.3), lineWidth: 1)
+                )
+                .frame(minHeight: 60, maxHeight: 200)
+
+            HStack(spacing: 8) {
+                Button("Cancel") {
+                    isEditing = false
+                    editingContent = ""
+                }
+                .buttonStyle(.plain)
+                .foregroundColor(theme.secondaryText)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 6)
+                .background(theme.secondaryBackground.opacity(0.5))
+                .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+
+                Button("Save & Regenerate") {
+                    let trimmed = editingContent.trimmingCharacters(in: .whitespacesAndNewlines)
+                    if !trimmed.isEmpty {
+                        onEdit?(turn.id, trimmed)
+                    }
+                    isEditing = false
+                    editingContent = ""
+                }
+                .buttonStyle(.plain)
+                .foregroundColor(.white)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 6)
+                .background(Color.accentColor)
+                .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+            }
         }
     }
 
