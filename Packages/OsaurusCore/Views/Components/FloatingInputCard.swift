@@ -13,7 +13,7 @@ struct FloatingInputCard: View {
     @Binding var text: String
     @Binding var selectedModel: String?
     @Binding var pendingImages: [Data]
-    let modelOptions: [String]
+    let modelOptions: [ModelOption]
     let isStreaming: Bool
     let supportsImages: Bool
     let onSend: () -> Void
@@ -26,6 +26,9 @@ struct FloatingInputCard: View {
     @Environment(\.colorScheme) private var colorScheme
     @State private var isDragOver = false
     @State private var keyMonitor: Any?
+    @State private var showModelPicker = false
+    // Cache model options to prevent popover refresh during streaming
+    @State private var cachedModelOptions: [ModelOption] = []
 
     // TextEditor should grow up to ~6 lines before scrolling
     private let inputFontSize: CGFloat = 15
@@ -163,28 +166,52 @@ struct FloatingInputCard: View {
 
     // MARK: - Model Selector
 
+    private var selectedModelOption: ModelOption? {
+        guard let id = selectedModel else { return nil }
+        return modelOptions.first { $0.id == id }
+    }
+
     private var modelSelector: some View {
         HStack {
-            Menu {
-                ForEach(modelOptions, id: \.self) { model in
-                    Button(action: { selectedModel = model }) {
-                        HStack {
-                            Text(displayModelName(model))
-                            if selectedModel == model {
-                                Image(systemName: "checkmark")
-                            }
-                        }
-                    }
-                }
-            } label: {
+            Button(action: { showModelPicker.toggle() }) {
                 HStack(spacing: 6) {
                     Circle()
                         .fill(Color.green)
                         .frame(width: 6, height: 6)
 
-                    Text(displayModelName(selectedModel))
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundColor(theme.secondaryText)
+                    // Model name with metadata badges
+                    if let option = selectedModelOption {
+                        HStack(spacing: 4) {
+                            Text(option.displayName)
+                                .font(.system(size: 12, weight: .medium))
+                                .foregroundColor(theme.secondaryText)
+                                .lineLimit(1)
+
+                            // Show VLM indicator
+                            if option.isVLM {
+                                Image(systemName: "eye")
+                                    .font(.system(size: 9))
+                                    .foregroundColor(theme.accentColor)
+                            }
+
+                            // Show parameter count badge
+                            if let params = option.parameterCount {
+                                Text(params)
+                                    .font(.system(size: 9, weight: .medium))
+                                    .foregroundColor(.blue.opacity(0.8))
+                                    .padding(.horizontal, 4)
+                                    .padding(.vertical, 1)
+                                    .background(
+                                        RoundedRectangle(cornerRadius: 3, style: .continuous)
+                                            .fill(Color.blue.opacity(0.12))
+                                    )
+                            }
+                        }
+                    } else {
+                        Text("Select Model")
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundColor(theme.secondaryText)
+                    }
 
                     Image(systemName: "chevron.up.chevron.down")
                         .font(.system(size: 9, weight: .semibold))
@@ -202,6 +229,19 @@ struct FloatingInputCard: View {
                 )
             }
             .buttonStyle(.plain)
+            .popover(isPresented: $showModelPicker, arrowEdge: .top) {
+                ModelPickerView(
+                    options: cachedModelOptions,
+                    selectedModel: $selectedModel,
+                    onDismiss: dismissModelPicker
+                )
+            }
+            .onChange(of: showModelPicker) { _, isShowing in
+                if isShowing {
+                    // Snapshot options when popover opens to prevent refresh during streaming
+                    cachedModelOptions = modelOptions
+                }
+            }
 
             Spacer()
 
@@ -220,11 +260,8 @@ struct FloatingInputCard: View {
         .foregroundColor(theme.tertiaryText.opacity(0.7))
     }
 
-    private func displayModelName(_ raw: String?) -> String {
-        guard let raw else { return "Model" }
-        if raw.lowercased() == "foundation" { return "Foundation" }
-        if let last = raw.split(separator: "/").last { return String(last) }
-        return raw
+    private func dismissModelPicker() {
+        showModelPicker = false
     }
 
     // MARK: - Input Card
@@ -594,7 +631,17 @@ extension NSImage {
                         text: $text,
                         selectedModel: $model,
                         pendingImages: $images,
-                        modelOptions: ["foundation", "mlx-community/Llama-3.2-3B-Instruct"],
+                        modelOptions: [
+                            .foundation(),
+                            ModelOption(
+                                id: "mlx-community/Llama-3.2-3B-Instruct-4bit",
+                                displayName: "Llama 3.2 3B Instruct 4bit",
+                                source: .local,
+                                parameterCount: "3B",
+                                quantization: "4-bit",
+                                isVLM: false
+                            ),
+                        ],
                         isStreaming: false,
                         supportsImages: true,
                         onSend: {},

@@ -17,7 +17,7 @@ final class ChatSession: ObservableObject {
     @Published var input: String = ""
     @Published var pendingImages: [Data] = []
     @Published var selectedModel: String? = nil
-    @Published var modelOptions: [String] = []
+    @Published var modelOptions: [ModelOption] = []
     @Published var scrollTick: Int = 0
     @Published var hasAnyModel: Bool = false
 
@@ -38,19 +38,9 @@ final class ChatSession: ObservableObject {
 
     init() {
         // Build initial options list
-        var opts: [String] = []
-        if FoundationModelService.isDefaultModelAvailable() {
-            opts.append("foundation")
-        }
-        opts.append(contentsOf: MLXService.getAvailableModels())
-        // Add remote provider models
-        let remoteModels = RemoteProviderManager.shared.cachedAvailableModels()
-        for providerModels in remoteModels {
-            opts.append(contentsOf: providerModels.models)
-        }
-        modelOptions = opts
-        selectedModel = opts.first
-        hasAnyModel = !opts.isEmpty
+        modelOptions = Self.buildModelOptions()
+        selectedModel = modelOptions.first?.id
+        hasAnyModel = !modelOptions.isEmpty
 
         // Listen for remote provider model changes
         remoteModelsObserver = NotificationCenter.default.addObserver(
@@ -64,29 +54,58 @@ final class ChatSession: ObservableObject {
         }
     }
 
-    func refreshModelOptions() {
-        var opts: [String] = []
+    /// Build rich model options from all sources
+    private static func buildModelOptions() -> [ModelOption] {
+        var options: [ModelOption] = []
 
         // Add foundation model first if available
         if FoundationModelService.isDefaultModelAvailable() {
-            opts.append("foundation")
+            options.append(.foundation())
         }
 
-        // Add local MLX models
-        let mlx = MLXService.getAvailableModels()
-        opts.append(contentsOf: mlx)
+        // Add local MLX models with rich metadata
+        let localModels = ModelManager.discoverLocalModels()
+        for model in localModels {
+            options.append(.fromMLXModel(model))
+        }
 
         // Add remote provider models
         let remoteModels = RemoteProviderManager.shared.cachedAvailableModels()
-        for providerModels in remoteModels {
-            opts.append(contentsOf: providerModels.models)
+        for providerInfo in remoteModels {
+            for modelId in providerInfo.models {
+                options.append(
+                    .fromRemoteModel(
+                        modelId: modelId,
+                        providerName: providerInfo.providerName,
+                        providerId: providerInfo.providerId
+                    )
+                )
+            }
         }
 
+        return options
+    }
+
+    func refreshModelOptions() {
+        let newOptions = Self.buildModelOptions()
+
         let prev = selectedModel
-        let newSelected = (prev != nil && opts.contains(prev!)) ? prev : opts.first
-        let newHasAnyModel = !opts.isEmpty
-        if modelOptions == opts && selectedModel == newSelected && hasAnyModel == newHasAnyModel { return }
-        modelOptions = opts
+        let newSelected: String?
+        if let prev = prev, newOptions.contains(where: { $0.id == prev }) {
+            newSelected = prev
+        } else {
+            newSelected = newOptions.first?.id
+        }
+        let newHasAnyModel = !newOptions.isEmpty
+
+        // Check if anything changed
+        let optionIds = modelOptions.map { $0.id }
+        let newOptionIds = newOptions.map { $0.id }
+        if optionIds == newOptionIds && selectedModel == newSelected && hasAnyModel == newHasAnyModel {
+            return
+        }
+
+        modelOptions = newOptions
         selectedModel = newSelected
         hasAnyModel = newHasAnyModel
     }
@@ -96,7 +115,27 @@ final class ChatSession: ObservableObject {
         guard let model = selectedModel else { return false }
         // Foundation models don't support images yet
         if model.lowercased() == "foundation" { return false }
+
+        // Check ModelOption first
+        if let option = modelOptions.first(where: { $0.id == model }) {
+            // Remote models: assume they support images (many do, and we can't detect)
+            if case .remote = option.source {
+                return true
+            }
+            // Local models: check VLM status
+            if option.isVLM {
+                return true
+            }
+        }
+
+        // Fall back to ModelManager detection for downloaded models
         return ModelManager.isVisionModel(named: model)
+    }
+
+    /// Get the currently selected ModelOption
+    var selectedModelOption: ModelOption? {
+        guard let model = selectedModel else { return nil }
+        return modelOptions.first { $0.id == model }
     }
 
     /// Filtered turns excluding tool messages (cached computation)
