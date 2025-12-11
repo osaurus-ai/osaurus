@@ -39,8 +39,17 @@ final class ChatSession: ObservableObject {
     init() {
         // Build initial options list
         modelOptions = Self.buildModelOptions()
-        selectedModel = modelOptions.first?.id
         hasAnyModel = !modelOptions.isEmpty
+
+        // Use configured default model if available, otherwise use first available
+        let chatConfig = ChatConfigurationStore.load()
+        if let defaultModel = chatConfig.defaultModel,
+            modelOptions.contains(where: { $0.id == defaultModel })
+        {
+            selectedModel = defaultModel
+        } else {
+            selectedModel = modelOptions.first?.id
+        }
 
         // Listen for remote provider model changes
         remoteModelsObserver = NotificationCenter.default.addObserver(
@@ -168,6 +177,16 @@ final class ChatSession: ObservableObject {
         createdAt = Date()
         updatedAt = Date()
         isDirty = false
+
+        // Apply configured default model for new chat
+        let chatConfig = ChatConfigurationStore.load()
+        if let defaultModel = chatConfig.defaultModel,
+            modelOptions.contains(where: { $0.id == defaultModel })
+        {
+            selectedModel = defaultModel
+        } else {
+            selectedModel = modelOptions.first?.id
+        }
     }
 
     // MARK: - Persistence Methods
@@ -221,7 +240,24 @@ final class ChatSession: ObservableObject {
         title = data.title
         createdAt = data.createdAt
         updatedAt = data.updatedAt
-        selectedModel = data.selectedModel
+
+        // Restore saved model if available, otherwise use configured default
+        if let savedModel = data.selectedModel,
+            modelOptions.contains(where: { $0.id == savedModel })
+        {
+            selectedModel = savedModel
+        } else {
+            // Fall back to configured default model or first available
+            let chatConfig = ChatConfigurationStore.load()
+            if let defaultModel = chatConfig.defaultModel,
+                modelOptions.contains(where: { $0.id == defaultModel })
+            {
+                selectedModel = defaultModel
+            } else {
+                selectedModel = modelOptions.first?.id
+            }
+        }
+
         turns = data.turns.map { ChatTurn(from: $0) }
         input = ""
         pendingImages = []
