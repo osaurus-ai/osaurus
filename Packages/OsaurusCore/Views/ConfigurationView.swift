@@ -16,12 +16,14 @@ struct ConfigurationView: View {
 
     // Chat settings state
     @State private var tempChatHotkey: Hotkey? = nil
+    @State private var tempDefaultModel: String? = nil
     @State private var tempSystemPrompt: String = ""
     @State private var tempChatTemperature: String = ""
     @State private var tempChatMaxTokens: String = ""
     @State private var tempChatTopP: String = ""
     @State private var tempChatMaxToolAttempts: String = ""
     @State private var tempChatAlwaysOnTop: Bool = false
+    @State private var availableModels: [ModelOption] = []
 
     // Server settings state
     @State private var tempAllowedOrigins: String = ""
@@ -54,6 +56,17 @@ struct ConfigurationView: View {
                             // Global Hotkey
                             SettingsField(label: "Global Hotkey") {
                                 HotkeyRecorder(value: $tempChatHotkey)
+                            }
+
+                            // Default Model
+                            SettingsField(
+                                label: "Default Model",
+                                hint: "Model used for new chat sessions"
+                            ) {
+                                DefaultModelPicker(
+                                    selection: $tempDefaultModel,
+                                    models: availableModels
+                                )
                             }
 
                             // System Prompt
@@ -476,12 +489,16 @@ struct ConfigurationView: View {
 
         let chat = ChatConfigurationStore.load()
         tempChatHotkey = chat.hotkey
+        tempDefaultModel = chat.defaultModel
         tempSystemPrompt = chat.systemPrompt
         tempChatTemperature = chat.temperature.map { String($0) } ?? ""
         tempChatMaxTokens = chat.maxTokens.map(String.init) ?? ""
         tempChatTopP = chat.topPOverride.map { String($0) } ?? ""
         tempChatMaxToolAttempts = chat.maxToolAttempts.map(String.init) ?? ""
         tempChatAlwaysOnTop = chat.alwaysOnTop
+
+        // Load available models for the default model picker
+        availableModels = buildAvailableModels()
 
         let defaults = ServerConfiguration.default
         tempTopP = configuration.genTopP == defaults.genTopP ? "" : String(configuration.genTopP)
@@ -515,6 +532,7 @@ struct ConfigurationView: View {
 
         // Chat settings - clear overrides to use defaults
         tempChatHotkey = chatDefaults.hotkey
+        tempDefaultModel = nil
         tempSystemPrompt = ""
         tempChatTemperature = ""
         tempChatMaxTokens = ""
@@ -631,7 +649,8 @@ struct ConfigurationView: View {
             maxTokens: parsedMax,
             topPOverride: parsedTopP,
             maxToolAttempts: parsedMaxToolAttempts,
-            alwaysOnTop: tempChatAlwaysOnTop
+            alwaysOnTop: tempChatAlwaysOnTop,
+            defaultModel: tempDefaultModel
         )
         ChatConfigurationStore.save(chatCfg)
 
@@ -661,6 +680,41 @@ struct ConfigurationView: View {
                 showSaveConfirmation = false
             }
         }
+    }
+}
+
+// MARK: - Model Helper
+extension ConfigurationView {
+    /// Build available models list for the default model picker
+    private func buildAvailableModels() -> [ModelOption] {
+        var options: [ModelOption] = []
+
+        // Add foundation model if available
+        if FoundationModelService.isDefaultModelAvailable() {
+            options.append(.foundation())
+        }
+
+        // Add local MLX models
+        let localModels = ModelManager.discoverLocalModels()
+        for model in localModels {
+            options.append(.fromMLXModel(model))
+        }
+
+        // Add remote provider models
+        let remoteModels = RemoteProviderManager.shared.cachedAvailableModels()
+        for providerInfo in remoteModels {
+            for modelId in providerInfo.models {
+                options.append(
+                    .fromRemoteModel(
+                        modelId: modelId,
+                        providerName: providerInfo.providerName,
+                        providerId: providerInfo.providerId
+                    )
+                )
+            }
+        }
+
+        return options
     }
 }
 
@@ -1112,5 +1166,79 @@ private struct SystemPermissionRow: View {
                         .stroke(isGranted ? theme.successColor.opacity(0.3) : theme.inputBorder, lineWidth: 1)
                 )
         )
+    }
+}
+
+// MARK: - Default Model Picker
+
+private struct DefaultModelPicker: View {
+    @Environment(\.theme) private var theme
+    @Binding var selection: String?
+    let models: [ModelOption]
+
+    private var displayName: String {
+        if let selected = selection,
+            let model = models.first(where: { $0.id == selected })
+        {
+            return model.displayName
+        }
+        return "Auto (first available)"
+    }
+
+    var body: some View {
+        Menu {
+            // Auto option (nil selection)
+            Button(action: { selection = nil }) {
+                HStack {
+                    Text("Auto (first available)")
+                    if selection == nil {
+                        Image(systemName: "checkmark")
+                    }
+                }
+            }
+
+            Divider()
+
+            // Group models by source
+            let grouped = models.groupedBySource()
+            ForEach(grouped, id: \.source.displayName) { group in
+                Section(group.source.displayName) {
+                    ForEach(group.models) { model in
+                        Button(action: { selection = model.id }) {
+                            HStack {
+                                Text(model.displayName)
+                                if selection == model.id {
+                                    Image(systemName: "checkmark")
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        } label: {
+            HStack {
+                Text(displayName)
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundColor(theme.primaryText)
+                    .lineLimit(1)
+
+                Spacer()
+
+                Image(systemName: "chevron.up.chevron.down")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundColor(theme.secondaryText)
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            .background(
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(theme.inputBackground)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 8)
+                            .stroke(theme.inputBorder, lineWidth: 1)
+                    )
+            )
+        }
+        .menuStyle(.borderlessButton)
     }
 }
