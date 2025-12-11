@@ -469,7 +469,7 @@ extension AppDelegate {
             win.titleVisibility = .hidden
             win.titlebarAppearsTransparent = true
             win.isMovableByWindowBackground = true
-            win.level = .floating
+            win.level = .normal
             win.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
             win.contentViewController = controller
             win.delegate = self
