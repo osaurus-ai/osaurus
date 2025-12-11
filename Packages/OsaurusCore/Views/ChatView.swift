@@ -27,6 +27,9 @@ final class ChatSession: ObservableObject {
     var createdAt: Date = Date()
     var updatedAt: Date = Date()
 
+    /// Tracks if session has unsaved content changes
+    private var isDirty: Bool = false
+
     /// Callback when session needs to be saved (called after streaming completes)
     var onSessionChanged: (() -> Void)?
 
@@ -125,6 +128,7 @@ final class ChatSession: ObservableObject {
         title = "New Chat"
         createdAt = Date()
         updatedAt = Date()
+        isDirty = false
     }
 
     // MARK: - Persistence Methods
@@ -136,7 +140,7 @@ final class ChatSession: ObservableObject {
             id: sessionId ?? UUID(),
             title: title,
             createdAt: createdAt,
-            updatedAt: Date(),
+            updatedAt: updatedAt,
             selectedModel: selectedModel,
             turns: turnData
         )
@@ -151,8 +155,14 @@ final class ChatSession: ObservableObject {
         if sessionId == nil {
             sessionId = UUID()
             createdAt = Date()
+            isDirty = true
         }
-        updatedAt = Date()
+
+        // Only update timestamp if content actually changed
+        if isDirty {
+            updatedAt = Date()
+            isDirty = false
+        }
 
         // Auto-generate title from first user message if still default
         if title == "New Chat" {
@@ -176,6 +186,7 @@ final class ChatSession: ObservableObject {
         turns = data.turns.map { ChatTurn(from: $0) }
         input = ""
         pendingImages = []
+        isDirty = false  // Fresh load, not dirty
     }
 
     /// Edit a user message and regenerate from that point
@@ -189,7 +200,8 @@ final class ChatSession: ObservableObject {
         // Remove all turns after this one
         turns = Array(turns.prefix(index + 1))
 
-        // Save and regenerate
+        // Mark as dirty and save
+        isDirty = true
         save()
         send("")  // Empty send to trigger regeneration with existing history
     }
@@ -198,7 +210,21 @@ final class ChatSession: ObservableObject {
     func deleteTurn(id: UUID) {
         guard let index = turns.firstIndex(where: { $0.id == id }) else { return }
         turns = Array(turns.prefix(index))
+        isDirty = true
         save()
+    }
+
+    /// Regenerate an assistant response (removes it and regenerates)
+    func regenerate(turnId: UUID) {
+        guard let index = turns.firstIndex(where: { $0.id == turnId }) else { return }
+        guard turns[index].role == .assistant else { return }
+
+        // Remove this turn and all subsequent turns
+        turns = Array(turns.prefix(index))
+        isDirty = true
+
+        // Regenerate
+        send("")
     }
 
     func send(_ text: String, images: [Data] = []) {
@@ -210,6 +236,21 @@ final class ChatSession: ObservableObject {
         // Only append user turn if there's actual content
         if !trimmed.isEmpty || !images.isEmpty {
             turns.append(ChatTurn(role: .user, content: trimmed, images: images))
+            isDirty = true
+
+            // Immediately save new session so it appears in sidebar
+            if sessionId == nil {
+                sessionId = UUID()
+                createdAt = Date()
+                updatedAt = Date()
+                isDirty = false  // Already set updatedAt
+                // Auto-generate title from first user message
+                let turnData = turns.map { ChatTurnData(from: $0) }
+                title = ChatSessionData.generateTitle(from: turnData)
+                let data = toSessionData()
+                ChatSessionStore.save(data)
+                onSessionChanged?()
+            }
         }
 
         currentTask = Task { @MainActor in
@@ -362,7 +403,7 @@ struct ChatView: View {
     @State private var hostWindow: NSWindow?
     @State private var keyMonitor: Any?
     @State private var isHeaderHovered: Bool = false
-    @State private var showSidebar: Bool = true
+    @State private var showSidebar: Bool = false
 
     private var theme: ThemeProtocol { themeManager.currentTheme }
 
@@ -378,11 +419,18 @@ struct ChatView: View {
                         manager: sessionsManager,
                         currentSessionId: session.sessionId,
                         onSelect: { data in
+                            // Don't reload if already on this session
+                            guard data.id != session.sessionId else { return }
                             // Save current session before switching
                             if !session.turns.isEmpty {
                                 session.save()
                             }
-                            session.load(from: data)
+                            // Load fresh data from store
+                            if let freshData = ChatSessionStore.load(id: data.id) {
+                                session.load(from: freshData)
+                            } else {
+                                session.load(from: data)
+                            }
                             isPinnedToBottom = true
                         },
                         onNewChat: {
@@ -619,6 +667,9 @@ struct ChatView: View {
                             onCopy: copyToPasteboard,
                             onEdit: { turnId, newContent in
                                 session.editAndRegenerate(turnId: turnId, newContent: newContent)
+                            },
+                            onRegenerate: { turnId in
+                                session.regenerate(turnId: turnId)
                             }
                         )
                         .padding(.horizontal, 16)

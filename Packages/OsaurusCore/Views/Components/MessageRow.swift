@@ -15,6 +15,7 @@ struct MessageRow: View {
     let isLatest: Bool
     let onCopy: (String) -> Void
     var onEdit: ((UUID, String) -> Void)? = nil
+    var onRegenerate: ((UUID) -> Void)? = nil
 
     @Environment(\.theme) private var theme
     @State private var isHovered: Bool = false
@@ -128,6 +129,10 @@ struct MessageRow: View {
                     if turn.role == .user && onEdit != nil {
                         editButton
                     }
+                    // Regenerate button (only for assistant messages)
+                    if turn.role == .assistant && onRegenerate != nil && !isStreaming {
+                        regenerateButton
+                    }
                     if !turn.content.isEmpty {
                         copyButton
                     }
@@ -156,6 +161,26 @@ struct MessageRow: View {
         .animation(.easeInOut(duration: 0.15), value: isHovered)
         .allowsHitTesting(isHovered)
         .help("Edit message")
+    }
+
+    private var regenerateButton: some View {
+        Button(action: {
+            onRegenerate?(turn.id)
+        }) {
+            Image(systemName: "arrow.clockwise")
+                .font(.system(size: 11, weight: .medium))
+                .foregroundColor(theme.tertiaryText)
+                .padding(6)
+                .background(
+                    Circle()
+                        .fill(theme.secondaryBackground.opacity(isHovered ? 0.8 : 0))
+                )
+        }
+        .buttonStyle(.plain)
+        .opacity(isHovered ? 1 : 0)
+        .animation(.easeInOut(duration: 0.15), value: isHovered)
+        .allowsHitTesting(isHovered)
+        .help("Regenerate response")
     }
 
     private var copyButton: some View {

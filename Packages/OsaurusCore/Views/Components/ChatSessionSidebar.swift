@@ -24,6 +24,9 @@ struct ChatSessionSidebar: View {
         VStack(spacing: 0) {
             // Header with New Chat button
             sidebarHeader
+                .onTapGesture {
+                    dismissEditing()
+                }
 
             Divider()
                 .opacity(0.3)
@@ -31,12 +34,23 @@ struct ChatSessionSidebar: View {
             // Session list
             if manager.sessions.isEmpty {
                 emptyState
+                    .onTapGesture {
+                        dismissEditing()
+                    }
             } else {
                 sessionList
             }
         }
         .frame(width: 240)
         .background(theme.secondaryBackground.opacity(colorScheme == .dark ? 0.3 : 0.5))
+    }
+
+    private func dismissEditing() {
+        guard let id = editingSessionId else { return }
+        if !editingTitle.trimmingCharacters(in: .whitespaces).isEmpty {
+            onRename(id, editingTitle)
+        }
+        editingSessionId = nil
     }
 
     // MARK: - Header
@@ -88,8 +102,18 @@ struct ChatSessionSidebar: View {
                         isSelected: session.id == currentSessionId,
                         isEditing: editingSessionId == session.id,
                         editingTitle: $editingTitle,
-                        onSelect: { onSelect(session) },
+                        onSelect: {
+                            // Dismiss any ongoing edit first
+                            if editingSessionId != nil && editingSessionId != session.id {
+                                dismissEditing()
+                            }
+                            onSelect(session)
+                        },
                         onStartRename: {
+                            // Dismiss any other editing first
+                            if editingSessionId != nil && editingSessionId != session.id {
+                                dismissEditing()
+                            }
                             editingSessionId = session.id
                             editingTitle = session.title
                         },
@@ -102,7 +126,13 @@ struct ChatSessionSidebar: View {
                         onCancelRename: {
                             editingSessionId = nil
                         },
-                        onDelete: { onDelete(session.id) }
+                        onDelete: {
+                            // Dismiss editing first
+                            if editingSessionId != nil {
+                                dismissEditing()
+                            }
+                            onDelete(session.id)
+                        }
                     )
                 }
             }
@@ -128,6 +158,7 @@ private struct SessionRow: View {
 
     @Environment(\.theme) private var theme
     @State private var isHovered = false
+    @FocusState private var isTextFieldFocused: Bool
 
     var body: some View {
         Group {
@@ -163,13 +194,29 @@ private struct SessionRow: View {
             }
 
             Spacer()
+
+            // Delete button (visible on hover)
+            if isHovered {
+                Button(action: onDelete) {
+                    Image(systemName: "trash")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundColor(theme.secondaryText)
+                }
+                .buttonStyle(.plain)
+                .help("Delete")
+                .transition(.opacity)
+            }
         }
-        .onTapGesture(perform: onSelect)
-        .contextMenu {
-            Button("Rename") { onStartRename() }
-            Divider()
-            Button("Delete", role: .destructive) { onDelete() }
+        .contentShape(Rectangle())
+        .onTapGesture {
+            onSelect()
         }
+        .gesture(
+            TapGesture(count: 2)
+                .onEnded {
+                    onStartRename()
+                }
+        )
     }
 
     private var editingView: some View {
@@ -181,7 +228,17 @@ private struct SessionRow: View {
             .padding(.vertical, 2)
             .background(theme.primaryBackground.opacity(0.5))
             .clipShape(RoundedRectangle(cornerRadius: 4))
+            .focused($isTextFieldFocused)
             .onExitCommand(perform: onCancelRename)
+            .onAppear {
+                isTextFieldFocused = true
+            }
+            .onChange(of: isTextFieldFocused) { _, focused in
+                if !focused {
+                    // Clicked outside - confirm the rename
+                    onConfirmRename()
+                }
+            }
     }
 
     private var rowBackground: some View {
