@@ -27,7 +27,16 @@ struct FloatingInputCard: View {
     @State private var isDragOver = false
     @State private var keyMonitor: Any?
 
-    private let maxHeight: CGFloat = 200
+    // TextEditor should grow up to ~6 lines before scrolling
+    private let inputFontSize: CGFloat = 15
+    private let maxVisibleLines: CGFloat = 6
+    private var maxHeight: CGFloat {
+        // Approximate line height from font metrics (ascender/descender/leading)
+        let font = NSFont.systemFont(ofSize: inputFontSize)
+        let lineHeight = font.ascender - font.descender + font.leading
+        // Small extra padding so the last line isn't cramped
+        return lineHeight * maxVisibleLines + 8
+    }
     private let maxImageSize: Int = 10 * 1024 * 1024  // 10MB limit
 
     private var canSend: Bool {
@@ -323,7 +332,7 @@ struct FloatingInputCard: View {
 
     private var textInputArea: some View {
         TextEditor(text: $localText)
-            .font(.system(size: 15))
+            .font(.system(size: inputFontSize))
             .foregroundColor(theme.primaryText)
             .scrollContentBackground(.hidden)
             .background(Color.clear)
