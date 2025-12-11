@@ -36,6 +36,8 @@ public struct ChatConfiguration: Codable, Equatable, Sendable {
     public var topPOverride: Float?
     /// Optional per-chat limit on consecutive tool attempts (nil uses default)
     public var maxToolAttempts: Int?
+    /// Whether the chat window should float above other windows
+    public var alwaysOnTop: Bool
 
     public init(
         hotkey: Hotkey?,
@@ -43,7 +45,8 @@ public struct ChatConfiguration: Codable, Equatable, Sendable {
         temperature: Float? = nil,
         maxTokens: Int? = nil,
         topPOverride: Float? = nil,
-        maxToolAttempts: Int? = nil
+        maxToolAttempts: Int? = nil,
+        alwaysOnTop: Bool = false
     ) {
         self.hotkey = hotkey
         self.systemPrompt = systemPrompt
@@ -51,6 +54,7 @@ public struct ChatConfiguration: Codable, Equatable, Sendable {
         self.maxTokens = maxTokens
         self.topPOverride = topPOverride
         self.maxToolAttempts = maxToolAttempts
+        self.alwaysOnTop = alwaysOnTop
     }
 
     public static var `default`: ChatConfiguration {
@@ -64,7 +68,8 @@ public struct ChatConfiguration: Codable, Equatable, Sendable {
             temperature: 0.7,
             maxTokens: 1024,
             topPOverride: nil,
-            maxToolAttempts: nil
+            maxToolAttempts: nil,
+            alwaysOnTop: false
         )
     }
 }

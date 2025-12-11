@@ -469,7 +469,8 @@ extension AppDelegate {
             win.titleVisibility = .hidden
             win.titlebarAppearsTransparent = true
             win.isMovableByWindowBackground = true
-            win.level = .normal
+            let chatConfig = ChatConfigurationStore.load()
+            win.level = chatConfig.alwaysOnTop ? .floating : .normal
             win.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
             win.contentViewController = controller
             win.delegate = self
@@ -497,6 +498,12 @@ extension AppDelegate {
 
     @MainActor func closeChatOverlay() {
         chatWindow?.orderOut(nil)
+    }
+
+    @MainActor func applyChatWindowLevel() {
+        guard let win = chatWindow else { return }
+        let chatConfig = ChatConfigurationStore.load()
+        win.level = chatConfig.alwaysOnTop ? .floating : .normal
     }
 }
 

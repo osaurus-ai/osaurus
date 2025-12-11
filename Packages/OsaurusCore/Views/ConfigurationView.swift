@@ -21,6 +21,7 @@ struct ConfigurationView: View {
     @State private var tempChatMaxTokens: String = ""
     @State private var tempChatTopP: String = ""
     @State private var tempChatMaxToolAttempts: String = ""
+    @State private var tempChatAlwaysOnTop: Bool = false
 
     // Server settings state
     @State private var tempAllowedOrigins: String = ""
@@ -116,6 +117,16 @@ struct ConfigurationView: View {
                                     help: "Max consecutive tool calls (1–10). Empty uses no limit"
                                 )
                             }
+
+                            Divider()
+                                .background(theme.primaryBorder)
+
+                            // Window Settings
+                            SettingsToggle(
+                                title: "Always on Top",
+                                description: "Keep chat window above other windows",
+                                isOn: $tempChatAlwaysOnTop
+                            )
                         }
                     }
 
@@ -470,6 +481,7 @@ struct ConfigurationView: View {
         tempChatMaxTokens = chat.maxTokens.map(String.init) ?? ""
         tempChatTopP = chat.topPOverride.map { String($0) } ?? ""
         tempChatMaxToolAttempts = chat.maxToolAttempts.map(String.init) ?? ""
+        tempChatAlwaysOnTop = chat.alwaysOnTop
 
         let defaults = ServerConfiguration.default
         tempTopP = configuration.genTopP == defaults.genTopP ? "" : String(configuration.genTopP)
@@ -508,6 +520,7 @@ struct ConfigurationView: View {
         tempChatMaxTokens = ""
         tempChatTopP = ""
         tempChatMaxToolAttempts = ""
+        tempChatAlwaysOnTop = chatDefaults.alwaysOnTop
 
         // Performance settings - clear to use defaults
         tempTopP = ""
@@ -617,12 +630,16 @@ struct ConfigurationView: View {
             temperature: parsedTemp,
             maxTokens: parsedMax,
             topPOverride: parsedTopP,
-            maxToolAttempts: parsedMaxToolAttempts
+            maxToolAttempts: parsedMaxToolAttempts,
+            alwaysOnTop: tempChatAlwaysOnTop
         )
         ChatConfigurationStore.save(chatCfg)
 
         // Apply hotkey without relaunch
         AppDelegate.shared?.applyChatHotkey()
+
+        // Apply chat window level immediately
+        AppDelegate.shared?.applyChatWindowLevel()
 
         // Apply login item state
         LoginItemService.shared.applyStartAtLogin(configuration.startAtLogin)
