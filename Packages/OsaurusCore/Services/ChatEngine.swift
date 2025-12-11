@@ -56,7 +56,7 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
 
     func streamChat(request: ChatCompletionRequest) async throws -> AsyncThrowingStream<String, Error> {
         let messages = await enrichMessagesWithSystemPrompt(request.messages)
-        let temperature = request.temperature ?? 0.7
+        let temperature = request.temperature
         let maxTokens = request.max_tokens ?? 1024
         let repPenalty: Float? = {
             // Map OpenAI penalties (presence/frequency) to a simple repetition penalty if provided
@@ -134,7 +134,7 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
         source: InferenceSource,
         model: String,
         inputTokens: Int,
-        temperature: Float,
+        temperature: Float?,
         maxTokens: Int
     ) -> AsyncThrowingStream<String, Error> {
         let (stream, continuation) = AsyncThrowingStream<String, Error>.makeStream()
@@ -194,7 +194,7 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
         let startTime = Date()
         let messages = await enrichMessagesWithSystemPrompt(request.messages)
         let inputTokens = estimateInputTokens(messages)
-        let temperature = request.temperature ?? 0.7
+        let temperature = request.temperature
         let maxTokens = request.max_tokens ?? 1024
         let repPenalty2: Float? = {
             if let fp = request.frequency_penalty, fp > 0 { return 1.0 + fp }

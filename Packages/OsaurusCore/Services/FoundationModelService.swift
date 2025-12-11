@@ -79,7 +79,7 @@ actor FoundationModelService: ToolCapableService {
 
                 let options = GenerationOptions(
                     sampling: nil,
-                    temperature: Double(parameters.temperature),
+                    temperature: Double(parameters.temperature ?? 0.7),
                     maximumResponseTokens: parameters.maxTokens
                 )
 
@@ -128,7 +128,7 @@ actor FoundationModelService: ToolCapableService {
         let prompt = OpenAIPromptBuilder.buildPrompt(from: messages)
         return try await Self.generateOneShot(
             prompt: prompt,
-            temperature: parameters.temperature,
+            temperature: parameters.temperature ?? 0.7,
             maxTokens: parameters.maxTokens
         )
     }
@@ -153,7 +153,7 @@ actor FoundationModelService: ToolCapableService {
 
                 let options = GenerationOptions(
                     sampling: nil,
-                    temperature: Double(parameters.temperature),
+                    temperature: Double(parameters.temperature ?? 0.7),
                     maximumResponseTokens: parameters.maxTokens
                 )
 
@@ -203,7 +203,7 @@ actor FoundationModelService: ToolCapableService {
 
                 let options = GenerationOptions(
                     sampling: nil,
-                    temperature: Double(parameters.temperature),
+                    temperature: Double(parameters.temperature ?? 0.7),
                     maximumResponseTokens: parameters.maxTokens
                 )
 

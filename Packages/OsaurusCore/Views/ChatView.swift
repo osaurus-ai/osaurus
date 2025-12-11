@@ -399,7 +399,7 @@ final class ChatSession: ObservableObject {
                     let req = ChatCompletionRequest(
                         model: selectedModel ?? "default",
                         messages: buildMessages(),
-                        temperature: chatCfg.temperature ?? 0.7,
+                        temperature: chatCfg.temperature,
                         max_tokens: chatCfg.maxTokens ?? 1024,
                         stream: true,
                         top_p: chatCfg.topPOverride,
