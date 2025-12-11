@@ -69,7 +69,7 @@ public struct ChatConfiguration: Codable, Equatable, Sendable {
         return ChatConfiguration(
             hotkey: Hotkey(keyCode: key, carbonModifiers: mods, displayString: display),
             systemPrompt: "",
-            temperature: 0.7,
+            temperature: nil,
             maxTokens: 1024,
             topPOverride: nil,
             maxToolAttempts: nil,

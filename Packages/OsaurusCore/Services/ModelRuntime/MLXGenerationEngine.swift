@@ -22,7 +22,7 @@ struct MLXGenerationEngine {
             let chat = buildChat()
             let toolsSpec = buildToolsSpec()
             let parameters = ModelRuntime.makeGenerateParameters(
-                temperature: generation.temperature,
+                temperature: generation.temperature ?? 0.7,
                 maxTokens: generation.maxTokens,
                 topP: generation.topPOverride ?? runtime.topP,
                 repetitionPenalty: generation.repetitionPenalty,

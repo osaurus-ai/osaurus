@@ -8,7 +8,7 @@
 import Foundation
 
 struct GenerationParameters: Sendable {
-    let temperature: Float
+    let temperature: Float?
     let maxTokens: Int
     /// Optional per-request top_p override (falls back to server configuration when nil)
     let topPOverride: Float?

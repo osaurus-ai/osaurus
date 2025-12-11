@@ -234,7 +234,7 @@ extension InsightsService {
         inputTokens: Int,
         outputTokens: Int,
         durationMs: Double,
-        temperature: Float,
+        temperature: Float?,
         maxTokens: Int,
         toolCalls: [ToolCallLog]? = nil,
         finishReason: RequestLog.FinishReason = .stop,
