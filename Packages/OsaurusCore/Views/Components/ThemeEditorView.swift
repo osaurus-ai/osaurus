@@ -136,6 +136,22 @@ struct ThemeEditorView: View {
                         )
                 )
                 .foregroundColor(currentTheme.primaryText)
+
+            // Author name field
+            TextField("Author Name", text: $editingTheme.metadata.author)
+                .textFieldStyle(.plain)
+                .font(.system(size: 13))
+                .padding(.horizontal, 12)
+                .padding(.vertical, 6)
+                .background(
+                    RoundedRectangle(cornerRadius: 6)
+                        .fill(currentTheme.inputBackground)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 6)
+                                .stroke(currentTheme.inputBorder, lineWidth: 1)
+                        )
+                )
+                .foregroundColor(currentTheme.primaryText)
         }
         .padding(16)
     }
