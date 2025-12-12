@@ -19,6 +19,15 @@ struct GenerationParameters: Sendable {
 struct ServiceToolInvocation: Error, Sendable {
     let toolName: String
     let jsonArguments: String
+    /// Optional tool call ID preserved from the streaming response (OpenAI format: "call_xxx")
+    /// If nil, the caller should generate a new ID
+    let toolCallId: String?
+
+    init(toolName: String, jsonArguments: String, toolCallId: String? = nil) {
+        self.toolName = toolName
+        self.jsonArguments = jsonArguments
+        self.toolCallId = toolCallId
+    }
 }
 
 protocol ModelService: Sendable {
