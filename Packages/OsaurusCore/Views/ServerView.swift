@@ -404,6 +404,18 @@ struct APIEndpoint {
             category: .core,
             examplePayload: nil
         ),
+        APIEndpoint(
+            method: "POST",
+            path: "/show",
+            description: "Show model metadata",
+            compatibility: "Ollama",
+            category: .core,
+            examplePayload: """
+                {
+                  "name": "foundation"
+                }
+                """
+        ),
         // Chat endpoints
         APIEndpoint(
             method: "POST",

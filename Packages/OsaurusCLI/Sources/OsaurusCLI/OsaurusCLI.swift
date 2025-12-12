@@ -15,6 +15,7 @@ struct OsaurusCLI {
         case serve([String])
         case stop
         case list
+        case show(String)
         case run(String)
         case mcp
         case ui
@@ -31,6 +32,9 @@ struct OsaurusCLI {
         case "serve": return .serve(rest)
         case "stop": return .stop
         case "list": return .list
+        case "show":
+            if let modelId = rest.first, !modelId.isEmpty { return .show(modelId) }
+            return nil
         case "run":
             if let modelId = rest.first, !modelId.isEmpty { return .run(modelId) }
             return nil
@@ -60,6 +64,8 @@ struct OsaurusCLI {
             await StopCommand.execute(args: [])
         case .list:
             await ListCommand.execute(args: [])
+        case .show(let modelId):
+            await ShowCommand.execute(args: [modelId])
         case .run(let modelId):
             await RunCommand.execute(args: [modelId])
         case .mcp:
@@ -89,6 +95,7 @@ struct OsaurusCLI {
               osaurus version         Show version (also: --version or -v)
               osaurus status          Check if the Osaurus server is running
               osaurus list            List available model IDs
+              osaurus show <model_id> Show metadata for a model
               osaurus run <model_id>  Chat with a downloaded model (interactive)
               osaurus ui              Show the Osaurus menu popover in the menu bar
               osaurus tools list      List installed tools

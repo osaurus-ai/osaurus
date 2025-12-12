@@ -166,6 +166,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 handleModelsEndpoint(head: head, context: context, startTime: startTime, userAgent: userAgent)
             } else if head.method == .GET, path == "/tags" {
                 handleTagsEndpoint(head: head, context: context, startTime: startTime, userAgent: userAgent)
+            } else if head.method == .POST, path == "/show" {
+                handleShowEndpoint(head: head, context: context, startTime: startTime, userAgent: userAgent)
             } else if head.method == .POST, path == "/chat/completions" || path == "/v1/chat/completions" {
                 handleChatCompletions(head: head, context: context, startTime: startTime, userAgent: userAgent)
             } else if head.method == .POST, path == "/chat" {
@@ -932,6 +934,194 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 responseBody: json,
                 responseStatus: 200,
                 startTime: logStartTime
+            )
+        }
+    }
+
+    private func handleShowEndpoint(
+        head: HTTPRequestHead,
+        context: ChannelHandlerContext,
+        startTime: Date,
+        userAgent: String?
+    ) {
+        let data: Data
+        let requestBodyString: String?
+        if let body = stateRef.value.requestBodyBuffer {
+            var bodyCopy = body
+            let bytes = bodyCopy.readBytes(length: bodyCopy.readableBytes) ?? []
+            data = Data(bytes)
+            requestBodyString = String(decoding: data, as: UTF8.self)
+        } else {
+            data = Data()
+            requestBodyString = nil
+        }
+
+        struct ShowRequest: Decodable {
+            let name: String
+        }
+
+        guard let req = try? JSONDecoder().decode(ShowRequest.self, from: data) else {
+            var headers = [("Content-Type", "application/json; charset=utf-8")]
+            headers.append(contentsOf: stateRef.value.corsHeaders)
+            let errorBody =
+                #"{"error":{"message":"Invalid request: expected {\"name\": \"<model_id>\"}","type":"invalid_request_error"}}"#
+            sendResponse(
+                context: context,
+                version: head.version,
+                status: .badRequest,
+                headers: headers,
+                body: errorBody
+            )
+            logRequest(
+                method: "POST",
+                path: "/show",
+                userAgent: userAgent,
+                requestBody: requestBodyString,
+                responseBody: errorBody,
+                responseStatus: 400,
+                startTime: startTime,
+                errorMessage: "Invalid request format"
+            )
+            return
+        }
+
+        let loop = context.eventLoop
+        let ctx = NIOLoopBound(context, eventLoop: loop)
+        let cors = stateRef.value.corsHeaders
+        let hop: (@escaping @Sendable () -> Void) -> Void = { block in
+            if loop.inEventLoop { block() } else { loop.execute { block() } }
+        }
+        let logStartTime = startTime
+        let logUserAgent = userAgent
+        let logRequestBody = requestBodyString
+        let logSelf = self
+        let modelName = req.name
+
+        Task(priority: .userInitiated) {
+            // Handle "foundation" model specially
+            if modelName.lowercased() == "foundation" || modelName.lowercased() == "default" {
+                if FoundationModelService.isDefaultModelAvailable() {
+                    let response: [String: Any] = [
+                        "modelfile": "",
+                        "parameters": "",
+                        "template": "",
+                        "details": [
+                            "parent_model": "",
+                            "format": "native",
+                            "family": "foundation",
+                            "families": ["foundation"],
+                            "parameter_size": "",
+                            "quantization_level": "",
+                        ],
+                        "model_info": [
+                            "general.architecture": "foundation",
+                            "general.name": "Apple Foundation Model",
+                        ],
+                    ]
+                    let jsonData = (try? JSONSerialization.data(withJSONObject: response)) ?? Data("{}".utf8)
+                    let json = String(decoding: jsonData, as: UTF8.self)
+                    hop {
+                        var headers = [("Content-Type", "application/json; charset=utf-8")]
+                        headers.append(contentsOf: cors)
+                        self.sendResponse(
+                            context: ctx.value,
+                            version: head.version,
+                            status: .ok,
+                            headers: headers,
+                            body: json
+                        )
+                    }
+                    logSelf.logRequest(
+                        method: "POST",
+                        path: "/show",
+                        userAgent: logUserAgent,
+                        requestBody: logRequestBody,
+                        responseBody: json,
+                        responseStatus: 200,
+                        startTime: logStartTime,
+                        model: "foundation"
+                    )
+                    return
+                } else {
+                    let errorBody =
+                        #"{"error":{"message":"Foundation model not available","type":"invalid_request_error"}}"#
+                    hop {
+                        var headers = [("Content-Type", "application/json; charset=utf-8")]
+                        headers.append(contentsOf: cors)
+                        self.sendResponse(
+                            context: ctx.value,
+                            version: head.version,
+                            status: .notFound,
+                            headers: headers,
+                            body: errorBody
+                        )
+                    }
+                    logSelf.logRequest(
+                        method: "POST",
+                        path: "/show",
+                        userAgent: logUserAgent,
+                        requestBody: logRequestBody,
+                        responseBody: errorBody,
+                        responseStatus: 404,
+                        startTime: logStartTime,
+                        errorMessage: "Foundation model not available"
+                    )
+                    return
+                }
+            }
+
+            // Try to load model info for MLX models
+            guard let modelInfo = ModelInfo.load(modelId: modelName) else {
+                let errorBody =
+                    #"{"error":{"message":"Model not found: \#(modelName)","type":"invalid_request_error"}}"#
+                hop {
+                    var headers = [("Content-Type", "application/json; charset=utf-8")]
+                    headers.append(contentsOf: cors)
+                    self.sendResponse(
+                        context: ctx.value,
+                        version: head.version,
+                        status: .notFound,
+                        headers: headers,
+                        body: errorBody
+                    )
+                }
+                logSelf.logRequest(
+                    method: "POST",
+                    path: "/show",
+                    userAgent: logUserAgent,
+                    requestBody: logRequestBody,
+                    responseBody: errorBody,
+                    responseStatus: 404,
+                    startTime: logStartTime,
+                    errorMessage: "Model not found: \(modelName)"
+                )
+                return
+            }
+
+            let response = modelInfo.toShowResponse()
+            let jsonData = (try? JSONEncoder().encode(response)) ?? Data("{}".utf8)
+            let json = String(decoding: jsonData, as: UTF8.self)
+
+            hop {
+                var headers = [("Content-Type", "application/json; charset=utf-8")]
+                headers.append(contentsOf: cors)
+                self.sendResponse(
+                    context: ctx.value,
+                    version: head.version,
+                    status: .ok,
+                    headers: headers,
+                    body: json
+                )
+            }
+            logSelf.logRequest(
+                method: "POST",
+                path: "/show",
+                userAgent: logUserAgent,
+                requestBody: logRequestBody,
+                responseBody: json,
+                responseStatus: 200,
+                startTime: logStartTime,
+                model: modelName
             )
         }
     }
