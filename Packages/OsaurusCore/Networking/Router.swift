@@ -58,6 +58,9 @@ public struct Router {
         case ("POST", "/chat"):
             return chatEndpoint(body: body, context: context, handler: handler)
 
+        case ("POST", "/show"):
+            return showEndpoint(body: body)
+
         default:
             return notFoundEndpoint()
         }
@@ -89,6 +92,9 @@ public struct Router {
 
         case ("POST", "/chat"):
             return chatEndpoint(bodyBuffer: bodyBuffer, context: context, handler: handler)
+
+        case ("POST", "/show"):
+            return showEndpoint(bodyBuffer: bodyBuffer)
 
         default:
             return notFoundEndpoint()
@@ -182,6 +188,68 @@ public struct Router {
             return (.ok, [("Content-Type", "application/json; charset=utf-8")], json)
         }
         return errorResponse(message: "Failed to encode models", statusCode: .internalServerError)
+    }
+
+    private func showEndpoint(body: Data) -> (HTTPResponseStatus, [(String, String)], String) {
+        let decoder = Self.makeJSONDecoder()
+        guard let request = try? decoder.decode(ShowRequest.self, from: body) else {
+            return errorResponse(
+                message: "Invalid request: expected {\"name\": \"<model_id>\"}",
+                statusCode: .badRequest
+            )
+        }
+        return handleShowRequest(modelName: request.name)
+    }
+
+    private func showEndpoint(bodyBuffer: ByteBuffer) -> (HTTPResponseStatus, [(String, String)], String) {
+        let decoder = Self.makeJSONDecoder()
+        guard let request = try? decoder.decode(ShowRequest.self, from: bodyBuffer) else {
+            return errorResponse(
+                message: "Invalid request: expected {\"name\": \"<model_id>\"}",
+                statusCode: .badRequest
+            )
+        }
+        return handleShowRequest(modelName: request.name)
+    }
+
+    private func handleShowRequest(modelName: String) -> (HTTPResponseStatus, [(String, String)], String) {
+        // Handle "foundation" model specially
+        if modelName.lowercased() == "foundation" || modelName.lowercased() == "default" {
+            if FoundationModelService.isDefaultModelAvailable() {
+                let response = ShowResponse(
+                    modelfile: "",
+                    parameters: "",
+                    template: "",
+                    details: ShowResponse.ShowDetails(
+                        parentModel: "",
+                        format: "native",
+                        family: "foundation",
+                        families: ["foundation"],
+                        parameterSize: "",
+                        quantizationLevel: ""
+                    ),
+                    modelInfo: [
+                        "general.architecture": AnyCodable("foundation"),
+                        "general.name": AnyCodable("Apple Foundation Model"),
+                    ]
+                )
+                if let json = encodeJSONString(response) {
+                    return (.ok, [("Content-Type", "application/json; charset=utf-8")], json)
+                }
+            }
+            return errorResponse(message: "Foundation model not available", statusCode: .notFound)
+        }
+
+        // Try to load model info for MLX models
+        guard let modelInfo = ModelInfo.load(modelId: modelName) else {
+            return errorResponse(message: "Model not found: \(modelName)", statusCode: .notFound)
+        }
+
+        let response = modelInfo.toShowResponse()
+        if let json = encodeJSONString(response) {
+            return (.ok, [("Content-Type", "application/json; charset=utf-8")], json)
+        }
+        return errorResponse(message: "Failed to encode model info", statusCode: .internalServerError)
     }
 
     private func chatCompletionsEndpoint(
