@@ -17,13 +17,10 @@ struct ToolPermissionView: View {
     let onAlwaysAllow: () -> Void
 
     @StateObject private var themeManager = ThemeManager.shared
+    @Environment(\.theme) private var theme
     @State private var copied = false
     @State private var showAlwaysAllowConfirm = false
     @State private var appeared = false
-
-    private var theme: ThemeProtocol {
-        themeManager.currentTheme
-    }
 
     private var prettyArguments: String {
         guard let data = argumentsJSON.data(using: .utf8),
@@ -81,7 +78,7 @@ struct ToolPermissionView: View {
                 // Description
                 if !description.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                     Text(description)
-                        .font(.system(size: 13, weight: .regular))
+                        .font(theme.font(size: 13, weight: .regular))
                         .foregroundColor(theme.primaryText.opacity(0.8))
                         .multilineTextAlignment(.center)
                         .lineSpacing(2)
@@ -128,10 +125,11 @@ struct ToolPermissionView: View {
         )
         .onAppear {
             // Entrance animation
-            withAnimation(.spring(response: 0.5, dampingFraction: 0.8).delay(0.05)) {
+            withAnimation(theme.springAnimation(responseMultiplier: 1.25).delay(0.05)) {
                 appeared = true
             }
         }
+        .environment(\.theme, themeManager.currentTheme)
         .alert("Always Allow \"\(toolName)\"?", isPresented: $showAlwaysAllowConfirm) {
             Button("Cancel", role: .cancel) {}
             Button("Always Allow") {
@@ -213,12 +211,12 @@ struct ToolPermissionView: View {
             // Title
             VStack(spacing: 6) {
                 Text("APPROVE ACTION")
-                    .font(.system(size: 10, weight: .semibold, design: .rounded))
+                    .font(theme.font(size: 10, weight: .semibold))
                     .foregroundColor(theme.secondaryText)
                     .tracking(1.5)
 
                 Text(toolName)
-                    .font(.system(size: 17, weight: .semibold))
+                    .font(theme.font(size: 17, weight: .semibold))
                     .foregroundColor(theme.primaryText)
             }
         }
@@ -231,11 +229,11 @@ struct ToolPermissionView: View {
             HStack {
                 HStack(spacing: 6) {
                     Image(systemName: "curlybraces")
-                        .font(.system(size: 10, weight: .medium))
+                        .font(theme.font(size: 10, weight: .medium))
                         .foregroundColor(theme.tertiaryText)
 
                     Text("ARGUMENTS")
-                        .font(.system(size: 10, weight: .semibold, design: .rounded))
+                        .font(theme.font(size: 10, weight: .semibold))
                         .foregroundColor(theme.tertiaryText)
                         .tracking(0.8)
                 }
@@ -246,9 +244,9 @@ struct ToolPermissionView: View {
                 Button(action: copyArguments) {
                     HStack(spacing: 5) {
                         Image(systemName: copied ? "checkmark" : "doc.on.doc")
-                            .font(.system(size: 9, weight: .semibold))
+                            .font(theme.font(size: 9, weight: .semibold))
                         Text(copied ? "Copied" : "Copy")
-                            .font(.system(size: 10, weight: .medium))
+                            .font(theme.font(size: 10, weight: .medium))
                     }
                     .foregroundColor(copied ? theme.successColor : theme.secondaryText)
                     .padding(.horizontal, 10)
@@ -272,7 +270,7 @@ struct ToolPermissionView: View {
             // Code block with enhanced styling
             ScrollView([.vertical, .horizontal], showsIndicators: true) {
                 Text(prettyArguments)
-                    .font(.system(size: 11.5, design: .monospaced))
+                    .font(theme.monoFont(size: 11.5))
                     .foregroundColor(theme.primaryText.opacity(0.9))
                     .textSelection(.enabled)
                     .padding(.horizontal, 14)
@@ -318,7 +316,6 @@ struct ToolPermissionView: View {
                     icon: "xmark",
                     isPrimary: false,
                     color: theme.errorColor,
-                    theme: theme,
                     action: onDeny
                 )
 
@@ -329,13 +326,12 @@ struct ToolPermissionView: View {
                     icon: "checkmark",
                     isPrimary: true,
                     color: theme.successColor,
-                    theme: theme,
                     action: onAllow
                 )
             }
 
             // Always Allow button (tertiary)
-            AlwaysAllowButton(theme: theme, action: { showAlwaysAllowConfirm = true })
+            AlwaysAllowButton(action: { showAlwaysAllowConfirm = true })
         }
     }
 
@@ -344,12 +340,12 @@ struct ToolPermissionView: View {
     private func copyArguments() {
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(prettyArguments, forType: .string)
-        withAnimation(.easeInOut(duration: 0.2)) {
+        withAnimation(theme.animationQuick()) {
             copied = true
         }
         Task { @MainActor in
             try? await Task.sleep(nanoseconds: 2_000_000_000)
-            withAnimation(.easeInOut(duration: 0.2)) {
+            withAnimation(theme.animationQuick()) {
                 copied = false
             }
         }
@@ -364,9 +360,9 @@ private struct PermissionButton: View {
     let icon: String
     let isPrimary: Bool
     let color: Color
-    let theme: ThemeProtocol
     let action: () -> Void
 
+    @Environment(\.theme) private var theme
     @State private var isPressed = false
     @State private var isHovering = false
 
@@ -380,9 +376,9 @@ private struct PermissionButton: View {
             VStack(spacing: 4) {
                 HStack(spacing: 6) {
                     Image(systemName: icon)
-                        .font(.system(size: 13, weight: isPrimary ? .semibold : .medium))
+                        .font(theme.font(size: 13, weight: isPrimary ? .semibold : .medium))
                     Text(title)
-                        .font(.system(size: 13, weight: isPrimary ? .semibold : .medium))
+                        .font(theme.font(size: 13, weight: isPrimary ? .semibold : .medium))
                 }
                 .foregroundColor(isPrimary ? .white : displayColor)
 
@@ -443,8 +439,8 @@ private struct PermissionButton: View {
         }
         .buttonStyle(PlainButtonStyle())
         .scaleEffect(isPressed ? 0.98 : 1.0)
-        .animation(.spring(response: 0.25, dampingFraction: 0.7), value: isPressed)
-        .animation(.easeOut(duration: 0.2), value: isHovering)
+        .animation(theme.springAnimation(responseMultiplier: 0.6, dampingMultiplier: 0.9), value: isPressed)
+        .animation(theme.animationQuick(), value: isHovering)
         .onHover { hovering in
             isHovering = hovering
             if hovering {
@@ -471,9 +467,11 @@ private struct KeyboardShortcutBadge: View {
     let isPrimary: Bool
     let color: Color
 
+    @Environment(\.theme) private var theme
+
     var body: some View {
         Text(shortcut)
-            .font(.system(size: 9, weight: .medium, design: .rounded))
+            .font(theme.font(size: 9, weight: .medium))
             .foregroundColor(isPrimary ? Color.white.opacity(0.7) : color.opacity(0.6))
             .padding(.horizontal, 6)
             .padding(.vertical, 2)
@@ -487,18 +485,18 @@ private struct KeyboardShortcutBadge: View {
 // MARK: - Always Allow Button
 
 private struct AlwaysAllowButton: View {
-    let theme: ThemeProtocol
     let action: () -> Void
 
+    @Environment(\.theme) private var theme
     @State private var isHovered = false
 
     var body: some View {
         Button(action: action) {
             HStack(spacing: 4) {
                 Image(systemName: "checkmark.circle")
-                    .font(.system(size: 11, weight: .medium))
+                    .font(theme.font(size: 11, weight: .medium))
                 Text("Always Allow")
-                    .font(.system(size: 12, weight: .medium))
+                    .font(theme.font(size: 12, weight: .medium))
             }
             .foregroundColor(isHovered ? theme.primaryText : theme.secondaryText)
             .padding(.horizontal, 12)
@@ -510,7 +508,7 @@ private struct AlwaysAllowButton: View {
         }
         .buttonStyle(PlainButtonStyle())
         .onHover { hovering in
-            withAnimation(.easeInOut(duration: 0.1)) {
+            withAnimation(theme.animationQuick()) {
                 isHovered = hovering
             }
             if hovering {
