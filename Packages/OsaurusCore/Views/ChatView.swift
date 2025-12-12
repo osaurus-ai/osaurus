@@ -392,7 +392,7 @@ final class ChatSession: ObservableObject {
                     return msgs
                 }
 
-                let maxAttempts = max(chatCfg.maxToolAttempts ?? 3, 1)
+                let maxAttempts = max(chatCfg.maxToolAttempts ?? 15, 1)
                 var attempts = 0
                 outer: while attempts < maxAttempts {
                     attempts += 1
@@ -422,9 +422,14 @@ final class ChatSession: ObservableObject {
                         }
                         break  // finished normally
                     } catch let inv as ServiceToolInvocation {
-                        // Create OpenAI-style tool call id
-                        let raw = UUID().uuidString.replacingOccurrences(of: "-", with: "")
-                        let callId = "call_" + String(raw.prefix(24))
+                        // Use preserved tool call ID from stream if available, otherwise generate one
+                        let callId: String
+                        if let preservedId = inv.toolCallId, !preservedId.isEmpty {
+                            callId = preservedId
+                        } else {
+                            let raw = UUID().uuidString.replacingOccurrences(of: "-", with: "")
+                            callId = "call_" + String(raw.prefix(24))
+                        }
                         let call = ToolCall(
                             id: callId,
                             type: "function",

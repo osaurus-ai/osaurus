@@ -480,8 +480,14 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     )
                 } catch let inv as ServiceToolInvocation {
                     // Translate tool invocation to OpenAI-style streaming tool_calls deltas
-                    let raw = UUID().uuidString.replacingOccurrences(of: "-", with: "")
-                    let callId = "call_" + String(raw.prefix(24))
+                    // Use preserved tool call ID from stream if available
+                    let callId: String
+                    if let preservedId = inv.toolCallId, !preservedId.isEmpty {
+                        callId = preservedId
+                    } else {
+                        let raw = UUID().uuidString.replacingOccurrences(of: "-", with: "")
+                        callId = "call_" + String(raw.prefix(24))
+                    }
                     let args = inv.jsonArguments
                     let chunkSize = 1024
                     hop {

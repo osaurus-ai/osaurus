@@ -72,7 +72,7 @@ public struct ChatConfiguration: Codable, Equatable, Sendable {
             temperature: nil,
             maxTokens: 1024,
             topPOverride: nil,
-            maxToolAttempts: nil,
+            maxToolAttempts: 15,  // Increased from 3 to support longer agentic workflows
             alwaysOnTop: false
         )
     }

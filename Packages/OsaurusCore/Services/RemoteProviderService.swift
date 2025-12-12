@@ -199,6 +199,9 @@ public actor RemoteProviderService: ToolCapableService {
                         return
                     }
 
+                    // Track accumulated tool calls by index (even in streamDeltas for robustness)
+                    var accumulatedToolCalls: [Int: (id: String?, name: String?, args: String)] = [:]
+
                     // Parse SSE stream with proper UTF-8 decoding
                     var buffer = ""
                     var utf8Buffer = Data()
@@ -227,6 +230,19 @@ public actor RemoteProviderService: ToolCapableService {
 
                                 // Check for stream end
                                 if dataContent.trimmingCharacters(in: .whitespaces) == "[DONE]" {
+                                    // Check for accumulated tool calls before finishing
+                                    if let firstToolCall = accumulatedToolCalls.sorted(by: { $0.key < $1.key }).first,
+                                        let toolName = firstToolCall.value.name
+                                    {
+                                        continuation.finish(
+                                            throwing: ServiceToolInvocation(
+                                                toolName: toolName,
+                                                jsonArguments: firstToolCall.value.args,
+                                                toolCallId: firstToolCall.value.id
+                                            )
+                                        )
+                                        return
+                                    }
                                     continuation.finish()
                                     return
                                 }
@@ -249,29 +265,68 @@ public actor RemoteProviderService: ToolCapableService {
                                             continuation.yield(output)
                                         }
 
-                                        // Check for finish reason
+                                        // Accumulate tool calls by index
+                                        if let toolCalls = chunk.choices.first?.delta.tool_calls {
+                                            for toolCall in toolCalls {
+                                                let idx = toolCall.index ?? 0
+                                                var current =
+                                                    accumulatedToolCalls[idx] ?? (id: nil, name: nil, args: "")
+
+                                                if let id = toolCall.id {
+                                                    current.id = id
+                                                }
+                                                if let name = toolCall.function?.name {
+                                                    current.name = name
+                                                }
+                                                if let args = toolCall.function?.arguments {
+                                                    current.args += args
+                                                }
+                                                accumulatedToolCalls[idx] = current
+                                            }
+                                        }
+
+                                        // Check for finish reason - emit tool calls if we have any
                                         if let finishReason = chunk.choices.first?.finish_reason,
-                                            !finishReason.isEmpty
+                                            !finishReason.isEmpty,
+                                            !accumulatedToolCalls.isEmpty
                                         {
-                                            // Handle tool calls if present
-                                            if finishReason == "tool_calls",
-                                                let toolCalls = chunk.choices.first?.delta.tool_calls,
-                                                let firstCall = toolCalls.first,
-                                                let name = firstCall.function?.name,
-                                                let args = firstCall.function?.arguments
+                                            if let firstToolCall = accumulatedToolCalls.sorted(by: { $0.key < $1.key })
+                                                .first,
+                                                let toolName = firstToolCall.value.name
                                             {
                                                 continuation.finish(
-                                                    throwing: ServiceToolInvocation(toolName: name, jsonArguments: args)
+                                                    throwing: ServiceToolInvocation(
+                                                        toolName: toolName,
+                                                        jsonArguments: firstToolCall.value.args,
+                                                        toolCallId: firstToolCall.value.id
+                                                    )
                                                 )
                                                 return
                                             }
                                         }
                                     } catch {
-                                        // Skip malformed chunks
+                                        // Log parsing errors for debugging
+                                        print(
+                                            "[Osaurus] Warning: Failed to parse SSE chunk in streamDeltas: \(error.localizedDescription)"
+                                        )
                                     }
                                 }
                             }
                         }
+                    }
+
+                    // Check for accumulated tool calls at stream end
+                    if let firstToolCall = accumulatedToolCalls.sorted(by: { $0.key < $1.key }).first,
+                        let toolName = firstToolCall.value.name
+                    {
+                        continuation.finish(
+                            throwing: ServiceToolInvocation(
+                                toolName: toolName,
+                                jsonArguments: firstToolCall.value.args,
+                                toolCallId: firstToolCall.value.id
+                            )
+                        )
+                        return
                     }
 
                     continuation.finish()
@@ -328,7 +383,8 @@ public actor RemoteProviderService: ToolCapableService {
         {
             throw ServiceToolInvocation(
                 toolName: firstCall.function.name,
-                jsonArguments: firstCall.function.arguments
+                jsonArguments: firstCall.function.arguments,
+                toolCallId: firstCall.id
             )
         }
 
@@ -386,9 +442,13 @@ public actor RemoteProviderService: ToolCapableService {
                         return
                     }
 
-                    // Track accumulated tool call data
-                    var accumulatedToolName: String?
-                    var accumulatedToolArgs = ""
+                    // Track accumulated tool calls by index (supports multiple parallel tool calls)
+                    // Structure: [index: (id, name, arguments)]
+                    var accumulatedToolCalls: [Int: (id: String?, name: String?, args: String)] = [:]
+
+                    // Track if we've seen any finish reason (for edge case handling)
+                    var hasReceivedFinishReason = false
+                    var lastFinishReason: String?
 
                     // Parse SSE stream with proper UTF-8 decoding
                     var buffer = ""
@@ -414,12 +474,19 @@ public actor RemoteProviderService: ToolCapableService {
                                 let dataContent = String(line.dropFirst(6))
 
                                 if dataContent.trimmingCharacters(in: .whitespaces) == "[DONE]" {
-                                    // If we accumulated a tool call, emit it
-                                    if let toolName = accumulatedToolName {
+                                    // If we accumulated any tool calls, emit the first one
+                                    // (subsequent tool calls will be handled in the next loop iteration)
+                                    if let firstToolCall = accumulatedToolCalls.sorted(by: { $0.key < $1.key }).first,
+                                        let toolName = firstToolCall.value.name
+                                    {
+                                        print(
+                                            "[Osaurus] Stream [DONE]: Emitting accumulated tool call '\(toolName)' with \(firstToolCall.value.args.count) bytes of arguments"
+                                        )
                                         continuation.finish(
                                             throwing: ServiceToolInvocation(
                                                 toolName: toolName,
-                                                jsonArguments: accumulatedToolArgs
+                                                jsonArguments: firstToolCall.value.args,
+                                                toolCallId: firstToolCall.value.id
                                             )
                                         )
                                         return
@@ -446,45 +513,84 @@ public actor RemoteProviderService: ToolCapableService {
                                             continuation.yield(output)
                                         }
 
-                                        // Handle tool call deltas
+                                        // Handle tool call deltas - track by index for multiple parallel tool calls
                                         if let toolCalls = chunk.choices.first?.delta.tool_calls {
                                             for toolCall in toolCalls {
+                                                let idx = toolCall.index ?? 0
+                                                var current =
+                                                    accumulatedToolCalls[idx] ?? (id: nil, name: nil, args: "")
+
+                                                // Preserve tool call ID from the stream
+                                                if let id = toolCall.id {
+                                                    current.id = id
+                                                }
                                                 if let name = toolCall.function?.name {
-                                                    accumulatedToolName = name
+                                                    current.name = name
+                                                    print("[Osaurus] Tool call detected: index=\(idx), name=\(name)")
                                                 }
                                                 if let args = toolCall.function?.arguments {
-                                                    accumulatedToolArgs += args
+                                                    current.args += args
                                                 }
+                                                accumulatedToolCalls[idx] = current
                                             }
                                         }
 
-                                        // Check finish reason
+                                        // Check finish reason - handle various formats from different providers
                                         if let finishReason = chunk.choices.first?.finish_reason,
-                                            finishReason == "tool_calls",
-                                            let toolName = accumulatedToolName
+                                            !finishReason.isEmpty
                                         {
-                                            continuation.finish(
-                                                throwing: ServiceToolInvocation(
-                                                    toolName: toolName,
-                                                    jsonArguments: accumulatedToolArgs
-                                                )
+                                            hasReceivedFinishReason = true
+                                            lastFinishReason = finishReason
+                                            print(
+                                                "[Osaurus] Received finish_reason: '\(finishReason)', accumulated tool calls: \(accumulatedToolCalls.count)"
                                             )
-                                            return
+
+                                            // Emit tool call if we have accumulated data and finish reason indicates tool calls
+                                            // Some providers use "tool_calls", others might use "function_call" or just "stop"
+                                            if !accumulatedToolCalls.isEmpty {
+                                                if let firstToolCall = accumulatedToolCalls.sorted(by: {
+                                                    $0.key < $1.key
+                                                }).first,
+                                                    let toolName = firstToolCall.value.name
+                                                {
+                                                    print(
+                                                        "[Osaurus] Emitting tool call '\(toolName)' on finish_reason '\(finishReason)'"
+                                                    )
+                                                    continuation.finish(
+                                                        throwing: ServiceToolInvocation(
+                                                            toolName: toolName,
+                                                            jsonArguments: firstToolCall.value.args,
+                                                            toolCallId: firstToolCall.value.id
+                                                        )
+                                                    )
+                                                    return
+                                                }
+                                            }
                                         }
                                     } catch {
-                                        // Skip malformed chunks
+                                        // Log parsing errors for debugging instead of silently ignoring
+                                        print(
+                                            "[Osaurus] Warning: Failed to parse SSE chunk: \(error.localizedDescription)"
+                                        )
+                                        print("[Osaurus] Raw chunk data: \(dataContent.prefix(500))")
                                     }
                                 }
                             }
                         }
                     }
 
-                    // If we have accumulated tool call data at stream end
-                    if let toolName = accumulatedToolName {
+                    // If we have accumulated tool call data at stream end (without [DONE] or explicit finish_reason)
+                    if let firstToolCall = accumulatedToolCalls.sorted(by: { $0.key < $1.key }).first,
+                        let toolName = firstToolCall.value.name
+                    {
+                        print(
+                            "[Osaurus] Stream ended: Emitting accumulated tool call '\(toolName)' (finish_reason was: \(lastFinishReason ?? "none"))"
+                        )
                         continuation.finish(
                             throwing: ServiceToolInvocation(
                                 toolName: toolName,
-                                jsonArguments: accumulatedToolArgs
+                                jsonArguments: firstToolCall.value.args,
+                                toolCallId: firstToolCall.value.id
                             )
                         )
                         return
@@ -492,6 +598,7 @@ public actor RemoteProviderService: ToolCapableService {
 
                     continuation.finish()
                 } catch {
+                    print("[Osaurus] Stream error: \(error.localizedDescription)")
                     continuation.finish(throwing: error)
                 }
             }
