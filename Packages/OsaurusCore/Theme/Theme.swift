@@ -73,6 +73,8 @@ protocol ThemeProtocol {
     var animationDurationQuick: Double { get }
     var animationDurationMedium: Double { get }
     var animationDurationSlow: Double { get }
+    var animationSpringResponse: Double { get }
+    var animationSpringDamping: Double { get }
     var animationSpring: Animation { get }
 
     // Shadows
@@ -141,6 +143,36 @@ extension ThemeProtocol {
         // Use Font.custom with family name - SwiftUI handles weight variants
         return .custom(monoFontName, size: size).weight(weight)
     }
+
+    // MARK: - Animation Helpers
+
+    /// Quick animation using theme settings
+    func animationQuick() -> Animation {
+        .easeInOut(duration: animationDurationQuick)
+    }
+
+    /// Medium animation using theme settings
+    func animationMedium() -> Animation {
+        .easeInOut(duration: animationDurationMedium)
+    }
+
+    /// Slow animation using theme settings
+    func animationSlow() -> Animation {
+        .easeInOut(duration: animationDurationSlow)
+    }
+
+    /// Spring animation using theme settings
+    func springAnimation() -> Animation {
+        .spring(response: animationSpringResponse, dampingFraction: animationSpringDamping)
+    }
+
+    /// Spring animation with custom response multiplier
+    func springAnimation(responseMultiplier: Double = 1.0, dampingMultiplier: Double = 1.0) -> Animation {
+        .spring(
+            response: animationSpringResponse * responseMultiplier,
+            dampingFraction: min(1.0, animationSpringDamping * dampingMultiplier)
+        )
+    }
 }
 
 // MARK: - Light Theme
@@ -202,7 +234,11 @@ struct LightTheme: ThemeProtocol {
     let animationDurationQuick: Double = 0.2
     let animationDurationMedium: Double = 0.3
     let animationDurationSlow: Double = 0.4
-    let animationSpring = Animation.spring(response: 0.4, dampingFraction: 0.8)
+    let animationSpringResponse: Double = 0.4
+    let animationSpringDamping: Double = 0.8
+    var animationSpring: Animation {
+        .spring(response: animationSpringResponse, dampingFraction: animationSpringDamping)
+    }
 
     // Shadows
     let shadowColor = Color.black
@@ -268,7 +304,11 @@ struct DarkTheme: ThemeProtocol {
     let animationDurationQuick: Double = 0.2
     let animationDurationMedium: Double = 0.3
     let animationDurationSlow: Double = 0.4
-    let animationSpring = Animation.spring(response: 0.4, dampingFraction: 0.8)
+    let animationSpringResponse: Double = 0.4
+    let animationSpringDamping: Double = 0.8
+    var animationSpring: Animation {
+        .spring(response: animationSpringResponse, dampingFraction: animationSpringDamping)
+    }
 
     // Shadows
     let shadowColor = Color.black
@@ -348,6 +388,8 @@ struct CustomizableTheme: ThemeProtocol {
     var animationDurationQuick: Double { config.animationConfig.durationQuick }
     var animationDurationMedium: Double { config.animationConfig.durationMedium }
     var animationDurationSlow: Double { config.animationConfig.durationSlow }
+    var animationSpringResponse: Double { config.animationConfig.springResponse }
+    var animationSpringDamping: Double { config.animationConfig.springDamping }
     var animationSpring: Animation { config.animationConfig.spring }
 
     // Shadows

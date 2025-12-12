@@ -174,7 +174,7 @@ private struct SessionRow: View {
         .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
         .contentShape(Rectangle())
         .onHover { hovering in
-            withAnimation(.easeInOut(duration: 0.1)) {
+            withAnimation(theme.animationQuick()) {
                 isHovered = hovering
             }
         }

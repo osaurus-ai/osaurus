@@ -144,7 +144,7 @@ struct FloatingInputCard: View {
 
             // Remove button
             Button(action: {
-                withAnimation(.spring(response: 0.25, dampingFraction: 0.8)) {
+                withAnimation(theme.springAnimation()) {
                     _ = pendingImages.remove(at: index)
                 }
             }) {
@@ -299,8 +299,8 @@ struct FloatingInputCard: View {
             x: 0,
             y: isFocused ? 8 : 4
         )
-        .animation(.spring(response: 0.3, dampingFraction: 0.8), value: isFocused)
-        .animation(.easeInOut(duration: 0.2), value: isDragOver)
+        .animation(theme.springAnimation(), value: isFocused)
+        .animation(theme.animationQuick(), value: isDragOver)
     }
 
     // MARK: - Image Attachment Button
@@ -336,7 +336,7 @@ struct FloatingInputCard: View {
                     if let nsImage = NSImage(data: data),
                         let pngData = nsImage.pngData()
                     {
-                        withAnimation(.spring(response: 0.25, dampingFraction: 0.8)) {
+                        withAnimation(theme.springAnimation()) {
                             pendingImages.append(pngData)
                         }
                     }
@@ -356,7 +356,7 @@ struct FloatingInputCard: View {
                         if let nsImage = NSImage(data: data),
                             let pngData = nsImage.pngData()
                         {
-                            withAnimation(.spring(response: 0.25, dampingFraction: 0.8)) {
+                            withAnimation(theme.springAnimation()) {
                                 pendingImages.append(pngData)
                             }
                         }
@@ -392,7 +392,7 @@ struct FloatingInputCard: View {
                 PasteboardImageMonitor(
                     supportsImages: supportsImages,
                     onImagePaste: { imageData in
-                        withAnimation(.spring(response: 0.25, dampingFraction: 0.8)) {
+                        withAnimation(theme.springAnimation()) {
                             pendingImages.append(imageData)
                         }
                     }
@@ -432,8 +432,8 @@ struct FloatingInputCard: View {
         .buttonStyle(.plain)
         .disabled(!canSend && !isStreaming)
         .opacity(!canSend && !isStreaming ? 0.5 : 1)
-        .animation(.spring(response: 0.25, dampingFraction: 0.7), value: isStreaming)
-        .animation(.easeInOut(duration: 0.15), value: canSend)
+        .animation(theme.springAnimation(), value: isStreaming)
+        .animation(theme.animationQuick(), value: canSend)
     }
 
     private var buttonBackground: some ShapeStyle {

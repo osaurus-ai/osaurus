@@ -44,7 +44,7 @@ struct ChatEmptyState: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .onAppear {
             isVisible = true
-            withAnimation(.easeOut(duration: 0.6).delay(0.1)) {
+            withAnimation(theme.animationSlow().delay(0.1)) {
                 hasAppeared = true
             }
             startGradientAnimation()
@@ -79,13 +79,13 @@ struct ChatEmptyState: View {
                     .opacity(hasAppeared ? 1 : 0)
                     .offset(y: hasAppeared ? 0 : 10)
             }
-            .animation(.spring(response: 0.5, dampingFraction: 0.8).delay(0.1), value: hasAppeared)
+            .animation(theme.springAnimation().delay(0.1), value: hasAppeared)
 
             // Quick actions
             quickActionsGrid
                 .opacity(hasAppeared ? 1 : 0)
                 .offset(y: hasAppeared ? 0 : 20)
-                .animation(.spring(response: 0.5, dampingFraction: 0.8).delay(0.25), value: hasAppeared)
+                .animation(theme.springAnimation().delay(0.25), value: hasAppeared)
 
             // Model indicator
             if let model = selectedModel {
@@ -135,7 +135,7 @@ struct ChatEmptyState: View {
             }
             .opacity(hasAppeared ? 1 : 0)
             .scaleEffect(hasAppeared ? 1 : 0.8)
-            .animation(.spring(response: 0.5, dampingFraction: 0.7).delay(0.1), value: hasAppeared)
+            .animation(theme.springAnimation().delay(0.1), value: hasAppeared)
 
             // Title and description - uses theme typography
             VStack(spacing: 8) {
@@ -150,7 +150,7 @@ struct ChatEmptyState: View {
             }
             .opacity(hasAppeared ? 1 : 0)
             .offset(y: hasAppeared ? 0 : 10)
-            .animation(.spring(response: 0.5, dampingFraction: 0.8).delay(0.15), value: hasAppeared)
+            .animation(theme.springAnimation().delay(0.15), value: hasAppeared)
 
             // Suggested model card
             SuggestedModelCard(
@@ -161,7 +161,7 @@ struct ChatEmptyState: View {
             )
             .opacity(hasAppeared ? 1 : 0)
             .offset(y: hasAppeared ? 0 : 15)
-            .animation(.spring(response: 0.5, dampingFraction: 0.8).delay(0.25), value: hasAppeared)
+            .animation(theme.springAnimation().delay(0.25), value: hasAppeared)
 
             // Secondary actions - uses theme caption size
             HStack(spacing: 16) {
@@ -388,7 +388,7 @@ private struct QuickActionButton: View {
         }
         .buttonStyle(.plain)
         .onHover { hovering in
-            withAnimation(.easeInOut(duration: 0.15)) {
+            withAnimation(theme.animationQuick()) {
                 isHovered = hovering
             }
         }
@@ -498,7 +498,7 @@ private struct SuggestedModelCard: View {
         }
         .buttonStyle(.plain)
         .onHover { hovering in
-            withAnimation(.easeInOut(duration: 0.2)) {
+            withAnimation(theme.animationQuick()) {
                 isHovered = hovering
             }
         }

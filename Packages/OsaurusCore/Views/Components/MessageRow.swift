@@ -62,7 +62,7 @@ struct MessageRow: View {
         .contentShape(RoundedRectangle(cornerRadius: 12, style: .continuous))  // Ensure entire area is hoverable
         .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
         .onHover { hovering in
-            withAnimation(.easeInOut(duration: 0.15)) {
+            withAnimation(theme.animationQuick()) {
                 isHovered = hovering
             }
         }
@@ -158,7 +158,7 @@ struct MessageRow: View {
         }
         .buttonStyle(.plain)
         .opacity(isHovered ? 1 : 0)
-        .animation(.easeInOut(duration: 0.15), value: isHovered)
+        .animation(theme.animationQuick(), value: isHovered)
         .allowsHitTesting(isHovered)
         .help("Edit message")
     }
@@ -178,7 +178,7 @@ struct MessageRow: View {
         }
         .buttonStyle(.plain)
         .opacity(isHovered ? 1 : 0)
-        .animation(.easeInOut(duration: 0.15), value: isHovered)
+        .animation(theme.animationQuick(), value: isHovered)
         .allowsHitTesting(isHovered)
         .help("Regenerate response")
     }
@@ -196,7 +196,7 @@ struct MessageRow: View {
         }
         .buttonStyle(.plain)
         .opacity(isHovered ? 1 : 0)
-        .animation(.easeInOut(duration: 0.15), value: isHovered)
+        .animation(theme.animationQuick(), value: isHovered)
         .allowsHitTesting(isHovered)  // Only allow clicks when visible
         .help("Copy message")
     }

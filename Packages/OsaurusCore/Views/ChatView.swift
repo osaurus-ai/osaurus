@@ -591,7 +591,7 @@ struct ChatView: View {
                             )
                         }
                     }
-                    .animation(.spring(response: 0.4, dampingFraction: 0.85), value: session.turns.isEmpty)
+                    .animation(theme.springAnimation(), value: session.turns.isEmpty)
                 }
             }
         }
@@ -608,8 +608,8 @@ struct ChatView: View {
             closeButton
         }
         .ignoresSafeArea()
-        .animation(.easeInOut(duration: 0.3), value: session.turns.isEmpty)
-        .animation(.easeInOut(duration: 0.2), value: showSidebar)
+        .animation(theme.animationMedium(), value: session.turns.isEmpty)
+        .animation(theme.animationQuick(), value: showSidebar)
         .background(WindowAccessor(window: $hostWindow))
         .onExitCommand { AppDelegate.shared?.closeChatOverlay() }
         .onReceive(NotificationCenter.default.publisher(for: .chatOverlayActivated)) { _ in
@@ -779,7 +779,7 @@ struct ChatView: View {
                 icon: showSidebar ? "sidebar.left" : "sidebar.left",
                 help: showSidebar ? "Hide sidebar" : "Show sidebar",
                 action: {
-                    withAnimation(.easeInOut(duration: 0.2)) {
+                    withAnimation(theme.animationQuick()) {
                         showSidebar.toggle()
                     }
                 }
@@ -878,14 +878,14 @@ struct ChatView: View {
             }
             .onChange(of: session.turns.count) { _, _ in
                 if isPinnedToBottom {
-                    withAnimation(.easeOut(duration: 0.2)) {
+                    withAnimation(theme.animationQuick()) {
                         proxy.scrollTo("BOTTOM", anchor: .bottom)
                     }
                 }
             }
             .onChange(of: session.scrollTick) { _, _ in
                 if isPinnedToBottom {
-                    withAnimation(.easeOut(duration: 0.1)) {
+                    withAnimation(theme.animationQuick()) {
                         proxy.scrollTo("BOTTOM", anchor: .bottom)
                     }
                 }
@@ -901,7 +901,7 @@ struct ChatView: View {
     private func scrollToBottomButton(proxy: ScrollViewProxy) -> some View {
         if !isPinnedToBottom && !session.turns.isEmpty {
             Button(action: {
-                withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+                withAnimation(theme.springAnimation()) {
                     proxy.scrollTo("BOTTOM", anchor: .bottom)
                 }
                 isPinnedToBottom = true
@@ -995,7 +995,7 @@ private struct HeaderActionButton: View {
         }
         .buttonStyle(.plain)
         .onHover { hovering in
-            withAnimation(.easeInOut(duration: 0.1)) {
+            withAnimation(theme.animationQuick()) {
                 isHovered = hovering
             }
         }
@@ -1024,7 +1024,7 @@ private struct CloseButton: View {
         }
         .buttonStyle(.plain)
         .onHover { hovering in
-            withAnimation(.easeInOut(duration: 0.1)) {
+            withAnimation(theme.animationQuick()) {
                 isHovered = hovering
             }
         }

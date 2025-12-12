@@ -187,13 +187,13 @@ struct CodeBlockView: View {
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(code, forType: .string)
 
-        withAnimation(.easeInOut(duration: 0.2)) {
+        withAnimation(theme.animationQuick()) {
             copied = true
         }
 
         Task { @MainActor in
             try? await Task.sleep(nanoseconds: 2_000_000_000)
-            withAnimation(.easeInOut(duration: 0.2)) {
+            withAnimation(theme.animationQuick()) {
                 copied = false
             }
         }

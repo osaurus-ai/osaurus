@@ -504,15 +504,60 @@ struct ThemeEditorView: View {
 
     // MARK: - Animation Editor
 
+    @State private var animationPreviewTrigger = false
+
     private var animationEditor: some View {
         VStack(alignment: .leading, spacing: 16) {
+            // Animation Preview
+            editorSection("Preview") {
+                VStack(spacing: 12) {
+                    HStack {
+                        // Spring animation preview
+                        RoundedRectangle(cornerRadius: 8)
+                            .fill(Color(themeHex: editingTheme.colors.accentColor))
+                            .frame(width: 40, height: 40)
+                            .offset(x: animationPreviewTrigger ? 80 : 0)
+                            .animation(
+                                .spring(
+                                    response: editingTheme.animationConfig.springResponse,
+                                    dampingFraction: editingTheme.animationConfig.springDamping
+                                ),
+                                value: animationPreviewTrigger
+                            )
+
+                        Spacer()
+                    }
+                    .frame(height: 50)
+                    .padding(.horizontal, 8)
+                    .background(
+                        RoundedRectangle(cornerRadius: 8)
+                            .fill(currentTheme.tertiaryBackground.opacity(0.5))
+                    )
+
+                    Button("Test Animation") {
+                        animationPreviewTrigger.toggle()
+                    }
+                    .buttonStyle(.bordered)
+                }
+            }
+
             editorSection("Duration") {
+                Text("Controls how long animations take")
+                    .font(.system(size: 11))
+                    .foregroundColor(currentTheme.tertiaryText)
+                    .padding(.bottom, 4)
+
                 sliderRow("Quick", value: $editingTheme.animationConfig.durationQuick, range: 0.05 ... 0.5)
                 sliderRow("Medium", value: $editingTheme.animationConfig.durationMedium, range: 0.1 ... 0.8)
                 sliderRow("Slow", value: $editingTheme.animationConfig.durationSlow, range: 0.2 ... 1.0)
             }
 
-            editorSection("Spring") {
+            editorSection("Spring Physics") {
+                Text("Response: How fast the spring moves\nDamping: How quickly it settles (lower = more bounce)")
+                    .font(.system(size: 11))
+                    .foregroundColor(currentTheme.tertiaryText)
+                    .padding(.bottom, 4)
+
                 sliderRow("Response", value: $editingTheme.animationConfig.springResponse, range: 0.1 ... 1.0)
                 sliderRow("Damping", value: $editingTheme.animationConfig.springDamping, range: 0.3 ... 1.0)
             }
