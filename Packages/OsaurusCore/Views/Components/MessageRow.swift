@@ -23,7 +23,7 @@ struct MessageRow: View {
     @State private var editingContent: String = ""
 
     private var accentBarColor: Color {
-        turn.role == .user ? Color.accentColor : theme.tertiaryText.opacity(0.4)
+        turn.role == .user ? theme.accentColor : theme.tertiaryText.opacity(0.4)
     }
 
     private var roleLabel: String {
@@ -115,10 +115,10 @@ struct MessageRow: View {
 
     private var headerRow: some View {
         HStack(spacing: 8) {
-            // Role indicator
+            // Role indicator - uses theme font
             Text(roleLabel)
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundColor(turn.role == .user ? Color.accentColor : theme.secondaryText)
+                .font(theme.font(size: CGFloat(theme.captionSize) + 1, weight: .semibold))
+                .foregroundColor(turn.role == .user ? theme.accentColor : theme.secondaryText)
 
             Spacer()
 
@@ -148,7 +148,7 @@ struct MessageRow: View {
             isEditing = true
         }) {
             Image(systemName: "pencil")
-                .font(.system(size: 11, weight: .medium))
+                .font(theme.font(size: CGFloat(theme.captionSize) - 1, weight: .medium))
                 .foregroundColor(theme.tertiaryText)
                 .padding(6)
                 .background(
@@ -168,7 +168,7 @@ struct MessageRow: View {
             onRegenerate?(turn.id)
         }) {
             Image(systemName: "arrow.clockwise")
-                .font(.system(size: 11, weight: .medium))
+                .font(theme.font(size: CGFloat(theme.captionSize) - 1, weight: .medium))
                 .foregroundColor(theme.tertiaryText)
                 .padding(6)
                 .background(
@@ -186,7 +186,7 @@ struct MessageRow: View {
     private var copyButton: some View {
         Button(action: { onCopy(turn.content) }) {
             Image(systemName: "doc.on.doc")
-                .font(.system(size: 11, weight: .medium))
+                .font(theme.font(size: CGFloat(theme.captionSize) - 1, weight: .medium))
                 .foregroundColor(theme.tertiaryText)
                 .padding(6)
                 .background(
@@ -212,7 +212,7 @@ struct MessageRow: View {
                 .padding(.vertical, 4)
         } else {
             MarkdownMessageView(text: turn.content, baseWidth: width)
-                .font(Typography.body(width))
+                .font(Typography.body(width, theme: theme))
                 .foregroundColor(theme.primaryText)
                 .textSelection(.enabled)
         }
@@ -223,7 +223,7 @@ struct MessageRow: View {
     private var editingView: some View {
         VStack(alignment: .leading, spacing: 12) {
             TextEditor(text: $editingContent)
-                .font(Typography.body(width))
+                .font(Typography.body(width, theme: theme))
                 .foregroundColor(theme.primaryText)
                 .scrollContentBackground(.hidden)
                 .background(theme.primaryBackground.opacity(0.3))
@@ -258,7 +258,7 @@ struct MessageRow: View {
                 .foregroundColor(.white)
                 .padding(.horizontal, 12)
                 .padding(.vertical, 6)
-                .background(Color.accentColor)
+                .background(theme.accentColor)
                 .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
             }
         }

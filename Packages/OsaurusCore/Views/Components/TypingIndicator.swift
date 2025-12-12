@@ -36,7 +36,7 @@ struct TypingIndicator: View {
 
     private func dotColor(for index: Int) -> Color {
         if animatingDot == index {
-            return Color.accentColor
+            return theme.accentColor
         } else {
             return theme.tertiaryText.opacity(0.6)
         }

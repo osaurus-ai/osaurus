@@ -71,15 +71,15 @@ struct CodeBlockView: View {
 
     private var headerBar: some View {
         HStack(spacing: 8) {
-            // Language tag with icon
+            // Language tag with icon - uses theme fonts
             if let language, !language.isEmpty {
                 HStack(spacing: 5) {
                     Image(systemName: languageIcon)
-                        .font(.system(size: 10, weight: .medium))
+                        .font(theme.font(size: CGFloat(theme.captionSize) - 2, weight: .medium))
                         .foregroundColor(theme.tertiaryText)
 
                     Text(language.lowercased())
-                        .font(.system(size: 11, weight: .medium, design: .monospaced))
+                        .font(theme.monoFont(size: CGFloat(theme.captionSize) - 1, weight: .medium))
                         .foregroundColor(theme.secondaryText)
                 }
                 .padding(.horizontal, 8)
@@ -96,11 +96,11 @@ struct CodeBlockView: View {
             Button(action: copy) {
                 HStack(spacing: 4) {
                     Image(systemName: copied ? "checkmark" : "doc.on.doc")
-                        .font(.system(size: 10, weight: .medium))
+                        .font(theme.font(size: CGFloat(theme.captionSize) - 2, weight: .medium))
 
                     if copied {
                         Text("Copied!")
-                            .font(.system(size: 10, weight: .medium))
+                            .font(theme.font(size: CGFloat(theme.captionSize) - 2, weight: .medium))
                     }
                 }
                 .foregroundColor(copied ? theme.successColor : theme.tertiaryText)
@@ -146,9 +146,9 @@ struct CodeBlockView: View {
                     lineNumbersView
                 }
 
-                // Code text
+                // Code text - uses theme code size
                 Text(code)
-                    .font(Typography.code(baseWidth))
+                    .font(Typography.code(baseWidth, theme: theme))
                     .foregroundColor(theme.primaryText.opacity(0.95))
                     .textSelection(.enabled)
                     .padding(.horizontal, 12)
@@ -163,7 +163,7 @@ struct CodeBlockView: View {
         // Use a simple Text with joined line numbers for better performance
         let numbers = (1 ... lineCount).map { String($0) }.joined(separator: "\n")
         return Text(numbers)
-            .font(.system(size: 12 * Typography.scale(for: baseWidth), weight: .regular, design: .monospaced))
+            .font(theme.monoFont(size: CGFloat(theme.codeSize) * Typography.scale(for: baseWidth)))
             .foregroundColor(theme.tertiaryText.opacity(0.5))
             .multilineTextAlignment(.trailing)
             .padding(.leading, 12)

@@ -640,8 +640,22 @@ struct ChatView: View {
 
     private var chatBackground: some View {
         ZStack {
-            // Base glass surface with dynamic corners based on sidebar state
-            GlassSurface(
+            // Theme background image layer (if configured)
+            if theme.backgroundImage != nil {
+                ThemeBackgroundImage()
+                    .clipShape(
+                        UnevenRoundedRectangle(
+                            topLeadingRadius: showSidebar ? 0 : 24,
+                            bottomLeadingRadius: showSidebar ? 0 : 24,
+                            bottomTrailingRadius: 24,
+                            topTrailingRadius: 24,
+                            style: .continuous
+                        )
+                    )
+            }
+
+            // Themed glass surface with dynamic corners based on sidebar state
+            ThemedGlassSurface(
                 cornerRadius: 24,
                 topLeadingRadius: showSidebar ? 0 : nil,
                 bottomLeadingRadius: showSidebar ? 0 : nil

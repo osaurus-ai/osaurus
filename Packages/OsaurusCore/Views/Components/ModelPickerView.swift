@@ -166,11 +166,11 @@ private struct ModelRowItem: View {
             HStack(spacing: 10) {
                 // Selection indicator
                 Circle()
-                    .fill(isSelected ? Color.accentColor : Color.clear)
+                    .fill(isSelected ? theme.accentColor : Color.clear)
                     .overlay(
                         Circle()
                             .strokeBorder(
-                                isSelected ? Color.accentColor : theme.tertiaryText.opacity(0.5),
+                                isSelected ? theme.accentColor : theme.tertiaryText.opacity(0.5),
                                 lineWidth: 1.5
                             )
                     )

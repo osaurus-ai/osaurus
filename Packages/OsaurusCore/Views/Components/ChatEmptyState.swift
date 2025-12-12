@@ -68,13 +68,13 @@ struct ChatEmptyState: View {
                     .offset(y: hasAppeared ? 0 : 10)
 
                 Text(greeting)
-                    .font(.system(size: 32, weight: .semibold, design: .rounded))
+                    .font(theme.font(size: CGFloat(theme.titleSize) + 4, weight: .semibold))
                     .foregroundColor(theme.primaryText)
                     .opacity(hasAppeared ? 1 : 0)
                     .offset(y: hasAppeared ? 0 : 15)
 
                 Text("How can I help you today?")
-                    .font(.system(size: 16))
+                    .font(theme.font(size: CGFloat(theme.bodySize) + 2))
                     .foregroundColor(theme.secondaryText)
                     .opacity(hasAppeared ? 1 : 0)
                     .offset(y: hasAppeared ? 0 : 10)
@@ -105,14 +105,14 @@ struct ChatEmptyState: View {
             ZStack {
                 // Outer glow
                 Circle()
-                    .fill(Color.accentColor)
+                    .fill(theme.accentColor)
                     .frame(width: 80, height: 80)
                     .blur(radius: 20)
                     .opacity(glowIntensity * 0.3)
 
                 // Inner glow
                 Circle()
-                    .fill(Color.accentColor)
+                    .fill(theme.accentColor)
                     .frame(width: 80, height: 80)
                     .blur(radius: 10)
                     .opacity(glowIntensity * 0.2)
@@ -127,7 +127,7 @@ struct ChatEmptyState: View {
                     .font(.system(size: 32, weight: .medium))
                     .foregroundStyle(
                         LinearGradient(
-                            colors: [Color.accentColor, Color.accentColor.opacity(0.7)],
+                            colors: [theme.accentColor, theme.accentColor.opacity(0.7)],
                             startPoint: .topLeading,
                             endPoint: .bottomTrailing
                         )
@@ -137,14 +137,14 @@ struct ChatEmptyState: View {
             .scaleEffect(hasAppeared ? 1 : 0.8)
             .animation(.spring(response: 0.5, dampingFraction: 0.7).delay(0.1), value: hasAppeared)
 
-            // Title and description
+            // Title and description - uses theme typography
             VStack(spacing: 8) {
                 Text("Get started with a model")
-                    .font(.system(size: 22, weight: .semibold, design: .rounded))
+                    .font(theme.font(size: CGFloat(theme.headingSize) + 4, weight: .semibold))
                     .foregroundColor(theme.primaryText)
 
                 Text("Download a recommended model below to start chatting")
-                    .font(.system(size: 14))
+                    .font(theme.font(size: CGFloat(theme.bodySize)))
                     .foregroundColor(theme.secondaryText)
                     .multilineTextAlignment(.center)
             }
@@ -163,15 +163,15 @@ struct ChatEmptyState: View {
             .offset(y: hasAppeared ? 0 : 15)
             .animation(.spring(response: 0.5, dampingFraction: 0.8).delay(0.25), value: hasAppeared)
 
-            // Secondary actions
+            // Secondary actions - uses theme caption size
             HStack(spacing: 16) {
                 Button(action: onOpenModelManager) {
                     HStack(spacing: 5) {
                         Image(systemName: "square.grid.2x2")
-                            .font(.system(size: 11))
+                            .font(theme.font(size: CGFloat(theme.captionSize) - 1))
                         Text("Browse all models")
                     }
-                    .font(.system(size: 13, weight: .medium))
+                    .font(theme.font(size: CGFloat(theme.captionSize) + 1, weight: .medium))
                     .foregroundColor(theme.secondaryText)
                 }
                 .buttonStyle(.plain)
@@ -190,10 +190,10 @@ struct ChatEmptyState: View {
                     Button(action: useFoundation) {
                         HStack(spacing: 5) {
                             Image(systemName: "cpu")
-                                .font(.system(size: 11))
+                                .font(theme.font(size: CGFloat(theme.captionSize) - 1))
                             Text("Use Apple Foundation")
                         }
-                        .font(.system(size: 13, weight: .medium))
+                        .font(theme.font(size: CGFloat(theme.captionSize) + 1, weight: .medium))
                         .foregroundColor(theme.secondaryText)
                     }
                     .buttonStyle(.plain)
@@ -218,19 +218,19 @@ struct ChatEmptyState: View {
         ZStack {
             // Outer glow layer
             RoundedRectangle(cornerRadius: 3)
-                .fill(Color.accentColor)
+                .fill(theme.accentColor)
                 .blur(radius: 8)
                 .opacity(glowIntensity * 0.5)
 
             // Inner glow layer
             RoundedRectangle(cornerRadius: 2)
-                .fill(Color.accentColor)
+                .fill(theme.accentColor)
                 .blur(radius: 4)
                 .opacity(glowIntensity * 0.7)
 
             // Main solid bar
             RoundedRectangle(cornerRadius: 2)
-                .fill(Color.accentColor)
+                .fill(theme.accentColor)
 
             // Shimmer highlight overlay
             RoundedRectangle(cornerRadius: 2)
@@ -351,7 +351,7 @@ private struct QuickActionButton: View {
             HStack(spacing: 10) {
                 Image(systemName: action.icon)
                     .font(.system(size: 14, weight: .medium))
-                    .foregroundColor(isHovered ? Color.accentColor : theme.secondaryText)
+                    .foregroundColor(isHovered ? theme.accentColor : theme.secondaryText)
                     .frame(width: 20)
 
                 Text(action.text)
@@ -416,8 +416,8 @@ private struct SuggestedModelCard: View {
                         .fill(
                             LinearGradient(
                                 colors: [
-                                    Color.accentColor.opacity(0.2),
-                                    Color.accentColor.opacity(0.1),
+                                    theme.accentColor.opacity(0.2),
+                                    theme.accentColor.opacity(0.1),
                                 ],
                                 startPoint: .topLeading,
                                 endPoint: .bottomTrailing
@@ -427,7 +427,7 @@ private struct SuggestedModelCard: View {
 
                     Image(systemName: "cube.fill")
                         .font(.system(size: 20, weight: .medium))
-                        .foregroundColor(Color.accentColor)
+                        .foregroundColor(theme.accentColor)
                 }
 
                 // Model info
@@ -440,12 +440,12 @@ private struct SuggestedModelCard: View {
                         // Recommended badge
                         Text("Recommended")
                             .font(.system(size: 10, weight: .semibold))
-                            .foregroundColor(Color.accentColor)
+                            .foregroundColor(theme.accentColor)
                             .padding(.horizontal, 6)
                             .padding(.vertical, 2)
                             .background(
                                 Capsule()
-                                    .fill(Color.accentColor.opacity(0.15))
+                                    .fill(theme.accentColor.opacity(0.15))
                             )
                     }
 
@@ -477,8 +477,8 @@ private struct SuggestedModelCard: View {
                 .padding(.vertical, 10)
                 .background(
                     Capsule()
-                        .fill(Color.accentColor)
-                        .shadow(color: Color.accentColor.opacity(isHovered ? 0.4 : 0), radius: 8, x: 0, y: 2)
+                        .fill(theme.accentColor)
+                        .shadow(color: theme.accentColor.opacity(isHovered ? 0.4 : 0), radius: 8, x: 0, y: 2)
                 )
             }
             .padding(16)
@@ -489,7 +489,7 @@ private struct SuggestedModelCard: View {
                         RoundedRectangle(cornerRadius: 16, style: .continuous)
                             .strokeBorder(
                                 isHovered
-                                    ? Color.accentColor.opacity(0.3)
+                                    ? theme.accentColor.opacity(0.3)
                                     : theme.primaryBorder.opacity(colorScheme == .dark ? 0.3 : 0.5),
                                 lineWidth: 1
                             )

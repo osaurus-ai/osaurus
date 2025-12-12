@@ -3,6 +3,7 @@
 //  osaurus
 //
 //  Multi-layer glass effect with enhanced blur and edge lighting
+//  Extended with theme-configurable material, tint, and opacity
 //
 
 import AppKit
@@ -12,6 +13,7 @@ import SwiftUI
 final class GlassContainerView: NSView {
     let baseGlassView: NSVisualEffectView
     let edgeLightingView: NSView
+    let tintOverlayView: NSView
 
     // Corner radii for mask - when set, uses mask layer instead of cornerRadius
     var cornerRadius: CGFloat = 28
@@ -21,12 +23,14 @@ final class GlassContainerView: NSView {
     var bottomTrailingRadius: CGFloat?
 
     var hasCustomCorners: Bool {
-        topLeadingRadius != nil || bottomLeadingRadius != nil || topTrailingRadius != nil || bottomTrailingRadius != nil
+        topLeadingRadius != nil || bottomLeadingRadius != nil || topTrailingRadius != nil
+            || bottomTrailingRadius != nil
     }
 
-    init(baseGlassView: NSVisualEffectView, edgeLightingView: NSView) {
+    init(baseGlassView: NSVisualEffectView, edgeLightingView: NSView, tintOverlayView: NSView) {
         self.baseGlassView = baseGlassView
         self.edgeLightingView = edgeLightingView
+        self.tintOverlayView = tintOverlayView
         super.init(frame: .zero)
         self.wantsLayer = true
     }
@@ -44,10 +48,13 @@ final class GlassContainerView: NSView {
             // Use native cornerRadius
             baseGlassView.layer?.mask = nil
             edgeLightingView.layer?.mask = nil
+            tintOverlayView.layer?.mask = nil
             baseGlassView.layer?.cornerRadius = cornerRadius
             baseGlassView.layer?.masksToBounds = true
             edgeLightingView.layer?.cornerRadius = cornerRadius
             edgeLightingView.layer?.masksToBounds = true
+            tintOverlayView.layer?.cornerRadius = cornerRadius
+            tintOverlayView.layer?.masksToBounds = true
             return
         }
 
@@ -56,11 +63,14 @@ final class GlassContainerView: NSView {
         baseGlassView.layer?.masksToBounds = false
         edgeLightingView.layer?.cornerRadius = 0
         edgeLightingView.layer?.masksToBounds = false
+        tintOverlayView.layer?.cornerRadius = 0
+        tintOverlayView.layer?.masksToBounds = false
 
         guard bounds.width > 0 && bounds.height > 0 else { return }
 
         baseGlassView.layer?.mask = createMaskLayer(for: bounds)
         edgeLightingView.layer?.mask = createMaskLayer(for: bounds)
+        tintOverlayView.layer?.mask = createMaskLayer(for: bounds)
     }
 
     private func effectiveRadius(for corner: CGFloat?) -> CGFloat {
@@ -130,6 +140,8 @@ struct GlassBackground: NSViewRepresentable {
     var topTrailingRadius: CGFloat?
     var bottomTrailingRadius: CGFloat?
     var material: NSVisualEffectView.Material = .hudWindow
+    var tintColor: NSColor?
+    var tintOpacity: CGFloat = 0
 
     func makeNSView(context: Context) -> NSView {
         // Base glass layer with strong blur
@@ -145,9 +157,15 @@ struct GlassBackground: NSViewRepresentable {
         edgeLightingView.layer?.borderWidth = 0
         edgeLightingView.layer?.borderColor = nil
 
+        // Tint overlay layer
+        let tintOverlayView = NSView()
+        tintOverlayView.wantsLayer = true
+        tintOverlayView.layer?.backgroundColor = tintColor?.withAlphaComponent(tintOpacity).cgColor
+
         let containerView = GlassContainerView(
             baseGlassView: baseGlassView,
-            edgeLightingView: edgeLightingView
+            edgeLightingView: edgeLightingView,
+            tintOverlayView: tintOverlayView
         )
 
         // Set corner radii
@@ -160,10 +178,12 @@ struct GlassBackground: NSViewRepresentable {
         // Add subviews
         containerView.addSubview(baseGlassView)
         containerView.addSubview(edgeLightingView)
+        containerView.addSubview(tintOverlayView)
 
         // Setup constraints
         baseGlassView.translatesAutoresizingMaskIntoConstraints = false
         edgeLightingView.translatesAutoresizingMaskIntoConstraints = false
+        tintOverlayView.translatesAutoresizingMaskIntoConstraints = false
 
         NSLayoutConstraint.activate([
             baseGlassView.leadingAnchor.constraint(equalTo: containerView.leadingAnchor),
@@ -175,6 +195,11 @@ struct GlassBackground: NSViewRepresentable {
             edgeLightingView.trailingAnchor.constraint(equalTo: containerView.trailingAnchor),
             edgeLightingView.topAnchor.constraint(equalTo: containerView.topAnchor),
             edgeLightingView.bottomAnchor.constraint(equalTo: containerView.bottomAnchor),
+
+            tintOverlayView.leadingAnchor.constraint(equalTo: containerView.leadingAnchor),
+            tintOverlayView.trailingAnchor.constraint(equalTo: containerView.trailingAnchor),
+            tintOverlayView.topAnchor.constraint(equalTo: containerView.topAnchor),
+            tintOverlayView.bottomAnchor.constraint(equalTo: containerView.bottomAnchor),
         ])
 
         return containerView
@@ -187,6 +212,9 @@ struct GlassBackground: NSViewRepresentable {
         if container.baseGlassView.material != material {
             container.baseGlassView.material = material
         }
+
+        // Update tint overlay
+        container.tintOverlayView.layer?.backgroundColor = tintColor?.withAlphaComponent(tintOpacity).cgColor
 
         // Update corner radii - container's layout() will handle mask updates
         container.cornerRadius = cornerRadius
@@ -212,7 +240,8 @@ struct GlassSurface: View {
     @Environment(\.colorScheme) private var colorScheme
 
     private var hasCustomCorners: Bool {
-        topLeadingRadius != nil || bottomLeadingRadius != nil || topTrailingRadius != nil || bottomTrailingRadius != nil
+        topLeadingRadius != nil || bottomLeadingRadius != nil || topTrailingRadius != nil
+            || bottomTrailingRadius != nil
     }
 
     var body: some View {
@@ -261,5 +290,101 @@ struct GlassSurface: View {
             }
         }
         .allowsHitTesting(false)
+    }
+}
+
+// MARK: - Themed Glass Surface
+
+/// A glass surface that automatically uses theme-configured glass properties
+struct ThemedGlassSurface: View {
+    var cornerRadius: CGFloat = 28
+    var topLeadingRadius: CGFloat?
+    var bottomLeadingRadius: CGFloat?
+    var topTrailingRadius: CGFloat?
+    var bottomTrailingRadius: CGFloat?
+
+    @Environment(\.theme) private var theme
+    @Environment(\.colorScheme) private var colorScheme
+
+    private var hasCustomCorners: Bool {
+        topLeadingRadius != nil || bottomLeadingRadius != nil || topTrailingRadius != nil
+            || bottomTrailingRadius != nil
+    }
+
+    var body: some View {
+        ZStack {
+            // Base AppKit-backed glass layer with theme material and tint
+            GlassBackground(
+                cornerRadius: cornerRadius,
+                topLeadingRadius: topLeadingRadius,
+                bottomLeadingRadius: bottomLeadingRadius,
+                topTrailingRadius: topTrailingRadius,
+                bottomTrailingRadius: bottomTrailingRadius,
+                material: theme.glassMaterial,
+                tintColor: theme.glassTintColor.map { NSColor($0) },
+                tintOpacity: CGFloat(theme.glassTintOpacity)
+            )
+
+            // Gradient overlay for brightness/contrast
+            gradientOverlay
+        }
+        .allowsHitTesting(false)
+    }
+
+    @ViewBuilder
+    private var gradientOverlay: some View {
+        let gradientColors = [
+            Color.white.opacity(colorScheme == .dark ? theme.glassOpacityPrimary : 0.5),
+            Color.white.opacity(colorScheme == .dark ? theme.glassOpacitySecondary : 0.35),
+        ]
+
+        if hasCustomCorners {
+            UnevenRoundedRectangle(
+                topLeadingRadius: topLeadingRadius ?? cornerRadius,
+                bottomLeadingRadius: bottomLeadingRadius ?? cornerRadius,
+                bottomTrailingRadius: bottomTrailingRadius ?? cornerRadius,
+                topTrailingRadius: topTrailingRadius ?? cornerRadius,
+                style: .continuous
+            )
+            .fill(
+                LinearGradient(
+                    gradient: Gradient(colors: gradientColors),
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing
+                )
+            )
+        } else {
+            RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                .fill(
+                    LinearGradient(
+                        gradient: Gradient(colors: gradientColors),
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    )
+                )
+        }
+    }
+}
+
+// MARK: - Theme Background Image View
+
+/// View that renders a theme's background image with proper scaling and overlay
+struct ThemeBackgroundImage: View {
+    @Environment(\.theme) private var theme
+
+    var body: some View {
+        if let backgroundImage = theme.backgroundImage {
+            ZStack {
+                Image(nsImage: backgroundImage)
+                    .resizable()
+                    .aspectRatio(contentMode: .fill)
+                    .opacity(theme.backgroundImageOpacity)
+
+                // Overlay if configured
+                if let overlayColor = theme.backgroundOverlayColor {
+                    overlayColor.opacity(theme.backgroundOverlayOpacity)
+                }
+            }
+        }
     }
 }

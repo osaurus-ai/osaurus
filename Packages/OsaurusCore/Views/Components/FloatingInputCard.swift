@@ -31,7 +31,7 @@ struct FloatingInputCard: View {
     @State private var cachedModelOptions: [ModelOption] = []
 
     // TextEditor should grow up to ~6 lines before scrolling
-    private let inputFontSize: CGFloat = 15
+    private var inputFontSize: CGFloat { CGFloat(theme.bodySize) }
     private let maxVisibleLines: CGFloat = 6
     private var maxHeight: CGFloat {
         // Approximate line height from font metrics (ascender/descender/leading)
@@ -183,21 +183,21 @@ struct FloatingInputCard: View {
                     if let option = selectedModelOption {
                         HStack(spacing: 4) {
                             Text(option.displayName)
-                                .font(.system(size: 12, weight: .medium))
+                                .font(theme.font(size: CGFloat(theme.captionSize), weight: .medium))
                                 .foregroundColor(theme.secondaryText)
                                 .lineLimit(1)
 
                             // Show VLM indicator
                             if option.isVLM {
                                 Image(systemName: "eye")
-                                    .font(.system(size: 9))
+                                    .font(theme.font(size: CGFloat(theme.captionSize) - 3))
                                     .foregroundColor(theme.accentColor)
                             }
 
                             // Show parameter count badge
                             if let params = option.parameterCount {
                                 Text(params)
-                                    .font(.system(size: 9, weight: .medium))
+                                    .font(theme.font(size: CGFloat(theme.captionSize) - 3, weight: .medium))
                                     .foregroundColor(.blue.opacity(0.8))
                                     .padding(.horizontal, 4)
                                     .padding(.vertical, 1)
@@ -209,12 +209,12 @@ struct FloatingInputCard: View {
                         }
                     } else {
                         Text("Select Model")
-                            .font(.system(size: 12, weight: .medium))
+                            .font(theme.font(size: CGFloat(theme.captionSize), weight: .medium))
                             .foregroundColor(theme.secondaryText)
                     }
 
                     Image(systemName: "chevron.up.chevron.down")
-                        .font(.system(size: 9, weight: .semibold))
+                        .font(theme.font(size: CGFloat(theme.captionSize) - 3, weight: .semibold))
                         .foregroundColor(theme.tertiaryText)
                 }
                 .padding(.horizontal, 12)
@@ -253,9 +253,9 @@ struct FloatingInputCard: View {
     private var keyboardHint: some View {
         HStack(spacing: 4) {
             Text("⏎")
-                .font(.system(size: 10, weight: .medium, design: .rounded))
+                .font(theme.font(size: CGFloat(theme.captionSize) - 2, weight: .medium))
             Text("to send")
-                .font(.system(size: 11))
+                .font(theme.font(size: CGFloat(theme.captionSize) - 1))
         }
         .foregroundColor(theme.tertiaryText.opacity(0.7))
     }
@@ -378,10 +378,10 @@ struct FloatingInputCard: View {
             .fixedSize(horizontal: false, vertical: true)
             .padding(.vertical, 2)
             .overlay(alignment: .topLeading) {
-                // Placeholder
+                // Placeholder - uses theme body size
                 if showPlaceholder {
                     Text(supportsImages ? "Message or paste image..." : "Message...")
-                        .font(.system(size: 15))
+                        .font(.system(size: inputFontSize))
                         .foregroundColor(theme.tertiaryText)
                         .padding(.leading, 6)
                         .padding(.top, 2)
@@ -405,9 +405,9 @@ struct FloatingInputCard: View {
     private var actionButton: some View {
         Button(action: isStreaming ? onStop : syncAndSend) {
             ZStack {
-                // Send icon
+                // Send icon - uses theme body size
                 Image(systemName: "arrow.up")
-                    .font(.system(size: 14, weight: .semibold))
+                    .font(theme.font(size: CGFloat(theme.bodySize), weight: .semibold))
                     .foregroundColor(.white)
                     .opacity(isStreaming ? 0 : 1)
                     .scaleEffect(isStreaming ? 0.5 : 1)
@@ -442,7 +442,7 @@ struct FloatingInputCard: View {
         } else {
             return AnyShapeStyle(
                 LinearGradient(
-                    colors: [Color.accentColor, Color.accentColor.opacity(0.85)],
+                    colors: [theme.accentColor, theme.accentColor.opacity(0.85)],
                     startPoint: .top,
                     endPoint: .bottom
                 )
@@ -451,7 +451,7 @@ struct FloatingInputCard: View {
     }
 
     private var buttonShadowColor: Color {
-        isStreaming ? Color.red.opacity(0.4) : Color.accentColor.opacity(0.4)
+        isStreaming ? Color.red.opacity(0.4) : theme.accentColor.opacity(0.4)
     }
 
     // MARK: - Card Styling
@@ -475,7 +475,7 @@ struct FloatingInputCard: View {
 
     private var effectiveBorderStyle: AnyShapeStyle {
         if isDragOver && supportsImages {
-            return AnyShapeStyle(Color.accentColor)
+            return AnyShapeStyle(theme.accentColor)
         }
         return borderGradient
     }
@@ -484,7 +484,7 @@ struct FloatingInputCard: View {
         if isFocused {
             return AnyShapeStyle(
                 LinearGradient(
-                    colors: [Color.accentColor.opacity(0.6), Color.accentColor.opacity(0.2)],
+                    colors: [theme.accentColor.opacity(0.6), theme.accentColor.opacity(0.2)],
                     startPoint: .topLeading,
                     endPoint: .bottomTrailing
                 )
@@ -501,7 +501,7 @@ struct FloatingInputCard: View {
     }
 
     private var shadowColor: Color {
-        isFocused ? Color.accentColor.opacity(0.15) : Color.black.opacity(0.15)
+        isFocused ? theme.accentColor.opacity(0.15) : Color.black.opacity(0.15)
     }
 }
 
