@@ -718,12 +718,13 @@ struct ThemePreviewCard: View {
 
             // Info and actions
             VStack(alignment: .leading, spacing: 8) {
-                HStack {
+                HStack(spacing: 8) {
                     VStack(alignment: .leading, spacing: 2) {
                         HStack(spacing: 6) {
                             Text(theme.metadata.name)
                                 .font(.system(size: 14, weight: .semibold))
                                 .foregroundColor(currentTheme.primaryText)
+                                .lineLimit(1)
 
                             if isActive {
                                 Image(systemName: "checkmark.circle.fill")
@@ -747,9 +748,10 @@ struct ThemePreviewCard: View {
                         Text("by \(theme.metadata.author)")
                             .font(.system(size: 11))
                             .foregroundColor(currentTheme.tertiaryText)
+                            .lineLimit(1)
                     }
 
-                    Spacer()
+                    Spacer(minLength: 8)
 
                     // Context menu
                     Menu {
@@ -777,9 +779,11 @@ struct ThemePreviewCard: View {
                         Image(systemName: "ellipsis.circle")
                             .font(.system(size: 16))
                             .foregroundColor(currentTheme.secondaryText)
+                            .frame(width: 28, height: 28)
+                            .contentShape(Rectangle())
                     }
                     .menuStyle(.borderlessButton)
-                    .frame(width: 24)
+                    .fixedSize()
                 }
 
                 // Color palette preview
