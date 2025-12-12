@@ -14,6 +14,7 @@ enum ManagementTab: String, CaseIterable {
     case models
     case providers
     case tools
+    case themes
     case insights
     case server
     case settings
@@ -23,6 +24,7 @@ enum ManagementTab: String, CaseIterable {
         case .models: return "cube.box.fill"
         case .providers: return "cloud.fill"
         case .tools: return "wrench.and.screwdriver.fill"
+        case .themes: return "paintpalette.fill"
         case .insights: return "chart.bar.doc.horizontal"
         case .server: return "server.rack"
         case .settings: return "gearshape.fill"
@@ -34,6 +36,7 @@ enum ManagementTab: String, CaseIterable {
         case .models: return "Models"
         case .providers: return "Providers"
         case .tools: return "Tools"
+        case .themes: return "Themes"
         case .insights: return "Insights"
         case .server: return "Server"
         case .settings: return "Settings"
@@ -66,6 +69,7 @@ struct ManagementView: View {
 
     private var sidebarItems: [SidebarItemData] {
         let connectedProviders = remoteProviderManager.providerStates.values.filter { $0.isConnected }.count
+        let customThemeCount = themeManager.installedThemes.filter { !$0.isBuiltIn }.count
 
         return [
             SidebarItemData(
@@ -84,6 +88,12 @@ struct ManagementView: View {
                 icon: ManagementTab.tools.icon,
                 label: ManagementTab.tools.label,
                 badge: repoService.updatesAvailableCount > 0 ? repoService.updatesAvailableCount : nil
+            ),
+            SidebarItemData(
+                id: ManagementTab.themes.rawValue,
+                icon: ManagementTab.themes.icon,
+                label: ManagementTab.themes.label,
+                badge: customThemeCount > 0 ? customThemeCount : nil
             ),
             SidebarItemData(
                 id: ManagementTab.insights.rawValue,
@@ -119,6 +129,8 @@ struct ManagementView: View {
                     RemoteProvidersView()
                 case ManagementTab.tools.rawValue:
                     ToolsManagerView()
+                case ManagementTab.themes.rawValue:
+                    ThemesView()
                 case ManagementTab.insights.rawValue:
                     InsightsView()
                 case ManagementTab.server.rawValue:

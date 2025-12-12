@@ -73,7 +73,7 @@ struct GroupedToolResponseView: View {
             .frame(maxHeight: isExpanded ? nil : 0, alignment: .top)
             .clipped()
             .opacity(isExpanded ? 1 : 0)
-            .animation(.spring(response: 0.35, dampingFraction: 0.85), value: isExpanded)
+            .animation(theme.springAnimation(), value: isExpanded)
         }
         .padding(.vertical, 12)
         .padding(.horizontal, 14)
@@ -94,7 +94,7 @@ struct GroupedToolResponseView: View {
             x: 0,
             y: isHovered ? 3 : 1
         )
-        .animation(.easeInOut(duration: 0.2), value: isHovered)
+        .animation(theme.animationQuick(), value: isHovered)
         .onHover { hovering in
             isHovered = hovering
         }
@@ -102,7 +102,7 @@ struct GroupedToolResponseView: View {
 
     private var header: some View {
         Button(action: {
-            withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) {
+            withAnimation(theme.springAnimation()) {
                 isExpanded.toggle()
             }
         }) {
@@ -114,14 +114,14 @@ struct GroupedToolResponseView: View {
                         .frame(width: 28, height: 28)
 
                     Image(systemName: "wrench.and.screwdriver.fill")
-                        .font(.system(size: 12, weight: .medium))
+                        .font(theme.font(size: CGFloat(theme.captionSize), weight: .medium))
                         .foregroundColor(statusColor)
                 }
 
                 // Title and status
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Tool \(calls.count == 1 ? "call" : "calls")")
-                        .font(.system(size: 13, weight: .semibold))
+                        .font(theme.font(size: CGFloat(theme.captionSize) + 1, weight: .semibold))
                         .foregroundColor(theme.primaryText)
 
                     // Status indicator
@@ -132,11 +132,11 @@ struct GroupedToolResponseView: View {
                                 .frame(width: 12, height: 12)
 
                             Text("\(completedCount)/\(calls.count) running...")
-                                .font(.system(size: 11, weight: .medium))
+                                .font(theme.font(size: CGFloat(theme.captionSize) - 1, weight: .medium))
                                 .foregroundColor(theme.accentColor)
                         } else if hasRejections {
                             Image(systemName: "xmark.circle.fill")
-                                .font(.system(size: 10))
+                                .font(theme.font(size: CGFloat(theme.captionSize) - 2))
                                 .foregroundColor(theme.errorColor)
 
                             Text(
@@ -144,15 +144,15 @@ struct GroupedToolResponseView: View {
                                     ? "\(rejectedCount) rejected"
                                     : "\(successCount) completed, \(rejectedCount) rejected"
                             )
-                            .font(.system(size: 11, weight: .medium))
+                            .font(theme.font(size: CGFloat(theme.captionSize) - 1, weight: .medium))
                             .foregroundColor(theme.errorColor)
                         } else {
                             Image(systemName: "checkmark.circle.fill")
-                                .font(.system(size: 10))
+                                .font(theme.font(size: CGFloat(theme.captionSize) - 2))
                                 .foregroundColor(theme.successColor)
 
                             Text("\(calls.count) completed")
-                                .font(.system(size: 11, weight: .medium))
+                                .font(theme.font(size: CGFloat(theme.captionSize) - 1, weight: .medium))
                                 .foregroundColor(theme.successColor)
                         }
                     }
@@ -162,10 +162,10 @@ struct GroupedToolResponseView: View {
 
                 // Expand/collapse chevron
                 Image(systemName: "chevron.right")
-                    .font(.system(size: 11, weight: .semibold))
+                    .font(theme.font(size: CGFloat(theme.captionSize) - 1, weight: .semibold))
                     .foregroundColor(theme.tertiaryText)
                     .rotationEffect(.degrees(isExpanded ? 90 : 0))
-                    .animation(.spring(response: 0.3, dampingFraction: 0.7), value: isExpanded)
+                    .animation(theme.springAnimation(), value: isExpanded)
             }
             .contentShape(Rectangle())
         }
@@ -305,7 +305,7 @@ private struct ToolCallRow: View {
                     icon: "curlybraces",
                     isActive: showArgs
                 ) {
-                    withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+                    withAnimation(theme.springAnimation()) {
                         showArgs.toggle()
                     }
                 }
@@ -316,7 +316,7 @@ private struct ToolCallRow: View {
                         icon: "doc.text",
                         isActive: showResult
                     ) {
-                        withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+                        withAnimation(theme.springAnimation()) {
                             showResult.toggle()
                         }
                     }
@@ -364,7 +364,7 @@ private struct ToolCallRow: View {
                 )
         )
         .onHover { hovering in
-            withAnimation(.easeInOut(duration: 0.15)) {
+            withAnimation(theme.animationQuick()) {
                 isHovered = hovering
             }
         }
@@ -428,7 +428,7 @@ private struct ToolToggleButton: View {
         }
         .buttonStyle(.plain)
         .onHover { hovering in
-            withAnimation(.easeInOut(duration: 0.1)) {
+            withAnimation(theme.animationQuick()) {
                 isHovered = hovering
             }
         }
@@ -487,8 +487,8 @@ private struct ToolCodeBlock: View {
                 }
                 .buttonStyle(.plain)
                 .opacity(isHovered || isCopied ? 1 : 0.5)
-                .animation(.easeInOut(duration: 0.15), value: isHovered)
-                .animation(.easeInOut(duration: 0.2), value: isCopied)
+                .animation(theme.animationQuick(), value: isHovered)
+                .animation(theme.animationQuick(), value: isCopied)
             }
             .padding(.horizontal, 10)
             .padding(.vertical, 7)
@@ -539,7 +539,7 @@ private struct ToolCodeBlock: View {
             y: 1
         )
         .onHover { hovering in
-            withAnimation(.easeInOut(duration: 0.15)) {
+            withAnimation(theme.animationQuick()) {
                 isHovered = hovering
             }
         }
@@ -582,13 +582,13 @@ private struct ToolCodeBlock: View {
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(text, forType: .string)
 
-        withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
+        withAnimation(theme.springAnimation()) {
             isCopied = true
         }
 
         Task { @MainActor in
             try? await Task.sleep(nanoseconds: 1_800_000_000)
-            withAnimation(.easeInOut(duration: 0.2)) {
+            withAnimation(theme.animationQuick()) {
                 isCopied = false
             }
         }

@@ -18,13 +18,14 @@ struct HeadingView: View {
 
     private var fontSize: CGFloat {
         let scale = Typography.scale(for: baseWidth)
+        // Use theme title/heading/body sizes as base, with level offsets
         switch level {
-        case 1: return 28 * scale
-        case 2: return 24 * scale
-        case 3: return 20 * scale
-        case 4: return 18 * scale
-        case 5: return 16 * scale
-        default: return 15 * scale
+        case 1: return CGFloat(theme.titleSize) * scale
+        case 2: return (CGFloat(theme.titleSize) - 4) * scale
+        case 3: return CGFloat(theme.headingSize) * scale
+        case 4: return (CGFloat(theme.headingSize) - 2) * scale
+        case 5: return (CGFloat(theme.bodySize) + 2) * scale
+        default: return CGFloat(theme.bodySize) * scale
         }
     }
 
@@ -62,12 +63,12 @@ struct HeadingView: View {
             options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)
         ) {
             Text(attributed)
-                .font(.system(size: fontSize, weight: fontWeight, design: .rounded))
+                .font(theme.font(size: fontSize, weight: fontWeight))
                 .foregroundColor(theme.primaryText)
                 .lineSpacing(2)
         } else {
             Text(text)
-                .font(.system(size: fontSize, weight: fontWeight, design: .rounded))
+                .font(theme.font(size: fontSize, weight: fontWeight))
                 .foregroundColor(theme.primaryText)
                 .lineSpacing(2)
         }
@@ -134,13 +135,13 @@ struct BlockquoteView: View {
             options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)
         ) {
             Text(attributed)
-                .font(Typography.body(baseWidth))
+                .font(Typography.body(baseWidth, theme: theme))
                 .italic()
                 .foregroundColor(theme.secondaryText)
                 .lineSpacing(4)
         } else {
             Text(content)
-                .font(Typography.body(baseWidth))
+                .font(Typography.body(baseWidth, theme: theme))
                 .italic()
                 .foregroundColor(theme.secondaryText)
                 .lineSpacing(4)
@@ -225,10 +226,15 @@ private struct ListItemView: View {
 
     var body: some View {
         HStack(alignment: .top, spacing: 10) {
-            // Bullet or number
+            // Bullet or number - uses theme body size and mono font
             if ordered {
                 Text("\(index + 1).")
-                    .font(.system(size: 14 * Typography.scale(for: baseWidth), weight: .medium, design: .monospaced))
+                    .font(
+                        theme.monoFont(
+                            size: CGFloat(theme.bodySize) * Typography.scale(for: baseWidth),
+                            weight: .medium
+                        )
+                    )
                     .foregroundColor(theme.accentColor)
                     .frame(width: 24, alignment: .trailing)
             } else {
@@ -251,13 +257,13 @@ private struct ListItemView: View {
             options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)
         ) {
             Text(attributed)
-                .font(Typography.body(baseWidth))
+                .font(Typography.body(baseWidth, theme: theme))
                 .foregroundColor(theme.primaryText)
                 .lineSpacing(4)
                 .frame(maxWidth: .infinity, alignment: .leading)
         } else {
             Text(item)
-                .font(Typography.body(baseWidth))
+                .font(Typography.body(baseWidth, theme: theme))
                 .foregroundColor(theme.primaryText)
                 .lineSpacing(4)
                 .frame(maxWidth: .infinity, alignment: .leading)

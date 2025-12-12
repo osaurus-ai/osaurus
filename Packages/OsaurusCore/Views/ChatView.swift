@@ -591,7 +591,7 @@ struct ChatView: View {
                             )
                         }
                     }
-                    .animation(.spring(response: 0.4, dampingFraction: 0.85), value: session.turns.isEmpty)
+                    .animation(theme.springAnimation(), value: session.turns.isEmpty)
                 }
             }
         }
@@ -608,8 +608,8 @@ struct ChatView: View {
             closeButton
         }
         .ignoresSafeArea()
-        .animation(.easeInOut(duration: 0.3), value: session.turns.isEmpty)
-        .animation(.easeInOut(duration: 0.2), value: showSidebar)
+        .animation(theme.animationMedium(), value: session.turns.isEmpty)
+        .animation(theme.animationQuick(), value: showSidebar)
         .background(WindowAccessor(window: $hostWindow))
         .onExitCommand { AppDelegate.shared?.closeChatOverlay() }
         .onReceive(NotificationCenter.default.publisher(for: .chatOverlayActivated)) { _ in
@@ -640,26 +640,134 @@ struct ChatView: View {
 
     private var chatBackground: some View {
         ZStack {
-            // Base glass surface with dynamic corners based on sidebar state
-            GlassSurface(
-                cornerRadius: 24,
-                topLeadingRadius: showSidebar ? 0 : nil,
-                bottomLeadingRadius: showSidebar ? 0 : nil
-            )
-            .allowsHitTesting(false)
+            // Layer 1: Base background (solid, gradient, or image)
+            baseBackgroundLayer
+                .clipShape(backgroundShape)
 
-            // Gradient overlay for depth - stronger in light mode for text contrast
-            LinearGradient(
-                colors: [
-                    theme.primaryBackground.opacity(colorScheme == .dark ? 0.3 : 0.6),
-                    theme.primaryBackground.opacity(colorScheme == .dark ? 0.1 : 0.4),
-                    Color.clear,
-                ],
-                startPoint: .top,
-                endPoint: .bottom
-            )
-            .allowsHitTesting(false)
+            // Layer 2: Glass effect (if enabled)
+            if theme.glassEnabled {
+                ThemedGlassSurface(
+                    cornerRadius: 24,
+                    topLeadingRadius: showSidebar ? 0 : nil,
+                    bottomLeadingRadius: showSidebar ? 0 : nil
+                )
+                .allowsHitTesting(false)
+
+                // Gradient overlay for depth - stronger in light mode for text contrast
+                LinearGradient(
+                    colors: [
+                        theme.primaryBackground.opacity(colorScheme == .dark ? 0.3 : 0.6),
+                        theme.primaryBackground.opacity(colorScheme == .dark ? 0.1 : 0.4),
+                        Color.clear,
+                    ],
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
+                .allowsHitTesting(false)
+            }
         }
+    }
+
+    private var backgroundShape: UnevenRoundedRectangle {
+        UnevenRoundedRectangle(
+            topLeadingRadius: showSidebar ? 0 : 24,
+            bottomLeadingRadius: showSidebar ? 0 : 24,
+            bottomTrailingRadius: 24,
+            topTrailingRadius: 24,
+            style: .continuous
+        )
+    }
+
+    @ViewBuilder
+    private var baseBackgroundLayer: some View {
+        if let customTheme = theme.customThemeConfig {
+            // Use custom theme's background settings
+            switch customTheme.background.type {
+            case .solid:
+                let color = Color(themeHex: customTheme.background.solidColor ?? customTheme.colors.primaryBackground)
+                color
+
+            case .gradient:
+                let colors = (customTheme.background.gradientColors ?? ["#000000", "#333333"])
+                    .map { Color(themeHex: $0) }
+                LinearGradient(
+                    colors: colors,
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
+
+            case .image:
+                if let image = customTheme.background.decodedImage() {
+                    ZStack {
+                        backgroundImageView(
+                            image: image,
+                            fit: customTheme.background.imageFit ?? .fill,
+                            opacity: customTheme.background.imageOpacity ?? 1.0
+                        )
+
+                        // Overlay if configured
+                        if let overlayHex = customTheme.background.overlayColor {
+                            Color(themeHex: overlayHex)
+                                .opacity(customTheme.background.overlayOpacity ?? 0.5)
+                        }
+                    }
+                } else {
+                    // Fallback to primary background if image fails to load
+                    Color(themeHex: customTheme.colors.primaryBackground)
+                }
+            }
+        } else {
+            // Default theme - use primary background with transparency for glass
+            theme.primaryBackground
+        }
+    }
+
+    @ViewBuilder
+    private func backgroundImageView(image: NSImage, fit: ThemeBackground.ImageFit, opacity: Double) -> some View {
+        GeometryReader { geo in
+            switch fit {
+            case .fill:
+                Image(nsImage: image)
+                    .resizable()
+                    .aspectRatio(contentMode: .fill)
+                    .frame(width: geo.size.width, height: geo.size.height)
+                    .clipped()
+                    .opacity(opacity)
+            case .fit:
+                Image(nsImage: image)
+                    .resizable()
+                    .aspectRatio(contentMode: .fit)
+                    .frame(width: geo.size.width, height: geo.size.height)
+                    .opacity(opacity)
+            case .stretch:
+                Image(nsImage: image)
+                    .resizable()
+                    .frame(width: geo.size.width, height: geo.size.height)
+                    .opacity(opacity)
+            case .tile:
+                // Tile the image
+                tiledImage(image: image, size: geo.size)
+                    .opacity(opacity)
+            }
+        }
+    }
+
+    private func tiledImage(image: NSImage, size: CGSize) -> some View {
+        let imageSize = image.size
+        let cols = Int(ceil(size.width / imageSize.width))
+        let rows = Int(ceil(size.height / imageSize.height))
+
+        return VStack(spacing: 0) {
+            ForEach(0 ..< rows, id: \.self) { _ in
+                HStack(spacing: 0) {
+                    ForEach(0 ..< cols, id: \.self) { _ in
+                        Image(nsImage: image)
+                    }
+                }
+            }
+        }
+        .frame(width: size.width, height: size.height)
+        .clipped()
     }
 
     // MARK: - Header
@@ -671,7 +779,7 @@ struct ChatView: View {
                 icon: showSidebar ? "sidebar.left" : "sidebar.left",
                 help: showSidebar ? "Hide sidebar" : "Show sidebar",
                 action: {
-                    withAnimation(.easeInOut(duration: 0.2)) {
+                    withAnimation(theme.animationQuick()) {
                         showSidebar.toggle()
                     }
                 }
@@ -770,14 +878,14 @@ struct ChatView: View {
             }
             .onChange(of: session.turns.count) { _, _ in
                 if isPinnedToBottom {
-                    withAnimation(.easeOut(duration: 0.2)) {
+                    withAnimation(theme.animationQuick()) {
                         proxy.scrollTo("BOTTOM", anchor: .bottom)
                     }
                 }
             }
             .onChange(of: session.scrollTick) { _, _ in
                 if isPinnedToBottom {
-                    withAnimation(.easeOut(duration: 0.1)) {
+                    withAnimation(theme.animationQuick()) {
                         proxy.scrollTo("BOTTOM", anchor: .bottom)
                     }
                 }
@@ -793,7 +901,7 @@ struct ChatView: View {
     private func scrollToBottomButton(proxy: ScrollViewProxy) -> some View {
         if !isPinnedToBottom && !session.turns.isEmpty {
             Button(action: {
-                withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+                withAnimation(theme.springAnimation()) {
                     proxy.scrollTo("BOTTOM", anchor: .bottom)
                 }
                 isPinnedToBottom = true
@@ -887,7 +995,7 @@ private struct HeaderActionButton: View {
         }
         .buttonStyle(.plain)
         .onHover { hovering in
-            withAnimation(.easeInOut(duration: 0.1)) {
+            withAnimation(theme.animationQuick()) {
                 isHovered = hovering
             }
         }
@@ -916,7 +1024,7 @@ private struct CloseButton: View {
         }
         .buttonStyle(.plain)
         .onHover { hovering in
-            withAnimation(.easeInOut(duration: 0.1)) {
+            withAnimation(theme.animationQuick()) {
                 isHovered = hovering
             }
         }
