@@ -129,6 +129,7 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
     }
 
     /// Wraps an async stream to count output tokens and log on completion
+    /// Uses Task.detached to avoid actor isolation deadlocks when consumed from MainActor
     private func wrapStreamWithLogging(
         _ inner: AsyncThrowingStream<String, Error>,
         source: InferenceSource,
@@ -139,26 +140,54 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
     ) -> AsyncThrowingStream<String, Error> {
         let (stream, continuation) = AsyncThrowingStream<String, Error>.makeStream()
 
-        Task {
+        // IMPORTANT: Use Task.detached to run on cooperative thread pool instead of
+        // ChatEngine actor's executor. This prevents deadlocks when the MainActor
+        // consumes this stream while waiting for actor-isolated yields.
+        Task.detached(priority: .userInitiated) {
             let startTime = Date()
             var outputTokenCount = 0
+            var deltaCount = 0
             var finishReason: InferenceLog.FinishReason = .stop
             var errorMsg: String? = nil
             var toolInvocation: (name: String, args: String)? = nil
+            var lastDeltaTime = startTime
+
+            print("[Osaurus][Stream] Starting stream wrapper for model: \(model)")
 
             do {
                 for try await delta in inner {
+                    deltaCount += 1
+                    let now = Date()
+                    let timeSinceStart = now.timeIntervalSince(startTime)
+                    let timeSinceLastDelta = now.timeIntervalSince(lastDeltaTime)
+                    lastDeltaTime = now
+
+                    // Log every 50th delta or if there's a long gap (potential freeze indicator)
+                    if deltaCount % 50 == 1 || timeSinceLastDelta > 2.0 {
+                        print(
+                            "[Osaurus][Stream] Delta #\(deltaCount): +\(String(format: "%.2f", timeSinceStart))s total, gap=\(String(format: "%.3f", timeSinceLastDelta))s, len=\(delta.count)"
+                        )
+                    }
+
                     // Estimate tokens: each delta chunk is roughly proportional to tokens
                     // More accurate: count whitespace-separated words, or use tokenizer
                     outputTokenCount += max(1, delta.count / 4)
                     continuation.yield(delta)
                 }
+
+                let totalTime = Date().timeIntervalSince(startTime)
+                print(
+                    "[Osaurus][Stream] Stream completed: \(deltaCount) deltas in \(String(format: "%.2f", totalTime))s"
+                )
+
                 continuation.finish()
             } catch let inv as ServiceToolInvocation {
+                print("[Osaurus][Stream] Tool invocation: \(inv.toolName)")
                 toolInvocation = (inv.toolName, inv.jsonArguments)
                 finishReason = .toolCalls
                 continuation.finish(throwing: inv)
             } catch {
+                print("[Osaurus][Stream] Stream error after \(deltaCount) deltas: \(error.localizedDescription)")
                 finishReason = .error
                 errorMsg = error.localizedDescription
                 continuation.finish(throwing: error)

@@ -412,14 +412,54 @@ final class ChatSession: ObservableObject {
                         session_id: nil
                     )
                     do {
-                        let stream = try await engine.streamChat(request: req)
-                        for try await delta in stream {
-                            if Task.isCancelled { break outer }
-                            if !delta.isEmpty {
-                                assistantTurn.content += delta
+                        let streamStartTime = Date()
+                        var uiDeltaCount = 0
+                        print("[Osaurus][UI] Starting stream consumption on MainActor")
+
+                        // Batching: accumulate deltas and flush periodically to reduce UI updates
+                        var deltaBuffer = ""
+                        var lastFlushTime = Date()
+                        let flushIntervalMs: Double = 50  // Flush every 50ms
+                        let maxBufferSize = 256  // Or when buffer reaches this size
+
+                        @MainActor
+                        func flushBuffer() {
+                            if !deltaBuffer.isEmpty {
+                                assistantTurn.content += deltaBuffer
+                                deltaBuffer = ""
                                 scrollTick &+= 1
+                                lastFlushTime = Date()
                             }
                         }
+
+                        let stream = try await engine.streamChat(request: req)
+                        for try await delta in stream {
+                            if Task.isCancelled {
+                                flushBuffer()  // Flush remaining before breaking
+                                break outer
+                            }
+                            if !delta.isEmpty {
+                                uiDeltaCount += 1
+
+                                deltaBuffer += delta
+
+                                // Flush if buffer is large enough or enough time has passed
+                                let now = Date()
+                                let timeSinceFlush = now.timeIntervalSince(lastFlushTime) * 1000  // ms
+                                if deltaBuffer.count >= maxBufferSize || timeSinceFlush >= flushIntervalMs {
+                                    flushBuffer()
+                                }
+                            }
+                        }
+
+                        // Flush any remaining buffered content
+                        flushBuffer()
+
+                        let totalTime = Date().timeIntervalSince(streamStartTime)
+                        print(
+                            "[Osaurus][UI] Stream consumption completed: \(uiDeltaCount) deltas in \(String(format: "%.2f", totalTime))s, final contentLen=\(assistantTurn.content.count)"
+                        )
+
                         break  // finished normally
                     } catch let inv as ServiceToolInvocation {
                         // Use preserved tool call ID from stream if available, otherwise generate one
