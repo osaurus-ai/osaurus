@@ -24,6 +24,8 @@ struct ThemesView: View {
     @Environment(\.theme) private var theme
 
     @State private var hasAppeared = false
+    @State private var isLoading = true
+    @State private var loadError: String?
     @State private var selectedThemeId: UUID?
     @State private var editingTheme: IdentifiableTheme?
     @State private var showingImporter = false
@@ -31,6 +33,7 @@ struct ThemesView: View {
     @State private var themeToExport: CustomTheme?
     @State private var showDeleteConfirmation = false
     @State private var themeToDelete: CustomTheme?
+    @State private var successMessage: String?
 
     private var installedThemes: [CustomTheme] {
         themeManager.installedThemes.sorted { $0.metadata.name < $1.metadata.name }
@@ -53,34 +56,63 @@ struct ThemesView: View {
                 .animation(.spring(response: 0.4, dampingFraction: 0.8), value: hasAppeared)
 
             // Content
-            ScrollView {
-                VStack(alignment: .leading, spacing: 24) {
-                    // Active theme indicator
-                    if let activeTheme = themeManager.activeCustomTheme {
-                        activeThemeSection(activeTheme)
-                    }
+            ZStack {
+                if isLoading {
+                    loadingView
+                } else if let error = loadError {
+                    errorView(error)
+                } else if installedThemes.isEmpty {
+                    noThemesView
+                } else {
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: 24) {
+                            // Active theme indicator
+                            if let activeTheme = themeManager.activeCustomTheme {
+                                activeThemeSection(activeTheme)
+                                    .transition(.opacity.combined(with: .move(edge: .top)))
+                            }
 
-                    // Built-in themes
-                    themesSection(title: "Built-in Themes", themes: builtInThemes)
+                            // Built-in themes
+                            if !builtInThemes.isEmpty {
+                                themesSection(
+                                    title: "Built-in Themes",
+                                    count: builtInThemes.count,
+                                    themes: builtInThemes
+                                )
+                                .transition(.opacity)
+                            }
 
-                    // Custom themes
-                    if !customThemes.isEmpty {
-                        themesSection(title: "Custom Themes", themes: customThemes)
-                    }
+                            // Custom themes
+                            if !customThemes.isEmpty {
+                                themesSection(title: "Custom Themes", count: customThemes.count, themes: customThemes)
+                                    .transition(.opacity)
+                            }
 
-                    // Empty state for custom themes
-                    if customThemes.isEmpty {
-                        emptyCustomThemesView
+                            // Empty state for custom themes
+                            if customThemes.isEmpty && !builtInThemes.isEmpty {
+                                emptyCustomThemesView
+                            }
+                        }
+                        .padding(24)
                     }
                 }
-                .padding(24)
+
+                // Success toast
+                if let message = successMessage {
+                    VStack {
+                        Spacer()
+                        successToast(message)
+                            .transition(.move(edge: .bottom).combined(with: .opacity))
+                            .padding(.bottom, 20)
+                    }
+                }
             }
             .opacity(hasAppeared ? 1 : 0)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(theme.primaryBackground)
         .onAppear {
-            themeManager.refreshInstalledThemes()
+            loadThemes()
             withAnimation(.easeOut(duration: 0.25).delay(0.05)) {
                 hasAppeared = true
             }
@@ -108,18 +140,32 @@ struct ThemesView: View {
         ) { result in
             handleExport(result)
         }
-        .alert("Delete Theme", isPresented: $showDeleteConfirmation) {
-            Button("Cancel", role: .cancel) {}
-            Button("Delete", role: .destructive) {
-                if let theme = themeToDelete {
-                    themeManager.deleteTheme(id: theme.metadata.id)
-                }
+        .alert("Delete Theme", isPresented: $showDeleteConfirmation, presenting: themeToDelete) { themeToDeleteItem in
+            Button("Cancel", role: .cancel) {
+                themeToDelete = nil
             }
-        } message: {
+            Button("Delete", role: .destructive) {
+                performDelete(themeToDeleteItem)
+            }
+        } message: { themeToDeleteItem in
             Text(
-                "Are you sure you want to delete \"\(themeToDelete?.metadata.name ?? "this theme")\"? This action cannot be undone."
+                "Are you sure you want to delete \"\(themeToDeleteItem.metadata.name)\"? This action cannot be undone."
             )
         }
+    }
+
+    // MARK: - Delete Helper
+
+    private func performDelete(_ theme: CustomTheme) {
+        let themeName = theme.metadata.name
+        let success = themeManager.deleteTheme(id: theme.metadata.id)
+        if success {
+            print("[Osaurus] Successfully deleted theme: \(themeName)")
+            showSuccess("Deleted \"\(themeName)\"")
+        } else {
+            print("[Osaurus] Failed to delete theme: \(themeName)")
+        }
+        themeToDelete = nil
     }
 
     // MARK: - Header
@@ -128,9 +174,24 @@ struct ThemesView: View {
         VStack(spacing: 16) {
             HStack {
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("Themes")
-                        .font(.system(size: 28, weight: .bold, design: .rounded))
-                        .foregroundColor(theme.primaryText)
+                    HStack(spacing: 10) {
+                        Text("Themes")
+                            .font(.system(size: 28, weight: .bold, design: .rounded))
+                            .foregroundColor(theme.primaryText)
+
+                        // Total count badge
+                        if !isLoading && !installedThemes.isEmpty {
+                            Text("\(installedThemes.count)")
+                                .font(.system(size: 12, weight: .semibold))
+                                .foregroundColor(theme.secondaryText)
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 3)
+                                .background(
+                                    Capsule()
+                                        .fill(theme.tertiaryBackground)
+                                )
+                        }
+                    }
 
                     Text("Customize the look and feel of your chat interface")
                         .font(.system(size: 14))
@@ -140,6 +201,24 @@ struct ThemesView: View {
                 Spacer()
 
                 HStack(spacing: 12) {
+                    // Refresh button
+                    Button(action: { loadThemes() }) {
+                        Image(systemName: "arrow.clockwise")
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundColor(theme.secondaryText)
+                            .frame(width: 36, height: 36)
+                            .background(
+                                RoundedRectangle(cornerRadius: 8)
+                                    .fill(theme.tertiaryBackground)
+                                    .overlay(
+                                        RoundedRectangle(cornerRadius: 8)
+                                            .stroke(theme.inputBorder, lineWidth: 1)
+                                    )
+                            )
+                    }
+                    .buttonStyle(PlainButtonStyle())
+                    .help("Refresh themes")
+
                     // Import button
                     Button(action: { showingImporter = true }) {
                         HStack(spacing: 6) {
@@ -188,44 +267,216 @@ struct ThemesView: View {
         .background(theme.secondaryBackground)
     }
 
+    // MARK: - Loading & Error States
+
+    private var loadingView: some View {
+        VStack(spacing: 16) {
+            ProgressView()
+                .scaleEffect(1.2)
+            Text("Loading themes...")
+                .font(.system(size: 14))
+                .foregroundColor(theme.secondaryText)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private func errorView(_ error: String) -> some View {
+        VStack(spacing: 16) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .font(.system(size: 40))
+                .foregroundColor(theme.warningColor)
+
+            VStack(spacing: 4) {
+                Text("Failed to Load Themes")
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundColor(theme.primaryText)
+
+                Text(error)
+                    .font(.system(size: 13))
+                    .foregroundColor(theme.secondaryText)
+                    .multilineTextAlignment(.center)
+            }
+
+            HStack(spacing: 12) {
+                Button(action: { loadThemes() }) {
+                    Label("Retry", systemImage: "arrow.clockwise")
+                        .font(.system(size: 13, weight: .medium))
+                }
+                .buttonStyle(.borderedProminent)
+
+                Button(action: {
+                    themeManager.forceReinstallBuiltInThemes(); loadThemes()
+                }) {
+                    Label("Reinstall Built-ins", systemImage: "arrow.triangle.2.circlepath")
+                        .font(.system(size: 13, weight: .medium))
+                }
+                .buttonStyle(.bordered)
+            }
+        }
+        .padding(40)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private var noThemesView: some View {
+        VStack(spacing: 16) {
+            Image(systemName: "paintpalette")
+                .font(.system(size: 48))
+                .foregroundColor(theme.tertiaryText)
+
+            VStack(spacing: 4) {
+                Text("No Themes Found")
+                    .font(.system(size: 18, weight: .semibold))
+                    .foregroundColor(theme.primaryText)
+
+                Text("Themes could not be loaded. Try reinstalling the built-in themes.")
+                    .font(.system(size: 13))
+                    .foregroundColor(theme.secondaryText)
+                    .multilineTextAlignment(.center)
+            }
+
+            Button(action: {
+                themeManager.forceReinstallBuiltInThemes(); loadThemes()
+            }) {
+                Label("Install Built-in Themes", systemImage: "arrow.down.circle")
+                    .font(.system(size: 13, weight: .medium))
+            }
+            .buttonStyle(.borderedProminent)
+        }
+        .padding(40)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private func successToast(_ message: String) -> some View {
+        HStack(spacing: 10) {
+            Image(systemName: "checkmark.circle.fill")
+                .font(.system(size: 16))
+                .foregroundColor(theme.successColor)
+
+            Text(message)
+                .font(.system(size: 13, weight: .medium))
+                .foregroundColor(theme.primaryText)
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
+        .background(
+            Capsule()
+                .fill(theme.cardBackground)
+                .shadow(color: Color.black.opacity(0.15), radius: 10, x: 0, y: 4)
+        )
+        .overlay(
+            Capsule()
+                .stroke(theme.successColor.opacity(0.3), lineWidth: 1)
+        )
+    }
+
+    private func showSuccess(_ message: String) {
+        withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
+            successMessage = message
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
+            withAnimation(.easeOut(duration: 0.2)) {
+                successMessage = nil
+            }
+        }
+    }
+
+    private func loadThemes() {
+        isLoading = true
+        loadError = nil
+
+        // Small delay for visual feedback
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+            themeManager.refreshInstalledThemes()
+
+            withAnimation(.easeOut(duration: 0.2)) {
+                isLoading = false
+                if themeManager.installedThemes.isEmpty {
+                    loadError = "No themes could be loaded from disk."
+                }
+            }
+        }
+    }
+
     // MARK: - Active Theme Section
 
     private func activeThemeSection(_ activeTheme: CustomTheme) -> some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
-                Label("Active Theme", systemImage: "checkmark.circle.fill")
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundColor(theme.successColor)
+                HStack(spacing: 8) {
+                    Image(systemName: "checkmark.circle.fill")
+                        .font(.system(size: 14))
+                        .foregroundColor(theme.successColor)
+
+                    Text("Currently Active")
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundColor(theme.primaryText)
+
+                    Text(activeTheme.metadata.name)
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundColor(theme.secondaryText)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 3)
+                        .background(
+                            Capsule()
+                                .fill(theme.successColor.opacity(0.15))
+                        )
+                }
 
                 Spacer()
 
-                Button(action: { themeManager.clearCustomTheme() }) {
-                    Text("Reset to Default")
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundColor(theme.secondaryText)
+                Button(action: {
+                    themeManager.clearCustomTheme()
+                    showSuccess("Reset to default theme")
+                }) {
+                    HStack(spacing: 4) {
+                        Image(systemName: "arrow.uturn.backward")
+                            .font(.system(size: 10, weight: .semibold))
+                        Text("Reset to Default")
+                            .font(.system(size: 12, weight: .medium))
+                    }
+                    .foregroundColor(theme.secondaryText)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 6)
+                    .background(
+                        Capsule()
+                            .fill(theme.tertiaryBackground)
+                    )
                 }
                 .buttonStyle(PlainButtonStyle())
             }
-
-            ThemePreviewCard(
-                theme: activeTheme,
-                isActive: true,
-                onApply: {},
-                onEdit: { openEditor(for: activeTheme) },
-                onExport: { exportTheme(activeTheme) },
-                onDuplicate: { duplicateTheme(activeTheme) },
-                onDelete: nil
+            .padding(14)
+            .background(
+                RoundedRectangle(cornerRadius: 10)
+                    .fill(theme.successColor.opacity(0.08))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 10)
+                            .stroke(theme.successColor.opacity(0.2), lineWidth: 1)
+                    )
             )
         }
     }
 
     // MARK: - Themes Section
 
-    private func themesSection(title: String, themes: [CustomTheme]) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text(title)
-                .font(.system(size: 14, weight: .semibold))
-                .foregroundColor(theme.primaryText)
+    private func themesSection(title: String, count: Int, themes: [CustomTheme]) -> some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(spacing: 8) {
+                Text(title)
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundColor(theme.primaryText)
+
+                Text("\(count)")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundColor(theme.secondaryText)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(
+                        Capsule()
+                            .fill(theme.tertiaryBackground)
+                    )
+
+                Spacer()
+            }
 
             LazyVGrid(
                 columns: [
@@ -239,7 +490,10 @@ struct ThemesView: View {
                     ThemePreviewCard(
                         theme: themeItem,
                         isActive: isActive,
-                        onApply: { themeManager.applyCustomTheme(themeItem) },
+                        onApply: {
+                            themeManager.applyCustomTheme(themeItem)
+                            showSuccess("Applied \"\(themeItem.metadata.name)\"")
+                        },
                         onEdit: { openEditor(for: themeItem) },
                         onExport: { exportTheme(themeItem) },
                         onDuplicate: { duplicateTheme(themeItem) },
@@ -253,44 +507,85 @@ struct ThemesView: View {
     // MARK: - Empty State
 
     private var emptyCustomThemesView: some View {
-        VStack(spacing: 16) {
-            Image(systemName: "paintpalette")
-                .font(.system(size: 40))
-                .foregroundColor(theme.tertiaryText)
+        VStack(spacing: 20) {
+            // Icon with gradient background
+            ZStack {
+                Circle()
+                    .fill(
+                        LinearGradient(
+                            colors: [theme.accentColor.opacity(0.15), theme.accentColor.opacity(0.05)],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        )
+                    )
+                    .frame(width: 80, height: 80)
 
-            VStack(spacing: 4) {
-                Text("No Custom Themes")
-                    .font(.system(size: 16, weight: .semibold))
-                    .foregroundColor(theme.primaryText)
-
-                Text("Create your own theme or import one to get started")
-                    .font(.system(size: 13))
-                    .foregroundColor(theme.secondaryText)
+                Image(systemName: "paintbrush.pointed.fill")
+                    .font(.system(size: 32))
+                    .foregroundColor(theme.accentColor)
             }
 
-            HStack(spacing: 12) {
+            VStack(spacing: 6) {
+                Text("Create Your First Custom Theme")
+                    .font(.system(size: 17, weight: .semibold))
+                    .foregroundColor(theme.primaryText)
+
+                Text("Design a unique look for your chat interface with custom colors, fonts, and effects")
+                    .font(.system(size: 13))
+                    .foregroundColor(theme.secondaryText)
+                    .multilineTextAlignment(.center)
+                    .frame(maxWidth: 400)
+            }
+
+            HStack(spacing: 14) {
                 Button(action: { showingImporter = true }) {
-                    Label("Import Theme", systemImage: "square.and.arrow.down")
-                        .font(.system(size: 13, weight: .medium))
+                    HStack(spacing: 6) {
+                        Image(systemName: "square.and.arrow.down")
+                            .font(.system(size: 12, weight: .medium))
+                        Text("Import")
+                            .font(.system(size: 13, weight: .medium))
+                    }
+                    .foregroundColor(theme.primaryText)
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 10)
+                    .background(
+                        RoundedRectangle(cornerRadius: 8)
+                            .fill(theme.tertiaryBackground)
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 8)
+                                    .stroke(theme.inputBorder, lineWidth: 1)
+                            )
+                    )
                 }
-                .buttonStyle(.bordered)
+                .buttonStyle(PlainButtonStyle())
 
                 Button(action: createNewTheme) {
-                    Label("Create Theme", systemImage: "plus")
-                        .font(.system(size: 13, weight: .medium))
+                    HStack(spacing: 6) {
+                        Image(systemName: "plus")
+                            .font(.system(size: 12, weight: .semibold))
+                        Text("Create Theme")
+                            .font(.system(size: 13, weight: .medium))
+                    }
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 18)
+                    .padding(.vertical, 10)
+                    .background(
+                        RoundedRectangle(cornerRadius: 8)
+                            .fill(theme.accentColor)
+                    )
                 }
-                .buttonStyle(.borderedProminent)
+                .buttonStyle(PlainButtonStyle())
             }
         }
         .frame(maxWidth: .infinity)
-        .padding(.vertical, 40)
+        .padding(.vertical, 48)
+        .padding(.horizontal, 24)
         .background(
-            RoundedRectangle(cornerRadius: 12)
+            RoundedRectangle(cornerRadius: 16)
                 .fill(theme.secondaryBackground)
                 .overlay(
-                    RoundedRectangle(cornerRadius: 12)
-                        .stroke(theme.primaryBorder, lineWidth: 1)
-                        .strokeBorder(style: StrokeStyle(lineWidth: 1, dash: [5]))
+                    RoundedRectangle(cornerRadius: 16)
+                        .stroke(theme.primaryBorder.opacity(0.6), lineWidth: 1)
                 )
         )
     }
@@ -298,15 +593,39 @@ struct ThemesView: View {
     // MARK: - Actions
 
     private func createNewTheme() {
-        // Start with dark theme as base
+        // Generate unique name
+        let baseName = "My Theme"
+        let existingNames = Set(installedThemes.map { $0.metadata.name })
+        var newName = baseName
+        var counter = 1
+
+        while existingNames.contains(newName) {
+            counter += 1
+            newName = "\(baseName) \(counter)"
+        }
+
+        // Start with dark theme as base with unique ID and name
         var newTheme = CustomTheme.darkDefault
-        newTheme.metadata = ThemeMetadata(name: "My Theme")
+        newTheme.metadata = ThemeMetadata(
+            id: UUID(),
+            name: newName,
+            author: "User"
+        )
         newTheme.isBuiltIn = false
-        editingTheme = IdentifiableTheme(newTheme)
+
+        // Dismiss any existing editor first, then open new one
+        editingTheme = nil
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+            editingTheme = IdentifiableTheme(newTheme)
+        }
     }
 
     private func openEditor(for theme: CustomTheme) {
-        editingTheme = IdentifiableTheme(theme)
+        // Dismiss any existing editor first
+        editingTheme = nil
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+            editingTheme = IdentifiableTheme(theme)
+        }
     }
 
     private func exportTheme(_ theme: CustomTheme) {
@@ -315,13 +634,29 @@ struct ThemesView: View {
     }
 
     private func duplicateTheme(_ themeItem: CustomTheme) {
-        let newName = "\(themeItem.metadata.name) Copy"
+        // Generate unique copy name
+        let baseName = "\(themeItem.metadata.name) Copy"
+        let existingNames = Set(installedThemes.map { $0.metadata.name })
+        var newName = baseName
+        var counter = 1
+
+        while existingNames.contains(newName) {
+            counter += 1
+            newName = "\(themeItem.metadata.name) Copy \(counter)"
+        }
+
         let duplicated = ThemeConfigurationStore.duplicateTheme(themeItem, newName: newName)
         themeManager.refreshInstalledThemes()
+        showSuccess("Duplicated as \"\(newName)\"")
         openEditor(for: duplicated)
     }
 
     private func confirmDelete(_ theme: CustomTheme) {
+        // Don't allow deleting built-in themes
+        guard !theme.isBuiltIn else {
+            print("[Osaurus] Cannot delete built-in theme: \(theme.metadata.name)")
+            return
+        }
         themeToDelete = theme
         showDeleteConfirmation = true
     }
@@ -331,8 +666,9 @@ struct ThemesView: View {
         case .success(let urls):
             guard let url = urls.first else { return }
             do {
-                _ = try ThemeConfigurationStore.importTheme(from: url)
+                let imported = try ThemeConfigurationStore.importTheme(from: url)
                 themeManager.refreshInstalledThemes()
+                showSuccess("Imported \"\(imported.metadata.name)\"")
             } catch {
                 print("[Osaurus] Failed to import theme: \(error)")
             }
@@ -344,6 +680,9 @@ struct ThemesView: View {
     private func handleExport(_ result: Result<URL, Error>) {
         switch result {
         case .success:
+            if let exported = themeToExport {
+                showSuccess("Exported \"\(exported.metadata.name)\"")
+            }
             themeToExport = nil
         case .failure(let error):
             print("[Osaurus] Export failed: \(error)")

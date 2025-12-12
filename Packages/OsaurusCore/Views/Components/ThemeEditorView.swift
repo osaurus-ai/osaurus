@@ -783,14 +783,26 @@ struct ThemeEditorView: View {
         if editingTheme.isBuiltIn {
             themeToSave.metadata.id = UUID()
             themeToSave.isBuiltIn = false
-            if !themeToSave.metadata.name.contains("Copy") {
+            if !themeToSave.metadata.name.contains("Copy") && !themeToSave.metadata.name.contains("Custom") {
                 themeToSave.metadata.name += " (Custom)"
             }
+            // Set creation date for new themes
+            themeToSave.metadata.createdAt = Date()
         }
 
         themeToSave.metadata.updatedAt = Date()
+
+        // Save the theme to disk
+        print("[Osaurus] ThemeEditor: Saving theme '\(themeToSave.metadata.name)' (id: \(themeToSave.metadata.id))")
         themeManager.saveTheme(themeToSave)
+
+        // Apply the theme
         themeManager.applyCustomTheme(themeToSave)
+
+        // Refresh themes list to ensure UI is up to date
+        themeManager.refreshInstalledThemes()
+
+        print("[Osaurus] ThemeEditor: Theme saved and applied successfully")
 
         withAnimation {
             showSaveConfirmation = true

@@ -433,24 +433,33 @@ class ThemeManager: ObservableObject {
     var isCustomThemeActive: Bool { activeCustomTheme != nil }
 
     private init() {
+        print("[Osaurus] ThemeManager: Initializing...")
+
         // Install built-in themes if needed
         ThemeConfigurationStore.installBuiltInThemesIfNeeded()
 
-        // Load installed themes
-        installedThemes = ThemeConfigurationStore.listThemes()
+        // Load installed themes into a local variable first
+        let loadedThemes = ThemeConfigurationStore.listThemes()
+        print("[Osaurus] ThemeManager: Found \(loadedThemes.count) installed themes")
 
         // Load saved appearance mode
         let config = ServerConfigurationStore.load() ?? ServerConfiguration.default
-        appearanceMode = config.appearanceMode
 
+        // Initialize all stored properties before using self
         // Check for active custom theme
         if let customTheme = ThemeConfigurationStore.loadActiveTheme() {
-            activeCustomTheme = customTheme
-            currentTheme = CustomizableTheme(config: customTheme)
+            print("[Osaurus] ThemeManager: Restoring active theme '\(customTheme.metadata.name)'")
+            self.activeCustomTheme = customTheme
+            self.currentTheme = CustomizableTheme(config: customTheme)
         } else {
+            print("[Osaurus] ThemeManager: No active custom theme, using \(config.appearanceMode) mode")
             // Initialize currentTheme based on appearance mode
-            currentTheme = Self.resolveTheme(for: config.appearanceMode)
+            self.currentTheme = Self.resolveTheme(for: config.appearanceMode)
         }
+
+        // Now we can assign to self properties
+        self.appearanceMode = config.appearanceMode
+        self.installedThemes = loadedThemes
 
         // Observe system appearance changes (Distributed Notification)
         DistributedNotificationCenter.default().addObserver(
@@ -459,6 +468,8 @@ class ThemeManager: ObservableObject {
             name: Notification.Name("AppleInterfaceThemeChangedNotification"),
             object: nil
         )
+
+        print("[Osaurus] ThemeManager: Initialization complete")
     }
 
     /// Update the appearance mode and apply the theme
@@ -496,6 +507,7 @@ class ThemeManager: ObservableObject {
     /// Refresh the list of installed themes
     func refreshInstalledThemes() {
         installedThemes = ThemeConfigurationStore.listThemes()
+        print("[Osaurus] ThemeManager: Refreshed themes, found \(installedThemes.count) themes")
     }
 
     /// Save a theme and refresh the list
@@ -510,14 +522,33 @@ class ThemeManager: ObservableObject {
     }
 
     /// Delete a theme
-    func deleteTheme(id: UUID) {
-        ThemeConfigurationStore.deleteTheme(id: id)
-        refreshInstalledThemes()
-
-        // If this was the active theme, clear it
-        if activeCustomTheme?.metadata.id == id {
-            clearCustomTheme()
+    /// Returns true if deletion was successful
+    @discardableResult
+    func deleteTheme(id: UUID) -> Bool {
+        // Check if theme exists and is not built-in
+        if let theme = installedThemes.first(where: { $0.metadata.id == id }) {
+            if theme.isBuiltIn {
+                print("[Osaurus] Cannot delete built-in theme: \(theme.metadata.name)")
+                return false
+            }
         }
+
+        let success = ThemeConfigurationStore.deleteTheme(id: id)
+        if success {
+            refreshInstalledThemes()
+
+            // If this was the active theme, clear it
+            if activeCustomTheme?.metadata.id == id {
+                clearCustomTheme()
+            }
+        }
+        return success
+    }
+
+    /// Force reinstall built-in themes (for recovery)
+    func forceReinstallBuiltInThemes() {
+        ThemeConfigurationStore.forceReinstallBuiltInThemes()
+        refreshInstalledThemes()
     }
 
     /// Resolve the theme based on appearance mode
