@@ -452,8 +452,8 @@ struct ThemeEditorView: View {
     private var typographyEditor: some View {
         VStack(alignment: .leading, spacing: 16) {
             editorSection("Font Families") {
-                fontPicker("Primary Font", fontName: $editingTheme.typography.primaryFont)
-                fontPicker("Mono Font", fontName: $editingTheme.typography.monoFont)
+                fontPicker("Primary Font", fontName: $editingTheme.typography.primaryFont, isMono: false)
+                fontPicker("Mono Font", fontName: $editingTheme.typography.monoFont, isMono: true)
             }
 
             editorSection("Font Sizes") {
@@ -634,7 +634,7 @@ struct ThemeEditorView: View {
         }
     }
 
-    private func fontPicker(_ label: String, fontName: Binding<String>) -> some View {
+    private func fontPicker(_ label: String, fontName: Binding<String>, isMono: Bool = false) -> some View {
         HStack {
             Text(label)
                 .font(.system(size: 13))
@@ -643,18 +643,54 @@ struct ThemeEditorView: View {
             Spacer()
 
             Picker("", selection: fontName) {
-                Text("SF Pro").tag("SF Pro")
-                Text("SF Mono").tag("SF Mono")
-                Text("Helvetica Neue").tag("Helvetica Neue")
-                Text("Menlo").tag("Menlo")
-                Text("Monaco").tag("Monaco")
-                Text("Courier New").tag("Courier New")
-                Text("JetBrains Mono").tag("JetBrains Mono")
-                Text("Fira Code").tag("Fira Code")
+                ForEach(isMono ? availableMonoFonts : availablePrimaryFonts, id: \.self) { font in
+                    Text(font)
+                        .font(.custom(font, size: 13))
+                        .tag(font)
+                }
             }
             .labelsHidden()
-            .frame(width: 140)
+            .frame(width: 160)
         }
+    }
+
+    // MARK: - Available System Fonts (macOS built-in)
+
+    /// Primary fonts - readable sans-serif fonts included with macOS
+    private var availablePrimaryFonts: [String] {
+        [
+            "SF Pro",  // System default
+            "Helvetica Neue",  // Classic Apple font
+            "Avenir",  // Modern humanist sans
+            "Avenir Next",  // Refined Avenir
+            "Gill Sans",  // British humanist sans
+            "Optima",  // Elegant sans
+            "Futura",  // Geometric sans
+            "Verdana",  // Screen-optimized
+            "Trebuchet MS",  // Friendly sans
+            "Arial",  // Universal sans
+            "Lucida Grande",  // Former macOS system font
+            "Geneva",  // Classic Mac font
+            "Charter",  // Readable serif
+            "Georgia",  // Screen serif
+            "Palatino",  // Elegant serif
+            "Times New Roman",  // Classic serif
+            "Baskerville",  // Traditional serif
+            "Hoefler Text",  // Apple's premium serif
+        ]
+    }
+
+    /// Monospace fonts - code-friendly fonts included with macOS
+    private var availableMonoFonts: [String] {
+        [
+            "SF Mono",  // System mono
+            "Menlo",  // Apple's code font
+            "Monaco",  // Classic Mac mono
+            "Courier New",  // Universal mono
+            "Courier",  // Original mono
+            "Andale Mono",  // Clean mono
+            "PT Mono",  // Pleasant mono
+        ]
     }
 
     // MARK: - Actions
@@ -710,21 +746,41 @@ struct ThemeEditorView: View {
 struct ThemeChatPreview: View {
     let theme: CustomTheme
 
-    // Computed font helpers using theme typography
+    // MARK: - Font Helpers using theme font families
+
+    private func primaryFont(size: CGFloat, weight: Font.Weight = .regular) -> Font {
+        let fontName = theme.typography.primaryFont
+        if fontName.lowercased().contains("sf pro") || fontName.isEmpty {
+            return .system(size: size, weight: weight)
+        }
+        // Use Font.custom with family name - SwiftUI handles weight variants
+        return .custom(fontName, size: size).weight(weight)
+    }
+
+    private func monoFont(size: CGFloat, weight: Font.Weight = .regular) -> Font {
+        let fontName = theme.typography.monoFont
+        if fontName.lowercased().contains("sf mono") || fontName.isEmpty {
+            return .system(size: size, weight: weight, design: .monospaced)
+        }
+        // Use Font.custom with family name - SwiftUI handles weight variants
+        return .custom(fontName, size: size).weight(weight)
+    }
+
+    // Convenience computed properties
     private var bodyFont: Font {
-        .system(size: CGFloat(theme.typography.bodySize))
+        primaryFont(size: CGFloat(theme.typography.bodySize))
     }
 
     private var captionFont: Font {
-        .system(size: CGFloat(theme.typography.captionSize))
+        primaryFont(size: CGFloat(theme.typography.captionSize))
     }
 
     private var headingFont: Font {
-        .system(size: CGFloat(theme.typography.headingSize), weight: .semibold)
+        primaryFont(size: CGFloat(theme.typography.headingSize), weight: .semibold)
     }
 
     private var codeFont: Font {
-        .system(size: CGFloat(theme.typography.codeSize), design: .monospaced)
+        monoFont(size: CGFloat(theme.typography.codeSize))
     }
 
     var body: some View {
@@ -793,14 +849,14 @@ struct ThemeChatPreview: View {
 
             // Message content
             VStack(alignment: .leading, spacing: 8) {
-                // Role label - uses caption size
+                // Role label - uses caption size with theme font
                 Text(role)
-                    .font(.system(size: CGFloat(theme.typography.captionSize) + 1, weight: .semibold))
+                    .font(primaryFont(size: CGFloat(theme.typography.captionSize) + 1, weight: .semibold))
                     .foregroundColor(
                         isUser ? Color(themeHex: theme.colors.accentColor) : Color(themeHex: theme.colors.secondaryText)
                     )
 
-                // Content - uses body size
+                // Content - uses body size with theme font
                 Text(content)
                     .font(bodyFont)
                     .foregroundColor(Color(themeHex: theme.colors.primaryText))
@@ -831,20 +887,20 @@ struct ThemeChatPreview: View {
 
             // Message content with code
             VStack(alignment: .leading, spacing: 8) {
-                // Role label
+                // Role label - uses theme font
                 Text("Assistant")
-                    .font(.system(size: CGFloat(theme.typography.captionSize) + 1, weight: .semibold))
+                    .font(primaryFont(size: CGFloat(theme.typography.captionSize) + 1, weight: .semibold))
                     .foregroundColor(Color(themeHex: theme.colors.secondaryText))
 
-                // Text content
+                // Text content - uses theme font
                 Text("Sure! Here's an example:")
                     .font(bodyFont)
                     .foregroundColor(Color(themeHex: theme.colors.primaryText))
 
-                // Code block
+                // Code block - uses mono theme font
                 VStack(alignment: .leading, spacing: 4) {
                     Text("swift")
-                        .font(.system(size: CGFloat(theme.typography.captionSize), weight: .medium))
+                        .font(monoFont(size: CGFloat(theme.typography.captionSize), weight: .medium))
                         .foregroundColor(Color(themeHex: theme.colors.tertiaryText))
                         .padding(.horizontal, 8)
                         .padding(.top, 6)
@@ -939,7 +995,7 @@ struct ThemeChatPreview: View {
                 .frame(width: 28, height: 28)
                 .overlay(
                     Image(systemName: "sidebar.left")
-                        .font(.system(size: CGFloat(theme.typography.captionSize), weight: .medium))
+                        .font(primaryFont(size: CGFloat(theme.typography.captionSize), weight: .medium))
                         .foregroundColor(Color(themeHex: theme.colors.secondaryText))
                 )
 
@@ -952,7 +1008,7 @@ struct ThemeChatPreview: View {
                     .frame(width: 28, height: 28)
                     .overlay(
                         Image(systemName: "plus")
-                            .font(.system(size: CGFloat(theme.typography.captionSize), weight: .medium))
+                            .font(primaryFont(size: CGFloat(theme.typography.captionSize), weight: .medium))
                             .foregroundColor(Color(themeHex: theme.colors.secondaryText))
                     )
 
@@ -961,7 +1017,7 @@ struct ThemeChatPreview: View {
                     .frame(width: 28, height: 28)
                     .overlay(
                         Image(systemName: "xmark")
-                            .font(.system(size: CGFloat(theme.typography.captionSize) - 2, weight: .semibold))
+                            .font(primaryFont(size: CGFloat(theme.typography.captionSize) - 2, weight: .semibold))
                             .foregroundColor(Color(themeHex: theme.colors.secondaryText))
                     )
             }
@@ -980,7 +1036,7 @@ struct ThemeChatPreview: View {
                         .font(captionFont)
                         .foregroundColor(Color(themeHex: theme.colors.secondaryText))
                     Image(systemName: "chevron.up.chevron.down")
-                        .font(.system(size: CGFloat(theme.typography.captionSize) - 3, weight: .semibold))
+                        .font(primaryFont(size: CGFloat(theme.typography.captionSize) - 3, weight: .semibold))
                         .foregroundColor(Color(themeHex: theme.colors.tertiaryText))
                 }
                 .padding(.horizontal, 12)
@@ -999,11 +1055,9 @@ struct ThemeChatPreview: View {
                 // Keyboard hint
                 HStack(spacing: 4) {
                     Text("⏎")
-                        .font(
-                            .system(size: CGFloat(theme.typography.captionSize) - 2, weight: .medium, design: .rounded)
-                        )
+                        .font(primaryFont(size: CGFloat(theme.typography.captionSize) - 2, weight: .medium))
                     Text("to send")
-                        .font(.system(size: CGFloat(theme.typography.captionSize) - 1))
+                        .font(primaryFont(size: CGFloat(theme.typography.captionSize) - 1))
                 }
                 .foregroundColor(Color(themeHex: theme.colors.tertiaryText).opacity(0.7))
             }
@@ -1031,7 +1085,7 @@ struct ThemeChatPreview: View {
                     .frame(width: 32, height: 32)
                     .overlay(
                         Image(systemName: "arrow.up")
-                            .font(.system(size: CGFloat(theme.typography.bodySize), weight: .semibold))
+                            .font(primaryFont(size: CGFloat(theme.typography.bodySize), weight: .semibold))
                             .foregroundColor(.white)
                     )
                     .shadow(

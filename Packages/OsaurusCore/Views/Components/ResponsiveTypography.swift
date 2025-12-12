@@ -70,9 +70,8 @@ enum Typography {
             return .system(size: size, weight: weight)
         }
 
-        // For custom fonts, we need to map weight to font variant
-        let weightedFontName = resolveWeightedFontName(fontName, weight: weight)
-        return .custom(weightedFontName, size: size)
+        // Use Font.custom with the family name - SwiftUI handles weight variants
+        return .custom(fontName, size: size).weight(weight)
     }
 
     /// Creates a monospace font from a font name
@@ -82,38 +81,8 @@ enum Typography {
             return .system(size: size, weight: weight, design: .monospaced)
         }
 
-        // For custom mono fonts
-        let weightedFontName = resolveWeightedFontName(fontName, weight: weight)
-        return .custom(weightedFontName, size: size)
-    }
-
-    /// Resolves font weight to actual font name variant
-    private static func resolveWeightedFontName(_ baseName: String, weight: Font.Weight) -> String {
-        // Common font weight suffixes
-        let weightSuffix: String
-        switch weight {
-        case .ultraLight: weightSuffix = "-UltraLight"
-        case .thin: weightSuffix = "-Thin"
-        case .light: weightSuffix = "-Light"
-        case .regular: weightSuffix = "-Regular"
-        case .medium: weightSuffix = "-Medium"
-        case .semibold: weightSuffix = "-SemiBold"
-        case .bold: weightSuffix = "-Bold"
-        case .heavy: weightSuffix = "-Heavy"
-        case .black: weightSuffix = "-Black"
-        default: weightSuffix = ""
-        }
-
-        // Try the weighted variant first, fall back to base name
-        // Remove spaces from font name for PostScript name format
-        let cleanName = baseName.replacingOccurrences(of: " ", with: "")
-
-        // For regular weight, try without suffix first
-        if weight == .regular {
-            return cleanName
-        }
-
-        return cleanName + weightSuffix
+        // Use Font.custom with the family name - SwiftUI handles weight variants
+        return .custom(fontName, size: size).weight(weight)
     }
 }
 

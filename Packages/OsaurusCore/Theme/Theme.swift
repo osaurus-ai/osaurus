@@ -127,8 +127,8 @@ extension ThemeProtocol {
         if primaryFontName.lowercased().contains("sf pro") || primaryFontName.isEmpty {
             return .system(size: size, weight: weight)
         }
-        let weightedName = resolveWeightedFontName(primaryFontName, weight: weight)
-        return .custom(weightedName, size: size)
+        // Use Font.custom with family name - SwiftUI handles weight variants
+        return .custom(primaryFontName, size: size).weight(weight)
     }
 
     /// Creates a monospace font using the theme's mono font family
@@ -136,26 +136,8 @@ extension ThemeProtocol {
         if monoFontName.lowercased().contains("sf mono") || monoFontName.isEmpty {
             return .system(size: size, weight: weight, design: .monospaced)
         }
-        let weightedName = resolveWeightedFontName(monoFontName, weight: weight)
-        return .custom(weightedName, size: size)
-    }
-
-    private func resolveWeightedFontName(_ baseName: String, weight: Font.Weight) -> String {
-        let weightSuffix: String
-        switch weight {
-        case .ultraLight: weightSuffix = "-UltraLight"
-        case .thin: weightSuffix = "-Thin"
-        case .light: weightSuffix = "-Light"
-        case .regular: weightSuffix = ""
-        case .medium: weightSuffix = "-Medium"
-        case .semibold: weightSuffix = "-SemiBold"
-        case .bold: weightSuffix = "-Bold"
-        case .heavy: weightSuffix = "-Heavy"
-        case .black: weightSuffix = "-Black"
-        default: weightSuffix = ""
-        }
-        let cleanName = baseName.replacingOccurrences(of: " ", with: "")
-        return cleanName + weightSuffix
+        // Use Font.custom with family name - SwiftUI handles weight variants
+        return .custom(monoFontName, size: size).weight(weight)
     }
 }
 
