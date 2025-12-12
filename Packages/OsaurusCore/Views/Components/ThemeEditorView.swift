@@ -268,6 +268,19 @@ struct ThemeEditorView: View {
                 .pickerStyle(.segmented)
             }
 
+            // Solid color picker
+            if editingTheme.background.type == .solid {
+                editorSection("Solid Color") {
+                    colorRow(
+                        "Background Color",
+                        hex: Binding(
+                            get: { editingTheme.background.solidColor ?? editingTheme.colors.primaryBackground },
+                            set: { editingTheme.background.solidColor = $0 }
+                        )
+                    )
+                }
+            }
+
             if editingTheme.background.type == .image {
                 editorSection("Background Image") {
                     VStack(spacing: 12) {
@@ -337,16 +350,24 @@ struct ThemeEditorView: View {
             if editingTheme.background.type == .gradient {
                 editorSection("Gradient Colors") {
                     VStack(spacing: 8) {
-                        let colors = editingTheme.background.gradientColors ?? ["#000000", "#333333"]
-                        ForEach(0 ..< colors.count, id: \.self) { index in
+                        // Use indices with direct binding to avoid stale captures
+                        ForEach(
+                            Array((editingTheme.background.gradientColors ?? ["#000000", "#333333"]).enumerated()),
+                            id: \.offset
+                        ) { index, _ in
                             colorRow(
                                 "Color \(index + 1)",
                                 hex: Binding(
-                                    get: { colors[index] },
+                                    get: {
+                                        let colors = editingTheme.background.gradientColors ?? ["#000000", "#333333"]
+                                        return index < colors.count ? colors[index] : "#000000"
+                                    },
                                     set: { newValue in
-                                        var updated = colors
-                                        updated[index] = newValue
-                                        editingTheme.background.gradientColors = updated
+                                        var colors = editingTheme.background.gradientColors ?? ["#000000", "#333333"]
+                                        if index < colors.count {
+                                            colors[index] = newValue
+                                            editingTheme.background.gradientColors = colors
+                                        }
                                     }
                                 )
                             )
@@ -354,7 +375,7 @@ struct ThemeEditorView: View {
 
                         HStack {
                             Button(action: {
-                                var colors = editingTheme.background.gradientColors ?? []
+                                var colors = editingTheme.background.gradientColors ?? ["#000000", "#333333"]
                                 colors.append("#000000")
                                 editingTheme.background.gradientColors = colors
                             }) {
@@ -402,47 +423,62 @@ struct ThemeEditorView: View {
 
     private var glassEditor: some View {
         VStack(alignment: .leading, spacing: 16) {
-            editorSection("Material") {
-                Picker("Material", selection: $editingTheme.glass.material) {
-                    Text("HUD Window").tag(ThemeGlass.GlassMaterial.hudWindow)
-                    Text("Popover").tag(ThemeGlass.GlassMaterial.popover)
-                    Text("Menu").tag(ThemeGlass.GlassMaterial.menu)
-                    Text("Sidebar").tag(ThemeGlass.GlassMaterial.sidebar)
-                    Text("Sheet").tag(ThemeGlass.GlassMaterial.sheet)
-                    Text("Content Background").tag(ThemeGlass.GlassMaterial.contentBackground)
-                    Text("Under Window").tag(ThemeGlass.GlassMaterial.underWindowBackground)
+            editorSection("Glass Effect") {
+                Toggle("Enable Glass Effect", isOn: $editingTheme.glass.enabled)
+                    .font(.system(size: 13))
+
+                Text(
+                    editingTheme.glass.enabled
+                        ? "Background shows through with blur/transparency"
+                        : "Background is solid (no transparency)"
+                )
+                .font(.system(size: 11))
+                .foregroundColor(currentTheme.tertiaryText)
+            }
+
+            if editingTheme.glass.enabled {
+                editorSection("Material") {
+                    Picker("Material", selection: $editingTheme.glass.material) {
+                        Text("HUD Window").tag(ThemeGlass.GlassMaterial.hudWindow)
+                        Text("Popover").tag(ThemeGlass.GlassMaterial.popover)
+                        Text("Menu").tag(ThemeGlass.GlassMaterial.menu)
+                        Text("Sidebar").tag(ThemeGlass.GlassMaterial.sidebar)
+                        Text("Sheet").tag(ThemeGlass.GlassMaterial.sheet)
+                        Text("Content Background").tag(ThemeGlass.GlassMaterial.contentBackground)
+                        Text("Under Window").tag(ThemeGlass.GlassMaterial.underWindowBackground)
+                    }
                 }
-            }
 
-            editorSection("Blur & Opacity") {
-                sliderRow("Blur Radius", value: $editingTheme.glass.blurRadius, range: 0 ... 60)
-                sliderRow("Primary Opacity", value: $editingTheme.glass.opacityPrimary, range: 0 ... 1)
-                sliderRow("Secondary Opacity", value: $editingTheme.glass.opacitySecondary, range: 0 ... 1)
-                sliderRow("Tertiary Opacity", value: $editingTheme.glass.opacityTertiary, range: 0 ... 1)
-            }
+                editorSection("Blur & Opacity") {
+                    sliderRow("Blur Radius", value: $editingTheme.glass.blurRadius, range: 0 ... 60)
+                    sliderRow("Primary Opacity", value: $editingTheme.glass.opacityPrimary, range: 0 ... 1)
+                    sliderRow("Secondary Opacity", value: $editingTheme.glass.opacitySecondary, range: 0 ... 1)
+                    sliderRow("Tertiary Opacity", value: $editingTheme.glass.opacityTertiary, range: 0 ... 1)
+                }
 
-            editorSection("Tint") {
-                colorRowOptional("Tint Color", hex: $editingTheme.glass.tintColor)
-                sliderRow(
-                    "Tint Opacity",
-                    value: Binding(
-                        get: { editingTheme.glass.tintOpacity ?? 0 },
-                        set: { editingTheme.glass.tintOpacity = $0 }
-                    ),
-                    range: 0 ... 1
-                )
-            }
+                editorSection("Tint") {
+                    colorRowOptional("Tint Color", hex: $editingTheme.glass.tintColor)
+                    sliderRow(
+                        "Tint Opacity",
+                        value: Binding(
+                            get: { editingTheme.glass.tintOpacity ?? 0 },
+                            set: { editingTheme.glass.tintOpacity = $0 }
+                        ),
+                        range: 0 ... 1
+                    )
+                }
 
-            editorSection("Edge Light") {
-                colorRow("Color", hex: $editingTheme.glass.edgeLight)
-                sliderRow(
-                    "Width",
-                    value: Binding(
-                        get: { editingTheme.glass.edgeLightWidth ?? 1 },
-                        set: { editingTheme.glass.edgeLightWidth = $0 }
-                    ),
-                    range: 0 ... 4
-                )
+                editorSection("Edge Light") {
+                    colorRow("Color", hex: $editingTheme.glass.edgeLight)
+                    sliderRow(
+                        "Width",
+                        value: Binding(
+                            get: { editingTheme.glass.edgeLightWidth ?? 1 },
+                            set: { editingTheme.glass.edgeLightWidth = $0 }
+                        ),
+                        range: 0 ... 4
+                    )
+                }
             }
         }
     }
@@ -788,8 +824,10 @@ struct ThemeChatPreview: View {
             // Background layer with glass effect
             backgroundLayer
 
-            // Glass overlay effect
-            glassOverlay
+            // Glass overlay effect (only if enabled)
+            if theme.glass.enabled {
+                glassOverlay
+            }
 
             // Content
             VStack(spacing: 0) {
@@ -947,19 +985,60 @@ struct ThemeChatPreview: View {
                     let data = Data(base64Encoded: imageData),
                     let nsImage = NSImage(data: data)
                 {
-                    Image(nsImage: nsImage)
-                        .resizable()
-                        .aspectRatio(contentMode: .fill)
-                        .opacity(theme.background.imageOpacity ?? 1.0)
+                    GeometryReader { geo in
+                        imageView(nsImage: nsImage, fit: theme.background.imageFit ?? .fill, size: geo.size)
+                            .opacity(theme.background.imageOpacity ?? 1.0)
+                    }
                 }
             }
 
-            // Overlay
+            // Overlay (applies to all background types)
             if let overlayColor = theme.background.overlayColor {
                 Color(themeHex: overlayColor)
                     .opacity(theme.background.overlayOpacity ?? 0.5)
             }
         }
+    }
+
+    @ViewBuilder
+    private func imageView(nsImage: NSImage, fit: ThemeBackground.ImageFit, size: CGSize) -> some View {
+        switch fit {
+        case .fill:
+            Image(nsImage: nsImage)
+                .resizable()
+                .aspectRatio(contentMode: .fill)
+                .frame(width: size.width, height: size.height)
+                .clipped()
+        case .fit:
+            Image(nsImage: nsImage)
+                .resizable()
+                .aspectRatio(contentMode: .fit)
+                .frame(width: size.width, height: size.height)
+        case .stretch:
+            Image(nsImage: nsImage)
+                .resizable()
+                .frame(width: size.width, height: size.height)
+        case .tile:
+            tiledImageView(nsImage: nsImage, size: size)
+        }
+    }
+
+    private func tiledImageView(nsImage: NSImage, size: CGSize) -> some View {
+        let imageSize = nsImage.size
+        let cols = max(1, Int(ceil(size.width / imageSize.width)))
+        let rows = max(1, Int(ceil(size.height / imageSize.height)))
+
+        return VStack(spacing: 0) {
+            ForEach(0 ..< rows, id: \.self) { _ in
+                HStack(spacing: 0) {
+                    ForEach(0 ..< cols, id: \.self) { _ in
+                        Image(nsImage: nsImage)
+                    }
+                }
+            }
+        }
+        .frame(width: size.width, height: size.height)
+        .clipped()
     }
 
     private var glassOverlay: some View {

@@ -278,6 +278,8 @@ public struct ThemeGlass: Codable, Equatable, Sendable {
         }
     }
 
+    /// Whether glass effect is enabled (false = solid background)
+    public var enabled: Bool
     public var material: GlassMaterial
     public var blurRadius: Double
     public var opacityPrimary: Double
@@ -289,6 +291,7 @@ public struct ThemeGlass: Codable, Equatable, Sendable {
     public var edgeLightWidth: Double?
 
     public init(
+        enabled: Bool = true,
         material: GlassMaterial = .hudWindow,
         blurRadius: Double = 30,
         opacityPrimary: Double = 0.10,
@@ -299,6 +302,7 @@ public struct ThemeGlass: Codable, Equatable, Sendable {
         edgeLight: String = "#ffffff33",
         edgeLightWidth: Double? = nil
     ) {
+        self.enabled = enabled
         self.material = material
         self.blurRadius = blurRadius
         self.opacityPrimary = opacityPrimary
@@ -316,6 +320,7 @@ public struct ThemeGlass: Codable, Equatable, Sendable {
     /// Light theme glass defaults
     public static var lightDefaults: ThemeGlass {
         ThemeGlass(
+            enabled: true,
             material: .hudWindow,
             blurRadius: 20,
             opacityPrimary: 0.15,
