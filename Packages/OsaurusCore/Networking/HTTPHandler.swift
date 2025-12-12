@@ -196,6 +196,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 handleMCPListTools(head: head, context: context, startTime: startTime, userAgent: userAgent)
             } else if head.method == .POST, path == "/mcp/call" {
                 handleMCPCallTool(head: head, context: context, startTime: startTime, userAgent: userAgent)
+            } else if head.method == .POST, path == "/messages" {
+                handleAnthropicMessages(head: head, context: context, startTime: startTime, userAgent: userAgent)
             } else {
                 var headers = [("Content-Type", "text/plain; charset=utf-8")]
                 headers.append(contentsOf: stateRef.value.corsHeaders)
@@ -1402,6 +1404,438 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     responseStatus: 200,
                     startTime: logStartTime,
                     toolCalls: [toolLog],
+                    errorMessage: error.localizedDescription
+                )
+            }
+        }
+    }
+
+    // MARK: - Anthropic Messages API
+
+    private func handleAnthropicMessages(
+        head: HTTPRequestHead,
+        context: ChannelHandlerContext,
+        startTime: Date,
+        userAgent: String?
+    ) {
+        let data: Data
+        let requestBodyString: String?
+        if let body = stateRef.value.requestBodyBuffer {
+            var bodyCopy = body
+            let bytes = bodyCopy.readBytes(length: bodyCopy.readableBytes) ?? []
+            data = Data(bytes)
+            requestBodyString = String(decoding: data, as: UTF8.self)
+        } else {
+            data = Data()
+            requestBodyString = nil
+        }
+
+        // Parse Anthropic request
+        guard let anthropicReq = try? JSONDecoder().decode(AnthropicMessagesRequest.self, from: data) else {
+            let error = AnthropicError(message: "Invalid request format", errorType: "invalid_request_error")
+            let errorJson =
+                (try? JSONEncoder().encode(error)).map { String(decoding: $0, as: UTF8.self) }
+                ?? #"{"type":"error","error":{"type":"invalid_request_error","message":"Invalid request format"}}"#
+            var headers = [("Content-Type", "application/json; charset=utf-8")]
+            headers.append(contentsOf: stateRef.value.corsHeaders)
+            sendResponse(
+                context: context,
+                version: head.version,
+                status: .badRequest,
+                headers: headers,
+                body: errorJson
+            )
+            logRequest(
+                method: "POST",
+                path: "/messages",
+                userAgent: userAgent,
+                requestBody: requestBodyString,
+                responseStatus: 400,
+                startTime: startTime,
+                errorMessage: "Invalid request format"
+            )
+            return
+        }
+
+        // Convert to internal format
+        let internalReq = anthropicReq.toChatCompletionRequest()
+
+        // Generate response ID
+        let messageId = "msg_\(UUID().uuidString.replacingOccurrences(of: "-", with: "").prefix(24))"
+        let model = anthropicReq.model
+
+        // Determine if streaming
+        let wantsStream = anthropicReq.stream ?? false
+
+        if wantsStream {
+            handleAnthropicMessagesStreaming(
+                anthropicReq: anthropicReq,
+                internalReq: internalReq,
+                messageId: messageId,
+                model: model,
+                head: head,
+                context: context,
+                startTime: startTime,
+                userAgent: userAgent,
+                requestBodyString: requestBodyString
+            )
+        } else {
+            handleAnthropicMessagesNonStreaming(
+                anthropicReq: anthropicReq,
+                internalReq: internalReq,
+                messageId: messageId,
+                model: model,
+                head: head,
+                context: context,
+                startTime: startTime,
+                userAgent: userAgent,
+                requestBodyString: requestBodyString
+            )
+        }
+    }
+
+    private func handleAnthropicMessagesStreaming(
+        anthropicReq: AnthropicMessagesRequest,
+        internalReq: ChatCompletionRequest,
+        messageId: String,
+        model: String,
+        head: HTTPRequestHead,
+        context: ChannelHandlerContext,
+        startTime: Date,
+        userAgent: String?,
+        requestBodyString: String?
+    ) {
+        let writer = AnthropicSSEResponseWriter()
+        let cors = stateRef.value.corsHeaders
+        let loop = context.eventLoop
+        let writerBound = NIOLoopBound(writer, eventLoop: loop)
+        let ctx = NIOLoopBound(context, eventLoop: loop)
+        let chatEngine = self.chatEngine
+        let hop: (@escaping @Sendable () -> Void) -> Void = { block in
+            if loop.inEventLoop { block() } else { loop.execute { block() } }
+        }
+
+        // Estimate input tokens (rough: 1 token per 4 chars)
+        let inputTokens =
+            anthropicReq.messages.reduce(0) { acc, msg in
+                acc + max(1, msg.content.plainText.count / 4)
+            } + (anthropicReq.system?.plainText.count ?? 0) / 4
+
+        // Send headers and message_start
+        hop {
+            writerBound.value.writeHeaders(ctx.value, extraHeaders: cors)
+            writerBound.value.writeMessageStart(
+                messageId: messageId,
+                model: model,
+                inputTokens: inputTokens,
+                context: ctx.value
+            )
+        }
+
+        // Capture for logging
+        let logStartTime = startTime
+        let logUserAgent = userAgent
+        let logRequestBody = requestBodyString
+        let logModel = model
+        let logSelf = self
+
+        Task(priority: .userInitiated) {
+            do {
+                let stream = try await chatEngine.streamChat(request: internalReq)
+                for try await delta in stream {
+                    hop {
+                        writerBound.value.writeTextDelta(delta, context: ctx.value)
+                    }
+                }
+                hop {
+                    writerBound.value.writeFinish(stopReason: "end_turn", context: ctx.value)
+                    writerBound.value.writeEnd(ctx.value)
+                }
+                logSelf.logRequest(
+                    method: "POST",
+                    path: "/messages",
+                    userAgent: logUserAgent,
+                    requestBody: logRequestBody,
+                    responseStatus: 200,
+                    startTime: logStartTime,
+                    model: logModel,
+                    finishReason: .stop
+                )
+            } catch let inv as ServiceToolInvocation {
+                // Handle tool invocation - emit tool_use content block
+                let toolId =
+                    inv.toolCallId ?? "toolu_\(UUID().uuidString.replacingOccurrences(of: "-", with: "").prefix(24))"
+                let args = inv.jsonArguments
+
+                hop {
+                    // Start tool_use block
+                    writerBound.value.writeToolUseBlockStart(
+                        toolId: toolId,
+                        toolName: inv.toolName,
+                        context: ctx.value
+                    )
+
+                    // Stream the JSON arguments in chunks
+                    let chunkSize = 512
+                    var i = args.startIndex
+                    while i < args.endIndex {
+                        let next = args.index(i, offsetBy: chunkSize, limitedBy: args.endIndex) ?? args.endIndex
+                        let chunk = String(args[i ..< next])
+                        writerBound.value.writeToolInputDelta(chunk, context: ctx.value)
+                        i = next
+                    }
+
+                    // Close the tool_use block
+                    writerBound.value.writeBlockStop(context: ctx.value)
+
+                    // Finish with tool_use stop reason
+                    writerBound.value.writeFinish(stopReason: "tool_use", context: ctx.value)
+                    writerBound.value.writeEnd(ctx.value)
+                }
+
+                let toolLog = ToolCallLog(name: inv.toolName, arguments: inv.jsonArguments)
+                logSelf.logRequest(
+                    method: "POST",
+                    path: "/messages",
+                    userAgent: logUserAgent,
+                    requestBody: logRequestBody,
+                    responseStatus: 200,
+                    startTime: logStartTime,
+                    model: logModel,
+                    toolCalls: [toolLog],
+                    finishReason: .toolCalls
+                )
+            } catch {
+                hop {
+                    writerBound.value.writeError(error.localizedDescription, context: ctx.value)
+                    writerBound.value.writeEnd(ctx.value)
+                }
+                logSelf.logRequest(
+                    method: "POST",
+                    path: "/messages",
+                    userAgent: logUserAgent,
+                    requestBody: logRequestBody,
+                    responseStatus: 500,
+                    startTime: logStartTime,
+                    model: logModel,
+                    finishReason: .error,
+                    errorMessage: error.localizedDescription
+                )
+            }
+        }
+    }
+
+    private func handleAnthropicMessagesNonStreaming(
+        anthropicReq: AnthropicMessagesRequest,
+        internalReq: ChatCompletionRequest,
+        messageId: String,
+        model: String,
+        head: HTTPRequestHead,
+        context: ChannelHandlerContext,
+        startTime: Date,
+        userAgent: String?,
+        requestBodyString: String?
+    ) {
+        let cors = stateRef.value.corsHeaders
+        let loop = context.eventLoop
+        let ctx = NIOLoopBound(context, eventLoop: loop)
+        let chatEngine = self.chatEngine
+        let hop: (@escaping @Sendable () -> Void) -> Void = { block in
+            if loop.inEventLoop { block() } else { loop.execute { block() } }
+        }
+
+        // Capture for logging
+        let logStartTime = startTime
+        let logUserAgent = userAgent
+        let logRequestBody = requestBodyString
+        let logModel = model
+        let logSelf = self
+
+        Task(priority: .userInitiated) {
+            do {
+                let resp = try await chatEngine.completeChat(request: internalReq)
+
+                // Convert OpenAI response to Anthropic format
+                let content = resp.choices.first?.message.content ?? ""
+                let stopReason: String
+                switch resp.choices.first?.finish_reason {
+                case "stop": stopReason = "end_turn"
+                case "length": stopReason = "max_tokens"
+                case "tool_calls": stopReason = "tool_use"
+                default: stopReason = "end_turn"
+                }
+
+                var contentBlocks: [AnthropicResponseContentBlock] = []
+
+                // Check for tool calls
+                if let toolCalls = resp.choices.first?.message.tool_calls, !toolCalls.isEmpty {
+                    // Add any text content first
+                    if !content.isEmpty {
+                        contentBlocks.append(.textBlock(content))
+                    }
+
+                    // Add tool_use blocks
+                    for toolCall in toolCalls {
+                        // Parse arguments JSON to dictionary
+                        var inputDict: [String: AnyCodableValue] = [:]
+                        if let argsData = toolCall.function.arguments.data(using: .utf8),
+                            let parsed = try? JSONSerialization.jsonObject(with: argsData) as? [String: Any]
+                        {
+                            inputDict = parsed.mapValues { AnyCodableValue($0) }
+                        }
+                        contentBlocks.append(
+                            .toolUseBlock(
+                                id: toolCall.id,
+                                name: toolCall.function.name,
+                                input: inputDict
+                            )
+                        )
+                    }
+                } else {
+                    contentBlocks.append(.textBlock(content))
+                }
+
+                let anthropicResp = AnthropicMessagesResponse(
+                    id: messageId,
+                    model: model,
+                    content: contentBlocks,
+                    stopReason: stopReason,
+                    usage: AnthropicUsage(
+                        inputTokens: resp.usage.prompt_tokens,
+                        outputTokens: resp.usage.completion_tokens
+                    )
+                )
+
+                let json = try JSONEncoder().encode(anthropicResp)
+                var headers: [(String, String)] = [("Content-Type", "application/json")]
+                headers.append(contentsOf: cors)
+                let headersCopy = headers
+                let body = String(decoding: json, as: UTF8.self)
+
+                hop {
+                    var responseHead = HTTPResponseHead(version: head.version, status: .ok)
+                    var buffer = ctx.value.channel.allocator.buffer(capacity: body.utf8.count)
+                    buffer.writeString(body)
+                    var nioHeaders = HTTPHeaders()
+                    for (name, value) in headersCopy { nioHeaders.add(name: name, value: value) }
+                    nioHeaders.add(name: "Content-Length", value: String(buffer.readableBytes))
+                    nioHeaders.add(name: "Connection", value: "close")
+                    responseHead.headers = nioHeaders
+                    let c = ctx.value
+                    c.write(NIOAny(HTTPServerResponsePart.head(responseHead)), promise: nil)
+                    c.write(NIOAny(HTTPServerResponsePart.body(.byteBuffer(buffer))), promise: nil)
+                    c.writeAndFlush(NIOAny(HTTPServerResponsePart.end(nil as HTTPHeaders?))).whenComplete { _ in
+                        ctx.value.close(promise: nil)
+                    }
+                }
+
+                logSelf.logRequest(
+                    method: "POST",
+                    path: "/messages",
+                    userAgent: logUserAgent,
+                    requestBody: logRequestBody,
+                    responseBody: body,
+                    responseStatus: 200,
+                    startTime: logStartTime,
+                    model: logModel,
+                    tokensInput: resp.usage.prompt_tokens,
+                    tokensOutput: resp.usage.completion_tokens,
+                    finishReason: .stop
+                )
+            } catch let inv as ServiceToolInvocation {
+                // Handle tool invocation for non-streaming
+                let toolId =
+                    inv.toolCallId ?? "toolu_\(UUID().uuidString.replacingOccurrences(of: "-", with: "").prefix(24))"
+
+                var inputDict: [String: AnyCodableValue] = [:]
+                if let argsData = inv.jsonArguments.data(using: .utf8),
+                    let parsed = try? JSONSerialization.jsonObject(with: argsData) as? [String: Any]
+                {
+                    inputDict = parsed.mapValues { AnyCodableValue($0) }
+                }
+
+                let anthropicResp = AnthropicMessagesResponse(
+                    id: messageId,
+                    model: model,
+                    content: [.toolUseBlock(id: toolId, name: inv.toolName, input: inputDict)],
+                    stopReason: "tool_use",
+                    usage: AnthropicUsage(inputTokens: 0, outputTokens: 0)
+                )
+
+                let json =
+                    (try? JSONEncoder().encode(anthropicResp))
+                    .map { String(decoding: $0, as: UTF8.self) } ?? "{}"
+                var headers: [(String, String)] = [("Content-Type", "application/json")]
+                headers.append(contentsOf: cors)
+                let headersCopy = headers
+                let body = json
+
+                hop {
+                    var responseHead = HTTPResponseHead(version: head.version, status: .ok)
+                    var buffer = ctx.value.channel.allocator.buffer(capacity: body.utf8.count)
+                    buffer.writeString(body)
+                    var nioHeaders = HTTPHeaders()
+                    for (name, value) in headersCopy { nioHeaders.add(name: name, value: value) }
+                    nioHeaders.add(name: "Content-Length", value: String(buffer.readableBytes))
+                    nioHeaders.add(name: "Connection", value: "close")
+                    responseHead.headers = nioHeaders
+                    let c = ctx.value
+                    c.write(NIOAny(HTTPServerResponsePart.head(responseHead)), promise: nil)
+                    c.write(NIOAny(HTTPServerResponsePart.body(.byteBuffer(buffer))), promise: nil)
+                    c.writeAndFlush(NIOAny(HTTPServerResponsePart.end(nil as HTTPHeaders?))).whenComplete { _ in
+                        ctx.value.close(promise: nil)
+                    }
+                }
+
+                let toolLog = ToolCallLog(name: inv.toolName, arguments: inv.jsonArguments)
+                logSelf.logRequest(
+                    method: "POST",
+                    path: "/messages",
+                    userAgent: logUserAgent,
+                    requestBody: logRequestBody,
+                    responseBody: body,
+                    responseStatus: 200,
+                    startTime: logStartTime,
+                    model: logModel,
+                    toolCalls: [toolLog],
+                    finishReason: .toolCalls
+                )
+            } catch {
+                let errorResp = AnthropicError(message: error.localizedDescription, errorType: "api_error")
+                let errorJson =
+                    (try? JSONEncoder().encode(errorResp))
+                    .map { String(decoding: $0, as: UTF8.self) }
+                    ?? #"{"type":"error","error":{"type":"api_error","message":"Internal error"}}"#
+                var headers: [(String, String)] = [("Content-Type", "application/json")]
+                headers.append(contentsOf: cors)
+                let headersCopy = headers
+                let body = errorJson
+
+                hop {
+                    var responseHead = HTTPResponseHead(version: head.version, status: .internalServerError)
+                    var buffer = ctx.value.channel.allocator.buffer(capacity: body.utf8.count)
+                    buffer.writeString(body)
+                    var nioHeaders = HTTPHeaders()
+                    for (name, value) in headersCopy { nioHeaders.add(name: name, value: value) }
+                    nioHeaders.add(name: "Content-Length", value: String(buffer.readableBytes))
+                    nioHeaders.add(name: "Connection", value: "close")
+                    responseHead.headers = nioHeaders
+                    let c = ctx.value
+                    c.write(NIOAny(HTTPServerResponsePart.head(responseHead)), promise: nil)
+                    c.write(NIOAny(HTTPServerResponsePart.body(.byteBuffer(buffer))), promise: nil)
+                    c.writeAndFlush(NIOAny(HTTPServerResponsePart.end(nil as HTTPHeaders?))).whenComplete { _ in
+                        ctx.value.close(promise: nil)
+                    }
+                }
+
+                logSelf.logRequest(
+                    method: "POST",
+                    path: "/messages",
+                    userAgent: logUserAgent,
+                    requestBody: logRequestBody,
+                    responseStatus: 500,
+                    startTime: logStartTime,
+                    model: logModel,
                     errorMessage: error.localizedDescription
                 )
             }

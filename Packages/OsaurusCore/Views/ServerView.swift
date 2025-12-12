@@ -448,6 +448,23 @@ struct APIEndpoint {
                 }
                 """
         ),
+        APIEndpoint(
+            method: "POST",
+            path: "/messages",
+            description: "Messages endpoint with streaming support",
+            compatibility: "Anthropic",
+            category: .chat,
+            examplePayload: """
+                {
+                  "model": "foundation",
+                  "max_tokens": 1024,
+                  "messages": [
+                    {"role": "user", "content": "Hello, Claude!"}
+                  ],
+                  "stream": false
+                }
+                """
+        ),
         // MCP endpoints
         APIEndpoint(
             method: "GET",
