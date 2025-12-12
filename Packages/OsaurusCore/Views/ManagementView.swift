@@ -90,12 +90,6 @@ struct ManagementView: View {
                 badge: repoService.updatesAvailableCount > 0 ? repoService.updatesAvailableCount : nil
             ),
             SidebarItemData(
-                id: ManagementTab.themes.rawValue,
-                icon: ManagementTab.themes.icon,
-                label: ManagementTab.themes.label,
-                badge: customThemeCount > 0 ? customThemeCount : nil
-            ),
-            SidebarItemData(
                 id: ManagementTab.insights.rawValue,
                 icon: ManagementTab.insights.icon,
                 label: ManagementTab.insights.label
@@ -104,6 +98,12 @@ struct ManagementView: View {
                 id: ManagementTab.server.rawValue,
                 icon: ManagementTab.server.icon,
                 label: ManagementTab.server.label
+            ),
+            SidebarItemData(
+                id: ManagementTab.themes.rawValue,
+                icon: ManagementTab.themes.icon,
+                label: ManagementTab.themes.label,
+                badge: customThemeCount > 0 ? customThemeCount : nil
             ),
             SidebarItemData(
                 id: ManagementTab.settings.rawValue,
