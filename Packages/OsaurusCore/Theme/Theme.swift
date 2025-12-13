@@ -178,126 +178,56 @@ extension ThemeProtocol {
 // MARK: - Light Theme
 
 struct LightTheme: ThemeProtocol {
-    // Primary colors
-    let primaryText = Color(hex: "1a1a1a")
-    let secondaryText = Color(hex: "6b7280")
-    let tertiaryText = Color(hex: "9ca3af")
+    // Primary colors - Warm, rich blacks
+    let primaryText = Color(hex: "1a1a18")
+    let secondaryText = Color(hex: "6b6b66")
+    let tertiaryText = Color(hex: "9c9c96")
 
-    // Background colors
+    // Background colors - Warm whites with depth
     let primaryBackground = Color(hex: "ffffff")
-    let secondaryBackground = Color(hex: "f9fafb")
-    let tertiaryBackground = Color(hex: "f3f4f6")
+    let secondaryBackground = Color(hex: "f9f9f7")
+    let tertiaryBackground = Color(hex: "f2f2ef")
 
-    // Sidebar colors
-    let sidebarBackground = Color(hex: "f5f5f7")
-    let sidebarSelectedBackground = Color(hex: "e8e8ed")
+    // Sidebar colors - Warm and inviting
+    let sidebarBackground = Color(hex: "f7f7f5")
+    let sidebarSelectedBackground = Color(hex: "eaeae6")
 
-    // Accent colors
-    let accentColor = Color(hex: "3b82f6")
-    let accentColorLight = Color(hex: "60a5fa")
+    // Accent colors - Rich warm black
+    let accentColor = Color(hex: "1a1a18")
+    let accentColorLight = Color(hex: "3d3d3a")
 
-    // Border colors
-    let primaryBorder = Color(hex: "e5e7eb")
-    let secondaryBorder = Color(hex: "f3f4f6")
-    let focusBorder = Color(hex: "3b82f6")
+    // Border colors - Warm and subtle
+    let primaryBorder = Color(hex: "e8e8e4")
+    let secondaryBorder = Color(hex: "f0f0ec")
+    let focusBorder = Color(hex: "4a4a46")
 
-    // Status colors
-    let successColor = Color(hex: "10b981")
-    let warningColor = Color(hex: "f59e0b")
+    // Status colors - Keep functional
+    let successColor = Color(hex: "22c55e")
+    let warningColor = Color(hex: "eab308")
     let errorColor = Color(hex: "ef4444")
-    let infoColor = Color(hex: "3b82f6")
+    let infoColor = Color(hex: "6b6b66")
 
-    // Component specific
+    // Component specific - Warm and layered
     let cardBackground = Color(hex: "ffffff")
-    let cardBorder = Color(hex: "e5e7eb")
-    let buttonBackground = Color(hex: "ffffff")
-    let buttonBorder = Color(hex: "d1d5db")
+    let cardBorder = Color(hex: "e8e8e4")
+    let buttonBackground = Color(hex: "1a1a18")
+    let buttonBorder = Color(hex: "1a1a18")
     let inputBackground = Color(hex: "ffffff")
-    let inputBorder = Color(hex: "d1d5db")
-    let glassTintOverlay = Color.black.opacity(0.12)
-    let codeBlockBackground = Color.black.opacity(0.08)
+    let inputBorder = Color(hex: "d8d8d4")
+    let glassTintOverlay = Color(hex: "f5f5f2").opacity(0.6)
+    let codeBlockBackground = Color(hex: "f5f5f2")
 
-    // Glass specific
-    let glassOpacityPrimary: Double = 0.15
-    let glassOpacitySecondary: Double = 0.10
-    let glassOpacityTertiary: Double = 0.05
-    let glassBlurRadius: Double = 20
-    let glassEdgeLight = Color.white.opacity(0.3)
-
-    // Card shadows (enhanced)
-    let cardShadowRadius: Double = 8
-    let cardShadowRadiusHover: Double = 16
-    let cardShadowY: Double = 2
-    let cardShadowYHover: Double = 6
-
-    // Animation timing
-    let animationDurationQuick: Double = 0.2
-    let animationDurationMedium: Double = 0.3
-    let animationDurationSlow: Double = 0.4
-    let animationSpringResponse: Double = 0.4
-    let animationSpringDamping: Double = 0.8
-    var animationSpring: Animation {
-        .spring(response: animationSpringResponse, dampingFraction: animationSpringDamping)
-    }
-
-    // Shadows
-    let shadowColor = Color.black
-    let shadowOpacity: Double = 0.05
-}
-
-// MARK: - Dark Theme
-
-struct DarkTheme: ThemeProtocol {
-    // Primary colors
-    let primaryText = Color(hex: "f9fafb")
-    let secondaryText = Color(hex: "9ca3af")
-    let tertiaryText = Color(hex: "6b7280")
-
-    // Background colors
-    let primaryBackground = Color(hex: "0f0f10")
-    let secondaryBackground = Color(hex: "18181b")
-    let tertiaryBackground = Color(hex: "27272a")
-
-    // Sidebar colors
-    let sidebarBackground = Color(hex: "141416")
-    let sidebarSelectedBackground = Color(hex: "2a2a2e")
-
-    // Accent colors
-    let accentColor = Color(hex: "3b82f6")
-    let accentColorLight = Color(hex: "60a5fa")
-
-    // Border colors
-    let primaryBorder = Color(hex: "27272a")
-    let secondaryBorder = Color(hex: "3f3f46")
-    let focusBorder = Color(hex: "3b82f6")
-
-    // Status colors
-    let successColor = Color(hex: "10b981")
-    let warningColor = Color(hex: "f59e0b")
-    let errorColor = Color(hex: "ef4444")
-    let infoColor = Color(hex: "3b82f6")
-
-    // Component specific
-    let cardBackground = Color(hex: "18181b")
-    let cardBorder = Color(hex: "3f3f46")
-    let buttonBackground = Color(hex: "18181b")
-    let buttonBorder = Color(hex: "3f3f46")
-    let inputBackground = Color(hex: "18181b")
-    let inputBorder = Color(hex: "3f3f46")
-    let glassTintOverlay = Color.black.opacity(0.18)
-    let codeBlockBackground = Color.black.opacity(0.35)
-
-    // Glass specific
-    let glassOpacityPrimary: Double = 0.10
+    // Glass specific - Rich depth
+    let glassOpacityPrimary: Double = 0.12
     let glassOpacitySecondary: Double = 0.08
     let glassOpacityTertiary: Double = 0.05
-    let glassBlurRadius: Double = 30
-    let glassEdgeLight = Color.white.opacity(0.2)
+    let glassBlurRadius: Double = 24
+    let glassEdgeLight = Color.white.opacity(0.5)
 
-    // Card shadows (enhanced)
+    // Card shadows - Soft and diffuse
     let cardShadowRadius: Double = 12
     let cardShadowRadiusHover: Double = 20
-    let cardShadowY: Double = 4
+    let cardShadowY: Double = 3
     let cardShadowYHover: Double = 8
 
     // Animation timing
@@ -310,9 +240,79 @@ struct DarkTheme: ThemeProtocol {
         .spring(response: animationSpringResponse, dampingFraction: animationSpringDamping)
     }
 
-    // Shadows
+    // Shadows - Warm and soft
+    let shadowColor = Color(hex: "1a1a18")
+    let shadowOpacity: Double = 0.08
+}
+
+// MARK: - Dark Theme
+
+struct DarkTheme: ThemeProtocol {
+    // Primary colors - Warm off-white
+    let primaryText = Color(hex: "f5f5f2")
+    let secondaryText = Color(hex: "a8a8a3")
+    let tertiaryText = Color(hex: "6e6e6a")
+
+    // Background colors - Rich, warm blacks with depth
+    let primaryBackground = Color(hex: "0c0c0b")
+    let secondaryBackground = Color(hex: "161614")
+    let tertiaryBackground = Color(hex: "1e1e1c")
+
+    // Sidebar colors - Deep and warm
+    let sidebarBackground = Color(hex: "111110")
+    let sidebarSelectedBackground = Color(hex: "222220")
+
+    // Accent colors - Warm cream
+    let accentColor = Color(hex: "f0f0eb")
+    let accentColorLight = Color(hex: "a8a8a3")
+
+    // Border colors - Warm and subtle
+    let primaryBorder = Color(hex: "2a2a28")
+    let secondaryBorder = Color(hex: "363633")
+    let focusBorder = Color(hex: "8a8a85")
+
+    // Status colors - Keep functional
+    let successColor = Color(hex: "22c55e")
+    let warningColor = Color(hex: "eab308")
+    let errorColor = Color(hex: "ef4444")
+    let infoColor = Color(hex: "a8a8a3")
+
+    // Component specific - Layered depth
+    let cardBackground = Color(hex: "161614")
+    let cardBorder = Color(hex: "2a2a28")
+    let buttonBackground = Color(hex: "f0f0eb")
+    let buttonBorder = Color(hex: "f0f0eb")
+    let inputBackground = Color(hex: "1a1a18")
+    let inputBorder = Color(hex: "363633")
+    let glassTintOverlay = Color(hex: "1a1a18").opacity(0.7)
+    let codeBlockBackground = Color(hex: "1a1a18")
+
+    // Glass specific - Rich and premium
+    let glassOpacityPrimary: Double = 0.10
+    let glassOpacitySecondary: Double = 0.07
+    let glassOpacityTertiary: Double = 0.04
+    let glassBlurRadius: Double = 28
+    let glassEdgeLight = Color.white.opacity(0.08)
+
+    // Card shadows - Soft glow
+    let cardShadowRadius: Double = 16
+    let cardShadowRadiusHover: Double = 24
+    let cardShadowY: Double = 4
+    let cardShadowYHover: Double = 10
+
+    // Animation timing
+    let animationDurationQuick: Double = 0.2
+    let animationDurationMedium: Double = 0.3
+    let animationDurationSlow: Double = 0.4
+    let animationSpringResponse: Double = 0.4
+    let animationSpringDamping: Double = 0.8
+    var animationSpring: Animation {
+        .spring(response: animationSpringResponse, dampingFraction: animationSpringDamping)
+    }
+
+    // Shadows - Deep and rich
     let shadowColor = Color.black
-    let shadowOpacity: Double = 0.3
+    let shadowOpacity: Double = 0.4
 }
 
 // MARK: - Customizable Theme (Wraps CustomTheme)
