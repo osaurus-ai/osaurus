@@ -111,7 +111,9 @@ public enum ThemeConfigurationStore {
         guard FileManager.default.fileExists(atPath: url.path) else { return nil }
         do {
             let data = try Data(contentsOf: url)
-            return try JSONDecoder().decode(CustomTheme.self, from: data)
+            let decoder = JSONDecoder()
+            decoder.dateDecodingStrategy = .iso8601
+            return try decoder.decode(CustomTheme.self, from: data)
         } catch {
             print("[Osaurus] Failed to load theme \(id): \(error)")
             return nil
