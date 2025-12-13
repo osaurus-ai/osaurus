@@ -156,6 +156,12 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
 
             do {
                 for try await delta in inner {
+                    // Check for task cancellation to allow early termination
+                    if Task.isCancelled {
+                        print("[Osaurus][Stream] Task cancelled after \(deltaCount) deltas")
+                        continuation.finish()
+                        return
+                    }
                     deltaCount += 1
                     let now = Date()
                     let timeSinceStart = now.timeIntervalSince(startTime)

@@ -206,6 +206,11 @@ public actor RemoteProviderService: ToolCapableService {
                     var buffer = ""
                     var utf8Buffer = Data()
                     for try await byte in bytes {
+                        // Check for task cancellation to allow early termination
+                        if Task.isCancelled {
+                            continuation.finish()
+                            return
+                        }
                         utf8Buffer.append(byte)
                         // Try to decode accumulated bytes as UTF-8
                         if let decoded = String(data: utf8Buffer, encoding: .utf8) {
@@ -454,6 +459,11 @@ public actor RemoteProviderService: ToolCapableService {
                     var buffer = ""
                     var utf8Buffer = Data()
                     for try await byte in bytes {
+                        // Check for task cancellation to allow early termination
+                        if Task.isCancelled {
+                            continuation.finish()
+                            return
+                        }
                         utf8Buffer.append(byte)
                         // Try to decode accumulated bytes as UTF-8
                         if let decoded = String(data: utf8Buffer, encoding: .utf8) {

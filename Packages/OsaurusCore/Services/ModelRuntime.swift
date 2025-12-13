@@ -140,6 +140,10 @@ actor ModelRuntime {
                     modelName: modelName
                 )
                 for try await ev in events {
+                    // Check for task cancellation to allow early termination
+                    if Task.isCancelled {
+                        break
+                    }
                     if case .tokens(let s) = ev, !s.isEmpty {
                         continuation.yield(s)
                     } else {
@@ -266,6 +270,11 @@ actor ModelRuntime {
         Task {
             do {
                 for try await ev in events {
+                    // Check for task cancellation to allow early termination
+                    if Task.isCancelled {
+                        continuation.finish()
+                        return
+                    }
                     switch ev {
                     case .tokens(let s):
                         if !s.isEmpty { continuation.yield(s) }
