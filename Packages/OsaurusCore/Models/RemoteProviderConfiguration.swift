@@ -92,20 +92,46 @@ public struct RemoteProvider: Codable, Identifiable, Sendable, Equatable {
     public var baseURL: URL? {
         var components = URLComponents()
         components.scheme = providerProtocol.rawValue
-        components.host = host
+
+        // Parse host - it might contain a path component (e.g., "host/api")
+        var actualHost = host.trimmingCharacters(in: .whitespaces)
+        var hostPath = ""
+
+        // Check if host contains a path (indicated by a slash after the hostname)
+        if let slashIndex = actualHost.firstIndex(of: "/") {
+            hostPath = String(actualHost[slashIndex...])  // e.g., "/api"
+            actualHost = String(actualHost[..<slashIndex])  // e.g., "host"
+        }
+
+        // Check if host contains a port (e.g., "localhost:8080")
+        if let colonIndex = actualHost.lastIndex(of: ":"),
+            let portValue = Int(String(actualHost[actualHost.index(after: colonIndex)...]))
+        {
+            // Extract port from host if not already set
+            if port == nil {
+                components.port = portValue
+            }
+            actualHost = String(actualHost[..<colonIndex])
+        }
+
+        components.host = actualHost
 
         // Only include port if it differs from the protocol default
         if let port = port, port != providerProtocol.defaultPort {
             components.port = port
         }
 
-        // Normalize base path
-        var normalizedPath = basePath.trimmingCharacters(in: .whitespaces)
+        // Combine any path from host with basePath
+        var normalizedPath = hostPath + basePath.trimmingCharacters(in: .whitespaces)
         if !normalizedPath.hasPrefix("/") {
             normalizedPath = "/" + normalizedPath
         }
         if normalizedPath.hasSuffix("/") {
             normalizedPath = String(normalizedPath.dropLast())
+        }
+        // Normalize double slashes (e.g., "/api//v1" -> "/api/v1")
+        while normalizedPath.contains("//") {
+            normalizedPath = normalizedPath.replacingOccurrences(of: "//", with: "/")
         }
         components.path = normalizedPath
 
@@ -121,6 +147,11 @@ public struct RemoteProvider: Codable, Identifiable, Sendable, Equatable {
 
     /// Display string for the endpoint
     public var displayEndpoint: String {
+        // Use the baseURL to get the properly constructed endpoint
+        if let url = baseURL {
+            return url.absoluteString
+        }
+        // Fallback to manual construction
         var result = "\(providerProtocol.rawValue)://\(host)"
         if let port = port, port != providerProtocol.defaultPort {
             result += ":\(port)"
