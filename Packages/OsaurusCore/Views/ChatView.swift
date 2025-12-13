@@ -930,9 +930,9 @@ struct ChatView: View {
             }
             .onChange(of: session.scrollTick) { _, _ in
                 if isPinnedToBottom {
-                    withAnimation(theme.animationQuick()) {
-                        proxy.scrollTo("BOTTOM", anchor: .bottom)
-                    }
+                    // No animation during streaming to prevent UI jumpiness
+                    // The scrollTick is updated during streaming buffer flushes
+                    proxy.scrollTo("BOTTOM", anchor: .bottom)
                 }
             }
             .onReceive(NotificationCenter.default.publisher(for: .chatOverlayActivated)) { _ in

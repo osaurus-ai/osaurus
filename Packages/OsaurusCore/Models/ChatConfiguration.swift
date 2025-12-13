@@ -70,7 +70,7 @@ public struct ChatConfiguration: Codable, Equatable, Sendable {
             hotkey: Hotkey(keyCode: key, carbonModifiers: mods, displayString: display),
             systemPrompt: "",
             temperature: nil,
-            maxTokens: 1024,
+            maxTokens: 4096,  // Increased from 1024 to support longer generations like essays
             topPOverride: nil,
             maxToolAttempts: 15,  // Increased from 3 to support longer agentic workflows
             alwaysOnTop: false

@@ -89,6 +89,11 @@ actor FoundationModelService: ToolCapableService {
                     do {
                         var iterator = session.streamResponse(to: prompt, options: options).makeAsyncIterator()
                         while let snapshot = try await iterator.next() {
+                            // Check for task cancellation to allow early termination
+                            if Task.isCancelled {
+                                continuation.finish()
+                                return
+                            }
                             var current = snapshot.content
                             if !stopSequences.isEmpty,
                                 let r = stopSequences.compactMap({ current.range(of: $0)?.lowerBound }).first
@@ -214,6 +219,11 @@ actor FoundationModelService: ToolCapableService {
                     do {
                         var iterator = session.streamResponse(to: prompt, options: options).makeAsyncIterator()
                         while let snapshot = try await iterator.next() {
+                            // Check for task cancellation to allow early termination
+                            if Task.isCancelled {
+                                continuation.finish()
+                                return
+                            }
                             var current = snapshot.content
                             if !stopSequences.isEmpty,
                                 let r = stopSequences.compactMap({ current.range(of: $0)?.lowerBound }).first
