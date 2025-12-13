@@ -11,7 +11,9 @@ import SwiftUI
 struct ServerView: View {
     @StateObject private var themeManager = ThemeManager.shared
     @EnvironmentObject var server: ServerController
-    @Environment(\.theme) private var theme
+
+    /// Use computed property to always get the current theme from ThemeManager
+    private var theme: ThemeProtocol { themeManager.currentTheme }
 
     @State private var hasAppeared = false
     @State private var expandedEndpoint: String?
@@ -740,10 +742,11 @@ private struct EndpointRow: View {
                                 TextEditor(text: $editablePayload)
                                     .font(.system(size: 11, design: .monospaced))
                                     .frame(minHeight: 120, maxHeight: 200)
+                                    .scrollContentBackground(.hidden)
                                     .padding(8)
                                     .background(
                                         RoundedRectangle(cornerRadius: 6)
-                                            .fill(theme.codeBlockBackground)
+                                            .fill(theme.inputBackground)
                                             .overlay(
                                                 RoundedRectangle(cornerRadius: 6)
                                                     .stroke(theme.inputBorder, lineWidth: 1)

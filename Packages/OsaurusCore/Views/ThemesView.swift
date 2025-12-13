@@ -21,7 +21,9 @@ struct IdentifiableTheme: Identifiable {
 
 struct ThemesView: View {
     @StateObject private var themeManager = ThemeManager.shared
-    @Environment(\.theme) private var theme
+
+    /// Use computed property to always get the current theme from ThemeManager
+    private var theme: ThemeProtocol { themeManager.currentTheme }
 
     @State private var hasAppeared = false
     @State private var isLoading = true

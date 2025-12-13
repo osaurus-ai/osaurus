@@ -446,15 +446,25 @@ class ThemeManager: ObservableObject {
         let config = ServerConfigurationStore.load() ?? ServerConfiguration.default
 
         // Initialize all stored properties before using self
-        // Check for active custom theme
+        // Check for active custom theme (user-selected)
         if let customTheme = ThemeConfigurationStore.loadActiveTheme() {
             print("[Osaurus] ThemeManager: Restoring active theme '\(customTheme.metadata.name)'")
             self.activeCustomTheme = customTheme
             self.currentTheme = CustomizableTheme(config: customTheme)
         } else {
-            print("[Osaurus] ThemeManager: No active custom theme, using \(config.appearanceMode) mode")
-            // Initialize currentTheme based on appearance mode
-            self.currentTheme = Self.resolveTheme(for: config.appearanceMode)
+            // No user-selected theme - use the built-in Dark/Light theme based on appearance mode
+            // Don't set activeCustomTheme so appearance mode changes will work
+            let builtInTheme = Self.resolveBuiltInTheme(for: config.appearanceMode, from: loadedThemes)
+            if let theme = builtInTheme {
+                print("[Osaurus] ThemeManager: Using built-in '\(theme.metadata.name)' theme (auto)")
+                self.currentTheme = CustomizableTheme(config: theme)
+            } else {
+                // Fallback to default CustomTheme if built-in themes aren't installed
+                print("[Osaurus] ThemeManager: No built-in theme found, using fallback")
+                let fallbackTheme =
+                    Self.isDarkMode(for: config.appearanceMode) ? CustomTheme.darkDefault : CustomTheme.lightDefault
+                self.currentTheme = CustomizableTheme(config: fallbackTheme)
+            }
         }
 
         // Now we can assign to self properties
@@ -472,15 +482,35 @@ class ThemeManager: ObservableObject {
         print("[Osaurus] ThemeManager: Initialization complete")
     }
 
+    /// Find the appropriate built-in theme based on appearance mode
+    private static func resolveBuiltInTheme(for mode: AppearanceMode, from themes: [CustomTheme]) -> CustomTheme? {
+        // Find the built-in Dark or Light theme based on appearance
+        let targetId =
+            isDarkMode(for: mode)
+            ? UUID(uuidString: "00000000-0000-0000-0000-000000000001")  // Dark theme ID
+            : UUID(uuidString: "00000000-0000-0000-0000-000000000002")  // Light theme ID
+
+        return themes.first { $0.metadata.id == targetId }
+    }
+
     /// Update the appearance mode and apply the theme
     func setAppearanceMode(_ mode: AppearanceMode) {
         appearanceMode = mode
 
-        // If a custom theme is active, don't change it based on appearance mode
+        // If a user-selected custom theme is active, don't change it based on appearance mode
         guard activeCustomTheme == nil else { return }
 
-        withAnimation(.easeInOut(duration: 0.3)) {
-            currentTheme = Self.resolveTheme(for: mode)
+        // Apply the appropriate built-in theme
+        if let builtInTheme = Self.resolveBuiltInTheme(for: mode, from: installedThemes) {
+            withAnimation(.easeInOut(duration: 0.3)) {
+                currentTheme = CustomizableTheme(config: builtInTheme)
+            }
+        } else {
+            // Fallback to default CustomTheme
+            let fallbackTheme = Self.isDarkMode(for: mode) ? CustomTheme.darkDefault : CustomTheme.lightDefault
+            withAnimation(.easeInOut(duration: 0.3)) {
+                currentTheme = CustomizableTheme(config: fallbackTheme)
+            }
         }
     }
 
@@ -499,8 +529,18 @@ class ThemeManager: ObservableObject {
         activeCustomTheme = nil
         ThemeConfigurationStore.saveActiveThemeId(nil)
 
-        withAnimation(.easeInOut(duration: 0.3)) {
-            currentTheme = Self.resolveTheme(for: appearanceMode)
+        // Apply the appropriate built-in theme based on current appearance mode
+        if let builtInTheme = Self.resolveBuiltInTheme(for: appearanceMode, from: installedThemes) {
+            withAnimation(.easeInOut(duration: 0.3)) {
+                currentTheme = CustomizableTheme(config: builtInTheme)
+            }
+        } else {
+            // Fallback to default CustomTheme
+            let fallbackTheme =
+                Self.isDarkMode(for: appearanceMode) ? CustomTheme.darkDefault : CustomTheme.lightDefault
+            withAnimation(.easeInOut(duration: 0.3)) {
+                currentTheme = CustomizableTheme(config: fallbackTheme)
+            }
         }
     }
 
@@ -551,24 +591,40 @@ class ThemeManager: ObservableObject {
         refreshInstalledThemes()
     }
 
-    /// Resolve the theme based on appearance mode
-    private static func resolveTheme(for mode: AppearanceMode) -> ThemeProtocol {
+    /// Determine if dark mode should be used based on appearance mode
+    private static func isDarkMode(for mode: AppearanceMode) -> Bool {
         switch mode {
         case .system:
-            return (NSApp.effectiveAppearance.name == .darkAqua) ? DarkTheme() : LightTheme()
+            // Use UserDefaults to reliably detect system appearance during early app startup
+            // NSApp.effectiveAppearance may not be ready yet when ThemeManager initializes
+            if let app = NSApp, app.isRunning {
+                return app.effectiveAppearance.name == .darkAqua
+            } else {
+                // Fall back to reading system preference directly
+                return UserDefaults.standard.string(forKey: "AppleInterfaceStyle") == "Dark"
+            }
         case .light:
-            return LightTheme()
+            return false
         case .dark:
-            return DarkTheme()
+            return true
         }
     }
 
     @objc private func systemAppearanceChanged() {
-        // Only update if we're following system appearance and no custom theme is active
+        // Only update if we're following system appearance and no user-selected theme is active
         guard appearanceMode == .system, activeCustomTheme == nil else { return }
 
-        withAnimation(.easeInOut(duration: 0.3)) {
-            currentTheme = Self.resolveTheme(for: .system)
+        // Apply the appropriate built-in theme
+        if let builtInTheme = Self.resolveBuiltInTheme(for: .system, from: installedThemes) {
+            withAnimation(.easeInOut(duration: 0.3)) {
+                currentTheme = CustomizableTheme(config: builtInTheme)
+            }
+        } else {
+            // Fallback to default CustomTheme
+            let fallbackTheme = Self.isDarkMode(for: .system) ? CustomTheme.darkDefault : CustomTheme.lightDefault
+            withAnimation(.easeInOut(duration: 0.3)) {
+                currentTheme = CustomizableTheme(config: fallbackTheme)
+            }
         }
     }
 }
