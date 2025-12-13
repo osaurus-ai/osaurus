@@ -17,7 +17,10 @@ struct ToolPermissionView: View {
     let onAlwaysAllow: () -> Void
 
     @StateObject private var themeManager = ThemeManager.shared
-    @Environment(\.theme) private var theme
+
+    /// Use computed property to always get the current theme from ThemeManager
+    private var theme: ThemeProtocol { themeManager.currentTheme }
+
     @State private var copied = false
     @State private var showAlwaysAllowConfirm = false
     @State private var appeared = false

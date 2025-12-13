@@ -408,7 +408,7 @@ struct FloatingInputCard: View {
                 // Send icon - uses theme body size
                 Image(systemName: "arrow.up")
                     .font(theme.font(size: CGFloat(theme.bodySize), weight: .semibold))
-                    .foregroundColor(.white)
+                    .foregroundColor(isStreaming ? .white : theme.primaryBackground)
                     .opacity(isStreaming ? 0 : 1)
                     .scaleEffect(isStreaming ? 0.5 : 1)
 

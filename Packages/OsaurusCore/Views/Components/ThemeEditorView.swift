@@ -11,8 +11,10 @@ import UniformTypeIdentifiers
 
 struct ThemeEditorView: View {
     @StateObject private var themeManager = ThemeManager.shared
-    @Environment(\.theme) private var currentTheme
     @Environment(\.dismiss) private var dismiss
+
+    /// Use computed property to always get the current theme from ThemeManager
+    private var currentTheme: ThemeProtocol { themeManager.currentTheme }
 
     @State private var editingTheme: CustomTheme
     let onDismiss: () -> Void

@@ -15,8 +15,10 @@ struct ModelDetailView: View, Identifiable {
 
     @StateObject private var modelManager = ModelManager.shared
     @StateObject private var themeManager = ThemeManager.shared
-    @Environment(\.theme) private var theme
     @Environment(\.dismiss) private var dismiss
+
+    /// Use computed property to always get the current theme from ThemeManager
+    private var theme: ThemeProtocol { themeManager.currentTheme }
 
     // MARK: - Properties
 

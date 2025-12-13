@@ -10,7 +10,9 @@ import SwiftUI
 struct InsightsView: View {
     @StateObject private var themeManager = ThemeManager.shared
     @StateObject private var insightsService = InsightsService.shared
-    @Environment(\.theme) private var theme
+
+    /// Use computed property to always get the current theme from ThemeManager
+    private var theme: ThemeProtocol { themeManager.currentTheme }
 
     @State private var hasAppeared = false
     @State private var selectedLogId: UUID?

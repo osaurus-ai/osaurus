@@ -18,7 +18,9 @@ struct ModelDownloadView: View {
 
     /// Theme manager for consistent UI styling
     @StateObject private var themeManager = ThemeManager.shared
-    @Environment(\.theme) private var theme
+
+    /// Use computed property to always get the current theme from ThemeManager
+    private var theme: ThemeProtocol { themeManager.currentTheme }
 
     /// Current search query text
     @State private var searchText: String = ""

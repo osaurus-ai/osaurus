@@ -12,7 +12,9 @@ struct ContentView: View {
     @EnvironmentObject var server: ServerController
     @EnvironmentObject private var updater: UpdaterViewModel
     @StateObject private var themeManager = ThemeManager.shared
-    @Environment(\.theme) private var theme
+
+    /// Use computed property to always get the current theme from ThemeManager
+    private var theme: ThemeProtocol { themeManager.currentTheme }
 
     @State private var portString: String = "1337"
     @State private var showError: Bool = false

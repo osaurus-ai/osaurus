@@ -15,7 +15,9 @@ struct ToolsManagerView: View {
     @StateObject private var themeManager = ThemeManager.shared
     @ObservedObject private var repoService = PluginRepositoryService.shared
     @ObservedObject private var providerManager = MCPProviderManager.shared
-    @Environment(\.theme) private var theme
+
+    /// Use computed property to always get the current theme from ThemeManager
+    private var theme: ThemeProtocol { themeManager.currentTheme }
 
     @State private var selectedTab: ToolsTab = .available
     @State private var searchText: String = ""

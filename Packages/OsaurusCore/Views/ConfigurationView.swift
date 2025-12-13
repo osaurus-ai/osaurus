@@ -3,7 +3,9 @@ import SwiftUI
 // MARK: - Configuration View
 struct ConfigurationView: View {
     @StateObject private var themeManager = ThemeManager.shared
-    @Environment(\.theme) private var theme
+
+    /// Use computed property to always get the current theme from ThemeManager
+    private var theme: ThemeProtocol { themeManager.currentTheme }
 
     @State private var tempPortString: String = ""
     @State private var tempExposeToNetwork: Bool = false
