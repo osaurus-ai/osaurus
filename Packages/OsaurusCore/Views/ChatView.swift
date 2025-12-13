@@ -422,13 +422,103 @@ final class ChatSession: ObservableObject {
                         let flushIntervalMs: Double = 50  // Flush every 50ms
                         let maxBufferSize = 256  // Or when buffer reaches this size
 
+                        // Thinking tag parsing state
+                        var isInsideThinking = false
+                        var pendingTagBuffer = ""  // Buffer for partial tag detection
+
                         @MainActor
                         func flushBuffer() {
-                            if !deltaBuffer.isEmpty {
-                                assistantTurn.content += deltaBuffer
+                            guard !deltaBuffer.isEmpty else { return }
+
+                            // Combine pending tag buffer with new delta for parsing
+                            var textToProcess = pendingTagBuffer + deltaBuffer
+                            pendingTagBuffer = ""
+                            deltaBuffer = ""
+
+                            // Process text, routing thinking content appropriately
+                            while !textToProcess.isEmpty {
+                                if isInsideThinking {
+                                    // Look for </think> closing tag
+                                    if let closeRange = textToProcess.range(of: "</think>", options: .caseInsensitive) {
+                                        // Add content before closing tag to thinking
+                                        let thinkingContent = String(textToProcess[..<closeRange.lowerBound])
+                                        assistantTurn.thinking += thinkingContent
+                                        // Remove processed content including the tag
+                                        textToProcess = String(textToProcess[closeRange.upperBound...])
+                                        isInsideThinking = false
+                                    } else {
+                                        // Check if we might have a partial </think> tag at the end
+                                        let possiblePartialTags = ["</", "</t", "</th", "</thi", "</thin", "</think"]
+                                        var foundPartial = false
+                                        for partial in possiblePartialTags.reversed() {
+                                            if textToProcess.lowercased().hasSuffix(partial) {
+                                                // Buffer the potential partial tag
+                                                let safePart = String(textToProcess.dropLast(partial.count))
+                                                assistantTurn.thinking += safePart
+                                                pendingTagBuffer = String(textToProcess.suffix(partial.count))
+                                                textToProcess = ""
+                                                foundPartial = true
+                                                break
+                                            }
+                                        }
+                                        if !foundPartial {
+                                            // All content goes to thinking
+                                            assistantTurn.thinking += textToProcess
+                                            textToProcess = ""
+                                        }
+                                    }
+                                } else {
+                                    // Look for <think> opening tag
+                                    if let openRange = textToProcess.range(of: "<think>", options: .caseInsensitive) {
+                                        // Add content before opening tag to regular content
+                                        let regularContent = String(textToProcess[..<openRange.lowerBound])
+                                        assistantTurn.content += regularContent
+                                        // Remove processed content including the tag
+                                        textToProcess = String(textToProcess[openRange.upperBound...])
+                                        isInsideThinking = true
+                                    } else {
+                                        // Check if we might have a partial <think> tag at the end
+                                        let possiblePartialTags = ["<", "<t", "<th", "<thi", "<thin", "<think"]
+                                        var foundPartial = false
+                                        for partial in possiblePartialTags.reversed() {
+                                            if textToProcess.lowercased().hasSuffix(partial) {
+                                                // Buffer the potential partial tag
+                                                let safePart = String(textToProcess.dropLast(partial.count))
+                                                assistantTurn.content += safePart
+                                                pendingTagBuffer = String(textToProcess.suffix(partial.count))
+                                                textToProcess = ""
+                                                foundPartial = true
+                                                break
+                                            }
+                                        }
+                                        if !foundPartial {
+                                            // All content goes to regular content
+                                            assistantTurn.content += textToProcess
+                                            textToProcess = ""
+                                        }
+                                    }
+                                }
+                            }
+
+                            scrollTick &+= 1
+                            lastFlushTime = Date()
+                        }
+
+                        /// Final flush that handles any remaining buffered content
+                        @MainActor
+                        func finalFlush() {
+                            // First flush any remaining delta buffer
+                            if !deltaBuffer.isEmpty || !pendingTagBuffer.isEmpty {
+                                // On final flush, treat any pending partial tags as regular content
+                                let remaining = pendingTagBuffer + deltaBuffer
+                                pendingTagBuffer = ""
                                 deltaBuffer = ""
+                                if isInsideThinking {
+                                    assistantTurn.thinking += remaining
+                                } else {
+                                    assistantTurn.content += remaining
+                                }
                                 scrollTick &+= 1
-                                lastFlushTime = Date()
                             }
                         }
 
@@ -452,8 +542,8 @@ final class ChatSession: ObservableObject {
                             }
                         }
 
-                        // Flush any remaining buffered content
-                        flushBuffer()
+                        // Flush any remaining buffered content (including partial tags)
+                        finalFlush()
 
                         let totalTime = Date().timeIntervalSince(streamStartTime)
                         print(

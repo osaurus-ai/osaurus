@@ -16,6 +16,7 @@ struct ChatTurnData: Codable, Identifiable, Sendable {
     var toolCalls: [ToolCall]?
     var toolCallId: String?
     var toolResults: [String: String]
+    var thinking: String
 
     init(
         id: UUID = UUID(),
@@ -24,7 +25,8 @@ struct ChatTurnData: Codable, Identifiable, Sendable {
         attachedImages: [Data] = [],
         toolCalls: [ToolCall]? = nil,
         toolCallId: String? = nil,
-        toolResults: [String: String] = [:]
+        toolResults: [String: String] = [:],
+        thinking: String = ""
     ) {
         self.id = id
         self.role = role
@@ -33,6 +35,24 @@ struct ChatTurnData: Codable, Identifiable, Sendable {
         self.toolCalls = toolCalls
         self.toolCallId = toolCallId
         self.toolResults = toolResults
+        self.thinking = thinking
+    }
+
+    // Custom decoder for backward compatibility with sessions saved before thinking was added
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(UUID.self, forKey: .id)
+        role = try container.decode(MessageRole.self, forKey: .role)
+        content = try container.decode(String.self, forKey: .content)
+        attachedImages = try container.decodeIfPresent([Data].self, forKey: .attachedImages) ?? []
+        toolCalls = try container.decodeIfPresent([ToolCall].self, forKey: .toolCalls)
+        toolCallId = try container.decodeIfPresent(String.self, forKey: .toolCallId)
+        toolResults = try container.decodeIfPresent([String: String].self, forKey: .toolResults) ?? [:]
+        thinking = try container.decodeIfPresent(String.self, forKey: .thinking) ?? ""
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, role, content, attachedImages, toolCalls, toolCallId, toolResults, thinking
     }
 }
 
@@ -49,6 +69,7 @@ extension ChatTurnData {
         self.toolCalls = turn.toolCalls
         self.toolCallId = turn.toolCallId
         self.toolResults = turn.toolResults
+        self.thinking = turn.thinking
     }
 }
 
@@ -59,5 +80,6 @@ extension ChatTurn {
         self.toolCalls = data.toolCalls
         self.toolCallId = data.toolCallId
         self.toolResults = data.toolResults
+        self.thinking = data.thinking
     }
 }

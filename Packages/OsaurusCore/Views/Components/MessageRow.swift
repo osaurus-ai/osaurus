@@ -45,6 +45,16 @@ struct MessageRow: View {
                     attachedImagesView
                 }
 
+                // Thinking block (if any) - shown above main content for assistant messages
+                if turn.role == .assistant && turn.hasThinking {
+                    ThinkingBlockView(
+                        thinking: turn.thinking,
+                        baseWidth: width,
+                        isStreaming: isStreaming && isLatest
+                    )
+                    .padding(.bottom, 4)
+                }
+
                 // Message content or typing indicator
                 contentView
 
