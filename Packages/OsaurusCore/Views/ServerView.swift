@@ -742,10 +742,11 @@ private struct EndpointRow: View {
                                 TextEditor(text: $editablePayload)
                                     .font(.system(size: 11, design: .monospaced))
                                     .frame(minHeight: 120, maxHeight: 200)
+                                    .scrollContentBackground(.hidden)
                                     .padding(8)
                                     .background(
                                         RoundedRectangle(cornerRadius: 6)
-                                            .fill(theme.codeBlockBackground)
+                                            .fill(theme.inputBackground)
                                             .overlay(
                                                 RoundedRectangle(cornerRadius: 6)
                                                     .stroke(theme.inputBorder, lineWidth: 1)
