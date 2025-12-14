@@ -47,11 +47,13 @@ struct MarkdownMessageView: View {
                     theme: theme
                 )
                 .frame(
+                    width: baseWidth,
                     height: SelectableTextView.calculateHeight(
                         blocks: textBlocks,
                         baseWidth: baseWidth,
                         theme: theme
-                    )
+                    ),
+                    alignment: .leading
                 )
 
             case .codeBlock(let code, let lang):
