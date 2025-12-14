@@ -30,6 +30,14 @@ struct MessageRow: View {
         turn.role == .user ? "You" : "Assistant"
     }
 
+    /// Calculate the actual content width after accounting for padding and accent bar
+    /// - ChatView adds .padding(.horizontal, 16) = 32px
+    /// - Accent bar: 3px width + 12px leading padding = 15px
+    /// - Content VStack: 16px leading + 12px trailing padding = 28px
+    private var contentWidth: CGFloat {
+        max(100, width - 32 - 15 - 28)
+    }
+
     var body: some View {
         HStack(alignment: .top, spacing: 0) {
             // Accent bar indicator
@@ -49,7 +57,7 @@ struct MessageRow: View {
                 if turn.role == .assistant && turn.hasThinking {
                     ThinkingBlockView(
                         thinking: turn.thinking,
-                        baseWidth: width,
+                        baseWidth: contentWidth,
                         isStreaming: isStreaming && isLatest
                     )
                     .padding(.bottom, 4)
@@ -221,8 +229,8 @@ struct MessageRow: View {
             TypingIndicator()
                 .padding(.vertical, 4)
         } else {
-            MarkdownMessageView(text: turn.content, baseWidth: width)
-                .font(Typography.body(width, theme: theme))
+            MarkdownMessageView(text: turn.content, baseWidth: contentWidth)
+                .font(Typography.body(contentWidth, theme: theme))
                 .foregroundColor(theme.primaryText)
                 .textSelection(.enabled)
         }
@@ -233,7 +241,7 @@ struct MessageRow: View {
     private var editingView: some View {
         VStack(alignment: .leading, spacing: 12) {
             TextEditor(text: $editingContent)
-                .font(Typography.body(width, theme: theme))
+                .font(Typography.body(contentWidth, theme: theme))
                 .foregroundColor(theme.primaryText)
                 .scrollContentBackground(.hidden)
                 .background(theme.primaryBackground.opacity(0.3))

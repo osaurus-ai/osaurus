@@ -449,7 +449,7 @@ struct SelectableTextViewSizer: View {
 
     var body: some View {
         SelectableTextView(blocks: blocks, baseWidth: baseWidth, theme: theme)
-            .frame(height: max(20, height))
+            .frame(width: baseWidth, height: max(20, height), alignment: .leading)
             .background(
                 GeometryReader { geo in
                     Color.clear.preference(key: TextHeightPreferenceKey.self, value: geo.size.height)
