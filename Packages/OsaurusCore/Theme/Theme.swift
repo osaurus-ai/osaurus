@@ -52,6 +52,9 @@ protocol ThemeProtocol {
     var glassTintOverlay: Color { get }
     var codeBlockBackground: Color { get }
 
+    // Selection (text highlight)
+    var selectionColor: Color { get }
+
     // Glass specific
     var glassEnabled: Bool { get }
     var glassOpacityPrimary: Double { get }
@@ -217,6 +220,9 @@ struct LightTheme: ThemeProtocol {
     let glassTintOverlay = Color(hex: "f5f5f2").opacity(0.6)
     let codeBlockBackground = Color(hex: "f5f5f2")
 
+    // Selection - Light blue highlight
+    let selectionColor = Color(hex: "3b82f6").opacity(0.3)
+
     // Glass specific - Rich depth
     let glassOpacityPrimary: Double = 0.12
     let glassOpacitySecondary: Double = 0.08
@@ -286,6 +292,9 @@ struct DarkTheme: ThemeProtocol {
     let inputBorder = Color(hex: "363633")
     let glassTintOverlay = Color(hex: "1a1a18").opacity(0.7)
     let codeBlockBackground = Color(hex: "1a1a18")
+
+    // Selection - Subtle warm highlight
+    let selectionColor = Color(hex: "f0f0eb").opacity(0.25)
 
     // Glass specific - Rich and premium
     let glassOpacityPrimary: Double = 0.10
@@ -363,6 +372,9 @@ struct CustomizableTheme: ThemeProtocol {
     var inputBorder: Color { Color(themeHex: config.colors.inputBorder) }
     var glassTintOverlay: Color { Color(themeHex: config.colors.glassTintOverlay) }
     var codeBlockBackground: Color { Color(themeHex: config.colors.codeBlockBackground) }
+
+    // Selection
+    var selectionColor: Color { Color(themeHex: config.colors.selectionColor) }
 
     // Glass specific
     var glassOpacityPrimary: Double { config.glass.opacityPrimary }

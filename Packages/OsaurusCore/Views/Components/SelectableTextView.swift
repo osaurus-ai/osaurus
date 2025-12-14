@@ -43,12 +43,22 @@ struct SelectableTextView: NSViewRepresentable {
         textView.textContainer?.widthTracksTextView = false
         textView.textContainer?.lineFragmentPadding = 0
 
+        // Apply theme selection color
+        textView.selectedTextAttributes = [
+            .backgroundColor: NSColor(theme.selectionColor)
+        ]
+
         return textView
     }
 
     func updateNSView(_ textView: SelectableNSTextView, context: Context) {
         // Update container width
         textView.textContainer?.containerSize = NSSize(width: baseWidth, height: CGFloat.greatestFiniteMagnitude)
+
+        // Update selection color for theme changes
+        textView.selectedTextAttributes = [
+            .backgroundColor: NSColor(theme.selectionColor)
+        ]
 
         // Build and set attributed string
         let attributedString = buildAttributedString()
