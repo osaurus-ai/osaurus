@@ -4,6 +4,7 @@
 //
 //  Renders markdown text with proper typography, code blocks, images, and more
 //  Optimized for streaming responses with stable block identity
+//  Uses NSTextView for web-like text selection across blocks
 //
 
 import AppKit
@@ -15,144 +16,205 @@ struct MarkdownMessageView: View {
 
     @Environment(\.theme) private var theme
 
-    // Parse blocks synchronously - computed property for efficiency
-    private var blocks: [MessageBlock] {
-        parseBlocks(text)
+    // Parse blocks and group into segments
+    private var segments: [ContentSegment] {
+        let blocks = parseBlocks(text)
+        return groupBlocksIntoSegments(blocks)
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            ForEach(Array(blocks.enumerated()), id: \.element.stableId) { index, block in
-                blockView(for: block, previousBlock: index > 0 ? blocks[index - 1] : nil)
+            ForEach(Array(segments.enumerated()), id: \.element.id) { index, segment in
+                segmentView(for: segment, isFirst: index == 0)
             }
         }
-        .textSelection(.enabled)
     }
 
     @ViewBuilder
-    private func blockView(for block: MessageBlock, previousBlock: MessageBlock?) -> some View {
+    private func segmentView(for segment: ContentSegment, isFirst: Bool) -> some View {
         VStack(alignment: .leading, spacing: 0) {
-            // Dynamic spacing based on block type transitions
-            if let spacing = spacingBefore(block: block, previousBlock: previousBlock), spacing > 0 {
+            // Add spacing before non-first segments
+            if !isFirst {
                 Spacer()
-                    .frame(height: spacing)
+                    .frame(height: segment.spacingBefore)
             }
 
-            switch block.kind {
-            case .paragraph(let md):
-                ParagraphView(text: md, baseWidth: baseWidth)
+            switch segment.kind {
+            case .textGroup(let textBlocks):
+                SelectableTextView(
+                    blocks: textBlocks,
+                    baseWidth: baseWidth,
+                    theme: theme
+                )
+                .frame(
+                    height: SelectableTextView.calculateHeight(
+                        blocks: textBlocks,
+                        baseWidth: baseWidth,
+                        theme: theme
+                    )
+                )
 
-            case .code(let code, let lang):
+            case .codeBlock(let code, let lang):
                 CodeBlockView(code: code, language: lang, baseWidth: baseWidth)
 
             case .image(let url, let altText):
                 MarkdownImageView(urlString: url, altText: altText, baseWidth: baseWidth)
 
-            case .heading(let level, let text):
-                HeadingView(level: level, text: text, baseWidth: baseWidth)
-
-            case .blockquote(let content):
-                BlockquoteView(content: content, baseWidth: baseWidth)
-
             case .horizontalRule:
                 HorizontalRuleView()
-
-            case .list(let items, let ordered):
-                ListBlockView(items: items, ordered: ordered, baseWidth: baseWidth)
             }
         }
     }
+}
 
-    /// Calculate spacing before a block based on its type and the previous block's type
-    private func spacingBefore(block: MessageBlock, previousBlock: MessageBlock?) -> CGFloat? {
-        guard let prev = previousBlock else { return nil }
+// MARK: - Content Segment
 
-        // Headings need more space before them (except after other headings)
-        if case .heading(let level, _) = block.kind {
-            if case .heading = prev.kind {
-                return 8
+/// Represents a segment of content - either a group of selectable text blocks or a special element
+private struct ContentSegment: Identifiable {
+    enum Kind {
+        case textGroup([SelectableTextBlock])
+        case codeBlock(code: String, language: String?)
+        case image(url: String, altText: String)
+        case horizontalRule
+    }
+
+    let id: String
+    let kind: Kind
+    let spacingBefore: CGFloat
+
+    init(id: String, kind: Kind, spacingBefore: CGFloat = 0) {
+        self.id = id
+        self.kind = kind
+        self.spacingBefore = spacingBefore
+    }
+}
+
+// MARK: - Block Grouping
+
+/// Groups consecutive text blocks into segments for efficient rendering with NSTextView
+private func groupBlocksIntoSegments(_ blocks: [MessageBlock]) -> [ContentSegment] {
+    var segments: [ContentSegment] = []
+    var currentTextBlocks: [SelectableTextBlock] = []
+    var segmentIndex = 0
+    var previousBlockKind: MessageBlock.Kind? = nil
+
+    func flushTextGroup() {
+        if !currentTextBlocks.isEmpty {
+            let spacing = segments.isEmpty ? 0 : spacingBeforeTextGroup(previousNonTextKind: previousBlockKind)
+            segments.append(
+                ContentSegment(
+                    id: "text-\(segmentIndex)",
+                    kind: .textGroup(currentTextBlocks),
+                    spacingBefore: spacing
+                )
+            )
+            segmentIndex += 1
+            currentTextBlocks.removeAll()
+        }
+    }
+
+    for block in blocks {
+        switch block.kind {
+        case .paragraph(let text):
+            currentTextBlocks.append(.paragraph(text))
+
+        case .heading(let level, let text):
+            currentTextBlocks.append(.heading(level: level, text: text))
+
+        case .blockquote(let content):
+            currentTextBlocks.append(.blockquote(content))
+
+        case .list(let items, let ordered):
+            for (index, item) in items.enumerated() {
+                currentTextBlocks.append(.listItem(text: item, index: index, ordered: ordered))
             }
-            return level <= 2 ? 20 : 16
+
+        case .code(let code, let lang):
+            flushTextGroup()
+            let spacing = spacingForSpecialBlock(.code(code, lang), previousKind: previousBlockKind)
+            segments.append(
+                ContentSegment(
+                    id: "code-\(segmentIndex)",
+                    kind: .codeBlock(code: code, language: lang),
+                    spacingBefore: spacing
+                )
+            )
+            segmentIndex += 1
+            previousBlockKind = block.kind
+
+        case .image(let url, let altText):
+            flushTextGroup()
+            let spacing = spacingForSpecialBlock(.image(url: url, altText: altText), previousKind: previousBlockKind)
+            segments.append(
+                ContentSegment(
+                    id: "image-\(segmentIndex)",
+                    kind: .image(url: url, altText: altText),
+                    spacingBefore: spacing
+                )
+            )
+            segmentIndex += 1
+            previousBlockKind = block.kind
+
+        case .horizontalRule:
+            flushTextGroup()
+            let spacing = spacingForSpecialBlock(.horizontalRule, previousKind: previousBlockKind)
+            segments.append(
+                ContentSegment(
+                    id: "hr-\(segmentIndex)",
+                    kind: .horizontalRule,
+                    spacingBefore: spacing
+                )
+            )
+            segmentIndex += 1
+            previousBlockKind = block.kind
         }
 
-        // Code blocks need breathing room
-        if case .code = block.kind {
-            return 14
+        // Track last text block kind for spacing
+        if case .paragraph = block.kind {
+            previousBlockKind = block.kind
+        } else if case .heading = block.kind {
+            previousBlockKind = block.kind
+        } else if case .blockquote = block.kind {
+            previousBlockKind = block.kind
+        } else if case .list = block.kind {
+            previousBlockKind = block.kind
         }
+    }
 
-        // After code blocks
-        if case .code = prev.kind {
-            return 14
-        }
+    flushTextGroup()
 
-        // Images need space
-        if case .image = block.kind {
-            return 16
-        }
+    return segments
+}
 
-        // After images
-        if case .image = prev.kind {
-            return 16
-        }
+/// Calculate spacing before a special block (code, image, hr)
+private func spacingForSpecialBlock(_ kind: MessageBlock.Kind, previousKind: MessageBlock.Kind?) -> CGFloat {
+    guard previousKind != nil else { return 0 }
 
-        // Blockquotes
-        if case .blockquote = block.kind {
-            return 12
-        }
-
-        if case .blockquote = prev.kind {
-            return 12
-        }
-
-        // Lists
-        if case .list = block.kind {
-            if case .list = prev.kind {
-                return 8
-            }
-            return 10
-        }
-
-        if case .list = prev.kind {
-            return 10
-        }
-
-        // Horizontal rule
-        if case .horizontalRule = block.kind {
-            return 8
-        }
-
-        if case .horizontalRule = prev.kind {
-            return 8
-        }
-
-        // Default paragraph spacing
+    switch kind {
+    case .code:
+        return 14
+    case .image:
+        return 16
+    case .horizontalRule:
+        return 8
+    default:
         return 12
     }
 }
 
-// MARK: - Paragraph View (Extracted for optimization)
+/// Calculate spacing before a text group that follows a special block
+private func spacingBeforeTextGroup(previousNonTextKind: MessageBlock.Kind?) -> CGFloat {
+    guard let prev = previousNonTextKind else { return 0 }
 
-private struct ParagraphView: View {
-    let text: String
-    let baseWidth: CGFloat
-
-    @Environment(\.theme) private var theme
-
-    var body: some View {
-        if let attributed = try? AttributedString(
-            markdown: text,
-            options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)
-        ) {
-            Text(attributed)
-                .font(Typography.body(baseWidth))
-                .lineSpacing(5)
-                .foregroundColor(theme.primaryText)
-        } else {
-            Text(text)
-                .font(Typography.body(baseWidth))
-                .lineSpacing(5)
-                .foregroundColor(theme.primaryText)
-        }
+    switch prev {
+    case .code:
+        return 14
+    case .image:
+        return 16
+    case .horizontalRule:
+        return 8
+    default:
+        return 12
     }
 }
 
