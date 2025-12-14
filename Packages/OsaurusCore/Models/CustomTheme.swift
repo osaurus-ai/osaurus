@@ -83,6 +83,9 @@ public struct ThemeColors: Codable, Equatable, Sendable {
     // Shadow
     public var shadowColor: String
 
+    // Selection (text highlight)
+    public var selectionColor: String
+
     public init(
         primaryText: String = "#f9fafb",
         secondaryText: String = "#9ca3af",
@@ -109,7 +112,8 @@ public struct ThemeColors: Codable, Equatable, Sendable {
         inputBorder: String = "#3f3f46",
         glassTintOverlay: String = "#00000030",
         codeBlockBackground: String = "#00000059",
-        shadowColor: String = "#000000"
+        shadowColor: String = "#000000",
+        selectionColor: String = "#3b82f680"
     ) {
         self.primaryText = primaryText
         self.secondaryText = secondaryText
@@ -137,6 +141,7 @@ public struct ThemeColors: Codable, Equatable, Sendable {
         self.glassTintOverlay = glassTintOverlay
         self.codeBlockBackground = codeBlockBackground
         self.shadowColor = shadowColor
+        self.selectionColor = selectionColor
     }
 
     /// Create colors from dark theme defaults
@@ -170,7 +175,8 @@ public struct ThemeColors: Codable, Equatable, Sendable {
             inputBorder: "#d1d5db",
             glassTintOverlay: "#0000001f",
             codeBlockBackground: "#00000014",
-            shadowColor: "#000000"
+            shadowColor: "#000000",
+            selectionColor: "#3b82f650"
         )
     }
 }
@@ -540,7 +546,8 @@ public struct CustomTheme: Codable, Equatable, Sendable {
                 inputBorder: "#2a2a40",
                 glassTintOverlay: "#ff00ff15",
                 codeBlockBackground: "#00000050",
-                shadowColor: "#ff00ff"
+                shadowColor: "#ff00ff",
+                selectionColor: "#ff00ff60"
             ),
             background: .default,
             glass: ThemeGlass(
@@ -606,7 +613,8 @@ public struct CustomTheme: Codable, Equatable, Sendable {
                 inputBorder: "#4c566a",
                 glassTintOverlay: "#88c0d010",
                 codeBlockBackground: "#2e344080",
-                shadowColor: "#000000"
+                shadowColor: "#000000",
+                selectionColor: "#88c0d060"
             ),
             background: .default,
             glass: ThemeGlass(
@@ -666,10 +674,12 @@ public struct CustomTheme: Codable, Equatable, Sendable {
                 inputBorder: "#d5d0c8",
                 glassTintOverlay: "#c9a95910",
                 codeBlockBackground: "#f0ece510",
-                shadowColor: "#8b7355"
+                shadowColor: "#8b7355",
+                selectionColor: "#c9a95950"
             ),
             background: .default,
             glass: ThemeGlass(
+                enabled: false,
                 material: .sheet,
                 blurRadius: 18,
                 opacityPrimary: 0.18,

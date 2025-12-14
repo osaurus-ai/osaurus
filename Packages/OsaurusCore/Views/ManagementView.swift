@@ -148,6 +148,7 @@ struct ManagementView: View {
         .frame(minWidth: 900, minHeight: 640)
         .background(theme.primaryBackground)
         .environment(\.theme, themeManager.currentTheme)
+        .tint(theme.selectionColor)
         .onAppear {
             // Slight delay to prevent initial layout jank
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {

@@ -270,6 +270,10 @@ struct ThemeEditorView: View {
                 colorRow("Glass Tint", hex: $editingTheme.colors.glassTintOverlay)
                 colorRow("Code Block", hex: $editingTheme.colors.codeBlockBackground)
             }
+
+            editorSection("Selection") {
+                colorRow("Text Selection", hex: $editingTheme.colors.selectionColor)
+            }
         }
     }
 
