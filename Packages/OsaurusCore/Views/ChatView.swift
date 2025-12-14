@@ -20,6 +20,8 @@ final class ChatSession: ObservableObject {
     @Published var modelOptions: [ModelOption] = []
     @Published var scrollTick: Int = 0
     @Published var hasAnyModel: Bool = false
+    /// Per-session tool overrides. Empty = use global config, otherwise map of tool name -> enabled
+    @Published var enabledToolOverrides: [String: Bool] = [:]
 
     // MARK: - Persistence Properties
     @Published var sessionId: UUID?
@@ -171,6 +173,7 @@ final class ChatSession: ObservableObject {
         turns.removeAll()
         input = ""
         pendingImages = []
+        enabledToolOverrides = [:]
         // Clear session identity for new chat
         sessionId = nil
         title = "New Chat"
@@ -200,7 +203,8 @@ final class ChatSession: ObservableObject {
             createdAt: createdAt,
             updatedAt: updatedAt,
             selectedModel: selectedModel,
-            turns: turnData
+            turns: turnData,
+            enabledToolOverrides: enabledToolOverrides.isEmpty ? nil : enabledToolOverrides
         )
     }
 
@@ -259,6 +263,7 @@ final class ChatSession: ObservableObject {
         }
 
         turns = data.turns.map { ChatTurn(from: $0) }
+        enabledToolOverrides = data.enabledToolOverrides ?? [:]
         input = ""
         pendingImages = []
         isDirty = false  // Fresh load, not dirty
@@ -344,7 +349,10 @@ final class ChatSession: ObservableObject {
                 let engine = ChatEngine(source: .chatUI)
                 let chatCfg = ChatConfigurationStore.load()
                 let sys = chatCfg.systemPrompt.trimmingCharacters(in: .whitespacesAndNewlines)
-                let toolSpecs = ToolRegistry.shared.specs()
+                // Use per-session tool overrides if any, otherwise use global config
+                let toolSpecs = ToolRegistry.shared.specs(
+                    withOverrides: enabledToolOverrides.isEmpty ? nil : enabledToolOverrides
+                )
 
                 @MainActor
                 func buildMessages() -> [ChatMessage] {
@@ -704,7 +712,11 @@ struct ChatView: View {
                                 text: $session.input,
                                 selectedModel: $session.selectedModel,
                                 pendingImages: $session.pendingImages,
+                                enabledToolOverrides: $session.enabledToolOverrides,
                                 modelOptions: session.modelOptions,
+                                availableTools: ToolRegistry.shared.listTools(
+                                    withOverrides: session.enabledToolOverrides
+                                ),
                                 isStreaming: session.isStreaming,
                                 supportsImages: session.selectedModelSupportsImages,
                                 onSend: { session.sendCurrent() },

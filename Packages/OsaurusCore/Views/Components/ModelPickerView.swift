@@ -24,8 +24,20 @@ struct ModelPickerView: View {
         filteredOptions.groupedBySource()
     }
 
+    /// Get the display name for the selected model
+    private var selectedModelName: String? {
+        guard let id = selectedModel else { return nil }
+        return options.first { $0.id == id }?.displayName
+    }
+
     var body: some View {
         VStack(spacing: 0) {
+            // Header
+            header
+
+            Divider()
+                .background(theme.primaryBorder.opacity(0.3))
+
             // Search field
             searchField
 
@@ -39,7 +51,7 @@ struct ModelPickerView: View {
                 modelList
             }
         }
-        .frame(width: 320, height: min(CGFloat(options.count * 44 + 100), 400))
+        .frame(width: 360, height: min(CGFloat(options.count * 52 + 140), 450))
         .background(
             RoundedRectangle(cornerRadius: 12, style: .continuous)
                 .fill(theme.primaryBackground)
@@ -50,6 +62,30 @@ struct ModelPickerView: View {
             RoundedRectangle(cornerRadius: 12, style: .continuous)
                 .strokeBorder(theme.primaryBorder.opacity(0.3), lineWidth: 0.5)
         )
+    }
+
+    // MARK: - Header
+
+    private var header: some View {
+        HStack {
+            Text("Available Models")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundColor(theme.primaryText)
+
+            Spacer()
+
+            Text("\(options.count)")
+                .font(.system(size: 11, weight: .medium))
+                .foregroundColor(theme.secondaryText)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 3)
+                .background(
+                    Capsule()
+                        .fill(theme.secondaryBackground)
+                )
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 12)
     }
 
     // MARK: - Search Field
@@ -75,7 +111,7 @@ struct ModelPickerView: View {
             }
         }
         .padding(.horizontal, 12)
-        .padding(.vertical, 10)
+        .padding(.vertical, 8)
         .background(theme.secondaryBackground.opacity(0.5))
     }
 
@@ -98,7 +134,7 @@ struct ModelPickerView: View {
 
     private var modelList: some View {
         ScrollView {
-            LazyVStack(spacing: 0, pinnedViews: [.sectionHeaders]) {
+            LazyVStack(spacing: 2, pinnedViews: [.sectionHeaders]) {
                 ForEach(groupedOptions, id: \.source) { group in
                     Section {
                         ForEach(group.models) { model in
@@ -112,16 +148,17 @@ struct ModelPickerView: View {
                             )
                         }
                     } header: {
-                        sectionHeader(for: group.source)
+                        sectionHeader(for: group.source, count: group.models.count)
                     }
                 }
             }
-            .padding(.vertical, 4)
+            .padding(.vertical, 6)
+            .padding(.horizontal, 4)
         }
     }
 
-    private func sectionHeader(for source: ModelOption.Source) -> some View {
-        HStack {
+    private func sectionHeader(for source: ModelOption.Source, count: Int) -> some View {
+        HStack(spacing: 6) {
             sourceIcon(for: source)
                 .font(.system(size: 10, weight: .semibold))
                 .foregroundColor(theme.tertiaryText)
@@ -131,11 +168,15 @@ struct ModelPickerView: View {
                 .foregroundColor(theme.secondaryText)
                 .textCase(.uppercase)
 
+            Text("(\(count))")
+                .font(.system(size: 10))
+                .foregroundColor(theme.tertiaryText)
+
             Spacer()
         }
         .padding(.horizontal, 12)
-        .padding(.vertical, 6)
-        .background(theme.primaryBackground.opacity(0.95))
+        .padding(.vertical, 8)
+        .background(theme.primaryBackground.opacity(0.98))
     }
 
     @ViewBuilder
@@ -163,25 +204,29 @@ private struct ModelRowItem: View {
 
     var body: some View {
         Button(action: onSelect) {
-            HStack(spacing: 10) {
-                // Selection indicator
-                Circle()
-                    .fill(isSelected ? theme.accentColor : Color.clear)
-                    .overlay(
+            HStack(spacing: 12) {
+                // Selection indicator using theme accent
+                ZStack {
+                    Circle()
+                        .strokeBorder(
+                            isSelected ? theme.accentColor : theme.tertiaryText.opacity(0.4),
+                            lineWidth: 1.5
+                        )
+                        .frame(width: 16, height: 16)
+
+                    if isSelected {
                         Circle()
-                            .strokeBorder(
-                                isSelected ? theme.accentColor : theme.tertiaryText.opacity(0.5),
-                                lineWidth: 1.5
-                            )
-                    )
-                    .frame(width: 14, height: 14)
+                            .fill(theme.accentColor)
+                            .frame(width: 8, height: 8)
+                    }
+                }
 
                 // Model info
-                VStack(alignment: .leading, spacing: 2) {
+                VStack(alignment: .leading, spacing: 3) {
                     HStack(spacing: 6) {
                         Text(model.displayName)
-                            .font(.system(size: 13, weight: isSelected ? .medium : .regular))
-                            .foregroundColor(theme.primaryText)
+                            .font(.system(size: 12, weight: isSelected ? .semibold : .medium))
+                            .foregroundColor(isSelected ? theme.primaryText : theme.secondaryText)
                             .lineLimit(1)
 
                         // VLM indicator
@@ -207,11 +252,18 @@ private struct ModelRowItem: View {
                 }
 
                 Spacer()
+
+                // Checkmark for selected
+                if isSelected {
+                    Image(systemName: "checkmark")
+                        .font(.system(size: 11, weight: .bold))
+                        .foregroundColor(theme.accentColor)
+                }
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 8)
             .background(
-                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
                     .fill(isHovered || isSelected ? theme.secondaryBackground.opacity(0.6) : Color.clear)
             )
             .contentShape(Rectangle())
@@ -238,8 +290,8 @@ private struct MetadataBadge: View {
             .padding(.horizontal, 5)
             .padding(.vertical, 2)
             .background(
-                RoundedRectangle(cornerRadius: 3, style: .continuous)
-                    .fill(color.opacity(0.15))
+                RoundedRectangle(cornerRadius: 4, style: .continuous)
+                    .fill(color.opacity(0.12))
             )
     }
 }
@@ -286,7 +338,7 @@ private struct MetadataBadge: View {
                     onDismiss: {}
                 )
                 .padding()
-                .frame(width: 400, height: 500)
+                .frame(width: 450, height: 550)
                 .background(Color.gray.opacity(0.2))
             }
         }

@@ -43,8 +43,21 @@ final class ToolRegistry {
 
     /// OpenAI-compatible tool specifications for the current registry
     func specs() -> [Tool] {
+        return specs(withOverrides: nil)
+    }
+
+    /// OpenAI-compatible tool specifications with optional per-session overrides
+    /// - Parameter overrides: Per-session tool enablement. nil = use global config only.
+    ///   If provided, keys in the map override global settings for those tools.
+    func specs(withOverrides overrides: [String: Bool]?) -> [Tool] {
         return toolsByName.values
-            .filter { configuration.isEnabled(name: $0.name) }
+            .filter { tool in
+                // Check per-session override first, fall back to global config
+                if let overrides = overrides, let override = overrides[tool.name] {
+                    return override
+                }
+                return configuration.isEnabled(name: tool.name)
+            }
             .map { $0.asOpenAITool() }
     }
 
@@ -148,13 +161,25 @@ final class ToolRegistry {
     // MARK: - Listing / Enablement
     /// Returns all registered tools with current enabled state.
     func listTools() -> [ToolEntry] {
+        return listTools(withOverrides: nil)
+    }
+
+    /// Returns all registered tools with enabled state computed from overrides + global config.
+    /// - Parameter overrides: Per-session tool enablement. nil = use global config only.
+    func listTools(withOverrides overrides: [String: Bool]?) -> [ToolEntry] {
         return toolsByName.values
             .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
             .map { t in
-                ToolEntry(
+                let enabled: Bool
+                if let overrides = overrides, let override = overrides[t.name] {
+                    enabled = override
+                } else {
+                    enabled = configuration.isEnabled(name: t.name)
+                }
+                return ToolEntry(
                     name: t.name,
                     description: t.description,
-                    enabled: configuration.isEnabled(name: t.name),
+                    enabled: enabled,
                     parameters: t.parameters
                 )
             }
