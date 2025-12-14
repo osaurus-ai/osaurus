@@ -174,172 +174,185 @@ public actor RemoteProviderService: ToolCapableService {
         }
 
         let urlRequest = try buildURLRequest(for: request)
+        let currentSession = self.session
 
-        return AsyncThrowingStream { continuation in
-            Task {
-                do {
-                    let (bytes, response) = try await session.bytes(for: urlRequest)
+        let (stream, continuation) = AsyncThrowingStream<String, Error>.makeStream()
 
-                    guard let httpResponse = response as? HTTPURLResponse else {
-                        continuation.finish(throwing: RemoteProviderServiceError.invalidResponse)
-                        return
-                    }
+        let producerTask = Task {
+            do {
+                let (bytes, response) = try await currentSession.bytes(for: urlRequest)
 
-                    if httpResponse.statusCode >= 400 {
-                        var errorData = Data()
-                        for try await byte in bytes {
-                            errorData.append(byte)
-                        }
-                        let errorMessage = String(data: errorData, encoding: .utf8) ?? "Unknown error"
-                        continuation.finish(
-                            throwing: RemoteProviderServiceError.requestFailed(
-                                "HTTP \(httpResponse.statusCode): \(errorMessage)"
-                            )
-                        )
-                        return
-                    }
+                guard let httpResponse = response as? HTTPURLResponse else {
+                    continuation.finish(throwing: RemoteProviderServiceError.invalidResponse)
+                    return
+                }
 
-                    // Track accumulated tool calls by index (even in streamDeltas for robustness)
-                    var accumulatedToolCalls: [Int: (id: String?, name: String?, args: String)] = [:]
-
-                    // Parse SSE stream with proper UTF-8 decoding
-                    var buffer = ""
-                    var utf8Buffer = Data()
+                if httpResponse.statusCode >= 400 {
+                    var errorData = Data()
                     for try await byte in bytes {
-                        // Check for task cancellation to allow early termination
-                        if Task.isCancelled {
-                            continuation.finish()
-                            return
+                        errorData.append(byte)
+                    }
+                    let errorMessage = String(data: errorData, encoding: .utf8) ?? "Unknown error"
+                    continuation.finish(
+                        throwing: RemoteProviderServiceError.requestFailed(
+                            "HTTP \(httpResponse.statusCode): \(errorMessage)"
+                        )
+                    )
+                    return
+                }
+
+                // Track accumulated tool calls by index (even in streamDeltas for robustness)
+                var accumulatedToolCalls: [Int: (id: String?, name: String?, args: String)] = [:]
+
+                // Parse SSE stream with proper UTF-8 decoding
+                var buffer = ""
+                var utf8Buffer = Data()
+                for try await byte in bytes {
+                    // Check for task cancellation to allow early termination
+                    if Task.isCancelled {
+                        continuation.finish()
+                        return
+                    }
+                    utf8Buffer.append(byte)
+                    // Try to decode accumulated bytes as UTF-8
+                    if let decoded = String(data: utf8Buffer, encoding: .utf8) {
+                        buffer.append(decoded)
+                        utf8Buffer.removeAll()
+                    }
+                    // If decoding fails, we have an incomplete multi-byte sequence - keep accumulating
+
+                    // Process complete lines
+                    while let newlineIndex = buffer.firstIndex(of: "\n") {
+                        let line = String(buffer[..<newlineIndex])
+                        buffer = String(buffer[buffer.index(after: newlineIndex)...])
+
+                        // Skip empty lines
+                        guard !line.trimmingCharacters(in: .whitespaces).isEmpty else {
+                            continue
                         }
-                        utf8Buffer.append(byte)
-                        // Try to decode accumulated bytes as UTF-8
-                        if let decoded = String(data: utf8Buffer, encoding: .utf8) {
-                            buffer.append(decoded)
-                            utf8Buffer.removeAll()
-                        }
-                        // If decoding fails, we have an incomplete multi-byte sequence - keep accumulating
 
-                        // Process complete lines
-                        while let newlineIndex = buffer.firstIndex(of: "\n") {
-                            let line = String(buffer[..<newlineIndex])
-                            buffer = String(buffer[buffer.index(after: newlineIndex)...])
+                        // Parse SSE data line
+                        if line.hasPrefix("data: ") {
+                            let dataContent = String(line.dropFirst(6))
 
-                            // Skip empty lines
-                            guard !line.trimmingCharacters(in: .whitespaces).isEmpty else {
-                                continue
-                            }
-
-                            // Parse SSE data line
-                            if line.hasPrefix("data: ") {
-                                let dataContent = String(line.dropFirst(6))
-
-                                // Check for stream end
-                                if dataContent.trimmingCharacters(in: .whitespaces) == "[DONE]" {
-                                    // Check for accumulated tool calls before finishing
-                                    if let firstToolCall = accumulatedToolCalls.sorted(by: { $0.key < $1.key }).first,
-                                        let toolName = firstToolCall.value.name
-                                    {
-                                        continuation.finish(
-                                            throwing: ServiceToolInvocation(
-                                                toolName: toolName,
-                                                jsonArguments: firstToolCall.value.args,
-                                                toolCallId: firstToolCall.value.id
-                                            )
+                            // Check for stream end
+                            if dataContent.trimmingCharacters(in: .whitespaces) == "[DONE]" {
+                                // Check for accumulated tool calls before finishing
+                                if let firstToolCall = accumulatedToolCalls.sorted(by: { $0.key < $1.key }).first,
+                                    let toolName = firstToolCall.value.name
+                                {
+                                    continuation.finish(
+                                        throwing: ServiceToolInvocation(
+                                            toolName: toolName,
+                                            jsonArguments: firstToolCall.value.args,
+                                            toolCallId: firstToolCall.value.id
                                         )
-                                        return
-                                    }
-                                    continuation.finish()
+                                    )
                                     return
                                 }
+                                continuation.finish()
+                                return
+                            }
 
-                                // Parse JSON chunk
-                                if let jsonData = dataContent.data(using: .utf8) {
-                                    do {
-                                        let chunk = try JSONDecoder().decode(ChatCompletionChunk.self, from: jsonData)
-                                        if let delta = chunk.choices.first?.delta.content, !delta.isEmpty {
-                                            // Check stop sequences
-                                            var output = delta
-                                            for seq in stopSequences {
-                                                if let range = output.range(of: seq) {
-                                                    output = String(output[..<range.lowerBound])
-                                                    continuation.yield(output)
-                                                    continuation.finish()
-                                                    return
-                                                }
-                                            }
-                                            continuation.yield(output)
-                                        }
-
-                                        // Accumulate tool calls by index
-                                        if let toolCalls = chunk.choices.first?.delta.tool_calls {
-                                            for toolCall in toolCalls {
-                                                let idx = toolCall.index ?? 0
-                                                var current =
-                                                    accumulatedToolCalls[idx] ?? (id: nil, name: nil, args: "")
-
-                                                if let id = toolCall.id {
-                                                    current.id = id
-                                                }
-                                                if let name = toolCall.function?.name {
-                                                    current.name = name
-                                                }
-                                                if let args = toolCall.function?.arguments {
-                                                    current.args += args
-                                                }
-                                                accumulatedToolCalls[idx] = current
-                                            }
-                                        }
-
-                                        // Check for finish reason - emit tool calls if we have any
-                                        if let finishReason = chunk.choices.first?.finish_reason,
-                                            !finishReason.isEmpty,
-                                            !accumulatedToolCalls.isEmpty
-                                        {
-                                            if let firstToolCall = accumulatedToolCalls.sorted(by: { $0.key < $1.key })
-                                                .first,
-                                                let toolName = firstToolCall.value.name
-                                            {
-                                                continuation.finish(
-                                                    throwing: ServiceToolInvocation(
-                                                        toolName: toolName,
-                                                        jsonArguments: firstToolCall.value.args,
-                                                        toolCallId: firstToolCall.value.id
-                                                    )
-                                                )
+                            // Parse JSON chunk
+                            if let jsonData = dataContent.data(using: .utf8) {
+                                do {
+                                    let chunk = try JSONDecoder().decode(ChatCompletionChunk.self, from: jsonData)
+                                    if let delta = chunk.choices.first?.delta.content, !delta.isEmpty {
+                                        // Check stop sequences
+                                        var output = delta
+                                        for seq in stopSequences {
+                                            if let range = output.range(of: seq) {
+                                                output = String(output[..<range.lowerBound])
+                                                continuation.yield(output)
+                                                continuation.finish()
                                                 return
                                             }
                                         }
-                                    } catch {
-                                        // Log parsing errors for debugging
-                                        print(
-                                            "[Osaurus] Warning: Failed to parse SSE chunk in streamDeltas: \(error.localizedDescription)"
-                                        )
+                                        continuation.yield(output)
                                     }
+
+                                    // Accumulate tool calls by index
+                                    if let toolCalls = chunk.choices.first?.delta.tool_calls {
+                                        for toolCall in toolCalls {
+                                            let idx = toolCall.index ?? 0
+                                            var current =
+                                                accumulatedToolCalls[idx] ?? (id: nil, name: nil, args: "")
+
+                                            if let id = toolCall.id {
+                                                current.id = id
+                                            }
+                                            if let name = toolCall.function?.name {
+                                                current.name = name
+                                            }
+                                            if let args = toolCall.function?.arguments {
+                                                current.args += args
+                                            }
+                                            accumulatedToolCalls[idx] = current
+                                        }
+                                    }
+
+                                    // Check for finish reason - emit tool calls if we have any
+                                    if let finishReason = chunk.choices.first?.finish_reason,
+                                        !finishReason.isEmpty,
+                                        !accumulatedToolCalls.isEmpty
+                                    {
+                                        if let firstToolCall = accumulatedToolCalls.sorted(by: { $0.key < $1.key })
+                                            .first,
+                                            let toolName = firstToolCall.value.name
+                                        {
+                                            continuation.finish(
+                                                throwing: ServiceToolInvocation(
+                                                    toolName: toolName,
+                                                    jsonArguments: firstToolCall.value.args,
+                                                    toolCallId: firstToolCall.value.id
+                                                )
+                                            )
+                                            return
+                                        }
+                                    }
+                                } catch {
+                                    // Log parsing errors for debugging
+                                    print(
+                                        "[Osaurus] Warning: Failed to parse SSE chunk in streamDeltas: \(error.localizedDescription)"
+                                    )
                                 }
                             }
                         }
                     }
+                }
 
-                    // Check for accumulated tool calls at stream end
-                    if let firstToolCall = accumulatedToolCalls.sorted(by: { $0.key < $1.key }).first,
-                        let toolName = firstToolCall.value.name
-                    {
-                        continuation.finish(
-                            throwing: ServiceToolInvocation(
-                                toolName: toolName,
-                                jsonArguments: firstToolCall.value.args,
-                                toolCallId: firstToolCall.value.id
-                            )
+                // Check for accumulated tool calls at stream end
+                if let firstToolCall = accumulatedToolCalls.sorted(by: { $0.key < $1.key }).first,
+                    let toolName = firstToolCall.value.name
+                {
+                    continuation.finish(
+                        throwing: ServiceToolInvocation(
+                            toolName: toolName,
+                            jsonArguments: firstToolCall.value.args,
+                            toolCallId: firstToolCall.value.id
                         )
-                        return
-                    }
+                    )
+                    return
+                }
 
+                continuation.finish()
+            } catch {
+                // Handle cancellation gracefully
+                if Task.isCancelled {
                     continuation.finish()
-                } catch {
+                } else {
                     continuation.finish(throwing: error)
                 }
             }
         }
+
+        // Cancel producer task when consumer stops consuming
+        continuation.onTermination = { @Sendable _ in
+            producerTask.cancel()
+        }
+
+        return stream
     }
 
     // MARK: - ToolCapableService Protocol
@@ -422,197 +435,210 @@ public actor RemoteProviderService: ToolCapableService {
         }
 
         let urlRequest = try buildURLRequest(for: request)
+        let currentSession = self.session
 
-        return AsyncThrowingStream { continuation in
-            Task {
-                do {
-                    let (bytes, response) = try await session.bytes(for: urlRequest)
+        let (stream, continuation) = AsyncThrowingStream<String, Error>.makeStream()
 
-                    guard let httpResponse = response as? HTTPURLResponse else {
-                        continuation.finish(throwing: RemoteProviderServiceError.invalidResponse)
-                        return
-                    }
+        let producerTask = Task {
+            do {
+                let (bytes, response) = try await currentSession.bytes(for: urlRequest)
 
-                    if httpResponse.statusCode >= 400 {
-                        var errorData = Data()
-                        for try await byte in bytes {
-                            errorData.append(byte)
-                        }
-                        let errorMessage = String(data: errorData, encoding: .utf8) ?? "Unknown error"
-                        continuation.finish(
-                            throwing: RemoteProviderServiceError.requestFailed(
-                                "HTTP \(httpResponse.statusCode): \(errorMessage)"
-                            )
-                        )
-                        return
-                    }
+                guard let httpResponse = response as? HTTPURLResponse else {
+                    continuation.finish(throwing: RemoteProviderServiceError.invalidResponse)
+                    return
+                }
 
-                    // Track accumulated tool calls by index (supports multiple parallel tool calls)
-                    // Structure: [index: (id, name, arguments)]
-                    var accumulatedToolCalls: [Int: (id: String?, name: String?, args: String)] = [:]
-
-                    // Track if we've seen any finish reason (for edge case handling)
-                    var hasReceivedFinishReason = false
-                    var lastFinishReason: String?
-
-                    // Parse SSE stream with proper UTF-8 decoding
-                    var buffer = ""
-                    var utf8Buffer = Data()
+                if httpResponse.statusCode >= 400 {
+                    var errorData = Data()
                     for try await byte in bytes {
-                        // Check for task cancellation to allow early termination
-                        if Task.isCancelled {
-                            continuation.finish()
-                            return
+                        errorData.append(byte)
+                    }
+                    let errorMessage = String(data: errorData, encoding: .utf8) ?? "Unknown error"
+                    continuation.finish(
+                        throwing: RemoteProviderServiceError.requestFailed(
+                            "HTTP \(httpResponse.statusCode): \(errorMessage)"
+                        )
+                    )
+                    return
+                }
+
+                // Track accumulated tool calls by index (supports multiple parallel tool calls)
+                // Structure: [index: (id, name, arguments)]
+                var accumulatedToolCalls: [Int: (id: String?, name: String?, args: String)] = [:]
+
+                // Track if we've seen any finish reason (for edge case handling)
+                var hasReceivedFinishReason = false
+                var lastFinishReason: String?
+
+                // Parse SSE stream with proper UTF-8 decoding
+                var buffer = ""
+                var utf8Buffer = Data()
+                for try await byte in bytes {
+                    // Check for task cancellation to allow early termination
+                    if Task.isCancelled {
+                        continuation.finish()
+                        return
+                    }
+                    utf8Buffer.append(byte)
+                    // Try to decode accumulated bytes as UTF-8
+                    if let decoded = String(data: utf8Buffer, encoding: .utf8) {
+                        buffer.append(decoded)
+                        utf8Buffer.removeAll()
+                    }
+                    // If decoding fails, we have an incomplete multi-byte sequence - keep accumulating
+
+                    while let newlineIndex = buffer.firstIndex(of: "\n") {
+                        let line = String(buffer[..<newlineIndex])
+                        buffer = String(buffer[buffer.index(after: newlineIndex)...])
+
+                        guard !line.trimmingCharacters(in: .whitespaces).isEmpty else {
+                            continue
                         }
-                        utf8Buffer.append(byte)
-                        // Try to decode accumulated bytes as UTF-8
-                        if let decoded = String(data: utf8Buffer, encoding: .utf8) {
-                            buffer.append(decoded)
-                            utf8Buffer.removeAll()
-                        }
-                        // If decoding fails, we have an incomplete multi-byte sequence - keep accumulating
 
-                        while let newlineIndex = buffer.firstIndex(of: "\n") {
-                            let line = String(buffer[..<newlineIndex])
-                            buffer = String(buffer[buffer.index(after: newlineIndex)...])
+                        if line.hasPrefix("data: ") {
+                            let dataContent = String(line.dropFirst(6))
 
-                            guard !line.trimmingCharacters(in: .whitespaces).isEmpty else {
-                                continue
-                            }
-
-                            if line.hasPrefix("data: ") {
-                                let dataContent = String(line.dropFirst(6))
-
-                                if dataContent.trimmingCharacters(in: .whitespaces) == "[DONE]" {
-                                    // If we accumulated any tool calls, emit the first one
-                                    // (subsequent tool calls will be handled in the next loop iteration)
-                                    if let firstToolCall = accumulatedToolCalls.sorted(by: { $0.key < $1.key }).first,
-                                        let toolName = firstToolCall.value.name
-                                    {
-                                        print(
-                                            "[Osaurus] Stream [DONE]: Emitting accumulated tool call '\(toolName)' with \(firstToolCall.value.args.count) bytes of arguments"
+                            if dataContent.trimmingCharacters(in: .whitespaces) == "[DONE]" {
+                                // If we accumulated any tool calls, emit the first one
+                                // (subsequent tool calls will be handled in the next loop iteration)
+                                if let firstToolCall = accumulatedToolCalls.sorted(by: { $0.key < $1.key }).first,
+                                    let toolName = firstToolCall.value.name
+                                {
+                                    print(
+                                        "[Osaurus] Stream [DONE]: Emitting accumulated tool call '\(toolName)' with \(firstToolCall.value.args.count) bytes of arguments"
+                                    )
+                                    continuation.finish(
+                                        throwing: ServiceToolInvocation(
+                                            toolName: toolName,
+                                            jsonArguments: firstToolCall.value.args,
+                                            toolCallId: firstToolCall.value.id
                                         )
-                                        continuation.finish(
-                                            throwing: ServiceToolInvocation(
-                                                toolName: toolName,
-                                                jsonArguments: firstToolCall.value.args,
-                                                toolCallId: firstToolCall.value.id
-                                            )
-                                        )
-                                        return
-                                    }
-                                    continuation.finish()
+                                    )
                                     return
                                 }
+                                continuation.finish()
+                                return
+                            }
 
-                                if let jsonData = dataContent.data(using: .utf8) {
-                                    do {
-                                        let chunk = try JSONDecoder().decode(ChatCompletionChunk.self, from: jsonData)
+                            if let jsonData = dataContent.data(using: .utf8) {
+                                do {
+                                    let chunk = try JSONDecoder().decode(ChatCompletionChunk.self, from: jsonData)
 
-                                        // Handle content delta
-                                        if let delta = chunk.choices.first?.delta.content, !delta.isEmpty {
-                                            var output = delta
-                                            for seq in stopSequences {
-                                                if let range = output.range(of: seq) {
-                                                    output = String(output[..<range.lowerBound])
-                                                    continuation.yield(output)
-                                                    continuation.finish()
-                                                    return
-                                                }
-                                            }
-                                            continuation.yield(output)
-                                        }
-
-                                        // Handle tool call deltas - track by index for multiple parallel tool calls
-                                        if let toolCalls = chunk.choices.first?.delta.tool_calls {
-                                            for toolCall in toolCalls {
-                                                let idx = toolCall.index ?? 0
-                                                var current =
-                                                    accumulatedToolCalls[idx] ?? (id: nil, name: nil, args: "")
-
-                                                // Preserve tool call ID from the stream
-                                                if let id = toolCall.id {
-                                                    current.id = id
-                                                }
-                                                if let name = toolCall.function?.name {
-                                                    current.name = name
-                                                    print("[Osaurus] Tool call detected: index=\(idx), name=\(name)")
-                                                }
-                                                if let args = toolCall.function?.arguments {
-                                                    current.args += args
-                                                }
-                                                accumulatedToolCalls[idx] = current
+                                    // Handle content delta
+                                    if let delta = chunk.choices.first?.delta.content, !delta.isEmpty {
+                                        var output = delta
+                                        for seq in stopSequences {
+                                            if let range = output.range(of: seq) {
+                                                output = String(output[..<range.lowerBound])
+                                                continuation.yield(output)
+                                                continuation.finish()
+                                                return
                                             }
                                         }
-
-                                        // Check finish reason - handle various formats from different providers
-                                        if let finishReason = chunk.choices.first?.finish_reason,
-                                            !finishReason.isEmpty
-                                        {
-                                            hasReceivedFinishReason = true
-                                            lastFinishReason = finishReason
-                                            print(
-                                                "[Osaurus] Received finish_reason: '\(finishReason)', accumulated tool calls: \(accumulatedToolCalls.count)"
-                                            )
-
-                                            // Emit tool call if we have accumulated data and finish reason indicates tool calls
-                                            // Some providers use "tool_calls", others might use "function_call" or just "stop"
-                                            if !accumulatedToolCalls.isEmpty {
-                                                if let firstToolCall = accumulatedToolCalls.sorted(by: {
-                                                    $0.key < $1.key
-                                                }).first,
-                                                    let toolName = firstToolCall.value.name
-                                                {
-                                                    print(
-                                                        "[Osaurus] Emitting tool call '\(toolName)' on finish_reason '\(finishReason)'"
-                                                    )
-                                                    continuation.finish(
-                                                        throwing: ServiceToolInvocation(
-                                                            toolName: toolName,
-                                                            jsonArguments: firstToolCall.value.args,
-                                                            toolCallId: firstToolCall.value.id
-                                                        )
-                                                    )
-                                                    return
-                                                }
-                                            }
-                                        }
-                                    } catch {
-                                        // Log parsing errors for debugging instead of silently ignoring
-                                        print(
-                                            "[Osaurus] Warning: Failed to parse SSE chunk: \(error.localizedDescription)"
-                                        )
-                                        print("[Osaurus] Raw chunk data: \(dataContent.prefix(500))")
+                                        continuation.yield(output)
                                     }
+
+                                    // Handle tool call deltas - track by index for multiple parallel tool calls
+                                    if let toolCalls = chunk.choices.first?.delta.tool_calls {
+                                        for toolCall in toolCalls {
+                                            let idx = toolCall.index ?? 0
+                                            var current =
+                                                accumulatedToolCalls[idx] ?? (id: nil, name: nil, args: "")
+
+                                            // Preserve tool call ID from the stream
+                                            if let id = toolCall.id {
+                                                current.id = id
+                                            }
+                                            if let name = toolCall.function?.name {
+                                                current.name = name
+                                                print("[Osaurus] Tool call detected: index=\(idx), name=\(name)")
+                                            }
+                                            if let args = toolCall.function?.arguments {
+                                                current.args += args
+                                            }
+                                            accumulatedToolCalls[idx] = current
+                                        }
+                                    }
+
+                                    // Check finish reason - handle various formats from different providers
+                                    if let finishReason = chunk.choices.first?.finish_reason,
+                                        !finishReason.isEmpty
+                                    {
+                                        hasReceivedFinishReason = true
+                                        lastFinishReason = finishReason
+                                        print(
+                                            "[Osaurus] Received finish_reason: '\(finishReason)', accumulated tool calls: \(accumulatedToolCalls.count)"
+                                        )
+
+                                        // Emit tool call if we have accumulated data and finish reason indicates tool calls
+                                        // Some providers use "tool_calls", others might use "function_call" or just "stop"
+                                        if !accumulatedToolCalls.isEmpty {
+                                            if let firstToolCall = accumulatedToolCalls.sorted(by: {
+                                                $0.key < $1.key
+                                            }).first,
+                                                let toolName = firstToolCall.value.name
+                                            {
+                                                print(
+                                                    "[Osaurus] Emitting tool call '\(toolName)' on finish_reason '\(finishReason)'"
+                                                )
+                                                continuation.finish(
+                                                    throwing: ServiceToolInvocation(
+                                                        toolName: toolName,
+                                                        jsonArguments: firstToolCall.value.args,
+                                                        toolCallId: firstToolCall.value.id
+                                                    )
+                                                )
+                                                return
+                                            }
+                                        }
+                                    }
+                                } catch {
+                                    // Log parsing errors for debugging instead of silently ignoring
+                                    print(
+                                        "[Osaurus] Warning: Failed to parse SSE chunk: \(error.localizedDescription)"
+                                    )
+                                    print("[Osaurus] Raw chunk data: \(dataContent.prefix(500))")
                                 }
                             }
                         }
                     }
+                }
 
-                    // If we have accumulated tool call data at stream end (without [DONE] or explicit finish_reason)
-                    if let firstToolCall = accumulatedToolCalls.sorted(by: { $0.key < $1.key }).first,
-                        let toolName = firstToolCall.value.name
-                    {
-                        print(
-                            "[Osaurus] Stream ended: Emitting accumulated tool call '\(toolName)' (finish_reason was: \(lastFinishReason ?? "none"))"
+                // If we have accumulated tool call data at stream end (without [DONE] or explicit finish_reason)
+                if let firstToolCall = accumulatedToolCalls.sorted(by: { $0.key < $1.key }).first,
+                    let toolName = firstToolCall.value.name
+                {
+                    print(
+                        "[Osaurus] Stream ended: Emitting accumulated tool call '\(toolName)' (finish_reason was: \(lastFinishReason ?? "none"))"
+                    )
+                    continuation.finish(
+                        throwing: ServiceToolInvocation(
+                            toolName: toolName,
+                            jsonArguments: firstToolCall.value.args,
+                            toolCallId: firstToolCall.value.id
                         )
-                        continuation.finish(
-                            throwing: ServiceToolInvocation(
-                                toolName: toolName,
-                                jsonArguments: firstToolCall.value.args,
-                                toolCallId: firstToolCall.value.id
-                            )
-                        )
-                        return
-                    }
+                    )
+                    return
+                }
 
+                continuation.finish()
+            } catch {
+                // Handle cancellation gracefully
+                if Task.isCancelled {
                     continuation.finish()
-                } catch {
+                } else {
                     print("[Osaurus] Stream error: \(error.localizedDescription)")
                     continuation.finish(throwing: error)
                 }
             }
         }
+
+        // Cancel producer task when consumer stops consuming
+        continuation.onTermination = { @Sendable _ in
+            producerTask.cancel()
+        }
+
+        return stream
     }
 
     // MARK: - Private Helpers

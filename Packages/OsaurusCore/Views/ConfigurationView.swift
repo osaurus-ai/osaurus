@@ -108,8 +108,8 @@ struct ConfigurationView: View {
                                     settingsTextField(
                                         label: "Max Tokens",
                                         text: $tempChatMaxTokens,
-                                        placeholder: "1024",
-                                        help: "Maximum response tokens. Empty uses default 1024"
+                                        placeholder: "16384",
+                                        help: "Maximum response tokens. Empty uses default 16384"
                                     )
                                     settingsTextField(
                                         label: "Top P Override",

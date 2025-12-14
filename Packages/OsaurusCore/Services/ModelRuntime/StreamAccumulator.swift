@@ -16,11 +16,16 @@ struct StreamAccumulator {
         tools: [Tool]?
     ) -> AsyncThrowingStream<ModelRuntimeEvent, Error> {
         let (stream, continuation) = AsyncThrowingStream<ModelRuntimeEvent, Error>.makeStream()
-        Task {
+        let producerTask = Task {
             var accumulated = ""
             var alreadyEmitted = 0
             let shouldCheckStop = !stopSequences.isEmpty
             for await event in events {
+                // Check for task cancellation to allow early termination
+                if Task.isCancelled {
+                    continuation.finish()
+                    return
+                }
                 if let toolCall = event.toolCall {
                     let argsData = try? JSONSerialization.data(
                         withJSONObject: toolCall.function.arguments.mapValues { $0.anyValue }
@@ -62,6 +67,12 @@ struct StreamAccumulator {
             }
             continuation.finish()
         }
+
+        // Cancel producer task when consumer stops consuming
+        continuation.onTermination = { @Sendable _ in
+            producerTask.cancel()
+        }
+
         return stream
     }
 }
