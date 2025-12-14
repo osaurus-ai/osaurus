@@ -143,7 +143,7 @@ struct ThinkingBlockView: View {
             ScrollView {
                 Text(thinking)
                     .font(theme.font(size: CGFloat(theme.bodySize) - 1, weight: .regular))
-                    .foregroundColor(theme.secondaryText)
+                    .foregroundColor(theme.primaryText.opacity(0.85))
                     .lineSpacing(4)
                     .textSelection(.enabled)
                     .frame(maxWidth: .infinity, alignment: .leading)
