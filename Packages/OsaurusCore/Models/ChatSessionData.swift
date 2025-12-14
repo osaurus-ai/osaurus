@@ -15,6 +15,8 @@ struct ChatSessionData: Codable, Identifiable, Sendable {
     var updatedAt: Date
     var selectedModel: String?
     var turns: [ChatTurnData]
+    /// Per-session tool overrides. nil = use global config, otherwise map of tool name -> enabled
+    var enabledToolOverrides: [String: Bool]?
 
     init(
         id: UUID = UUID(),
@@ -22,7 +24,8 @@ struct ChatSessionData: Codable, Identifiable, Sendable {
         createdAt: Date = Date(),
         updatedAt: Date = Date(),
         selectedModel: String? = nil,
-        turns: [ChatTurnData] = []
+        turns: [ChatTurnData] = [],
+        enabledToolOverrides: [String: Bool]? = nil
     ) {
         self.id = id
         self.title = title
@@ -30,6 +33,23 @@ struct ChatSessionData: Codable, Identifiable, Sendable {
         self.updatedAt = updatedAt
         self.selectedModel = selectedModel
         self.turns = turns
+        self.enabledToolOverrides = enabledToolOverrides
+    }
+
+    // Custom decoder for backward compatibility with sessions saved before enabledToolOverrides was added
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(UUID.self, forKey: .id)
+        title = try container.decode(String.self, forKey: .title)
+        createdAt = try container.decode(Date.self, forKey: .createdAt)
+        updatedAt = try container.decode(Date.self, forKey: .updatedAt)
+        selectedModel = try container.decodeIfPresent(String.self, forKey: .selectedModel)
+        turns = try container.decode([ChatTurnData].self, forKey: .turns)
+        enabledToolOverrides = try container.decodeIfPresent([String: Bool].self, forKey: .enabledToolOverrides)
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, title, createdAt, updatedAt, selectedModel, turns, enabledToolOverrides
     }
 
     /// Generate a title from the first user message

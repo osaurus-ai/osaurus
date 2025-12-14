@@ -13,7 +13,9 @@ struct FloatingInputCard: View {
     @Binding var text: String
     @Binding var selectedModel: String?
     @Binding var pendingImages: [Data]
+    @Binding var enabledToolOverrides: [String: Bool]
     let modelOptions: [ModelOption]
+    let availableTools: [ToolRegistry.ToolEntry]
     let isStreaming: Bool
     let supportsImages: Bool
     let onSend: () -> Void
@@ -27,8 +29,11 @@ struct FloatingInputCard: View {
     @State private var isDragOver = false
     @State private var keyMonitor: Any?
     @State private var showModelPicker = false
+    @State private var showToolPicker = false
     // Cache model options to prevent popover refresh during streaming
     @State private var cachedModelOptions: [ModelOption] = []
+    // Cache tool list to prevent popover refresh during streaming
+    @State private var cachedTools: [ToolRegistry.ToolEntry] = []
 
     // TextEditor should grow up to ~6 lines before scrolling
     private var inputFontSize: CGFloat { CGFloat(theme.bodySize) }
@@ -54,9 +59,9 @@ struct FloatingInputCard: View {
 
     var body: some View {
         VStack(spacing: 12) {
-            // Model selector chip (when multiple models available)
-            if modelOptions.count > 1 {
-                modelSelector
+            // Model and tool selector chips
+            if modelOptions.count > 1 || !availableTools.isEmpty {
+                selectorRow
             }
 
             // Main input card (with inline images)
@@ -164,6 +169,27 @@ struct FloatingInputCard: View {
         .padding(.trailing, 4)
     }
 
+    // MARK: - Selector Row (Model + Tools)
+
+    private var selectorRow: some View {
+        HStack(spacing: 8) {
+            // Model selector (when multiple models available)
+            if modelOptions.count > 1 {
+                modelSelectorChip
+            }
+
+            // Tool selector (when tools available)
+            if !availableTools.isEmpty {
+                toolSelectorChip
+            }
+
+            Spacer()
+
+            // Keyboard hint
+            keyboardHint
+        }
+    }
+
     // MARK: - Model Selector
 
     private var selectedModelOption: ModelOption? {
@@ -171,82 +197,144 @@ struct FloatingInputCard: View {
         return modelOptions.first { $0.id == id }
     }
 
-    private var modelSelector: some View {
-        HStack {
-            Button(action: { showModelPicker.toggle() }) {
-                HStack(spacing: 6) {
-                    Circle()
-                        .fill(Color.green)
-                        .frame(width: 6, height: 6)
+    private var modelSelectorChip: some View {
+        Button(action: { showModelPicker.toggle() }) {
+            HStack(spacing: 6) {
+                Circle()
+                    .fill(Color.green)
+                    .frame(width: 6, height: 6)
 
-                    // Model name with metadata badges
-                    if let option = selectedModelOption {
-                        HStack(spacing: 4) {
-                            Text(option.displayName)
-                                .font(theme.font(size: CGFloat(theme.captionSize), weight: .medium))
-                                .foregroundColor(theme.secondaryText)
-                                .lineLimit(1)
-
-                            // Show VLM indicator
-                            if option.isVLM {
-                                Image(systemName: "eye")
-                                    .font(theme.font(size: CGFloat(theme.captionSize) - 3))
-                                    .foregroundColor(theme.accentColor)
-                            }
-
-                            // Show parameter count badge
-                            if let params = option.parameterCount {
-                                Text(params)
-                                    .font(theme.font(size: CGFloat(theme.captionSize) - 3, weight: .medium))
-                                    .foregroundColor(.blue.opacity(0.8))
-                                    .padding(.horizontal, 4)
-                                    .padding(.vertical, 1)
-                                    .background(
-                                        RoundedRectangle(cornerRadius: 3, style: .continuous)
-                                            .fill(Color.blue.opacity(0.12))
-                                    )
-                            }
-                        }
-                    } else {
-                        Text("Select Model")
+                // Model name with metadata badges
+                if let option = selectedModelOption {
+                    HStack(spacing: 4) {
+                        Text(option.displayName)
                             .font(theme.font(size: CGFloat(theme.captionSize), weight: .medium))
                             .foregroundColor(theme.secondaryText)
+                            .lineLimit(1)
+
+                        // Show VLM indicator
+                        if option.isVLM {
+                            Image(systemName: "eye")
+                                .font(theme.font(size: CGFloat(theme.captionSize) - 3))
+                                .foregroundColor(theme.accentColor)
+                        }
+
+                        // Show parameter count badge
+                        if let params = option.parameterCount {
+                            Text(params)
+                                .font(theme.font(size: CGFloat(theme.captionSize) - 3, weight: .medium))
+                                .foregroundColor(.blue.opacity(0.8))
+                                .padding(.horizontal, 4)
+                                .padding(.vertical, 1)
+                                .background(
+                                    RoundedRectangle(cornerRadius: 3, style: .continuous)
+                                        .fill(Color.blue.opacity(0.12))
+                                )
+                        }
                     }
-
-                    Image(systemName: "chevron.up.chevron.down")
-                        .font(theme.font(size: CGFloat(theme.captionSize) - 3, weight: .semibold))
-                        .foregroundColor(theme.tertiaryText)
+                } else {
+                    Text("Select Model")
+                        .font(theme.font(size: CGFloat(theme.captionSize), weight: .medium))
+                        .foregroundColor(theme.secondaryText)
                 }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 6)
-                .background(
-                    Capsule()
-                        .fill(theme.secondaryBackground.opacity(0.8))
-                        .overlay(
-                            Capsule()
-                                .strokeBorder(theme.primaryBorder.opacity(0.5), lineWidth: 0.5)
-                        )
-                )
+
+                Image(systemName: "chevron.up.chevron.down")
+                    .font(theme.font(size: CGFloat(theme.captionSize) - 3, weight: .semibold))
+                    .foregroundColor(theme.tertiaryText)
             }
-            .buttonStyle(.plain)
-            .popover(isPresented: $showModelPicker, arrowEdge: .top) {
-                ModelPickerView(
-                    options: cachedModelOptions,
-                    selectedModel: $selectedModel,
-                    onDismiss: dismissModelPicker
-                )
+            .padding(.horizontal, 12)
+            .padding(.vertical, 6)
+            .background(
+                Capsule()
+                    .fill(theme.secondaryBackground.opacity(0.8))
+                    .overlay(
+                        Capsule()
+                            .strokeBorder(theme.primaryBorder.opacity(0.5), lineWidth: 0.5)
+                    )
+            )
+        }
+        .buttonStyle(.plain)
+        .popover(isPresented: $showModelPicker, arrowEdge: .top) {
+            ModelPickerView(
+                options: cachedModelOptions,
+                selectedModel: $selectedModel,
+                onDismiss: dismissModelPicker
+            )
+        }
+        .onChange(of: showModelPicker) { _, isShowing in
+            if isShowing {
+                // Snapshot options when popover opens to prevent refresh during streaming
+                cachedModelOptions = modelOptions
             }
-            .onChange(of: showModelPicker) { _, isShowing in
-                if isShowing {
-                    // Snapshot options when popover opens to prevent refresh during streaming
-                    cachedModelOptions = modelOptions
+        }
+    }
+
+    // MARK: - Tool Selector
+
+    /// Count of enabled tools (with overrides applied)
+    private var enabledToolCount: Int {
+        availableTools.filter { tool in
+            if let override = enabledToolOverrides[tool.name] {
+                return override
+            }
+            return tool.enabled
+        }.count
+    }
+
+    /// Whether any tools have been modified from global settings
+    private var hasToolOverrides: Bool {
+        !enabledToolOverrides.isEmpty
+    }
+
+    private var toolSelectorChip: some View {
+        Button(action: { showToolPicker.toggle() }) {
+            HStack(spacing: 6) {
+                Image(systemName: "wrench.and.screwdriver")
+                    .font(theme.font(size: CGFloat(theme.captionSize) - 2))
+                    .foregroundColor(hasToolOverrides ? theme.accentColor : theme.tertiaryText)
+
+                Text("\(enabledToolCount) tools")
+                    .font(theme.font(size: CGFloat(theme.captionSize), weight: .medium))
+                    .foregroundColor(theme.secondaryText)
+
+                // Show modified indicator if overrides exist
+                if hasToolOverrides {
+                    Circle()
+                        .fill(Color.orange)
+                        .frame(width: 5, height: 5)
                 }
+
+                Image(systemName: "chevron.up.chevron.down")
+                    .font(theme.font(size: CGFloat(theme.captionSize) - 3, weight: .semibold))
+                    .foregroundColor(theme.tertiaryText)
             }
-
-            Spacer()
-
-            // Keyboard hint
-            keyboardHint
+            .padding(.horizontal, 12)
+            .padding(.vertical, 6)
+            .background(
+                Capsule()
+                    .fill(theme.secondaryBackground.opacity(0.8))
+                    .overlay(
+                        Capsule()
+                            .strokeBorder(
+                                hasToolOverrides ? theme.accentColor.opacity(0.5) : theme.primaryBorder.opacity(0.5),
+                                lineWidth: 0.5
+                            )
+                    )
+            )
+        }
+        .buttonStyle(.plain)
+        .popover(isPresented: $showToolPicker, arrowEdge: .top) {
+            ToolSelectorView(
+                tools: cachedTools,
+                enabledOverrides: $enabledToolOverrides,
+                onDismiss: { showToolPicker = false }
+            )
+        }
+        .onChange(of: showToolPicker) { _, isShowing in
+            if isShowing {
+                // Snapshot tools when popover opens to prevent refresh during streaming
+                cachedTools = availableTools
+            }
         }
     }
 
@@ -623,6 +711,7 @@ extension NSImage {
             @State private var text = ""
             @State private var model: String? = "foundation"
             @State private var images: [Data] = []
+            @State private var toolOverrides: [String: Bool] = [:]
 
             var body: some View {
                 VStack {
@@ -631,6 +720,7 @@ extension NSImage {
                         text: $text,
                         selectedModel: $model,
                         pendingImages: $images,
+                        enabledToolOverrides: $toolOverrides,
                         modelOptions: [
                             .foundation(),
                             ModelOption(
@@ -640,6 +730,20 @@ extension NSImage {
                                 parameterCount: "3B",
                                 quantization: "4-bit",
                                 isVLM: false
+                            ),
+                        ],
+                        availableTools: [
+                            ToolRegistry.ToolEntry(
+                                name: "browser_screenshot",
+                                description: "Take a screenshot",
+                                enabled: true,
+                                parameters: nil
+                            ),
+                            ToolRegistry.ToolEntry(
+                                name: "browser_click",
+                                description: "Click an element",
+                                enabled: true,
+                                parameters: nil
                             ),
                         ],
                         isStreaming: false,
