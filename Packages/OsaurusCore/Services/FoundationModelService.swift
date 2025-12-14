@@ -84,7 +84,7 @@ actor FoundationModelService: ToolCapableService {
                 )
 
                 let (stream, continuation) = AsyncThrowingStream<String, Error>.makeStream()
-                Task {
+                let producerTask = Task {
                     var previous = ""
                     do {
                         var iterator = session.streamResponse(to: prompt, options: options).makeAsyncIterator()
@@ -113,9 +113,20 @@ actor FoundationModelService: ToolCapableService {
                         }
                         continuation.finish()
                     } catch {
-                        continuation.finish(throwing: error)
+                        // Handle cancellation gracefully
+                        if Task.isCancelled {
+                            continuation.finish()
+                        } else {
+                            continuation.finish(throwing: error)
+                        }
                     }
                 }
+
+                // Cancel producer task when consumer stops consuming
+                continuation.onTermination = { @Sendable _ in
+                    producerTask.cancel()
+                }
+
                 return stream
             } else {
                 throw FoundationModelServiceError.notAvailable
@@ -214,7 +225,7 @@ actor FoundationModelService: ToolCapableService {
 
                 let session = LanguageModelSession(model: .default, tools: appleTools, instructions: nil)
                 let (stream, continuation) = AsyncThrowingStream<String, Error>.makeStream()
-                Task {
+                let producerTask = Task {
                     var previous = ""
                     do {
                         var iterator = session.streamResponse(to: prompt, options: options).makeAsyncIterator()
@@ -254,9 +265,20 @@ actor FoundationModelService: ToolCapableService {
                             continuation.finish(throwing: error)
                         }
                     } catch {
-                        continuation.finish(throwing: error)
+                        // Handle cancellation gracefully
+                        if Task.isCancelled {
+                            continuation.finish()
+                        } else {
+                            continuation.finish(throwing: error)
+                        }
                     }
                 }
+
+                // Cancel producer task when consumer stops consuming
+                continuation.onTermination = { @Sendable _ in
+                    producerTask.cancel()
+                }
+
                 return stream
             } else {
                 throw FoundationModelServiceError.notAvailable

@@ -128,7 +128,7 @@ actor ModelRuntime {
             repetitionPenalty: nil
         )
         let (stream, continuation) = AsyncStream<String>.makeStream()
-        Task {
+        let producerTask = Task {
             do {
                 let events = try await generateEventStream(
                     chatBuilder: { ModelRuntime.mapMessagesToMLX(messages) },
@@ -156,6 +156,12 @@ actor ModelRuntime {
             }
             continuation.finish()
         }
+
+        // Cancel producer task when consumer stops consuming
+        continuation.onTermination = { @Sendable _ in
+            producerTask.cancel()
+        }
+
         return stream
     }
 
@@ -267,7 +273,7 @@ actor ModelRuntime {
             modelName: modelName
         )
         let (stream, continuation) = AsyncThrowingStream<String, Error>.makeStream()
-        Task {
+        let producerTask = Task {
             do {
                 for try await ev in events {
                     // Check for task cancellation to allow early termination
@@ -287,9 +293,20 @@ actor ModelRuntime {
                 }
                 continuation.finish()
             } catch {
-                continuation.finish(throwing: error)
+                // Handle cancellation gracefully
+                if Task.isCancelled {
+                    continuation.finish()
+                } else {
+                    continuation.finish(throwing: error)
+                }
             }
         }
+
+        // Cancel producer task when consumer stops consuming
+        continuation.onTermination = { @Sendable _ in
+            producerTask.cancel()
+        }
+
         return stream
     }
 

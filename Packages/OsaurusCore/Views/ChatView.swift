@@ -400,7 +400,7 @@ final class ChatSession: ObservableObject {
                         model: selectedModel ?? "default",
                         messages: buildMessages(),
                         temperature: chatCfg.temperature,
-                        max_tokens: chatCfg.maxTokens ?? 1024,
+                        max_tokens: chatCfg.maxTokens ?? 16384,
                         stream: true,
                         top_p: chatCfg.topPOverride,
                         frequency_penalty: nil,

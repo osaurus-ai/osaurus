@@ -57,7 +57,7 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
     func streamChat(request: ChatCompletionRequest) async throws -> AsyncThrowingStream<String, Error> {
         let messages = await enrichMessagesWithSystemPrompt(request.messages)
         let temperature = request.temperature
-        let maxTokens = request.max_tokens ?? 1024
+        let maxTokens = request.max_tokens ?? 16384
         let repPenalty: Float? = {
             // Map OpenAI penalties (presence/frequency) to a simple repetition penalty if provided
             if let fp = request.frequency_penalty, fp > 0 { return 1.0 + fp }
@@ -128,8 +128,9 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
         }
     }
 
-    /// Wraps an async stream to count output tokens and log on completion
-    /// Uses Task.detached to avoid actor isolation deadlocks when consumed from MainActor
+    /// Wraps an async stream to count output tokens and log on completion.
+    /// Uses Task.detached to avoid actor isolation deadlocks when consumed from MainActor.
+    /// Properly handles cancellation via onTermination handler to prevent orphaned tasks.
     private func wrapStreamWithLogging(
         _ inner: AsyncThrowingStream<String, Error>,
         source: InferenceSource,
@@ -140,10 +141,11 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
     ) -> AsyncThrowingStream<String, Error> {
         let (stream, continuation) = AsyncThrowingStream<String, Error>.makeStream()
 
+        // Create the producer task and store reference for cancellation
         // IMPORTANT: Use Task.detached to run on cooperative thread pool instead of
         // ChatEngine actor's executor. This prevents deadlocks when the MainActor
         // consumes this stream while waiting for actor-isolated yields.
-        Task.detached(priority: .userInitiated) {
+        let producerTask = Task.detached(priority: .userInitiated) {
             let startTime = Date()
             var outputTokenCount = 0
             var deltaCount = 0
@@ -193,6 +195,12 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
                 finishReason = .toolCalls
                 continuation.finish(throwing: inv)
             } catch {
+                // Check if this is a CancellationError (expected when consumer stops)
+                if Task.isCancelled || error is CancellationError {
+                    print("[Osaurus][Stream] Stream cancelled after \(deltaCount) deltas")
+                    continuation.finish()
+                    return
+                }
                 print("[Osaurus][Stream] Stream error after \(deltaCount) deltas: \(error.localizedDescription)")
                 finishReason = .error
                 errorMsg = error.localizedDescription
@@ -222,6 +230,21 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
             }
         }
 
+        // Set up termination handler to cancel the producer task when consumer stops consuming
+        // This ensures proper cleanup when the UI task is cancelled or completes early
+        continuation.onTermination = { @Sendable termination in
+            switch termination {
+            case .cancelled:
+                print("[Osaurus][Stream] Consumer cancelled - stopping producer task")
+                producerTask.cancel()
+            case .finished:
+                // Normal completion, producer should already be done
+                break
+            @unknown default:
+                producerTask.cancel()
+            }
+        }
+
         return stream
     }
 
@@ -230,7 +253,7 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
         let messages = await enrichMessagesWithSystemPrompt(request.messages)
         let inputTokens = estimateInputTokens(messages)
         let temperature = request.temperature
-        let maxTokens = request.max_tokens ?? 1024
+        let maxTokens = request.max_tokens ?? 16384
         let repPenalty2: Float? = {
             if let fp = request.frequency_penalty, fp > 0 { return 1.0 + fp }
             if let pp = request.presence_penalty, pp > 0 { return 1.0 + pp }
