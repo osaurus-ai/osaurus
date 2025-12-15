@@ -50,7 +50,8 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegat
         // Create status bar item and attach click handler
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         if let button = item.button {
-            if let image = NSImage(systemSymbolName: "brain", accessibilityDescription: "Osaurus") {
+            if let image = NSImage(named: "osaurus") {
+                image.size = NSSize(width: 18, height: 18)
                 image.isTemplate = true
                 button.image = image
             } else {
@@ -189,15 +190,9 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegat
         // Ensure no NSMenu is attached so button action is triggered
         statusItem.menu = nil
         if let button = statusItem.button {
-            // Update symbol based on server activity
-            let isActive = (serverController.serverHealth == .running) || serverController.isRestarting
-            let desiredName = isActive ? "brain.fill" : "brain"
-            var image = NSImage(systemSymbolName: desiredName, accessibilityDescription: "Osaurus")
-            if image == nil && isActive {
-                // Fallback if brain.fill is unavailable on this macOS version
-                image = NSImage(systemSymbolName: "brain", accessibilityDescription: "Osaurus")
-            }
-            if let image {
+            // Update status bar icon
+            if let image = NSImage(named: "osaurus") {
+                image.size = NSSize(width: 18, height: 18)
                 image.isTemplate = true
                 button.image = image
             }
@@ -553,6 +548,7 @@ extension AppDelegate {
                 deeplinkFile: deeplinkFile
             )
             .environmentObject(self.serverController)
+            .environmentObject(self.updater)
             .environment(\.theme, themeManager.currentTheme)
 
             let hostingController = NSHostingController(rootView: root)
@@ -561,15 +557,26 @@ extension AppDelegate {
                 window.contentViewController = hostingController
                 if window.isMiniaturized { window.deminiaturize(nil) }
                 NSApp.activate(ignoringOtherApps: true)
-                window.center()
+                self.centerWindowOnActiveScreen(window)
                 window.makeKeyAndOrderFront(nil)
                 window.orderFrontRegardless()
                 NSLog("[Management] Reused existing window and brought to front")
                 return
             }
 
+            // Calculate centered position on active screen before creating window
+            let defaultSize = NSSize(width: 900, height: 640)
+            let mouse = NSEvent.mouseLocation
+            let screen = NSScreen.screens.first { NSMouseInRect(mouse, $0.frame, false) } ?? NSScreen.main
+            let initialRect: NSRect
+            if let s = screen {
+                initialRect = self.centeredRect(size: defaultSize, on: s)
+            } else {
+                initialRect = NSRect(x: 0, y: 0, width: defaultSize.width, height: defaultSize.height)
+            }
+
             let window = NSWindow(
-                contentRect: NSRect(x: 0, y: 0, width: 820, height: 640),
+                contentRect: initialRect,
                 styleMask: [.titled, .closable, .fullSizeContentView],
                 backing: .buffered,
                 defer: false
@@ -577,8 +584,9 @@ extension AppDelegate {
             window.titleVisibility = .hidden
             window.titlebarAppearsTransparent = true
             window.isMovableByWindowBackground = true
+            window.standardWindowButton(.miniaturizeButton)?.isHidden = true
+            window.standardWindowButton(.zoomButton)?.isHidden = true
             window.contentViewController = hostingController
-            window.center()
             window.delegate = self
             window.isReleasedWhenClosed = false
             self.managementWindow = window

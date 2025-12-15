@@ -16,7 +16,7 @@ enum ModelListTab: String, CaseIterable, AnimatedTabItem {
     case all = "All"
 
     /// Curated list of recommended models
-    case suggested = "Suggested"
+    case suggested = "Recommended"
 
     /// Only models downloaded locally
     case downloaded = "Downloaded"

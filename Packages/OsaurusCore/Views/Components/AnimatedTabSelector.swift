@@ -97,6 +97,7 @@ private struct AnimatedTabButton<Tab: AnimatedTabItem>: View {
                         )
                 }
             }
+            .fixedSize()
             .padding(.horizontal, 14)
             .padding(.vertical, 8)
             .background(

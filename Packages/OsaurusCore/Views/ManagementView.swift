@@ -47,12 +47,14 @@ enum ManagementTab: String, CaseIterable {
 struct ManagementView: View {
     @StateObject private var themeManager = ThemeManager.shared
     @StateObject private var repoService = PluginRepositoryService.shared
+    @EnvironmentObject private var updater: UpdaterViewModel
 
     /// Use computed property to always get the current theme from ThemeManager
     private var theme: ThemeProtocol { themeManager.currentTheme }
 
     @State private var selectedTab: String
     @State private var hasAppeared = false
+    @State private var searchText: String = ""
 
     var deeplinkModelId: String?
     var deeplinkFile: String?
@@ -118,6 +120,7 @@ struct ManagementView: View {
     var body: some View {
         SidebarNavigation(
             selection: $selectedTab,
+            searchText: $searchText,
             items: sidebarItems
         ) { selected in
             Group {
@@ -138,12 +141,16 @@ struct ManagementView: View {
                 case ManagementTab.server.rawValue:
                     ServerView()
                 case ManagementTab.settings.rawValue:
-                    ConfigurationView()
+                    ConfigurationView(searchText: $searchText)
                 default:
                     Text("Unknown tab")
                 }
             }
             .opacity(hasAppeared ? 1 : 0)
+        } footer: {
+            SidebarUpdateButton {
+                updater.checkForUpdates()
+            }
         }
         .frame(minWidth: 900, minHeight: 640)
         .background(theme.primaryBackground)
@@ -154,6 +161,20 @@ struct ManagementView: View {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
                 withAnimation(.easeOut(duration: 0.2)) {
                     hasAppeared = true
+                }
+            }
+        }
+        .onChange(of: selectedTab) { _, newTab in
+            // Clear search when switching away from settings
+            if newTab != ManagementTab.settings.rawValue && !searchText.isEmpty {
+                searchText = ""
+            }
+        }
+        .onChange(of: searchText) { _, newValue in
+            // Navigate to Settings when user starts typing in search
+            if !newValue.isEmpty && selectedTab != ManagementTab.settings.rawValue {
+                withAnimation(.easeOut(duration: 0.2)) {
+                    selectedTab = ManagementTab.settings.rawValue
                 }
             }
         }

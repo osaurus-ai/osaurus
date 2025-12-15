@@ -27,22 +27,70 @@ struct SidebarItemData: Identifiable, Hashable {
 
 // MARK: - Sidebar Navigation View
 
-struct SidebarNavigation<Content: View>: View {
+struct SidebarNavigation<Content: View, Footer: View>: View {
     @Environment(\.theme) private var theme
     @Binding var selection: String
+    @Binding var searchText: String
     let items: [SidebarItemData]
     let content: (String) -> Content
+    let footer: () -> Footer
 
+    @State private var isCollapsed = false
     @Namespace private var sidebarNamespace
+
+    private var sidebarWidth: CGFloat {
+        isCollapsed ? 64 : 200
+    }
+
+    init(
+        selection: Binding<String>,
+        searchText: Binding<String>,
+        items: [SidebarItemData],
+        @ViewBuilder content: @escaping (String) -> Content,
+        @ViewBuilder footer: @escaping () -> Footer
+    ) {
+        self._selection = selection
+        self._searchText = searchText
+        self.items = items
+        self.content = content
+        self.footer = footer
+    }
 
     var body: some View {
         HStack(spacing: 0) {
             // Sidebar
-            VStack(alignment: .leading, spacing: 4) {
+            VStack(alignment: isCollapsed ? .center : .leading, spacing: isCollapsed ? 6 : 4) {
+                // Toggle button
+                Button(action: {
+                    withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+                        isCollapsed.toggle()
+                    }
+                }) {
+                    Image(systemName: "sidebar.left")
+                        .font(.system(size: 14, weight: .medium))
+                        .foregroundColor(theme.secondaryText)
+                        .frame(width: isCollapsed ? 44 : 28, height: 28)
+                        .background(
+                            RoundedRectangle(cornerRadius: 6)
+                                .fill(theme.tertiaryBackground.opacity(0.5))
+                        )
+                }
+                .buttonStyle(PlainButtonStyle())
+                .help(isCollapsed ? "Expand Sidebar" : "Collapse Sidebar")
+                .frame(maxWidth: .infinity, alignment: isCollapsed ? .center : .trailing)
+                .padding(.bottom, isCollapsed ? 12 : 8)
+
+                // Search field (only shown when expanded)
+                if !isCollapsed {
+                    SidebarSearchField(text: $searchText)
+                        .padding(.bottom, 8)
+                }
+
                 ForEach(items) { item in
                     SidebarItemView(
                         item: item,
                         isSelected: selection == item.id,
+                        isCollapsed: isCollapsed,
                         namespace: sidebarNamespace
                     ) {
                         withAnimation(.easeOut(duration: 0.2)) {
@@ -52,16 +100,24 @@ struct SidebarNavigation<Content: View>: View {
                 }
 
                 Spacer()
+
+                // Footer (hidden when collapsed for cleaner look)
+                if !isCollapsed {
+                    footer()
+                }
             }
-            .padding(.vertical, 16)
-            .padding(.horizontal, 12)
-            .frame(width: 200)
+            .padding(.top, 26)
+            .padding(.bottom, 16)
+            .padding(.horizontal, isCollapsed ? 8 : 12)
+            .frame(width: sidebarWidth)
             .background(theme.sidebarBackground)
+            .animation(.spring(response: 0.3, dampingFraction: 0.8), value: isCollapsed)
 
             // Divider
             Rectangle()
                 .fill(theme.primaryBorder)
                 .frame(width: 1)
+                .ignoresSafeArea(edges: .top)
 
             // Content area with crossfade transition
             ZStack {
@@ -72,6 +128,23 @@ struct SidebarNavigation<Content: View>: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .animation(.easeOut(duration: 0.2), value: selection)
         }
+        .ignoresSafeArea(edges: .top)
+    }
+}
+
+// Convenience initializer without footer
+extension SidebarNavigation where Footer == EmptyView {
+    init(
+        selection: Binding<String>,
+        searchText: Binding<String>,
+        items: [SidebarItemData],
+        @ViewBuilder content: @escaping (String) -> Content
+    ) {
+        self._selection = selection
+        self._searchText = searchText
+        self.items = items
+        self.content = content
+        self.footer = { EmptyView() }
     }
 }
 
@@ -82,6 +155,7 @@ private struct SidebarItemView: View {
 
     let item: SidebarItemData
     let isSelected: Bool
+    let isCollapsed: Bool
     let namespace: Namespace.ID
     let action: () -> Void
 
@@ -89,45 +163,79 @@ private struct SidebarItemView: View {
 
     var body: some View {
         Button(action: action) {
-            HStack(spacing: 10) {
-                Image(systemName: item.icon)
-                    .font(.system(size: 16, weight: .medium))
-                    .foregroundColor(isSelected ? theme.accentColor : theme.secondaryText)
-                    .frame(width: 24)
-
-                Text(item.label)
-                    .font(.system(size: 13, weight: isSelected ? .semibold : .regular, design: .rounded))
-                    .foregroundColor(isSelected ? theme.primaryText : theme.secondaryText)
-
-                Spacer()
-
-                if let badge = item.badge, badge > 0 {
-                    Text("\(badge)")
-                        .font(.system(size: 11, weight: .bold, design: .rounded))
-                        .foregroundColor(.white)
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 2)
-                        .background(
-                            Capsule()
-                                .fill(Color.orange)
-                        )
-                }
-            }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 10)
-            .background(
+            if isCollapsed {
+                // Collapsed: icon only, centered with clean styling
                 ZStack {
-                    if isSelected {
-                        RoundedRectangle(cornerRadius: 8)
-                            .fill(theme.sidebarSelectedBackground)
-                            .matchedGeometryEffect(id: "sidebar_selection", in: namespace)
-                    } else if isHovering {
-                        RoundedRectangle(cornerRadius: 8)
-                            .fill(theme.tertiaryBackground.opacity(0.5))
+                    Image(systemName: item.icon)
+                        .font(.system(size: 18, weight: .medium))
+                        .foregroundColor(isSelected ? theme.accentColor : theme.secondaryText)
+                        .symbolRenderingMode(.hierarchical)
+
+                    // Badge overlay for collapsed state
+                    if let badge = item.badge, badge > 0 {
+                        Circle()
+                            .fill(Color.orange)
+                            .frame(width: 8, height: 8)
+                            .offset(x: 12, y: -12)
                     }
                 }
-            )
-            .contentShape(RoundedRectangle(cornerRadius: 8))
+                .frame(width: 44, height: 40)
+                .background(
+                    RoundedRectangle(cornerRadius: 10)
+                        .fill(
+                            isSelected
+                                ? theme.sidebarSelectedBackground
+                                : (isHovering ? theme.tertiaryBackground.opacity(0.6) : Color.clear)
+                        )
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 10)
+                        .stroke(isSelected ? theme.accentColor.opacity(0.3) : Color.clear, lineWidth: 1)
+                )
+                .contentShape(RoundedRectangle(cornerRadius: 10))
+                .help(item.label)
+            } else {
+                // Expanded: full row
+                HStack(spacing: 10) {
+                    Image(systemName: item.icon)
+                        .font(.system(size: 16, weight: .medium))
+                        .foregroundColor(isSelected ? theme.accentColor : theme.secondaryText)
+                        .frame(width: 24)
+
+                    Text(item.label)
+                        .font(.system(size: 13, weight: isSelected ? .semibold : .regular, design: .rounded))
+                        .foregroundColor(isSelected ? theme.primaryText : theme.secondaryText)
+
+                    Spacer()
+
+                    if let badge = item.badge, badge > 0 {
+                        Text("\(badge)")
+                            .font(.system(size: 11, weight: .bold, design: .rounded))
+                            .foregroundColor(.white)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(
+                                Capsule()
+                                    .fill(Color.orange)
+                            )
+                    }
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 10)
+                .background(
+                    ZStack {
+                        if isSelected {
+                            RoundedRectangle(cornerRadius: 8)
+                                .fill(theme.sidebarSelectedBackground)
+                                .matchedGeometryEffect(id: "sidebar_selection", in: namespace)
+                        } else if isHovering {
+                            RoundedRectangle(cornerRadius: 8)
+                                .fill(theme.tertiaryBackground.opacity(0.5))
+                        }
+                    }
+                )
+                .contentShape(RoundedRectangle(cornerRadius: 8))
+            }
         }
         .buttonStyle(PlainButtonStyle())
         .onHover { hovering in
@@ -154,15 +262,113 @@ struct SidebarSectionHeader: View {
     }
 }
 
+// MARK: - Sidebar Search Field
+
+struct SidebarSearchField: View {
+    @Environment(\.theme) private var theme
+    @Binding var text: String
+    @FocusState private var isFocused: Bool
+    @State private var isHovering = false
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: 12, weight: .medium))
+                .foregroundColor(isFocused ? theme.accentColor : theme.tertiaryText)
+
+            ZStack(alignment: .leading) {
+                // Custom placeholder for better visibility
+                if text.isEmpty {
+                    Text("Search Settings")
+                        .font(.system(size: 12))
+                        .foregroundColor(theme.secondaryText)
+                        .allowsHitTesting(false)
+                }
+                TextField("", text: $text)
+                    .textFieldStyle(.plain)
+                    .font(.system(size: 12))
+                    .foregroundColor(theme.primaryText)
+                    .focused($isFocused)
+            }
+
+            if !text.isEmpty {
+                Button(action: { text = "" }) {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.system(size: 11))
+                        .foregroundColor(isHovering ? theme.secondaryText : theme.tertiaryText)
+                }
+                .buttonStyle(PlainButtonStyle())
+                .onHover { hovering in
+                    isHovering = hovering
+                }
+            }
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 7)
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(theme.tertiaryBackground)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8)
+                        .stroke(
+                            isFocused ? theme.accentColor.opacity(0.6) : theme.primaryBorder.opacity(0.5),
+                            lineWidth: 1
+                        )
+                )
+        )
+        .animation(.easeOut(duration: 0.15), value: isFocused)
+    }
+}
+
+// MARK: - Sidebar Update Button
+
+struct SidebarUpdateButton: View {
+    @Environment(\.theme) private var theme
+    let action: () -> Void
+
+    @State private var isHovering = false
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 8) {
+                Image(systemName: "arrow.up.circle")
+                    .font(.system(size: 14, weight: .medium))
+
+                Text("Check for Updates")
+                    .font(.system(size: 12, weight: .medium))
+
+                Spacer()
+            }
+            .foregroundColor(theme.secondaryText)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            .background(
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(isHovering ? theme.tertiaryBackground : Color.clear)
+            )
+            .contentShape(RoundedRectangle(cornerRadius: 8))
+        }
+        .buttonStyle(PlainButtonStyle())
+        .onHover { hovering in
+            withAnimation(.easeOut(duration: 0.15)) {
+                isHovering = hovering
+            }
+        }
+        .help("Check for app updates")
+    }
+}
+
 // MARK: - Preview
 
 #Preview {
     struct PreviewWrapper: View {
         @State private var selection = "models"
+        @State private var searchText = ""
 
         var body: some View {
             SidebarNavigation(
                 selection: $selection,
+                searchText: $searchText,
                 items: [
                     SidebarItemData(id: "models", icon: "cube.box.fill", label: "Models"),
                     SidebarItemData(id: "tools", icon: "wrench.and.screwdriver.fill", label: "Tools", badge: 2),
