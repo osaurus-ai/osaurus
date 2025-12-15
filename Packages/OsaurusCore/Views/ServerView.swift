@@ -327,7 +327,6 @@ struct ServerView: View {
 
                 let durationMs = Date().timeIntervalSince(startTime) * 1000
                 let statusCode = (response as? HTTPURLResponse)?.statusCode ?? 0
-                let responseBody = String(data: data, encoding: .utf8)
 
                 await MainActor.run {
                     endpointResponses[endpoint.path] = EndpointTestResult(

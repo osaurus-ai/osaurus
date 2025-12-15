@@ -467,7 +467,6 @@ public actor RemoteProviderService: ToolCapableService {
                 var accumulatedToolCalls: [Int: (id: String?, name: String?, args: String)] = [:]
 
                 // Track if we've seen any finish reason (for edge case handling)
-                var hasReceivedFinishReason = false
                 var lastFinishReason: String?
 
                 // Parse SSE stream with proper UTF-8 decoding
@@ -564,7 +563,6 @@ public actor RemoteProviderService: ToolCapableService {
                                     if let finishReason = chunk.choices.first?.finish_reason,
                                         !finishReason.isEmpty
                                     {
-                                        hasReceivedFinishReason = true
                                         lastFinishReason = finishReason
                                         print(
                                             "[Osaurus] Received finish_reason: '\(finishReason)', accumulated tool calls: \(accumulatedToolCalls.count)"

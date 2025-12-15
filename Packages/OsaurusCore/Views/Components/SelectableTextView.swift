@@ -314,8 +314,8 @@ struct SelectableTextView: NSViewRepresentable {
                 let traits = existingFont.fontDescriptor.symbolicTraits
 
                 // Determine weight and italic from existing font
-                var isBold = traits.contains(.bold) || baseWeight == .bold || baseWeight == .semibold
-                var fontIsItalic = traits.contains(.italic) || isItalic
+                let isBold = traits.contains(.bold) || baseWeight == .bold || baseWeight == .semibold
+                let fontIsItalic = traits.contains(.italic) || isItalic
 
                 // Check for inline code (usually monospace)
                 if existingFont.fontDescriptor.symbolicTraits.contains(.monoSpace) {
