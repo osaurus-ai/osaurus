@@ -160,28 +160,30 @@ struct ThemeEditorView: View {
 
     private var tabSelector: some View {
         ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 4) {
+            HStack(spacing: 6) {
                 ForEach(EditorTab.allCases, id: \.rawValue) { tab in
                     Button(action: { selectedTab = tab }) {
-                        HStack(spacing: 6) {
+                        HStack(spacing: 8) {
                             Image(systemName: tab.icon)
-                                .font(.system(size: 11))
+                                .font(.system(size: 13))
                             Text(tab.rawValue)
-                                .font(.system(size: 12, weight: .medium))
+                                .font(.system(size: 13, weight: .medium))
                         }
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 8)
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 10)
+                        .frame(minHeight: 36)
                         .background(
-                            RoundedRectangle(cornerRadius: 6)
+                            RoundedRectangle(cornerRadius: 8)
                                 .fill(selectedTab == tab ? currentTheme.accentColor : Color.clear)
                         )
                         .foregroundColor(selectedTab == tab ? .white : currentTheme.secondaryText)
+                        .contentShape(RoundedRectangle(cornerRadius: 8))
                     }
                     .buttonStyle(PlainButtonStyle())
                 }
             }
             .padding(.horizontal, 16)
-            .padding(.vertical, 8)
+            .padding(.vertical, 10)
         }
         .background(currentTheme.tertiaryBackground.opacity(0.5))
     }
@@ -446,7 +448,7 @@ struct ThemeEditorView: View {
     private var glassEditor: some View {
         VStack(alignment: .leading, spacing: 16) {
             editorSection("Glass Effect") {
-                Toggle("Enable Glass Effect", isOn: $editingTheme.glass.enabled)
+                Toggle("Enable Glass Effect", isOn: $editingTheme.glass.enabled.animation(.easeInOut(duration: 0.2)))
                     .font(.system(size: 13))
 
                 Text(
@@ -470,6 +472,7 @@ struct ThemeEditorView: View {
                         Text("Under Window").tag(ThemeGlass.GlassMaterial.underWindowBackground)
                     }
                 }
+                .transition(.opacity.combined(with: .move(edge: .top)))
 
                 editorSection("Blur & Opacity") {
                     sliderRow("Blur Radius", value: $editingTheme.glass.blurRadius, range: 0 ... 60)
@@ -477,6 +480,7 @@ struct ThemeEditorView: View {
                     sliderRow("Secondary Opacity", value: $editingTheme.glass.opacitySecondary, range: 0 ... 1)
                     sliderRow("Tertiary Opacity", value: $editingTheme.glass.opacityTertiary, range: 0 ... 1)
                 }
+                .transition(.opacity.combined(with: .move(edge: .top)))
 
                 editorSection("Tint") {
                     colorRowOptional("Tint Color", hex: $editingTheme.glass.tintColor)
@@ -489,6 +493,7 @@ struct ThemeEditorView: View {
                         range: 0 ... 1
                     )
                 }
+                .transition(.opacity.combined(with: .move(edge: .top)))
 
                 editorSection("Edge Light") {
                     colorRow("Color", hex: $editingTheme.glass.edgeLight)
@@ -501,8 +506,10 @@ struct ThemeEditorView: View {
                         range: 0 ... 4
                     )
                 }
+                .transition(.opacity.combined(with: .move(edge: .top)))
             }
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     // MARK: - Typography Editor
