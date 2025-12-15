@@ -33,6 +33,37 @@ final class ToolRegistry {
         let description: String
         var enabled: Bool
         let parameters: JSONValue?
+
+        /// Estimated tokens this tool definition adds to context (rough heuristic: ~4 chars per token)
+        var estimatedTokens: Int {
+            var total = name.count + description.count
+            if let params = parameters {
+                total += Self.estimateJSONSize(params)
+            }
+            // Add overhead for JSON structure (type, function wrapper, etc.)
+            total += 50
+            return max(1, total / 4)
+        }
+
+        /// Recursively estimate the serialized size of a JSONValue
+        private static func estimateJSONSize(_ value: JSONValue) -> Int {
+            switch value {
+            case .null:
+                return 4  // "null"
+            case .bool(let b):
+                return b ? 4 : 5  // "true" or "false"
+            case .number(let n):
+                return String(n).count
+            case .string(let s):
+                return s.count + 2  // quotes
+            case .array(let arr):
+                return arr.reduce(2) { $0 + estimateJSONSize($1) + 1 }  // brackets + commas
+            case .object(let dict):
+                return dict.reduce(2) { acc, pair in
+                    acc + pair.key.count + 3 + estimateJSONSize(pair.value) + 1  // key + quotes + colon + value + comma
+                }
+            }
+        }
     }
 
     private init() {}

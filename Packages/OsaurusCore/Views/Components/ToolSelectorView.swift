@@ -290,6 +290,18 @@ private struct ToolRowItem: View {
             }
 
             Spacer()
+
+            // Token estimate (subtle)
+            HStack(spacing: 2) {
+                Text("~\(tool.estimatedTokens)")
+                    .font(.system(size: 10, weight: .medium, design: .monospaced))
+                    .foregroundColor(theme.tertiaryText)
+
+                Text("tokens")
+                    .font(.system(size: 9, weight: .regular))
+                    .foregroundColor(theme.tertiaryText.opacity(0.6))
+            }
+            .help("Adds ~\(tool.estimatedTokens) tokens to context when enabled")
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
