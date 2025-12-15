@@ -244,7 +244,12 @@ struct ModelDownloadView: View {
     private var filteredSuggestedModels: [MLXModel] {
         let filtered = SearchService.filterModels(modelManager.suggestedModels, with: searchText)
         return filtered.sorted { lhs, rhs in
-            lhs.name.localizedCaseInsensitiveCompare(rhs.name) == .orderedAscending
+            // Top suggestions first
+            if lhs.isTopSuggestion != rhs.isTopSuggestion {
+                return lhs.isTopSuggestion
+            }
+            // Then alphabetically
+            return lhs.name.localizedCaseInsensitiveCompare(rhs.name) == .orderedAscending
         }
     }
 
