@@ -708,225 +708,122 @@ final class ModelManager: NSObject, ObservableObject {
 extension ModelManager {
     /// Fully curated models with descriptions we control. Order matters.
     fileprivate static let curatedSuggestedModels: [MLXModel] = [
-        // Top suggestion — Gemma 3n E4B IT LM (4-bit)
+        // MARK: Top Picks
+
         MLXModel(
             id: "mlx-community/gemma-3n-E4B-it-lm-4bit",
             name: friendlyName(from: "mlx-community/gemma-3n-E4B-it-lm-4bit"),
-            description:
-                "Gemma 3n E4B IT LM (4-bit). Excellent quality/speed balance on Apple Silicon; great general assistant.",
-            downloadURL: "https://huggingface.co/mlx-community/gemma-3n-E4B-it-lm-4bit"
+            description: "Google's latest efficient model. Fast, smart, and runs great on any Mac.",
+            downloadURL: "https://huggingface.co/mlx-community/gemma-3n-E4B-it-lm-4bit",
+            isTopSuggestion: true
         ),
 
-        // Qwen3 Coder — top pick for coding
+        MLXModel(
+            id: "mlx-community/Qwen3-4B-4bit",
+            name: friendlyName(from: "mlx-community/Qwen3-4B-4bit"),
+            description: "Alibaba's compact powerhouse. Excellent reasoning in a lightweight package.",
+            downloadURL: "https://huggingface.co/mlx-community/Qwen3-4B-4bit",
+            isTopSuggestion: true
+        ),
+
+        MLXModel(
+            id: "mlx-community/Qwen3-VL-4B-Instruct-8bit",
+            name: friendlyName(from: "mlx-community/Qwen3-VL-4B-Instruct-8bit"),
+            description: "See and understand images. Best vision model for most users.",
+            downloadURL: "https://huggingface.co/mlx-community/Qwen3-VL-4B-Instruct-8bit",
+            isTopSuggestion: true
+        ),
+
+        // MARK: Coding Models
+
         MLXModel(
             id: "lmstudio-community/qwen3-coder-30b-a3b-instruct-mlx-4bit",
             name: friendlyName(from: "lmstudio-community/qwen3-coder-30b-a3b-instruct-mlx-4bit"),
-            description:
-                "Qwen3 Coder 30B A3B Instruct (MLX 4-bit). Exceptional coding model; very large download and memory usage.",
+            description: "Elite coding assistant. Excels at complex programming tasks. Needs 32GB+ RAM.",
             downloadURL:
                 "https://huggingface.co/lmstudio-community/qwen3-coder-30b-a3b-instruct-mlx-4bit"
         ),
 
-        // Popular general models (extra variety)
-        MLXModel(
-            id: "mlx-community/Mistral-7B-Instruct-4bit",
-            name: friendlyName(from: "mlx-community/Mistral-7B-Instruct-4bit"),
-            description: "Popular 7B instruct model. Good general assistant with efficient runtime.",
-            downloadURL: "https://huggingface.co/mlx-community/Mistral-7B-Instruct-4bit"
-        ),
-        MLXModel(
-            id: "mlx-community/Phi-3-mini-4k-instruct-4bit",
-            name: friendlyName(from: "mlx-community/Phi-3-mini-4k-instruct-4bit"),
-            description: "Very small and speedy. Great for lightweight tasks and constrained devices.",
-            downloadURL: "https://huggingface.co/mlx-community/Phi-3-mini-4k-instruct-4bit"
-        ),
+        // MARK: Large Models
 
-        // Qwen family — 3 sizes
-        MLXModel(
-            id: "mlx-community/Qwen3-1.7B-4bit",
-            name: friendlyName(from: "mlx-community/Qwen3-1.7B-4bit"),
-            description:
-                "Qwen3 1.7B (4-bit). Tiny and fast. Great for quick tests, code helpers, and lightweight tasks.",
-            downloadURL: "https://huggingface.co/mlx-community/Qwen3-1.7B-4bit"
-        ),
-        MLXModel(
-            id: "mlx-community/Qwen3-4B-4bit",
-            name: friendlyName(from: "mlx-community/Qwen3-4B-4bit"),
-            description: "Qwen3 4B (4-bit). Modern small model with strong instruction following.",
-            downloadURL: "https://huggingface.co/mlx-community/Qwen3-4B-4bit"
-        ),
         MLXModel(
             id: "mlx-community/Qwen3-235B-A22B-4bit",
             name: friendlyName(from: "mlx-community/Qwen3-235B-A22B-4bit"),
-            description: "Qwen3 235B MoE A22B (4-bit). High quality; heavy memory requirements.",
+            description: "Massive MoE model with frontier-level intelligence. Requires 64GB+ RAM.",
             downloadURL: "https://huggingface.co/mlx-community/Qwen3-235B-A22B-4bit"
-        ),
-
-        // New additions — Gemma 3, Qwen3, GPT-OSS
-        MLXModel(
-            id: "lmstudio-community/gemma-3-270m-it-MLX-8bit",
-            name: friendlyName(from: "lmstudio-community/gemma-3-270m-it-MLX-8bit"),
-            description: "Gemma 3 270M IT (8-bit MLX). Extremely small and fast for experimentation.",
-            downloadURL: "https://huggingface.co/lmstudio-community/gemma-3-270m-it-MLX-8bit"
-        ),
-
-        // Reasoning-focused choices
-        MLXModel(
-            id: "mlx-community/DeepSeek-R1-Distill-Qwen-1.5B-4bit",
-            name: friendlyName(from: "mlx-community/DeepSeek-R1-Distill-Qwen-1.5B-4bit"),
-            description:
-                "Reasoning-focused distilled model. Good for structured steps and chain-of-thought style prompts.",
-            downloadURL: "https://huggingface.co/mlx-community/DeepSeek-R1-Distill-Qwen-1.5B-4bit"
         ),
 
         MLXModel(
             id: "mlx-community/Qwen3-Next-80B-A3B-Thinking-4bit",
             name: friendlyName(from: "mlx-community/Qwen3-Next-80B-A3B-Thinking-4bit"),
-            description:
-                "Qwen3-Next 80B A3B Thinking (4-bit). Reasoning-focused assistant; heavy memory requirements.",
+            description: "Advanced reasoning with thinking capability. Great for complex problems.",
             downloadURL: "https://huggingface.co/mlx-community/Qwen3-Next-80B-A3B-Thinking-4bit"
         ),
 
         MLXModel(
             id: "lmstudio-community/gpt-oss-20b-MLX-8bit",
             name: friendlyName(from: "lmstudio-community/gpt-oss-20b-MLX-8bit"),
-            description: "GPT-OSS 20B (8-bit MLX) by OpenAI. High-quality general model in MLX format.",
+            description: "OpenAI's open-source release. Strong all-around performance.",
             downloadURL: "https://huggingface.co/lmstudio-community/gpt-oss-20b-MLX-8bit"
         ),
 
         MLXModel(
             id: "lmstudio-community/gpt-oss-120b-MLX-8bit",
             name: friendlyName(from: "lmstudio-community/gpt-oss-120b-MLX-8bit"),
-            description:
-                "GPT-OSS 120B (MLX 8-bit). ~117B parameters; premium general assistant with strong reasoning and coding. Optimized for Apple Silicon via MLX; requires 64GB+ unified memory; very large download.",
+            description: "OpenAI's largest open model. Premium quality, requires 64GB+ unified memory.",
             downloadURL: "https://huggingface.co/lmstudio-community/gpt-oss-120b-MLX-8bit"
         ),
 
         // MARK: Vision Language Models (VLM)
 
-        // Kimi VL — versatile VLM with reasoning
         MLXModel(
             id: "mlx-community/Kimi-VL-A3B-Thinking-4bit",
             name: friendlyName(from: "mlx-community/Kimi-VL-A3B-Thinking-4bit"),
-            description:
-                "Vision Language Model (VLM). Kimi VL A3B thinking variant with strong reasoning and image understanding.",
+            description: "Vision model with reasoning. Analyzes images with step-by-step thinking.",
             downloadURL: "https://huggingface.co/mlx-community/Kimi-VL-A3B-Thinking-4bit"
         ),
 
-        // Qwen VL family — excellent vision models
+        // MARK: Compact Models
+
         MLXModel(
-            id: "lmstudio-community/Qwen3-VL-4B-Instruct-MLX-4bit",
-            name: friendlyName(from: "lmstudio-community/Qwen3-VL-4B-Instruct-MLX-4bit"),
-            description:
-                "Vision Language Model (VLM). Qwen3-VL 4B (4-bit). Latest generation multimodal model with excellent image understanding.",
-            downloadURL: "https://huggingface.co/lmstudio-community/Qwen3-VL-4B-Instruct-MLX-4bit"
-        ),
-        MLXModel(
-            id: "mlx-community/Qwen3-VL-4B-Instruct-8bit",
-            name: friendlyName(from: "mlx-community/Qwen3-VL-4B-Instruct-8bit"),
-            description:
-                "Vision Language Model (VLM). Qwen3-VL 4B (8-bit). Higher precision variant for better quality image understanding.",
-            downloadURL: "https://huggingface.co/mlx-community/Qwen3-VL-4B-Instruct-8bit"
-        ),
-        MLXModel(
-            id: "mlx-community/Qwen2.5-VL-3B-Instruct-4bit",
-            name: friendlyName(from: "mlx-community/Qwen2.5-VL-3B-Instruct-4bit"),
-            description:
-                "Vision Language Model (VLM). Qwen2.5-VL 3B (4-bit). Compact and efficient multimodal model with strong vision capabilities.",
-            downloadURL: "https://huggingface.co/mlx-community/Qwen2.5-VL-3B-Instruct-4bit"
-        ),
-        MLXModel(
-            id: "mlx-community/Qwen2-VL-2B-Instruct-4bit",
-            name: friendlyName(from: "mlx-community/Qwen2-VL-2B-Instruct-4bit"),
-            description:
-                "Vision Language Model (VLM). Qwen2-VL 2B (4-bit). Compact multimodal model for image understanding and visual Q&A.",
-            downloadURL: "https://huggingface.co/mlx-community/Qwen2-VL-2B-Instruct-4bit"
-        ),
-        MLXModel(
-            id: "mlx-community/Qwen2-VL-7B-Instruct-4bit",
-            name: friendlyName(from: "mlx-community/Qwen2-VL-7B-Instruct-4bit"),
-            description:
-                "Vision Language Model (VLM). Qwen2-VL 7B (4-bit). Strong multimodal capabilities for image analysis, OCR, and visual reasoning.",
-            downloadURL: "https://huggingface.co/mlx-community/Qwen2-VL-7B-Instruct-4bit"
+            id: "mlx-community/Granite-4.0-H-Tiny-4bit-DWQ",
+            name: friendlyName(from: "mlx-community/Granite-4.0-H-Tiny-4bit-DWQ"),
+            description: "IBM's tiny hybrid MoE. Ultra-efficient at just 1B parameters.",
+            downloadURL: "https://huggingface.co/mlx-community/Granite-4.0-H-Tiny-4bit-DWQ"
         ),
 
-        // SmolVLM — tiny but capable VLMs
-        MLXModel(
-            id: "mlx-community/SmolVLM-Instruct-4bit",
-            name: friendlyName(from: "mlx-community/SmolVLM-Instruct-4bit"),
-            description:
-                "Vision Language Model (VLM). SmolVLM (4-bit). Tiny and fast VLM for lightweight image understanding tasks.",
-            downloadURL: "https://huggingface.co/mlx-community/SmolVLM-Instruct-4bit"
-        ),
-        MLXModel(
-            id: "HuggingFaceTB/SmolVLM2-500M-Video-Instruct-mlx",
-            name: friendlyName(from: "HuggingFaceTB/SmolVLM2-500M-Video-Instruct-mlx"),
-            description:
-                "Vision Language Model (VLM). SmolVLM2 500M Video. Ultra-compact VLM with video understanding capabilities.",
-            downloadURL: "https://huggingface.co/HuggingFaceTB/SmolVLM2-500M-Video-Instruct-mlx"
-        ),
-
-        // PaliGemma — Google's VLM
-        MLXModel(
-            id: "mlx-community/paligemma-3b-mix-448-8bit",
-            name: friendlyName(from: "mlx-community/paligemma-3b-mix-448-8bit"),
-            description:
-                "Vision Language Model (VLM). PaliGemma 3B (8-bit). Google's versatile VLM for image captioning, VQA, and detection.",
-            downloadURL: "https://huggingface.co/mlx-community/paligemma-3b-mix-448-8bit"
-        ),
-
-        // LLaVA — popular open VLM
-        MLXModel(
-            id: "mlx-community/llava-1.5-7b-4bit",
-            name: friendlyName(from: "mlx-community/llava-1.5-7b-4bit"),
-            description:
-                "Vision Language Model (VLM). LLaVA 1.5 7B (4-bit). Popular open-source VLM for image captioning and visual conversations.",
-            downloadURL: "https://huggingface.co/mlx-community/llava-1.5-7b-4bit"
-        ),
-
-        // Pixtral — Mistral's vision model
-        MLXModel(
-            id: "mlx-community/pixtral-12b-4bit",
-            name: friendlyName(from: "mlx-community/pixtral-12b-4bit"),
-            description:
-                "Vision Language Model (VLM). Pixtral 12B (4-bit) by Mistral. Excellent image understanding with strong text generation.",
-            downloadURL: "https://huggingface.co/mlx-community/pixtral-12b-4bit"
-        ),
-
-        // MARK: Text-only LLMs
-
-        // Gemma 3 QAT family — Google's efficient models
         MLXModel(
             id: "mlx-community/gemma-3-4b-it-qat-4bit",
             name: friendlyName(from: "mlx-community/gemma-3-4b-it-qat-4bit"),
-            description: "Gemma 3 4B QAT (4-bit). Compact and efficient model with great quality for its size.",
+            description: "Google's efficient 4B model. Great quality-to-size ratio.",
             downloadURL: "https://huggingface.co/mlx-community/gemma-3-4b-it-qat-4bit"
         ),
+
         MLXModel(
             id: "mlx-community/gemma-3-12b-it-qat-4bit",
             name: friendlyName(from: "mlx-community/gemma-3-12b-it-qat-4bit"),
-            description: "Gemma 3 12B QAT (4-bit). Strong mid-size model with excellent instruction following.",
+            description: "Mid-size Gemma with strong instruction following. Balanced choice.",
             downloadURL: "https://huggingface.co/mlx-community/gemma-3-12b-it-qat-4bit"
         ),
+
         MLXModel(
             id: "mlx-community/gemma-3-27b-it-qat-4bit",
             name: friendlyName(from: "mlx-community/gemma-3-27b-it-qat-4bit"),
-            description: "Gemma 3 27B QAT (4-bit). High-quality large model with excellent reasoning capabilities.",
+            description: "Largest Gemma 3. Excellent reasoning and nuanced responses.",
             downloadURL: "https://huggingface.co/mlx-community/gemma-3-27b-it-qat-4bit"
         ),
 
-        // Llama family
         MLXModel(
             id: "mlx-community/Llama-3.2-1B-Instruct-4bit",
             name: friendlyName(from: "mlx-community/Llama-3.2-1B-Instruct-4bit"),
-            description: "Tiny and fast. Great for quick tests, code helpers, and lightweight tasks.",
+            description: "Meta's tiniest Llama. Lightning fast for simple tasks.",
             downloadURL: "https://huggingface.co/mlx-community/Llama-3.2-1B-Instruct-4bit"
         ),
+
         MLXModel(
             id: "mlx-community/Llama-3.2-3B-Instruct-4bit",
             name: friendlyName(from: "mlx-community/Llama-3.2-3B-Instruct-4bit"),
-            description:
-                "Great quality/speed balance. Strong general assistant at a small memory footprint.",
+            description: "Compact Llama with solid performance. Low memory, quick responses.",
             downloadURL: "https://huggingface.co/mlx-community/Llama-3.2-3B-Instruct-4bit"
         ),
     ]
@@ -942,6 +839,7 @@ extension ModelManager {
             .replacingOccurrences(of: "qwen", with: "Qwen", options: .caseInsensitive)
             .replacingOccurrences(of: "gemma", with: "Gemma", options: .caseInsensitive)
             .replacingOccurrences(of: "deepseek", with: "DeepSeek", options: .caseInsensitive)
+            .replacingOccurrences(of: "granite", with: "Granite", options: .caseInsensitive)
     }
 }
 

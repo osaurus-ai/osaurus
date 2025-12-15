@@ -14,6 +14,9 @@ struct MLXModel: Identifiable, Codable {
     let description: String
     let downloadURL: String
 
+    /// Whether this model should appear at the top of the suggested models list
+    let isTopSuggestion: Bool
+
     // Capture the models root directory at initialization time to avoid
     // relying on a mutable global during tests or concurrent execution.
     private let rootDirectory: URL
@@ -23,12 +26,14 @@ struct MLXModel: Identifiable, Codable {
         name: String,
         description: String,
         downloadURL: String,
+        isTopSuggestion: Bool = false,
         rootDirectory: URL? = nil
     ) {
         self.id = id
         self.name = name
         self.description = description
         self.downloadURL = downloadURL
+        self.isTopSuggestion = isTopSuggestion
         self.rootDirectory = rootDirectory ?? DirectoryPickerService.effectiveModelsDirectory()
     }
 

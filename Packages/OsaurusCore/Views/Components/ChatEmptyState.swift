@@ -15,12 +15,18 @@ struct ChatEmptyState: View {
     let onUseFoundation: (() -> Void)?
     let onQuickAction: (String) -> Void
 
+    @StateObject private var modelManager = ModelManager.shared
     @State private var shimmerPhase: CGFloat = 0
     @State private var glowIntensity: CGFloat = 0.6
     @State private var hasAppeared = false
     @State private var isVisible = false
     @Environment(\.theme) private var theme
     @Environment(\.colorScheme) private var colorScheme
+
+    /// Top suggested models to display in empty state
+    private var topSuggestions: [MLXModel] {
+        modelManager.suggestedModels.filter { $0.isTopSuggestion }
+    }
 
     private let quickActions = [
         QuickAction(icon: "lightbulb", text: "Explain a concept", prompt: "Explain "),
@@ -143,7 +149,7 @@ struct ChatEmptyState: View {
                     .font(theme.font(size: CGFloat(theme.headingSize) + 4, weight: .semibold))
                     .foregroundColor(theme.primaryText)
 
-                Text("Download a recommended model below to start chatting")
+                Text("Download a recommended model to start chatting")
                     .font(theme.font(size: CGFloat(theme.bodySize)))
                     .foregroundColor(theme.secondaryText)
                     .multilineTextAlignment(.center)
@@ -152,16 +158,18 @@ struct ChatEmptyState: View {
             .offset(y: hasAppeared ? 0 : 10)
             .animation(theme.springAnimation().delay(0.15), value: hasAppeared)
 
-            // Suggested model card
-            SuggestedModelCard(
-                modelName: "Gemma 3n E4B IT",
-                modelDescription: "Fast & efficient on Apple Silicon",
-                estimatedSize: "~2.5 GB",
-                onDownload: onOpenModelManager
-            )
-            .opacity(hasAppeared ? 1 : 0)
-            .offset(y: hasAppeared ? 0 : 15)
-            .animation(theme.springAnimation().delay(0.25), value: hasAppeared)
+            // Top suggested model cards
+            VStack(spacing: 12) {
+                ForEach(Array(topSuggestions.enumerated()), id: \.element.id) { index, model in
+                    SuggestedModelCard(
+                        model: model,
+                        onDownload: onOpenModelManager
+                    )
+                    .opacity(hasAppeared ? 1 : 0)
+                    .offset(y: hasAppeared ? 0 : 15)
+                    .animation(theme.springAnimation().delay(0.25 + Double(index) * 0.08), value: hasAppeared)
+                }
+            }
 
             // Secondary actions - uses theme caption size
             HStack(spacing: 16) {
@@ -207,7 +215,7 @@ struct ChatEmptyState: View {
                 }
             }
             .opacity(hasAppeared ? 1 : 0)
-            .animation(.easeOut(duration: 0.4).delay(0.35), value: hasAppeared)
+            .animation(.easeOut(duration: 0.4).delay(0.5), value: hasAppeared)
         }
         .padding(.horizontal, 40)
     }
@@ -398,14 +406,24 @@ private struct QuickActionButton: View {
 // MARK: - Suggested Model Card
 
 private struct SuggestedModelCard: View {
-    let modelName: String
-    let modelDescription: String
-    let estimatedSize: String
+    let model: MLXModel
     let onDownload: () -> Void
 
     @State private var isHovered = false
     @Environment(\.theme) private var theme
     @Environment(\.colorScheme) private var colorScheme
+
+    private var isVLM: Bool {
+        model.isLikelyVLM
+    }
+
+    private var modelTypeIcon: String {
+        isVLM ? "eye" : "text.bubble"
+    }
+
+    private var modelTypeLabel: String {
+        isVLM ? "Vision" : "Text"
+    }
 
     var body: some View {
         Button(action: onDownload) {
@@ -433,53 +451,52 @@ private struct SuggestedModelCard: View {
                 // Model info
                 VStack(alignment: .leading, spacing: 4) {
                     HStack(spacing: 8) {
-                        Text(modelName)
+                        Text(model.name)
                             .font(.system(size: 15, weight: .semibold))
                             .foregroundColor(theme.primaryText)
+                            .lineLimit(1)
 
-                        // Recommended badge
-                        Text("Recommended")
-                            .font(.system(size: 10, weight: .semibold))
-                            .foregroundColor(theme.accentColor)
-                            .padding(.horizontal, 6)
-                            .padding(.vertical, 2)
-                            .background(
-                                Capsule()
-                                    .fill(theme.accentColor.opacity(0.15))
-                            )
+                        // Model type badge
+                        HStack(spacing: 3) {
+                            Image(systemName: modelTypeIcon)
+                                .font(.system(size: 8, weight: .semibold))
+                            Text(modelTypeLabel)
+                                .font(.system(size: 10, weight: .semibold))
+                        }
+                        .foregroundColor(isVLM ? .purple : theme.accentColor)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(
+                            Capsule()
+                                .fill((isVLM ? Color.purple : theme.accentColor).opacity(0.12))
+                        )
+
+                        // Quantization badge if available
+                        if let quant = model.quantization {
+                            Text(quant)
+                                .font(.system(size: 10, weight: .medium))
+                                .foregroundColor(theme.secondaryText)
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 2)
+                                .background(
+                                    Capsule()
+                                        .fill(theme.tertiaryBackground)
+                                )
+                        }
                     }
 
-                    HStack(spacing: 8) {
-                        Text(modelDescription)
-                            .font(.system(size: 12))
-                            .foregroundColor(theme.secondaryText)
-
-                        Text("·")
-                            .foregroundColor(theme.tertiaryText)
-
-                        Text(estimatedSize)
-                            .font(.system(size: 12, weight: .medium))
-                            .foregroundColor(theme.tertiaryText)
-                    }
+                    Text(model.description)
+                        .font(.system(size: 12))
+                        .foregroundColor(theme.secondaryText)
+                        .lineLimit(1)
                 }
 
                 Spacer()
 
                 // Download button
-                HStack(spacing: 6) {
-                    Image(systemName: "arrow.down.circle.fill")
-                        .font(.system(size: 14))
-                    Text("Download")
-                        .font(.system(size: 13, weight: .semibold))
-                }
-                .foregroundColor(.white)
-                .padding(.horizontal, 16)
-                .padding(.vertical, 10)
-                .background(
-                    Capsule()
-                        .fill(theme.accentColor)
-                        .shadow(color: theme.accentColor.opacity(isHovered ? 0.4 : 0), radius: 8, x: 0, y: 2)
-                )
+                Image(systemName: "arrow.down.circle.fill")
+                    .font(.system(size: 24))
+                    .foregroundColor(isHovered ? theme.accentColor : theme.secondaryText)
             }
             .padding(16)
             .background(
@@ -502,7 +519,7 @@ private struct SuggestedModelCard: View {
                 isHovered = hovering
             }
         }
-        .frame(maxWidth: 480)
+        .frame(maxWidth: 520)
     }
 }
 

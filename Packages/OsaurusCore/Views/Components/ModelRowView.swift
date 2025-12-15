@@ -130,6 +130,11 @@ struct ModelRowView: View {
     /// Row of small pills showing model type, parameters, and quantization
     private var metadataPillsRow: some View {
         HStack(spacing: 6) {
+            // Top suggestion badge
+            if model.isTopSuggestion {
+                topSuggestionBadge
+            }
+
             // Model type badge (LLM/VLM)
             modelTypeBadge
 
@@ -143,6 +148,23 @@ struct ModelRowView: View {
                 MetadataPill(text: quant, icon: "gauge.with.dots.needle.bottom.50percent")
             }
         }
+    }
+
+    /// Badge indicating this is a top suggested model
+    private var topSuggestionBadge: some View {
+        HStack(spacing: 3) {
+            Image(systemName: "star.fill")
+                .font(.system(size: 8, weight: .semibold))
+            Text("Top Pick")
+                .font(.system(size: 10, weight: .semibold))
+        }
+        .foregroundColor(.orange)
+        .padding(.horizontal, 6)
+        .padding(.vertical, 3)
+        .background(
+            Capsule()
+                .fill(Color.orange.opacity(0.12))
+        )
     }
 
     /// Badge showing whether model is LLM or VLM
