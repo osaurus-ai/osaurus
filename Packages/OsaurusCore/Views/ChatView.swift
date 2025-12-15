@@ -427,16 +427,81 @@ final class ChatSession: ObservableObject {
                         // Batching: accumulate deltas and flush periodically to reduce UI updates
                         var deltaBuffer = ""
                         var lastFlushTime = Date()
-                        let flushIntervalMs: Double = 50  // Flush every 50ms
-                        let maxBufferSize = 256  // Or when buffer reaches this size
+                        // Adaptive flush tuning: as output grows, reduce update frequency to avoid
+                        // markdown/layout churn that can beachball the UI on large responses.
+                        var flushIntervalMs: Double = 50  // baseline
+                        var maxBufferSize: Int = 256  // baseline
+                        var longestFlushMs: Double = 0
+
+                        // Track approximate output sizes without repeatedly calling String.count on huge buffers.
+                        var assistantContentLen: Int = 0
+                        var assistantThinkingLen: Int = 0
+
+                        func recomputeFlushTuning() {
+                            let totalChars = assistantContentLen + assistantThinkingLen
+
+                            // Base tuning by total output size
+                            let base: (intervalMs: Double, maxBuf: Int) = {
+                                switch totalChars {
+                                case 0 ..< 4_000:
+                                    return (50, 256)
+                                case 4_000 ..< 16_000:
+                                    return (75, 384)
+                                case 16_000 ..< 48_000:
+                                    return (110, 512)
+                                case 48_000 ..< 96_000:
+                                    return (160, 768)
+                                case 96_000 ..< 160_000:
+                                    return (220, 1_024)
+                                case 160_000 ..< 260_000:
+                                    return (300, 1_536)
+                                case 260_000 ..< 420_000:
+                                    return (380, 2_048)
+                                default:
+                                    return (500, 3_072)
+                                }
+                            }()
+
+                            // Backpressure based on the worst observed flush cost (includes markdown parsing + SwiftUI invalidation).
+                            let factor: Double = {
+                                switch longestFlushMs {
+                                case 0 ..< 16:
+                                    return 1.0
+                                case 16 ..< 33:
+                                    return 1.25
+                                case 33 ..< 60:
+                                    return 1.5
+                                default:
+                                    return 2.0
+                                }
+                            }()
+
+                            flushIntervalMs = min(500, base.intervalMs * factor)
+                            maxBufferSize = min(4_096, Int(Double(base.maxBuf) * factor))
+                        }
 
                         // Thinking tag parsing state
                         var isInsideThinking = false
                         var pendingTagBuffer = ""  // Buffer for partial tag detection
 
                         @MainActor
+                        func appendContent(_ s: String) {
+                            guard !s.isEmpty else { return }
+                            assistantTurn.content += s
+                            assistantContentLen += s.count
+                        }
+
+                        @MainActor
+                        func appendThinking(_ s: String) {
+                            guard !s.isEmpty else { return }
+                            assistantTurn.thinking += s
+                            assistantThinkingLen += s.count
+                        }
+
+                        @MainActor
                         func flushBuffer() {
                             guard !deltaBuffer.isEmpty else { return }
+                            let flushStart = Date()
 
                             // Combine pending tag buffer with new delta for parsing
                             var textToProcess = pendingTagBuffer + deltaBuffer
@@ -450,7 +515,7 @@ final class ChatSession: ObservableObject {
                                     if let closeRange = textToProcess.range(of: "</think>", options: .caseInsensitive) {
                                         // Add content before closing tag to thinking
                                         let thinkingContent = String(textToProcess[..<closeRange.lowerBound])
-                                        assistantTurn.thinking += thinkingContent
+                                        appendThinking(thinkingContent)
                                         // Remove processed content including the tag
                                         textToProcess = String(textToProcess[closeRange.upperBound...])
                                         isInsideThinking = false
@@ -462,7 +527,7 @@ final class ChatSession: ObservableObject {
                                             if textToProcess.lowercased().hasSuffix(partial) {
                                                 // Buffer the potential partial tag
                                                 let safePart = String(textToProcess.dropLast(partial.count))
-                                                assistantTurn.thinking += safePart
+                                                appendThinking(safePart)
                                                 pendingTagBuffer = String(textToProcess.suffix(partial.count))
                                                 textToProcess = ""
                                                 foundPartial = true
@@ -471,7 +536,7 @@ final class ChatSession: ObservableObject {
                                         }
                                         if !foundPartial {
                                             // All content goes to thinking
-                                            assistantTurn.thinking += textToProcess
+                                            appendThinking(textToProcess)
                                             textToProcess = ""
                                         }
                                     }
@@ -480,7 +545,7 @@ final class ChatSession: ObservableObject {
                                     if let openRange = textToProcess.range(of: "<think>", options: .caseInsensitive) {
                                         // Add content before opening tag to regular content
                                         let regularContent = String(textToProcess[..<openRange.lowerBound])
-                                        assistantTurn.content += regularContent
+                                        appendContent(regularContent)
                                         // Remove processed content including the tag
                                         textToProcess = String(textToProcess[openRange.upperBound...])
                                         isInsideThinking = true
@@ -492,7 +557,7 @@ final class ChatSession: ObservableObject {
                                             if textToProcess.lowercased().hasSuffix(partial) {
                                                 // Buffer the potential partial tag
                                                 let safePart = String(textToProcess.dropLast(partial.count))
-                                                assistantTurn.content += safePart
+                                                appendContent(safePart)
                                                 pendingTagBuffer = String(textToProcess.suffix(partial.count))
                                                 textToProcess = ""
                                                 foundPartial = true
@@ -501,7 +566,7 @@ final class ChatSession: ObservableObject {
                                         }
                                         if !foundPartial {
                                             // All content goes to regular content
-                                            assistantTurn.content += textToProcess
+                                            appendContent(textToProcess)
                                             textToProcess = ""
                                         }
                                     }
@@ -510,6 +575,9 @@ final class ChatSession: ObservableObject {
 
                             scrollTick &+= 1
                             lastFlushTime = Date()
+
+                            let flushMs = lastFlushTime.timeIntervalSince(flushStart) * 1000
+                            if flushMs > longestFlushMs { longestFlushMs = flushMs }
                         }
 
                         /// Final flush that handles any remaining buffered content
@@ -522,9 +590,9 @@ final class ChatSession: ObservableObject {
                                 pendingTagBuffer = ""
                                 deltaBuffer = ""
                                 if isInsideThinking {
-                                    assistantTurn.thinking += remaining
+                                    appendThinking(remaining)
                                 } else {
-                                    assistantTurn.content += remaining
+                                    appendContent(remaining)
                                 }
                                 scrollTick &+= 1
                             }
@@ -544,6 +612,7 @@ final class ChatSession: ObservableObject {
                                 // Flush if buffer is large enough or enough time has passed
                                 let now = Date()
                                 let timeSinceFlush = now.timeIntervalSince(lastFlushTime) * 1000  // ms
+                                recomputeFlushTuning()
                                 if deltaBuffer.count >= maxBufferSize || timeSinceFlush >= flushIntervalMs {
                                     flushBuffer()
                                 }

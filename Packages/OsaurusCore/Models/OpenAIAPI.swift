@@ -261,7 +261,9 @@ extension ChatMessage {
                 if case .text(let text) = part { return text }
                 return nil
             }
-            self.content = texts.isEmpty ? nil : texts.joined(separator: "\n")
+            // OpenAI-style array-of-parts text should be concatenated verbatim. Newlines should be
+            // represented explicitly in the text segments themselves, not inserted by the decoder.
+            self.content = texts.isEmpty ? nil : texts.joined()
         } else {
             self.content = nil
             self.contentParts = nil

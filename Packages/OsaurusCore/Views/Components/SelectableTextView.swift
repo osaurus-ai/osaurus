@@ -25,6 +25,15 @@ struct SelectableTextView: NSViewRepresentable {
     let baseWidth: CGFloat
     let theme: ThemeProtocol
 
+    final class Coordinator {
+        var lastKey: Int?
+        var lastMeasuredHeight: CGFloat = 0
+    }
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator()
+    }
+
     func makeNSView(context: Context) -> SelectableNSTextView {
         let textView = SelectableNSTextView()
         textView.isEditable = false
@@ -60,17 +69,28 @@ struct SelectableTextView: NSViewRepresentable {
             .backgroundColor: NSColor(theme.selectionColor)
         ]
 
-        // Build and set attributed string
-        let attributedString = buildAttributedString()
-        textView.textStorage?.setAttributedString(attributedString)
+        // Cache key: blocks + theme + width. Avoid rebuilding attributed strings (and relayout) when unchanged.
+        let key = makeCacheKey()
+        if context.coordinator.lastKey != key {
+            let attributedString = buildAttributedString()
+            textView.textStorage?.setAttributedString(attributedString)
 
-        // Force layout and update frame
-        textView.layoutManager?.ensureLayout(for: textView.textContainer!)
-        if let layoutManager = textView.layoutManager,
-            let textContainer = textView.textContainer
-        {
-            let usedRect = layoutManager.usedRect(for: textContainer)
-            textView.frame.size = NSSize(width: baseWidth, height: ceil(usedRect.height))
+            // Force layout once (single pass). SwiftUI sizing uses intrinsicContentSize.
+            if let textContainer = textView.textContainer,
+                let layoutManager = textView.layoutManager
+            {
+                layoutManager.ensureLayout(for: textContainer)
+                let usedRect = layoutManager.usedRect(for: textContainer)
+                let measured = ceil(usedRect.height) + 4  // small buffer to prevent clipping
+                context.coordinator.lastMeasuredHeight = measured
+                textView.updatePreferredSize(width: baseWidth, height: measured)
+            } else {
+                textView.updatePreferredSize(width: baseWidth, height: context.coordinator.lastMeasuredHeight)
+            }
+            context.coordinator.lastKey = key
+        } else {
+            // Fast path: keep intrinsic sizing stable without re-layout.
+            textView.updatePreferredSize(width: baseWidth, height: context.coordinator.lastMeasuredHeight)
         }
     }
 
@@ -407,12 +427,94 @@ struct SelectableTextView: NSViewRepresentable {
         }
     }
 
+    // MARK: - Cache Key
+
+    private func makeCacheKey() -> Int {
+        var hasher = Hasher()
+        // Width affects Typography.scale(for:) and layout
+        hasher.combine(Int((baseWidth * 10).rounded()))  // 0.1pt precision
+        hashBlocks(into: &hasher)
+        hashTheme(into: &hasher)
+        return hasher.finalize()
+    }
+
+    private func hashBlocks(into hasher: inout Hasher) {
+        hasher.combine(blocks.count)
+        for b in blocks {
+            switch b {
+            case .paragraph(let s):
+                hasher.combine(0)
+                hasher.combine(s)
+            case .heading(let level, let text):
+                hasher.combine(1)
+                hasher.combine(level)
+                hasher.combine(text)
+            case .blockquote(let s):
+                hasher.combine(2)
+                hasher.combine(s)
+            case .listItem(let text, let index, let ordered):
+                hasher.combine(3)
+                hasher.combine(text)
+                hasher.combine(index)
+                hasher.combine(ordered)
+            }
+        }
+    }
+
+    private func hashTheme(into hasher: inout Hasher) {
+        hasher.combine(theme.primaryFontName)
+        hasher.combine(theme.monoFontName)
+        hasher.combine(theme.titleSize)
+        hasher.combine(theme.headingSize)
+        hasher.combine(theme.bodySize)
+        hasher.combine(theme.captionSize)
+        hasher.combine(theme.codeSize)
+        hashColor(theme.primaryText, into: &hasher)
+        hashColor(theme.secondaryText, into: &hasher)
+        hashColor(theme.accentColor, into: &hasher)
+        hashColor(theme.selectionColor, into: &hasher)
+    }
+
+    private func hashColor(_ color: Color, into hasher: inout Hasher) {
+        let ns = NSColor(color)
+        guard let rgb = ns.usingColorSpace(.deviceRGB) else {
+            hasher.combine(ns.description)
+            return
+        }
+        var r: CGFloat = 0
+        var g: CGFloat = 0
+        var b: CGFloat = 0
+        var a: CGFloat = 0
+        rgb.getRed(&r, green: &g, blue: &b, alpha: &a)
+        hasher.combine(Int((r * 255).rounded()))
+        hasher.combine(Int((g * 255).rounded()))
+        hasher.combine(Int((b * 255).rounded()))
+        hasher.combine(Int((a * 255).rounded()))
+    }
 }
 
 // MARK: - Custom NSTextView
 
 /// Custom NSTextView that handles link clicks and cursor changes
 final class SelectableNSTextView: NSTextView {
+    private var preferredIntrinsicWidth: CGFloat = 0
+    private var preferredIntrinsicHeight: CGFloat = 0
+
+    override var intrinsicContentSize: NSSize {
+        let width = preferredIntrinsicWidth > 0 ? preferredIntrinsicWidth : super.intrinsicContentSize.width
+        let height = preferredIntrinsicHeight > 0 ? preferredIntrinsicHeight : super.intrinsicContentSize.height
+        return NSSize(width: width, height: height)
+    }
+
+    func updatePreferredSize(width: CGFloat, height: CGFloat) {
+        let w = max(1, width)
+        let h = max(1, height)
+        guard w != preferredIntrinsicWidth || h != preferredIntrinsicHeight else { return }
+        preferredIntrinsicWidth = w
+        preferredIntrinsicHeight = h
+        invalidateIntrinsicContentSize()
+    }
+
     override func resetCursorRects() {
         addCursorRect(bounds, cursor: .iBeam)
     }

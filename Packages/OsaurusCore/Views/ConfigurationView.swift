@@ -555,7 +555,10 @@ struct ConfigurationView: View {
     private func saveConfiguration() {
         guard let port = Int(tempPortString), (1 ..< 65536).contains(port) else { return }
 
-        var configuration = ServerConfigurationStore.load() ?? ServerConfiguration.default
+        let previousServerCfg = ServerConfigurationStore.load() ?? ServerConfiguration.default
+        let previousChatCfg = ChatConfigurationStore.load()
+
+        var configuration = previousServerCfg
         configuration.port = port
         configuration.exposeToNetwork = tempExposeToNetwork
         configuration.startAtLogin = tempStartAtLogin
@@ -604,6 +607,20 @@ struct ConfigurationView: View {
             .filter { !$0.isEmpty }
         configuration.allowedOrigins = parsedOrigins
 
+        // Determine which side effects are actually needed
+        let serverConfigChanged = previousServerCfg != configuration
+        let startAtLoginChanged = previousServerCfg.startAtLogin != configuration.startAtLogin
+        let serverRestartNeeded =
+            previousServerCfg.port != configuration.port
+            || previousServerCfg.exposeToNetwork != configuration.exposeToNetwork
+            || previousServerCfg.allowedOrigins != configuration.allowedOrigins
+            || previousServerCfg.genTopP != configuration.genTopP
+            || previousServerCfg.genKVBits != configuration.genKVBits
+            || previousServerCfg.genKVGroupSize != configuration.genKVGroupSize
+            || previousServerCfg.genQuantizedKVStart != configuration.genQuantizedKVStart
+            || previousServerCfg.genMaxKVSize != configuration.genMaxKVSize
+            || previousServerCfg.genPrefillStepSize != configuration.genPrefillStepSize
+
         // Persist to disk
         ServerConfigurationStore.save(configuration)
 
@@ -644,18 +661,32 @@ struct ConfigurationView: View {
         )
         ChatConfigurationStore.save(chatCfg)
 
-        // Apply hotkey without relaunch
-        AppDelegate.shared?.applyChatHotkey()
+        let hotkeyChanged = previousChatCfg.hotkey != chatCfg.hotkey
+        let alwaysOnTopChanged = previousChatCfg.alwaysOnTop != chatCfg.alwaysOnTop
 
-        // Apply chat window level immediately
-        AppDelegate.shared?.applyChatWindowLevel()
+        // Apply hotkey without relaunch (only if it changed)
+        if hotkeyChanged {
+            AppDelegate.shared?.applyChatHotkey()
+        }
 
-        // Apply login item state
-        LoginItemService.shared.applyStartAtLogin(configuration.startAtLogin)
+        // Apply chat window level immediately (only if it changed)
+        if alwaysOnTopChanged {
+            AppDelegate.shared?.applyChatWindowLevel()
+        }
 
-        // Restart server to apply changes
+        // Apply login item state (only if it changed)
+        if startAtLoginChanged {
+            LoginItemService.shared.applyStartAtLogin(configuration.startAtLogin)
+        }
+
+        // Sync in-memory server configuration and restart only if needed
         Task { @MainActor in
-            await AppDelegate.shared?.serverController.restartServer()
+            if serverConfigChanged {
+                AppDelegate.shared?.serverController.configuration = configuration
+            }
+            if serverRestartNeeded {
+                await AppDelegate.shared?.serverController.restartServer()
+            }
         }
 
         // Show confirmation
