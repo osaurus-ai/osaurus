@@ -106,7 +106,8 @@ struct SidebarNavigation<Content: View, Footer: View>: View {
                     footer()
                 }
             }
-            .padding(.vertical, 16)
+            .padding(.top, 26)
+            .padding(.bottom, 16)
             .padding(.horizontal, isCollapsed ? 8 : 12)
             .frame(width: sidebarWidth)
             .background(theme.sidebarBackground)
@@ -116,6 +117,7 @@ struct SidebarNavigation<Content: View, Footer: View>: View {
             Rectangle()
                 .fill(theme.primaryBorder)
                 .frame(width: 1)
+                .ignoresSafeArea(edges: .top)
 
             // Content area with crossfade transition
             ZStack {
@@ -126,6 +128,7 @@ struct SidebarNavigation<Content: View, Footer: View>: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .animation(.easeOut(duration: 0.2), value: selection)
         }
+        .ignoresSafeArea(edges: .top)
     }
 }
 
