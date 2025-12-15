@@ -30,6 +30,7 @@ struct SidebarItemData: Identifiable, Hashable {
 struct SidebarNavigation<Content: View, Footer: View>: View {
     @Environment(\.theme) private var theme
     @Binding var selection: String
+    @Binding var searchText: String
     let items: [SidebarItemData]
     let content: (String) -> Content
     let footer: () -> Footer
@@ -43,11 +44,13 @@ struct SidebarNavigation<Content: View, Footer: View>: View {
 
     init(
         selection: Binding<String>,
+        searchText: Binding<String>,
         items: [SidebarItemData],
         @ViewBuilder content: @escaping (String) -> Content,
         @ViewBuilder footer: @escaping () -> Footer
     ) {
         self._selection = selection
+        self._searchText = searchText
         self.items = items
         self.content = content
         self.footer = footer
@@ -76,6 +79,12 @@ struct SidebarNavigation<Content: View, Footer: View>: View {
                 .help(isCollapsed ? "Expand Sidebar" : "Collapse Sidebar")
                 .frame(maxWidth: .infinity, alignment: isCollapsed ? .center : .trailing)
                 .padding(.bottom, isCollapsed ? 12 : 8)
+
+                // Search field (only shown when expanded)
+                if !isCollapsed {
+                    SidebarSearchField(text: $searchText)
+                        .padding(.bottom, 8)
+                }
 
                 ForEach(items) { item in
                     SidebarItemView(
@@ -124,10 +133,12 @@ struct SidebarNavigation<Content: View, Footer: View>: View {
 extension SidebarNavigation where Footer == EmptyView {
     init(
         selection: Binding<String>,
+        searchText: Binding<String>,
         items: [SidebarItemData],
         @ViewBuilder content: @escaping (String) -> Content
     ) {
         self._selection = selection
+        self._searchText = searchText
         self.items = items
         self.content = content
         self.footer = { EmptyView() }
@@ -248,6 +259,64 @@ struct SidebarSectionHeader: View {
     }
 }
 
+// MARK: - Sidebar Search Field
+
+struct SidebarSearchField: View {
+    @Environment(\.theme) private var theme
+    @Binding var text: String
+    @FocusState private var isFocused: Bool
+    @State private var isHovering = false
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: 12, weight: .medium))
+                .foregroundColor(isFocused ? theme.accentColor : theme.tertiaryText)
+
+            ZStack(alignment: .leading) {
+                // Custom placeholder for better visibility
+                if text.isEmpty {
+                    Text("Search Settings")
+                        .font(.system(size: 12))
+                        .foregroundColor(theme.secondaryText)
+                        .allowsHitTesting(false)
+                }
+                TextField("", text: $text)
+                    .textFieldStyle(.plain)
+                    .font(.system(size: 12))
+                    .foregroundColor(theme.primaryText)
+                    .focused($isFocused)
+            }
+
+            if !text.isEmpty {
+                Button(action: { text = "" }) {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.system(size: 11))
+                        .foregroundColor(isHovering ? theme.secondaryText : theme.tertiaryText)
+                }
+                .buttonStyle(PlainButtonStyle())
+                .onHover { hovering in
+                    isHovering = hovering
+                }
+            }
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 7)
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(theme.tertiaryBackground)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8)
+                        .stroke(
+                            isFocused ? theme.accentColor.opacity(0.6) : theme.primaryBorder.opacity(0.5),
+                            lineWidth: 1
+                        )
+                )
+        )
+        .animation(.easeOut(duration: 0.15), value: isFocused)
+    }
+}
+
 // MARK: - Sidebar Update Button
 
 struct SidebarUpdateButton: View {
@@ -291,10 +360,12 @@ struct SidebarUpdateButton: View {
 #Preview {
     struct PreviewWrapper: View {
         @State private var selection = "models"
+        @State private var searchText = ""
 
         var body: some View {
             SidebarNavigation(
                 selection: $selection,
+                searchText: $searchText,
                 items: [
                     SidebarItemData(id: "models", icon: "cube.box.fill", label: "Models"),
                     SidebarItemData(id: "tools", icon: "wrench.and.screwdriver.fill", label: "Tools", badge: 2),

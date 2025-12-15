@@ -38,6 +38,23 @@ struct ConfigurationView: View {
     @State private var tempMaxKV: String = ""
     @State private var tempPrefillStep: String = ""
 
+    // Search (passed from sidebar)
+    @Binding var searchText: String
+
+    init(searchText: Binding<String> = .constant("")) {
+        self._searchText = searchText
+    }
+
+    private var isSearching: Bool {
+        !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    private func matchesSearch(_ texts: String...) -> Bool {
+        guard isSearching else { return true }
+        let query = searchText.lowercased()
+        return texts.contains { $0.lowercased().contains(query) }
+    }
+
     var body: some View {
         VStack(spacing: 0) {
             // Header
@@ -50,287 +67,319 @@ struct ConfigurationView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 24) {
                     // MARK: - Chat Section
-                    SettingsSection(title: "Chat", icon: "message") {
-                        VStack(alignment: .leading, spacing: 20) {
-                            // Global Hotkey
-                            SettingsField(label: "Global Hotkey") {
-                                HotkeyRecorder(value: $tempChatHotkey)
-                            }
-
-                            // Default Model
-                            SettingsField(
-                                label: "Default Model",
-                                hint: "Model used for new chat sessions"
-                            ) {
-                                DefaultModelPicker(
-                                    selection: $tempDefaultModel,
-                                    models: availableModels
-                                )
-                            }
-
-                            // System Prompt
-                            SettingsField(label: "System Prompt") {
-                                ZStack(alignment: .topLeading) {
-                                    TextEditor(text: $tempSystemPrompt)
-                                        .font(.system(size: 13, design: .monospaced))
-                                        .scrollContentBackground(.hidden)
-                                        .frame(minHeight: 80, maxHeight: 140)
-                                        .padding(8)
-                                        .background(
-                                            RoundedRectangle(cornerRadius: 8)
-                                                .fill(theme.inputBackground)
-                                                .overlay(
-                                                    RoundedRectangle(cornerRadius: 8)
-                                                        .stroke(theme.inputBorder, lineWidth: 1)
-                                                )
-                                        )
-                                        .foregroundColor(theme.primaryText)
-                                    if tempSystemPrompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                                        Text("Optional. Shown as a system message for all chats.")
-                                            .font(.system(size: 11))
-                                            .foregroundColor(theme.secondaryText)
-                                            .padding(.top, 12)
-                                            .padding(.leading, 14)
-                                            .allowsHitTesting(false)
-                                    }
+                    if matchesSearch(
+                        "Chat",
+                        "Hotkey",
+                        "Model",
+                        "System Prompt",
+                        "Temperature",
+                        "Max Tokens",
+                        "Top P",
+                        "Tools",
+                        "Always on Top",
+                        "Generation"
+                    ) {
+                        SettingsSection(title: "Chat", icon: "message") {
+                            VStack(alignment: .leading, spacing: 20) {
+                                // Global Hotkey
+                                SettingsField(label: "Global Hotkey") {
+                                    HotkeyRecorder(value: $tempChatHotkey)
                                 }
-                            }
 
-                            // Generation Settings
-                            SettingsSubsection(label: "Generation") {
-                                VStack(spacing: 12) {
-                                    settingsTextField(
-                                        label: "Temperature",
-                                        text: $tempChatTemperature,
-                                        placeholder: "0.7",
-                                        help: "Randomness (0–2). Values > 0.8 may cause erratic output"
-                                    )
-                                    settingsTextField(
-                                        label: "Max Tokens",
-                                        text: $tempChatMaxTokens,
-                                        placeholder: "16384",
-                                        help: "Maximum response tokens. Empty uses default 16384"
-                                    )
-                                    settingsTextField(
-                                        label: "Top P Override",
-                                        text: $tempChatTopP,
-                                        placeholder: "",
-                                        help: "Override server Top P (0–1). Empty uses server default"
+                                // Default Model
+                                SettingsField(
+                                    label: "Default Model",
+                                    hint: "Model used for new chat sessions"
+                                ) {
+                                    DefaultModelPicker(
+                                        selection: $tempDefaultModel,
+                                        models: availableModels
                                     )
                                 }
-                            }
 
-                            // Tools Settings
-                            SettingsSubsection(label: "Tools") {
-                                settingsTextField(
-                                    label: "Max Tool Attempts",
-                                    text: $tempChatMaxToolAttempts,
-                                    placeholder: "",
-                                    help: "Max consecutive tool calls (1–10). Empty uses no limit"
-                                )
-                            }
-
-                            Divider()
-                                .background(theme.primaryBorder)
-
-                            // Window Settings
-                            SettingsToggle(
-                                title: "Always on Top",
-                                description: "Keep chat window above other windows",
-                                isOn: $tempChatAlwaysOnTop
-                            )
-                        }
-                    }
-
-                    // MARK: - Server Section
-                    SettingsSection(title: "Server", icon: "network") {
-                        VStack(alignment: .leading, spacing: 20) {
-                            // Port
-                            SettingsField(label: "Port", hint: "Enter a port number between 1 and 65535") {
-                                ZStack(alignment: .leading) {
-                                    if tempPortString.isEmpty {
-                                        Text("1337")
-                                            .font(.system(size: 13, weight: .medium, design: .monospaced))
-                                            .foregroundColor(theme.secondaryText)
-                                            .padding(.leading, 12)
-                                            .allowsHitTesting(false)
-                                    }
-                                    TextField("", text: $tempPortString)
-                                        .textFieldStyle(.plain)
-                                        .font(.system(size: 13, weight: .medium, design: .monospaced))
-                                        .padding(.horizontal, 12)
-                                        .padding(.vertical, 8)
-                                        .foregroundColor(theme.primaryText)
-                                }
-                                .background(
-                                    RoundedRectangle(cornerRadius: 8)
-                                        .fill(theme.inputBackground)
-                                        .overlay(
-                                            RoundedRectangle(cornerRadius: 8)
-                                                .stroke(theme.inputBorder, lineWidth: 1)
-                                        )
-                                )
-                            }
-
-                            // Network Exposure Toggle
-                            SettingsToggle(
-                                title: "Expose to Network",
-                                description: "Allow devices on your network to connect",
-                                isOn: $tempExposeToNetwork
-                            )
-
-                            // CORS Settings
-                            SettingsField(
-                                label: "Allowed Origins",
-                                hint: "Comma-separated list. Use * for any origin, or leave empty to disable CORS"
-                            ) {
-                                ZStack(alignment: .leading) {
-                                    if tempAllowedOrigins.isEmpty {
-                                        Text("https://example.com, https://app.localhost")
+                                // System Prompt
+                                SettingsField(label: "System Prompt") {
+                                    ZStack(alignment: .topLeading) {
+                                        TextEditor(text: $tempSystemPrompt)
                                             .font(.system(size: 13, design: .monospaced))
-                                            .foregroundColor(theme.secondaryText)
-                                            .padding(.leading, 12)
-                                            .allowsHitTesting(false)
-                                    }
-                                    TextField("", text: $tempAllowedOrigins)
-                                        .textFieldStyle(.plain)
-                                        .font(.system(size: 13, design: .monospaced))
-                                        .padding(.horizontal, 12)
-                                        .padding(.vertical, 8)
-                                        .foregroundColor(theme.primaryText)
-                                }
-                                .background(
-                                    RoundedRectangle(cornerRadius: 8)
-                                        .fill(theme.inputBackground)
-                                        .overlay(
-                                            RoundedRectangle(cornerRadius: 8)
-                                                .stroke(theme.inputBorder, lineWidth: 1)
-                                        )
-                                )
-                            }
-                        }
-                    }
-
-                    // MARK: - System Section
-                    SettingsSection(title: "System", icon: "gear") {
-                        VStack(alignment: .leading, spacing: 20) {
-                            // Start at Login
-                            SettingsToggle(
-                                title: "Start at Login",
-                                description: "Launch Osaurus when you sign in",
-                                isOn: $tempStartAtLogin
-                            )
-
-                            Divider()
-                                .background(theme.primaryBorder)
-
-                            // Command Line Tool
-                            VStack(alignment: .leading, spacing: 12) {
-                                Text("Command Line Tool")
-                                    .font(.system(size: 12, weight: .medium))
-                                    .foregroundColor(theme.secondaryText)
-
-                                Text("Install the `osaurus` CLI into your PATH for terminal access.")
-                                    .font(.system(size: 12))
-                                    .foregroundColor(theme.tertiaryText)
-
-                                HStack(spacing: 12) {
-                                    Button(action: { installCLI() }) {
-                                        Text("Install CLI")
-                                            .font(.system(size: 13, weight: .medium))
-                                            .foregroundColor(theme.primaryText)
-                                            .padding(.horizontal, 14)
-                                            .padding(.vertical, 8)
+                                            .scrollContentBackground(.hidden)
+                                            .frame(minHeight: 80, maxHeight: 140)
+                                            .padding(8)
                                             .background(
                                                 RoundedRectangle(cornerRadius: 8)
-                                                    .fill(theme.tertiaryBackground)
+                                                    .fill(theme.inputBackground)
                                                     .overlay(
                                                         RoundedRectangle(cornerRadius: 8)
                                                             .stroke(theme.inputBorder, lineWidth: 1)
                                                     )
                                             )
-                                    }
-                                    .buttonStyle(PlainButtonStyle())
-                                    .help("Create a symlink to the embedded CLI")
-
-                                    if let message = cliInstallMessage {
-                                        HStack(spacing: 6) {
-                                            Image(
-                                                systemName: cliInstallSuccess
-                                                    ? "checkmark.circle.fill" : "exclamationmark.triangle.fill"
-                                            )
-                                            .font(.system(size: 12))
-                                            Text(message)
+                                            .foregroundColor(theme.primaryText)
+                                        if tempSystemPrompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                                            Text("Optional. Shown as a system message for all chats.")
                                                 .font(.system(size: 11))
-                                                .lineLimit(2)
+                                                .foregroundColor(theme.secondaryText)
+                                                .padding(.top, 12)
+                                                .padding(.leading, 14)
+                                                .allowsHitTesting(false)
                                         }
-                                        .foregroundColor(cliInstallSuccess ? theme.successColor : theme.warningColor)
                                     }
                                 }
 
-                                Text("If installed to ~/.local/bin, ensure it's in your PATH.")
-                                    .font(.system(size: 11))
-                                    .foregroundColor(theme.tertiaryText)
+                                // Generation Settings
+                                SettingsSubsection(label: "Generation") {
+                                    VStack(spacing: 12) {
+                                        settingsTextField(
+                                            label: "Temperature",
+                                            text: $tempChatTemperature,
+                                            placeholder: "0.7",
+                                            help: "Randomness (0–2). Values > 0.8 may cause erratic output"
+                                        )
+                                        settingsTextField(
+                                            label: "Max Tokens",
+                                            text: $tempChatMaxTokens,
+                                            placeholder: "16384",
+                                            help: "Maximum response tokens. Empty uses default 16384"
+                                        )
+                                        settingsTextField(
+                                            label: "Top P Override",
+                                            text: $tempChatTopP,
+                                            placeholder: "",
+                                            help: "Override server Top P (0–1). Empty uses server default"
+                                        )
+                                    }
+                                }
+
+                                // Tools Settings
+                                SettingsSubsection(label: "Tools") {
+                                    settingsTextField(
+                                        label: "Max Tool Attempts",
+                                        text: $tempChatMaxToolAttempts,
+                                        placeholder: "",
+                                        help: "Max consecutive tool calls (1–10). Empty uses no limit"
+                                    )
+                                }
+
+                                Divider()
+                                    .background(theme.primaryBorder)
+
+                                // Window Settings
+                                SettingsToggle(
+                                    title: "Always on Top",
+                                    description: "Keep chat window above other windows",
+                                    isOn: $tempChatAlwaysOnTop
+                                )
                             }
+                        }
+                    }
 
-                            Divider()
-                                .background(theme.primaryBorder)
+                    // MARK: - Server Section
+                    if matchesSearch("Server", "Port", "Network", "Expose", "CORS", "Origins", "Allowed Origins") {
+                        SettingsSection(title: "Server", icon: "network") {
+                            VStack(alignment: .leading, spacing: 20) {
+                                // Port
+                                SettingsField(label: "Port", hint: "Enter a port number between 1 and 65535") {
+                                    ZStack(alignment: .leading) {
+                                        if tempPortString.isEmpty {
+                                            Text("1337")
+                                                .font(.system(size: 13, weight: .medium, design: .monospaced))
+                                                .foregroundColor(theme.secondaryText)
+                                                .padding(.leading, 12)
+                                                .allowsHitTesting(false)
+                                        }
+                                        TextField("", text: $tempPortString)
+                                            .textFieldStyle(.plain)
+                                            .font(.system(size: 13, weight: .medium, design: .monospaced))
+                                            .padding(.horizontal, 12)
+                                            .padding(.vertical, 8)
+                                            .foregroundColor(theme.primaryText)
+                                    }
+                                    .background(
+                                        RoundedRectangle(cornerRadius: 8)
+                                            .fill(theme.inputBackground)
+                                            .overlay(
+                                                RoundedRectangle(cornerRadius: 8)
+                                                    .stroke(theme.inputBorder, lineWidth: 1)
+                                            )
+                                    )
+                                }
 
-                            // Storage
-                            VStack(alignment: .leading, spacing: 12) {
-                                Text("Storage")
-                                    .font(.system(size: 12, weight: .medium))
-                                    .foregroundColor(theme.secondaryText)
+                                // Network Exposure Toggle
+                                SettingsToggle(
+                                    title: "Expose to Network",
+                                    description: "Allow devices on your network to connect",
+                                    isOn: $tempExposeToNetwork
+                                )
 
-                                DirectoryPickerView()
+                                // CORS Settings
+                                SettingsField(
+                                    label: "Allowed Origins",
+                                    hint: "Comma-separated list. Use * for any origin, or leave empty to disable CORS"
+                                ) {
+                                    ZStack(alignment: .leading) {
+                                        if tempAllowedOrigins.isEmpty {
+                                            Text("https://example.com, https://app.localhost")
+                                                .font(.system(size: 13, design: .monospaced))
+                                                .foregroundColor(theme.secondaryText)
+                                                .padding(.leading, 12)
+                                                .allowsHitTesting(false)
+                                        }
+                                        TextField("", text: $tempAllowedOrigins)
+                                            .textFieldStyle(.plain)
+                                            .font(.system(size: 13, design: .monospaced))
+                                            .padding(.horizontal, 12)
+                                            .padding(.vertical, 8)
+                                            .foregroundColor(theme.primaryText)
+                                    }
+                                    .background(
+                                        RoundedRectangle(cornerRadius: 8)
+                                            .fill(theme.inputBackground)
+                                            .overlay(
+                                                RoundedRectangle(cornerRadius: 8)
+                                                    .stroke(theme.inputBorder, lineWidth: 1)
+                                            )
+                                    )
+                                }
+                            }
+                        }
+                    }
+
+                    // MARK: - System Section
+                    if matchesSearch("System", "Login", "Start at Login", "CLI", "Command Line", "Install", "Symlink") {
+                        SettingsSection(title: "System", icon: "gear") {
+                            VStack(alignment: .leading, spacing: 20) {
+                                // Start at Login
+                                SettingsToggle(
+                                    title: "Start at Login",
+                                    description: "Launch Osaurus when you sign in",
+                                    isOn: $tempStartAtLogin
+                                )
+
+                                Divider()
+                                    .background(theme.primaryBorder)
+
+                                // Command Line Tool
+                                VStack(alignment: .leading, spacing: 12) {
+                                    Text("Command Line Tool")
+                                        .font(.system(size: 12, weight: .medium))
+                                        .foregroundColor(theme.secondaryText)
+
+                                    Text("Install the `osaurus` CLI into your PATH for terminal access.")
+                                        .font(.system(size: 12))
+                                        .foregroundColor(theme.tertiaryText)
+
+                                    HStack(spacing: 12) {
+                                        Button(action: { installCLI() }) {
+                                            Text("Install CLI")
+                                                .font(.system(size: 13, weight: .medium))
+                                                .foregroundColor(theme.primaryText)
+                                                .padding(.horizontal, 14)
+                                                .padding(.vertical, 8)
+                                                .background(
+                                                    RoundedRectangle(cornerRadius: 8)
+                                                        .fill(theme.tertiaryBackground)
+                                                        .overlay(
+                                                            RoundedRectangle(cornerRadius: 8)
+                                                                .stroke(theme.inputBorder, lineWidth: 1)
+                                                        )
+                                                )
+                                        }
+                                        .buttonStyle(PlainButtonStyle())
+                                        .help("Create a symlink to the embedded CLI")
+
+                                        if let message = cliInstallMessage {
+                                            HStack(spacing: 6) {
+                                                Image(
+                                                    systemName: cliInstallSuccess
+                                                        ? "checkmark.circle.fill" : "exclamationmark.triangle.fill"
+                                                )
+                                                .font(.system(size: 12))
+                                                Text(message)
+                                                    .font(.system(size: 11))
+                                                    .lineLimit(2)
+                                            }
+                                            .foregroundColor(
+                                                cliInstallSuccess ? theme.successColor : theme.warningColor
+                                            )
+                                        }
+                                    }
+
+                                    Text("If installed to ~/.local/bin, ensure it's in your PATH.")
+                                        .font(.system(size: 11))
+                                        .foregroundColor(theme.tertiaryText)
+                                }
+
+                                Divider()
+                                    .background(theme.primaryBorder)
+
+                                // Storage
+                                VStack(alignment: .leading, spacing: 12) {
+                                    Text("Storage")
+                                        .font(.system(size: 12, weight: .medium))
+                                        .foregroundColor(theme.secondaryText)
+
+                                    DirectoryPickerView()
+                                }
                             }
                         }
                     }
 
                     // MARK: - Performance Section
-                    SettingsSection(title: "Performance", icon: "cpu") {
-                        VStack(spacing: 12) {
-                            settingsTextField(
-                                label: "Top P",
-                                text: $tempTopP,
-                                placeholder: "1.0",
-                                help: "Controls diversity of generated text (0–1). Empty uses default 1.0"
-                            )
-                            settingsTextField(
-                                label: "KV Cache Bits",
-                                text: $tempKVBits,
-                                placeholder: "",
-                                help: "Quantization bits for KV cache. Empty disables quantization"
-                            )
-                            settingsTextField(
-                                label: "KV Group Size",
-                                text: $tempKVGroup,
-                                placeholder: "64",
-                                help: "Group size for KV quantization. Empty uses default 64"
-                            )
-                            settingsTextField(
-                                label: "Quantized KV Start",
-                                text: $tempQuantStart,
-                                placeholder: "0",
-                                help: "Starting layer for KV quantization. Empty uses default 0"
-                            )
-                            settingsTextField(
-                                label: "Max KV Size",
-                                text: $tempMaxKV,
-                                placeholder: "",
-                                help: "Maximum KV cache size in tokens. Empty uses unlimited"
-                            )
-                            settingsTextField(
-                                label: "Prefill Step Size",
-                                text: $tempPrefillStep,
-                                placeholder: "512",
-                                help: "Step size for prefill operations. Empty uses default 512"
-                            )
+                    if matchesSearch(
+                        "Performance",
+                        "Top P",
+                        "KV Cache",
+                        "Quantization",
+                        "Prefill",
+                        "Max KV",
+                        "CPU",
+                        "Memory"
+                    ) {
+                        SettingsSection(title: "Performance", icon: "cpu") {
+                            VStack(spacing: 12) {
+                                settingsTextField(
+                                    label: "Top P",
+                                    text: $tempTopP,
+                                    placeholder: "1.0",
+                                    help: "Controls diversity of generated text (0–1). Empty uses default 1.0"
+                                )
+                                settingsTextField(
+                                    label: "KV Cache Bits",
+                                    text: $tempKVBits,
+                                    placeholder: "",
+                                    help: "Quantization bits for KV cache. Empty disables quantization"
+                                )
+                                settingsTextField(
+                                    label: "KV Group Size",
+                                    text: $tempKVGroup,
+                                    placeholder: "64",
+                                    help: "Group size for KV quantization. Empty uses default 64"
+                                )
+                                settingsTextField(
+                                    label: "Quantized KV Start",
+                                    text: $tempQuantStart,
+                                    placeholder: "0",
+                                    help: "Starting layer for KV quantization. Empty uses default 0"
+                                )
+                                settingsTextField(
+                                    label: "Max KV Size",
+                                    text: $tempMaxKV,
+                                    placeholder: "",
+                                    help: "Maximum KV cache size in tokens. Empty uses unlimited"
+                                )
+                                settingsTextField(
+                                    label: "Prefill Step Size",
+                                    text: $tempPrefillStep,
+                                    placeholder: "512",
+                                    help: "Step size for prefill operations. Empty uses default 512"
+                                )
+                            }
                         }
                     }
 
                     // MARK: - System Permissions Section
-                    SystemPermissionsSection()
+                    if matchesSearch("Permissions", "Accessibility", "Automation", "Privacy", "Security") {
+                        SystemPermissionsSection()
+                    }
                 }
                 .padding(.horizontal, 24)
                 .padding(.vertical, 24)
