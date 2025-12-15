@@ -18,6 +18,8 @@ struct FloatingInputCard: View {
     let availableTools: [ToolRegistry.ToolEntry]
     let isStreaming: Bool
     let supportsImages: Bool
+    /// Current estimated context token count for the session
+    let estimatedContextTokens: Int
     let onSend: () -> Void
     let onStop: () -> Void
 
@@ -57,10 +59,21 @@ struct FloatingInputCard: View {
         localText.isEmpty && pendingImages.isEmpty
     }
 
+    /// Context tokens including what's currently being typed (localText may differ from text binding)
+    private var displayContextTokens: Int {
+        var total = estimatedContextTokens
+        // Add tokens for text being typed (if not already counted via binding)
+        // The localText is the real-time typing state
+        if !localText.isEmpty {
+            total += max(1, localText.count / 4)
+        }
+        return total
+    }
+
     var body: some View {
         VStack(spacing: 12) {
             // Model and tool selector chips
-            if modelOptions.count > 1 || !availableTools.isEmpty {
+            if modelOptions.count > 1 || !availableTools.isEmpty || displayContextTokens > 0 {
                 selectorRow
             }
 
@@ -172,7 +185,7 @@ struct FloatingInputCard: View {
     // MARK: - Selector Row (Model + Tools)
 
     private var selectorRow: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: 10) {
             // Model selector (when multiple models available)
             if modelOptions.count > 1 {
                 modelSelectorChip
@@ -183,10 +196,48 @@ struct FloatingInputCard: View {
                 toolSelectorChip
             }
 
+            // Context size indicator (when there's context)
+            if displayContextTokens > 0 {
+                // Subtle separator
+                Circle()
+                    .fill(theme.tertiaryText.opacity(0.3))
+                    .frame(width: 3, height: 3)
+
+                contextIndicatorChip
+            }
+
             Spacer()
 
             // Keyboard hint
             keyboardHint
+        }
+    }
+
+    // MARK: - Context Indicator
+
+    private var contextIndicatorChip: some View {
+        HStack(spacing: 4) {
+            Text("~\(formatTokenCount(displayContextTokens))")
+                .font(.system(size: CGFloat(theme.captionSize) - 1, weight: .medium, design: .monospaced))
+                .foregroundColor(theme.tertiaryText)
+
+            Text("tokens")
+                .font(.system(size: CGFloat(theme.captionSize) - 1, weight: .regular))
+                .foregroundColor(theme.tertiaryText.opacity(0.7))
+        }
+        .help("Estimated context: ~\(displayContextTokens) tokens (messages + tools + input)")
+    }
+
+    /// Format token count for compact display (e.g., "1.2k", "15k")
+    private func formatTokenCount(_ tokens: Int) -> String {
+        if tokens < 1000 {
+            return "\(tokens)"
+        } else if tokens < 10000 {
+            let k = Double(tokens) / 1000.0
+            return String(format: "%.1fk", k)
+        } else {
+            let k = tokens / 1000
+            return "\(k)k"
         }
     }
 
@@ -748,6 +799,7 @@ extension NSImage {
                         ],
                         isStreaming: false,
                         supportsImages: true,
+                        estimatedContextTokens: 2450,
                         onSend: {},
                         onStop: {}
                     )

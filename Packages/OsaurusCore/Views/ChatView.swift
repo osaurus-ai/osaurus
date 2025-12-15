@@ -154,6 +154,79 @@ final class ChatSession: ObservableObject {
         turns.filter { $0.role != .tool }
     }
 
+    /// Estimated token count for current session context (rough heuristic: ~4 chars per token)
+    var estimatedContextTokens: Int {
+        var total = 0
+
+        // System prompt
+        let systemPrompt = ChatConfigurationStore.load().systemPrompt
+        if !systemPrompt.isEmpty {
+            total += max(1, systemPrompt.count / 4)
+        }
+
+        // Enabled tool definitions
+        let enabledTools = ToolRegistry.shared.listTools(withOverrides: enabledToolOverrides)
+            .filter { tool in
+                if let override = enabledToolOverrides[tool.name] {
+                    return override
+                }
+                return tool.enabled
+            }
+        for tool in enabledTools {
+            total += tool.estimatedTokens
+        }
+
+        // All turns
+        for turn in turns {
+            if !turn.content.isEmpty {
+                total += max(1, turn.content.count / 4)
+            }
+            // Tool calls (serialized as JSON)
+            if let toolCalls = turn.toolCalls {
+                for call in toolCalls {
+                    total += max(1, (call.function.name.count + call.function.arguments.count) / 4)
+                }
+            }
+            // Tool results
+            for (_, result) in turn.toolResults {
+                total += max(1, result.count / 4)
+            }
+            // Thinking content
+            if !turn.thinking.isEmpty {
+                total += max(1, turn.thinking.count / 4)
+            }
+            // Images (base64 ~1.33x size, then /4 for tokens)
+            for img in turn.attachedImages {
+                total += max(1, (img.count * 4) / 3 / 4)
+            }
+        }
+
+        // Current input (what user is typing)
+        if !input.isEmpty {
+            total += max(1, input.count / 4)
+        }
+
+        // Pending images
+        for img in pendingImages {
+            total += max(1, (img.count * 4) / 3 / 4)
+        }
+
+        return total
+    }
+
+    /// Format token count for display (e.g., "1.2K", "15K")
+    static func formatTokenCount(_ tokens: Int) -> String {
+        if tokens < 1000 {
+            return "\(tokens)"
+        } else if tokens < 10000 {
+            let k = Double(tokens) / 1000.0
+            return String(format: "%.1fK", k)
+        } else {
+            let k = tokens / 1000
+            return "\(k)K"
+        }
+    }
+
     func sendCurrent() {
         guard !isStreaming else { return }
         let text = input
@@ -788,6 +861,7 @@ struct ChatView: View {
                                 ),
                                 isStreaming: session.isStreaming,
                                 supportsImages: session.selectedModelSupportsImages,
+                                estimatedContextTokens: session.estimatedContextTokens,
                                 onSend: { session.sendCurrent() },
                                 onStop: { session.stop() }
                             )
