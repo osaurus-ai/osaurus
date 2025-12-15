@@ -75,6 +75,7 @@ struct FloatingInputCard: View {
             // Model and tool selector chips
             if modelOptions.count > 1 || !availableTools.isEmpty || displayContextTokens > 0 {
                 selectorRow
+                    .padding(.top, 8)
             }
 
             // Main input card (with inline images)
@@ -198,11 +199,6 @@ struct FloatingInputCard: View {
 
             // Context size indicator (when there's context)
             if displayContextTokens > 0 {
-                // Subtle separator
-                Circle()
-                    .fill(theme.tertiaryText.opacity(0.3))
-                    .frame(width: 3, height: 3)
-
                 contextIndicatorChip
             }
 
