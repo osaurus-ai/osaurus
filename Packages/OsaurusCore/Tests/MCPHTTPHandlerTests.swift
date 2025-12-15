@@ -139,7 +139,8 @@ struct MCPHTTPHandlerTests {
 // MARK: - Test tool
 
 private struct EchoTool: OsaurusTool {
-    let name: String = "echo"
+    static let nameStatic: String = "echo"
+    let name: String = EchoTool.nameStatic
     let description: String = "Echo back the input JSON arguments"
     let parameters: JSONValue? = .object([
         "type": .string("object"),

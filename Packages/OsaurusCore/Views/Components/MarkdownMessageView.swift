@@ -46,15 +46,10 @@ struct MarkdownMessageView: View {
                     baseWidth: baseWidth,
                     theme: theme
                 )
-                .frame(
-                    width: baseWidth,
-                    height: SelectableTextView.calculateHeight(
-                        blocks: textBlocks,
-                        baseWidth: baseWidth,
-                        theme: theme
-                    ),
-                    alignment: .leading
-                )
+                // Let the NSTextView self-size via intrinsicContentSize instead of doing a separate
+                // height calculation pass (which duplicates layout work and can freeze the UI during streaming).
+                .frame(width: baseWidth, alignment: .leading)
+                .fixedSize(horizontal: false, vertical: true)
 
             case .codeBlock(let code, let lang):
                 CodeBlockView(code: code, language: lang, baseWidth: baseWidth)
