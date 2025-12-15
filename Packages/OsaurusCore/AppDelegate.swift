@@ -50,7 +50,8 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegat
         // Create status bar item and attach click handler
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         if let button = item.button {
-            if let image = NSImage(systemSymbolName: "brain", accessibilityDescription: "Osaurus") {
+            if let image = NSImage(named: "osaurus") {
+                image.size = NSSize(width: 18, height: 18)
                 image.isTemplate = true
                 button.image = image
             } else {
@@ -189,15 +190,9 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegat
         // Ensure no NSMenu is attached so button action is triggered
         statusItem.menu = nil
         if let button = statusItem.button {
-            // Update symbol based on server activity
-            let isActive = (serverController.serverHealth == .running) || serverController.isRestarting
-            let desiredName = isActive ? "brain.fill" : "brain"
-            var image = NSImage(systemSymbolName: desiredName, accessibilityDescription: "Osaurus")
-            if image == nil && isActive {
-                // Fallback if brain.fill is unavailable on this macOS version
-                image = NSImage(systemSymbolName: "brain", accessibilityDescription: "Osaurus")
-            }
-            if let image {
+            // Update status bar icon
+            if let image = NSImage(named: "osaurus") {
+                image.size = NSSize(width: 18, height: 18)
                 image.isTemplate = true
                 button.image = image
             }

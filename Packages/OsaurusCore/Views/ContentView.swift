@@ -148,9 +148,9 @@ private struct TopStatusHeader: View {
                 .clipShape(RoundedRectangle(cornerRadius: 8))
                 .contentShape(Rectangle())
                 .onTapGesture {
-                    AppDelegate.shared?.showManagementWindow(initialTab: .settings)
+                    AppDelegate.shared?.showManagementWindow(initialTab: .server)
                 }
-                .help("Open Settings")
+                .help("Open Server Management")
 
             VStack(alignment: .leading, spacing: 4) {
                 HStack(spacing: 8) {
