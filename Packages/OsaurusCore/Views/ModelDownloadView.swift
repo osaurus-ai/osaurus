@@ -224,7 +224,7 @@ struct ModelDownloadView: View {
         case .all:
             return "No models available"
         case .suggested:
-            return "No suggested models"
+            return "No recommended models"
         case .downloaded:
             return "No downloaded models"
         }
