@@ -18,10 +18,13 @@ Canonical reference for all Osaurus features, their status, and documentation.
 | Developer Tools: Insights        | Stable    | "Developer Tools"  | DEVELOPER_TOOLS.md            | Views/InsightsView.swift, Services/InsightsService.swift                   |
 | Developer Tools: Server Explorer | Stable    | "Developer Tools"  | DEVELOPER_TOOLS.md            | Views/ServerView.swift                                                     |
 | Apple Foundation Models          | macOS 26+ | "What is Osaurus?" | (in README)                   | Services/FoundationModelService.swift                                      |
-| Menu Bar Chat                    | Stable    | "Highlights"       | (in README)                   | Views/ChatOverlayView.swift                                                |
+| Menu Bar Chat                    | Stable    | "Highlights"       | (in README)                   | Views/ChatView.swift, Views/ChatOverlayView.swift                          |
+| Chat Session Management          | Stable    | "Highlights"       | (in README)                   | Managers/ChatSessionsManager.swift, Models/ChatSessionData.swift           |
+| Custom Themes                    | Stable    | "Highlights"       | (in README)                   | Views/ThemesView.swift, Views/Components/ThemeEditorView.swift             |
 | Model Manager                    | Stable    | "Highlights"       | (in README)                   | Views/ModelDownloadView.swift, Services/HuggingFaceService.swift           |
 | Shared Configuration             | Stable    | -                  | SHARED_CONFIGURATION_GUIDE.md | Services/SharedConfigurationService.swift                                  |
 | OpenAI API Compatibility         | Stable    | "API Endpoints"    | OpenAI_API_GUIDE.md           | Networking/HTTPHandler.swift, Models/OpenAIAPI.swift                       |
+| Anthropic API Compatibility      | Stable    | "API Endpoints"    | (in README)                   | Networking/HTTPHandler.swift, Models/AnthropicAPI.swift                    |
 | Ollama API Compatibility         | Stable    | "API Endpoints"    | (in README)                   | Networking/HTTPHandler.swift                                               |
 | CLI                              | Stable    | "CLI Reference"    | (in README)                   | Packages/OsaurusCLI/                                                       |
 
@@ -40,6 +43,7 @@ Canonical reference for all Osaurus features, their status, and documentation.
 │  │   ├── ModelDownloadView (Models)                                      │
 │  │   ├── RemoteProvidersView (Providers)                                 │
 │  │   ├── ToolsManagerView (Tools)                                        │
+│  │   ├── ThemesView (Themes)                                             │
 │  │   ├── InsightsView (Developer: Insights)                              │
 │  │   ├── ServerView (Developer: Server Explorer)                         │
 │  │   └── ConfigurationView (Settings)                                    │
@@ -65,7 +69,7 @@ Canonical reference for all Osaurus features, their status, and documentation.
 │  Networking Layer                                                        │
 │  ├── OsaurusServer (HTTP + MCP server)                                   │
 │  ├── Router (Request routing)                                            │
-│  └── HTTPHandler (OpenAI/Ollama API handlers)                            │
+│  └── HTTPHandler (OpenAI/Anthropic/Ollama API handlers)                  │
 ├─────────────────────────────────────────────────────────────────────────┤
 │  CLI (OsaurusCLI Package)                                                │
 │  └── Commands: serve, stop, status, ui, list, run, mcp, tools            │
@@ -186,6 +190,69 @@ Canonical reference for all Osaurus features, their status, and documentation.
 - Interactive endpoint catalog
 - Test endpoints with editable payloads
 - Formatted response viewer
+
+---
+
+### Anthropic API Compatibility
+
+**Purpose:** Provide Anthropic Messages API compatibility for Claude Code and other Anthropic SDK clients.
+
+**Components:**
+
+- `Models/AnthropicAPI.swift` — Anthropic request/response models
+- `Models/ResponseWriters.swift` — SSE streaming for Anthropic format
+- `Networking/HTTPHandler.swift` — `/messages` endpoint handler
+
+**Features:**
+
+- Full Messages API support (`/messages` endpoint)
+- Streaming and non-streaming responses
+- Tool use (function calling) support
+- Converts internally to OpenAI format for unified processing
+
+---
+
+### Custom Themes
+
+**Purpose:** Customize the chat interface appearance with custom color schemes and styling.
+
+**Components:**
+
+- `Views/ThemesView.swift` — Theme gallery and management
+- `Views/Components/ThemeEditorView.swift` — Full theme editor
+- `Models/CustomTheme.swift` — Theme data model
+- `Models/ThemeConfigurationStore.swift` — Theme persistence
+- `Theme/Theme.swift` — Theme protocol and built-in themes
+
+**Features:**
+
+- Built-in light and dark themes
+- Create custom themes with full color customization
+- Import/export themes as JSON files
+- Live preview while editing
+- Background options: solid, gradient, or image
+
+---
+
+### Chat Session Management
+
+**Purpose:** Persist and manage chat conversations with per-session configuration.
+
+**Components:**
+
+- `Managers/ChatSessionsManager.swift` — Session list management
+- `Models/ChatSessionData.swift` — Session data model
+- `Models/ChatSessionStore.swift` — Session persistence
+- `Views/Components/ChatSessionSidebar.swift` — Session history sidebar
+
+**Features:**
+
+- Automatic session persistence
+- Session history with sidebar navigation
+- Per-session model selection
+- Per-session tool configuration overrides
+- Context token estimation display
+- Auto-generated titles from first message
 
 ---
 

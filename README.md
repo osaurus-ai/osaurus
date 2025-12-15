@@ -6,6 +6,7 @@
 [![Stars](https://img.shields.io/github/stars/dinoki-ai/osaurus?style=social)](https://github.com/dinoki-ai/osaurus/stargazers)
 ![Platform](<https://img.shields.io/badge/Platform-macOS%20(Apple%20Silicon)-black?logo=apple>)
 ![OpenAI API](https://img.shields.io/badge/OpenAI%20API-compatible-0A7CFF)
+![Anthropic API](https://img.shields.io/badge/Anthropic%20API-compatible-0A7CFF)
 ![Ollama API](https://img.shields.io/badge/Ollama%20API-compatible-0A7CFF)
 ![MCP Server](https://img.shields.io/badge/MCP-server-0A7CFF)
 ![Foundation Models](https://img.shields.io/badge/Apple%20Foundation%20Models-supported-0A7CFF)
@@ -41,7 +42,7 @@ Osaurus is an all-in-one LLM server for macOS. It combines:
 
 - **MLX Runtime** — Optimized local inference for Apple Silicon using [MLX](https://github.com/ml-explore/mlx)
 - **Remote Providers** — Connect to OpenAI, OpenRouter, Ollama, LM Studio, or any OpenAI-compatible API
-- **OpenAI & Ollama APIs** — Drop-in compatible endpoints for existing tools
+- **OpenAI, Anthropic & Ollama APIs** — Drop-in compatible endpoints for existing tools
 - **MCP Server** — Expose tools to AI agents via Model Context Protocol
 - **Remote MCP Providers** — Connect to external MCP servers and aggregate their tools
 - **Plugin System** — Extend functionality with community and custom tools
@@ -50,17 +51,19 @@ Osaurus is an all-in-one LLM server for macOS. It combines:
 
 ### Highlights
 
-| Feature                  | Description                                                |
-| ------------------------ | ---------------------------------------------------------- |
-| **Local LLM Server**     | Run Llama, Qwen, Gemma, Mistral, and more locally          |
-| **Remote Providers**     | OpenAI, OpenRouter, Ollama, LM Studio, or custom endpoints |
-| **OpenAI Compatible**    | `/v1/chat/completions` with streaming and tool calling     |
-| **MCP Server**           | Connect to Cursor, Claude Desktop, and other MCP clients   |
-| **Remote MCP Providers** | Aggregate tools from external MCP servers                  |
-| **Tools & Plugins**      | Browser automation, file system, git, web search, and more |
-| **Developer Tools**      | Request insights, API explorer, and live endpoint testing  |
-| **Menu Bar Chat**        | Built-in chat overlay with global hotkey (`⌘;`)            |
-| **Model Manager**        | Download and manage models from Hugging Face               |
+| Feature                  | Description                                                     |
+| ------------------------ | --------------------------------------------------------------- |
+| **Local LLM Server**     | Run Llama, Qwen, Gemma, Mistral, and more locally               |
+| **Remote Providers**     | OpenAI, OpenRouter, Ollama, LM Studio, or custom endpoints      |
+| **OpenAI Compatible**    | `/v1/chat/completions` with streaming and tool calling          |
+| **Anthropic Compatible** | `/messages` endpoint for Claude Code and Anthropic SDK clients  |
+| **MCP Server**           | Connect to Cursor, Claude Desktop, and other MCP clients        |
+| **Remote MCP Providers** | Aggregate tools from external MCP servers                       |
+| **Tools & Plugins**      | Browser automation, file system, git, web search, and more      |
+| **Custom Themes**        | Create, import, and export themes with full color customization |
+| **Developer Tools**      | Request insights, API explorer, and live endpoint testing       |
+| **Menu Bar Chat**        | Chat overlay with session history, context tracking (`⌘;`)      |
+| **Model Manager**        | Download and manage models from Hugging Face                    |
 
 ---
 
@@ -231,13 +234,14 @@ See [Developer Tools Guide](docs/DEVELOPER_TOOLS.md) for details.
 
 Base URL: `http://127.0.0.1:1337` (or your configured port)
 
-| Endpoint                    | Description                      |
-| --------------------------- | -------------------------------- |
-| `GET /health`               | Server health                    |
-| `GET /v1/models`            | List models (OpenAI format)      |
-| `GET /v1/tags`              | List models (Ollama format)      |
-| `POST /v1/chat/completions` | Chat completions (OpenAI format) |
-| `POST /chat`                | Chat (Ollama format, NDJSON)     |
+| Endpoint                    | Description                         |
+| --------------------------- | ----------------------------------- |
+| `GET /health`               | Server health                       |
+| `GET /v1/models`            | List models (OpenAI format)         |
+| `GET /v1/tags`              | List models (Ollama format)         |
+| `POST /v1/chat/completions` | Chat completions (OpenAI format)    |
+| `POST /messages`            | Chat completions (Anthropic format) |
+| `POST /chat`                | Chat (Ollama format, NDJSON)        |
 
 All endpoints support `/v1`, `/api`, and `/v1/api` prefixes.
 
