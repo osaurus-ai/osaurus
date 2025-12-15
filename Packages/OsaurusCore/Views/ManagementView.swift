@@ -47,6 +47,7 @@ enum ManagementTab: String, CaseIterable {
 struct ManagementView: View {
     @StateObject private var themeManager = ThemeManager.shared
     @StateObject private var repoService = PluginRepositoryService.shared
+    @EnvironmentObject private var updater: UpdaterViewModel
 
     /// Use computed property to always get the current theme from ThemeManager
     private var theme: ThemeProtocol { themeManager.currentTheme }
@@ -144,6 +145,10 @@ struct ManagementView: View {
                 }
             }
             .opacity(hasAppeared ? 1 : 0)
+        } footer: {
+            SidebarUpdateButton {
+                updater.checkForUpdates()
+            }
         }
         .frame(minWidth: 900, minHeight: 640)
         .background(theme.primaryBackground)
