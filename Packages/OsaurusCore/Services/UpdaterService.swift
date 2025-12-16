@@ -16,12 +16,22 @@ final class UpdaterViewModel: NSObject, ObservableObject, SPUUpdaterDelegate {
         userDriverDelegate: nil
     )
 
+    // MARK: - Published State for Update Availability
+    @Published var updateAvailable: Bool = false
+    @Published var availableVersion: String? = nil
+
     override init() {
         super.init()
     }
 
+    /// Opens the Sparkle update UI to check and install updates
     func checkForUpdates() {
         updaterController.checkForUpdates(nil)
+    }
+
+    /// Silently checks for updates in the background without showing UI
+    func checkForUpdatesInBackground() {
+        updaterController.updater.checkForUpdatesInBackground()
     }
 
     // MARK: - SPUUpdaterDelegate
@@ -42,10 +52,19 @@ final class UpdaterViewModel: NSObject, ObservableObject, SPUUpdaterDelegate {
             item.versionString,
             item.displayVersionString
         )
+        let version = item.displayVersionString
+        Task { @MainActor in
+            self.updateAvailable = true
+            self.availableVersion = version
+        }
     }
 
     nonisolated func updaterDidNotFindUpdate(_ updater: SPUUpdater) {
         NSLog("Sparkle: didNotFindUpdate")
+        Task { @MainActor in
+            self.updateAvailable = false
+            self.availableVersion = nil
+        }
     }
 
     nonisolated func updater(_ updater: SPUUpdater, didAbortWithError error: Error) {
