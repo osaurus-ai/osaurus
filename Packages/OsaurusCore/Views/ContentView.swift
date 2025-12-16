@@ -166,11 +166,8 @@ private struct TopStatusHeader: View {
 
                     // Show status indicator
                     if case .error = server.serverHealth {
-                        Button(action: onRetry) {
-                            StatusBadge(status: "Retry", color: badgeColor, isAnimating: badgeAnimating)
-                        }
-                        .buttonStyle(PlainButtonStyle())
-                        .help("Retry")
+                        RetryButton(action: onRetry)
+                            .help("Retry starting the server")
                     } else if case .running = server.serverHealth {
                         // Simple green dot for running state
                         StatusDot(color: badgeColor, isAnimating: false)
@@ -237,6 +234,37 @@ private struct StatusDot: View {
                         value: isAnimating
                     )
             )
+    }
+}
+
+// MARK: - Retry Button
+private struct RetryButton: View {
+    @Environment(\.theme) private var theme
+    let action: () -> Void
+
+    @State private var isHovering = false
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 4) {
+                Image(systemName: "arrow.clockwise")
+                    .font(.system(size: 10, weight: .semibold))
+                Text("Retry")
+                    .font(.system(size: 11, weight: .semibold))
+            }
+            .foregroundColor(.white)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 5)
+            .background(
+                RoundedRectangle(cornerRadius: 5)
+                    .fill(theme.errorColor)
+            )
+            .opacity(isHovering ? 0.85 : 1.0)
+        }
+        .buttonStyle(PlainButtonStyle())
+        .onHover { hovering in
+            isHovering = hovering
+        }
     }
 }
 
