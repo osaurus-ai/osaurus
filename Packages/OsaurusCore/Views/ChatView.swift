@@ -836,7 +836,7 @@ struct ChatView: View {
                                     },
                                     onUseFoundation: FoundationModelService.isDefaultModelAvailable()
                                         ? {
-                                            session.selectedModel = "foundation"
+                                            session.selectedModel = session.modelOptions.first?.id ?? "foundation"
                                         } : nil,
                                     onQuickAction: { prompt in
                                         session.input = prompt
@@ -875,7 +875,7 @@ struct ChatView: View {
                                 },
                                 onUseFoundation: FoundationModelService.isDefaultModelAvailable()
                                     ? {
-                                        session.selectedModel = "foundation"
+                                        session.selectedModel = session.modelOptions.first?.id ?? "foundation"
                                     } : nil,
                                 onQuickAction: { _ in }
                             )
