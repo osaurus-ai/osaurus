@@ -324,29 +324,101 @@ struct SidebarSearchField: View {
 
 struct SidebarUpdateButton: View {
     @Environment(\.theme) private var theme
+    let updateAvailable: Bool
+    let availableVersion: String?
     let action: () -> Void
 
     @State private var isHovering = false
+    @State private var isPulsing = false
 
     var body: some View {
         Button(action: action) {
-            HStack(spacing: 8) {
-                Image(systemName: "arrow.up.circle")
-                    .font(.system(size: 14, weight: .medium))
+            if updateAvailable {
+                // Update available state - prominent styling
+                HStack(spacing: 8) {
+                    Image(systemName: "arrow.up.circle.fill")
+                        .font(.system(size: 16, weight: .semibold))
+                        .symbolRenderingMode(.hierarchical)
 
-                Text("Check for Updates")
-                    .font(.system(size: 12, weight: .medium))
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Update Available")
+                            .font(.system(size: 12, weight: .semibold, design: .rounded))
+                        if let version = availableVersion {
+                            Text("v\(version)")
+                                .font(.system(size: 10, weight: .medium, design: .monospaced))
+                                .opacity(0.8)
+                        }
+                    }
 
-                Spacer()
+                    Spacer()
+
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 10, weight: .semibold))
+                        .opacity(0.7)
+                }
+                .foregroundColor(.white)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 10)
+                .background(
+                    ZStack {
+                        // Base gradient background
+                        RoundedRectangle(cornerRadius: 10)
+                            .fill(
+                                LinearGradient(
+                                    colors: [
+                                        theme.accentColor,
+                                        theme.accentColor.opacity(0.8),
+                                    ],
+                                    startPoint: .topLeading,
+                                    endPoint: .bottomTrailing
+                                )
+                            )
+
+                        // Pulsing glow effect
+                        RoundedRectangle(cornerRadius: 10)
+                            .fill(theme.accentColor.opacity(0.3))
+                            .blur(radius: 8)
+                            .scaleEffect(isPulsing ? 1.05 : 1.0)
+                            .opacity(isPulsing ? 0.8 : 0.4)
+
+                        // Hover highlight
+                        if isHovering {
+                            RoundedRectangle(cornerRadius: 10)
+                                .fill(Color.white.opacity(0.15))
+                        }
+                    }
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 10)
+                        .stroke(Color.white.opacity(0.2), lineWidth: 1)
+                )
+                .shadow(color: theme.accentColor.opacity(0.4), radius: isPulsing ? 8 : 4, y: 2)
+                .contentShape(RoundedRectangle(cornerRadius: 10))
+                .onAppear {
+                    withAnimation(.easeInOut(duration: 1.5).repeatForever(autoreverses: true)) {
+                        isPulsing = true
+                    }
+                }
+            } else {
+                // Normal state - subtle styling
+                HStack(spacing: 8) {
+                    Image(systemName: "arrow.up.circle")
+                        .font(.system(size: 14, weight: .medium))
+
+                    Text("Check for Updates")
+                        .font(.system(size: 12, weight: .medium))
+
+                    Spacer()
+                }
+                .foregroundColor(theme.secondaryText)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+                .background(
+                    RoundedRectangle(cornerRadius: 8)
+                        .fill(isHovering ? theme.tertiaryBackground : Color.clear)
+                )
+                .contentShape(RoundedRectangle(cornerRadius: 8))
             }
-            .foregroundColor(theme.secondaryText)
-            .padding(.horizontal, 12)
-            .padding(.vertical, 8)
-            .background(
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(isHovering ? theme.tertiaryBackground : Color.clear)
-            )
-            .contentShape(RoundedRectangle(cornerRadius: 8))
         }
         .buttonStyle(PlainButtonStyle())
         .onHover { hovering in
@@ -354,7 +426,8 @@ struct SidebarUpdateButton: View {
                 isHovering = hovering
             }
         }
-        .help("Check for app updates")
+        .help(updateAvailable ? "Install the latest update" : "Check for app updates")
+        .animation(.easeOut(duration: 0.3), value: updateAvailable)
     }
 }
 

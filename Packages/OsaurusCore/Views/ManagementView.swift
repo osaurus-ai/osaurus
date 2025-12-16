@@ -148,7 +148,10 @@ struct ManagementView: View {
             }
             .opacity(hasAppeared ? 1 : 0)
         } footer: {
-            SidebarUpdateButton {
+            SidebarUpdateButton(
+                updateAvailable: updater.updateAvailable,
+                availableVersion: updater.availableVersion
+            ) {
                 updater.checkForUpdates()
             }
         }
@@ -163,6 +166,8 @@ struct ManagementView: View {
                     hasAppeared = true
                 }
             }
+            // Check for updates in background when view appears
+            updater.checkForUpdatesInBackground()
         }
         .onChange(of: selectedTab) { _, newTab in
             // Clear search when switching away from settings
