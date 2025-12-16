@@ -488,8 +488,8 @@ final class ChatSession: ObservableObject {
                         presence_penalty: nil,
                         stop: nil,
                         n: nil,
-                        tools: toolSpecs,
-                        tool_choice: .auto,
+                        tools: toolSpecs.isEmpty ? nil : toolSpecs,
+                        tool_choice: toolSpecs.isEmpty ? nil : .auto,
                         session_id: nil
                     )
                     do {
