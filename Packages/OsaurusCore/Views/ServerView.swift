@@ -371,132 +371,151 @@ struct APIEndpoint {
         case mcp = "MCP"
     }
 
-    static let allEndpoints: [APIEndpoint] = [
-        // Core endpoints
-        APIEndpoint(
-            method: "GET",
-            path: "/",
-            description: "Root endpoint - server status message",
-            compatibility: nil,
-            category: .core,
-            examplePayload: nil
-        ),
-        APIEndpoint(
-            method: "GET",
-            path: "/health",
-            description: "Health check endpoint",
-            compatibility: nil,
-            category: .core,
-            examplePayload: nil
-        ),
-        APIEndpoint(
-            method: "GET",
-            path: "/models",
-            description: "List available models",
-            compatibility: "OpenAI",
-            category: .core,
-            examplePayload: nil
-        ),
-        APIEndpoint(
-            method: "GET",
-            path: "/tags",
-            description: "List available models",
-            compatibility: "Ollama",
-            category: .core,
-            examplePayload: nil
-        ),
-        APIEndpoint(
-            method: "POST",
-            path: "/show",
-            description: "Show model metadata",
-            compatibility: "Ollama",
-            category: .core,
-            examplePayload: """
-                {
-                  "name": "foundation"
-                }
-                """
-        ),
-        // Chat endpoints
-        APIEndpoint(
-            method: "POST",
-            path: "/chat/completions",
-            description: "Chat completions with streaming support",
-            compatibility: "OpenAI",
-            category: .chat,
-            examplePayload: """
-                {
-                  "model": "foundation",
-                  "messages": [
-                    {"role": "user", "content": "Hello!"}
-                  ],
-                  "stream": false
-                }
-                """
-        ),
-        APIEndpoint(
-            method: "POST",
-            path: "/chat",
-            description: "Chat endpoint (NDJSON streaming)",
-            compatibility: "Ollama",
-            category: .chat,
-            examplePayload: """
-                {
-                  "model": "foundation",
-                  "messages": [
-                    {"role": "user", "content": "Hello!"}
-                  ]
-                }
-                """
-        ),
-        APIEndpoint(
-            method: "POST",
-            path: "/messages",
-            description: "Messages endpoint with streaming support",
-            compatibility: "Anthropic",
-            category: .chat,
-            examplePayload: """
-                {
-                  "model": "foundation",
-                  "max_tokens": 1024,
-                  "messages": [
-                    {"role": "user", "content": "Hello, Claude!"}
-                  ],
-                  "stream": false
-                }
-                """
-        ),
-        // MCP endpoints
-        APIEndpoint(
-            method: "GET",
-            path: "/mcp/health",
-            description: "MCP server health check",
-            compatibility: "MCP",
-            category: .mcp,
-            examplePayload: nil
-        ),
-        APIEndpoint(
-            method: "GET",
-            path: "/mcp/tools",
-            description: "List available tools",
-            compatibility: "MCP",
-            category: .mcp,
-            examplePayload: nil
-        ),
-        APIEndpoint(
-            method: "POST",
-            path: "/mcp/call",
-            description: "Execute a tool by name",
-            compatibility: "MCP",
-            category: .mcp,
-            examplePayload: """
-                {
-                  "name": "example_tool",
-                  "arguments": {}
-                }
-                """
-        ),
-    ]
+    /// Returns the first available model name for use in example payloads.
+    /// Prefers "foundation" when available, falls back to first local MLX model,
+    /// then to a placeholder.
+    private static var defaultExampleModel: String {
+        if FoundationModelService.isDefaultModelAvailable() {
+            return "foundation"
+        }
+        // Fall back to first local MLX model if available
+        let localModels = ModelManager.discoverLocalModels()
+        if let first = localModels.first {
+            return first.id
+        }
+        // Final fallback to a placeholder
+        return "your-model-name"
+    }
+
+    static var allEndpoints: [APIEndpoint] {
+        let model = defaultExampleModel
+        return [
+            // Core endpoints
+            APIEndpoint(
+                method: "GET",
+                path: "/",
+                description: "Root endpoint - server status message",
+                compatibility: nil,
+                category: .core,
+                examplePayload: nil
+            ),
+            APIEndpoint(
+                method: "GET",
+                path: "/health",
+                description: "Health check endpoint",
+                compatibility: nil,
+                category: .core,
+                examplePayload: nil
+            ),
+            APIEndpoint(
+                method: "GET",
+                path: "/models",
+                description: "List available models",
+                compatibility: "OpenAI",
+                category: .core,
+                examplePayload: nil
+            ),
+            APIEndpoint(
+                method: "GET",
+                path: "/tags",
+                description: "List available models",
+                compatibility: "Ollama",
+                category: .core,
+                examplePayload: nil
+            ),
+            APIEndpoint(
+                method: "POST",
+                path: "/show",
+                description: "Show model metadata",
+                compatibility: "Ollama",
+                category: .core,
+                examplePayload: """
+                    {
+                      "name": "\(model)"
+                    }
+                    """
+            ),
+            // Chat endpoints
+            APIEndpoint(
+                method: "POST",
+                path: "/chat/completions",
+                description: "Chat completions with streaming support",
+                compatibility: "OpenAI",
+                category: .chat,
+                examplePayload: """
+                    {
+                      "model": "\(model)",
+                      "messages": [
+                        {"role": "user", "content": "Hello!"}
+                      ],
+                      "stream": false
+                    }
+                    """
+            ),
+            APIEndpoint(
+                method: "POST",
+                path: "/chat",
+                description: "Chat endpoint (NDJSON streaming)",
+                compatibility: "Ollama",
+                category: .chat,
+                examplePayload: """
+                    {
+                      "model": "\(model)",
+                      "messages": [
+                        {"role": "user", "content": "Hello!"}
+                      ]
+                    }
+                    """
+            ),
+            APIEndpoint(
+                method: "POST",
+                path: "/messages",
+                description: "Messages endpoint with streaming support",
+                compatibility: "Anthropic",
+                category: .chat,
+                examplePayload: """
+                    {
+                      "model": "\(model)",
+                      "max_tokens": 1024,
+                      "messages": [
+                        {"role": "user", "content": "Hello, Claude!"}
+                      ],
+                      "stream": false
+                    }
+                    """
+            ),
+            // MCP endpoints
+            APIEndpoint(
+                method: "GET",
+                path: "/mcp/health",
+                description: "MCP server health check",
+                compatibility: "MCP",
+                category: .mcp,
+                examplePayload: nil
+            ),
+            APIEndpoint(
+                method: "GET",
+                path: "/mcp/tools",
+                description: "List available tools",
+                compatibility: "MCP",
+                category: .mcp,
+                examplePayload: nil
+            ),
+            APIEndpoint(
+                method: "POST",
+                path: "/mcp/call",
+                description: "Execute a tool by name",
+                compatibility: "MCP",
+                category: .mcp,
+                examplePayload: """
+                    {
+                      "name": "example_tool",
+                      "arguments": {}
+                    }
+                    """
+            ),
+        ]
+    }
 
     static var groupedEndpoints: [(category: EndpointCategory, endpoints: [APIEndpoint])] {
         let categories: [EndpointCategory] = [.core, .chat, .mcp]
