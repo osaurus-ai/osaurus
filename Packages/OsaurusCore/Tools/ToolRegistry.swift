@@ -151,15 +151,13 @@ final class ToolRegistry {
             case .auto:
                 // Filter out system permissions from per-tool grant requirements
                 let nonSystemRequirements = requirements.filter { !SystemPermissionService.isSystemPermission($0) }
+                // Auto-grant missing requirements when policy is .auto
+                // This ensures backwards compatibility for existing configurations
                 if !configuration.hasGrants(for: name, requirements: nonSystemRequirements) {
-                    throw NSError(
-                        domain: "ToolRegistry",
-                        code: 5,
-                        userInfo: [
-                            NSLocalizedDescriptionKey:
-                                "Missing grants for tool: \(name). Requirements: \(nonSystemRequirements.joined(separator: ", "))"
-                        ]
-                    )
+                    for req in nonSystemRequirements {
+                        configuration.setGrant(true, requirement: req, for: name)
+                    }
+                    ToolConfigurationStore.save(configuration)
                 }
             }
         } else {
@@ -233,6 +231,16 @@ final class ToolRegistry {
     // MARK: - Policy / Grants
     func setPolicy(_ policy: ToolPermissionPolicy, for name: String) {
         configuration.setPolicy(policy, for: name)
+
+        // When setting to .auto, automatically grant all non-system requirements
+        // This ensures tools can execute without requiring separate manual grants
+        if policy == .auto, let tool = toolsByName[name] as? PermissionedTool {
+            let requirements = tool.requirements
+            for req in requirements where !SystemPermissionService.isSystemPermission(req) {
+                configuration.setGrant(true, requirement: req, for: name)
+            }
+        }
+
         ToolConfigurationStore.save(configuration)
     }
 
