@@ -14,20 +14,49 @@ struct MarkdownMessageView: View {
     let text: String
     let baseWidth: CGFloat
 
+    var body: some View {
+        // Use inner view with memoized parsing to avoid re-parsing on every render
+        MemoizedMarkdownView(text: text, baseWidth: baseWidth)
+    }
+}
+
+// MARK: - Memoized Inner View
+
+/// Inner view that caches parsed segments and only recomputes when text changes
+private struct MemoizedMarkdownView: View {
+    let text: String
+    let baseWidth: CGFloat
+
     @Environment(\.theme) private var theme
 
-    // Parse blocks and group into segments
-    private var segments: [ContentSegment] {
-        let blocks = parseBlocks(text)
-        return groupBlocksIntoSegments(blocks)
-    }
+    // Memoized segments - only recomputed when text changes via .onChange
+    @State private var cachedSegments: [ContentSegment] = []
+    @State private var lastParsedText: String = ""
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            ForEach(Array(segments.enumerated()), id: \.element.id) { index, segment in
+            ForEach(Array(cachedSegments.enumerated()), id: \.element.id) { index, segment in
                 segmentView(for: segment, isFirst: index == 0)
             }
         }
+        .onAppear {
+            // Initial parse
+            if lastParsedText != text {
+                updateSegments()
+            }
+        }
+        .onChange(of: text) { _, newText in
+            // Only reparse when text actually changes
+            if lastParsedText != newText {
+                updateSegments()
+            }
+        }
+    }
+
+    private func updateSegments() {
+        let blocks = parseBlocks(text)
+        cachedSegments = groupBlocksIntoSegments(blocks)
+        lastParsedText = text
     }
 
     @ViewBuilder

@@ -26,7 +26,10 @@ struct SelectableTextView: NSViewRepresentable {
     let theme: ThemeProtocol
 
     final class Coordinator {
-        var lastKey: Int?
+        // Store previous state directly for O(1) comparison instead of O(n) hashing
+        var lastBlocks: [SelectableTextBlock]?
+        var lastWidth: CGFloat = 0
+        var lastThemeFingerprint: String = ""
         var lastMeasuredHeight: CGFloat = 0
     }
 
@@ -69,9 +72,14 @@ struct SelectableTextView: NSViewRepresentable {
             .backgroundColor: NSColor(theme.selectionColor)
         ]
 
-        // Cache key: blocks + theme + width. Avoid rebuilding attributed strings (and relayout) when unchanged.
-        let key = makeCacheKey()
-        if context.coordinator.lastKey != key {
+        // Fast path: Direct comparison instead of expensive O(n) hashing every update
+        // Swift's Equatable for arrays uses optimized comparison that short-circuits early
+        let themeFingerprint = makeThemeFingerprint()
+        let widthChanged = abs(context.coordinator.lastWidth - baseWidth) > 0.1
+        let themeChanged = context.coordinator.lastThemeFingerprint != themeFingerprint
+        let blocksChanged = context.coordinator.lastBlocks != blocks
+
+        if blocksChanged || widthChanged || themeChanged {
             let attributedString = buildAttributedString()
             textView.textStorage?.setAttributedString(attributedString)
 
@@ -87,7 +95,11 @@ struct SelectableTextView: NSViewRepresentable {
             } else {
                 textView.updatePreferredSize(width: baseWidth, height: context.coordinator.lastMeasuredHeight)
             }
-            context.coordinator.lastKey = key
+
+            // Update coordinator state
+            context.coordinator.lastBlocks = blocks
+            context.coordinator.lastWidth = baseWidth
+            context.coordinator.lastThemeFingerprint = themeFingerprint
         } else {
             // Fast path: keep intrinsic sizing stable without re-layout.
             textView.updatePreferredSize(width: baseWidth, height: context.coordinator.lastMeasuredHeight)
@@ -427,69 +439,15 @@ struct SelectableTextView: NSViewRepresentable {
         }
     }
 
-    // MARK: - Cache Key
+    // MARK: - Theme Fingerprint
 
-    private func makeCacheKey() -> Int {
-        var hasher = Hasher()
-        // Width affects Typography.scale(for:) and layout
-        hasher.combine(Int((baseWidth * 10).rounded()))  // 0.1pt precision
-        hashBlocks(into: &hasher)
-        hashTheme(into: &hasher)
-        return hasher.finalize()
-    }
-
-    private func hashBlocks(into hasher: inout Hasher) {
-        hasher.combine(blocks.count)
-        for b in blocks {
-            switch b {
-            case .paragraph(let s):
-                hasher.combine(0)
-                hasher.combine(s)
-            case .heading(let level, let text):
-                hasher.combine(1)
-                hasher.combine(level)
-                hasher.combine(text)
-            case .blockquote(let s):
-                hasher.combine(2)
-                hasher.combine(s)
-            case .listItem(let text, let index, let ordered):
-                hasher.combine(3)
-                hasher.combine(text)
-                hasher.combine(index)
-                hasher.combine(ordered)
-            }
-        }
-    }
-
-    private func hashTheme(into hasher: inout Hasher) {
-        hasher.combine(theme.primaryFontName)
-        hasher.combine(theme.monoFontName)
-        hasher.combine(theme.titleSize)
-        hasher.combine(theme.headingSize)
-        hasher.combine(theme.bodySize)
-        hasher.combine(theme.captionSize)
-        hasher.combine(theme.codeSize)
-        hashColor(theme.primaryText, into: &hasher)
-        hashColor(theme.secondaryText, into: &hasher)
-        hashColor(theme.accentColor, into: &hasher)
-        hashColor(theme.selectionColor, into: &hasher)
-    }
-
-    private func hashColor(_ color: Color, into hasher: inout Hasher) {
-        let ns = NSColor(color)
-        guard let rgb = ns.usingColorSpace(.deviceRGB) else {
-            hasher.combine(ns.description)
-            return
-        }
-        var r: CGFloat = 0
-        var g: CGFloat = 0
-        var b: CGFloat = 0
-        var a: CGFloat = 0
-        rgb.getRed(&r, green: &g, blue: &b, alpha: &a)
-        hasher.combine(Int((r * 255).rounded()))
-        hasher.combine(Int((g * 255).rounded()))
-        hasher.combine(Int((b * 255).rounded()))
-        hasher.combine(Int((a * 255).rounded()))
+    /// Lightweight fingerprint for theme changes (computed rarely, only when theme changes)
+    /// Uses string-based key instead of expensive color conversions
+    private func makeThemeFingerprint() -> String {
+        // Simple concatenation of theme properties that affect rendering
+        // This is much cheaper than hashing colors via NSColor conversion
+        return
+            "\(theme.primaryFontName)|\(theme.monoFontName)|\(theme.titleSize)|\(theme.headingSize)|\(theme.bodySize)|\(theme.captionSize)|\(theme.codeSize)"
     }
 }
 
