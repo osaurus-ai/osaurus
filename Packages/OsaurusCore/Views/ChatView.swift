@@ -863,7 +863,8 @@ struct ChatView: View {
                                 supportsImages: session.selectedModelSupportsImages,
                                 estimatedContextTokens: session.estimatedContextTokens,
                                 onSend: { session.sendCurrent() },
-                                onStop: { session.stop() }
+                                onStop: { session.stop() },
+                                focusTrigger: focusTrigger
                             )
                         } else {
                             // No models empty state
