@@ -889,8 +889,8 @@ struct ChatView: View {
             minWidth: 800,
             idealWidth: 950,
             maxWidth: .infinity,
-            minHeight: session.turns.isEmpty ? 490 : 550,
-            idealHeight: session.turns.isEmpty ? 550 : 700,
+            minHeight: session.turns.isEmpty ? 550 : 610,
+            idealHeight: session.turns.isEmpty ? 610 : 760,
             maxHeight: .infinity
         )
         .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
@@ -1230,7 +1230,7 @@ struct ChatView: View {
     private func resizeWindowForContent(isEmpty: Bool) {
         guard let window = hostWindow else { return }
 
-        let targetHeight: CGFloat = isEmpty ? 500 : 700
+        let targetHeight: CGFloat = isEmpty ? 610 : 760
         let currentFrame = window.frame
 
         let currentCenterY = currentFrame.origin.y + (currentFrame.height / 2)

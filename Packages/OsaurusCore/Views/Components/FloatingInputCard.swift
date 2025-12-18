@@ -140,47 +140,19 @@ struct FloatingInputCard: View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 6) {
                 ForEach(Array(pendingImages.enumerated()), id: \.offset) { index, imageData in
-                    imagePreviewThumbnail(imageData: imageData, index: index, size: 40)
+                    CachedImageThumbnail(
+                        imageData: imageData,
+                        size: 40,
+                        onRemove: {
+                            withAnimation(theme.springAnimation()) {
+                                _ = pendingImages.remove(at: index)
+                            }
+                        }
+                    )
                 }
             }
         }
         .frame(height: 48)
-    }
-
-    private func imagePreviewThumbnail(imageData: Data, index: Int, size: CGFloat = 64) -> some View {
-        ZStack(alignment: .topTrailing) {
-            if let nsImage = NSImage(data: imageData) {
-                Image(nsImage: nsImage)
-                    .resizable()
-                    .aspectRatio(contentMode: .fill)
-                    .frame(width: size, height: size)
-                    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 8, style: .continuous)
-                            .strokeBorder(theme.primaryBorder.opacity(0.3), lineWidth: 1)
-                    )
-            }
-
-            // Remove button
-            Button(action: {
-                withAnimation(theme.springAnimation()) {
-                    _ = pendingImages.remove(at: index)
-                }
-            }) {
-                Image(systemName: "xmark.circle.fill")
-                    .font(.system(size: 16))
-                    .foregroundColor(.white)
-                    .background(
-                        Circle()
-                            .fill(Color.black.opacity(0.6))
-                            .frame(width: 18, height: 18)
-                    )
-            }
-            .buttonStyle(.plain)
-            .offset(x: 4, y: -4)
-        }
-        .padding(.top, 4)
-        .padding(.trailing, 4)
     }
 
     // MARK: - Selector Row (Model + Tools)
@@ -637,6 +609,59 @@ struct FloatingInputCard: View {
 
     private var shadowColor: Color {
         isFocused ? theme.accentColor.opacity(0.15) : Color.black.opacity(0.15)
+    }
+}
+
+// MARK: - Cached Image Thumbnail
+
+/// A thumbnail view that caches the decoded NSImage to prevent expensive re-decoding on every parent re-render
+struct CachedImageThumbnail: View {
+    let imageData: Data
+    let size: CGFloat
+    let onRemove: () -> Void
+
+    @State private var cachedImage: NSImage?
+    @Environment(\.theme) private var theme
+
+    var body: some View {
+        ZStack(alignment: .topTrailing) {
+            if let nsImage = cachedImage {
+                Image(nsImage: nsImage)
+                    .resizable()
+                    .aspectRatio(contentMode: .fill)
+                    .frame(width: size, height: size)
+                    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 8, style: .continuous)
+                            .strokeBorder(theme.primaryBorder.opacity(0.3), lineWidth: 1)
+                    )
+            } else {
+                // Placeholder while loading
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(theme.secondaryBackground)
+                    .frame(width: size, height: size)
+            }
+
+            // Remove button
+            Button(action: onRemove) {
+                Image(systemName: "xmark.circle.fill")
+                    .font(.system(size: 16))
+                    .foregroundColor(.white)
+                    .background(
+                        Circle()
+                            .fill(Color.black.opacity(0.6))
+                            .frame(width: 18, height: 18)
+                    )
+            }
+            .buttonStyle(.plain)
+            .offset(x: 4, y: -4)
+        }
+        .padding(.top, 4)
+        .padding(.trailing, 4)
+        .task(id: imageData) {
+            // Decode image only once when data changes
+            cachedImage = NSImage(data: imageData)
+        }
     }
 }
 
