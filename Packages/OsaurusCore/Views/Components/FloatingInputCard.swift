@@ -22,6 +22,8 @@ struct FloatingInputCard: View {
     let estimatedContextTokens: Int
     let onSend: () -> Void
     let onStop: () -> Void
+    /// Trigger to focus the input field (increment to focus)
+    var focusTrigger: Int = 0
 
     // Local state for text input to prevent parent re-renders on every keystroke
     @State private var localText: String = ""
@@ -98,6 +100,12 @@ struct FloatingInputCard: View {
             // Sync from binding when it changes externally (e.g., quick actions)
             if newValue != localText {
                 localText = newValue
+            }
+        }
+        .onChange(of: focusTrigger) { _, _ in
+            // Small delay to ensure window is fully ready for focus
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                isFocused = true
             }
         }
     }
