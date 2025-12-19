@@ -68,7 +68,7 @@ struct MessageRow: View {
 
                 // Tool calls (if any)
                 if turn.role == .assistant, let calls = turn.toolCalls, !calls.isEmpty {
-                    GroupedToolResponseView(calls: calls, resultsById: turn.toolResults)
+                    toolCallsView(calls: calls)
                         .padding(.top, 4)
                 }
             }
@@ -279,6 +279,26 @@ struct MessageRow: View {
                 .background(theme.accentColor)
                 .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
             }
+        }
+    }
+
+    // MARK: - Tool Calls View
+
+    @ViewBuilder
+    private func toolCallsView(calls: [ToolCall]) -> some View {
+        let displayStyle = ChatConfigurationStore.load().toolCallDisplayStyle
+
+        switch displayStyle {
+        case .inline:
+            // Show each tool call as a separate compact row
+            VStack(spacing: 6) {
+                ForEach(calls, id: \.id) { call in
+                    InlineToolCallView(call: call, result: turn.toolResults[call.id])
+                }
+            }
+        case .grouped:
+            // Show all tool calls in a collapsible container
+            GroupedToolResponseView(calls: calls, resultsById: turn.toolResults)
         }
     }
 

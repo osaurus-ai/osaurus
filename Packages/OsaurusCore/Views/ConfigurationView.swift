@@ -25,6 +25,7 @@ struct ConfigurationView: View {
     @State private var tempChatTopP: String = ""
     @State private var tempChatMaxToolAttempts: String = ""
     @State private var tempChatAlwaysOnTop: Bool = false
+    @State private var tempToolCallDisplayStyle: ToolCallDisplayStyle = .inline
     @State private var availableModels: [ModelOption] = []
 
     // Server settings state
@@ -76,6 +77,10 @@ struct ConfigurationView: View {
                         "Max Tokens",
                         "Top P",
                         "Tools",
+                        "Tool Call",
+                        "Display Style",
+                        "Inline",
+                        "Grouped",
                         "Always on Top",
                         "Generation"
                     ) {
@@ -151,12 +156,38 @@ struct ConfigurationView: View {
 
                                 // Tools Settings
                                 SettingsSubsection(label: "Tools") {
-                                    settingsTextField(
-                                        label: "Max Tool Attempts",
-                                        text: $tempChatMaxToolAttempts,
-                                        placeholder: "",
-                                        help: "Max consecutive tool calls (1–10). Empty uses no limit"
-                                    )
+                                    VStack(spacing: 12) {
+                                        settingsTextField(
+                                            label: "Max Tool Attempts",
+                                            text: $tempChatMaxToolAttempts,
+                                            placeholder: "",
+                                            help: "Max consecutive tool calls (1–10). Empty uses no limit"
+                                        )
+
+                                        // Tool Call Display Style
+                                        HStack {
+                                            Text("Display Style")
+                                                .font(.system(size: 12, weight: .medium))
+                                                .foregroundColor(theme.secondaryText)
+
+                                            Spacer()
+
+                                            Picker("", selection: $tempToolCallDisplayStyle) {
+                                                ForEach(ToolCallDisplayStyle.allCases, id: \.self) { style in
+                                                    Text(style.displayName).tag(style)
+                                                }
+                                            }
+                                            .pickerStyle(.segmented)
+                                            .frame(width: 160)
+                                        }
+
+                                        Text(
+                                            "Inline shows each tool call as a separate row. Grouped bundles all calls in a collapsible container."
+                                        )
+                                        .font(.system(size: 11))
+                                        .foregroundColor(theme.tertiaryText)
+                                        .frame(maxWidth: .infinity, alignment: .leading)
+                                    }
                                 }
 
                                 Divider()
@@ -537,6 +568,7 @@ struct ConfigurationView: View {
         tempChatTopP = chat.topPOverride.map { String($0) } ?? ""
         tempChatMaxToolAttempts = chat.maxToolAttempts.map(String.init) ?? ""
         tempChatAlwaysOnTop = chat.alwaysOnTop
+        tempToolCallDisplayStyle = chat.toolCallDisplayStyle
 
         // Load available models for the default model picker
         availableModels = buildAvailableModels()
@@ -579,6 +611,7 @@ struct ConfigurationView: View {
         tempChatTopP = ""
         tempChatMaxToolAttempts = ""
         tempChatAlwaysOnTop = chatDefaults.alwaysOnTop
+        tempToolCallDisplayStyle = chatDefaults.toolCallDisplayStyle
 
         // Performance settings - clear to use defaults
         tempTopP = ""
@@ -706,7 +739,8 @@ struct ConfigurationView: View {
             topPOverride: parsedTopP,
             maxToolAttempts: parsedMaxToolAttempts,
             alwaysOnTop: tempChatAlwaysOnTop,
-            defaultModel: tempDefaultModel
+            defaultModel: tempDefaultModel,
+            toolCallDisplayStyle: tempToolCallDisplayStyle
         )
         ChatConfigurationStore.save(chatCfg)
 

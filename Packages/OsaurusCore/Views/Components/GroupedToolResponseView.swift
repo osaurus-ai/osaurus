@@ -2,11 +2,195 @@
 //  GroupedToolResponseView.swift
 //  osaurus
 //
-//  Collapsible UI to display assistant tool calls and their results, grouped under a message.
+//  Collapsible UI to display assistant tool calls and their results.
+//  Supports two display modes: inline (row-by-row) and grouped (collapsible container).
 //
 
 import AppKit
 import SwiftUI
+
+// MARK: - Inline Tool Call View (Compact Row)
+
+/// Compact inline view for a single tool call - shows tool name, arg preview, and status.
+/// Expandable to reveal full arguments and result.
+struct InlineToolCallView: View {
+    let call: ToolCall
+    let result: String?
+
+    @State private var isExpanded: Bool = false
+    @State private var isHovered: Bool = false
+    @Environment(\.theme) private var theme
+
+    private var isComplete: Bool {
+        result != nil
+    }
+
+    private var isRejected: Bool {
+        result?.hasPrefix("[REJECTED]") == true
+    }
+
+    private var statusColor: Color {
+        if !isComplete {
+            return theme.accentColor
+        } else if isRejected {
+            return theme.errorColor
+        } else {
+            return theme.successColor
+        }
+    }
+
+    /// Extract a key argument preview from the JSON arguments
+    private var argPreview: String? {
+        guard let data = call.function.arguments.data(using: .utf8),
+            let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        else { return nil }
+
+        // Priority order for preview: path, file, query, url, name, command, then first string value
+        let priorityKeys = [
+            "path", "file", "file_path", "filepath", "query", "url", "name", "command", "pattern", "content",
+        ]
+        for key in priorityKeys {
+            if let value = json[key] as? String, !value.isEmpty {
+                return truncatePreview(value)
+            }
+        }
+
+        // Fall back to first string value
+        for (_, value) in json {
+            if let str = value as? String, !str.isEmpty {
+                return truncatePreview(str)
+            }
+        }
+
+        return nil
+    }
+
+    private func truncatePreview(_ text: String) -> String {
+        let clean = text.trimmingCharacters(in: .whitespacesAndNewlines)
+            .replacingOccurrences(of: "\n", with: " ")
+        if clean.count > 40 {
+            return String(clean.prefix(37)) + "..."
+        }
+        return clean
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            // Compact header row
+            Button(action: {
+                withAnimation(theme.springAnimation()) {
+                    isExpanded.toggle()
+                }
+            }) {
+                HStack(spacing: 8) {
+                    // Status icon
+                    statusIcon
+
+                    // Tool name
+                    Text(call.function.name)
+                        .font(.system(size: 12, weight: .medium, design: .monospaced))
+                        .foregroundColor(theme.primaryText)
+
+                    // Arg preview
+                    if let preview = argPreview {
+                        Text(preview)
+                            .font(.system(size: 11, weight: .regular))
+                            .foregroundColor(theme.tertiaryText)
+                            .lineLimit(1)
+                    }
+
+                    Spacer()
+
+                    // Expand chevron
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundColor(theme.tertiaryText)
+                        .rotationEffect(.degrees(isExpanded ? 90 : 0))
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+
+            // Expanded content
+            if isExpanded {
+                expandedContent
+                    .padding(.horizontal, 12)
+                    .padding(.bottom, 10)
+                    .transition(
+                        .asymmetric(
+                            insertion: .opacity.combined(with: .move(edge: .top)),
+                            removal: .opacity
+                        )
+                    )
+            }
+        }
+        .background(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(theme.secondaryBackground.opacity(isHovered ? 0.7 : 0.5))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .strokeBorder(
+                            isHovered ? theme.primaryBorder.opacity(0.3) : theme.primaryBorder.opacity(0.15),
+                            lineWidth: 0.5
+                        )
+                )
+        )
+        .animation(theme.animationQuick(), value: isHovered)
+        .animation(theme.springAnimation(), value: isExpanded)
+        .onHover { hovering in
+            isHovered = hovering
+        }
+    }
+
+    @ViewBuilder
+    private var statusIcon: some View {
+        if !isComplete {
+            ProgressView()
+                .scaleEffect(0.5)
+                .frame(width: 16, height: 16)
+        } else if isRejected {
+            Image(systemName: "xmark.circle.fill")
+                .font(.system(size: 14, weight: .medium))
+                .foregroundColor(theme.errorColor)
+        } else {
+            Image(systemName: "checkmark.circle.fill")
+                .font(.system(size: 14, weight: .medium))
+                .foregroundColor(theme.successColor)
+        }
+    }
+
+    private var expandedContent: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            // Arguments
+            ToolCodeBlock(
+                title: "Arguments",
+                text: prettyJSON(call.function.arguments),
+                language: "json"
+            )
+
+            // Result (if complete)
+            if let result {
+                ToolCodeBlock(
+                    title: "Result",
+                    text: result,
+                    language: nil
+                )
+            }
+        }
+    }
+
+    private func prettyJSON(_ raw: String) -> String {
+        guard let data = raw.data(using: .utf8),
+            let obj = try? JSONSerialization.jsonObject(with: data),
+            let pretty = try? JSONSerialization.data(withJSONObject: obj, options: [.prettyPrinted, .sortedKeys])
+        else { return raw }
+        return String(data: pretty, encoding: .utf8) ?? raw
+    }
+}
+
+// MARK: - Grouped Tool Response View (Collapsible Container)
 
 struct GroupedToolResponseView: View {
     let calls: [ToolCall]
@@ -435,9 +619,9 @@ private struct ToolToggleButton: View {
     }
 }
 
-// MARK: - Code Block
+// MARK: - Code Block (Shared)
 
-private struct ToolCodeBlock: View {
+struct ToolCodeBlock: View {
     let title: String
     let text: String
     let language: String?
@@ -598,7 +782,7 @@ private struct ToolCodeBlock: View {
 // MARK: - Preview
 
 #if DEBUG
-    struct GroupedToolResponseView_Previews: PreviewProvider {
+    struct ToolCallViews_Previews: PreviewProvider {
         static var previews: some View {
             let calls = [
                 ToolCall(
@@ -633,13 +817,32 @@ private struct ToolCodeBlock: View {
                     "Found 10 results for 'Swift programming':\n1. Swift.org - Official Swift Language\n2. Swift Programming Guide\n3. Learn Swift in 30 days",
             ]
 
-            VStack(spacing: 20) {
-                GroupedToolResponseView(calls: calls, resultsById: results)
+            ScrollView {
+                VStack(alignment: .leading, spacing: 24) {
+                    // Inline style preview
+                    Text("Inline Style (Default)")
+                        .font(.headline)
+                        .foregroundColor(.white)
 
-                GroupedToolResponseView(calls: [calls[0]], resultsById: ["call_1": results["call_1"]!])
+                    VStack(spacing: 6) {
+                        ForEach(calls, id: \.id) { call in
+                            InlineToolCallView(call: call, result: results[call.id])
+                        }
+                    }
+
+                    Divider()
+                        .background(Color.gray)
+
+                    // Grouped style preview
+                    Text("Grouped Style")
+                        .font(.headline)
+                        .foregroundColor(.white)
+
+                    GroupedToolResponseView(calls: calls, resultsById: results)
+                }
+                .padding()
             }
-            .frame(width: 500)
-            .padding()
+            .frame(width: 500, height: 600)
             .background(Color(hex: "0f0f10"))
         }
     }
