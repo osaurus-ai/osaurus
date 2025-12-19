@@ -223,10 +223,10 @@ struct LightTheme: ThemeProtocol {
     // Selection - Light blue highlight
     let selectionColor = Color(hex: "3b82f6").opacity(0.3)
 
-    // Glass specific - Rich depth
-    let glassOpacityPrimary: Double = 0.12
-    let glassOpacitySecondary: Double = 0.08
-    let glassOpacityTertiary: Double = 0.05
+    // Glass specific - Rich depth with improved contrast
+    let glassOpacityPrimary: Double = 0.25
+    let glassOpacitySecondary: Double = 0.18
+    let glassOpacityTertiary: Double = 0.10
     let glassBlurRadius: Double = 24
     let glassEdgeLight = Color.white.opacity(0.5)
 
@@ -296,12 +296,12 @@ struct DarkTheme: ThemeProtocol {
     // Selection - Subtle warm highlight
     let selectionColor = Color(hex: "f0f0eb").opacity(0.25)
 
-    // Glass specific - Rich and premium
-    let glassOpacityPrimary: Double = 0.10
-    let glassOpacitySecondary: Double = 0.07
-    let glassOpacityTertiary: Double = 0.04
+    // Glass specific - Rich and premium with improved contrast
+    let glassOpacityPrimary: Double = 0.20
+    let glassOpacitySecondary: Double = 0.15
+    let glassOpacityTertiary: Double = 0.08
     let glassBlurRadius: Double = 28
-    let glassEdgeLight = Color.white.opacity(0.08)
+    let glassEdgeLight = Color.white.opacity(0.12)
 
     // Card shadows - Soft glow
     let cardShadowRadius: Double = 16

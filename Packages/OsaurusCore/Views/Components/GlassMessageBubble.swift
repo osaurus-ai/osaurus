@@ -60,21 +60,26 @@ struct GlassMessageBubble: View {
 
     private var glassBackground: some ShapeStyle {
         if role == .user {
-            // Use theme accent color for user messages
+            // Use theme accent color for user messages - opacity scales with theme glass settings
+            let baseOpacity = colorScheme == .dark ? 0.18 : 0.15
+            let boost = theme.glassOpacityPrimary * 0.5
             return LinearGradient(
                 colors: [
-                    theme.accentColor.opacity(0.15),
-                    theme.accentColor.opacity(0.08),
+                    theme.accentColor.opacity(baseOpacity + boost),
+                    theme.accentColor.opacity((baseOpacity + boost) * 0.6),
                 ],
                 startPoint: .topLeading,
                 endPoint: .bottomTrailing
             )
         } else {
             // Use theme secondary background for assistant messages
+            // Ensures readable text while respecting theme customization
+            let baseOpacity = colorScheme == .dark ? 0.7 : 0.8
+            let boost = theme.glassOpacityPrimary * 0.8
             return LinearGradient(
                 colors: [
-                    theme.secondaryBackground.opacity(colorScheme == .dark ? 0.5 : 0.8),
-                    theme.secondaryBackground.opacity(colorScheme == .dark ? 0.3 : 0.6),
+                    theme.secondaryBackground.opacity(min(0.95, baseOpacity + boost)),
+                    theme.secondaryBackground.opacity(min(0.9, (baseOpacity + boost) * 0.85)),
                 ],
                 startPoint: .topLeading,
                 endPoint: .bottomTrailing
