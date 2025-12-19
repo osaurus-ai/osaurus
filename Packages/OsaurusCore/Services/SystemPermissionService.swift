@@ -30,6 +30,8 @@ final class SystemPermissionService: ObservableObject {
             return checkAutomationPermission()
         case .accessibility:
             return checkAccessibilityPermission()
+        case .disk:
+            return checkDiskPermission()
         }
     }
 
@@ -65,6 +67,8 @@ final class SystemPermissionService: ObservableObject {
             requestAutomationPermission()
         case .accessibility:
             requestAccessibilityPermission()
+        case .disk:
+            requestDiskPermission()
         }
     }
 
@@ -153,6 +157,47 @@ final class SystemPermissionService: ObservableObject {
                 self.openSystemSettings(for: .automation)
             }
         }
+    }
+
+    // MARK: - Full Disk Access Permission
+
+    private func checkDiskPermission() -> Bool {
+        // Check Full Disk Access by attempting to access a protected file.
+        // ~/Library/Safari/Bookmarks.plist is protected and requires FDA.
+        // We attempt to get file attributes which will fail without FDA.
+        let protectedPaths = [
+            FileManager.default.homeDirectoryForCurrentUser
+                .appendingPathComponent("Library/Safari/Bookmarks.plist"),
+            FileManager.default.homeDirectoryForCurrentUser
+                .appendingPathComponent("Library/Safari"),
+            FileManager.default.homeDirectoryForCurrentUser
+                .appendingPathComponent("Library/Mail"),
+        ]
+
+        for path in protectedPaths {
+            do {
+                // Try to get attributes - this will fail without FDA
+                _ = try FileManager.default.attributesOfItem(atPath: path.path)
+                return true
+            } catch let error as NSError {
+                // Error code 257 = permission denied (no FDA)
+                // Error code 4 = file not found (try next path)
+                if error.code == 257 {
+                    return false
+                }
+                // For other errors (like file not found), try the next path
+                continue
+            }
+        }
+
+        // If none of the protected paths exist or all failed, assume no FDA
+        return false
+    }
+
+    private func requestDiskPermission() {
+        // macOS doesn't allow programmatic FDA requests.
+        // We can only open System Settings for the user to grant it manually.
+        openSystemSettings(for: .disk)
     }
 
     // MARK: - Bulk Checks

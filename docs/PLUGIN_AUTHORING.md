@@ -43,6 +43,7 @@ The plugin will be unpacked into:
 ```
 
 Examples:
+
 - `com.acme.echo-1.0.0.zip`
 - `dev.example.MyPlugin-0.1.0.zip`
 - `my-plugin-2.3.1-beta.zip`
@@ -100,6 +101,7 @@ The `requirements` array specifies what permissions or capabilities the tool nee
 | --------------- | ------------------------------------------------------------------------------------ |
 | `automation`    | AppleScript/Apple Events automation - allows controlling other applications          |
 | `accessibility` | Accessibility API access - allows UI interaction, input simulation, computer control |
+| `disk`          | Full Disk Access - allows accessing protected files like Messages database, app data |
 
 Example tool requiring automation:
 
@@ -124,6 +126,21 @@ Example tool requiring both automation and accessibility (e.g., for computer use
   "description": "Control the computer via UI automation",
   "parameters": { ... },
   "requirements": ["automation", "accessibility"],
+  "permission_policy": "ask"
+}
+```
+
+Example tool requiring Full Disk Access (e.g., for reading Messages):
+
+```json
+{
+  "id": "read_messages",
+  "description": "Read message history from a contact",
+  "parameters": {
+    "type": "object",
+    "properties": { "phoneNumber": { "type": "string" } }
+  },
+  "requirements": ["disk"],
   "permission_policy": "ask"
 }
 ```
@@ -160,10 +177,11 @@ Users can override these defaults per-tool via the Osaurus UI.
 
 Some tools require macOS system permissions that must be granted at the app level:
 
-| Permission        | How to Grant                                         | Use Case                                          |
-| ----------------- | ---------------------------------------------------- | ------------------------------------------------- |
-| **Automation**    | System Settings → Privacy & Security → Automation    | AppleScript, controlling other apps               |
-| **Accessibility** | System Settings → Privacy & Security → Accessibility | UI automation, input simulation, computer control |
+| Permission           | How to Grant                                            | Use Case                                          |
+| -------------------- | ------------------------------------------------------- | ------------------------------------------------- |
+| **Automation**       | System Settings → Privacy & Security → Automation       | AppleScript, controlling other apps               |
+| **Accessibility**    | System Settings → Privacy & Security → Accessibility    | UI automation, input simulation, computer control |
+| **Full Disk Access** | System Settings → Privacy & Security → Full Disk Access | Accessing Messages, Safari data, other app data   |
 
 **User Experience:**
 

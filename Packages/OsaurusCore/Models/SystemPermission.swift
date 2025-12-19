@@ -14,6 +14,8 @@ enum SystemPermission: String, CaseIterable, Codable, Sendable {
     case automation
     /// Accessibility API access (AXIsProcessTrusted)
     case accessibility
+    /// Full Disk Access permission
+    case disk
 
     /// Human-readable name for UI display
     var displayName: String {
@@ -22,6 +24,8 @@ enum SystemPermission: String, CaseIterable, Codable, Sendable {
             return "Automation"
         case .accessibility:
             return "Accessibility"
+        case .disk:
+            return "Full Disk Access"
         }
     }
 
@@ -32,6 +36,8 @@ enum SystemPermission: String, CaseIterable, Codable, Sendable {
             return "Allows plugins to control other applications using AppleScript and Apple Events."
         case .accessibility:
             return "Allows plugins to interact with UI elements, simulate input, and control the computer."
+        case .disk:
+            return "Allows plugins to access protected files like the Messages database and other app data."
         }
     }
 
@@ -42,6 +48,8 @@ enum SystemPermission: String, CaseIterable, Codable, Sendable {
             return "applescript"
         case .accessibility:
             return "accessibility"
+        case .disk:
+            return "disk"
         }
     }
 
@@ -52,6 +60,8 @@ enum SystemPermission: String, CaseIterable, Codable, Sendable {
             return "gearshape.2"
         case .accessibility:
             return "figure.stand"
+        case .disk:
+            return "externaldrive.fill.badge.checkmark"
         }
     }
 
@@ -64,6 +74,9 @@ enum SystemPermission: String, CaseIterable, Codable, Sendable {
         case .accessibility:
             // Opens Privacy & Security > Accessibility
             return URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")
+        case .disk:
+            // Opens Privacy & Security > Full Disk Access
+            return URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles")
         }
     }
 }
