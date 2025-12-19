@@ -945,16 +945,27 @@ struct ChatView: View {
                 )
                 .allowsHitTesting(false)
 
-                // Gradient overlay for depth - stronger in light mode for text contrast
+                // Solid backing layer for text contrast - uses theme glass opacity to determine
+                // how solid the background should be (higher glass opacity = more solid backing)
+                // Minimum backing ensures readable text even with low theme opacity settings
+                let baseBackingOpacity = colorScheme == .dark ? 0.6 : 0.7
+                let themeBoost = theme.glassOpacityPrimary * 0.8  // Theme can add up to ~0.15 more
+                let backingOpacity = min(0.92, baseBackingOpacity + themeBoost)
+
+                backgroundShape
+                    .fill(theme.primaryBackground.opacity(backingOpacity))
+                    .allowsHitTesting(false)
+
+                // Gradient overlay for depth and polish - scales with theme settings
                 LinearGradient(
                     colors: [
-                        theme.primaryBackground.opacity(colorScheme == .dark ? 0.3 : 0.6),
-                        theme.primaryBackground.opacity(colorScheme == .dark ? 0.1 : 0.4),
-                        Color.clear,
+                        theme.primaryBackground.opacity(theme.glassOpacityPrimary * 1.5),
+                        theme.primaryBackground.opacity(theme.glassOpacitySecondary),
                     ],
                     startPoint: .top,
                     endPoint: .bottom
                 )
+                .clipShape(backgroundShape)
                 .allowsHitTesting(false)
             }
         }
