@@ -1064,6 +1064,8 @@ private struct SettingsToggle: View {
 private struct SystemPermissionsSection: View {
     @Environment(\.theme) private var theme
     @ObservedObject private var permissionService = SystemPermissionService.shared
+    @State private var calendarTestResult: String? = nil
+    @State private var isTestingCalendar: Bool = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -1081,6 +1083,95 @@ private struct SystemPermissionsSection: View {
             VStack(spacing: 12) {
                 ForEach(SystemPermission.allCases, id: \.rawValue) { permission in
                     SystemPermissionRow(permission: permission)
+                }
+            }
+
+            Divider()
+                .background(theme.primaryBorder)
+
+            // Diagnostics subsection
+            VStack(alignment: .leading, spacing: 12) {
+                Text("Diagnostics")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundColor(theme.secondaryText)
+
+                HStack(spacing: 12) {
+                    Button(action: {
+                        guard !isTestingCalendar else { return }
+                        isTestingCalendar = true
+                        calendarTestResult = nil
+
+                        // Run on background thread to avoid blocking UI
+                        DispatchQueue.global(qos: .userInitiated).async {
+                            let result = SystemPermissionService.debugTestCalendarAccess()
+                            print("[Osaurus][Diagnostics] Calendar AppleScript test: \(result)")
+
+                            DispatchQueue.main.async {
+                                calendarTestResult = result
+                                isTestingCalendar = false
+                                // Update Calendar permission state based on test result
+                                permissionService.updateCalendarPermissionState(result.hasPrefix("SUCCESS"))
+                            }
+                        }
+                    }) {
+                        HStack(spacing: 6) {
+                            if isTestingCalendar {
+                                ProgressView()
+                                    .scaleEffect(0.6)
+                                    .frame(width: 12, height: 12)
+                            } else {
+                                Image(systemName: "calendar.badge.checkmark")
+                                    .font(.system(size: 12))
+                            }
+                            Text(isTestingCalendar ? "Testing..." : "Test Calendar AppleScript")
+                                .font(.system(size: 12, weight: .medium))
+                        }
+                        .foregroundColor(theme.primaryText)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 8)
+                        .background(
+                            RoundedRectangle(cornerRadius: 6)
+                                .fill(theme.tertiaryBackground)
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 6)
+                                        .stroke(theme.inputBorder, lineWidth: 1)
+                                )
+                        )
+                    }
+                    .buttonStyle(PlainButtonStyle())
+                    .disabled(isTestingCalendar)
+                    .help("Run a test AppleScript against Calendar.app to verify automation permissions")
+
+                }
+
+                if let result = calendarTestResult {
+                    let isSuccess = result.hasPrefix("SUCCESS")
+                    HStack(alignment: .top, spacing: 6) {
+                        Image(systemName: isSuccess ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
+                            .font(.system(size: 12))
+                        Text(result)
+                            .font(.system(size: 11, design: .monospaced))
+                            .lineLimit(4)
+                            .textSelection(.enabled)
+                    }
+                    .foregroundColor(isSuccess ? theme.successColor : theme.warningColor)
+                    .padding(8)
+                    .background(
+                        RoundedRectangle(cornerRadius: 6)
+                            .fill((isSuccess ? theme.successColor : theme.warningColor).opacity(0.1))
+                    )
+                }
+
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Error -1743: Permission denied. Error -600: Calendar not responding.")
+                        .font(.system(size: 11))
+                        .foregroundColor(theme.tertiaryText)
+                    Text(
+                        "Note: Xcode debug builds require separate Automation grants in System Settings → Privacy → Automation."
+                    )
+                    .font(.system(size: 11))
+                    .foregroundColor(theme.tertiaryText)
+                    .italic()
                 }
             }
         }

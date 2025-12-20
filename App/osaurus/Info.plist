@@ -10,6 +10,12 @@
 	<string>HBRBQ8QQOhmvMKnSxQxqb3upTjyirdx0xkHSSRqn7aI=</string>
 	<key>NSAppleEventsUsageDescription</key>
 	<string>Osaurus plugins may use automation to control other applications on your behalf.</string>
+	<key>NSCalendarsUsageDescription</key>
+	<string>Osaurus plugins may access your calendar to read and create events.</string>
+	<key>NSCalendarsFullAccessUsageDescription</key>
+	<string>Osaurus plugins may access your calendar to read and create events.</string>
+	<key>NSRemindersUsageDescription</key>
+	<string>Osaurus plugins may access your reminders to read and create tasks.</string>
 	<key>CFBundleURLTypes</key>
 	<array>
 		<dict>
