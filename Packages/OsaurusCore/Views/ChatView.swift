@@ -721,11 +721,26 @@ final class ChatSession: ObservableObject {
                         // Execute tool and append hidden tool result turn
                         let resultText: String
                         do {
+                            // Log tool execution start
+                            let truncatedArgs = inv.jsonArguments.prefix(200)
+                            print(
+                                "[Osaurus][Tool] Executing: \(inv.toolName) with args: \(truncatedArgs)\(inv.jsonArguments.count > 200 ? "..." : "")"
+                            )
+
                             resultText = try await ToolRegistry.shared.execute(
                                 name: inv.toolName,
                                 argumentsJSON: inv.jsonArguments
                             )
+
+                            // Log tool success (truncated result)
+                            let truncatedResult = resultText.prefix(500)
+                            print(
+                                "[Osaurus][Tool] Success: \(inv.toolName) returned \(resultText.count) chars: \(truncatedResult)\(resultText.count > 500 ? "..." : "")"
+                            )
                         } catch {
+                            // Log tool error
+                            print("[Osaurus][Tool] Error: \(inv.toolName) failed: \(error.localizedDescription)")
+
                             // Store rejection/error as the result so UI shows "Rejected" instead of hanging
                             let rejectionMessage = "[REJECTED] \(error.localizedDescription)"
                             assistantTurn.toolResults[callId] = rejectionMessage
