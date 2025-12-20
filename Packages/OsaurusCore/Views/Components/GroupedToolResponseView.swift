@@ -115,11 +115,12 @@ struct InlineToolCallView: View {
 
                     Spacer()
 
-                    // Expand chevron
+                    // Expand chevron with smooth rotation
                     Image(systemName: "chevron.right")
                         .font(.system(size: 10, weight: .semibold))
                         .foregroundColor(theme.tertiaryText)
                         .rotationEffect(.degrees(isExpanded ? 90 : 0))
+                        .animation(.spring(response: 0.3, dampingFraction: 0.7), value: isExpanded)
                 }
                 .padding(.horizontal, 12)
                 .padding(.vertical, 8)
@@ -132,14 +133,10 @@ struct InlineToolCallView: View {
                 expandedContent
                     .padding(.horizontal, 12)
                     .padding(.bottom, 10)
-                    .transition(
-                        .asymmetric(
-                            insertion: .opacity.combined(with: .move(edge: .top)),
-                            removal: .opacity
-                        )
-                    )
+                    .transition(.opacity)
             }
         }
+        .clipped()
         .background(
             RoundedRectangle(cornerRadius: 8, style: .continuous)
                 .fill(theme.secondaryBackground.opacity(isHovered ? 0.7 : 0.5))
@@ -633,11 +630,11 @@ private struct ToolToggleButton: View {
                     .font(.system(size: 11, weight: .medium))
                     .foregroundColor(isActive ? theme.accentColor : theme.secondaryText)
 
-                if isActive {
-                    Image(systemName: "chevron.down")
-                        .font(.system(size: 8, weight: .bold))
-                        .foregroundColor(theme.accentColor)
-                }
+                // Chevron always present, rotates smoothly
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 8, weight: .bold))
+                    .foregroundColor(isActive ? theme.accentColor : theme.tertiaryText.opacity(0.6))
+                    .rotationEffect(.degrees(isActive ? 90 : 0))
             }
             .padding(.horizontal, 10)
             .padding(.vertical, 6)
@@ -657,6 +654,7 @@ private struct ToolToggleButton: View {
                             )
                     )
             )
+            .animation(.spring(response: 0.3, dampingFraction: 0.7), value: isActive)
         }
         .buttonStyle(.plain)
         .onHover { hovering in
@@ -669,6 +667,15 @@ private struct ToolToggleButton: View {
 
 // MARK: - Code Block (Shared)
 
+/// Prepared text content for display
+private struct PreparedContent: Equatable {
+    let displayText: String
+    let lineCount: Int
+    let totalLineCount: Int
+    let totalSize: Int
+    let isTruncated: Bool
+}
+
 struct ToolCodeBlock: View {
     let title: String
     let text: String
@@ -679,60 +686,19 @@ struct ToolCodeBlock: View {
     private static let maxDisplayLines = 500
     // Max height for scrollable content area
     private static let maxContentHeight: CGFloat = 300
+    // Threshold for showing loading state (chars) - lowered to show loading more often
+    private static let largeContentThreshold = 1_000
 
     @State private var isCopied = false
     @State private var isHovered = false
     @State private var showFullText = false
+    @State private var preparedContent: PreparedContent?
+    @State private var isLoading = false
     @Environment(\.theme) private var theme
 
-    /// Whether the text exceeds display limits
-    private var isTruncated: Bool {
-        !showFullText && (text.count > Self.maxDisplayChars || lineCount > Self.maxDisplayLines)
-    }
-
-    /// Cached line count to avoid repeated computation
-    private var lineCount: Int {
-        text.reduce(0) { count, char in count + (char == "\n" ? 1 : 0) } + 1
-    }
-
-    /// Text to display (truncated or full)
-    private var displayText: String {
-        if showFullText {
-            return text
-        }
-
-        // Truncate by character count first
-        if text.count > Self.maxDisplayChars {
-            let truncated = String(text.prefix(Self.maxDisplayChars))
-            // Find last newline to avoid cutting mid-line
-            if let lastNewline = truncated.lastIndex(of: "\n") {
-                return String(truncated[..<lastNewline])
-            }
-            return truncated
-        }
-
-        // Truncate by line count
-        if lineCount > Self.maxDisplayLines {
-            var count = 0
-            var endIndex = text.startIndex
-            for (idx, char) in text.enumerated() {
-                if char == "\n" {
-                    count += 1
-                    if count >= Self.maxDisplayLines {
-                        endIndex = text.index(text.startIndex, offsetBy: idx)
-                        break
-                    }
-                }
-            }
-            return String(text[..<endIndex])
-        }
-
-        return text
-    }
-
-    /// Line count for the displayed text
-    private var displayLineCount: Int {
-        displayText.reduce(0) { count, char in count + (char == "\n" ? 1 : 0) } + 1
+    /// Whether content is large enough to warrant deferred loading
+    private var isLargeContent: Bool {
+        text.count > Self.largeContentThreshold
     }
 
     var body: some View {
@@ -752,8 +718,8 @@ struct ToolCodeBlock: View {
                         .tracking(0.8)
 
                     // Show truncation indicator
-                    if isTruncated {
-                        Text("(\(formatSize(text.count)) truncated)")
+                    if let content = preparedContent, content.isTruncated {
+                        Text("(\(formatSize(content.totalSize)) truncated)")
                             .font(.system(size: 9, weight: .regular))
                             .foregroundColor(theme.warningColor.opacity(0.8))
                     }
@@ -802,22 +768,30 @@ struct ToolCodeBlock: View {
                     )
             )
 
-            // Code content with optimized line numbers
-            // Only add vertical scroll + max height for large content
-            codeContentView
-                .background(theme.codeBlockBackground)
+            // Code content - show loading state while preparing, then content
+            Group {
+                if let content = preparedContent {
+                    codeContentView(for: content)
+                } else if isLoading {
+                    // Show loading spinner while preparing
+                    loadingView
+                } else {
+                    // Fallback empty state (should rarely happen)
+                    Color.clear.frame(height: 20)
+                }
+            }
+            .animation(.easeOut(duration: 0.15), value: preparedContent != nil)
 
             // Show "Show Full" button if truncated
-            if isTruncated {
+            if let content = preparedContent, content.isTruncated {
                 Button(action: {
-                    withAnimation(theme.springAnimation()) {
-                        showFullText = true
-                    }
+                    showFullText = true
+                    prepareContent()
                 }) {
                     HStack(spacing: 6) {
                         Image(systemName: "arrow.down.doc")
                             .font(.system(size: 10, weight: .medium))
-                        Text("Show full content (\(formatSize(text.count)), \(lineCount) lines)")
+                        Text("Show full content (\(formatSize(content.totalSize)), \(content.totalLineCount) lines)")
                             .font(.system(size: 10, weight: .medium))
                     }
                     .foregroundColor(theme.accentColor)
@@ -847,24 +821,119 @@ struct ToolCodeBlock: View {
                 isHovered = hovering
             }
         }
+        .onAppear {
+            // Prepare content when view appears
+            if preparedContent == nil {
+                prepareContent()
+            }
+        }
+        .onChange(of: text) { _, _ in
+            // Re-prepare if text changes
+            preparedContent = nil
+            prepareContent()
+        }
     }
 
-    /// Whether the content is large enough to need constrained height
-    private var needsHeightConstraint: Bool {
-        // Approximate: if more than ~15 lines, constrain height
-        displayLineCount > 15
+    /// Loading placeholder view - elegant shimmer effect
+    private var loadingView: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            ForEach(0 ..< 3, id: \.self) { index in
+                HStack(spacing: 0) {
+                    // Line number placeholder
+                    RoundedRectangle(cornerRadius: 2)
+                        .fill(theme.tertiaryText.opacity(0.06))
+                        .frame(width: 16, height: 12)
+                        .padding(.trailing, 12)
+
+                    // Code line placeholder with varying widths
+                    RoundedRectangle(cornerRadius: 3)
+                        .fill(
+                            LinearGradient(
+                                colors: [
+                                    theme.tertiaryText.opacity(0.04),
+                                    theme.tertiaryText.opacity(0.08),
+                                    theme.tertiaryText.opacity(0.04),
+                                ],
+                                startPoint: .leading,
+                                endPoint: .trailing
+                            )
+                        )
+                        .frame(width: shimmerWidth(for: index), height: 12)
+
+                    Spacer(minLength: 0)
+                }
+            }
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(theme.codeBlockBackground)
+    }
+
+    /// Varying shimmer widths for visual interest
+    private func shimmerWidth(for index: Int) -> CGFloat {
+        switch index {
+        case 0: return 180
+        case 1: return 240
+        case 2: return 140
+        default: return 160
+        }
+    }
+
+    /// Prepare content - synchronously for small content, async for large
+    private func prepareContent() {
+        let sourceText = text
+        let shouldTruncate = !showFullText
+        let maxChars = Self.maxDisplayChars
+        let maxLines = Self.maxDisplayLines
+
+        // For small content, prepare synchronously (no loading state needed)
+        if sourceText.count < Self.largeContentThreshold {
+            let content = prepareDisplayContent(
+                from: sourceText,
+                truncate: shouldTruncate,
+                maxChars: maxChars,
+                maxLines: maxLines
+            )
+            preparedContent = content
+            isLoading = false
+            return
+        }
+
+        // For large content, prepare in background with loading state
+        // Reset state to show loading
+        preparedContent = nil
+        isLoading = true
+
+        Task {
+            // Prepare content off main thread
+            let content = await Task.detached(priority: .userInitiated) {
+                prepareDisplayContent(
+                    from: sourceText,
+                    truncate: shouldTruncate,
+                    maxChars: maxChars,
+                    maxLines: maxLines
+                )
+            }.value
+
+            // Ensure minimum loading time so spinner is visible
+            try? await Task.sleep(nanoseconds: 200_000_000)  // 200ms minimum
+
+            preparedContent = content
+            isLoading = false
+        }
     }
 
     /// Code content view - applies max height only when content is large
     @ViewBuilder
-    private var codeContentView: some View {
-        let content = HStack(alignment: .top, spacing: 0) {
+    private func codeContentView(for content: PreparedContent) -> some View {
+        let textContent = HStack(alignment: .top, spacing: 0) {
             // Optimized line numbers - single Text view instead of ForEach
-            if displayText.contains("\n") {
-                optimizedLineNumbers
+            if content.displayText.contains("\n") {
+                optimizedLineNumbers(lineCount: content.lineCount)
             }
 
-            Text(displayText)
+            Text(content.displayText)
                 .font(.system(size: 11, weight: .regular, design: .monospaced))
                 .foregroundColor(theme.primaryText.opacity(0.9))
                 .textSelection(.enabled)
@@ -872,23 +941,25 @@ struct ToolCodeBlock: View {
                 .padding(.vertical, 10)
         }
 
-        if needsHeightConstraint {
+        // Apply max height constraint only for large content (>15 lines)
+        if content.lineCount > 15 {
             // Large content: enable both scrolls with max height
             ScrollView([.horizontal, .vertical], showsIndicators: true) {
-                content
+                textContent
             }
             .frame(maxHeight: Self.maxContentHeight)
+            .background(theme.codeBlockBackground)
         } else {
             // Small content: only horizontal scroll, natural height
             ScrollView(.horizontal, showsIndicators: false) {
-                content
+                textContent
             }
+            .background(theme.codeBlockBackground)
         }
     }
 
     /// Optimized line numbers using a single Text view with joined string
-    private var optimizedLineNumbers: some View {
-        let count = displayLineCount
+    private func optimizedLineNumbers(lineCount count: Int) -> some View {
         // Build a single string with all line numbers
         let lineNumbersText = (1 ... count).map { String($0) }.joined(separator: "\n")
 
@@ -945,6 +1016,67 @@ struct ToolCodeBlock: View {
             }
         }
     }
+}
+
+// MARK: - Content Preparation (Off Main Thread)
+
+/// Prepare content off main thread - standalone function to avoid MainActor isolation
+private func prepareDisplayContent(
+    from text: String,
+    truncate: Bool,
+    maxChars: Int,
+    maxLines: Int
+) -> PreparedContent {
+    // Count total lines
+    var totalLineCount = 1
+    for char in text {
+        if char == "\n" { totalLineCount += 1 }
+    }
+
+    let totalSize = text.count
+
+    // Determine if we need to truncate
+    let needsTruncation = truncate && (text.count > maxChars || totalLineCount > maxLines)
+
+    let displayText: String
+    let displayLineCount: Int
+
+    if !needsTruncation {
+        displayText = text
+        displayLineCount = totalLineCount
+    } else if text.count > maxChars {
+        // Truncate by chars
+        let truncated = String(text.prefix(maxChars))
+        if let lastNewline = truncated.lastIndex(of: "\n") {
+            displayText = String(truncated[..<lastNewline])
+        } else {
+            displayText = truncated
+        }
+        displayLineCount = displayText.reduce(1) { $0 + ($1 == "\n" ? 1 : 0) }
+    } else {
+        // Truncate by lines
+        var count = 0
+        var endIndex = text.startIndex
+        for (idx, char) in text.enumerated() {
+            if char == "\n" {
+                count += 1
+                if count >= maxLines {
+                    endIndex = text.index(text.startIndex, offsetBy: idx)
+                    break
+                }
+            }
+        }
+        displayText = String(text[..<endIndex])
+        displayLineCount = maxLines
+    }
+
+    return PreparedContent(
+        displayText: displayText,
+        lineCount: displayLineCount,
+        totalLineCount: totalLineCount,
+        totalSize: totalSize,
+        isTruncated: needsTruncation
+    )
 }
 
 // MARK: - Preview
