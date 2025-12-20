@@ -69,9 +69,9 @@ cp "$CLI_SRC" "$ARCHIVE_APP/Contents/Helpers/osaurus"
 chmod +x "$ARCHIVE_APP/Contents/Helpers/osaurus"
 
 # Re-sign the modified app bundle inside the archive
-# (Use --deep to sign the nested CLI binary as well)
+# (Use --deep to sign the nested CLI binary as well, but explicitly re-apply entitlements)
 echo "Re-signing modified app bundle..."
-codesign --force --deep --options runtime --sign "${CODE_SIGN_IDENTITY_VALUE}" "$ARCHIVE_APP"
+codesign --force --deep --options runtime --entitlements "App/osaurus/osaurus.entitlements" --sign "${CODE_SIGN_IDENTITY_VALUE}" "$ARCHIVE_APP"
 
 cat > ExportOptions.plist <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
