@@ -1064,8 +1064,6 @@ private struct SettingsToggle: View {
 private struct SystemPermissionsSection: View {
     @Environment(\.theme) private var theme
     @ObservedObject private var permissionService = SystemPermissionService.shared
-    @State private var calendarTestResult: String? = nil
-    @State private var isTestingCalendar: Bool = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -1083,95 +1081,6 @@ private struct SystemPermissionsSection: View {
             VStack(spacing: 12) {
                 ForEach(SystemPermission.allCases, id: \.rawValue) { permission in
                     SystemPermissionRow(permission: permission)
-                }
-            }
-
-            Divider()
-                .background(theme.primaryBorder)
-
-            // Diagnostics subsection
-            VStack(alignment: .leading, spacing: 12) {
-                Text("Diagnostics")
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(theme.secondaryText)
-
-                HStack(spacing: 12) {
-                    Button(action: {
-                        guard !isTestingCalendar else { return }
-                        isTestingCalendar = true
-                        calendarTestResult = nil
-
-                        // Run on background thread to avoid blocking UI
-                        DispatchQueue.global(qos: .userInitiated).async {
-                            let result = SystemPermissionService.debugTestCalendarAccess()
-                            print("[Osaurus][Diagnostics] Calendar AppleScript test: \(result)")
-
-                            DispatchQueue.main.async {
-                                calendarTestResult = result
-                                isTestingCalendar = false
-                                // Update Calendar permission state based on test result
-                                permissionService.updateCalendarPermissionState(result.hasPrefix("SUCCESS"))
-                            }
-                        }
-                    }) {
-                        HStack(spacing: 6) {
-                            if isTestingCalendar {
-                                ProgressView()
-                                    .scaleEffect(0.6)
-                                    .frame(width: 12, height: 12)
-                            } else {
-                                Image(systemName: "calendar.badge.checkmark")
-                                    .font(.system(size: 12))
-                            }
-                            Text(isTestingCalendar ? "Testing..." : "Test Calendar AppleScript")
-                                .font(.system(size: 12, weight: .medium))
-                        }
-                        .foregroundColor(theme.primaryText)
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 8)
-                        .background(
-                            RoundedRectangle(cornerRadius: 6)
-                                .fill(theme.tertiaryBackground)
-                                .overlay(
-                                    RoundedRectangle(cornerRadius: 6)
-                                        .stroke(theme.inputBorder, lineWidth: 1)
-                                )
-                        )
-                    }
-                    .buttonStyle(PlainButtonStyle())
-                    .disabled(isTestingCalendar)
-                    .help("Run a test AppleScript against Calendar.app to verify automation permissions")
-
-                }
-
-                if let result = calendarTestResult {
-                    let isSuccess = result.hasPrefix("SUCCESS")
-                    HStack(alignment: .top, spacing: 6) {
-                        Image(systemName: isSuccess ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
-                            .font(.system(size: 12))
-                        Text(result)
-                            .font(.system(size: 11, design: .monospaced))
-                            .lineLimit(4)
-                            .textSelection(.enabled)
-                    }
-                    .foregroundColor(isSuccess ? theme.successColor : theme.warningColor)
-                    .padding(8)
-                    .background(
-                        RoundedRectangle(cornerRadius: 6)
-                            .fill((isSuccess ? theme.successColor : theme.warningColor).opacity(0.1))
-                    )
-                }
-
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Error -1743: Permission denied. Error -600: Calendar not responding.")
-                        .font(.system(size: 11))
-                        .foregroundColor(theme.tertiaryText)
-                    Text(
-                        "Note: Xcode debug builds require separate Automation grants in System Settings → Privacy → Automation."
-                    )
-                    .font(.system(size: 11))
-                    .foregroundColor(theme.tertiaryText)
-                    .italic()
                 }
             }
         }
@@ -1196,88 +1105,156 @@ private struct SystemPermissionRow: View {
     @ObservedObject private var permissionService = SystemPermissionService.shared
     let permission: SystemPermission
 
+    @State private var isTesting = false
+    @State private var testResult: String? = nil
+
     private var isGranted: Bool {
         permissionService.permissionStates[permission] ?? false
     }
 
+    // Only automation permissions support the diagnostic test
+    private var canTest: Bool {
+        permission == .automation || permission == .automationCalendar
+    }
+
     var body: some View {
-        HStack(spacing: 12) {
-            // Permission icon
-            ZStack {
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(isGranted ? theme.successColor.opacity(0.1) : theme.tertiaryBackground)
-                Image(systemName: permission.systemIconName)
-                    .font(.system(size: 16, weight: .medium))
-                    .foregroundColor(isGranted ? theme.successColor : theme.secondaryText)
-            }
-            .frame(width: 36, height: 36)
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 12) {
+                // Permission icon
+                ZStack {
+                    RoundedRectangle(cornerRadius: 8)
+                        .fill(isGranted ? theme.successColor.opacity(0.1) : theme.tertiaryBackground)
+                    Image(systemName: permission.systemIconName)
+                        .font(.system(size: 16, weight: .medium))
+                        .foregroundColor(isGranted ? theme.successColor : theme.secondaryText)
+                }
+                .frame(width: 36, height: 36)
 
-            // Permission info
-            VStack(alignment: .leading, spacing: 3) {
-                HStack(spacing: 6) {
-                    Text(permission.displayName)
-                        .font(.system(size: 13, weight: .medium))
+                // Permission info
+                VStack(alignment: .leading, spacing: 3) {
+                    HStack(spacing: 6) {
+                        Text(permission.displayName)
+                            .font(.system(size: 13, weight: .medium))
+                            .foregroundColor(theme.primaryText)
+
+                        // Status badge
+                        Text(isGranted ? "Granted" : "Not Granted")
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundColor(isGranted ? theme.successColor : theme.warningColor)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(
+                                Capsule()
+                                    .fill(isGranted ? theme.successColor.opacity(0.1) : theme.warningColor.opacity(0.1))
+                            )
+                    }
+
+                    Text(permission.description)
+                        .font(.system(size: 11))
+                        .foregroundColor(theme.tertiaryText)
+                        .lineLimit(2)
+                }
+
+                Spacer()
+
+                HStack(spacing: 8) {
+                    // Test Button (for automation permissions)
+                    if canTest {
+                        Button(action: runTest) {
+                            if isTesting {
+                                ProgressView()
+                                    .scaleEffect(0.6)
+                                    .frame(width: 12, height: 12)
+                            } else {
+                                Text("Test")
+                                    .font(.system(size: 12, weight: .medium))
+                            }
+                        }
                         .foregroundColor(theme.primaryText)
-
-                    // Status badge
-                    Text(isGranted ? "Granted" : "Not Granted")
-                        .font(.system(size: 10, weight: .semibold))
-                        .foregroundColor(isGranted ? theme.successColor : theme.warningColor)
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 2)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 6)
                         .background(
-                            Capsule()
-                                .fill(isGranted ? theme.successColor.opacity(0.1) : theme.warningColor.opacity(0.1))
+                            RoundedRectangle(cornerRadius: 6)
+                                .fill(theme.tertiaryBackground)
                         )
-                }
+                        .buttonStyle(PlainButtonStyle())
+                        .disabled(isTesting)
+                        .help("Run a diagnostic test to verify permission")
+                    }
 
-                Text(permission.description)
-                    .font(.system(size: 11))
-                    .foregroundColor(theme.tertiaryText)
-                    .lineLimit(2)
+                    // Action button
+                    if isGranted {
+                        Button(action: {
+                            permissionService.openSystemSettings(for: permission)
+                        }) {
+                            HStack(spacing: 4) {
+                                Image(systemName: "gear")
+                                    .font(.system(size: 11))
+                                Text("Settings")
+                                    .font(.system(size: 12, weight: .medium))
+                            }
+                            .foregroundColor(theme.secondaryText)
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 6)
+                            .background(
+                                RoundedRectangle(cornerRadius: 6)
+                                    .fill(theme.tertiaryBackground)
+                            )
+                        }
+                        .buttonStyle(PlainButtonStyle())
+                    } else {
+                        Button(action: {
+                            permissionService.requestPermission(permission)
+                        }) {
+                            HStack(spacing: 4) {
+                                Image(systemName: "hand.raised")
+                                    .font(.system(size: 11))
+                                Text("Grant")
+                                    .font(.system(size: 12, weight: .medium))
+                            }
+                            .foregroundColor(.white)
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 6)
+                            .background(
+                                RoundedRectangle(cornerRadius: 6)
+                                    .fill(theme.accentColor)
+                            )
+                        }
+                        .buttonStyle(PlainButtonStyle())
+                    }
+                }
             }
 
-            Spacer()
+            // Inline Test Result
+            if let result = testResult {
+                let isSuccess = result.hasPrefix("SUCCESS")
+                HStack(alignment: .top, spacing: 6) {
+                    Image(systemName: isSuccess ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
+                        .font(.system(size: 12))
+                        .foregroundColor(isSuccess ? theme.successColor : theme.warningColor)
+                        .padding(.top, 1)
 
-            // Action button
-            if isGranted {
-                Button(action: {
-                    permissionService.openSystemSettings(for: permission)
-                }) {
-                    HStack(spacing: 4) {
-                        Image(systemName: "gear")
-                            .font(.system(size: 11))
-                        Text("Settings")
-                            .font(.system(size: 12, weight: .medium))
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(result)
+                            .font(.system(size: 11, design: .monospaced))
+                            .lineLimit(4)
+                            .textSelection(.enabled)
+                            .foregroundColor(isSuccess ? theme.successColor : theme.warningColor)
+
+                        if !isSuccess {
+                            Text("Xcode builds need separate grants. Try 'tccutil reset AppleEvents' if stuck.")
+                                .font(.system(size: 10))
+                                .foregroundColor(theme.tertiaryText)
+                                .padding(.top, 2)
+                        }
                     }
-                    .foregroundColor(theme.secondaryText)
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 6)
-                    .background(
-                        RoundedRectangle(cornerRadius: 6)
-                            .fill(theme.tertiaryBackground)
-                    )
                 }
-                .buttonStyle(PlainButtonStyle())
-            } else {
-                Button(action: {
-                    permissionService.requestPermission(permission)
-                }) {
-                    HStack(spacing: 4) {
-                        Image(systemName: "hand.raised")
-                            .font(.system(size: 11))
-                        Text("Grant")
-                            .font(.system(size: 12, weight: .medium))
-                    }
-                    .foregroundColor(.white)
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 6)
-                    .background(
-                        RoundedRectangle(cornerRadius: 6)
-                            .fill(theme.accentColor)
-                    )
-                }
-                .buttonStyle(PlainButtonStyle())
+                .padding(8)
+                .background(
+                    RoundedRectangle(cornerRadius: 6)
+                        .fill((isSuccess ? theme.successColor : theme.warningColor).opacity(0.1))
+                )
+                .padding(.leading, 48)  // Align with text
             }
         }
         .padding(12)
@@ -1289,6 +1266,33 @@ private struct SystemPermissionRow: View {
                         .stroke(isGranted ? theme.successColor.opacity(0.3) : theme.inputBorder, lineWidth: 1)
                 )
         )
+    }
+
+    private func runTest() {
+        guard !isTesting else { return }
+        isTesting = true
+        testResult = nil
+
+        DispatchQueue.global(qos: .userInitiated).async {
+            let result: String
+            if permission == .automationCalendar {
+                result = SystemPermissionService.debugTestCalendarAccess()
+            } else if permission == .automation {
+                result = SystemPermissionService.debugTestAutomationAccess()
+            } else {
+                result = "Test not available"
+            }
+
+            DispatchQueue.main.async {
+                testResult = result
+                isTesting = false
+
+                // Update permission state if test succeeded
+                if result.hasPrefix("SUCCESS") {
+                    permissionService.updatePermissionState(permission, isGranted: true)
+                }
+            }
+        }
     }
 }
 
