@@ -26,8 +26,13 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegat
     public func applicationDidFinishLaunching(_ notification: Notification) {
         AppDelegate.shared = self
 
-        // Configure as menu bar app (hide Dock icon)
-        NSApp.setActivationPolicy(.accessory)
+        // Configure as regular app (show Dock icon) by default, or accessory if hidden
+        let hideDockIcon = ServerConfigurationStore.load()?.hideDockIcon ?? false
+        if hideDockIcon {
+            NSApp.setActivationPolicy(.accessory)
+        } else {
+            NSApp.setActivationPolicy(.regular)
+        }
 
         // App has launched
         NSLog("Osaurus server app launched")
@@ -112,6 +117,15 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegat
         for url in urls {
             handleDeepLink(url)
         }
+    }
+
+    public func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        if !flag {
+            Task { @MainActor in
+                self.showChatOverlay()
+            }
+        }
+        return true
     }
 
     public func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
@@ -456,8 +470,6 @@ extension AppDelegate {
             win.isOpaque = false
             win.backgroundColor = .clear
             win.hasShadow = true
-            win.hidesOnDeactivate = false
-            win.isExcludedFromWindowsMenu = true
             win.standardWindowButton(.miniaturizeButton)?.isHidden = true
             win.standardWindowButton(.zoomButton)?.isHidden = true
             win.standardWindowButton(.closeButton)?.isHidden = true
@@ -466,7 +478,9 @@ extension AppDelegate {
             win.isMovableByWindowBackground = true
             let chatConfig = ChatConfigurationStore.load()
             win.level = chatConfig.alwaysOnTop ? .floating : .normal
-            win.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
+            if chatConfig.alwaysOnTop {
+                win.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
+            }
             win.contentViewController = controller
             win.delegate = self
             win.animationBehavior = .none
