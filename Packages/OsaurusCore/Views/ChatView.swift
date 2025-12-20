@@ -154,6 +154,24 @@ final class ChatSession: ObservableObject {
         turns.filter { $0.role != .tool }
     }
 
+    /// Grouped turns for display
+    var visibleGroups: [MessageGroup] {
+        var groups: [MessageGroup] = []
+
+        for turn in visibleTurns {
+            if let lastGroup = groups.last, lastGroup.role == turn.role {
+                // Append to existing group
+                var updatedGroup = lastGroup
+                updatedGroup.turns.append(turn)
+                groups[groups.count - 1] = updatedGroup
+            } else {
+                // Start new group with stable ID from first turn
+                groups.append(MessageGroup(id: turn.id, role: turn.role, turns: [turn]))
+            }
+        }
+        return groups
+    }
+
     /// Estimated token count for current session context (rough heuristic: ~4 chars per token)
     var estimatedContextTokens: Int {
         var total = 0
@@ -412,11 +430,20 @@ final class ChatSession: ObservableObject {
             defer {
                 isStreaming = false
                 ServerController.signalGenerationEnd()
+                // Remove trailing empty assistant turn if present (can happen after tool calls)
+                if let lastTurn = turns.last,
+                    lastTurn.role == .assistant,
+                    lastTurn.content.isEmpty,
+                    lastTurn.toolCalls == nil,
+                    lastTurn.thinking.isEmpty
+                {
+                    turns.removeLast()
+                }
                 // Auto-save after streaming completes
                 save()
             }
 
-            let assistantTurn = ChatTurn(role: .assistant, content: "")
+            var assistantTurn = ChatTurn(role: .assistant, content: "")
             turns.append(assistantTurn)
             do {
                 let engine = ChatEngine(source: .chatUI)
@@ -753,6 +780,13 @@ final class ChatSession: ObservableObject {
                         let toolTurn = ChatTurn(role: .tool, content: resultText)
                         toolTurn.toolCallId = callId
                         turns.append(toolTurn)
+
+                        // Create a new assistant turn for subsequent content
+                        // This ensures tool calls and text are rendered sequentially
+                        let newAssistantTurn = ChatTurn(role: .assistant, content: "")
+                        turns.append(newAssistantTurn)
+                        assistantTurn = newAssistantTurn
+
                         // Continue loop with new history
                         continue
                     }
@@ -1157,18 +1191,16 @@ struct ChatView: View {
     // MARK: - Message Thread
 
     private func messageThread(_ width: CGFloat) -> some View {
-        let visible = session.visibleTurns
+        let groups = session.visibleGroups
+
         return ScrollViewReader { proxy in
             ScrollView {
-                LazyVStack(spacing: 2) {
-                    ForEach(Array(visible.enumerated()), id: \.element.id) { index, turn in
-                        let isLatest = index == visible.count - 1
-
-                        MessageRow(
-                            turn: turn,
+                LazyVStack(spacing: 0) {
+                    ForEach(groups) { group in
+                        MessageGroupView(
+                            group: group,
                             width: width,
                             isStreaming: session.isStreaming,
-                            isLatest: isLatest,
                             onCopy: copyToPasteboard,
                             onEdit: { turnId, newContent in
                                 session.editAndRegenerate(turnId: turnId, newContent: newContent)
@@ -1178,6 +1210,7 @@ struct ChatView: View {
                             }
                         )
                         .padding(.horizontal, 16)
+                        .padding(.bottom, 16)
                     }
 
                     // Bottom anchor
