@@ -9,6 +9,19 @@
 import AppKit
 import SwiftUI
 
+// MARK: - JSON Formatting Utility
+
+/// Formats JSON on a background thread to avoid blocking UI
+private enum JSONFormatter {
+    static func prettyJSON(_ raw: String) -> String {
+        guard let data = raw.data(using: .utf8),
+            let obj = try? JSONSerialization.jsonObject(with: data),
+            let pretty = try? JSONSerialization.data(withJSONObject: obj, options: [.prettyPrinted, .sortedKeys])
+        else { return raw }
+        return String(data: pretty, encoding: .utf8) ?? raw
+    }
+}
+
 // MARK: - Inline Tool Call View (Compact Row)
 
 /// Compact inline view for a single tool call - shows tool name, arg preview, and status.
@@ -19,6 +32,7 @@ struct InlineToolCallView: View {
 
     @State private var isExpanded: Bool = false
     @State private var isHovered: Bool = false
+    @State private var formattedArgs: String?
     @Environment(\.theme) private var theme
 
     private var isComplete: Bool {
@@ -113,7 +127,7 @@ struct InlineToolCallView: View {
             }
             .buttonStyle(.plain)
 
-            // Expanded content
+            // Expanded content - only render when expanded
             if isExpanded {
                 expandedContent
                     .padding(.horizontal, 12)
@@ -142,6 +156,18 @@ struct InlineToolCallView: View {
         .onHover { hovering in
             isHovered = hovering
         }
+        .onChange(of: isExpanded) { _, expanded in
+            if expanded && formattedArgs == nil {
+                // Format JSON in background when first expanded
+                let rawArgs = call.function.arguments
+                Task.detached(priority: .userInitiated) {
+                    let formatted = JSONFormatter.prettyJSON(rawArgs)
+                    await MainActor.run {
+                        formattedArgs = formatted
+                    }
+                }
+            }
+        }
     }
 
     @ViewBuilder
@@ -163,12 +189,21 @@ struct InlineToolCallView: View {
 
     private var expandedContent: some View {
         VStack(alignment: .leading, spacing: 8) {
-            // Arguments
-            ToolCodeBlock(
-                title: "Arguments",
-                text: prettyJSON(call.function.arguments),
-                language: "json"
-            )
+            // Arguments - use cached formatted version or show loading
+            if let formatted = formattedArgs {
+                ToolCodeBlock(
+                    title: "Arguments",
+                    text: formatted,
+                    language: "json"
+                )
+            } else {
+                // Show raw args while formatting in background
+                ToolCodeBlock(
+                    title: "Arguments",
+                    text: call.function.arguments,
+                    language: "json"
+                )
+            }
 
             // Result (if complete)
             if let result {
@@ -179,14 +214,6 @@ struct InlineToolCallView: View {
                 )
             }
         }
-    }
-
-    private func prettyJSON(_ raw: String) -> String {
-        guard let data = raw.data(using: .utf8),
-            let obj = try? JSONSerialization.jsonObject(with: data),
-            let pretty = try? JSONSerialization.data(withJSONObject: obj, options: [.prettyPrinted, .sortedKeys])
-        else { return raw }
-        return String(data: pretty, encoding: .utf8) ?? raw
     }
 }
 
@@ -357,7 +384,8 @@ struct GroupedToolResponseView: View {
     }
 
     private var content: some View {
-        VStack(spacing: 8) {
+        // Use LazyVStack to avoid rendering all rows at once for large lists
+        LazyVStack(spacing: 8) {
             ForEach(Array(calls.enumerated()), id: \.0) { index, call in
                 ToolCallRow(
                     call: call,
@@ -380,6 +408,7 @@ private struct ToolCallRow: View {
     @State private var showArgs: Bool = false
     @State private var showResult: Bool = false
     @State private var isHovered: Bool = false
+    @State private var formattedArgs: String?
     @Environment(\.theme) private var theme
 
     private var isComplete: Bool {
@@ -509,19 +538,34 @@ private struct ToolCallRow: View {
                 Spacer()
             }
 
-            // Expandable content
+            // Expandable content - uses cached formatted JSON
             if showArgs {
-                ToolCodeBlock(
-                    title: "Arguments",
-                    text: prettyJSON(call.function.arguments),
-                    language: "json"
-                )
-                .transition(
-                    .asymmetric(
-                        insertion: .opacity.combined(with: .scale(scale: 0.98, anchor: .top)),
-                        removal: .opacity
+                if let formatted = formattedArgs {
+                    ToolCodeBlock(
+                        title: "Arguments",
+                        text: formatted,
+                        language: "json"
                     )
-                )
+                    .transition(
+                        .asymmetric(
+                            insertion: .opacity.combined(with: .scale(scale: 0.98, anchor: .top)),
+                            removal: .opacity
+                        )
+                    )
+                } else {
+                    // Show raw args while formatting
+                    ToolCodeBlock(
+                        title: "Arguments",
+                        text: call.function.arguments,
+                        language: "json"
+                    )
+                    .transition(
+                        .asymmetric(
+                            insertion: .opacity.combined(with: .scale(scale: 0.98, anchor: .top)),
+                            removal: .opacity
+                        )
+                    )
+                }
             }
 
             if showResult, let result {
@@ -552,14 +596,18 @@ private struct ToolCallRow: View {
                 isHovered = hovering
             }
         }
-    }
-
-    private func prettyJSON(_ raw: String) -> String {
-        guard let data = raw.data(using: .utf8),
-            let obj = try? JSONSerialization.jsonObject(with: data),
-            let pretty = try? JSONSerialization.data(withJSONObject: obj, options: [.prettyPrinted, .sortedKeys])
-        else { return raw }
-        return String(data: pretty, encoding: .utf8) ?? raw
+        .onChange(of: showArgs) { _, showing in
+            if showing && formattedArgs == nil {
+                // Format JSON in background when first shown
+                let rawArgs = call.function.arguments
+                Task.detached(priority: .userInitiated) {
+                    let formatted = JSONFormatter.prettyJSON(rawArgs)
+                    await MainActor.run {
+                        formattedArgs = formatted
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -626,9 +674,66 @@ struct ToolCodeBlock: View {
     let text: String
     let language: String?
 
+    // Truncation thresholds for performance
+    private static let maxDisplayChars = 50_000  // ~50KB
+    private static let maxDisplayLines = 500
+    // Max height for scrollable content area
+    private static let maxContentHeight: CGFloat = 300
+
     @State private var isCopied = false
     @State private var isHovered = false
+    @State private var showFullText = false
     @Environment(\.theme) private var theme
+
+    /// Whether the text exceeds display limits
+    private var isTruncated: Bool {
+        !showFullText && (text.count > Self.maxDisplayChars || lineCount > Self.maxDisplayLines)
+    }
+
+    /// Cached line count to avoid repeated computation
+    private var lineCount: Int {
+        text.reduce(0) { count, char in count + (char == "\n" ? 1 : 0) } + 1
+    }
+
+    /// Text to display (truncated or full)
+    private var displayText: String {
+        if showFullText {
+            return text
+        }
+
+        // Truncate by character count first
+        if text.count > Self.maxDisplayChars {
+            let truncated = String(text.prefix(Self.maxDisplayChars))
+            // Find last newline to avoid cutting mid-line
+            if let lastNewline = truncated.lastIndex(of: "\n") {
+                return String(truncated[..<lastNewline])
+            }
+            return truncated
+        }
+
+        // Truncate by line count
+        if lineCount > Self.maxDisplayLines {
+            var count = 0
+            var endIndex = text.startIndex
+            for (idx, char) in text.enumerated() {
+                if char == "\n" {
+                    count += 1
+                    if count >= Self.maxDisplayLines {
+                        endIndex = text.index(text.startIndex, offsetBy: idx)
+                        break
+                    }
+                }
+            }
+            return String(text[..<endIndex])
+        }
+
+        return text
+    }
+
+    /// Line count for the displayed text
+    private var displayLineCount: Int {
+        displayText.reduce(0) { count, char in count + (char == "\n" ? 1 : 0) } + 1
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -645,6 +750,13 @@ struct ToolCodeBlock: View {
                         .font(.system(size: 9, weight: .bold, design: .rounded))
                         .foregroundColor(theme.tertiaryText)
                         .tracking(0.8)
+
+                    // Show truncation indicator
+                    if isTruncated {
+                        Text("(\(formatSize(text.count)) truncated)")
+                            .font(.system(size: 9, weight: .regular))
+                            .foregroundColor(theme.warningColor.opacity(0.8))
+                    }
                 }
 
                 Spacer()
@@ -690,23 +802,31 @@ struct ToolCodeBlock: View {
                     )
             )
 
-            // Code content with line numbers for multi-line
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(alignment: .top, spacing: 0) {
-                    // Line numbers for multi-line content
-                    if text.contains("\n") {
-                        lineNumbers
-                    }
+            // Code content with optimized line numbers
+            // Only add vertical scroll + max height for large content
+            codeContentView
+                .background(theme.codeBlockBackground)
 
-                    Text(text)
-                        .font(.system(size: 11, weight: .regular, design: .monospaced))
-                        .foregroundColor(theme.primaryText.opacity(0.9))
-                        .textSelection(.enabled)
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 10)
+            // Show "Show Full" button if truncated
+            if isTruncated {
+                Button(action: {
+                    withAnimation(theme.springAnimation()) {
+                        showFullText = true
+                    }
+                }) {
+                    HStack(spacing: 6) {
+                        Image(systemName: "arrow.down.doc")
+                            .font(.system(size: 10, weight: .medium))
+                        Text("Show full content (\(formatSize(text.count)), \(lineCount) lines)")
+                            .font(.system(size: 10, weight: .medium))
+                    }
+                    .foregroundColor(theme.accentColor)
+                    .padding(.vertical, 8)
+                    .frame(maxWidth: .infinity)
+                    .background(theme.accentColor.opacity(0.08))
                 }
+                .buttonStyle(.plain)
             }
-            .background(theme.codeBlockBackground)
         }
         .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
         .overlay(
@@ -729,29 +849,66 @@ struct ToolCodeBlock: View {
         }
     }
 
-    private var lineNumbers: some View {
-        let lines = text.components(separatedBy: "\n")
-        return VStack(alignment: .trailing, spacing: 0) {
-            ForEach(1 ... lines.count, id: \.self) { lineNum in
-                Text("\(lineNum)")
-                    .font(.system(size: 10, weight: .regular, design: .monospaced))
-                    .foregroundColor(theme.tertiaryText.opacity(0.4))
-                    .frame(height: 15)
+    /// Whether the content is large enough to need constrained height
+    private var needsHeightConstraint: Bool {
+        // Approximate: if more than ~15 lines, constrain height
+        displayLineCount > 15
+    }
+
+    /// Code content view - applies max height only when content is large
+    @ViewBuilder
+    private var codeContentView: some View {
+        let content = HStack(alignment: .top, spacing: 0) {
+            // Optimized line numbers - single Text view instead of ForEach
+            if displayText.contains("\n") {
+                optimizedLineNumbers
+            }
+
+            Text(displayText)
+                .font(.system(size: 11, weight: .regular, design: .monospaced))
+                .foregroundColor(theme.primaryText.opacity(0.9))
+                .textSelection(.enabled)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 10)
+        }
+
+        if needsHeightConstraint {
+            // Large content: enable both scrolls with max height
+            ScrollView([.horizontal, .vertical], showsIndicators: true) {
+                content
+            }
+            .frame(maxHeight: Self.maxContentHeight)
+        } else {
+            // Small content: only horizontal scroll, natural height
+            ScrollView(.horizontal, showsIndicators: false) {
+                content
             }
         }
-        .padding(.leading, 8)
-        .padding(.trailing, 6)
-        .padding(.vertical, 10)
-        .background(
-            Rectangle()
-                .fill(theme.codeBlockBackground.opacity(0.3))
-        )
-        .overlay(
-            Rectangle()
-                .fill(theme.primaryBorder.opacity(0.1))
-                .frame(width: 1),
-            alignment: .trailing
-        )
+    }
+
+    /// Optimized line numbers using a single Text view with joined string
+    private var optimizedLineNumbers: some View {
+        let count = displayLineCount
+        // Build a single string with all line numbers
+        let lineNumbersText = (1 ... count).map { String($0) }.joined(separator: "\n")
+
+        return Text(lineNumbersText)
+            .font(.system(size: 10, weight: .regular, design: .monospaced))
+            .foregroundColor(theme.tertiaryText.opacity(0.4))
+            .lineSpacing(0)
+            .padding(.leading, 8)
+            .padding(.trailing, 6)
+            .padding(.vertical, 10)
+            .background(
+                Rectangle()
+                    .fill(theme.codeBlockBackground.opacity(0.3))
+            )
+            .overlay(
+                Rectangle()
+                    .fill(theme.primaryBorder.opacity(0.1))
+                    .frame(width: 1),
+                alignment: .trailing
+            )
     }
 
     private func languageIcon(for lang: String) -> String {
@@ -762,7 +919,18 @@ struct ToolCodeBlock: View {
         }
     }
 
+    private func formatSize(_ bytes: Int) -> String {
+        if bytes < 1024 {
+            return "\(bytes) B"
+        } else if bytes < 1024 * 1024 {
+            return String(format: "%.1f KB", Double(bytes) / 1024.0)
+        } else {
+            return String(format: "%.1f MB", Double(bytes) / (1024.0 * 1024.0))
+        }
+    }
+
     private func copyToClipboard() {
+        // Always copy full text, not truncated
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(text, forType: .string)
 

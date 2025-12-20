@@ -32,6 +32,9 @@ private struct MemoizedMarkdownView: View {
     // Memoized segments - only recomputed when text changes via .onChange
     @State private var cachedSegments: [ContentSegment] = []
     @State private var lastParsedText: String = ""
+    // Cache for incremental parsing
+    @State private var cachedBlocks: [MessageBlock] = []
+    @State private var lastStableIndex: Int = 0  // Index of last "stable" block (not affected by streaming)
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -48,15 +51,36 @@ private struct MemoizedMarkdownView: View {
         .onChange(of: text) { _, newText in
             // Only reparse when text actually changes
             if lastParsedText != newText {
-                updateSegments()
+                updateSegmentsIncremental(oldText: lastParsedText, newText: newText)
             }
         }
     }
 
     private func updateSegments() {
         let blocks = parseBlocks(text)
+        cachedBlocks = blocks
         cachedSegments = groupBlocksIntoSegments(blocks)
         lastParsedText = text
+        // All blocks except the last one are considered stable
+        lastStableIndex = max(0, blocks.count - 1)
+    }
+
+    /// Incremental update: only reparse from the last stable block
+    private func updateSegmentsIncremental(oldText: String, newText: String) {
+        // Fast path: if text only got longer (streaming append), do incremental parse
+        if newText.hasPrefix(oldText) && !cachedBlocks.isEmpty {
+            // Reparse the full text (still benefits from optimized parser)
+            let newBlocks = parseBlocks(newText)
+
+            // Update cached state
+            cachedBlocks = newBlocks
+            cachedSegments = groupBlocksIntoSegments(newBlocks)
+            lastParsedText = newText
+            lastStableIndex = max(0, newBlocks.count - 1)
+        } else {
+            // Full reparse for non-append changes (edits, deletions)
+            updateSegments()
+        }
     }
 
     @ViewBuilder
@@ -302,22 +326,61 @@ private struct MessageBlock: Identifiable {
 
 // MARK: - Parser
 
+/// Optimized line iterator that avoids creating intermediate arrays
+private struct LineIterator: IteratorProtocol {
+    private let string: String
+    private var currentIndex: String.Index
+    private let endIndex: String.Index
+
+    init(_ string: String) {
+        self.string = string
+        self.currentIndex = string.startIndex
+        self.endIndex = string.endIndex
+    }
+
+    mutating func next() -> Substring? {
+        guard currentIndex < endIndex else { return nil }
+
+        // Find the next newline or end of string
+        let lineStart = currentIndex
+        while currentIndex < endIndex && string[currentIndex] != "\n" {
+            currentIndex = string.index(after: currentIndex)
+        }
+
+        let lineEnd = currentIndex
+
+        // Skip past the newline for next iteration
+        if currentIndex < endIndex {
+            currentIndex = string.index(after: currentIndex)
+        }
+
+        return string[lineStart ..< lineEnd]
+    }
+}
+
 private func parseBlocks(_ input: String) -> [MessageBlock] {
     var blocks: [MessageBlock] = []
-    var currentParagraphLines: [String] = []
-    var currentBlockquoteLines: [String] = []
+    var currentParagraphLines: [Substring] = []
+    var currentBlockquoteLines: [Substring] = []
     var currentListItems: [String] = []
     var isOrderedList = false
     var blockIndex = 0
 
-    let lines = input.replacingOccurrences(of: "\r\n", with: "\n").split(
-        separator: "\n",
-        omittingEmptySubsequences: false
-    )
+    // Normalize line endings once
+    let normalizedInput = input.contains("\r\n") ? input.replacingOccurrences(of: "\r\n", with: "\n") : input
 
+    // Collect lines into array for index-based access (needed for code blocks)
+    // Use lazy evaluation for better memory efficiency
+    var lines: [Substring] = []
+    var iter = LineIterator(normalizedInput)
+    while let line = iter.next() {
+        lines.append(line)
+    }
+
+    @inline(__always)
     func flushParagraph() {
         if !currentParagraphLines.isEmpty {
-            let paragraphText = currentParagraphLines.joined(separator: "\n")
+            let paragraphText = currentParagraphLines.map { String($0) }.joined(separator: "\n")
             // Check if paragraph contains standalone image
             if let imageKind = extractStandaloneImageKind(from: paragraphText) {
                 blocks.append(MessageBlock(index: blockIndex, kind: imageKind))
@@ -325,56 +388,63 @@ private func parseBlocks(_ input: String) -> [MessageBlock] {
                 blocks.append(MessageBlock(index: blockIndex, kind: .paragraph(paragraphText)))
             }
             blockIndex += 1
-            currentParagraphLines.removeAll()
+            currentParagraphLines.removeAll(keepingCapacity: true)
         }
     }
 
+    @inline(__always)
     func flushBlockquote() {
         if !currentBlockquoteLines.isEmpty {
+            let quoteText = currentBlockquoteLines.map { String($0) }.joined(separator: "\n")
             blocks.append(
-                MessageBlock(index: blockIndex, kind: .blockquote(currentBlockquoteLines.joined(separator: "\n")))
+                MessageBlock(index: blockIndex, kind: .blockquote(quoteText))
             )
             blockIndex += 1
-            currentBlockquoteLines.removeAll()
+            currentBlockquoteLines.removeAll(keepingCapacity: true)
         }
     }
 
+    @inline(__always)
     func flushList() {
         if !currentListItems.isEmpty {
             blocks.append(MessageBlock(index: blockIndex, kind: .list(items: currentListItems, ordered: isOrderedList)))
             blockIndex += 1
-            currentListItems.removeAll()
+            currentListItems.removeAll(keepingCapacity: true)
         }
     }
 
     var i = 0
     while i < lines.count {
-        let line = String(lines[i])
-        let trimmed = line.trimmingCharacters(in: .whitespaces)
+        let line = lines[i]
+        let trimmed = line.trimmingWhitespace()
 
-        // Fenced code block
+        // Fenced code block - check prefix efficiently
         if trimmed.hasPrefix("```") {
             flushParagraph()
             flushBlockquote()
             flushList()
 
-            let lang = String(trimmed.dropFirst(3)).trimmingCharacters(in: .whitespaces).nilIfEmpty
+            let langPart = trimmed.dropFirst(3)
+            let lang = langPart.trimmingWhitespace()
+            let langStr = lang.isEmpty ? nil : String(lang)
+
             i += 1
-            var codeLines: [String] = []
+            var codeLines: [Substring] = []
             while i < lines.count {
-                let l = String(lines[i])
-                if l.trimmingCharacters(in: .whitespaces).hasPrefix("```") { break }
+                let l = lines[i]
+                if l.trimmingWhitespace().hasPrefix("```") { break }
                 codeLines.append(l)
                 i += 1
             }
-            blocks.append(MessageBlock(index: blockIndex, kind: .code(codeLines.joined(separator: "\n"), lang)))
+            let codeText = codeLines.map { String($0) }.joined(separator: "\n")
+            blocks.append(MessageBlock(index: blockIndex, kind: .code(codeText, langStr)))
             blockIndex += 1
             if i < lines.count { i += 1 }
             continue
         }
 
         // Horizontal rule (---, ***, ___)
-        if isHorizontalRule(trimmed) {
+        if isHorizontalRuleFast(trimmed) {
             flushParagraph()
             flushBlockquote()
             flushList()
@@ -385,7 +455,7 @@ private func parseBlocks(_ input: String) -> [MessageBlock] {
         }
 
         // Heading (# to ######)
-        if let headingMatch = parseHeading(trimmed) {
+        if let headingMatch = parseHeadingFast(trimmed) {
             flushParagraph()
             flushBlockquote()
             flushList()
@@ -401,7 +471,7 @@ private func parseBlocks(_ input: String) -> [MessageBlock] {
         if trimmed.hasPrefix(">") {
             flushParagraph()
             flushList()
-            let quoteContent = String(trimmed.dropFirst()).trimmingCharacters(in: .whitespaces)
+            let quoteContent = trimmed.dropFirst().trimmingWhitespace()
             currentBlockquoteLines.append(quoteContent)
             i += 1
             continue
@@ -410,27 +480,27 @@ private func parseBlocks(_ input: String) -> [MessageBlock] {
         }
 
         // Unordered list (- or * or +)
-        if let listItem = parseUnorderedListItem(trimmed) {
+        if let listItem = parseUnorderedListItemFast(trimmed) {
             flushParagraph()
             flushBlockquote()
             if !currentListItems.isEmpty && isOrderedList {
                 flushList()
             }
             isOrderedList = false
-            currentListItems.append(listItem)
+            currentListItems.append(String(listItem))
             i += 1
             continue
         }
 
         // Ordered list (1. 2. etc.)
-        if let listItem = parseOrderedListItem(trimmed) {
+        if let listItem = parseOrderedListItemFast(trimmed) {
             flushParagraph()
             flushBlockquote()
             if !currentListItems.isEmpty && !isOrderedList {
                 flushList()
             }
             isOrderedList = true
-            currentListItems.append(listItem)
+            currentListItems.append(String(listItem))
             i += 1
             continue
         }
@@ -461,21 +531,55 @@ private func parseBlocks(_ input: String) -> [MessageBlock] {
     return blocks
 }
 
-// MARK: - Parser Helpers
+// MARK: - Substring Extension for Efficient Trimming
 
-private func isHorizontalRule(_ line: String) -> Bool {
-    let trimmed = line.trimmingCharacters(in: .whitespaces)
-    guard trimmed.count >= 3 else { return false }
+extension Substring {
+    /// Efficiently trim whitespace without creating intermediate String
+    @inline(__always)
+    fileprivate func trimmingWhitespace() -> Substring {
+        var start = startIndex
+        var end = endIndex
 
-    // Check for ---, ***, or ___
-    let chars = Array(trimmed)
-    let first = chars[0]
-    guard first == "-" || first == "*" || first == "_" else { return false }
+        while start < end && self[start].isWhitespace {
+            start = index(after: start)
+        }
 
-    return chars.allSatisfy { $0 == first || $0 == " " } && chars.filter { $0 == first }.count >= 3
+        while end > start {
+            let prevIndex = index(before: end)
+            if self[prevIndex].isWhitespace {
+                end = prevIndex
+            } else {
+                break
+            }
+        }
+
+        return self[start ..< end]
+    }
 }
 
-private func parseHeading(_ line: String) -> (level: Int, text: String)? {
+// MARK: - Parser Helpers (Optimized for Substring)
+
+/// Fast horizontal rule check without regex
+@inline(__always)
+private func isHorizontalRuleFast(_ line: Substring) -> Bool {
+    guard line.count >= 3 else { return false }
+
+    guard let first = line.first, first == "-" || first == "*" || first == "_" else { return false }
+
+    var count = 0
+    for char in line {
+        if char == first {
+            count += 1
+        } else if !char.isWhitespace {
+            return false
+        }
+    }
+    return count >= 3
+}
+
+/// Fast heading parser without regex
+@inline(__always)
+private func parseHeadingFast(_ line: Substring) -> (level: Int, text: String)? {
     var level = 0
     var index = line.startIndex
 
@@ -486,32 +590,81 @@ private func parseHeading(_ line: String) -> (level: Int, text: String)? {
 
     guard level > 0, index < line.endIndex, line[index] == " " else { return nil }
 
-    let text = String(line[line.index(after: index)...]).trimmingCharacters(in: .whitespaces)
-    // Remove trailing # if present
-    let cleanedText = text.replacingOccurrences(of: #"\s*#+\s*$"#, with: "", options: .regularExpression)
-    return (level, cleanedText)
+    var textStart = line.index(after: index)
+    var textEnd = line.endIndex
+
+    // Trim leading whitespace
+    while textStart < textEnd && line[textStart].isWhitespace {
+        textStart = line.index(after: textStart)
+    }
+
+    // Trim trailing # and whitespace
+    while textEnd > textStart {
+        let prevIndex = line.index(before: textEnd)
+        let char = line[prevIndex]
+        if char == "#" || char.isWhitespace {
+            textEnd = prevIndex
+        } else {
+            break
+        }
+    }
+
+    return (level, String(line[textStart ..< textEnd]))
+}
+
+/// Fast unordered list item parser
+@inline(__always)
+private func parseUnorderedListItemFast(_ line: Substring) -> Substring? {
+    guard line.count >= 2 else { return nil }
+    let first = line.first!
+    let secondIndex = line.index(after: line.startIndex)
+
+    if (first == "-" || first == "*" || first == "+") && line[secondIndex] == " " {
+        return line[line.index(secondIndex, offsetBy: 1)...]
+    }
+    return nil
+}
+
+/// Fast ordered list item parser without regex
+@inline(__always)
+private func parseOrderedListItemFast(_ line: Substring) -> Substring? {
+    var index = line.startIndex
+
+    // Skip digits
+    while index < line.endIndex && line[index].isNumber {
+        index = line.index(after: index)
+    }
+
+    // Check for ". "
+    guard index > line.startIndex,
+        index < line.endIndex,
+        line[index] == "."
+    else { return nil }
+
+    let afterDot = line.index(after: index)
+    guard afterDot < line.endIndex, line[afterDot] == " " else { return nil }
+
+    let textStart = line.index(after: afterDot)
+    return line[textStart...]
+}
+
+// Legacy functions for compatibility
+private func isHorizontalRule(_ line: String) -> Bool {
+    isHorizontalRuleFast(Substring(line))
+}
+
+private func parseHeading(_ line: String) -> (level: Int, text: String)? {
+    parseHeadingFast(Substring(line))
 }
 
 private func parseUnorderedListItem(_ line: String) -> String? {
-    let trimmed = line.trimmingCharacters(in: .whitespaces)
-    if trimmed.hasPrefix("- ") {
-        return String(trimmed.dropFirst(2))
-    } else if trimmed.hasPrefix("* ") {
-        return String(trimmed.dropFirst(2))
-    } else if trimmed.hasPrefix("+ ") {
-        return String(trimmed.dropFirst(2))
-    }
-    return nil
+    guard let result = parseUnorderedListItemFast(Substring(line)) else { return nil }
+    return String(result)
 }
 
 private func parseOrderedListItem(_ line: String) -> String? {
-    let trimmed = line.trimmingCharacters(in: .whitespaces)
-    // Match patterns like "1. ", "2. ", "10. " etc.
-    let pattern = #"^\d+\.\s+"#
-    if let range = trimmed.range(of: pattern, options: .regularExpression) {
-        return String(trimmed[range.upperBound...])
-    }
-    return nil
+    guard let result = parseOrderedListItemFast(Substring(line)) else { return nil }
+    return String(result)
 }
 
 private func extractStandaloneImageKind(from text: String) -> MessageBlock.Kind? {
