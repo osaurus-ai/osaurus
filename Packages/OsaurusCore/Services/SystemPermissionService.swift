@@ -47,16 +47,12 @@ final class SystemPermissionService: ObservableObject {
             var newStates: [SystemPermission: Bool] = [:]
 
             for permission in SystemPermission.allCases {
-                if permission == .automationCalendar {
-                    // Skip Calendar to avoid launching it
+                if permission == .automationCalendar || permission == .automation {
+                    // Skip Automation to avoid launching apps/running scripts automatically
+                    // Use last known state
                     await MainActor.run {
                         newStates[permission] = self.permissionStates[permission]
                     }
-                    continue
-                }
-
-                if permission == .automation {
-                    newStates[permission] = self.performFullAutomationCheck()
                     continue
                 }
 
@@ -89,26 +85,16 @@ final class SystemPermissionService: ObservableObject {
     }
 
     /// Refresh only permissions that don't require launching apps or disrupting user flow
-    /// Calendar automation check is excluded because it launches Calendar.app
+    /// Automation checks (Calendar & General) are excluded because they run AppleScript
     private func refreshNonDisruptivePermissions() {
         for permission in SystemPermission.allCases {
-            // Skip Calendar automation - it requires launching Calendar which is disruptive
-            if permission == .automationCalendar {
+            // Skip Automation checks - they require running AppleScript which can be disruptive
+            // We only check these when the user explicitly clicks "Grant" or "Test"
+            if permission == .automationCalendar || permission == .automation {
                 continue
             }
 
-            // For standard Automation, we need to actually check it (run AppleScript) but we must do it
-            // carefully. Since we are running on background thread here (from startPeriodicRefresh),
-            // we can run the check and update the state.
-            if permission == .automation {
-                let granted = performFullAutomationCheck()
-                Task { @MainActor in
-                    permissionStates[permission] = granted
-                }
-                continue
-            }
-
-            // For other permissions, the checks are cheap/safe
+            // For other permissions (Accessibility, Disk), the checks are cheap/safe
             let granted = isGranted(permission)
             Task { @MainActor in
                 permissionStates[permission] = granted
@@ -116,9 +102,9 @@ final class SystemPermissionService: ObservableObject {
         }
     }
 
-    /// Update the Calendar automation permission state directly (used after diagnostic test)
-    func updateCalendarPermissionState(_ isGranted: Bool) {
-        permissionStates[.automationCalendar] = isGranted
+    /// Update any permission state directly (used after diagnostic test)
+    func updatePermissionState(_ permission: SystemPermission, isGranted: Bool) {
+        permissionStates[permission] = isGranted
     }
 
     /// Stop periodic refresh
@@ -301,7 +287,7 @@ final class SystemPermissionService: ObservableObject {
                 return self.performFullCalendarAutomationCheck()
             }.value
 
-            updateCalendarPermissionState(granted)
+            updatePermissionState(.automationCalendar, isGranted: granted)
 
             // If not granted, the dialog likely didn't appear (already shown before)
             // Open System Settings so the user can manually grant the permission
@@ -368,6 +354,40 @@ final class SystemPermissionService: ObservableObject {
     /// Check if a requirement string represents a system permission
     static func isSystemPermission(_ requirement: String) -> Bool {
         return SystemPermission(rawValue: requirement) != nil
+    }
+
+    // MARK: - Debug: Test Automation Access
+
+    /// Debug function to test general Automation access (System Events)
+    nonisolated static func debugTestAutomationAccess() -> String {
+        let script = NSAppleScript(
+            source: """
+                tell application "System Events"
+                    return name of first process whose frontmost is true
+                end tell
+                """
+        )
+
+        var errorInfo: NSDictionary?
+        let result = script?.executeAndReturnError(&errorInfo)
+
+        if let error = errorInfo {
+            let errorNumber = error[NSAppleScript.errorNumber] as? Int ?? -1
+            let errorMessage = error[NSAppleScript.errorMessage] as? String ?? "Unknown error"
+
+            var guidance = ""
+            if errorNumber == -1743 {
+                guidance = " → Permission denied. Grant in System Settings → Privacy & Security → Automation"
+            }
+
+            return "ERROR [\(errorNumber)]: \(errorMessage)\(guidance)"
+        }
+
+        if let resultValue = result?.stringValue {
+            return "SUCCESS: \(resultValue)"
+        }
+
+        return "NO RESULT"
     }
 
     // MARK: - Debug: Test Calendar AppleScript
