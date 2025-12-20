@@ -26,8 +26,13 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegat
     public func applicationDidFinishLaunching(_ notification: Notification) {
         AppDelegate.shared = self
 
-        // Configure as regular app (show Dock icon)
-        NSApp.setActivationPolicy(.regular)
+        // Configure as regular app (show Dock icon) by default, or accessory if hidden
+        let hideDockIcon = ServerConfigurationStore.load()?.hideDockIcon ?? false
+        if hideDockIcon {
+            NSApp.setActivationPolicy(.accessory)
+        } else {
+            NSApp.setActivationPolicy(.regular)
+        }
 
         // App has launched
         NSLog("Osaurus server app launched")

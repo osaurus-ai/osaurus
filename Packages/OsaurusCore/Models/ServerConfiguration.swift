@@ -33,6 +33,9 @@ public struct ServerConfiguration: Codable, Equatable, Sendable {
     /// Start Osaurus automatically at login
     public var startAtLogin: Bool
 
+    /// Hide the dock icon (run as accessory app)
+    public var hideDockIcon: Bool
+
     /// Appearance mode (system, light, or dark)
     public var appearanceMode: AppearanceMode
 
@@ -63,6 +66,7 @@ public struct ServerConfiguration: Codable, Equatable, Sendable {
         case port
         case exposeToNetwork
         case startAtLogin
+        case hideDockIcon
         case appearanceMode
         case numberOfThreads
         case backlog
@@ -83,6 +87,8 @@ public struct ServerConfiguration: Codable, Equatable, Sendable {
             try container.decodeIfPresent(Bool.self, forKey: .exposeToNetwork) ?? defaults.exposeToNetwork
         self.startAtLogin =
             try container.decodeIfPresent(Bool.self, forKey: .startAtLogin) ?? defaults.startAtLogin
+        self.hideDockIcon =
+            try container.decodeIfPresent(Bool.self, forKey: .hideDockIcon) ?? defaults.hideDockIcon
         self.appearanceMode =
             try container.decodeIfPresent(AppearanceMode.self, forKey: .appearanceMode) ?? defaults.appearanceMode
         self.numberOfThreads =
@@ -108,6 +114,7 @@ public struct ServerConfiguration: Codable, Equatable, Sendable {
         port: Int,
         exposeToNetwork: Bool,
         startAtLogin: Bool,
+        hideDockIcon: Bool = false,
         appearanceMode: AppearanceMode = .system,
         numberOfThreads: Int,
         backlog: Int32,
@@ -122,6 +129,7 @@ public struct ServerConfiguration: Codable, Equatable, Sendable {
         self.port = port
         self.exposeToNetwork = exposeToNetwork
         self.startAtLogin = startAtLogin
+        self.hideDockIcon = hideDockIcon
         self.appearanceMode = appearanceMode
         self.numberOfThreads = numberOfThreads
         self.backlog = backlog
@@ -140,6 +148,7 @@ public struct ServerConfiguration: Codable, Equatable, Sendable {
             port: 1337,
             exposeToNetwork: false,  // Default to false (localhost)
             startAtLogin: false,
+            hideDockIcon: false,  // Default to showing dock icon
             appearanceMode: .system,  // Default to system appearance
             numberOfThreads: ProcessInfo.processInfo.activeProcessorCount,
             backlog: 256,

@@ -10,6 +10,7 @@ struct ConfigurationView: View {
     @State private var tempPortString: String = ""
     @State private var tempExposeToNetwork: Bool = false
     @State private var tempStartAtLogin: Bool = false
+    @State private var tempHideDockIcon: Bool = false
     @State private var cliInstallMessage: String? = nil
     @State private var cliInstallSuccess: Bool = false
     @State private var hasAppeared = false
@@ -285,6 +286,12 @@ struct ConfigurationView: View {
                                     isOn: $tempStartAtLogin
                                 )
 
+                                SettingsToggle(
+                                    title: "Hide Dock Icon",
+                                    description: "Run in menu bar only (requires restart)",
+                                    isOn: $tempHideDockIcon
+                                )
+
                                 Divider()
                                     .background(theme.primaryBorder)
 
@@ -558,6 +565,7 @@ struct ConfigurationView: View {
         tempPortString = String(configuration.port)
         tempExposeToNetwork = configuration.exposeToNetwork
         tempStartAtLogin = configuration.startAtLogin
+        tempHideDockIcon = configuration.hideDockIcon
 
         let chat = ChatConfigurationStore.load()
         tempChatHotkey = chat.hotkey
@@ -600,6 +608,7 @@ struct ConfigurationView: View {
         tempPortString = String(serverDefaults.port)
         tempExposeToNetwork = serverDefaults.exposeToNetwork
         tempStartAtLogin = serverDefaults.startAtLogin
+        tempHideDockIcon = serverDefaults.hideDockIcon
         tempAllowedOrigins = ""
 
         // Chat settings - clear overrides to use defaults
@@ -644,6 +653,7 @@ struct ConfigurationView: View {
         configuration.port = port
         configuration.exposeToNetwork = tempExposeToNetwork
         configuration.startAtLogin = tempStartAtLogin
+        configuration.hideDockIcon = tempHideDockIcon
 
         // Save performance settings
         let defaults = ServerConfiguration.default
