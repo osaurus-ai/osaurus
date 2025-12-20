@@ -286,19 +286,11 @@ struct MessageRow: View {
 
     @ViewBuilder
     private func toolCallsView(calls: [ToolCall]) -> some View {
-        let displayStyle = ChatConfigurationStore.load().toolCallDisplayStyle
-
-        switch displayStyle {
-        case .inline:
-            // Show each tool call as a separate compact row
-            VStack(spacing: 6) {
-                ForEach(calls, id: \.id) { call in
-                    InlineToolCallView(call: call, result: turn.toolResults[call.id])
-                }
+        // Show each tool call as a separate compact row
+        VStack(spacing: 6) {
+            ForEach(calls, id: \.id) { call in
+                InlineToolCallView(call: call, result: turn.toolResults[call.id])
             }
-        case .grouped:
-            // Show all tool calls in a collapsible container
-            GroupedToolResponseView(calls: calls, resultsById: turn.toolResults)
         }
     }
 
