@@ -297,12 +297,12 @@ struct FloatingInputCard: View {
             .padding(.horizontal, 12)
             .padding(.vertical, 6)
             .background(
-                Capsule()
+                RoundedRectangle(cornerRadius: 18, style: .continuous)
                     .fill(theme.secondaryBackground.opacity(0.8))
-                    .overlay(
-                        Capsule()
-                            .strokeBorder(theme.primaryBorder.opacity(0.5), lineWidth: 0.5)
-                    )
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                    .strokeBorder(theme.primaryBorder.opacity(0.5), lineWidth: 1)
             )
         }
         .buttonStyle(.plain)
@@ -363,14 +363,14 @@ struct FloatingInputCard: View {
             .padding(.horizontal, 12)
             .padding(.vertical, 6)
             .background(
-                Capsule()
+                RoundedRectangle(cornerRadius: 18, style: .continuous)
                     .fill(theme.secondaryBackground.opacity(0.8))
-                    .overlay(
-                        Capsule()
-                            .strokeBorder(
-                                hasToolOverrides ? theme.accentColor.opacity(0.5) : theme.primaryBorder.opacity(0.5),
-                                lineWidth: 0.5
-                            )
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                    .strokeBorder(
+                        hasToolOverrides ? theme.accentColor.opacity(0.5) : theme.primaryBorder.opacity(0.5),
+                        lineWidth: 1
                     )
             )
         }
