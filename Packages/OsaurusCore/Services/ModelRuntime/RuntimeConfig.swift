@@ -22,7 +22,7 @@ struct RuntimeConfig: Sendable {
             kvBits: cfg?.genKVBits,
             kvGroup: cfg?.genKVGroupSize ?? 64,
             quantStart: cfg?.genQuantizedKVStart ?? 0,
-            maxKV: cfg?.genMaxKVSize,
+            maxKV: cfg?.genMaxKVSize ?? 8192,
             prefillStep: cfg?.genPrefillStepSize ?? 512
         )
     }

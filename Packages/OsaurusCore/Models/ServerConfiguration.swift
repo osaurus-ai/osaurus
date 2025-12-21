@@ -156,7 +156,7 @@ public struct ServerConfiguration: Codable, Equatable, Sendable {
             genKVBits: nil,
             genKVGroupSize: 64,
             genQuantizedKVStart: 0,
-            genMaxKVSize: nil,
+            genMaxKVSize: 8192,
             genPrefillStepSize: 512,
             allowedOrigins: []
         )
