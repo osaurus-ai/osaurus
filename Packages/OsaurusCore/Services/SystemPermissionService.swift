@@ -6,6 +6,7 @@
 //
 
 @preconcurrency import AppKit
+import Contacts
 import Foundation
 
 @MainActor
@@ -69,6 +70,8 @@ final class SystemPermissionService: ObservableObject {
             return checkCalendarAutomationPermission()
         case .accessibility:
             return checkAccessibilityPermission()
+        case .contacts:
+            return checkContactsPermission()
         case .disk:
             return checkDiskPermission()
         }
@@ -162,6 +165,8 @@ final class SystemPermissionService: ObservableObject {
             requestCalendarAutomationPermission()
         case .accessibility:
             requestAccessibilityPermission()
+        case .contacts:
+            requestContactsPermission()
         case .disk:
             requestDiskPermission()
         }
@@ -185,6 +190,30 @@ final class SystemPermissionService: ObservableObject {
         let promptKey = kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String
         let options: NSDictionary = [promptKey: true]
         _ = AXIsProcessTrustedWithOptions(options)
+    }
+
+    // MARK: - Contacts Permission
+
+    private func checkContactsPermission() -> Bool {
+        let status = CNContactStore.authorizationStatus(for: .contacts)
+        return status == .authorized
+    }
+
+    private func requestContactsPermission() {
+        Task { @MainActor in
+            let store = CNContactStore()
+            do {
+                let granted = try await store.requestAccess(for: .contacts)
+                setPermission(.contacts, isGranted: granted)
+                if !granted {
+                    openSystemSettings(for: .contacts)
+                }
+            } catch {
+                print("Error requesting contacts permission: \(error)")
+                setPermission(.contacts, isGranted: false)
+                openSystemSettings(for: .contacts)
+            }
+        }
     }
 
     // MARK: - Automation Permission
@@ -490,6 +519,40 @@ final class SystemPermissionService: ObservableObject {
         }
 
         return "NO RESULT"
+    }
+
+    // MARK: - Debug: Test Contacts Access
+
+    /// Debug function to test if Contacts access works.
+    nonisolated static func debugTestContactsAccess() -> String {
+        let status = CNContactStore.authorizationStatus(for: .contacts)
+        switch status {
+        case .authorized:
+            // Try to actually fetch a contact to verify
+            let store = CNContactStore()
+            let keys = [CNContactGivenNameKey as CNKeyDescriptor]
+            let request = CNContactFetchRequest(keysToFetch: keys)
+            request.predicate = nil
+            // Just fetch one to test
+            var count = 0
+            do {
+                try store.enumerateContacts(with: request) { _, stop in
+                    count += 1
+                    stop.pointee = true
+                }
+                return "SUCCESS: Authorized (Found \(count)+ contacts)"
+            } catch {
+                return "ERROR: Authorized but fetch failed: \(error.localizedDescription)"
+            }
+        case .denied:
+            return "ERROR: Access Denied"
+        case .restricted:
+            return "ERROR: Access Restricted"
+        case .notDetermined:
+            return "WARNING: Access Not Determined"
+        @unknown default:
+            return "ERROR: Unknown Status"
+        }
     }
 
     /// Simple error wrapper for osascript results

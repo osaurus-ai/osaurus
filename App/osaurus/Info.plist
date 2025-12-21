@@ -14,6 +14,8 @@
 	<string>Osaurus plugins may access your calendar to read and create events.</string>
 	<key>NSCalendarsFullAccessUsageDescription</key>
 	<string>Osaurus plugins may access your calendar to read and create events.</string>
+	<key>NSContactsUsageDescription</key>
+	<string>Osaurus plugins may access your contacts to search and read contact information.</string>
 	<key>NSRemindersUsageDescription</key>
 	<string>Osaurus plugins may access your reminders to read and create tasks.</string>
 	<key>CFBundleURLTypes</key>
