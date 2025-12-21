@@ -371,8 +371,8 @@ struct ConfigurationView: View {
                                 settingsTextField(
                                     label: "Max KV Size",
                                     text: $tempMaxKV,
-                                    placeholder: "",
-                                    help: "Maximum KV cache size in tokens. Empty uses unlimited"
+                                    placeholder: "8192",
+                                    help: "Maximum KV cache size in tokens. Empty uses default 8192"
                                 )
                                 settingsTextField(
                                     label: "Prefill Step Size",
