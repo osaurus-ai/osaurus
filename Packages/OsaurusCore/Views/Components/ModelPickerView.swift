@@ -101,7 +101,7 @@ struct ModelPickerView: View {
                             .font(.system(size: 10))
                             .foregroundColor(theme.secondaryText)
                             .lineLimit(1)
-                        
+
                         if selectedModel != defaultModelId {
                             Button("Reset") {
                                 selectedModel = defaultModelId

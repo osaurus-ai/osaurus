@@ -86,8 +86,12 @@ struct MessageContent: View {
         if isEditing {
             editingView
         } else if turn.content.isEmpty && turn.role == .assistant && isStreaming && isLatest {
-            TypingIndicator()
-                .padding(.vertical, 4)
+            // Only show typing indicator if there are no tool calls
+            // If tool calls exist, the InlineToolCallView shows its own status
+            if turn.toolCalls == nil || turn.toolCalls!.isEmpty {
+                TypingIndicator()
+                    .padding(.vertical, 4)
+            }
         } else if !turn.content.isEmpty {
             MarkdownMessageView(text: turn.content, baseWidth: contentWidth)
                 .font(Typography.body(contentWidth, theme: theme))
