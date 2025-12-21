@@ -845,6 +845,7 @@ struct ChatView: View {
     @StateObject private var themeManager = ThemeManager.shared
     @StateObject private var session = ChatSession()
     @StateObject private var sessionsManager = ChatSessionsManager.shared
+    @ObservedObject private var toolRegistry = ToolRegistry.shared
     @Environment(\.colorScheme) private var colorScheme
 
     @State private var focusTrigger: Int = 0

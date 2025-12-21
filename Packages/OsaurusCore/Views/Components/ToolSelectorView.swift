@@ -39,13 +39,23 @@ struct ToolSelectorView: View {
         if let override = enabledOverrides[name] {
             return override
         }
-        return tools.first { $0.name == name }?.enabled ?? false
+        // Use live global state instead of snapshot state from ToolEntry
+        return ToolRegistry.shared.isGlobalEnabled(name)
     }
 
     /// Toggle a tool's enabled state in the overrides
     private func toggleTool(_ name: String) {
         let currentlyEnabled = isToolEnabled(name)
-        enabledOverrides[name] = !currentlyEnabled
+        let newValue = !currentlyEnabled
+
+        // Check global state to avoid redundant overrides
+        let globalEnabled = ToolRegistry.shared.isGlobalEnabled(name)
+
+        if newValue == globalEnabled {
+            enabledOverrides.removeValue(forKey: name)
+        } else {
+            enabledOverrides[name] = newValue
+        }
     }
 
     /// Check if a tool has a per-session override
@@ -61,14 +71,24 @@ struct ToolSelectorView: View {
     /// Enable all tools for this session
     private func enableAll() {
         for tool in tools {
-            enabledOverrides[tool.name] = true
+            // If global is enabled, remove override. If global is disabled, add override = true
+            if ToolRegistry.shared.isGlobalEnabled(tool.name) {
+                enabledOverrides.removeValue(forKey: tool.name)
+            } else {
+                enabledOverrides[tool.name] = true
+            }
         }
     }
 
     /// Disable all tools for this session
     private func disableAll() {
         for tool in tools {
-            enabledOverrides[tool.name] = false
+            // If global is disabled, remove override. If global is enabled, add override = false
+            if !ToolRegistry.shared.isGlobalEnabled(tool.name) {
+                enabledOverrides.removeValue(forKey: tool.name)
+            } else {
+                enabledOverrides[tool.name] = false
+            }
         }
     }
 
