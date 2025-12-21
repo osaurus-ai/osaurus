@@ -16,9 +16,46 @@ final class SystemPermissionService: ObservableObject {
     @Published private(set) var permissionStates: [SystemPermission: Bool] = [:]
 
     private var refreshTimer: Timer?
+    private let kPermissionStatesKey = "SystemPermissionStates"
 
     private init() {
+        loadPermissionStates()
         refreshAllPermissions()
+    }
+
+    // MARK: - Persistence
+
+    private func savePermissionStates() {
+        let rawStates = Dictionary(uniqueKeysWithValues: permissionStates.map { ($0.key.rawValue, $0.value) })
+        UserDefaults.standard.set(rawStates, forKey: kPermissionStatesKey)
+    }
+
+    private func loadPermissionStates() {
+        guard let rawStates = UserDefaults.standard.dictionary(forKey: kPermissionStatesKey) as? [String: Bool] else {
+            return
+        }
+
+        var loadedStates: [SystemPermission: Bool] = [:]
+        for (key, value) in rawStates {
+            if let permission = SystemPermission(rawValue: key) {
+                loadedStates[permission] = value
+            }
+        }
+        self.permissionStates = loadedStates
+    }
+
+    /// Centralized helper to set permission and persist state
+    private func setPermission(_ permission: SystemPermission, isGranted: Bool) {
+        permissionStates[permission] = isGranted
+        savePermissionStates()
+    }
+
+    /// Batch update permissions and persist
+    private func setPermissions(_ states: [SystemPermission: Bool]) {
+        for (permission, isGranted) in states {
+            permissionStates[permission] = isGranted
+        }
+        savePermissionStates()
     }
 
     // MARK: - Permission Checking
@@ -66,9 +103,7 @@ final class SystemPermissionService: ObservableObject {
 
             // Update state on MainActor
             await MainActor.run {
-                for (perm, granted) in newStates {
-                    self.permissionStates[perm] = granted
-                }
+                self.setPermissions(newStates)
             }
         }
     }
@@ -97,14 +132,17 @@ final class SystemPermissionService: ObservableObject {
             // For other permissions (Accessibility, Disk), the checks are cheap/safe
             let granted = isGranted(permission)
             Task { @MainActor in
-                permissionStates[permission] = granted
+                // Only update if changed to avoid unnecessary saves, although setPermission handles it efficiently enough
+                if self.permissionStates[permission] != granted {
+                    self.setPermission(permission, isGranted: granted)
+                }
             }
         }
     }
 
     /// Update any permission state directly (used after diagnostic test)
     func updatePermissionState(_ permission: SystemPermission, isGranted: Bool) {
-        permissionStates[permission] = isGranted
+        setPermission(permission, isGranted: isGranted)
     }
 
     /// Stop periodic refresh
@@ -198,7 +236,7 @@ final class SystemPermissionService: ObservableObject {
                 return self.performFullAutomationCheck()
             }.value
 
-            permissionStates[.automation] = granted
+            setPermission(.automation, isGranted: granted)
 
             // If not granted, the dialog likely didn't appear (already shown before)
             // Open System Settings so the user can manually grant the permission
@@ -287,7 +325,7 @@ final class SystemPermissionService: ObservableObject {
                 return self.performFullCalendarAutomationCheck()
             }.value
 
-            updatePermissionState(.automationCalendar, isGranted: granted)
+            setPermission(.automationCalendar, isGranted: granted)
 
             // If not granted, the dialog likely didn't appear (already shown before)
             // Open System Settings so the user can manually grant the permission
