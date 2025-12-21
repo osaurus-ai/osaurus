@@ -112,6 +112,9 @@ private struct MemoizedMarkdownView: View {
 
             case .horizontalRule:
                 HorizontalRuleView()
+
+            case .table(let headers, let rows):
+                TableView(headers: headers, rows: rows, baseWidth: baseWidth)
             }
         }
     }
@@ -126,6 +129,7 @@ private struct ContentSegment: Identifiable {
         case codeBlock(code: String, language: String?)
         case image(url: String, altText: String)
         case horizontalRule
+        case table(headers: [String], rows: [[String]])
     }
 
     let id: String
@@ -217,6 +221,19 @@ private func groupBlocksIntoSegments(_ blocks: [MessageBlock]) -> [ContentSegmen
             )
             segmentIndex += 1
             previousBlockKind = block.kind
+
+        case .table(let headers, let rows):
+            flushTextGroup()
+            let spacing = spacingForSpecialBlock(.table(headers: headers, rows: rows), previousKind: previousBlockKind)
+            segments.append(
+                ContentSegment(
+                    id: "table-\(segmentIndex)",
+                    kind: .table(headers: headers, rows: rows),
+                    spacingBefore: spacing
+                )
+            )
+            segmentIndex += 1
+            previousBlockKind = block.kind
         }
 
         // Track last text block kind for spacing
@@ -236,7 +253,7 @@ private func groupBlocksIntoSegments(_ blocks: [MessageBlock]) -> [ContentSegmen
     return segments
 }
 
-/// Calculate spacing before a special block (code, image, hr)
+/// Calculate spacing before a special block (code, image, hr, table)
 private func spacingForSpecialBlock(_ kind: MessageBlock.Kind, previousKind: MessageBlock.Kind?) -> CGFloat {
     guard previousKind != nil else { return 0 }
 
@@ -247,6 +264,8 @@ private func spacingForSpecialBlock(_ kind: MessageBlock.Kind, previousKind: Mes
         return 16
     case .horizontalRule:
         return 8
+    case .table:
+        return 14
     default:
         return 12
     }
@@ -263,6 +282,8 @@ private func spacingBeforeTextGroup(previousNonTextKind: MessageBlock.Kind?) -> 
         return 16
     case .horizontalRule:
         return 8
+    case .table:
+        return 14
     default:
         return 12
     }
@@ -279,6 +300,7 @@ private struct MessageBlock: Identifiable {
         case blockquote(String)
         case horizontalRule
         case list(items: [String], ordered: Bool)
+        case table(headers: [String], rows: [[String]])
 
         /// Generate a stable hash for the block kind
         var contentHash: Int {
@@ -308,6 +330,10 @@ private struct MessageBlock: Identifiable {
                 hasher.combine("l")
                 hasher.combine(items)
                 hasher.combine(ordered)
+            case .table(let headers, let rows):
+                hasher.combine("t")
+                hasher.combine(headers)
+                hasher.combine(rows)
             }
             return hasher.finalize()
         }
@@ -413,6 +439,23 @@ private func parseBlocks(_ input: String) -> [MessageBlock] {
         }
     }
 
+    /// Check if the next non-blank line is a list item of the same type
+    func nextNonBlankIsListItem(from startIndex: Int, ordered: Bool) -> Bool {
+        var j = startIndex
+        while j < lines.count {
+            let nextTrimmed = lines[j].trimmingWhitespace()
+            if !nextTrimmed.isEmpty {
+                if ordered {
+                    return parseOrderedListItemFast(nextTrimmed) != nil
+                } else {
+                    return parseUnorderedListItemFast(nextTrimmed) != nil
+                }
+            }
+            j += 1
+        }
+        return false
+    }
+
     var i = 0
     while i < lines.count {
         let line = lines[i]
@@ -441,6 +484,38 @@ private func parseBlocks(_ input: String) -> [MessageBlock] {
             blockIndex += 1
             if i < lines.count { i += 1 }
             continue
+        }
+
+        // Table detection: | header | header | followed by | --- | --- |
+        if trimmed.hasPrefix("|"), i + 1 < lines.count {
+            let nextLine = lines[i + 1].trimmingWhitespace()
+            if isTableSeparatorLine(nextLine) {
+                flushParagraph()
+                flushBlockquote()
+                flushList()
+
+                // Parse headers from the current line
+                let headers = parseTableRow(trimmed)
+
+                // Skip the separator line
+                i += 2
+
+                // Parse data rows
+                var rows: [[String]] = []
+                while i < lines.count {
+                    let rowLine = lines[i].trimmingWhitespace()
+                    if rowLine.hasPrefix("|") {
+                        rows.append(parseTableRow(rowLine))
+                        i += 1
+                    } else {
+                        break
+                    }
+                }
+
+                blocks.append(MessageBlock(index: blockIndex, kind: .table(headers: headers, rows: rows)))
+                blockIndex += 1
+                continue
+            }
         }
 
         // Horizontal rule (---, ***, ___)
@@ -505,17 +580,26 @@ private func parseBlocks(_ input: String) -> [MessageBlock] {
             continue
         }
 
-        // Flush list if we encounter non-list content
-        if !currentListItems.isEmpty {
-            flushList()
-        }
-
-        // Blank line separates paragraphs
+        // Blank line handling
         if trimmed.isEmpty {
             flushParagraph()
             flushBlockquote()
+
+            // For lists: only flush if the next non-blank line is NOT a list item of the same type
+            // This allows "loose" lists (lists with blank lines between items) to render with proper numbering
+            if !currentListItems.isEmpty {
+                if !nextNonBlankIsListItem(from: i + 1, ordered: isOrderedList) {
+                    flushList()
+                }
+            }
+
             i += 1
             continue
+        }
+
+        // Flush list if we encounter non-list, non-empty content
+        if !currentListItems.isEmpty {
+            flushList()
         }
 
         // Regular paragraph line
@@ -529,6 +613,50 @@ private func parseBlocks(_ input: String) -> [MessageBlock] {
     flushList()
 
     return blocks
+}
+
+// MARK: - Table Parsing Helpers
+
+/// Check if a line is a table separator line (e.g., | --- | --- |)
+@inline(__always)
+private func isTableSeparatorLine(_ line: Substring) -> Bool {
+    guard line.hasPrefix("|") else { return false }
+
+    // A separator line contains only |, -, :, and whitespace
+    for char in line {
+        if char != "|" && char != "-" && char != ":" && !char.isWhitespace {
+            return false
+        }
+    }
+
+    // Must have at least one dash
+    return line.contains("-")
+}
+
+/// Parse a table row into cells
+private func parseTableRow(_ line: Substring) -> [String] {
+    var cells: [String] = []
+    var currentCell = ""
+    var inCell = false
+
+    for char in line {
+        if char == "|" {
+            if inCell {
+                cells.append(currentCell.trimmingCharacters(in: .whitespaces))
+                currentCell = ""
+            }
+            inCell = true
+        } else if inCell {
+            currentCell.append(char)
+        }
+    }
+
+    // Don't append the last cell if it's empty (trailing |)
+    if !currentCell.trimmingCharacters(in: .whitespaces).isEmpty {
+        cells.append(currentCell.trimmingCharacters(in: .whitespaces))
+    }
+
+    return cells
 }
 
 // MARK: - Substring Extension for Efficient Trimming
@@ -723,8 +851,24 @@ extension String {
             2. Step two
             3. Step three
 
+            Loose ordered list (with blank lines):
+
+            1. First item
+
+            2. Second item
+
+            3. Third item
+
             > This is a blockquote with some important information
             > that spans multiple lines.
+
+            ### Table Example
+
+            | Name | Age | City |
+            | --- | --- | --- |
+            | Alice | 30 | New York |
+            | Bob | 25 | San Francisco |
+            | Charlie | 35 | Chicago |
 
             Here's an image:
 
