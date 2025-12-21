@@ -115,6 +115,7 @@ private struct MemoizedMarkdownView: View {
 
             case .table(let headers, let rows):
                 TableView(headers: headers, rows: rows, baseWidth: baseWidth)
+                    .fixedSize(horizontal: false, vertical: true)
             }
         }
     }
