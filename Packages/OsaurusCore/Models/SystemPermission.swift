@@ -16,6 +16,8 @@ enum SystemPermission: String, CaseIterable, Codable, Sendable {
     case automationCalendar = "automation_calendar"
     /// Accessibility API access (AXIsProcessTrusted)
     case accessibility
+    /// Contacts access permission
+    case contacts
     /// Full Disk Access permission
     case disk
 
@@ -28,6 +30,8 @@ enum SystemPermission: String, CaseIterable, Codable, Sendable {
             return "Automation (Calendar)"
         case .accessibility:
             return "Accessibility"
+        case .contacts:
+            return "Contacts"
         case .disk:
             return "Full Disk Access"
         }
@@ -42,6 +46,8 @@ enum SystemPermission: String, CaseIterable, Codable, Sendable {
             return "Allows plugins to read and create events in Calendar.app via AppleScript."
         case .accessibility:
             return "Allows plugins to interact with UI elements, simulate input, and control the computer."
+        case .contacts:
+            return "Allows plugins to access and search contacts."
         case .disk:
             return "Allows plugins to access protected files like the Messages database and other app data."
         }
@@ -56,6 +62,8 @@ enum SystemPermission: String, CaseIterable, Codable, Sendable {
             return "calendar"
         case .accessibility:
             return "accessibility"
+        case .contacts:
+            return "person.crop.circle"
         case .disk:
             return "disk"
         }
@@ -70,6 +78,8 @@ enum SystemPermission: String, CaseIterable, Codable, Sendable {
             return "calendar"
         case .accessibility:
             return "figure.stand"
+        case .contacts:
+            return "person.crop.circle"
         case .disk:
             return "externaldrive.fill.badge.checkmark"
         }
@@ -87,6 +97,9 @@ enum SystemPermission: String, CaseIterable, Codable, Sendable {
         case .accessibility:
             // Opens Privacy & Security > Accessibility
             return URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")
+        case .contacts:
+            // Opens Privacy & Security > Contacts
+            return URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Contacts")
         case .disk:
             // Opens Privacy & Security > Full Disk Access
             return URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles")
