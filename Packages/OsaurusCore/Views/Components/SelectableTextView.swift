@@ -279,18 +279,31 @@ struct SelectableTextView: NSViewRepresentable {
 
     // MARK: - Inline Markdown Rendering
 
+    /// Quick check if text likely contains markdown syntax (avoids expensive parsing for plain text)
+    @inline(__always)
+    private func likelyContainsMarkdown(_ text: String) -> Bool {
+        // Check for common inline markdown characters
+        // This is a fast heuristic to skip markdown parsing for plain text
+        text.contains("*") || text.contains("_") || text.contains("`") || text.contains("[") || text.contains("~")
+    }
+
     private func renderInlineMarkdown(
         _ text: String,
         fontSize: CGFloat,
         weight: NSFont.Weight,
         isItalic: Bool = false
     ) -> NSMutableAttributedString {
-        // Base attributes
-        let baseFont = nsFont(size: fontSize, weight: weight, italic: isItalic)
+        // Base attributes - use cached font
+        let baseFont = cachedFont(size: fontSize, weight: weight, italic: isItalic)
         let baseAttributes: [NSAttributedString.Key: Any] = [
             .font: baseFont,
             .foregroundColor: NSColor(theme.primaryText),
         ]
+
+        // Fast path: skip markdown parsing for plain text
+        guard likelyContainsMarkdown(text) else {
+            return NSMutableAttributedString(string: text, attributes: baseAttributes)
+        }
 
         // Try to parse as markdown
         if let markdownAttr = try? NSAttributedString(
@@ -307,6 +320,31 @@ struct SelectableTextView: NSViewRepresentable {
         return NSMutableAttributedString(string: text, attributes: baseAttributes)
     }
 
+    // MARK: - Font Caching
+
+    /// Thread-local font cache to avoid repeated font creation
+    private static var fontCache: [String: NSFont] = [:]
+
+    private func cachedFont(size: CGFloat, weight: NSFont.Weight, italic: Bool) -> NSFont {
+        let key = "\(theme.primaryFontName)-\(size)-\(weight.rawValue)-\(italic)"
+        if let cached = Self.fontCache[key] {
+            return cached
+        }
+        let font = nsFont(size: size, weight: weight, italic: italic)
+        Self.fontCache[key] = font
+        return font
+    }
+
+    private func cachedMonoFont(size: CGFloat, weight: NSFont.Weight) -> NSFont {
+        let key = "mono-\(theme.monoFontName)-\(size)-\(weight.rawValue)"
+        if let cached = Self.fontCache[key] {
+            return cached
+        }
+        let font = nsMonoFont(size: size, weight: weight)
+        Self.fontCache[key] = font
+        return font
+    }
+
     private func applyThemeStyling(
         to attrString: NSMutableAttributedString,
         baseFontSize: CGFloat,
@@ -315,36 +353,46 @@ struct SelectableTextView: NSViewRepresentable {
     ) {
         let fullRange = NSRange(location: 0, length: attrString.length)
 
+        // Cache colors to avoid repeated conversions
+        let primaryTextColor = NSColor(theme.primaryText)
+        let accentColor = NSColor(theme.accentColor)
+
         // Apply base text color
-        attrString.addAttribute(.foregroundColor, value: NSColor(theme.primaryText), range: fullRange)
+        attrString.addAttribute(.foregroundColor, value: primaryTextColor, range: fullRange)
+
+        // Pre-cache common fonts
+        let baseFont = cachedFont(size: baseFontSize, weight: baseWeight, italic: isItalic)
+        let boldFont = cachedFont(size: baseFontSize, weight: .bold, italic: false)
+        let boldItalicFont = cachedFont(size: baseFontSize, weight: .bold, italic: true)
+        let italicFont = cachedFont(size: baseFontSize, weight: baseWeight, italic: true)
+        let codeFont = cachedMonoFont(size: baseFontSize * 0.9, weight: .regular)
 
         // Enumerate and fix fonts/styles
         attrString.enumerateAttributes(in: fullRange, options: []) { attributes, range, _ in
-            var newFont = nsFont(size: baseFontSize, weight: baseWeight, italic: isItalic)
+            var newFont = baseFont
 
             if let existingFont = attributes[.font] as? NSFont {
                 let traits = existingFont.fontDescriptor.symbolicTraits
+
+                // Check for inline code (usually monospace)
+                if traits.contains(.monoSpace) {
+                    // Inline code styling
+                    attrString.addAttribute(.font, value: codeFont, range: range)
+                    attrString.addAttribute(.foregroundColor, value: accentColor, range: range)
+                    return
+                }
 
                 // Determine weight and italic from existing font
                 let isBold = traits.contains(.bold) || baseWeight == .bold || baseWeight == .semibold
                 let fontIsItalic = traits.contains(.italic) || isItalic
 
-                // Check for inline code (usually monospace)
-                if existingFont.fontDescriptor.symbolicTraits.contains(.monoSpace) {
-                    // Inline code styling
-                    let codeFont = nsMonoFont(size: baseFontSize * 0.9, weight: .regular)
-                    attrString.addAttribute(.font, value: codeFont, range: range)
-                    attrString.addAttribute(.foregroundColor, value: NSColor(theme.accentColor), range: range)
-                    return
-                }
-
-                // Reconstruct font with proper weight/italic
+                // Use pre-cached fonts
                 if isBold && fontIsItalic {
-                    newFont = nsFont(size: baseFontSize, weight: .bold, italic: true)
+                    newFont = boldItalicFont
                 } else if isBold {
-                    newFont = nsFont(size: baseFontSize, weight: .bold, italic: false)
+                    newFont = boldFont
                 } else if fontIsItalic {
-                    newFont = nsFont(size: baseFontSize, weight: baseWeight, italic: true)
+                    newFont = italicFont
                 }
             }
 
@@ -352,7 +400,7 @@ struct SelectableTextView: NSViewRepresentable {
 
             // Style links
             if attributes[.link] != nil {
-                attrString.addAttribute(.foregroundColor, value: NSColor(theme.accentColor), range: range)
+                attrString.addAttribute(.foregroundColor, value: accentColor, range: range)
                 attrString.addAttribute(.underlineStyle, value: NSUnderlineStyle.single.rawValue, range: range)
             }
         }

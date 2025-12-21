@@ -8,21 +8,6 @@
 import Carbon.HIToolbox
 import Foundation
 
-/// How tool calls are displayed in the chat UI
-public enum ToolCallDisplayStyle: String, Codable, CaseIterable, Sendable {
-    /// Each tool call appears as a separate compact row (default)
-    case inline = "inline"
-    /// All tool calls are grouped in a collapsible container
-    case grouped = "grouped"
-
-    public var displayName: String {
-        switch self {
-        case .inline: return "Inline"
-        case .grouped: return "Grouped"
-        }
-    }
-}
-
 public struct Hotkey: Codable, Equatable, Sendable {
     /// Carbon virtual key code (e.g., kVK_ANSI_Semicolon)
     public let keyCode: UInt32
@@ -55,8 +40,6 @@ public struct ChatConfiguration: Codable, Equatable, Sendable {
     public var alwaysOnTop: Bool
     /// Default model for new chat sessions (nil uses first available)
     public var defaultModel: String?
-    /// How tool calls are displayed in the chat UI
-    public var toolCallDisplayStyle: ToolCallDisplayStyle
 
     public init(
         hotkey: Hotkey?,
@@ -66,8 +49,7 @@ public struct ChatConfiguration: Codable, Equatable, Sendable {
         topPOverride: Float? = nil,
         maxToolAttempts: Int? = nil,
         alwaysOnTop: Bool = false,
-        defaultModel: String? = nil,
-        toolCallDisplayStyle: ToolCallDisplayStyle = .inline
+        defaultModel: String? = nil
     ) {
         self.hotkey = hotkey
         self.systemPrompt = systemPrompt
@@ -77,7 +59,6 @@ public struct ChatConfiguration: Codable, Equatable, Sendable {
         self.maxToolAttempts = maxToolAttempts
         self.alwaysOnTop = alwaysOnTop
         self.defaultModel = defaultModel
-        self.toolCallDisplayStyle = toolCallDisplayStyle
     }
 
     public static var `default`: ChatConfiguration {
@@ -92,8 +73,7 @@ public struct ChatConfiguration: Codable, Equatable, Sendable {
             maxTokens: 16384,  // High default to support long generations (essays, code, etc.)
             topPOverride: nil,
             maxToolAttempts: 15,  // Increased from 3 to support longer agentic workflows
-            alwaysOnTop: false,
-            toolCallDisplayStyle: .inline
+            alwaysOnTop: false
         )
     }
 }
