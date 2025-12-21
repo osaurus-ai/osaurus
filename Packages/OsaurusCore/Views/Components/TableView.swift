@@ -17,7 +17,7 @@ struct TableView: View {
     var body: some View {
         Grid(horizontalSpacing: 1, verticalSpacing: 1) {
             // Headers
-            GridRow {
+            GridRow(alignment: .top) {
                 ForEach(Array(headers.enumerated()), id: \.offset) { index, header in
                     TableCell(
                         text: header,
@@ -29,7 +29,7 @@ struct TableView: View {
 
             // Rows
             ForEach(Array(rows.enumerated()), id: \.offset) { rowIndex, row in
-                GridRow {
+                GridRow(alignment: .top) {
                     ForEach(Array(row.enumerated()), id: \.offset) { colIndex, cell in
                         TableCell(
                             text: cell,
@@ -68,9 +68,11 @@ private struct TableCell: View {
 
     var body: some View {
         renderMarkdown(text.replacingOccurrences(of: "<br>", with: "\n"))
+            .lineLimit(nil)
+            .fixedSize(horizontal: false, vertical: true)
             .padding(.horizontal, 12)
             .padding(.vertical, 8)
-            .frame(maxWidth: .infinity, alignment: .leading)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             .background(background)
     }
 
