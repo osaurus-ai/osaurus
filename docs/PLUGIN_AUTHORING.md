@@ -101,6 +101,7 @@ The `requirements` array specifies what permissions or capabilities the tool nee
 | --------------- | ------------------------------------------------------------------------------------ |
 | `automation`    | AppleScript/Apple Events automation - allows controlling other applications          |
 | `accessibility` | Accessibility API access - allows UI interaction, input simulation, computer control |
+| `contacts`      | Contacts access - allows plugins to access and search contacts                       |
 | `disk`          | Full Disk Access - allows accessing protected files like Messages database, app data |
 
 Example tool requiring automation:
@@ -126,6 +127,21 @@ Example tool requiring both automation and accessibility (e.g., for computer use
   "description": "Control the computer via UI automation",
   "parameters": { ... },
   "requirements": ["automation", "accessibility"],
+  "permission_policy": "ask"
+}
+```
+
+Example tool requiring contacts (e.g., for looking up phone numbers):
+
+```json
+{
+  "id": "find_contact",
+  "description": "Find contact details by name",
+  "parameters": {
+    "type": "object",
+    "properties": { "name": { "type": "string" } }
+  },
+  "requirements": ["contacts"],
   "permission_policy": "ask"
 }
 ```
@@ -181,6 +197,7 @@ Some tools require macOS system permissions that must be granted at the app leve
 | -------------------- | ------------------------------------------------------- | ------------------------------------------------- |
 | **Automation**       | System Settings → Privacy & Security → Automation       | AppleScript, controlling other apps               |
 | **Accessibility**    | System Settings → Privacy & Security → Accessibility    | UI automation, input simulation, computer control |
+| **Contacts**         | System Settings → Privacy & Security → Contacts         | Searching contacts, reading contact info          |
 | **Full Disk Access** | System Settings → Privacy & Security → Full Disk Access | Accessing Messages, Safari data, other app data   |
 
 **User Experience:**
