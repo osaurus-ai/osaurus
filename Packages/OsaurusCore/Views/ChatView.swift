@@ -986,7 +986,7 @@ struct ChatView: View {
         )
         .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
         .overlay(alignment: .topTrailing) {
-            closeButton
+            windowControls
         }
         .ignoresSafeArea()
         .animation(theme.animationMedium(), value: session.turns.isEmpty)
@@ -1224,9 +1224,14 @@ struct ChatView: View {
         }
     }
 
-    private var closeButton: some View {
-        CloseButton(action: { AppDelegate.shared?.closeChatOverlay() })
-            .padding(16)
+    private var windowControls: some View {
+        HStack(spacing: 8) {
+            SettingsButton(action: {
+                AppDelegate.shared?.showManagementWindow(initialTab: .settings)
+            })
+            CloseButton(action: { AppDelegate.shared?.closeChatOverlay() })
+        }
+        .padding(16)
     }
 
     // MARK: - Message Thread
@@ -1392,6 +1397,35 @@ private struct HeaderActionButton: View {
             }
         }
         .help(help)
+    }
+}
+
+// MARK: - Settings Button
+
+private struct SettingsButton: View {
+    let action: () -> Void
+
+    @State private var isHovered = false
+    @Environment(\.theme) private var theme
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: "gearshape.fill")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundColor(isHovered ? theme.primaryText : theme.secondaryText)
+                .frame(width: 28, height: 28)
+                .background(
+                    Circle()
+                        .fill(theme.secondaryBackground.opacity(isHovered ? 0.8 : 0.5))
+                )
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering in
+            withAnimation(theme.animationQuick()) {
+                isHovered = hovering
+            }
+        }
+        .help("Settings")
     }
 }
 
