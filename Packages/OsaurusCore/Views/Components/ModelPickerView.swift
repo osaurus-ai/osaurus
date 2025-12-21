@@ -13,6 +13,7 @@ struct ModelPickerView: View {
     let onDismiss: () -> Void
 
     @State private var searchText: String = ""
+    @State private var defaultModelId: String?
     @Environment(\.theme) private var theme
     @Environment(\.colorScheme) private var colorScheme
 
@@ -27,6 +28,12 @@ struct ModelPickerView: View {
     /// Get the display name for the selected model
     private var selectedModelName: String? {
         guard let id = selectedModel else { return nil }
+        return options.first { $0.id == id }?.displayName
+    }
+
+    /// Get the display name for the default model
+    private var defaultModelName: String? {
+        guard let id = defaultModelId else { return nil }
         return options.first { $0.id == id }?.displayName
     }
 
@@ -62,15 +69,51 @@ struct ModelPickerView: View {
             RoundedRectangle(cornerRadius: 12, style: .continuous)
                 .strokeBorder(theme.primaryBorder.opacity(0.3), lineWidth: 0.5)
         )
+        .onAppear {
+            loadDefaultModel()
+        }
+    }
+
+    private func loadDefaultModel() {
+        let config = ChatConfigurationStore.load()
+        defaultModelId = config.defaultModel
+    }
+
+    private func setDefaultModel(_ id: String) {
+        var config = ChatConfigurationStore.load()
+        config.defaultModel = id
+        ChatConfigurationStore.save(config)
+        defaultModelId = id
     }
 
     // MARK: - Header
 
     private var header: some View {
         HStack {
-            Text("Available Models")
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundColor(theme.primaryText)
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Available Models")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundColor(theme.primaryText)
+
+                if let defaultName = defaultModelName {
+                    HStack(spacing: 6) {
+                        Text("Default: \(defaultName)")
+                            .font(.system(size: 10))
+                            .foregroundColor(theme.secondaryText)
+                            .lineLimit(1)
+                        
+                        if selectedModel != defaultModelId {
+                            Button("Reset") {
+                                selectedModel = defaultModelId
+                                onDismiss()
+                            }
+                            .font(.system(size: 10, weight: .medium))
+                            .foregroundColor(theme.accentColor)
+                            .buttonStyle(.plain)
+                        }
+                    }
+                }
+            }
 
             Spacer()
 
@@ -141,9 +184,13 @@ struct ModelPickerView: View {
                             ModelRowItem(
                                 model: model,
                                 isSelected: selectedModel == model.id,
+                                isDefault: defaultModelId == model.id,
                                 onSelect: {
                                     selectedModel = model.id
                                     onDismiss()
+                                },
+                                onSetDefault: {
+                                    setDefaultModel(model.id)
                                 }
                             )
                         }
@@ -197,78 +244,96 @@ struct ModelPickerView: View {
 private struct ModelRowItem: View {
     let model: ModelOption
     let isSelected: Bool
+    let isDefault: Bool
     let onSelect: () -> Void
+    let onSetDefault: () -> Void
 
     @State private var isHovered: Bool = false
     @Environment(\.theme) private var theme
 
     var body: some View {
-        Button(action: onSelect) {
-            HStack(spacing: 12) {
-                // Selection indicator using theme accent
-                ZStack {
-                    Circle()
-                        .strokeBorder(
-                            isSelected ? theme.accentColor : theme.tertiaryText.opacity(0.4),
-                            lineWidth: 1.5
-                        )
-                        .frame(width: 16, height: 16)
+        HStack(spacing: 12) {
+            // Selection indicator using theme accent
+            ZStack {
+                Circle()
+                    .strokeBorder(
+                        isSelected ? theme.accentColor : theme.tertiaryText.opacity(0.4),
+                        lineWidth: 1.5
+                    )
+                    .frame(width: 16, height: 16)
 
-                    if isSelected {
-                        Circle()
-                            .fill(theme.accentColor)
-                            .frame(width: 8, height: 8)
-                    }
-                }
-
-                // Model info
-                VStack(alignment: .leading, spacing: 3) {
-                    HStack(spacing: 6) {
-                        Text(model.displayName)
-                            .font(.system(size: 12, weight: isSelected ? .semibold : .medium))
-                            .foregroundColor(isSelected ? theme.primaryText : theme.secondaryText)
-                            .lineLimit(1)
-
-                        // VLM indicator
-                        if model.isVLM {
-                            Image(systemName: "eye")
-                                .font(.system(size: 10))
-                                .foregroundColor(theme.accentColor)
-                                .help("Vision Language Model - supports images")
-                        }
-                    }
-
-                    // Metadata badges
-                    if model.parameterCount != nil || model.quantization != nil {
-                        HStack(spacing: 4) {
-                            if let params = model.parameterCount {
-                                MetadataBadge(text: params, color: .blue)
-                            }
-                            if let quant = model.quantization {
-                                MetadataBadge(text: quant, color: .purple)
-                            }
-                        }
-                    }
-                }
-
-                Spacer()
-
-                // Checkmark for selected
                 if isSelected {
-                    Image(systemName: "checkmark")
-                        .font(.system(size: 11, weight: .bold))
-                        .foregroundColor(theme.accentColor)
+                    Circle()
+                        .fill(theme.accentColor)
+                        .frame(width: 8, height: 8)
                 }
             }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 8)
-            .background(
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .fill(isHovered || isSelected ? theme.secondaryBackground.opacity(0.6) : Color.clear)
-            )
-            .contentShape(Rectangle())
+
+            // Model info
+            VStack(alignment: .leading, spacing: 3) {
+                HStack(spacing: 6) {
+                    Text(model.displayName)
+                        .font(.system(size: 12, weight: isSelected ? .semibold : .medium))
+                        .foregroundColor(isSelected ? theme.primaryText : theme.secondaryText)
+                        .lineLimit(1)
+
+                    // VLM indicator
+                    if model.isVLM {
+                        Image(systemName: "eye")
+                            .font(.system(size: 10))
+                            .foregroundColor(theme.accentColor)
+                            .help("Vision Language Model - supports images")
+                    }
+                }
+
+                // Metadata badges
+                if model.parameterCount != nil || model.quantization != nil {
+                    HStack(spacing: 4) {
+                        if let params = model.parameterCount {
+                            MetadataBadge(text: params, color: .blue)
+                        }
+                        if let quant = model.quantization {
+                            MetadataBadge(text: quant, color: .purple)
+                        }
+                    }
+                }
+            }
+
+            Spacer()
+
+            // Default Toggle (Pin)
+            if isDefault || isHovered {
+                Button(action: onSetDefault) {
+                    Image(systemName: isDefault ? "pin.fill" : "pin")
+                        .font(.system(size: 12))
+                        .foregroundColor(isDefault ? theme.accentColor : theme.tertiaryText)
+                        .padding(4)
+                        .background(
+                            Circle()
+                                .fill(isDefault ? theme.accentColor.opacity(0.1) : Color.clear)
+                        )
+                }
+                .buttonStyle(.plain)
+                .help(isDefault ? "Current default model" : "Set as default model")
+            }
+
+            // Checkmark for selected
+            if isSelected {
+                Image(systemName: "checkmark")
+                    .font(.system(size: 11, weight: .bold))
+                    .foregroundColor(theme.accentColor)
+            }
         }
-        .buttonStyle(.plain)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(isHovered || isSelected ? theme.secondaryBackground.opacity(0.6) : Color.clear)
+        )
+        .contentShape(Rectangle())
+        .onTapGesture {
+            onSelect()
+        }
         .onHover { hovering in
             withAnimation(.easeInOut(duration: 0.1)) {
                 isHovered = hovering
