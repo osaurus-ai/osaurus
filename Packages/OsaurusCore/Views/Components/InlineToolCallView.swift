@@ -15,9 +15,18 @@ import SwiftUI
 private enum JSONFormatter {
     static func prettyJSON(_ raw: String) -> String {
         guard let data = raw.data(using: .utf8),
-            let obj = try? JSONSerialization.jsonObject(with: data),
-            let pretty = try? JSONSerialization.data(withJSONObject: obj, options: [.prettyPrinted, .sortedKeys])
+            let obj = try? JSONSerialization.jsonObject(with: data)
         else { return raw }
+
+        // Return compact string for empty objects
+        if let dict = obj as? [String: Any], dict.isEmpty {
+            return "{}"
+        }
+
+        guard let pretty = try? JSONSerialization.data(withJSONObject: obj, options: [.prettyPrinted, .sortedKeys])
+        else {
+            return raw
+        }
         return String(data: pretty, encoding: .utf8) ?? raw
     }
 }
@@ -186,18 +195,16 @@ struct InlineToolCallView: View {
 
     private var expandedContent: some View {
         VStack(alignment: .leading, spacing: 8) {
-            // Arguments - use cached formatted version or show loading
-            if let formatted = formattedArgs {
+            // Arguments - hide if empty or "{}"
+            let currentArgs = formattedArgs ?? call.function.arguments
+            let isArgsEmpty =
+                currentArgs.trimmingCharacters(in: .whitespacesAndNewlines) == "{}"
+                || currentArgs.isEmpty
+
+            if !isArgsEmpty {
                 ToolCodeBlock(
                     title: "Arguments",
-                    text: formatted,
-                    language: "json"
-                )
-            } else {
-                // Show raw args while formatting in background
-                ToolCodeBlock(
-                    title: "Arguments",
-                    text: call.function.arguments,
+                    text: currentArgs,
                     language: "json"
                 )
             }

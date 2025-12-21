@@ -67,7 +67,7 @@ struct MessageGroupView: View {
                     .padding(.bottom, 8)
 
                 // Message turns
-                VStack(alignment: .leading, spacing: 16) {
+                VStack(alignment: .leading, spacing: 0) {
                     ForEach(Array(group.turns.enumerated()), id: \.element.id) { index, turn in
                         let isLatestInGroup = index == group.turns.count - 1
 
@@ -79,6 +79,7 @@ struct MessageGroupView: View {
                             onCopy: onCopy,
                             onEdit: onEdit
                         )
+                        .padding(.top, spacingForTurn(at: index))
                         // Allow edit via direct tap on user messages?
                         // MessageContent handles its own editing state
                     }
@@ -96,6 +97,25 @@ struct MessageGroupView: View {
                 isHovered = hovering
             }
         }
+    }
+
+    // MARK: - Helpers
+
+    private func spacingForTurn(at index: Int) -> CGFloat {
+        if index == 0 { return 0 }
+
+        let currentTurn = group.turns[index]
+        let previousTurn = group.turns[index - 1]
+
+        // If both are tool-only turns (empty content, has tool calls), reduce spacing
+        let currentIsToolOnly = currentTurn.content.isEmpty && (currentTurn.toolCalls?.isEmpty == false)
+        let previousIsToolOnly = previousTurn.content.isEmpty && (previousTurn.toolCalls?.isEmpty == false)
+
+        if currentIsToolOnly && previousIsToolOnly {
+            return 4  // Reduced spacing (visually closer)
+        }
+
+        return 16  // Standard spacing
     }
 
     // MARK: - Accent Bar
