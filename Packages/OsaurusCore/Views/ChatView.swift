@@ -454,6 +454,32 @@ final class ChatSession: ObservableObject {
                     withOverrides: enabledToolOverrides.isEmpty ? nil : enabledToolOverrides
                 )
 
+                // Estimate tokens for a message (heuristic: ~4 chars per token)
+                func estimateTokens(for msg: ChatMessage) -> Int {
+                    let charCount = (msg.content ?? "").count
+                    return max(1, charCount / 4)
+                }
+
+                // Get model context length (with fallback)
+                let modelContextLength: Int = {
+                    guard let model = selectedModel else { return 8192 }
+                    // Foundation model has ~4096 token context
+                    if model == "foundation" || model == "default" {
+                        return 4096
+                    }
+                    if let info = ModelInfo.load(modelId: model),
+                        let ctx = info.model.contextLength
+                    {
+                        return ctx
+                    }
+                    // Default context length if not found
+                    return 8192
+                }()
+
+                // Reserve space for model response
+                let maxResponseTokens = chatCfg.maxTokens ?? 16384
+                let availableContextTokens = max(1024, modelContextLength - maxResponseTokens)
+
                 @MainActor
                 func buildMessages() -> [ChatMessage] {
                     var msgs: [ChatMessage] = []
@@ -497,6 +523,20 @@ final class ChatSession: ObservableObject {
                             msgs.append(ChatMessage(role: t.role.rawValue, content: t.content))
                         }
                     }
+
+                    // Prune older messages if context limit is exceeded
+                    // Keep system prompt (index 0 if present) and remove from oldest non-system messages
+                    let hasSystemPrompt = !sys.isEmpty && !msgs.isEmpty && msgs[0].role == "system"
+                    let startIndex = hasSystemPrompt ? 1 : 0
+
+                    var totalTokens = msgs.reduce(0) { $0 + estimateTokens(for: $1) }
+
+                    while totalTokens > availableContextTokens && msgs.count > startIndex + 1 {
+                        // Remove the oldest non-system message
+                        let removed = msgs.remove(at: startIndex)
+                        totalTokens -= estimateTokens(for: removed)
+                    }
+
                     return msgs
                 }
 

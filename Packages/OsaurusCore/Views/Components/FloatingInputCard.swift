@@ -72,6 +72,21 @@ struct FloatingInputCard: View {
         return total
     }
 
+    /// Max context length for the selected model
+    private var maxContextTokens: Int? {
+        guard let model = selectedModel else { return nil }
+        // Foundation model has ~4096 token context
+        if model == "foundation" || model == "default" {
+            return 4096
+        }
+        if let info = ModelInfo.load(modelId: model),
+            let ctx = info.model.contextLength
+        {
+            return ctx
+        }
+        return nil
+    }
+
     var body: some View {
         VStack(spacing: 12) {
             // Model and tool selector chips
@@ -193,15 +208,25 @@ struct FloatingInputCard: View {
 
     private var contextIndicatorChip: some View {
         HStack(spacing: 4) {
-            Text("~\(formatTokenCount(displayContextTokens))")
-                .font(.system(size: CGFloat(theme.captionSize) - 1, weight: .medium, design: .monospaced))
-                .foregroundColor(theme.tertiaryText)
+            if let maxCtx = maxContextTokens {
+                Text("~\(formatTokenCount(displayContextTokens)) / \(formatTokenCount(maxCtx))")
+                    .font(.system(size: CGFloat(theme.captionSize) - 1, weight: .medium, design: .monospaced))
+                    .foregroundColor(theme.tertiaryText)
+            } else {
+                Text("~\(formatTokenCount(displayContextTokens))")
+                    .font(.system(size: CGFloat(theme.captionSize) - 1, weight: .medium, design: .monospaced))
+                    .foregroundColor(theme.tertiaryText)
+            }
 
             Text("tokens")
                 .font(.system(size: CGFloat(theme.captionSize) - 1, weight: .regular))
                 .foregroundColor(theme.tertiaryText.opacity(0.7))
         }
-        .help("Estimated context: ~\(displayContextTokens) tokens (messages + tools + input)")
+        .help(
+            maxContextTokens != nil
+                ? "Estimated context: ~\(displayContextTokens) / \(maxContextTokens!) tokens"
+                : "Estimated context: ~\(displayContextTokens) tokens (messages + tools + input)"
+        )
     }
 
     /// Format token count for compact display (e.g., "1.2k", "15k")
