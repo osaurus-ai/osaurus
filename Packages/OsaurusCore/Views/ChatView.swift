@@ -1197,22 +1197,6 @@ struct ChatView: View {
             }
 
             Spacer()
-
-            // Actions
-            HStack(spacing: 8) {
-                if !session.turns.isEmpty {
-                    // New chat button
-                    HeaderActionButton(
-                        icon: "plus",
-                        help: "New chat",
-                        action: {
-                            // Save current session before creating new
-                            session.save()
-                            session.reset()
-                        }
-                    )
-                }
-            }
         }
         .padding(.leading, 20)
         .padding(.trailing, 56)  // Leave room for close button
@@ -1226,9 +1210,21 @@ struct ChatView: View {
 
     private var windowControls: some View {
         HStack(spacing: 8) {
-            SettingsButton(action: {
-                AppDelegate.shared?.showManagementWindow(initialTab: .settings)
-            })
+            if session.turns.isEmpty {
+                SettingsButton(action: {
+                    AppDelegate.shared?.showManagementWindow(initialTab: .settings)
+                })
+            } else {
+                HeaderActionButton(
+                    icon: "plus",
+                    help: "New chat",
+                    action: {
+                        // Save current session before creating new
+                        session.save()
+                        session.reset()
+                    }
+                )
+            }
             CloseButton(action: { AppDelegate.shared?.closeChatOverlay() })
         }
         .padding(16)
