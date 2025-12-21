@@ -6,13 +6,14 @@
 //
 
 import Foundation
+import Combine
 
 @MainActor
-final class ToolRegistry {
+final class ToolRegistry: ObservableObject {
     static let shared = ToolRegistry()
 
-    private var toolsByName: [String: OsaurusTool] = [:]
-    private var configuration: ToolConfiguration = ToolConfigurationStore.load()
+    @Published private var toolsByName: [String: OsaurusTool] = [:]
+    @Published private var configuration: ToolConfiguration = ToolConfigurationStore.load()
 
     struct ToolPolicyInfo {
         let isPermissioned: Bool
@@ -221,6 +222,11 @@ final class ToolRegistry {
         Task { @MainActor in
             await MCPServerManager.shared.notifyToolsListChanged()
         }
+    }
+
+    /// Check if a tool is enabled in the global configuration
+    func isGlobalEnabled(_ name: String) -> Bool {
+        return configuration.isEnabled(name: name)
     }
 
     /// Retrieve parameter schema for a tool by name.
