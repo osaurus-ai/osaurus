@@ -189,7 +189,7 @@ struct LightTheme: ThemeProtocol {
     let primaryText = Color(hex: "1a1a18")  // ~17:1 contrast ✓
     let secondaryText = Color(hex: "555550")  // ~7:1 contrast ✓ (was #6b6b66)
     let tertiaryText = Color(hex: "717168")  // ~5.5:1 contrast ✓ (was #9c9c96, ~2.8:1)
-    let placeholderText = Color(hex: "717168")  // Matches tertiaryText
+    let placeholderText = Color(hex: "555550")  // Matches secondaryText for better visibility
 
     // Background colors - Warm whites with depth
     let primaryBackground = Color(hex: "ffffff")
@@ -266,7 +266,7 @@ struct DarkTheme: ThemeProtocol {
     let primaryText = Color(hex: "f5f5f2")  // ~17:1 contrast ✓
     let secondaryText = Color(hex: "a8a8a3")  // ~8.5:1 contrast ✓
     let tertiaryText = Color(hex: "8a8a85")  // ~5.5:1 contrast ✓ (was #6e6e6a, ~3.9:1)
-    let placeholderText = Color(hex: "8a8a85")  // Matches tertiaryText
+    let placeholderText = Color(hex: "a1a1aa")  // Matches secondaryText for better visibility
 
     // Background colors - Rich, warm blacks with depth
     let primaryBackground = Color(hex: "0c0c0b")

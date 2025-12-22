@@ -78,18 +78,27 @@ struct ModelRowView: View {
                             .truncationMode(.tail)
                     }
 
-                    // Repository link
+                    // Repository link - use Button instead of Link to control color explicitly
                     if let url = URL(string: model.downloadURL) {
-                        HStack(spacing: 4) {
-                            Image(systemName: "link")
-                                .font(.system(size: 10))
-                            Link(repositoryName(from: model.downloadURL), destination: url)
-                                .font(.system(size: 12))
-                                .lineLimit(1)
-                                .truncationMode(.middle)
-                                .allowsHitTesting(false)
+                        Button(action: { NSWorkspace.shared.open(url) }) {
+                            HStack(spacing: 4) {
+                                Image(systemName: "link")
+                                    .font(.system(size: 10))
+                                Text(repositoryName(from: model.downloadURL))
+                                    .font(.system(size: 12))
+                                    .lineLimit(1)
+                                    .truncationMode(.middle)
+                            }
+                            .foregroundColor(theme.accentColor)
                         }
-                        .foregroundColor(theme.tertiaryText)
+                        .buttonStyle(.plain)
+                        .onHover { hovering in
+                            if hovering {
+                                NSCursor.pointingHand.push()
+                            } else {
+                                NSCursor.pop()
+                            }
+                        }
                     }
 
                     // Download progress

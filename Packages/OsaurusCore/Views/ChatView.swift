@@ -1058,7 +1058,7 @@ struct ChatView: View {
             resizeWindowForContent(isEmpty: newValue)
         }
         .environment(\.theme, themeManager.currentTheme)
-        .tint(theme.selectionColor)
+        .tint(theme.accentColor)
     }
 
     // MARK: - Background

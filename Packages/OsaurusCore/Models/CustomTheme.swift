@@ -102,11 +102,11 @@ public struct ThemeColors: Codable, Equatable, Sendable {
         tertiaryBackground: String = "#27272a",
         sidebarBackground: String = "#141416",
         sidebarSelectedBackground: String = "#2a2a2e",
-        accentColor: String = "#3b82f6",
-        accentColorLight: String = "#60a5fa",
+        accentColor: String = "#60a5fa",  // Higher contrast for links (was #3b82f6)
+        accentColorLight: String = "#93c5fd",
         primaryBorder: String = "#3f3f46",  // Improved visibility (was #27272a)
         secondaryBorder: String = "#52525b",  // Improved visibility (was #3f3f46)
-        focusBorder: String = "#3b82f6",
+        focusBorder: String = "#60a5fa",  // Matches accentColor for consistency
         successColor: String = "#22c55e",  // Good contrast on dark ✓
         warningColor: String = "#fbbf24",  // Brighter for dark bg ✓ (was #f59e0b)
         errorColor: String = "#f87171",  // Brighter for dark bg ✓ (was #ef4444)
@@ -122,7 +122,7 @@ public struct ThemeColors: Codable, Equatable, Sendable {
         shadowColor: String = "#000000",
         selectionColor: String = "#3b82f680",
         cursorColor: String = "#3b82f6",
-        placeholderText: String? = nil
+        placeholderText: String? = "#a1a1aa"  // Matches secondaryText for better visibility
     ) {
         self.primaryText = primaryText
         self.secondaryText = secondaryText
@@ -169,7 +169,7 @@ public struct ThemeColors: Codable, Equatable, Sendable {
             tertiaryBackground: "#f3f4f6",
             sidebarBackground: "#f5f5f7",
             sidebarSelectedBackground: "#e8e8ed",
-            accentColor: "#2563eb",  // Slightly darker blue for better contrast
+            accentColor: "#1d4ed8",  // Darker blue for better contrast (was #2563eb)
             accentColorLight: "#3b82f6",
             primaryBorder: "#d1d5db",  // Improved visibility (was #e5e7eb)
             secondaryBorder: "#e5e7eb",  // Decorative (was #f3f4f6)
@@ -189,7 +189,7 @@ public struct ThemeColors: Codable, Equatable, Sendable {
             shadowColor: "#000000",
             selectionColor: "#2563eb50",
             cursorColor: "#2563eb",
-            placeholderText: "#6b6b6b"  // Matches tertiaryText default
+            placeholderText: "#525252"  // Matches secondaryText for better visibility
         )
     }
 }
