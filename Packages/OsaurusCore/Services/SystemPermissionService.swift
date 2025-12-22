@@ -7,6 +7,7 @@
 
 @preconcurrency import AppKit
 import Contacts
+import EventKit
 import Foundation
 
 @MainActor
@@ -68,6 +69,8 @@ final class SystemPermissionService: ObservableObject {
             return checkAutomationPermission()
         case .automationCalendar:
             return checkCalendarAutomationPermission()
+        case .calendar:
+            return checkCalendarPermission()
         case .accessibility:
             return checkAccessibilityPermission()
         case .contacts:
@@ -163,6 +166,8 @@ final class SystemPermissionService: ObservableObject {
             requestAutomationPermission()
         case .automationCalendar:
             requestCalendarAutomationPermission()
+        case .calendar:
+            requestCalendarPermission()
         case .accessibility:
             requestAccessibilityPermission()
         case .contacts:
@@ -212,6 +217,30 @@ final class SystemPermissionService: ObservableObject {
                 print("Error requesting contacts permission: \(error)")
                 setPermission(.contacts, isGranted: false)
                 openSystemSettings(for: .contacts)
+            }
+        }
+    }
+
+    // MARK: - Calendar Permission (EventKit)
+
+    private func checkCalendarPermission() -> Bool {
+        let status = EKEventStore.authorizationStatus(for: .event)
+        return status == .fullAccess
+    }
+
+    private func requestCalendarPermission() {
+        Task { @MainActor in
+            let store = EKEventStore()
+            do {
+                let granted = try await store.requestFullAccessToEvents()
+                setPermission(.calendar, isGranted: granted)
+                if !granted {
+                    openSystemSettings(for: .calendar)
+                }
+            } catch {
+                print("Error requesting calendar permission: \(error)")
+                setPermission(.calendar, isGranted: false)
+                openSystemSettings(for: .calendar)
             }
         }
     }
@@ -543,6 +572,32 @@ final class SystemPermissionService: ObservableObject {
                 return "SUCCESS: Authorized (Found \(count)+ contacts)"
             } catch {
                 return "ERROR: Authorized but fetch failed: \(error.localizedDescription)"
+            }
+        case .denied:
+            return "ERROR: Access Denied"
+        case .restricted:
+            return "ERROR: Access Restricted"
+        case .notDetermined:
+            return "WARNING: Access Not Determined"
+        @unknown default:
+            return "ERROR: Unknown Status"
+        }
+    }
+
+    // MARK: - Debug: Test Calendar (EventKit) Access
+
+    /// Debug function to test if Calendar access works via EventKit.
+    nonisolated static func debugTestCalendarEventKitAccess() -> String {
+        let status = EKEventStore.authorizationStatus(for: .event)
+        switch status {
+        case .fullAccess, .writeOnly:  // writeOnly shouldn't happen for us but covering it
+            let store = EKEventStore()
+            // Try to fetch calendars to verify
+            let calendars = store.calendars(for: .event)
+            if !calendars.isEmpty {
+                return "SUCCESS: Authorized (Found \(calendars.count) calendars)"
+            } else {
+                return "SUCCESS: Authorized (No calendars found)"
             }
         case .denied:
             return "ERROR: Access Denied"
