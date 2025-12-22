@@ -24,7 +24,7 @@ actor ModelRuntime {
         let isCurrent: Bool
     }
 
-    private final class SessionHolder: NSObject {
+    private final class SessionHolder: NSObject, @unchecked Sendable {
         let name: String
         let container: ModelContainer
         let weightsSizeBytes: Int64
@@ -43,8 +43,8 @@ actor ModelRuntime {
 
     // MARK: - State
 
-    private let modelCache = NSCache<NSString, SessionHolder>()
-    private var cachedModelNames: Set<String> = []
+    private var modelCache: [String: SessionHolder] = [:]
+    private var loadingTasks: [String: Task<SessionHolder, Error>] = [:]
     private var currentModelName: String?
 
     private init() {}
@@ -52,39 +52,29 @@ actor ModelRuntime {
     // MARK: - Public API
 
     func cachedModelSummaries() -> [ModelCacheSummary] {
-        var toRemove: [String] = []
-        var results: [ModelCacheSummary] = []
-        for name in cachedModelNames {
-            if let holder = modelCache.object(forKey: name as NSString) {
-                results.append(
-                    ModelCacheSummary(
-                        name: name,
-                        bytes: holder.weightsSizeBytes,
-                        isCurrent: name == currentModelName
-                    )
-                )
-            } else {
-                toRemove.append(name)
-            }
-        }
-        if !toRemove.isEmpty {
-            for n in toRemove { cachedModelNames.remove(n) }
-        }
-        return results.sorted { lhs, rhs in
+        return modelCache.values.map { holder in
+            ModelCacheSummary(
+                name: holder.name,
+                bytes: holder.weightsSizeBytes,
+                isCurrent: holder.name == currentModelName
+            )
+        }.sorted { lhs, rhs in
             if lhs.isCurrent != rhs.isCurrent { return lhs.isCurrent }
             return lhs.name < rhs.name
         }
     }
 
     func unload(name: String) {
-        modelCache.removeObject(forKey: name as NSString)
-        cachedModelNames.remove(name)
+        modelCache.removeValue(forKey: name)
+        loadingTasks[name]?.cancel()
+        loadingTasks.removeValue(forKey: name)
         if currentModelName == name { currentModelName = nil }
     }
 
     func clearAll() {
-        modelCache.removeAllObjects()
-        cachedModelNames.removeAll()
+        modelCache.removeAll()
+        for task in loadingTasks.values { task.cancel() }
+        loadingTasks.removeAll()
         currentModelName = nil
     }
 
@@ -168,8 +158,41 @@ actor ModelRuntime {
     // MARK: - Internals
 
     private func loadContainer(id: String, name: String) async throws -> SessionHolder {
-        if let existing = modelCache.object(forKey: name as NSString) { return existing }
-        guard let localURL = findLocalDirectory(forModelId: id) else {
+        // 1. Check cache
+        if let existing = modelCache[name] { return existing }
+
+        // Check eviction policy
+        let policy = await ServerConfigurationStore.load()?.modelEvictionPolicy ?? .strictSingleModel
+
+        if policy == .strictSingleModel {
+            // Enforce single-model policy: Unload all other models to free memory
+            let otherModels = modelCache.keys.filter { $0 != name }
+            for other in otherModels {
+                print("[ModelRuntime] Enforcing strict policy: Unloading \(other)")
+                unload(name: other)
+            }
+
+            // Also cancel any other pending loading tasks
+            let otherTasks = loadingTasks.keys.filter { $0 != name }
+            for other in otherTasks {
+                print("[ModelRuntime] Cancelling pending load for \(other)")
+                loadingTasks[other]?.cancel()
+                loadingTasks.removeValue(forKey: other)
+            }
+        } else {
+            // Flexible policy: Only warn if multiple large models are loaded
+            // We could implement LRU here in the future if needed
+            if !modelCache.isEmpty {
+                print("[ModelRuntime] Loading \(name) alongside existing models (Flexible Policy)")
+            }
+        }
+
+        // 2. Check in-flight loading tasks (deduplication)
+        if let existingTask = loadingTasks[name] {
+            return try await existingTask.value
+        }
+
+        guard let localURL = Self.findLocalDirectory(forModelId: id) else {
             throw NSError(
                 domain: "ModelRuntime",
                 code: 1,
@@ -177,25 +200,37 @@ actor ModelRuntime {
             )
         }
 
-        // Check if this is a VLM model and use the appropriate factory
-        let isVLM = ModelManager.isVisionModel(at: localURL)
-        let container: ModelContainer
+        // 3. Start new loading task
+        let task = Task<SessionHolder, Error> {
+            // Check if this is a VLM model and use the appropriate factory
+            let isVLM = ModelManager.isVisionModel(at: localURL)
+            let container: ModelContainer
 
-        if isVLM {
-            // Use VLMModelFactory explicitly for vision models
-            let configuration = ModelConfiguration(directory: localURL)
-            container = try await VLMModelFactory.shared.loadContainer(configuration: configuration)
-        } else {
-            // Use default loading for LLM models
-            container = try await loadModelContainer(directory: localURL)
+            if isVLM {
+                // Use VLMModelFactory explicitly for vision models
+                let configuration = ModelConfiguration(directory: localURL)
+                container = try await VLMModelFactory.shared.loadContainer(configuration: configuration)
+            } else {
+                // Use default loading for LLM models
+                container = try await loadModelContainer(directory: localURL)
+            }
+
+            let weightsBytes = Self.computeWeightsSizeBytes(at: localURL)
+            return SessionHolder(name: name, container: container, weightsSizeBytes: weightsBytes)
         }
 
-        let weightsBytes = computeWeightsSizeBytes(at: localURL)
-        let holder = SessionHolder(name: name, container: container, weightsSizeBytes: weightsBytes)
-        modelCache.setObject(holder, forKey: name as NSString)
-        cachedModelNames.insert(name)
-        currentModelName = name
-        return holder
+        loadingTasks[name] = task
+
+        do {
+            let holder = try await task.value
+            modelCache[name] = holder
+            loadingTasks[name] = nil
+            currentModelName = name
+            return holder
+        } catch {
+            loadingTasks[name] = nil
+            throw error
+        }
     }
 
     // MARK: - Driver helpers (actor-isolated)
@@ -457,7 +492,7 @@ actor ModelRuntime {
 
     // MARK: - Inline tool-call fallback detection moved to ToolDetection.swift
 
-    private func computeWeightsSizeBytes(at url: URL) -> Int64 {
+    private static func computeWeightsSizeBytes(at url: URL) -> Int64 {
         let fm = FileManager.default
         guard
             let enumerator = fm.enumerator(
@@ -478,7 +513,7 @@ actor ModelRuntime {
         return total
     }
 
-    private func findLocalDirectory(forModelId id: String) -> URL? {
+    private static func findLocalDirectory(forModelId id: String) -> URL? {
         let parts = id.split(separator: "/").map(String.init)
         let base = DirectoryPickerService.effectiveModelsDirectory()
         let url = parts.reduce(base) { partial, component in

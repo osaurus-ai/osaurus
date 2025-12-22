@@ -38,6 +38,7 @@ struct ConfigurationView: View {
     @State private var tempQuantStart: String = ""
     @State private var tempMaxKV: String = ""
     @State private var tempPrefillStep: String = ""
+    @State private var tempEvictionPolicy: ModelEvictionPolicy = .strictSingleModel
 
     // Search (passed from sidebar)
     @Binding var searchText: String
@@ -380,6 +381,28 @@ struct ConfigurationView: View {
                                     placeholder: "512",
                                     help: "Step size for prefill operations. Empty uses default 512"
                                 )
+
+                                Divider()
+                                    .background(theme.primaryBorder)
+
+                                // Eviction Policy
+                                VStack(alignment: .leading, spacing: 10) {
+                                    Text("Model Management")
+                                        .font(.system(size: 12, weight: .medium))
+                                        .foregroundColor(theme.secondaryText)
+
+                                    Picker("", selection: $tempEvictionPolicy) {
+                                        ForEach(ModelEvictionPolicy.allCases, id: \.self) { policy in
+                                            Text(policy.rawValue).tag(policy)
+                                        }
+                                    }
+                                    .pickerStyle(.segmented)
+                                    .labelsHidden()
+
+                                    Text(tempEvictionPolicy.description)
+                                        .font(.system(size: 11))
+                                        .foregroundColor(theme.tertiaryText)
+                                }
                             }
                         }
                     }
@@ -564,6 +587,7 @@ struct ConfigurationView: View {
             configuration.genPrefillStepSize == defaults.genPrefillStepSize
             ? "" : String(configuration.genPrefillStepSize)
         tempAllowedOrigins = configuration.allowedOrigins.joined(separator: ", ")
+        tempEvictionPolicy = configuration.modelEvictionPolicy
     }
 
     // MARK: - Reset to Defaults
@@ -597,6 +621,7 @@ struct ConfigurationView: View {
         tempQuantStart = ""
         tempMaxKV = ""
         tempPrefillStep = ""
+        tempEvictionPolicy = serverDefaults.modelEvictionPolicy
 
         // Show confirmation
         withAnimation(.easeInOut(duration: 0.2)) {
@@ -659,6 +684,9 @@ struct ConfigurationView: View {
                 Int(trimmedPrefill) ?? defaults.genPrefillStepSize
         }
 
+        // Save eviction policy
+        configuration.modelEvictionPolicy = tempEvictionPolicy
+
         // Save CORS allowed origins
         let parsedOrigins: [String] =
             tempAllowedOrigins
@@ -680,6 +708,7 @@ struct ConfigurationView: View {
             || previousServerCfg.genQuantizedKVStart != configuration.genQuantizedKVStart
             || previousServerCfg.genMaxKVSize != configuration.genMaxKVSize
             || previousServerCfg.genPrefillStepSize != configuration.genPrefillStepSize
+            || previousServerCfg.modelEvictionPolicy != configuration.modelEvictionPolicy
 
         // Persist to disk
         ServerConfigurationStore.save(configuration)
