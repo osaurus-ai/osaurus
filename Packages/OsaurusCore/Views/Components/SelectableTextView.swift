@@ -27,10 +27,14 @@ struct SelectableTextView: NSViewRepresentable {
 
     final class Coordinator {
         // Store previous state directly for O(1) comparison instead of O(n) hashing
-        var lastBlocks: [SelectableTextBlock]?
+        var lastBlocks: [SelectableTextBlock] = []
         var lastWidth: CGFloat = 0
         var lastThemeFingerprint: String = ""
         var lastMeasuredHeight: CGFloat = 0
+
+        // Track length of each block's rendered text (including trailing newline if present)
+        // This enables O(1) incremental updates by only modifying changed blocks
+        var blockLengths: [Int] = []
     }
 
     func makeCoordinator() -> Coordinator {
@@ -83,8 +87,19 @@ struct SelectableTextView: NSViewRepresentable {
         let blocksChanged = context.coordinator.lastBlocks != blocks
 
         if blocksChanged || widthChanged || themeChanged {
-            let attributedString = buildAttributedString()
-            textView.textStorage?.setAttributedString(attributedString)
+            // Incremental update optimization
+            if !widthChanged && !themeChanged && context.coordinator.lastBlocks.count > 0 {
+                updateTextStorageIncrementally(
+                    textView: textView,
+                    oldBlocks: context.coordinator.lastBlocks,
+                    newBlocks: blocks,
+                    coordinator: context.coordinator
+                )
+            } else {
+                // Full rebuild
+                let attributedString = buildAttributedString(coordinator: context.coordinator)
+                textView.textStorage?.setAttributedString(attributedString)
+            }
 
             // Force layout once (single pass). SwiftUI sizing uses intrinsicContentSize.
             if let textContainer = textView.textContainer,
@@ -109,97 +124,230 @@ struct SelectableTextView: NSViewRepresentable {
         }
     }
 
+    // MARK: - Incremental Updates
+
+    private func updateTextStorageIncrementally(
+        textView: SelectableNSTextView,
+        oldBlocks: [SelectableTextBlock],
+        newBlocks: [SelectableTextBlock],
+        coordinator: Coordinator
+    ) {
+        guard let storage = textView.textStorage else { return }
+
+        // Find the first index where blocks differ
+        var diffIndex = 0
+        let commonCount = min(oldBlocks.count, newBlocks.count)
+
+        while diffIndex < commonCount {
+            if oldBlocks[diffIndex] != newBlocks[diffIndex] {
+                break
+            }
+            diffIndex += 1
+        }
+
+        // If diffIndex is 0, we have to rebuild everything (no common prefix)
+        // But we can still use the loop structure below
+
+        // Calculate the safe prefix length using cached block lengths
+        var prefixLength = 0
+        if diffIndex > 0 {
+            // Ensure blockLengths matches oldBlocks
+            if coordinator.blockLengths.count >= diffIndex {
+                prefixLength = coordinator.blockLengths.prefix(diffIndex).reduce(0, +)
+            } else {
+                // Fallback: cached lengths out of sync, force full rebuild
+                diffIndex = 0
+                prefixLength = 0
+            }
+        }
+
+        // Safety check: ensure prefix length is within bounds
+        if prefixLength > storage.length {
+            diffIndex = 0
+            prefixLength = 0
+        }
+
+        // 1. Delete modified/removed content
+        let rangeToDelete = NSRange(location: prefixLength, length: storage.length - prefixLength)
+        if rangeToDelete.length > 0 {
+            storage.deleteCharacters(in: rangeToDelete)
+        }
+
+        // 2. Prepare to append new content
+        // Update cached lengths: keep valid prefix
+        var newLengths = Array(coordinator.blockLengths.prefix(diffIndex))
+
+        // 3. Handle boundary condition: if we are appending to a previously "last" block,
+        // it needs a newline added because it's no longer last.
+        // The block content itself (at diffIndex-1) didn't change (it's in common prefix),
+        // but its rendering context changed (needs \n).
+        if diffIndex > 0 && diffIndex == oldBlocks.count && diffIndex < newBlocks.count {
+            // Append newline to the now-intermediate block
+            let newline = NSAttributedString(string: "\n")
+            storage.append(newline)
+
+            // Update length of the previous block to include the newline
+            if diffIndex - 1 < newLengths.count {
+                newLengths[diffIndex - 1] += 1
+            }
+        }
+
+        // 4. Render and append new blocks
+        let scale = Typography.scale(for: baseWidth)
+        let bodyFontSize = CGFloat(theme.bodySize) * scale
+
+        for i in diffIndex ..< newBlocks.count {
+            let block = newBlocks[i]
+            let isFirst = i == 0
+            let previousBlock = isFirst ? nil : newBlocks[i - 1]
+
+            // Render block
+            let attrString = renderBlock(
+                block,
+                isFirst: isFirst,
+                previousBlock: previousBlock,
+                bodyFontSize: bodyFontSize,
+                scale: scale
+            )
+
+            storage.append(attrString)
+            var blockLen = attrString.length
+
+            // Append newline if not last
+            if i < newBlocks.count - 1 {
+                storage.append(NSAttributedString(string: "\n"))
+                blockLen += 1
+            }
+
+            newLengths.append(blockLen)
+        }
+
+        // Update cache
+        coordinator.blockLengths = newLengths
+    }
+
     // MARK: - Attributed String Building
 
-    private func buildAttributedString() -> NSMutableAttributedString {
+    private func buildAttributedString(coordinator: Coordinator? = nil) -> NSMutableAttributedString {
         let result = NSMutableAttributedString()
         let scale = Typography.scale(for: baseWidth)
         let bodyFontSize = CGFloat(theme.bodySize) * scale
+        var lengths: [Int] = []
 
         for (index, block) in blocks.enumerated() {
             let isFirst = index == 0
             let previousBlock = isFirst ? nil : blocks[index - 1]
 
-            switch block {
-            case .paragraph(let text):
-                let attrString = renderInlineMarkdown(text, fontSize: bodyFontSize, weight: .regular)
-                applyParagraphStyle(
-                    to: attrString,
-                    lineSpacing: 5,
-                    spacingBefore: isFirst ? 0 : spacingBefore(block: block, previousBlock: previousBlock)
-                )
-                result.append(attrString)
+            let attrString = renderBlock(
+                block,
+                isFirst: isFirst,
+                previousBlock: previousBlock,
+                bodyFontSize: bodyFontSize,
+                scale: scale
+            )
+            result.append(attrString)
 
-            case .heading(let level, let text):
-                let fontSize = headingSize(level: level, scale: scale)
-                let weight = level <= 2 ? NSFont.Weight.bold : .semibold
-                let attrString = renderInlineMarkdown(text, fontSize: fontSize, weight: weight)
-                applyParagraphStyle(
-                    to: attrString,
-                    lineSpacing: 2,
-                    spacingBefore: isFirst ? 0 : spacingBefore(block: block, previousBlock: previousBlock)
-                )
-                result.append(attrString)
-
-            case .blockquote(let text):
-                let attrString = renderInlineMarkdown(text, fontSize: bodyFontSize, weight: .regular, isItalic: true)
-                // Apply secondary text color for blockquotes
-                attrString.addAttribute(
-                    .foregroundColor,
-                    value: NSColor(theme.secondaryText),
-                    range: NSRange(location: 0, length: attrString.length)
-                )
-                applyParagraphStyle(
-                    to: attrString,
-                    lineSpacing: 4,
-                    spacingBefore: isFirst ? 0 : spacingBefore(block: block, previousBlock: previousBlock),
-                    leftIndent: 16
-                )
-                result.append(attrString)
-
-            case .listItem(let text, let itemIndex, let ordered):
-                let bulletWidth: CGFloat = ordered ? 28 : 20
-                let bullet: String
-                if ordered {
-                    bullet = "\(itemIndex + 1)."
-                } else {
-                    bullet = "•"
-                }
-
-                // Create the full line with bullet + text
-                let fullLine = NSMutableAttributedString()
-
-                // Create bullet with accent color
-                let bulletAttr = NSMutableAttributedString(
-                    string: bullet,
-                    attributes: [
-                        .font: nsFont(size: bodyFontSize, weight: .medium),
-                        .foregroundColor: NSColor(theme.accentColor),
-                    ]
-                )
-                fullLine.append(bulletAttr)
-
-                // Add tab character
-                fullLine.append(NSAttributedString(string: "\t"))
-
-                // Create item text
-                let itemAttr = renderInlineMarkdown(text, fontSize: bodyFontSize, weight: .regular)
-                fullLine.append(itemAttr)
-
-                // Apply paragraph style with hanging indent
-                applyListParagraphStyle(
-                    to: fullLine,
-                    lineSpacing: 4,
-                    spacingBefore: isFirst ? 0 : spacingBefore(block: block, previousBlock: previousBlock),
-                    bulletWidth: bulletWidth
-                )
-                result.append(fullLine)
-            }
+            var blockLen = attrString.length
 
             // Add newline between blocks (except after the last one)
             if index < blocks.count - 1 {
                 result.append(NSAttributedString(string: "\n"))
+                blockLen += 1
             }
+
+            lengths.append(blockLen)
+        }
+
+        if let coord = coordinator {
+            coord.blockLengths = lengths
+        }
+
+        return result
+    }
+
+    private func renderBlock(
+        _ block: SelectableTextBlock,
+        isFirst: Bool,
+        previousBlock: SelectableTextBlock?,
+        bodyFontSize: CGFloat,
+        scale: CGFloat
+    ) -> NSMutableAttributedString {
+        let result = NSMutableAttributedString()
+
+        switch block {
+        case .paragraph(let text):
+            let attrString = renderInlineMarkdown(text, fontSize: bodyFontSize, weight: .regular)
+            applyParagraphStyle(
+                to: attrString,
+                lineSpacing: 5,
+                spacingBefore: isFirst ? 0 : spacingBefore(block: block, previousBlock: previousBlock)
+            )
+            result.append(attrString)
+
+        case .heading(let level, let text):
+            let fontSize = headingSize(level: level, scale: scale)
+            let weight = level <= 2 ? NSFont.Weight.bold : .semibold
+            let attrString = renderInlineMarkdown(text, fontSize: fontSize, weight: weight)
+            applyParagraphStyle(
+                to: attrString,
+                lineSpacing: 2,
+                spacingBefore: isFirst ? 0 : spacingBefore(block: block, previousBlock: previousBlock)
+            )
+            result.append(attrString)
+
+        case .blockquote(let text):
+            let attrString = renderInlineMarkdown(text, fontSize: bodyFontSize, weight: .regular, isItalic: true)
+            // Apply secondary text color for blockquotes
+            attrString.addAttribute(
+                .foregroundColor,
+                value: NSColor(theme.secondaryText),
+                range: NSRange(location: 0, length: attrString.length)
+            )
+            applyParagraphStyle(
+                to: attrString,
+                lineSpacing: 4,
+                spacingBefore: isFirst ? 0 : spacingBefore(block: block, previousBlock: previousBlock),
+                leftIndent: 16
+            )
+            result.append(attrString)
+
+        case .listItem(let text, let itemIndex, let ordered):
+            let bulletWidth: CGFloat = ordered ? 28 : 20
+            let bullet: String
+            if ordered {
+                bullet = "\(itemIndex + 1)."
+            } else {
+                bullet = "•"
+            }
+
+            // Create the full line with bullet + text
+            let fullLine = NSMutableAttributedString()
+
+            // Create bullet with accent color
+            let bulletAttr = NSMutableAttributedString(
+                string: bullet,
+                attributes: [
+                    .font: nsFont(size: bodyFontSize, weight: .medium),
+                    .foregroundColor: NSColor(theme.accentColor),
+                ]
+            )
+            fullLine.append(bulletAttr)
+
+            // Add tab character
+            fullLine.append(NSAttributedString(string: "\t"))
+
+            // Create item text
+            let itemAttr = renderInlineMarkdown(text, fontSize: bodyFontSize, weight: .regular)
+            fullLine.append(itemAttr)
+
+            // Apply paragraph style with hanging indent
+            applyListParagraphStyle(
+                to: fullLine,
+                lineSpacing: 4,
+                spacingBefore: isFirst ? 0 : spacingBefore(block: block, previousBlock: previousBlock),
+                bulletWidth: bulletWidth
+            )
+            result.append(fullLine)
         }
 
         return result
