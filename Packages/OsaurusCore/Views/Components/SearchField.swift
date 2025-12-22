@@ -24,7 +24,7 @@ struct SearchField: View {
                 if text.isEmpty {
                     Text(placeholder)
                         .font(.system(size: 14))
-                        .foregroundColor(theme.secondaryText)
+                        .foregroundColor(theme.placeholderText)
                         .allowsHitTesting(false)
                 }
                 TextField("", text: $text)

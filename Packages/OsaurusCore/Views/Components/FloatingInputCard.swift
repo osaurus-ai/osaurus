@@ -524,7 +524,7 @@ struct FloatingInputCard: View {
             if showPlaceholder {
                 Text(supportsImages ? "Message or paste image..." : "Message...")
                     .font(.system(size: inputFontSize))
-                    .foregroundColor(theme.tertiaryText)
+                    .foregroundColor(theme.placeholderText)
                     .padding(.leading, 6)
                     .padding(.top, 2)
                     .allowsHitTesting(false)

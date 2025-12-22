@@ -219,6 +219,7 @@ public enum ThemeConfigurationStore {
             return
         }
 
+        // Install any missing themes
         for theme in CustomTheme.allBuiltInPresets {
             let url = themeFileURL(for: theme.metadata.id)
             if !FileManager.default.fileExists(atPath: url.path) {

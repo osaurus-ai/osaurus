@@ -44,7 +44,7 @@ struct ContentView: View {
             height: 150
         )
         .environment(\.theme, themeManager.currentTheme)
-        .tint(theme.selectionColor)
+        .tint(theme.accentColor)
         .onAppear {
             portString = String(server.port)
         }
