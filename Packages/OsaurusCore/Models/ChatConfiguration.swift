@@ -32,6 +32,8 @@ public struct ChatConfiguration: Codable, Equatable, Sendable {
     public var temperature: Float?
     /// Optional per-chat override for maximum response tokens (nil uses app default)
     public var maxTokens: Int?
+    /// Optional default context length for models with unknown limits (e.g. remote)
+    public var contextLength: Int?
     /// Optional per-chat override for top_p sampling (nil uses server default)
     public var topPOverride: Float?
     /// Optional per-chat limit on consecutive tool attempts (nil uses default)
@@ -46,6 +48,7 @@ public struct ChatConfiguration: Codable, Equatable, Sendable {
         systemPrompt: String,
         temperature: Float? = nil,
         maxTokens: Int? = nil,
+        contextLength: Int? = nil,
         topPOverride: Float? = nil,
         maxToolAttempts: Int? = nil,
         alwaysOnTop: Bool = false,
@@ -55,6 +58,7 @@ public struct ChatConfiguration: Codable, Equatable, Sendable {
         self.systemPrompt = systemPrompt
         self.temperature = temperature
         self.maxTokens = maxTokens
+        self.contextLength = contextLength
         self.topPOverride = topPOverride
         self.maxToolAttempts = maxToolAttempts
         self.alwaysOnTop = alwaysOnTop
@@ -71,6 +75,7 @@ public struct ChatConfiguration: Codable, Equatable, Sendable {
             systemPrompt: "",
             temperature: nil,
             maxTokens: 16384,  // High default to support long generations (essays, code, etc.)
+            contextLength: 128000,  // Default to 128k for modern remote models
             topPOverride: nil,
             maxToolAttempts: 15,  // Increased from 3 to support longer agentic workflows
             alwaysOnTop: false

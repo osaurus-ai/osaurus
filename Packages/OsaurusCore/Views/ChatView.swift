@@ -461,6 +461,7 @@ final class ChatSession: ObservableObject {
                 }
 
                 // Get model context length (with fallback)
+                // This logic is complex, so we break it down for the compiler
                 let modelContextLength: Int = {
                     guard let model = selectedModel else { return 8192 }
                     // Foundation model has ~4096 token context
@@ -472,13 +473,33 @@ final class ChatSession: ObservableObject {
                     {
                         return ctx
                     }
-                    // Default context length if not found
-                    return 8192
+
+                    // For remote models (where we don't have local ModelInfo), assume a modern context window
+                    // Most modern providers (OpenRouter, OpenAI, Anthropic) support at least 128k
+                    // IMPORTANT: We use modelOptions directly, not session.modelOptions, because we're inside the task
+                    // and session is an ObservableObject on the main actor.
+                    // Instead of trying to access `session` which is not available in this scope,
+                    // we re-fetch the options or just check the registry.
+                    // For simplicity in this isolated task, we'll check RemoteProviderManager directly.
+                    let isRemote = RemoteProviderManager.shared.cachedAvailableModels().contains { provider in
+                        provider.models.contains(model)
+                    }
+
+                    if isRemote {
+                        // Use configured default or fall back to 128k
+                        return chatCfg.contextLength ?? 128_000
+                    }
+
+                    // Default fallback
+                    return chatCfg.contextLength ?? 8192
                 }()
 
                 // Reserve space for model response
-                let maxResponseTokens = chatCfg.maxTokens ?? 16384
-                let availableContextTokens = max(1024, modelContextLength - maxResponseTokens)
+                // If maxTokens is not explicitly set in config, use a reasonable default for reservation
+                // rather than the maximum possible (which would starve input context)
+                let configuredMaxTokens = chatCfg.maxTokens
+                let reserveResponseTokens = configuredMaxTokens ?? 4096
+                let availableContextTokens = max(2048, modelContextLength - reserveResponseTokens)
 
                 @MainActor
                 func buildMessages() -> [ChatMessage] {
@@ -533,6 +554,13 @@ final class ChatSession: ObservableObject {
 
                     while totalTokens > availableContextTokens && msgs.count > startIndex + 1 {
                         // Remove the oldest non-system message
+                        let removed = msgs.remove(at: startIndex)
+                        totalTokens -= estimateTokens(for: removed)
+                    }
+
+                    // Ensure we don't leave orphaned tool messages at the start of the conversation history
+                    // (e.g. if we pruned the Assistant message that called the tool)
+                    while msgs.count > startIndex && msgs[startIndex].role == "tool" {
                         let removed = msgs.remove(at: startIndex)
                         totalTokens -= estimateTokens(for: removed)
                     }

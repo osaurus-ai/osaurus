@@ -23,6 +23,7 @@ struct ConfigurationView: View {
     @State private var tempSystemPrompt: String = ""
     @State private var tempChatTemperature: String = ""
     @State private var tempChatMaxTokens: String = ""
+    @State private var tempChatContextLength: String = ""
     @State private var tempChatTopP: String = ""
     @State private var tempChatMaxToolAttempts: String = ""
     @State private var tempChatAlwaysOnTop: Bool = false
@@ -76,6 +77,7 @@ struct ConfigurationView: View {
                         "System Prompt",
                         "Temperature",
                         "Max Tokens",
+                        "Context Length",
                         "Top P",
                         "Tools",
                         "Tool Call",
@@ -135,6 +137,12 @@ struct ConfigurationView: View {
                                             text: $tempChatMaxTokens,
                                             placeholder: "16384",
                                             help: "Maximum response tokens. Empty uses default 16384"
+                                        )
+                                        settingsTextField(
+                                            label: "Context Length",
+                                            text: $tempChatContextLength,
+                                            placeholder: "128000",
+                                            help: "Assumed context window for remote models. Empty uses default 128k"
                                         )
                                         settingsTextField(
                                             label: "Top P Override",
@@ -546,6 +554,7 @@ struct ConfigurationView: View {
         tempSystemPrompt = chat.systemPrompt
         tempChatTemperature = chat.temperature.map { String($0) } ?? ""
         tempChatMaxTokens = chat.maxTokens.map(String.init) ?? ""
+        tempChatContextLength = chat.contextLength.map(String.init) ?? ""
         tempChatTopP = chat.topPOverride.map { String($0) } ?? ""
         tempChatMaxToolAttempts = chat.maxToolAttempts.map(String.init) ?? ""
         tempChatAlwaysOnTop = chat.alwaysOnTop
@@ -590,6 +599,7 @@ struct ConfigurationView: View {
         tempSystemPrompt = ""
         tempChatTemperature = ""
         tempChatMaxTokens = ""
+        tempChatContextLength = ""
         tempChatTopP = ""
         tempChatMaxToolAttempts = ""
         tempChatAlwaysOnTop = chatDefaults.alwaysOnTop
@@ -706,6 +716,12 @@ struct ConfigurationView: View {
             return max(1, v)
         }()
 
+        let trimmedContext = tempChatContextLength.trimmingCharacters(in: .whitespacesAndNewlines)
+        let parsedContext: Int? = {
+            guard !trimmedContext.isEmpty, let v = Int(trimmedContext) else { return nil }
+            return max(2048, v)
+        }()
+
         let trimmedTopPChat = tempChatTopP.trimmingCharacters(in: .whitespacesAndNewlines)
         let parsedTopP: Float? = {
             guard !trimmedTopPChat.isEmpty, let v = Float(trimmedTopPChat) else { return nil }
@@ -723,6 +739,7 @@ struct ConfigurationView: View {
             systemPrompt: tempSystemPrompt,
             temperature: parsedTemp,
             maxTokens: parsedMax,
+            contextLength: parsedContext,
             topPOverride: parsedTopP,
             maxToolAttempts: parsedMaxToolAttempts,
             alwaysOnTop: tempChatAlwaysOnTop,
