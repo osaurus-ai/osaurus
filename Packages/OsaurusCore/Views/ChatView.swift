@@ -513,9 +513,24 @@ final class ChatSession: ObservableObject {
                             if isLastTurn && t.content.isEmpty && t.toolCalls == nil {
                                 continue
                             }
-                            // For assistant messages with tool_calls but no content, use empty string
-                            // OpenAI API rejects null content
-                            let content = t.content.isEmpty ? (t.toolCalls != nil ? "" : nil) : t.content
+                            
+                            // For assistant messages with tool_calls but no content, use empty string?
+                            // OpenAI API usually rejects null content unless tool_calls are present.
+                            // Some providers (like Groq/Anthropic/xAI) are strict: content must be non-empty string OR null/absent if tool_calls present.
+                            // If neither content nor tool_calls, it's invalid.
+                            
+                            // If we have content, use it.
+                            // If we have tool_calls but no content, use nil for content (let encoder handle it).
+                            // If we have neither, this is a malformed turn that should be skipped or fixed.
+                            
+                            if t.content.isEmpty && (t.toolCalls == nil || t.toolCalls!.isEmpty) {
+                                // Invalid assistant message (no content, no tools). Skip it to prevent 400s.
+                                print("[Osaurus] Warning: Skipping empty assistant message at index \(index)")
+                                continue
+                            }
+                            
+                            let content: String? = t.content.isEmpty ? nil : t.content
+                            
                             msgs.append(
                                 ChatMessage(
                                     role: "assistant",
