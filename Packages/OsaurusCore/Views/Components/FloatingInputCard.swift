@@ -27,7 +27,7 @@ struct FloatingInputCard: View {
 
     // Local state for text input to prevent parent re-renders on every keystroke
     @State private var localText: String = ""
-    @FocusState private var isFocused: Bool
+    @State private var isFocused: Bool = false
     @Environment(\.theme) private var theme
     @Environment(\.colorScheme) private var colorScheme
     @State private var isDragOver = false
@@ -508,36 +508,38 @@ struct FloatingInputCard: View {
     }
 
     private var textInputArea: some View {
-        TextEditor(text: $localText)
-            .font(.system(size: inputFontSize))
-            .foregroundColor(theme.primaryText)
-            .scrollContentBackground(.hidden)
-            .background(Color.clear)
-            .focused($isFocused)
-            .frame(minHeight: 60, maxHeight: maxHeight)
-            .fixedSize(horizontal: false, vertical: true)
-            .padding(.vertical, 2)
-            .overlay(alignment: .topLeading) {
-                // Placeholder - uses theme body size
-                if showPlaceholder {
-                    Text(supportsImages ? "Message or paste image..." : "Message...")
-                        .font(.system(size: inputFontSize))
-                        .foregroundColor(theme.tertiaryText)
-                        .padding(.leading, 6)
-                        .padding(.top, 2)
-                        .allowsHitTesting(false)
-                }
+        EditableTextView(
+            text: $localText,
+            fontSize: inputFontSize,
+            textColor: theme.primaryText,
+            cursorColor: theme.cursorColor,
+            isFocused: $isFocused,
+            maxHeight: maxHeight
+        )
+        .frame(minHeight: 60)
+        .fixedSize(horizontal: false, vertical: true)
+        .padding(.vertical, 2)
+        .overlay(alignment: .topLeading) {
+            // Placeholder - uses theme body size
+            if showPlaceholder {
+                Text(supportsImages ? "Message or paste image..." : "Message...")
+                    .font(.system(size: inputFontSize))
+                    .foregroundColor(theme.tertiaryText)
+                    .padding(.leading, 6)
+                    .padding(.top, 2)
+                    .allowsHitTesting(false)
             }
-            .background(
-                PasteboardImageMonitor(
-                    supportsImages: supportsImages,
-                    onImagePaste: { imageData in
-                        withAnimation(theme.springAnimation()) {
-                            pendingImages.append(imageData)
-                        }
+        }
+        .background(
+            PasteboardImageMonitor(
+                supportsImages: supportsImages,
+                onImagePaste: { imageData in
+                    withAnimation(theme.springAnimation()) {
+                        pendingImages.append(imageData)
                     }
-                )
+                }
             )
+        )
     }
 
     // MARK: - Action Button

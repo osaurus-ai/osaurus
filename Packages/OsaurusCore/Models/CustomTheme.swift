@@ -86,6 +86,9 @@ public struct ThemeColors: Codable, Equatable, Sendable {
     // Selection (text highlight)
     public var selectionColor: String
 
+    // Cursor
+    public var cursorColor: String
+
     // Default dark theme colors - WCAG AA compliant
     public init(
         primaryText: String = "#f9fafb",  // ~17:1 contrast ✓
@@ -114,7 +117,8 @@ public struct ThemeColors: Codable, Equatable, Sendable {
         glassTintOverlay: String = "#00000030",
         codeBlockBackground: String = "#00000059",
         shadowColor: String = "#000000",
-        selectionColor: String = "#3b82f680"
+        selectionColor: String = "#3b82f680",
+        cursorColor: String = "#3b82f6"
     ) {
         self.primaryText = primaryText
         self.secondaryText = secondaryText
@@ -143,6 +147,7 @@ public struct ThemeColors: Codable, Equatable, Sendable {
         self.codeBlockBackground = codeBlockBackground
         self.shadowColor = shadowColor
         self.selectionColor = selectionColor
+        self.cursorColor = cursorColor
     }
 
     /// Create colors from dark theme defaults
@@ -177,7 +182,8 @@ public struct ThemeColors: Codable, Equatable, Sendable {
             glassTintOverlay: "#0000001f",
             codeBlockBackground: "#00000014",
             shadowColor: "#000000",
-            selectionColor: "#2563eb50"
+            selectionColor: "#2563eb50",
+            cursorColor: "#2563eb"
         )
     }
 }
@@ -548,7 +554,8 @@ public struct CustomTheme: Codable, Equatable, Sendable {
                 glassTintOverlay: "#ff00ff15",
                 codeBlockBackground: "#00000050",
                 shadowColor: "#ff00ff",
-                selectionColor: "#ff00ff60"
+                selectionColor: "#ff00ff60",
+                cursorColor: "#ff00ff"
             ),
             background: .default,
             glass: ThemeGlass(
@@ -615,7 +622,8 @@ public struct CustomTheme: Codable, Equatable, Sendable {
                 glassTintOverlay: "#88c0d010",
                 codeBlockBackground: "#2e344080",
                 shadowColor: "#000000",
-                selectionColor: "#88c0d060"
+                selectionColor: "#88c0d060",
+                cursorColor: "#88c0d0"
             ),
             background: .default,
             glass: ThemeGlass(
@@ -676,7 +684,8 @@ public struct CustomTheme: Codable, Equatable, Sendable {
                 glassTintOverlay: "#9a7b3010",
                 codeBlockBackground: "#f0ece520",
                 shadowColor: "#8b7355",
-                selectionColor: "#9a7b3050"
+                selectionColor: "#9a7b3050",
+                cursorColor: "#9a7b30"
             ),
             background: .default,
             glass: ThemeGlass(

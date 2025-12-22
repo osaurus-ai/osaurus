@@ -275,6 +275,7 @@ struct ThemeEditorView: View {
 
             editorSection("Selection") {
                 colorRow("Text Selection", hex: $editingTheme.colors.selectionColor)
+                colorRow("Cursor Color", hex: $editingTheme.colors.cursorColor)
             }
         }
     }
