@@ -60,6 +60,9 @@ struct SelectableTextView: NSViewRepresentable {
             .backgroundColor: NSColor(theme.selectionColor)
         ]
 
+        // Apply cursor color
+        textView.insertionPointColor = NSColor(theme.cursorColor)
+
         return textView
     }
 

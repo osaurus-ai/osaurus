@@ -55,6 +55,9 @@ protocol ThemeProtocol {
     // Selection (text highlight)
     var selectionColor: Color { get }
 
+    // Cursor
+    var cursorColor: Color { get }
+
     // Glass specific
     var glassEnabled: Bool { get }
     var glassOpacityPrimary: Double { get }
@@ -223,6 +226,9 @@ struct LightTheme: ThemeProtocol {
     // Selection - Light blue highlight
     let selectionColor = Color(hex: "3b82f6").opacity(0.3)
 
+    // Cursor - High contrast black
+    let cursorColor = Color(hex: "1a1a18")
+
     // Glass specific - Rich depth with improved contrast
     let glassOpacityPrimary: Double = 0.25
     let glassOpacitySecondary: Double = 0.18
@@ -295,6 +301,9 @@ struct DarkTheme: ThemeProtocol {
 
     // Selection - Subtle warm highlight
     let selectionColor = Color(hex: "f0f0eb").opacity(0.25)
+
+    // Cursor - High contrast white
+    let cursorColor = Color(hex: "f0f0eb")
 
     // Glass specific - Rich and premium with improved contrast
     let glassOpacityPrimary: Double = 0.20
@@ -375,6 +384,9 @@ struct CustomizableTheme: ThemeProtocol {
 
     // Selection
     var selectionColor: Color { Color(themeHex: config.colors.selectionColor) }
+
+    // Cursor
+    var cursorColor: Color { Color(themeHex: config.colors.cursorColor) }
 
     // Glass specific
     var glassOpacityPrimary: Double { config.glass.opacityPrimary }
