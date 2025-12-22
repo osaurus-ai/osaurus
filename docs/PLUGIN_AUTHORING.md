@@ -97,12 +97,16 @@ The `requirements` array specifies what permissions or capabilities the tool nee
 
 **System Permissions:**
 
-| Requirement     | Description                                                                          |
-| --------------- | ------------------------------------------------------------------------------------ |
-| `automation`    | AppleScript/Apple Events automation - allows controlling other applications          |
-| `accessibility` | Accessibility API access - allows UI interaction, input simulation, computer control |
-| `contacts`      | Contacts access - allows plugins to access and search contacts                       |
-| `disk`          | Full Disk Access - allows accessing protected files like Messages database, app data |
+| Requirement     | Description                                                                                       |
+| --------------- | ------------------------------------------------------------------------------------------------- |
+| `automation`    | AppleScript/Apple Events automation - allows controlling other applications                       |
+| `accessibility` | Accessibility API access - allows UI interaction, input simulation, computer control              |
+| `calendar`      | Calendar access (EventKit) - allows plugins to read and create calendar events directly           |
+| `contacts`      | Contacts access - allows plugins to access and search contacts                                    |
+| `location`      | Location access - allows plugins to access the user's current location                            |
+| `notes`         | Notes access (via AppleScript) - allows plugins to read and create notes                          |
+| `reminders`     | Reminders access (EventKit) - allows plugins to read and create tasks and reminders               |
+| `disk`          | Full Disk Access - allows accessing protected files like the Messages database and other app data |
 
 Example tool requiring automation:
 
@@ -142,6 +146,25 @@ Example tool requiring contacts (e.g., for looking up phone numbers):
     "properties": { "name": { "type": "string" } }
   },
   "requirements": ["contacts"],
+  "permission_policy": "ask"
+}
+```
+
+Example tool requiring calendar access (e.g., for scheduling meetings):
+
+```json
+{
+  "id": "add_event",
+  "description": "Add an event to the calendar",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "title": { "type": "string" },
+      "start_date": { "type": "string" },
+      "end_date": { "type": "string" }
+    }
+  },
+  "requirements": ["calendar"],
   "permission_policy": "ask"
 }
 ```
@@ -193,12 +216,16 @@ Users can override these defaults per-tool via the Osaurus UI.
 
 Some tools require macOS system permissions that must be granted at the app level:
 
-| Permission           | How to Grant                                            | Use Case                                          |
-| -------------------- | ------------------------------------------------------- | ------------------------------------------------- |
-| **Automation**       | System Settings → Privacy & Security → Automation       | AppleScript, controlling other apps               |
-| **Accessibility**    | System Settings → Privacy & Security → Accessibility    | UI automation, input simulation, computer control |
-| **Contacts**         | System Settings → Privacy & Security → Contacts         | Searching contacts, reading contact info          |
-| **Full Disk Access** | System Settings → Privacy & Security → Full Disk Access | Accessing Messages, Safari data, other app data   |
+| Permission           | How to Grant                                             | Use Case                                          |
+| -------------------- | -------------------------------------------------------- | ------------------------------------------------- |
+| **Automation**       | System Settings → Privacy & Security → Automation        | AppleScript, controlling other apps               |
+| **Accessibility**    | System Settings → Privacy & Security → Accessibility     | UI automation, input simulation, computer control |
+| **Calendar**         | System Settings → Privacy & Security → Calendars         | Reading and creating calendar events directly     |
+| **Contacts**         | System Settings → Privacy & Security → Contacts          | Searching contacts, reading contact info          |
+| **Location**         | System Settings → Privacy & Security → Location Services | Accessing current location                        |
+| **Notes**            | System Settings → Privacy & Security → Automation        | Reading and creating notes                        |
+| **Reminders**        | System Settings → Privacy & Security → Reminders         | Reading and creating reminders                    |
+| **Full Disk Access** | System Settings → Privacy & Security → Full Disk Access  | Accessing Messages, Safari data, other app data   |
 
 **User Experience:**
 
