@@ -82,6 +82,8 @@ final class SystemPermissionService: NSObject, ObservableObject, CLLocationManag
             return checkLocationPermission()
         case .notes:
             return checkNotesPermission()
+        case .maps:
+            return checkMapsPermission()
         case .accessibility:
             return checkAccessibilityPermission()
         case .contacts:
@@ -101,7 +103,9 @@ final class SystemPermissionService: NSObject, ObservableObject, CLLocationManag
             var newStates: [SystemPermission: Bool] = [:]
 
             for permission in SystemPermission.allCases {
-                if permission == .automationCalendar || permission == .automation {
+                if permission == .automationCalendar || permission == .automation || permission == .notes
+                    || permission == .maps
+                {
                     // Skip Automation to avoid launching apps/running scripts automatically
                     // Use last known state
                     await MainActor.run {
@@ -142,7 +146,9 @@ final class SystemPermissionService: NSObject, ObservableObject, CLLocationManag
         for permission in SystemPermission.allCases {
             // Skip Automation checks - they require running AppleScript which can be disruptive
             // We only check these when the user explicitly clicks "Grant" or "Test"
-            if permission == .automationCalendar || permission == .automation {
+            if permission == .automationCalendar || permission == .automation || permission == .notes
+                || permission == .maps
+            {
                 continue
             }
 
@@ -185,6 +191,8 @@ final class SystemPermissionService: NSObject, ObservableObject, CLLocationManag
             requestLocationPermission()
         case .notes:
             requestNotesPermission()
+        case .maps:
+            requestMapsPermission()
         case .accessibility:
             requestAccessibilityPermission()
         case .contacts:
@@ -317,6 +325,11 @@ final class SystemPermissionService: NSObject, ObservableObject, CLLocationManag
         return permissionStates[.notes] ?? false
     }
 
+    private func checkMapsPermission() -> Bool {
+        // Return cached state for Maps (Automation)
+        return permissionStates[.maps] ?? false
+    }
+
     /// Perform full Automation check (runs AppleScript against System Events)
     /// This is called only on explicit user request, not during periodic refresh
     nonisolated private func performFullAutomationCheck() -> Bool {
@@ -388,6 +401,29 @@ final class SystemPermissionService: NSObject, ObservableObject, CLLocationManag
 
             if !granted {
                 self.openSystemSettings(for: .notes)
+            }
+        }
+    }
+
+    private func requestMapsPermission() {
+        Task { @MainActor in
+            let alreadyGranted = checkMapsPermission()
+            if alreadyGranted {
+                refreshAllPermissions()
+                return
+            }
+
+            let granted: Bool = await Task.detached { [weak self] in
+                guard let self = self else { return false }
+                // Use debug test to trigger the prompt/check
+                let result = SystemPermissionService.debugTestMapsAccess()
+                return result.hasPrefix("SUCCESS")
+            }.value
+
+            setPermission(.maps, isGranted: granted)
+
+            if !granted {
+                self.openSystemSettings(for: .maps)
             }
         }
     }
@@ -753,6 +789,40 @@ final class SystemPermissionService: NSObject, ObservableObject, CLLocationManag
         let script = NSAppleScript(
             source: """
                 tell application "Notes"
+                    return name
+                end tell
+                """
+        )
+
+        var errorInfo: NSDictionary?
+        let result = script?.executeAndReturnError(&errorInfo)
+
+        if let error = errorInfo {
+            let errorNumber = error[NSAppleScript.errorNumber] as? Int ?? -1
+            let errorMessage = error[NSAppleScript.errorMessage] as? String ?? "Unknown error"
+
+            var guidance = ""
+            if errorNumber == -1743 {
+                guidance = " → Permission denied. Grant in System Settings → Privacy & Security → Automation"
+            }
+
+            return "ERROR [\(errorNumber)]: \(errorMessage)\(guidance)"
+        }
+
+        if let resultValue = result?.stringValue {
+            return "SUCCESS: Connected to \(resultValue)"
+        }
+
+        return "NO RESULT"
+    }
+
+    // MARK: - Debug: Test Maps Access
+
+    /// Debug function to test if Maps access works via AppleScript.
+    nonisolated static func debugTestMapsAccess() -> String {
+        let script = NSAppleScript(
+            source: """
+                tell application "Maps"
                     return name
                 end tell
                 """

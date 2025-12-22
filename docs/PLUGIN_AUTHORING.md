@@ -104,6 +104,7 @@ The `requirements` array specifies what permissions or capabilities the tool nee
 | `calendar`      | Calendar access (EventKit) - allows plugins to read and create calendar events directly           |
 | `contacts`      | Contacts access - allows plugins to access and search contacts                                    |
 | `location`      | Location access - allows plugins to access the user's current location                            |
+| `maps`          | Maps access (via AppleScript) - allows plugins to control Maps app                                |
 | `notes`         | Notes access (via AppleScript) - allows plugins to read and create notes                          |
 | `reminders`     | Reminders access (EventKit) - allows plugins to read and create tasks and reminders               |
 | `disk`          | Full Disk Access - allows accessing protected files like the Messages database and other app data |
@@ -223,6 +224,7 @@ Some tools require macOS system permissions that must be granted at the app leve
 | **Calendar**         | System Settings → Privacy & Security → Calendars         | Reading and creating calendar events directly     |
 | **Contacts**         | System Settings → Privacy & Security → Contacts          | Searching contacts, reading contact info          |
 | **Location**         | System Settings → Privacy & Security → Location Services | Accessing current location                        |
+| **Maps**             | System Settings → Privacy & Security → Automation        | Controlling Maps app                              |
 | **Notes**            | System Settings → Privacy & Security → Automation        | Reading and creating notes                        |
 | **Reminders**        | System Settings → Privacy & Security → Reminders         | Reading and creating reminders                    |
 | **Full Disk Access** | System Settings → Privacy & Security → Full Disk Access  | Accessing Messages, Safari data, other app data   |

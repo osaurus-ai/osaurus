@@ -22,6 +22,8 @@ enum SystemPermission: String, CaseIterable, Codable, Sendable {
     case location
     /// AppleScript automation permission for Notes.app
     case notes
+    /// AppleScript automation permission for Maps.app
+    case maps
     /// Accessibility API access (AXIsProcessTrusted)
     case accessibility
     /// Contacts access permission
@@ -44,6 +46,8 @@ enum SystemPermission: String, CaseIterable, Codable, Sendable {
             return "Location"
         case .notes:
             return "Notes"
+        case .maps:
+            return "Maps"
         case .accessibility:
             return "Accessibility"
         case .contacts:
@@ -68,6 +72,8 @@ enum SystemPermission: String, CaseIterable, Codable, Sendable {
             return "Allows plugins to access your current location."
         case .notes:
             return "Allows plugins to read and create notes in the Notes app via AppleScript."
+        case .maps:
+            return "Allows plugins to control Maps app via AppleScript."
         case .accessibility:
             return "Allows plugins to interact with UI elements, simulate input, and control the computer."
         case .contacts:
@@ -92,6 +98,8 @@ enum SystemPermission: String, CaseIterable, Codable, Sendable {
             return "location"
         case .notes:
             return "note"
+        case .maps:
+            return "map"
         case .accessibility:
             return "accessibility"
         case .contacts:
@@ -116,6 +124,8 @@ enum SystemPermission: String, CaseIterable, Codable, Sendable {
             return "location.fill"
         case .notes:
             return "note.text"
+        case .maps:
+            return "map.fill"
         case .accessibility:
             return "figure.stand"
         case .contacts:
@@ -145,6 +155,9 @@ enum SystemPermission: String, CaseIterable, Codable, Sendable {
             return URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_LocationServices")
         case .notes:
             // Opens Privacy & Security > Automation (Notes is listed under the app)
+            return URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Automation")
+        case .maps:
+            // Opens Privacy & Security > Automation (Maps is listed under the app)
             return URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Automation")
         case .accessibility:
             // Opens Privacy & Security > Accessibility
