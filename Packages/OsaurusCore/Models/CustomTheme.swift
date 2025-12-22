@@ -86,6 +86,9 @@ public struct ThemeColors: Codable, Equatable, Sendable {
     // Selection (text highlight)
     public var selectionColor: String
 
+    // Placeholder
+    public var placeholderText: String?
+
     // Cursor
     public var cursorColor: String
 
@@ -118,7 +121,8 @@ public struct ThemeColors: Codable, Equatable, Sendable {
         codeBlockBackground: String = "#00000059",
         shadowColor: String = "#000000",
         selectionColor: String = "#3b82f680",
-        cursorColor: String = "#3b82f6"
+        cursorColor: String = "#3b82f6",
+        placeholderText: String? = nil
     ) {
         self.primaryText = primaryText
         self.secondaryText = secondaryText
@@ -148,6 +152,7 @@ public struct ThemeColors: Codable, Equatable, Sendable {
         self.shadowColor = shadowColor
         self.selectionColor = selectionColor
         self.cursorColor = cursorColor
+        self.placeholderText = placeholderText
     }
 
     /// Create colors from dark theme defaults
@@ -183,7 +188,8 @@ public struct ThemeColors: Codable, Equatable, Sendable {
             codeBlockBackground: "#00000014",
             shadowColor: "#000000",
             selectionColor: "#2563eb50",
-            cursorColor: "#2563eb"
+            cursorColor: "#2563eb",
+            placeholderText: "#6b6b6b"  // Matches tertiaryText default
         )
     }
 }

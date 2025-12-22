@@ -185,7 +185,7 @@ struct ConfigurationView: View {
                                         if tempPortString.isEmpty {
                                             Text("1337")
                                                 .font(.system(size: 13, design: .monospaced))
-                                                .foregroundColor(theme.secondaryText)
+                                                .foregroundColor(theme.placeholderText)
                                                 .padding(.leading, 12)
                                                 .allowsHitTesting(false)
                                         }
@@ -222,7 +222,7 @@ struct ConfigurationView: View {
                                         if tempAllowedOrigins.isEmpty {
                                             Text("https://example.com, https://app.localhost")
                                                 .font(.system(size: 13, design: .monospaced))
-                                                .foregroundColor(theme.secondaryText)
+                                                .foregroundColor(theme.placeholderText)
                                                 .padding(.leading, 12)
                                                 .allowsHitTesting(false)
                                         }
@@ -517,7 +517,7 @@ struct ConfigurationView: View {
                 if text.wrappedValue.isEmpty && !placeholder.isEmpty {
                     Text(placeholder)
                         .font(.system(size: 13, design: .monospaced))
-                        .foregroundColor(theme.secondaryText)
+                        .foregroundColor(theme.placeholderText)
                         .padding(.leading, 12)
                         .allowsHitTesting(false)
                 }

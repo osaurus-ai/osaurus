@@ -228,6 +228,7 @@ struct ThemeEditorView: View {
                 colorRow("Primary Text", hex: $editingTheme.colors.primaryText)
                 colorRow("Secondary Text", hex: $editingTheme.colors.secondaryText)
                 colorRow("Tertiary Text", hex: $editingTheme.colors.tertiaryText)
+                colorRowOptional("Placeholder Text", hex: $editingTheme.colors.placeholderText)
             }
 
             editorSection("Background Colors") {
@@ -1232,7 +1233,9 @@ struct ThemeChatPreview: View {
             HStack(alignment: .bottom, spacing: 12) {
                 Text("Message or paste image...")
                     .font(bodyFont)
-                    .foregroundColor(Color(themeHex: theme.colors.tertiaryText))
+                    .foregroundColor(
+                        Color(themeHex: theme.colors.placeholderText ?? theme.colors.tertiaryText)
+                    )
 
                 Spacer()
 
