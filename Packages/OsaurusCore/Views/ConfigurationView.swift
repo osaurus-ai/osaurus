@@ -1092,7 +1092,7 @@ private struct SystemPermissionRow: View {
     // Only automation permissions support the diagnostic test
     private var canTest: Bool {
         permission == .automation || permission == .automationCalendar || permission == .contacts
-            || permission == .calendar
+            || permission == .calendar || permission == .reminders || permission == .location || permission == .notes
     }
 
     var body: some View {
@@ -1257,6 +1257,12 @@ private struct SystemPermissionRow: View {
                 result = SystemPermissionService.debugTestCalendarAccess()
             } else if permission == .calendar {
                 result = SystemPermissionService.debugTestCalendarEventKitAccess()
+            } else if permission == .reminders {
+                result = SystemPermissionService.debugTestRemindersAccess()
+            } else if permission == .location {
+                result = SystemPermissionService.debugTestLocationAccess()
+            } else if permission == .notes {
+                result = SystemPermissionService.debugTestNotesAccess()
             } else if permission == .automation {
                 result = SystemPermissionService.debugTestAutomationAccess()
             } else if permission == .contacts {

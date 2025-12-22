@@ -7,12 +7,15 @@
 
 @preconcurrency import AppKit
 import Contacts
+import CoreLocation
 import EventKit
 import Foundation
 
 @MainActor
-final class SystemPermissionService: ObservableObject {
+final class SystemPermissionService: NSObject, ObservableObject, CLLocationManagerDelegate {
     static let shared = SystemPermissionService()
+
+    private let locationManager = CLLocationManager()
 
     /// Published permission states for reactive UI updates
     @Published private(set) var permissionStates: [SystemPermission: Bool] = [:]
@@ -20,7 +23,9 @@ final class SystemPermissionService: ObservableObject {
     private var refreshTimer: Timer?
     private let kPermissionStatesKey = "SystemPermissionStates"
 
-    private init() {
+    private override init() {
+        super.init()
+        locationManager.delegate = self
         loadPermissionStates()
         refreshAllPermissions()
     }
@@ -71,6 +76,12 @@ final class SystemPermissionService: ObservableObject {
             return checkCalendarAutomationPermission()
         case .calendar:
             return checkCalendarPermission()
+        case .reminders:
+            return checkRemindersPermission()
+        case .location:
+            return checkLocationPermission()
+        case .notes:
+            return checkNotesPermission()
         case .accessibility:
             return checkAccessibilityPermission()
         case .contacts:
@@ -168,6 +179,12 @@ final class SystemPermissionService: ObservableObject {
             requestCalendarAutomationPermission()
         case .calendar:
             requestCalendarPermission()
+        case .reminders:
+            requestRemindersPermission()
+        case .location:
+            requestLocationPermission()
+        case .notes:
+            requestNotesPermission()
         case .accessibility:
             requestAccessibilityPermission()
         case .contacts:
@@ -245,11 +262,59 @@ final class SystemPermissionService: ObservableObject {
         }
     }
 
+    // MARK: - Reminders Permission (EventKit)
+
+    private func checkRemindersPermission() -> Bool {
+        let status = EKEventStore.authorizationStatus(for: .reminder)
+        return status == .fullAccess
+    }
+
+    private func requestRemindersPermission() {
+        Task { @MainActor in
+            let store = EKEventStore()
+            do {
+                let granted = try await store.requestFullAccessToReminders()
+                setPermission(.reminders, isGranted: granted)
+                if !granted {
+                    openSystemSettings(for: .reminders)
+                }
+            } catch {
+                print("Error requesting reminders permission: \(error)")
+                setPermission(.reminders, isGranted: false)
+                openSystemSettings(for: .reminders)
+            }
+        }
+    }
+
+    // MARK: - Location Permission
+
+    private func checkLocationPermission() -> Bool {
+        let status = locationManager.authorizationStatus
+        return status == .authorizedAlways
+    }
+
+    private func requestLocationPermission() {
+        locationManager.requestAlwaysAuthorization()
+    }
+
+    nonisolated func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
+        let status = manager.authorizationStatus
+        Task { @MainActor in
+            let granted = status == .authorizedAlways
+            self.setPermission(.location, isGranted: granted)
+        }
+    }
+
     // MARK: - Automation Permission
 
     private func checkAutomationPermission() -> Bool {
         // Return cached state to avoid running AppleScript on main thread during view updates
         return permissionStates[.automation] ?? false
+    }
+
+    private func checkNotesPermission() -> Bool {
+        // Return cached state for Notes (Automation)
+        return permissionStates[.notes] ?? false
     }
 
     /// Perform full Automation check (runs AppleScript against System Events)
@@ -300,6 +365,29 @@ final class SystemPermissionService: ObservableObject {
             // Open System Settings so the user can manually grant the permission
             if !granted {
                 self.openSystemSettings(for: .automation)
+            }
+        }
+    }
+
+    private func requestNotesPermission() {
+        Task { @MainActor in
+            let alreadyGranted = checkNotesPermission()
+            if alreadyGranted {
+                refreshAllPermissions()
+                return
+            }
+
+            let granted: Bool = await Task.detached { [weak self] in
+                guard let self = self else { return false }
+                // Use debug test to trigger the prompt/check
+                let result = SystemPermissionService.debugTestNotesAccess()
+                return result.hasPrefix("SUCCESS")
+            }.value
+
+            setPermission(.notes, isGranted: granted)
+
+            if !granted {
+                self.openSystemSettings(for: .notes)
             }
         }
     }
@@ -608,6 +696,88 @@ final class SystemPermissionService: ObservableObject {
         @unknown default:
             return "ERROR: Unknown Status"
         }
+    }
+
+    // MARK: - Debug: Test Reminders (EventKit) Access
+
+    /// Debug function to test if Reminders access works via EventKit.
+    nonisolated static func debugTestRemindersAccess() -> String {
+        let status = EKEventStore.authorizationStatus(for: .reminder)
+        switch status {
+        case .fullAccess, .writeOnly:
+            let store = EKEventStore()
+            let calendars = store.calendars(for: .reminder)
+            if !calendars.isEmpty {
+                return "SUCCESS: Authorized (Found \(calendars.count) lists)"
+            } else {
+                return "SUCCESS: Authorized (No lists found)"
+            }
+        case .denied:
+            return "ERROR: Access Denied"
+        case .restricted:
+            return "ERROR: Access Restricted"
+        case .notDetermined:
+            return "WARNING: Access Not Determined"
+        @unknown default:
+            return "ERROR: Unknown Status"
+        }
+    }
+
+    // MARK: - Debug: Test Location Access
+
+    /// Debug function to test if Location access works.
+    /// Note: This is tricky to test synchronously as location updates are async delegate callbacks.
+    /// We just check auth status here.
+    nonisolated static func debugTestLocationAccess() -> String {
+        let manager = CLLocationManager()
+        let status = manager.authorizationStatus
+
+        switch status {
+        case .authorizedAlways:
+            return "SUCCESS: Authorized"
+        case .denied:
+            return "ERROR: Access Denied"
+        case .restricted:
+            return "ERROR: Access Restricted"
+        case .notDetermined:
+            return "WARNING: Access Not Determined"
+        @unknown default:
+            return "ERROR: Unknown Status"
+        }
+    }
+
+    // MARK: - Debug: Test Notes Access
+
+    /// Debug function to test if Notes access works via AppleScript.
+    nonisolated static func debugTestNotesAccess() -> String {
+        let script = NSAppleScript(
+            source: """
+                tell application "Notes"
+                    return name
+                end tell
+                """
+        )
+
+        var errorInfo: NSDictionary?
+        let result = script?.executeAndReturnError(&errorInfo)
+
+        if let error = errorInfo {
+            let errorNumber = error[NSAppleScript.errorNumber] as? Int ?? -1
+            let errorMessage = error[NSAppleScript.errorMessage] as? String ?? "Unknown error"
+
+            var guidance = ""
+            if errorNumber == -1743 {
+                guidance = " → Permission denied. Grant in System Settings → Privacy & Security → Automation"
+            }
+
+            return "ERROR [\(errorNumber)]: \(errorMessage)\(guidance)"
+        }
+
+        if let resultValue = result?.stringValue {
+            return "SUCCESS: Connected to \(resultValue)"
+        }
+
+        return "NO RESULT"
     }
 
     /// Simple error wrapper for osascript results

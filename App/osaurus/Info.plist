@@ -18,6 +18,10 @@
 	<string>Osaurus plugins may access your contacts to search and read contact information.</string>
 	<key>NSRemindersUsageDescription</key>
 	<string>Osaurus plugins may access your reminders to read and create tasks.</string>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>Osaurus plugins may access your location to provide location-based services.</string>
+	<key>NSLocationUsageDescription</key>
+	<string>Osaurus plugins may access your location to provide location-based services.</string>
 	<key>CFBundleURLTypes</key>
 	<array>
 		<dict>

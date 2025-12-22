@@ -16,6 +16,12 @@ enum SystemPermission: String, CaseIterable, Codable, Sendable {
     case automationCalendar = "automation_calendar"
     /// EventKit Calendar access permission
     case calendar
+    /// EventKit Reminders access permission
+    case reminders
+    /// Location Services permission
+    case location
+    /// AppleScript automation permission for Notes.app
+    case notes
     /// Accessibility API access (AXIsProcessTrusted)
     case accessibility
     /// Contacts access permission
@@ -32,6 +38,12 @@ enum SystemPermission: String, CaseIterable, Codable, Sendable {
             return "Automation (Calendar)"
         case .calendar:
             return "Calendar"
+        case .reminders:
+            return "Reminders"
+        case .location:
+            return "Location"
+        case .notes:
+            return "Notes"
         case .accessibility:
             return "Accessibility"
         case .contacts:
@@ -50,6 +62,12 @@ enum SystemPermission: String, CaseIterable, Codable, Sendable {
             return "Allows plugins to read and create events in Calendar.app via AppleScript."
         case .calendar:
             return "Allows plugins to access your calendar to read and create events directly."
+        case .reminders:
+            return "Allows plugins to access your reminders to read and create tasks."
+        case .location:
+            return "Allows plugins to access your current location."
+        case .notes:
+            return "Allows plugins to read and create notes in the Notes app via AppleScript."
         case .accessibility:
             return "Allows plugins to interact with UI elements, simulate input, and control the computer."
         case .contacts:
@@ -68,6 +86,12 @@ enum SystemPermission: String, CaseIterable, Codable, Sendable {
             return "calendar"
         case .calendar:
             return "calendar.badge.plus"
+        case .reminders:
+            return "list.bullet.clipboard"
+        case .location:
+            return "location"
+        case .notes:
+            return "note"
         case .accessibility:
             return "accessibility"
         case .contacts:
@@ -86,6 +110,12 @@ enum SystemPermission: String, CaseIterable, Codable, Sendable {
             return "calendar"
         case .calendar:
             return "calendar"
+        case .reminders:
+            return "list.bullet.rectangle"
+        case .location:
+            return "location.fill"
+        case .notes:
+            return "note.text"
         case .accessibility:
             return "figure.stand"
         case .contacts:
@@ -107,6 +137,15 @@ enum SystemPermission: String, CaseIterable, Codable, Sendable {
         case .calendar:
             // Opens Privacy & Security > Calendars
             return URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Calendars")
+        case .reminders:
+            // Opens Privacy & Security > Reminders
+            return URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Reminders")
+        case .location:
+            // Opens Privacy & Security > Location Services
+            return URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_LocationServices")
+        case .notes:
+            // Opens Privacy & Security > Automation (Notes is listed under the app)
+            return URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Automation")
         case .accessibility:
             // Opens Privacy & Security > Accessibility
             return URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")
