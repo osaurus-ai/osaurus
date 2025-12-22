@@ -38,6 +38,7 @@ struct ConfigurationView: View {
     @State private var tempQuantStart: String = ""
     @State private var tempMaxKV: String = ""
     @State private var tempPrefillStep: String = ""
+    @State private var tempEvictionPolicy: ModelEvictionPolicy = .strictSingleModel
 
     // Search (passed from sidebar)
     @Binding var searchText: String
@@ -100,31 +101,24 @@ struct ConfigurationView: View {
                                 }
 
                                 // System Prompt
-                                SettingsField(label: "System Prompt") {
-                                    ZStack(alignment: .topLeading) {
-                                        TextEditor(text: $tempSystemPrompt)
-                                            .font(.system(size: 13, design: .monospaced))
-                                            .scrollContentBackground(.hidden)
-                                            .frame(minHeight: 80, maxHeight: 140)
-                                            .padding(8)
-                                            .background(
-                                                RoundedRectangle(cornerRadius: 8)
-                                                    .fill(theme.inputBackground)
-                                                    .overlay(
-                                                        RoundedRectangle(cornerRadius: 8)
-                                                            .stroke(theme.inputBorder, lineWidth: 1)
-                                                    )
-                                            )
-                                            .foregroundColor(theme.primaryText)
-                                        if tempSystemPrompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                                            Text("Optional. Shown as a system message for all chats.")
-                                                .font(.system(size: 11))
-                                                .foregroundColor(theme.secondaryText)
-                                                .padding(.top, 12)
-                                                .padding(.leading, 14)
-                                                .allowsHitTesting(false)
-                                        }
-                                    }
+                                SettingsField(
+                                    label: "System Prompt",
+                                    hint: "Optional. Shown as a system message for all chats."
+                                ) {
+                                    TextEditor(text: $tempSystemPrompt)
+                                        .font(.system(size: 13, design: .monospaced))
+                                        .scrollContentBackground(.hidden)
+                                        .frame(minHeight: 80, maxHeight: 140)
+                                        .padding(8)
+                                        .background(
+                                            RoundedRectangle(cornerRadius: 8)
+                                                .fill(theme.inputBackground)
+                                                .overlay(
+                                                    RoundedRectangle(cornerRadius: 8)
+                                                        .stroke(theme.inputBorder, lineWidth: 1)
+                                                )
+                                        )
+                                        .foregroundColor(theme.primaryText)
                                 }
 
                                 // Generation Settings
@@ -161,8 +155,7 @@ struct ConfigurationView: View {
                                     )
                                 }
 
-                                Divider()
-                                    .background(theme.primaryBorder)
+                                SettingsDivider()
 
                                 // Window Settings
                                 SettingsToggle(
@@ -183,14 +176,14 @@ struct ConfigurationView: View {
                                     ZStack(alignment: .leading) {
                                         if tempPortString.isEmpty {
                                             Text("1337")
-                                                .font(.system(size: 13, weight: .medium, design: .monospaced))
+                                                .font(.system(size: 13, design: .monospaced))
                                                 .foregroundColor(theme.secondaryText)
                                                 .padding(.leading, 12)
                                                 .allowsHitTesting(false)
                                         }
                                         TextField("", text: $tempPortString)
                                             .textFieldStyle(.plain)
-                                            .font(.system(size: 13, weight: .medium, design: .monospaced))
+                                            .font(.system(size: 13, design: .monospaced))
                                             .padding(.horizontal, 12)
                                             .padding(.vertical, 8)
                                             .foregroundColor(theme.primaryText)
@@ -262,69 +255,49 @@ struct ConfigurationView: View {
                                     isOn: $tempHideDockIcon
                                 )
 
-                                Divider()
-                                    .background(theme.primaryBorder)
+                                SettingsDivider()
 
                                 // Command Line Tool
-                                VStack(alignment: .leading, spacing: 12) {
-                                    Text("Command Line Tool")
-                                        .font(.system(size: 12, weight: .medium))
-                                        .foregroundColor(theme.secondaryText)
+                                SettingsSubsection(label: "Command Line Tool") {
+                                    VStack(alignment: .leading, spacing: 12) {
+                                        Text("Install the `osaurus` CLI into your PATH for terminal access.")
+                                            .font(.system(size: 12))
+                                            .foregroundColor(theme.tertiaryText)
 
-                                    Text("Install the `osaurus` CLI into your PATH for terminal access.")
-                                        .font(.system(size: 12))
-                                        .foregroundColor(theme.tertiaryText)
-
-                                    HStack(spacing: 12) {
-                                        Button(action: { installCLI() }) {
-                                            Text("Install CLI")
-                                                .font(.system(size: 13, weight: .medium))
-                                                .foregroundColor(theme.primaryText)
-                                                .padding(.horizontal, 14)
-                                                .padding(.vertical, 8)
-                                                .background(
-                                                    RoundedRectangle(cornerRadius: 8)
-                                                        .fill(theme.tertiaryBackground)
-                                                        .overlay(
-                                                            RoundedRectangle(cornerRadius: 8)
-                                                                .stroke(theme.inputBorder, lineWidth: 1)
-                                                        )
-                                                )
-                                        }
-                                        .buttonStyle(PlainButtonStyle())
-                                        .help("Create a symlink to the embedded CLI")
-
-                                        if let message = cliInstallMessage {
-                                            HStack(spacing: 6) {
-                                                Image(
-                                                    systemName: cliInstallSuccess
-                                                        ? "checkmark.circle.fill" : "exclamationmark.triangle.fill"
-                                                )
-                                                .font(.system(size: 12))
-                                                Text(message)
-                                                    .font(.system(size: 11))
-                                                    .lineLimit(2)
+                                        HStack(spacing: 12) {
+                                            Button(action: { installCLI() }) {
+                                                Text("Install CLI")
                                             }
-                                            .foregroundColor(
-                                                cliInstallSuccess ? theme.successColor : theme.warningColor
-                                            )
-                                        }
-                                    }
+                                            .buttonStyle(SettingsButtonStyle())
+                                            .help("Create a symlink to the embedded CLI")
 
-                                    Text("If installed to ~/.local/bin, ensure it's in your PATH.")
-                                        .font(.system(size: 11))
-                                        .foregroundColor(theme.tertiaryText)
+                                            if let message = cliInstallMessage {
+                                                HStack(spacing: 6) {
+                                                    Image(
+                                                        systemName: cliInstallSuccess
+                                                            ? "checkmark.circle.fill" : "exclamationmark.triangle.fill"
+                                                    )
+                                                    .font(.system(size: 12))
+                                                    Text(message)
+                                                        .font(.system(size: 11))
+                                                        .lineLimit(2)
+                                                }
+                                                .foregroundColor(
+                                                    cliInstallSuccess ? theme.successColor : theme.warningColor
+                                                )
+                                            }
+                                        }
+
+                                        Text("If installed to ~/.local/bin, ensure it's in your PATH.")
+                                            .font(.system(size: 11))
+                                            .foregroundColor(theme.tertiaryText)
+                                    }
                                 }
 
-                                Divider()
-                                    .background(theme.primaryBorder)
+                                SettingsDivider()
 
                                 // Storage
-                                VStack(alignment: .leading, spacing: 12) {
-                                    Text("Storage")
-                                        .font(.system(size: 12, weight: .medium))
-                                        .foregroundColor(theme.secondaryText)
-
+                                SettingsSubsection(label: "Storage") {
                                     DirectoryPickerView()
                                 }
                             }
@@ -343,43 +316,73 @@ struct ConfigurationView: View {
                         "Memory"
                     ) {
                         SettingsSection(title: "Performance", icon: "cpu") {
-                            VStack(spacing: 12) {
-                                settingsTextField(
-                                    label: "Top P",
-                                    text: $tempTopP,
-                                    placeholder: "1.0",
-                                    help: "Controls diversity of generated text (0–1). Empty uses default 1.0"
-                                )
-                                settingsTextField(
-                                    label: "KV Cache Bits",
-                                    text: $tempKVBits,
-                                    placeholder: "",
-                                    help: "Quantization bits for KV cache. Empty disables quantization"
-                                )
-                                settingsTextField(
-                                    label: "KV Group Size",
-                                    text: $tempKVGroup,
-                                    placeholder: "64",
-                                    help: "Group size for KV quantization. Empty uses default 64"
-                                )
-                                settingsTextField(
-                                    label: "Quantized KV Start",
-                                    text: $tempQuantStart,
-                                    placeholder: "0",
-                                    help: "Starting layer for KV quantization. Empty uses default 0"
-                                )
-                                settingsTextField(
-                                    label: "Max KV Size",
-                                    text: $tempMaxKV,
-                                    placeholder: "8192",
-                                    help: "Maximum KV cache size in tokens. Empty uses default 8192"
-                                )
-                                settingsTextField(
-                                    label: "Prefill Step Size",
-                                    text: $tempPrefillStep,
-                                    placeholder: "512",
-                                    help: "Step size for prefill operations. Empty uses default 512"
-                                )
+                            VStack(alignment: .leading, spacing: 20) {
+                                // Generation
+                                SettingsSubsection(label: "Generation") {
+                                    VStack(spacing: 12) {
+                                        settingsTextField(
+                                            label: "Top P",
+                                            text: $tempTopP,
+                                            placeholder: "1.0",
+                                            help: "Controls diversity of generated text (0–1). Empty uses default 1.0"
+                                        )
+                                    }
+                                }
+
+                                // KV Cache Settings
+                                SettingsSubsection(label: "KV Cache") {
+                                    VStack(spacing: 12) {
+                                        settingsTextField(
+                                            label: "Cache Bits",
+                                            text: $tempKVBits,
+                                            placeholder: "",
+                                            help: "Quantization bits for KV cache. Empty disables quantization"
+                                        )
+                                        settingsTextField(
+                                            label: "Group Size",
+                                            text: $tempKVGroup,
+                                            placeholder: "64",
+                                            help: "Group size for KV quantization. Empty uses default 64"
+                                        )
+                                        settingsTextField(
+                                            label: "Quantized Start",
+                                            text: $tempQuantStart,
+                                            placeholder: "0",
+                                            help: "Starting layer for KV quantization. Empty uses default 0"
+                                        )
+                                        settingsTextField(
+                                            label: "Max Size",
+                                            text: $tempMaxKV,
+                                            placeholder: "8192",
+                                            help: "Maximum KV cache size in tokens. Empty uses default 8192"
+                                        )
+                                        settingsTextField(
+                                            label: "Prefill Step",
+                                            text: $tempPrefillStep,
+                                            placeholder: "512",
+                                            help: "Step size for prefill operations. Empty uses default 512"
+                                        )
+                                    }
+                                }
+
+                                SettingsDivider()
+
+                                // Eviction Policy
+                                SettingsSubsection(label: "Model Management") {
+                                    VStack(alignment: .leading, spacing: 10) {
+                                        Picker("", selection: $tempEvictionPolicy) {
+                                            ForEach(ModelEvictionPolicy.allCases, id: \.self) { policy in
+                                                Text(policy.rawValue).tag(policy)
+                                            }
+                                        }
+                                        .pickerStyle(.segmented)
+                                        .labelsHidden()
+
+                                        Text(tempEvictionPolicy.description)
+                                            .font(.system(size: 11))
+                                            .foregroundColor(theme.tertiaryText)
+                                    }
+                                }
                             }
                         }
                     }
@@ -564,6 +567,7 @@ struct ConfigurationView: View {
             configuration.genPrefillStepSize == defaults.genPrefillStepSize
             ? "" : String(configuration.genPrefillStepSize)
         tempAllowedOrigins = configuration.allowedOrigins.joined(separator: ", ")
+        tempEvictionPolicy = configuration.modelEvictionPolicy
     }
 
     // MARK: - Reset to Defaults
@@ -597,6 +601,7 @@ struct ConfigurationView: View {
         tempQuantStart = ""
         tempMaxKV = ""
         tempPrefillStep = ""
+        tempEvictionPolicy = serverDefaults.modelEvictionPolicy
 
         // Show confirmation
         withAnimation(.easeInOut(duration: 0.2)) {
@@ -659,6 +664,9 @@ struct ConfigurationView: View {
                 Int(trimmedPrefill) ?? defaults.genPrefillStepSize
         }
 
+        // Save eviction policy
+        configuration.modelEvictionPolicy = tempEvictionPolicy
+
         // Save CORS allowed origins
         let parsedOrigins: [String] =
             tempAllowedOrigins
@@ -680,6 +688,7 @@ struct ConfigurationView: View {
             || previousServerCfg.genQuantizedKVStart != configuration.genQuantizedKVStart
             || previousServerCfg.genMaxKVSize != configuration.genMaxKVSize
             || previousServerCfg.genPrefillStepSize != configuration.genPrefillStepSize
+            || previousServerCfg.modelEvictionPolicy != configuration.modelEvictionPolicy
 
         // Persist to disk
         ServerConfigurationStore.save(configuration)
@@ -1002,11 +1011,20 @@ private struct SettingsSubsection<Content: View>: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             Text(label)
-                .font(.system(size: 12, weight: .medium))
+                .font(.system(size: 12, weight: .semibold))
                 .foregroundColor(theme.secondaryText)
+                .textCase(.uppercase)
+                .tracking(0.5)
 
             content()
         }
+        .padding(.leading, 12)
+        .overlay(
+            Rectangle()
+                .fill(theme.accentColor.opacity(0.3))
+                .frame(width: 2),
+            alignment: .leading
+        )
     }
 }
 
@@ -1033,6 +1051,45 @@ private struct SettingsToggle: View {
                 .toggleStyle(SwitchToggleStyle(tint: theme.accentColor))
                 .labelsHidden()
         }
+    }
+}
+
+private struct SettingsDivider: View {
+    @Environment(\.theme) private var theme
+
+    var body: some View {
+        Rectangle()
+            .fill(theme.primaryBorder)
+            .frame(height: 1)
+            .opacity(0.6)
+    }
+}
+
+private struct SettingsButtonStyle: ButtonStyle {
+    @Environment(\.theme) private var theme
+    let isPrimary: Bool
+
+    init(isPrimary: Bool = false) {
+        self.isPrimary = isPrimary
+    }
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(.system(size: 13, weight: .medium))
+            .foregroundColor(isPrimary ? .white : theme.primaryText)
+            .padding(.horizontal, 14)
+            .padding(.vertical, 8)
+            .background(
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(isPrimary ? theme.accentColor : theme.tertiaryBackground)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 8)
+                            .stroke(isPrimary ? Color.clear : theme.inputBorder, lineWidth: 1)
+                    )
+            )
+            .opacity(configuration.isPressed ? 0.8 : 1.0)
+            .scaleEffect(configuration.isPressed ? 0.98 : 1.0)
+            .animation(.easeOut(duration: 0.15), value: configuration.isPressed)
     }
 }
 

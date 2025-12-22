@@ -62,6 +62,9 @@ public struct ServerConfiguration: Codable, Equatable, Sendable {
     /// List of allowed origins for CORS. Empty disables CORS. Use "*" to allow any origin.
     public var allowedOrigins: [String]
 
+    /// Memory management policy for loaded models
+    public var modelEvictionPolicy: ModelEvictionPolicy
+
     private enum CodingKeys: String, CodingKey {
         case port
         case exposeToNetwork
@@ -77,6 +80,7 @@ public struct ServerConfiguration: Codable, Equatable, Sendable {
         case genMaxKVSize
         case genPrefillStepSize
         case allowedOrigins
+        case modelEvictionPolicy
     }
 
     public init(from decoder: Decoder) throws {
@@ -108,6 +112,9 @@ public struct ServerConfiguration: Codable, Equatable, Sendable {
         self.allowedOrigins =
             try container.decodeIfPresent([String].self, forKey: .allowedOrigins)
             ?? defaults.allowedOrigins
+        self.modelEvictionPolicy =
+            try container.decodeIfPresent(ModelEvictionPolicy.self, forKey: .modelEvictionPolicy)
+            ?? defaults.modelEvictionPolicy
     }
 
     public init(
@@ -124,7 +131,8 @@ public struct ServerConfiguration: Codable, Equatable, Sendable {
         genQuantizedKVStart: Int,
         genMaxKVSize: Int?,
         genPrefillStepSize: Int,
-        allowedOrigins: [String] = []
+        allowedOrigins: [String] = [],
+        modelEvictionPolicy: ModelEvictionPolicy = .strictSingleModel
     ) {
         self.port = port
         self.exposeToNetwork = exposeToNetwork
@@ -140,6 +148,7 @@ public struct ServerConfiguration: Codable, Equatable, Sendable {
         self.genMaxKVSize = genMaxKVSize
         self.genPrefillStepSize = genPrefillStepSize
         self.allowedOrigins = allowedOrigins
+        self.modelEvictionPolicy = modelEvictionPolicy
     }
 
     /// Default configuration
@@ -158,12 +167,30 @@ public struct ServerConfiguration: Codable, Equatable, Sendable {
             genQuantizedKVStart: 0,
             genMaxKVSize: 8192,
             genPrefillStepSize: 512,
-            allowedOrigins: []
+            allowedOrigins: [],
+            modelEvictionPolicy: .strictSingleModel
         )
     }
 
     /// Validates if the port is in valid range
     public var isValidPort: Bool {
         (1 ..< 65536).contains(port)
+    }
+}
+
+/// Policy for managing model eviction from memory
+public enum ModelEvictionPolicy: String, Codable, CaseIterable, Sendable {
+    /// Strictly keep only one model loaded at a time (safest for memory)
+    case strictSingleModel = "Strict (One Model)"
+    /// Allow multiple models (best for high RAM systems or rapid switching)
+    case manualMultiModel = "Flexible (Multi Model)"
+
+    public var description: String {
+        switch self {
+        case .strictSingleModel:
+            return "Automatically unloads other models. Recommended for standard use."
+        case .manualMultiModel:
+            return "Keeps models loaded until manually unloaded. Requires 32GB+ RAM."
+        }
     }
 }
