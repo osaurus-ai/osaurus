@@ -114,6 +114,20 @@ struct ModelDownloadView: View {
                 }
 
                 Spacer()
+
+                // Download status indicator (shown when downloads are active)
+                if modelManager.activeDownloadsCount > 0 {
+                    DownloadStatusIndicator(
+                        activeCount: modelManager.activeDownloadsCount,
+                        averageProgress: averageDownloadProgress,
+                        onTap: {
+                            withAnimation(.easeOut(duration: 0.2)) {
+                                selectedTab = .downloaded
+                            }
+                        }
+                    )
+                    .transition(.scale.combined(with: .opacity))
+                }
             }
 
             // Tabs + Search row
@@ -124,7 +138,10 @@ struct ModelDownloadView: View {
                         .all: filteredModels.count,
                         .suggested: filteredSuggestedModels.count,
                         .downloaded: completedDownloadedModelsCount,
-                    ]
+                    ],
+                    badges: modelManager.activeDownloadsCount > 0
+                        ? [.downloaded: modelManager.activeDownloadsCount]
+                        : nil
                 )
 
                 Spacer()
@@ -328,6 +345,16 @@ struct ModelDownloadView: View {
         return filtered.count
     }
 
+    /// Average progress across all active downloads (0.0 to 1.0)
+    private var averageDownloadProgress: Double {
+        let activeProgress = modelManager.downloadStates.compactMap { (_, state) -> Double? in
+            if case .downloading(let progress) = state { return progress }
+            return nil
+        }
+        guard !activeProgress.isEmpty else { return 0 }
+        return activeProgress.reduce(0, +) / Double(activeProgress.count)
+    }
+
     /// Models to display based on the currently selected tab
     private var displayedModels: [MLXModel] {
         let baseModels: [MLXModel]
@@ -400,6 +427,67 @@ private struct SkeletonCard: View {
 
     private var shimmerGradient: some ShapeStyle {
         theme.tertiaryBackground.opacity(isAnimating ? 0.8 : 0.4)
+    }
+}
+
+// MARK: - Download Status Indicator
+
+/// Download status button shown when downloads are active
+private struct DownloadStatusIndicator: View {
+    @Environment(\.theme) private var theme
+
+    let activeCount: Int
+    let averageProgress: Double
+    let onTap: () -> Void
+
+    @State private var isHovering = false
+
+    var body: some View {
+        Button(action: onTap) {
+            HStack(spacing: 6) {
+                // Progress ring with arrow
+                ZStack {
+                    Circle()
+                        .stroke(
+                            theme.secondaryText.opacity(0.25),
+                            lineWidth: 1.5
+                        )
+                        .frame(width: 14, height: 14)
+
+                    Circle()
+                        .trim(from: 0, to: averageProgress)
+                        .stroke(
+                            theme.accentColor,
+                            style: StrokeStyle(lineWidth: 1.5, lineCap: .round)
+                        )
+                        .frame(width: 14, height: 14)
+                        .rotationEffect(.degrees(-90))
+                        .animation(.easeOut(duration: 0.3), value: averageProgress)
+
+                    Image(systemName: "arrow.down")
+                        .font(.system(size: 7, weight: .bold))
+                        .foregroundColor(theme.accentColor)
+                }
+
+                Text("Downloading")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundColor(theme.secondaryText)
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 7)
+            .background(
+                RoundedRectangle(cornerRadius: 6)
+                    .fill(isHovering ? theme.tertiaryBackground : theme.tertiaryBackground.opacity(0.5))
+            )
+            .contentShape(RoundedRectangle(cornerRadius: 6))
+        }
+        .buttonStyle(PlainButtonStyle())
+        .onHover { hovering in
+            withAnimation(.easeOut(duration: 0.1)) {
+                isHovering = hovering
+            }
+        }
+        .help("Downloading \(activeCount) model\(activeCount == 1 ? "" : "s") – Click to view")
     }
 }
 

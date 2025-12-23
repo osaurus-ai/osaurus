@@ -18,8 +18,8 @@ enum ModelListTab: String, CaseIterable, AnimatedTabItem {
     /// Curated list of recommended models
     case suggested = "Recommended"
 
-    /// Only models downloaded locally
-    case downloaded = "Downloaded"
+    /// Only models downloaded locally (includes active downloads)
+    case downloaded = "Downloads"
 
     /// Display name for the tab (required by AnimatedTabItem)
     var title: String { rawValue }
@@ -592,6 +592,14 @@ final class ModelManager: NSObject, ObservableObject {
 
     var totalDownloadedSizeString: String {
         ByteCountFormatter.string(fromByteCount: totalDownloadedSize, countStyle: .file)
+    }
+
+    /// Number of models currently being downloaded
+    var activeDownloadsCount: Int {
+        downloadStates.values.filter {
+            if case .downloading = $0 { return true }
+            return false
+        }.count
     }
 
     // MARK: - Private Methods
