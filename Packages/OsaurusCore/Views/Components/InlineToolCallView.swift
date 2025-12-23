@@ -310,6 +310,7 @@ struct InlineToolCallView: View {
     @State private var isHovered: Bool = false
     @State private var formattedArgs: String?
     @State private var hasAppeared: Bool = false
+    @State private var shimmerOffset: CGFloat = -1.0
     @Environment(\.theme) private var theme
 
     private var isComplete: Bool {
@@ -333,7 +334,9 @@ struct InlineToolCallView: View {
         VStack(alignment: .leading, spacing: 0) {
             // Compact header row
             Button(action: {
-                isExpanded.toggle()
+                withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+                    isExpanded.toggle()
+                }
             }) {
                 HStack(spacing: 10) {
                     // Status icon
@@ -357,10 +360,13 @@ struct InlineToolCallView: View {
 
                     Spacer()
 
-                    // Expand chevron
-                    Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
+                    // Expand chevron with smooth rotation
+                    Image(systemName: "chevron.right")
                         .font(.system(size: 10, weight: .semibold))
-                        .foregroundColor(theme.tertiaryText.opacity(0.7))
+                        .foregroundColor(theme.tertiaryText.opacity(isHovered ? 1.0 : 0.7))
+                        .rotationEffect(.degrees(isExpanded ? 90 : 0))
+                        .animation(.spring(response: 0.3, dampingFraction: 0.7), value: isExpanded)
+                        .animation(.easeOut(duration: 0.15), value: isHovered)
                 }
                 .padding(.leading, 14)  // Extra padding for accent strip
                 .padding(.trailing, 12)
@@ -369,21 +375,25 @@ struct InlineToolCallView: View {
             }
             .buttonStyle(.plain)
 
-            // Expanded content
+            // Expanded content with animation
             if isExpanded {
                 expandedContent
                     .padding(.leading, 14)
                     .padding(.trailing, 12)
                     .padding(.bottom, 12)
+                    .transition(.opacity.combined(with: .move(edge: .top)))
             }
         }
-        // Accent strip as overlay on left edge
+        // Accent strip as overlay on left edge with shimmer for in-progress
         .overlay(alignment: .leading) {
-            statusColor
-                .frame(width: 3)
+            accentStripView
         }
-        // Hover highlight
-        .background(theme.accentColor.opacity(isHovered ? 0.04 : 0))
+        // Subtle hover glow
+        .background(
+            RoundedRectangle(cornerRadius: 2, style: .continuous)
+                .fill(theme.accentColor.opacity(isHovered ? 0.05 : 0))
+                .animation(.easeOut(duration: 0.2), value: isHovered)
+        )
         .contentShape(Rectangle())
         .onHover { hovering in
             isHovered = hovering
@@ -400,7 +410,52 @@ struct InlineToolCallView: View {
                 }
             }
         }
+        .onAppear {
+            // Start shimmer animation for in-progress calls
+            if !isComplete {
+                startShimmerAnimation()
+            }
+        }
+        .onChange(of: isComplete) { _, complete in
+            if complete {
+                // Stop shimmer when complete
+                shimmerOffset = -1.0
+            }
+        }
         .id(call.id)
+    }
+
+    private func startShimmerAnimation() {
+        withAnimation(.linear(duration: 1.5).repeatForever(autoreverses: false)) {
+            shimmerOffset = 2.0
+        }
+    }
+
+    @ViewBuilder
+    private var accentStripView: some View {
+        if !isComplete {
+            // Animated shimmer accent for in-progress
+            Rectangle()
+                .fill(
+                    LinearGradient(
+                        stops: [
+                            .init(color: statusColor.opacity(0.6), location: 0),
+                            .init(color: statusColor, location: 0.3),
+                            .init(color: statusColor.opacity(0.9), location: 0.5),
+                            .init(color: statusColor, location: 0.7),
+                            .init(color: statusColor.opacity(0.6), location: 1.0),
+                        ],
+                        startPoint: UnitPoint(x: 0, y: shimmerOffset - 1),
+                        endPoint: UnitPoint(x: 0, y: shimmerOffset)
+                    )
+                )
+                .frame(width: 3)
+        } else {
+            // Solid accent for complete
+            Rectangle()
+                .fill(statusColor)
+                .frame(width: 3)
+        }
     }
 
     private var statusColor: Color {

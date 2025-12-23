@@ -19,6 +19,9 @@ struct MessageContent: View {
     @Environment(\.theme) private var theme
     @State private var isEditing: Bool = false
     @State private var editingContent: String = ""
+    @State private var gradientRotation: Double = 0
+    @State private var showCompletionGlow: Bool = false
+    @State private var wasInProgress: Bool = false
 
     // Derived from MessageRow logic
     private var contentWidth: CGFloat {
@@ -148,8 +151,52 @@ struct MessageContent: View {
 
     // MARK: - Tools
 
+    /// Check if any tool call in this turn is still in progress
+    private func hasInProgressCall(calls: [ToolCall]) -> Bool {
+        calls.contains { turn.toolResults[$0.id] == nil }
+    }
+
+    /// Check if any tool call was rejected
+    private func hasRejectedCall(calls: [ToolCall]) -> Bool {
+        calls.contains { turn.toolResults[$0.id]?.hasPrefix("[REJECTED]") == true }
+    }
+
+    /// Border color based on state
+    private func completionBorderColor(calls: [ToolCall]) -> Color {
+        if hasInProgressCall(calls: calls) {
+            return theme.accentColor
+        } else if hasRejectedCall(calls: calls) {
+            return theme.errorColor
+        } else {
+            return theme.successColor
+        }
+    }
+
+    private var animatedGradientBorder: AngularGradient {
+        AngularGradient(
+            gradient: Gradient(colors: [
+                theme.accentColor.opacity(0.6),
+                theme.accentColor.opacity(0.2),
+                theme.accentColor.opacity(0.4),
+                theme.accentColor.opacity(0.2),
+                theme.accentColor.opacity(0.6),
+            ]),
+            center: .center,
+            angle: .degrees(gradientRotation)
+        )
+    }
+
+    private func startGradientAnimation() {
+        withAnimation(.linear(duration: 3.0).repeatForever(autoreverses: false)) {
+            gradientRotation = 360
+        }
+    }
+
     @ViewBuilder
     private func toolCallsView(calls: [ToolCall]) -> some View {
+        let inProgress = hasInProgressCall(calls: calls)
+        let borderColor = completionBorderColor(calls: calls)
+
         // Grouped container for all tool calls
         VStack(spacing: 0) {
             ForEach(Array(calls.enumerated()), id: \.element.id) { index, call in
@@ -169,11 +216,48 @@ struct MessageContent: View {
             RoundedRectangle(cornerRadius: 10, style: .continuous)
                 .fill(theme.secondaryBackground.opacity(0.6))
         )
+        // Border: animated gradient when in progress, colored when complete
         .overlay(
             RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .strokeBorder(theme.primaryBorder.opacity(0.2), lineWidth: 1)
+                .strokeBorder(
+                    inProgress
+                        ? AnyShapeStyle(animatedGradientBorder)
+                        : AnyShapeStyle(borderColor.opacity(showCompletionGlow ? 0.6 : 0.25)),
+                    lineWidth: inProgress ? 1.5 : (showCompletionGlow ? 1.5 : 1)
+                )
+                .animation(.easeOut(duration: 0.8), value: showCompletionGlow)
         )
         .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+        // Glow effect
+        .shadow(
+            color: inProgress
+                ? theme.accentColor.opacity(0.15)
+                : (showCompletionGlow ? borderColor.opacity(0.2) : .clear),
+            radius: 8,
+            x: 0,
+            y: 2
+        )
+        .animation(.easeOut(duration: 0.8), value: showCompletionGlow)
+        .onAppear {
+            wasInProgress = inProgress
+            if inProgress {
+                startGradientAnimation()
+            }
+        }
+        .onChange(of: inProgress) { _, nowInProgress in
+            if nowInProgress {
+                wasInProgress = true
+                startGradientAnimation()
+            } else if wasInProgress {
+                // Just completed - show completion glow then fade
+                showCompletionGlow = true
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                    withAnimation(.easeOut(duration: 0.8)) {
+                        showCompletionGlow = false
+                    }
+                }
+            }
+        }
     }
 
     // MARK: - Public Actions

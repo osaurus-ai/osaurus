@@ -269,6 +269,8 @@ struct GroupedToolCallsView: View {
     let isStreaming: Bool
 
     @Environment(\.theme) private var theme
+    @State private var gradientRotation: Double = 0
+    @State private var showCompletionGlow: Bool = false
 
     /// Collect all tool calls from all turns with their results
     private var allToolCalls: [(call: ToolCall, result: String?, turnId: UUID)] {
@@ -281,6 +283,27 @@ struct GroupedToolCallsView: View {
             }
         }
         return result
+    }
+
+    /// Check if any tool call is still in progress
+    private var hasInProgressCall: Bool {
+        allToolCalls.contains { $0.result == nil }
+    }
+
+    /// Check if any tool call was rejected
+    private var hasRejectedCall: Bool {
+        allToolCalls.contains { $0.result?.hasPrefix("[REJECTED]") == true }
+    }
+
+    /// Border color based on state
+    private var completionBorderColor: Color {
+        if hasInProgressCall {
+            return theme.accentColor
+        } else if hasRejectedCall {
+            return theme.errorColor
+        } else {
+            return theme.successColor
+        }
     }
 
     var body: some View {
@@ -302,12 +325,65 @@ struct GroupedToolCallsView: View {
             RoundedRectangle(cornerRadius: 10, style: .continuous)
                 .fill(theme.secondaryBackground.opacity(0.6))
         )
+        // Border: animated gradient when in progress, colored when complete
         .overlay(
             RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .strokeBorder(theme.primaryBorder.opacity(0.2), lineWidth: 1)
+                .strokeBorder(
+                    hasInProgressCall
+                        ? AnyShapeStyle(animatedGradientBorder)
+                        : AnyShapeStyle(completionBorderColor.opacity(showCompletionGlow ? 0.6 : 0.25)),
+                    lineWidth: hasInProgressCall ? 1.5 : (showCompletionGlow ? 1.5 : 1)
+                )
+                .animation(.easeOut(duration: 0.8), value: showCompletionGlow)
         )
         .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-        // Disable all implicit animations in this container
-        .transaction { $0.animation = nil }
+        // Glow effect
+        .shadow(
+            color: hasInProgressCall
+                ? theme.accentColor.opacity(0.15)
+                : (showCompletionGlow ? completionBorderColor.opacity(0.2) : .clear),
+            radius: 8,
+            x: 0,
+            y: 2
+        )
+        .animation(.easeOut(duration: 0.8), value: showCompletionGlow)
+        .onAppear {
+            if hasInProgressCall {
+                startGradientAnimation()
+            }
+        }
+        .onChange(of: hasInProgressCall) { oldValue, inProgress in
+            if inProgress {
+                startGradientAnimation()
+            } else if oldValue {
+                // Just completed - show completion glow then fade
+                showCompletionGlow = true
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                    withAnimation(.easeOut(duration: 0.8)) {
+                        showCompletionGlow = false
+                    }
+                }
+            }
+        }
+    }
+
+    private func startGradientAnimation() {
+        withAnimation(.linear(duration: 3.0).repeatForever(autoreverses: false)) {
+            gradientRotation = 360
+        }
+    }
+
+    private var animatedGradientBorder: AngularGradient {
+        AngularGradient(
+            gradient: Gradient(colors: [
+                theme.accentColor.opacity(0.6),
+                theme.accentColor.opacity(0.2),
+                theme.accentColor.opacity(0.4),
+                theme.accentColor.opacity(0.2),
+                theme.accentColor.opacity(0.6),
+            ]),
+            center: .center,
+            angle: .degrees(gradientRotation)
+        )
     }
 }
