@@ -24,9 +24,6 @@ struct ChatSessionSidebar: View {
         VStack(spacing: 0) {
             // Header with New Chat button
             sidebarHeader
-                .onTapGesture {
-                    dismissEditing()
-                }
 
             Divider()
                 .opacity(0.3)
@@ -34,9 +31,6 @@ struct ChatSessionSidebar: View {
             // Session list
             if manager.sessions.isEmpty {
                 emptyState
-                    .onTapGesture {
-                        dismissEditing()
-                    }
             } else {
                 sessionList
             }
@@ -161,62 +155,66 @@ private struct SessionRow: View {
     @FocusState private var isTextFieldFocused: Bool
 
     var body: some View {
-        Group {
-            if isEditing {
-                editingView
-            } else {
-                normalView
+        if isEditing {
+            editingView
+                .padding(.horizontal, 10)
+                .padding(.vertical, 8)
+                .background(rowBackground)
+                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        } else {
+            HStack {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(session.title)
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundColor(theme.primaryText)
+                        .lineLimit(1)
+
+                    Text(relativeDate(session.updatedAt))
+                        .font(.system(size: 10))
+                        .foregroundColor(theme.secondaryText.opacity(0.7))
+                }
+                Spacer()
+
+                // Action buttons (visible on hover)
+                if isHovered {
+                    HStack(spacing: 4) {
+                        ActionButton(
+                            icon: "pencil",
+                            help: "Rename",
+                            action: onStartRename
+                        )
+
+                        ActionButton(
+                            icon: "trash",
+                            help: "Delete",
+                            action: onDelete
+                        )
+                    }
+                    .transition(.opacity.combined(with: .scale(scale: 0.9)))
+                }
             }
-        }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 8)
-        .background(rowBackground)
-        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-        .contentShape(Rectangle())
-        .onHover { hovering in
-            withAnimation(theme.animationQuick()) {
-                isHovered = hovering
+            .padding(.horizontal, 10)
+            .padding(.vertical, 8)
+            .background(rowBackground)
+            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .onTapGesture {
+                onSelect()
+            }
+            .onHover { hovering in
+                withAnimation(theme.animationQuick()) {
+                    isHovered = hovering
+                }
+            }
+            .contextMenu {
+                Button("Rename", action: onStartRename)
+                Button("Delete", role: .destructive, action: onDelete)
             }
         }
     }
 
     private var normalView: some View {
-        HStack(spacing: 8) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(session.title)
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(theme.primaryText)
-                    .lineLimit(1)
-
-                Text(relativeDate(session.updatedAt))
-                    .font(.system(size: 10))
-                    .foregroundColor(theme.secondaryText.opacity(0.7))
-            }
-
-            Spacer()
-
-            // Delete button (visible on hover)
-            if isHovered {
-                Button(action: onDelete) {
-                    Image(systemName: "trash")
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundColor(theme.secondaryText)
-                }
-                .buttonStyle(.plain)
-                .help("Delete")
-                .transition(.opacity)
-            }
-        }
-        .contentShape(Rectangle())
-        .onTapGesture {
-            onSelect()
-        }
-        .gesture(
-            TapGesture(count: 2)
-                .onEnded {
-                    onStartRename()
-                }
-        )
+        EmptyView()  // Keeping for compilation but not used
     }
 
     private var editingView: some View {
@@ -257,6 +255,38 @@ private struct SessionRow: View {
         let formatter = RelativeDateTimeFormatter()
         formatter.unitsStyle = .abbreviated
         return formatter.localizedString(for: date, relativeTo: Date())
+    }
+}
+
+// MARK: - Action Button
+
+private struct ActionButton: View {
+    let icon: String
+    let help: String
+    let action: () -> Void
+
+    @Environment(\.theme) private var theme
+    @State private var isHovered = false
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: icon)
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundColor(isHovered ? theme.primaryText : theme.secondaryText)
+                .frame(width: 24, height: 24)
+                .background(
+                    RoundedRectangle(cornerRadius: 5, style: .continuous)
+                        .fill(isHovered ? theme.secondaryBackground : Color.clear)
+                )
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help(help)
+        .onHover { hovering in
+            withAnimation(.easeInOut(duration: 0.15)) {
+                isHovered = hovering
+            }
+        }
     }
 }
 

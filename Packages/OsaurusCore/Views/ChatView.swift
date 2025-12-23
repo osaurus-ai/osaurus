@@ -908,42 +908,46 @@ struct ChatView: View {
             HStack(spacing: 0) {
                 // Sidebar
                 if showSidebar {
-                    ChatSessionSidebar(
-                        manager: sessionsManager,
-                        currentSessionId: session.sessionId,
-                        onSelect: { data in
-                            // Don't reload if already on this session
-                            guard data.id != session.sessionId else { return }
-                            // Save current session before switching
-                            if !session.turns.isEmpty {
-                                session.save()
-                            }
-                            // Load fresh data from store
-                            if let freshData = ChatSessionStore.load(id: data.id) {
-                                session.load(from: freshData)
-                            } else {
-                                session.load(from: data)
-                            }
-                            isPinnedToBottom = true
-                        },
-                        onNewChat: {
-                            // Save current and create new
-                            if !session.turns.isEmpty {
-                                session.save()
-                            }
-                            session.reset()
-                        },
-                        onDelete: { id in
-                            sessionsManager.delete(id: id)
-                            // If we deleted the current session, reset
-                            if session.sessionId == id {
+                    ZStack {
+                        ChatSessionSidebar(
+                            manager: sessionsManager,
+                            currentSessionId: session.sessionId,
+                            onSelect: { data in
+                                // Don't reload if already on this session
+                                guard data.id != session.sessionId else { return }
+                                // Save current session before switching
+                                if !session.turns.isEmpty {
+                                    session.save()
+                                }
+                                // Load fresh data from store
+                                if let freshData = ChatSessionStore.load(id: data.id) {
+                                    session.load(from: freshData)
+                                } else {
+                                    session.load(from: data)
+                                }
+                                isPinnedToBottom = true
+                            },
+                            onNewChat: {
+                                // Save current and create new
+                                if !session.turns.isEmpty {
+                                    session.save()
+                                }
                                 session.reset()
+                            },
+                            onDelete: { id in
+                                sessionsManager.delete(id: id)
+                                // If we deleted the current session, reset
+                                if session.sessionId == id {
+                                    session.reset()
+                                }
+                            },
+                            onRename: { id, title in
+                                sessionsManager.rename(id: id, title: title)
                             }
-                        },
-                        onRename: { id, title in
-                            sessionsManager.rename(id: id, title: title)
-                        }
-                    )
+                        )
+                    }
+                    .frame(width: 240)
+                    .zIndex(1)
                     .transition(.move(edge: .leading))
                 }
 
