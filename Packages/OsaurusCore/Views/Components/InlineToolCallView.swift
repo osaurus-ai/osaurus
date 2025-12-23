@@ -31,6 +31,273 @@ private enum JSONFormatter {
     }
 }
 
+// MARK: - Tool Category
+
+/// Tool categories for icon selection
+private enum ToolCategory {
+    case file
+    case search
+    case terminal
+    case network
+    case database
+    case code
+    case general
+
+    var icon: String {
+        switch self {
+        case .file: return "folder.fill"
+        case .search: return "magnifyingglass"
+        case .terminal: return "terminal.fill"
+        case .network: return "globe"
+        case .database: return "cylinder.split.1x2.fill"
+        case .code: return "curlybraces"
+        case .general: return "gearshape.fill"
+        }
+    }
+
+    var gradient: [Color] {
+        switch self {
+        case .file: return [Color(hex: "f59e0b"), Color(hex: "d97706")]
+        case .search: return [Color(hex: "8b5cf6"), Color(hex: "7c3aed")]
+        case .terminal: return [Color(hex: "10b981"), Color(hex: "059669")]
+        case .network: return [Color(hex: "3b82f6"), Color(hex: "2563eb")]
+        case .database: return [Color(hex: "ec4899"), Color(hex: "db2777")]
+        case .code: return [Color(hex: "06b6d4"), Color(hex: "0891b2")]
+        case .general: return [Color(hex: "6b7280"), Color(hex: "4b5563")]
+        }
+    }
+
+    static func from(toolName: String) -> ToolCategory {
+        let name = toolName.lowercased()
+
+        // File operations
+        if name.contains("file") || name.contains("read") || name.contains("write")
+            || name.contains("path") || name.contains("directory") || name.contains("folder")
+        {
+            return .file
+        }
+
+        // Search operations
+        if name.contains("search") || name.contains("find") || name.contains("query")
+            || name.contains("grep") || name.contains("lookup")
+        {
+            return .search
+        }
+
+        // Terminal/command operations
+        if name.contains("terminal") || name.contains("command") || name.contains("exec")
+            || name.contains("shell") || name.contains("run") || name.contains("bash")
+        {
+            return .terminal
+        }
+
+        // Network operations
+        if name.contains("http") || name.contains("api") || name.contains("fetch")
+            || name.contains("request") || name.contains("url") || name.contains("web")
+        {
+            return .network
+        }
+
+        // Database operations
+        if name.contains("database") || name.contains("sql") || name.contains("db")
+            || name.contains("query") || name.contains("table")
+        {
+            return .database
+        }
+
+        // Code operations
+        if name.contains("code") || name.contains("edit") || name.contains("replace")
+            || name.contains("refactor") || name.contains("lint")
+        {
+            return .code
+        }
+
+        return .general
+    }
+}
+
+// MARK: - Preview Generator
+
+/// Generates human-readable previews for JSON and text content
+private enum PreviewGenerator {
+    /// Generate a preview for JSON arguments (object)
+    static func jsonPreview(_ jsonString: String, maxLength: Int = 60) -> String? {
+        guard let data = jsonString.data(using: .utf8),
+            let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+            !json.isEmpty
+        else { return nil }
+
+        var parts: [String] = []
+        var totalLength = 0
+
+        // Priority keys for preview
+        let priorityKeys = ["path", "file", "file_path", "query", "url", "name", "command", "pattern", "content"]
+
+        // Build preview string
+        for key in priorityKeys {
+            if let value = json[key] {
+                let valueStr = formatValue(value)
+                let part = "\(key): \(valueStr)"
+                if totalLength + part.count > maxLength && !parts.isEmpty {
+                    break
+                }
+                parts.append(part)
+                totalLength += part.count + 2
+            }
+        }
+
+        // If no priority keys found, use first few keys
+        if parts.isEmpty {
+            for (key, value) in json.prefix(3) {
+                let valueStr = formatValue(value)
+                let part = "\(key): \(valueStr)"
+                if totalLength + part.count > maxLength && !parts.isEmpty {
+                    break
+                }
+                parts.append(part)
+                totalLength += part.count + 2
+            }
+        }
+
+        // Add count if more parameters exist
+        let remaining = json.count - parts.count
+        if remaining > 0 {
+            parts.append("+\(remaining) more")
+        }
+
+        return parts.isEmpty ? nil : parts.joined(separator: ", ")
+    }
+
+    /// Generate a preview for result content (handles JSON arrays, objects, and plain text)
+    static func resultPreview(_ text: String, maxLength: Int = 80) -> String {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        // Try to parse as JSON first
+        if let data = trimmed.data(using: .utf8),
+            let json = try? JSONSerialization.jsonObject(with: data)
+        {
+
+            // Handle JSON array
+            if let array = json as? [Any] {
+                if array.isEmpty {
+                    return "Empty array []"
+                }
+                // Describe array contents
+                let itemDescriptions = array.prefix(3).map { formatValue($0) }
+                let preview = itemDescriptions.joined(separator: ", ")
+                let suffix = array.count > 3 ? " +\(array.count - 3) more" : ""
+                let result = "[\(array.count) items] \(preview)\(suffix)"
+                if result.count > maxLength {
+                    return String(result.prefix(maxLength - 3)) + "..."
+                }
+                return result
+            }
+
+            // Handle JSON object
+            if let dict = json as? [String: Any] {
+                if dict.isEmpty {
+                    return "Empty object {}"
+                }
+                // Use jsonPreview for objects
+                if let preview = jsonPreview(trimmed, maxLength: maxLength) {
+                    return preview
+                }
+                return "{\(dict.count) keys}"
+            }
+        }
+
+        // Plain text - get first meaningful line
+        let lines = trimmed.components(separatedBy: .newlines).filter { !$0.isEmpty }
+        guard let firstLine = lines.first else {
+            return trimmed.isEmpty ? "Empty response" : trimmed
+        }
+
+        if firstLine.count <= maxLength {
+            if lines.count > 1 {
+                return "\(firstLine) (+\(lines.count - 1) lines)"
+            }
+            return firstLine
+        }
+
+        return String(firstLine.prefix(maxLength - 3)) + "..."
+    }
+
+    /// Format size for display
+    static func formatSize(_ bytes: Int) -> String {
+        if bytes < 1024 {
+            return "\(bytes) B"
+        } else if bytes < 1024 * 1024 {
+            return String(format: "%.1f KB", Double(bytes) / 1024.0)
+        } else {
+            return String(format: "%.1f MB", Double(bytes) / (1024.0 * 1024.0))
+        }
+    }
+
+    /// Count lines in text
+    static func lineCount(_ text: String) -> Int {
+        text.components(separatedBy: "\n").count
+    }
+
+    private static func formatValue(_ value: Any) -> String {
+        switch value {
+        case let str as String:
+            let clean = str.trimmingCharacters(in: .whitespacesAndNewlines)
+                .replacingOccurrences(of: "\n", with: " ")
+            if clean.count > 30 {
+                return String(clean.prefix(27)) + "..."
+            }
+            return clean
+        case let num as NSNumber:
+            return num.stringValue
+        case let bool as Bool:
+            return bool ? "true" : "false"
+        case let arr as [Any]:
+            return "[\(arr.count) items]"
+        case let dict as [String: Any]:
+            // Try to get a meaningful preview from the dict
+            if let name = dict["title"] as? String ?? dict["name"] as? String {
+                let clean = name.trimmingCharacters(in: .whitespacesAndNewlines)
+                if clean.count > 25 {
+                    return String(clean.prefix(22)) + "..."
+                }
+                return clean
+            }
+            return "{\(dict.count) keys}"
+        default:
+            return String(describing: value)
+        }
+    }
+}
+
+// MARK: - Pulsing Dot Animation
+
+/// Animated pulsing dot for in-progress state
+private struct PulsingDot: View {
+    let color: Color
+    @State private var isPulsing = false
+
+    var body: some View {
+        ZStack {
+            // Outer pulse ring
+            Circle()
+                .fill(color.opacity(0.3))
+                .frame(width: 16, height: 16)
+                .scaleEffect(isPulsing ? 1.4 : 1.0)
+                .opacity(isPulsing ? 0 : 0.6)
+
+            // Inner dot
+            Circle()
+                .fill(color)
+                .frame(width: 8, height: 8)
+        }
+        .onAppear {
+            withAnimation(.easeInOut(duration: 1.0).repeatForever(autoreverses: false)) {
+                isPulsing = true
+            }
+        }
+    }
+}
+
 // MARK: - Inline Tool Call View (Compact Row)
 
 /// Compact inline view for a single tool call - shows tool name, arg preview, and status.
@@ -42,6 +309,7 @@ struct InlineToolCallView: View {
     @State private var isExpanded: Bool = false
     @State private var isHovered: Bool = false
     @State private var formattedArgs: String?
+    @State private var hasAppeared: Bool = false
     @Environment(\.theme) private var theme
 
     private var isComplete: Bool {
@@ -52,113 +320,71 @@ struct InlineToolCallView: View {
         result?.hasPrefix("[REJECTED]") == true
     }
 
-    private var statusColor: Color {
-        if !isComplete {
-            return theme.accentColor
-        } else if isRejected {
-            return theme.errorColor
-        } else {
-            return theme.successColor
-        }
+    private var category: ToolCategory {
+        ToolCategory.from(toolName: call.function.name)
     }
 
     /// Extract a key argument preview from the JSON arguments
     private var argPreview: String? {
-        guard let data = call.function.arguments.data(using: .utf8),
-            let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
-        else { return nil }
-
-        // Priority order for preview: path, file, query, url, name, command, then first string value
-        let priorityKeys = [
-            "path", "file", "file_path", "filepath", "query", "url", "name", "command", "pattern", "content",
-        ]
-        for key in priorityKeys {
-            if let value = json[key] as? String, !value.isEmpty {
-                return truncatePreview(value)
-            }
-        }
-
-        // Fall back to first string value
-        for (_, value) in json {
-            if let str = value as? String, !str.isEmpty {
-                return truncatePreview(str)
-            }
-        }
-
-        return nil
-    }
-
-    private func truncatePreview(_ text: String) -> String {
-        let clean = text.trimmingCharacters(in: .whitespacesAndNewlines)
-            .replacingOccurrences(of: "\n", with: " ")
-        if clean.count > 40 {
-            return String(clean.prefix(37)) + "..."
-        }
-        return clean
+        PreviewGenerator.jsonPreview(call.function.arguments, maxLength: 50)
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             // Compact header row
             Button(action: {
-                withAnimation(theme.springAnimation()) {
-                    isExpanded.toggle()
-                }
+                isExpanded.toggle()
             }) {
-                HStack(spacing: 8) {
+                HStack(spacing: 10) {
                     // Status icon
                     statusIcon
 
+                    // Category icon with gradient background
+                    categoryIcon
+
                     // Tool name
                     Text(call.function.name)
-                        .font(.system(size: 12, weight: .medium, design: .monospaced))
+                        .font(theme.monoFont(size: 12, weight: .semibold))
                         .foregroundColor(theme.primaryText)
 
                     // Arg preview
                     if let preview = argPreview {
                         Text(preview)
-                            .font(.system(size: 11, weight: .regular))
+                            .font(theme.font(size: 11, weight: .regular))
                             .foregroundColor(theme.tertiaryText)
                             .lineLimit(1)
                     }
 
                     Spacer()
 
-                    // Expand chevron with smooth rotation
-                    Image(systemName: "chevron.right")
+                    // Expand chevron
+                    Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
                         .font(.system(size: 10, weight: .semibold))
-                        .foregroundColor(theme.tertiaryText)
-                        .rotationEffect(.degrees(isExpanded ? 90 : 0))
-                        .animation(.spring(response: 0.3, dampingFraction: 0.7), value: isExpanded)
+                        .foregroundColor(theme.tertiaryText.opacity(0.7))
                 }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 8)
+                .padding(.leading, 14)  // Extra padding for accent strip
+                .padding(.trailing, 12)
+                .padding(.vertical, 10)
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
 
-            // Expanded content - only render when expanded
+            // Expanded content
             if isExpanded {
                 expandedContent
-                    .padding(.horizontal, 12)
-                    .padding(.bottom, 10)
-                    .transition(.opacity)
+                    .padding(.leading, 14)
+                    .padding(.trailing, 12)
+                    .padding(.bottom, 12)
             }
         }
-        .clipped()
-        .background(
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .fill(theme.secondaryBackground.opacity(isHovered ? 0.7 : 0.5))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .strokeBorder(
-                            isHovered ? theme.primaryBorder.opacity(0.3) : theme.primaryBorder.opacity(0.15),
-                            lineWidth: 0.5
-                        )
-                )
-        )
-        .animation(theme.animationQuick(), value: isHovered)
-        .animation(theme.springAnimation(), value: isExpanded)
+        // Accent strip as overlay on left edge
+        .overlay(alignment: .leading) {
+            statusColor
+                .frame(width: 3)
+        }
+        // Hover highlight
+        .background(theme.accentColor.opacity(isHovered ? 0.04 : 0))
+        .contentShape(Rectangle())
         .onHover { hovering in
             isHovered = hovering
         }
@@ -174,23 +400,62 @@ struct InlineToolCallView: View {
                 }
             }
         }
+        .id(call.id)
+    }
+
+    private var statusColor: Color {
+        if !isComplete {
+            return theme.accentColor
+        } else if isRejected {
+            return theme.errorColor
+        } else {
+            return theme.successColor
+        }
     }
 
     @ViewBuilder
     private var statusIcon: some View {
         if !isComplete {
-            ProgressView()
-                .scaleEffect(0.5)
+            PulsingDot(color: theme.accentColor)
                 .frame(width: 16, height: 16)
         } else if isRejected {
             Image(systemName: "xmark.circle.fill")
                 .font(.system(size: 14, weight: .medium))
-                .foregroundColor(theme.errorColor)
+                .foregroundStyle(
+                    LinearGradient(
+                        colors: [theme.errorColor, theme.errorColor.opacity(0.7)],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    )
+                )
         } else {
             Image(systemName: "checkmark.circle.fill")
                 .font(.system(size: 14, weight: .medium))
-                .foregroundColor(theme.successColor)
+                .foregroundStyle(
+                    LinearGradient(
+                        colors: [theme.successColor, theme.successColor.opacity(0.7)],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    )
+                )
         }
+    }
+
+    private var categoryIcon: some View {
+        Image(systemName: category.icon)
+            .font(.system(size: 10, weight: .semibold))
+            .foregroundColor(.white)
+            .frame(width: 20, height: 20)
+            .background(
+                RoundedRectangle(cornerRadius: 5, style: .continuous)
+                    .fill(
+                        LinearGradient(
+                            colors: category.gradient,
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        )
+                    )
+            )
     }
 
     private var expandedContent: some View {
@@ -202,325 +467,204 @@ struct InlineToolCallView: View {
                 || currentArgs.isEmpty
 
             if !isArgsEmpty {
-                ToolCodeBlock(
+                CollapsibleCodeSection(
                     title: "Arguments",
                     text: currentArgs,
-                    language: "json"
+                    language: "json",
+                    previewText: PreviewGenerator.jsonPreview(call.function.arguments, maxLength: 80),
+                    sectionId: "\(call.id)-args"
                 )
             }
 
             // Result (if complete)
             if let result {
-                ToolCodeBlock(
+                CollapsibleCodeSection(
                     title: "Result",
                     text: result,
-                    language: nil
+                    language: nil,
+                    previewText: PreviewGenerator.resultPreview(result, maxLength: 80),
+                    sectionId: "\(call.id)-result"
                 )
             }
         }
     }
 }
 
-// MARK: - Code Block (Shared)
+// MARK: - Collapsible Code Section
 
-/// Prepared text content for display
-private struct PreparedContent: Equatable {
-    let displayText: String
-    let lineCount: Int
-    let totalLineCount: Int
-    let totalSize: Int
-    let isTruncated: Bool
-}
-
-struct ToolCodeBlock: View {
+/// A collapsible section for displaying code/text content with a preview
+struct CollapsibleCodeSection: View {
     let title: String
     let text: String
     let language: String?
+    let previewText: String?
+    let sectionId: String
 
-    // Truncation thresholds for performance
-    private static let maxDisplayChars = 50_000  // ~50KB
-    private static let maxDisplayLines = 500
-    // Max height for scrollable content area
-    private static let maxContentHeight: CGFloat = 300
-    // Threshold for showing loading state (chars) - lowered to show loading more often
-    private static let largeContentThreshold = 1_000
+    // Max height for expanded content
+    private static let maxContentHeight: CGFloat = 200
 
-    @State private var isCopied = false
-    @State private var isHovered = false
-    @State private var showFullText = false
+    @State private var isCollapsed: Bool = true
+    @State private var isHovered: Bool = false
+    @State private var isCopied: Bool = false
     @State private var preparedContent: PreparedContent?
-    @State private var isLoading = false
+    @State private var isLoading: Bool = false
     @Environment(\.theme) private var theme
 
-    /// Whether content is large enough to warrant deferred loading
-    private var isLargeContent: Bool {
-        text.count > Self.largeContentThreshold
+    init(title: String, text: String, language: String?, previewText: String?, sectionId: String = UUID().uuidString) {
+        self.title = title
+        self.text = text
+        self.language = language
+        self.previewText = previewText
+        self.sectionId = sectionId
+    }
+
+    private var sizeInfo: String {
+        let bytes = text.count
+        let lines = PreviewGenerator.lineCount(text)
+        return "\(PreviewGenerator.formatSize(bytes)), \(lines) line\(lines == 1 ? "" : "s")"
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            // Header
-            HStack {
-                HStack(spacing: 6) {
+            // Header row - always visible
+            Button(action: toggleCollapse) {
+                HStack(spacing: 8) {
+                    // Expand/collapse chevron
+                    Image(systemName: isCollapsed ? "chevron.right" : "chevron.down")
+                        .font(.system(size: 9, weight: .bold))
+                        .foregroundColor(theme.tertiaryText)
+
+                    // Language/type icon
                     if let language {
                         Image(systemName: languageIcon(for: language))
                             .font(.system(size: 9, weight: .medium))
                             .foregroundColor(theme.tertiaryText)
                     }
 
+                    // Title
                     Text(title.uppercased())
                         .font(.system(size: 9, weight: .bold, design: .rounded))
                         .foregroundColor(theme.tertiaryText)
                         .tracking(0.8)
 
-                    // Show truncation indicator
-                    if let content = preparedContent, content.isTruncated {
-                        Text("(\(formatSize(content.totalSize)) truncated)")
-                            .font(.system(size: 9, weight: .regular))
-                            .foregroundColor(theme.warningColor.opacity(0.8))
-                    }
-                }
+                    // Size info
+                    Text("(\(sizeInfo))")
+                        .font(.system(size: 9, weight: .regular))
+                        .foregroundColor(theme.tertiaryText.opacity(0.6))
 
-                Spacer()
+                    Spacer()
 
-                Button(action: copyToClipboard) {
-                    HStack(spacing: 4) {
-                        Image(systemName: isCopied ? "checkmark" : "doc.on.doc")
-                            .font(.system(size: 9, weight: .medium))
-                            .contentTransition(.symbolEffect(.replace))
-
-                        if isCopied {
-                            Text("Copied!")
+                    // Copy button
+                    Button(action: copyToClipboard) {
+                        HStack(spacing: 4) {
+                            Image(systemName: isCopied ? "checkmark" : "doc.on.doc")
                                 .font(.system(size: 9, weight: .medium))
-                                .transition(.opacity.combined(with: .move(edge: .leading)))
+                                .contentTransition(.symbolEffect(.replace))
+
+                            if isCopied {
+                                Text("Copied!")
+                                    .font(.system(size: 9, weight: .medium))
+                                    .transition(.opacity.combined(with: .move(edge: .leading)))
+                            }
                         }
-                    }
-                    .foregroundColor(isCopied ? theme.successColor : theme.tertiaryText)
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 3)
-                    .background(
-                        Capsule()
-                            .fill(isCopied ? theme.successColor.opacity(0.12) : Color.clear)
-                    )
-                }
-                .buttonStyle(.plain)
-                .opacity(isHovered || isCopied ? 1 : 0.5)
-                .animation(theme.animationQuick(), value: isHovered)
-                .animation(theme.animationQuick(), value: isCopied)
-            }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 7)
-            .background(
-                theme.codeBlockBackground.opacity(0.5)
-                    .overlay(
-                        LinearGradient(
-                            colors: [
-                                theme.primaryBorder.opacity(0.04),
-                                Color.clear,
-                            ],
-                            startPoint: .top,
-                            endPoint: .bottom
+                        .foregroundColor(isCopied ? theme.successColor : theme.tertiaryText)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 3)
+                        .background(
+                            Capsule()
+                                .fill(isCopied ? theme.successColor.opacity(0.12) : Color.clear)
                         )
-                    )
-            )
-
-            // Code content - show loading state while preparing, then content
-            Group {
-                if let content = preparedContent {
-                    codeContentView(for: content)
-                } else if isLoading {
-                    // Show loading spinner while preparing
-                    loadingView
-                } else {
-                    // Fallback empty state (should rarely happen)
-                    Color.clear.frame(height: 20)
-                }
-            }
-            .animation(.easeOut(duration: 0.15), value: preparedContent != nil)
-
-            // Show "Show Full" button if truncated
-            if let content = preparedContent, content.isTruncated {
-                Button(action: {
-                    showFullText = true
-                    prepareContent()
-                }) {
-                    HStack(spacing: 6) {
-                        Image(systemName: "arrow.down.doc")
-                            .font(.system(size: 10, weight: .medium))
-                        Text("Show full content (\(formatSize(content.totalSize)), \(content.totalLineCount) lines)")
-                            .font(.system(size: 10, weight: .medium))
                     }
-                    .foregroundColor(theme.accentColor)
-                    .padding(.vertical, 8)
-                    .frame(maxWidth: .infinity)
-                    .background(theme.accentColor.opacity(0.08))
+                    .buttonStyle(.plain)
+                    .opacity(isHovered || isCopied ? 1 : 0.6)
                 }
-                .buttonStyle(.plain)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 8)
+                .contentShape(Rectangle())
             }
-        }
-        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .strokeBorder(
-                    isHovered ? theme.primaryBorder.opacity(0.3) : theme.primaryBorder.opacity(0.15),
-                    lineWidth: 0.5
-                )
-        )
-        .shadow(
-            color: theme.shadowColor.opacity(0.04),
-            radius: 2,
-            x: 0,
-            y: 1
-        )
-        .onHover { hovering in
-            withAnimation(theme.animationQuick()) {
-                isHovered = hovering
-            }
-        }
-        .onAppear {
-            // Prepare content when view appears
-            if preparedContent == nil {
-                prepareContent()
-            }
-        }
-        .onChange(of: text) { _, _ in
-            // Re-prepare if text changes
-            preparedContent = nil
-            prepareContent()
-        }
-    }
+            .buttonStyle(.plain)
 
-    /// Loading placeholder view - elegant shimmer effect
-    private var loadingView: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            ForEach(0 ..< 3, id: \.self) { index in
+            // Preview row (when collapsed)
+            if isCollapsed, let preview = previewText, !preview.isEmpty {
                 HStack(spacing: 0) {
-                    // Line number placeholder
-                    RoundedRectangle(cornerRadius: 2)
-                        .fill(theme.tertiaryText.opacity(0.06))
-                        .frame(width: 16, height: 12)
-                        .padding(.trailing, 12)
-
-                    // Code line placeholder with varying widths
-                    RoundedRectangle(cornerRadius: 3)
-                        .fill(
-                            LinearGradient(
-                                colors: [
-                                    theme.tertiaryText.opacity(0.04),
-                                    theme.tertiaryText.opacity(0.08),
-                                    theme.tertiaryText.opacity(0.04),
-                                ],
-                                startPoint: .leading,
-                                endPoint: .trailing
-                            )
-                        )
-                        .frame(width: shimmerWidth(for: index), height: 12)
+                    Text(preview)
+                        .font(theme.monoFont(size: 11, weight: .regular))
+                        .foregroundColor(theme.secondaryText)
+                        .lineLimit(1)
+                        .padding(.horizontal, 10)
+                        .padding(.bottom, 8)
 
                     Spacer(minLength: 0)
                 }
             }
+
+            // Expanded content
+            if !isCollapsed {
+                codeContent
+            }
         }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 12)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(theme.codeBlockBackground)
-    }
-
-    /// Varying shimmer widths for visual interest
-    private func shimmerWidth(for index: Int) -> CGFloat {
-        switch index {
-        case 0: return 180
-        case 1: return 240
-        case 2: return 140
-        default: return 160
-        }
-    }
-
-    /// Prepare content - synchronously for small content, async for large
-    private func prepareContent() {
-        let sourceText = text
-        let shouldTruncate = !showFullText
-        let maxChars = Self.maxDisplayChars
-        let maxLines = Self.maxDisplayLines
-
-        // For small content, prepare synchronously (no loading state needed)
-        if sourceText.count < Self.largeContentThreshold {
-            let content = prepareDisplayContent(
-                from: sourceText,
-                truncate: shouldTruncate,
-                maxChars: maxChars,
-                maxLines: maxLines
-            )
-            preparedContent = content
-            isLoading = false
-            return
-        }
-
-        // For large content, prepare in background with loading state
-        // Reset state to show loading
-        preparedContent = nil
-        isLoading = true
-
-        Task {
-            // Prepare content off main thread
-            let content = await Task.detached(priority: .userInitiated) {
-                prepareDisplayContent(
-                    from: sourceText,
-                    truncate: shouldTruncate,
-                    maxChars: maxChars,
-                    maxLines: maxLines
+        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .background(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(theme.codeBlockBackground.opacity(0.6))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .strokeBorder(
+                    theme.primaryBorder.opacity(isHovered ? 0.25 : 0.15),
+                    lineWidth: 0.5
                 )
-            }.value
+        )
+        .onHover { hovering in
+            isHovered = hovering
+        }
+        .id(sectionId)
+    }
 
-            // Ensure minimum loading time so spinner is visible
-            try? await Task.sleep(nanoseconds: 200_000_000)  // 200ms minimum
-
-            preparedContent = content
-            isLoading = false
+    private func toggleCollapse() {
+        isCollapsed.toggle()
+        // Prepare content when expanding
+        if !isCollapsed && preparedContent == nil {
+            prepareContent()
         }
     }
 
-    /// Code content view - applies max height only when content is large
     @ViewBuilder
-    private func codeContentView(for content: PreparedContent) -> some View {
-        let textContent = HStack(alignment: .top, spacing: 0) {
-            // Optimized line numbers - single Text view instead of ForEach
-            if content.displayText.contains("\n") {
-                optimizedLineNumbers(lineCount: content.lineCount)
-            }
-
-            Text(content.displayText)
-                .font(.system(size: 11, weight: .regular, design: .monospaced))
-                .foregroundColor(theme.primaryText.opacity(0.9))
-                .textSelection(.enabled)
-                .padding(.horizontal, 10)
-                .padding(.vertical, 10)
-        }
-
-        // Apply max height constraint only for large content (>15 lines)
-        if content.lineCount > 15 {
-            // Large content: enable both scrolls with max height
+    private var codeContent: some View {
+        if let content = preparedContent {
             ScrollView([.horizontal, .vertical], showsIndicators: true) {
-                textContent
+                HStack(alignment: .top, spacing: 0) {
+                    // Line numbers
+                    if content.displayText.contains("\n") {
+                        lineNumbers(count: content.lineCount)
+                    }
+
+                    Text(content.displayText)
+                        .font(theme.monoFont(size: CGFloat(theme.codeSize) - 2, weight: .regular))
+                        .foregroundColor(theme.primaryText.opacity(0.9))
+                        .textSelection(.enabled)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 10)
+                }
             }
-            .frame(maxHeight: Self.maxContentHeight)
+            .frame(maxHeight: Self.maxContentHeight, alignment: .topLeading)
+            .frame(maxWidth: .infinity, alignment: .leading)
             .background(theme.codeBlockBackground)
+        } else if isLoading {
+            loadingView
+                .frame(maxWidth: .infinity, alignment: .leading)
         } else {
-            // Small content: only horizontal scroll, natural height
-            ScrollView(.horizontal, showsIndicators: false) {
-                textContent
-            }
-            .background(theme.codeBlockBackground)
+            Color.clear.frame(height: 20)
+                .onAppear { prepareContent() }
         }
     }
 
-    /// Optimized line numbers using a single Text view with joined string
-    private func optimizedLineNumbers(lineCount count: Int) -> some View {
-        // Build a single string with all line numbers
+    private func lineNumbers(count: Int) -> some View {
         let lineNumbersText = (1 ... count).map { String($0) }.joined(separator: "\n")
 
         return Text(lineNumbersText)
-            .font(.system(size: 10, weight: .regular, design: .monospaced))
+            .font(theme.monoFont(size: CGFloat(theme.codeSize) - 3, weight: .regular))
             .foregroundColor(theme.tertiaryText.opacity(0.4))
             .lineSpacing(0)
             .padding(.leading, 8)
@@ -538,6 +682,38 @@ struct ToolCodeBlock: View {
             )
     }
 
+    private var loadingView: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            ForEach(0 ..< 3, id: \.self) { index in
+                HStack(spacing: 0) {
+                    RoundedRectangle(cornerRadius: 2)
+                        .fill(theme.tertiaryText.opacity(0.06))
+                        .frame(width: 16, height: 12)
+                        .padding(.trailing, 12)
+
+                    RoundedRectangle(cornerRadius: 3)
+                        .fill(theme.tertiaryText.opacity(0.06))
+                        .frame(width: shimmerWidth(for: index), height: 12)
+
+                    Spacer(minLength: 0)
+                }
+            }
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(theme.codeBlockBackground)
+    }
+
+    private func shimmerWidth(for index: Int) -> CGFloat {
+        switch index {
+        case 0: return 180
+        case 1: return 240
+        case 2: return 140
+        default: return 160
+        }
+    }
+
     private func languageIcon(for lang: String) -> String {
         switch lang.lowercased() {
         case "json": return "curlybraces"
@@ -546,18 +722,44 @@ struct ToolCodeBlock: View {
         }
     }
 
-    private func formatSize(_ bytes: Int) -> String {
-        if bytes < 1024 {
-            return "\(bytes) B"
-        } else if bytes < 1024 * 1024 {
-            return String(format: "%.1f KB", Double(bytes) / 1024.0)
-        } else {
-            return String(format: "%.1f MB", Double(bytes) / (1024.0 * 1024.0))
+    private func prepareContent() {
+        let sourceText = text
+        let maxChars = 50_000
+        let maxLines = 500
+
+        if sourceText.count < 1000 {
+            let content = prepareDisplayContent(
+                from: sourceText,
+                truncate: true,
+                maxChars: maxChars,
+                maxLines: maxLines
+            )
+            preparedContent = content
+            isLoading = false
+            return
+        }
+
+        isLoading = true
+        Task {
+            let content = await Task.detached(priority: .userInitiated) {
+                prepareDisplayContent(
+                    from: sourceText,
+                    truncate: true,
+                    maxChars: maxChars,
+                    maxLines: maxLines
+                )
+            }.value
+
+            try? await Task.sleep(nanoseconds: 100_000_000)
+
+            await MainActor.run {
+                preparedContent = content
+                isLoading = false
+            }
         }
     }
 
     private func copyToClipboard() {
-        // Always copy full text, not truncated
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(text, forType: .string)
 
@@ -574,24 +776,51 @@ struct ToolCodeBlock: View {
     }
 }
 
+// MARK: - Legacy ToolCodeBlock (Compatibility)
+
+/// Legacy code block - now wraps CollapsibleCodeSection for backwards compatibility
+struct ToolCodeBlock: View {
+    let title: String
+    let text: String
+    let language: String?
+
+    var body: some View {
+        CollapsibleCodeSection(
+            title: title,
+            text: text,
+            language: language,
+            previewText: language == "json"
+                ? PreviewGenerator.jsonPreview(text, maxLength: 80)
+                : PreviewGenerator.resultPreview(text, maxLength: 80),
+            sectionId: "\(title)-\(text.hashValue)"
+        )
+    }
+}
+
+// MARK: - Prepared Content
+
+private struct PreparedContent: Equatable {
+    let displayText: String
+    let lineCount: Int
+    let totalLineCount: Int
+    let totalSize: Int
+    let isTruncated: Bool
+}
+
 // MARK: - Content Preparation (Off Main Thread)
 
-/// Prepare content off main thread - standalone function to avoid MainActor isolation
 private func prepareDisplayContent(
     from text: String,
     truncate: Bool,
     maxChars: Int,
     maxLines: Int
 ) -> PreparedContent {
-    // Count total lines
     var totalLineCount = 1
     for char in text {
         if char == "\n" { totalLineCount += 1 }
     }
 
     let totalSize = text.count
-
-    // Determine if we need to truncate
     let needsTruncation = truncate && (text.count > maxChars || totalLineCount > maxLines)
 
     let displayText: String
@@ -601,7 +830,6 @@ private func prepareDisplayContent(
         displayText = text
         displayLineCount = totalLineCount
     } else if text.count > maxChars {
-        // Truncate by chars
         let truncated = String(text.prefix(maxChars))
         if let lastNewline = truncated.lastIndex(of: "\n") {
             displayText = String(truncated[..<lastNewline])
@@ -610,7 +838,6 @@ private func prepareDisplayContent(
         }
         displayLineCount = displayText.reduce(1) { $0 + ($1 == "\n" ? 1 : 0) }
     } else {
-        // Truncate by lines
         var count = 0
         var endIndex = text.startIndex
         for (idx, char) in text.enumerated() {
@@ -645,8 +872,8 @@ private func prepareDisplayContent(
                     id: "call_1",
                     type: "function",
                     function: ToolCallFunction(
-                        name: "get_weather",
-                        arguments: "{\"location\": \"San Francisco\", \"unit\": \"celsius\"}"
+                        name: "read_file",
+                        arguments: "{\"path\": \"/Users/example/project/src/main.swift\", \"encoding\": \"utf-8\"}"
                     )
                 ),
                 ToolCall(
@@ -654,41 +881,41 @@ private func prepareDisplayContent(
                     type: "function",
                     function: ToolCallFunction(
                         name: "search_web",
-                        arguments: "{\"query\": \"Swift programming\", \"limit\": 10}"
+                        arguments: "{\"query\": \"Swift programming best practices\", \"limit\": 10}"
                     )
                 ),
                 ToolCall(
                     id: "call_3",
                     type: "function",
                     function: ToolCallFunction(
-                        name: "read_file",
-                        arguments: "{\"path\": \"/Users/example/document.txt\"}"
+                        name: "run_command",
+                        arguments: "{\"command\": \"npm install\", \"cwd\": \"/Users/example/project\"}"
                     )
                 ),
             ]
 
             let results = [
-                "call_1": "Temperature: 18°C, Conditions: Partly cloudy with a gentle breeze from the west.",
+                "call_1":
+                    "import Foundation\n\nfunc main() {\n    print(\"Hello, World!\")\n}\n\nmain()",
                 "call_2":
-                    "Found 10 results for 'Swift programming':\n1. Swift.org - Official Swift Language\n2. Swift Programming Guide\n3. Learn Swift in 30 days",
+                    "Found 10 results for 'Swift programming best practices':\n1. Swift.org - Official Swift Language\n2. Swift Programming Guide\n3. Learn Swift in 30 days\n4. Advanced Swift Techniques\n5. SwiftUI Best Practices",
             ]
 
             ScrollView {
-                VStack(alignment: .leading, spacing: 24) {
-                    Text("Inline Tool Calls")
+                VStack(alignment: .leading, spacing: 12) {
+                    Text("Tool Calls")
                         .font(.headline)
                         .foregroundColor(.white)
+                        .padding(.bottom, 8)
 
-                    VStack(spacing: 6) {
-                        ForEach(calls, id: \.id) { call in
-                            InlineToolCallView(call: call, result: results[call.id])
-                        }
+                    ForEach(calls, id: \.id) { call in
+                        InlineToolCallView(call: call, result: results[call.id])
                     }
                 }
                 .padding()
             }
-            .frame(width: 500, height: 400)
-            .background(Color(hex: "0f0f10"))
+            .frame(width: 600, height: 500)
+            .background(Color(hex: "0c0c0b"))
         }
     }
 #endif

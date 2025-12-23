@@ -55,6 +55,25 @@ struct MessageGroupView: View {
         isStreaming && group.role == .assistant
     }
 
+    /// Groups consecutive tool-only turns together for unified rendering
+    private var groupedTurnContent: [(kind: TurnContentKind, turns: [ChatTurn])] {
+        var result: [(kind: TurnContentKind, turns: [ChatTurn])] = []
+
+        for turn in group.turns {
+            let isToolOnly = turn.content.isEmpty && (turn.toolCalls?.isEmpty == false)
+            let kind: TurnContentKind = isToolOnly ? .toolCalls : .content
+
+            // If same kind as previous, append to existing group
+            if let last = result.last, last.kind == kind {
+                result[result.count - 1].turns.append(turn)
+            } else {
+                result.append((kind: kind, turns: [turn]))
+            }
+        }
+
+        return result
+    }
+
     var body: some View {
         HStack(alignment: .top, spacing: 0) {
             // Continuous accent bar
@@ -66,22 +85,33 @@ struct MessageGroupView: View {
                 headerRow
                     .padding(.bottom, 8)
 
-                // Message turns
+                // Message turns - grouped by content type
                 VStack(alignment: .leading, spacing: 0) {
-                    ForEach(Array(group.turns.enumerated()), id: \.element.id) { index, turn in
-                        let isLatestInGroup = index == group.turns.count - 1
+                    ForEach(Array(groupedTurnContent.enumerated()), id: \.offset) { groupIndex, turnGroup in
+                        if turnGroup.kind == .toolCalls {
+                            // Render all tool calls from consecutive tool-only turns in one container
+                            GroupedToolCallsView(
+                                turns: turnGroup.turns,
+                                isStreaming: isStreaming
+                            )
+                            .padding(.top, groupIndex > 0 ? 8 : 0)
+                        } else {
+                            // Regular content turns
+                            ForEach(Array(turnGroup.turns.enumerated()), id: \.element.id) { turnIndex, turn in
+                                let isLatestInGroup =
+                                    groupIndex == groupedTurnContent.count - 1 && turnIndex == turnGroup.turns.count - 1
 
-                        MessageContent(
-                            turn: turn,
-                            availableWidth: contentWidth,
-                            isStreaming: isStreaming,
-                            isLatest: isLatestInGroup && isStreamingGroup,
-                            onCopy: onCopy,
-                            onEdit: onEdit
-                        )
-                        .padding(.top, spacingForTurn(at: index))
-                        // Allow edit via direct tap on user messages?
-                        // MessageContent handles its own editing state
+                                MessageContent(
+                                    turn: turn,
+                                    availableWidth: contentWidth,
+                                    isStreaming: isStreaming,
+                                    isLatest: isLatestInGroup && isStreamingGroup,
+                                    onCopy: onCopy,
+                                    onEdit: onEdit
+                                )
+                                .padding(.top, (groupIndex > 0 || turnIndex > 0) ? 16 : 0)
+                            }
+                        }
                     }
                 }
             }
@@ -93,10 +123,14 @@ struct MessageGroupView: View {
         .contentShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
         .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
         .onHover { hovering in
-            withAnimation(theme.animationQuick()) {
-                isHovered = hovering
-            }
+            // Use explicit animation only for hover state, not for child layouts
+            isHovered = hovering
         }
+    }
+
+    private enum TurnContentKind {
+        case content
+        case toolCalls
     }
 
     // MARK: - Helpers
@@ -224,5 +258,56 @@ struct MessageGroupView: View {
                 Color.clear
             }
         }
+    }
+}
+
+// MARK: - Grouped Tool Calls View
+
+/// Renders tool calls from multiple turns in a single grouped container
+struct GroupedToolCallsView: View {
+    let turns: [ChatTurn]
+    let isStreaming: Bool
+
+    @Environment(\.theme) private var theme
+
+    /// Collect all tool calls from all turns with their results
+    private var allToolCalls: [(call: ToolCall, result: String?, turnId: UUID)] {
+        var result: [(call: ToolCall, result: String?, turnId: UUID)] = []
+        for turn in turns {
+            if let calls = turn.toolCalls {
+                for call in calls {
+                    result.append((call: call, result: turn.toolResults[call.id], turnId: turn.id))
+                }
+            }
+        }
+        return result
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            ForEach(Array(allToolCalls.enumerated()), id: \.element.call.id) { index, item in
+                InlineToolCallView(
+                    call: item.call,
+                    result: item.result
+                )
+
+                // Divider between tool calls (not after last)
+                if index < allToolCalls.count - 1 {
+                    Divider()
+                        .background(theme.primaryBorder.opacity(0.15))
+                }
+            }
+        }
+        .background(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(theme.secondaryBackground.opacity(0.6))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .strokeBorder(theme.primaryBorder.opacity(0.2), lineWidth: 1)
+        )
+        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+        // Disable all implicit animations in this container
+        .transaction { $0.animation = nil }
     }
 }

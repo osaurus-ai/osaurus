@@ -150,11 +150,30 @@ struct MessageContent: View {
 
     @ViewBuilder
     private func toolCallsView(calls: [ToolCall]) -> some View {
-        VStack(spacing: 6) {
-            ForEach(calls, id: \.id) { call in
-                InlineToolCallView(call: call, result: turn.toolResults[call.id])
+        // Grouped container for all tool calls
+        VStack(spacing: 0) {
+            ForEach(Array(calls.enumerated()), id: \.element.id) { index, call in
+                InlineToolCallView(
+                    call: call,
+                    result: turn.toolResults[call.id]
+                )
+
+                // Divider between tool calls (not after last)
+                if index < calls.count - 1 {
+                    Divider()
+                        .background(theme.primaryBorder.opacity(0.15))
+                }
             }
         }
+        .background(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(theme.secondaryBackground.opacity(0.6))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .strokeBorder(theme.primaryBorder.opacity(0.2), lineWidth: 1)
+        )
+        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
     }
 
     // MARK: - Public Actions
