@@ -936,6 +936,11 @@ struct ChatView: View {
         sessionsManager.sessions(for: personaManager.activePersonaId)
     }
 
+    /// Whether there are any custom (non-built-in) personas
+    private var hasCustomPersonas: Bool {
+        personaManager.personas.contains { !$0.isBuiltIn }
+    }
+
     var body: some View {
         GeometryReader { proxy in
             let sidebarWidth: CGFloat = showSidebar ? 240 : 0
@@ -945,12 +950,14 @@ struct ChatView: View {
                 // Sidebar
                 if showSidebar {
                     VStack(spacing: 0) {
-                        // Persona picker
-                        PersonaPickerHeader(
-                            personas: personaManager.personas,
-                            activePersonaId: personaManager.activePersonaId,
-                            onSelectPersona: switchPersona
-                        )
+                        // Only show persona picker if there are custom personas
+                        if hasCustomPersonas {
+                            PersonaPickerHeader(
+                                personas: personaManager.personas,
+                                activePersonaId: personaManager.activePersonaId,
+                                onSelectPersona: switchPersona
+                            )
+                        }
 
                         ChatSessionSidebar(
                             sessions: filteredSessions,
@@ -1345,7 +1352,8 @@ struct ChatView: View {
 
     private func messageThread(_ width: CGFloat) -> some View {
         let groups = session.visibleGroups
-        let activePersonaName = personaManager.activePersona.name
+        // Use "Assistant" for default persona, otherwise use persona name
+        let displayName = personaManager.activePersona.isBuiltIn ? "Assistant" : personaManager.activePersona.name
 
         return ScrollViewReader { proxy in
             ScrollView {
@@ -1355,7 +1363,7 @@ struct ChatView: View {
                             group: group,
                             width: width,
                             isStreaming: session.isStreaming,
-                            personaName: activePersonaName,
+                            personaName: displayName,
                             onCopy: copyToPasteboard,
                             onEdit: { turnId, newContent in
                                 session.editAndRegenerate(turnId: turnId, newContent: newContent)

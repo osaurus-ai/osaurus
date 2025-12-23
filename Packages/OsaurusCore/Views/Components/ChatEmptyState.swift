@@ -30,6 +30,16 @@ struct ChatEmptyState: View {
         personas.first { $0.id == activePersonaId } ?? Persona.default
     }
 
+    /// Whether there are any custom (non-built-in) personas
+    private var hasCustomPersonas: Bool {
+        personas.contains { !$0.isBuiltIn }
+    }
+
+    /// Display name for the greeting - "Assistant" for default, otherwise persona name
+    private var displayName: String {
+        activePersona.isBuiltIn ? "Assistant" : activePersona.name
+    }
+
     /// Top suggested models to display in empty state
     private var topSuggestions: [MLXModel] {
         modelManager.suggestedModels.filter { $0.isTopSuggestion }
@@ -73,16 +83,23 @@ struct ChatEmptyState: View {
 
     private var readyState: some View {
         VStack(spacing: 32) {
-            // Persona picker and greeting
+            // Greeting and optional persona picker
             VStack(spacing: 16) {
-                // Persona picker button
-                personaPickerButton
-                    .opacity(hasAppeared ? 1 : 0)
-                    .offset(y: hasAppeared ? 0 : 10)
+                // Only show persona picker if there are custom personas
+                if hasCustomPersonas {
+                    personaPickerButton
+                        .opacity(hasAppeared ? 1 : 0)
+                        .offset(y: hasAppeared ? 0 : 10)
+                } else {
+                    // Animated accent line for default state
+                    accentLine
+                        .opacity(hasAppeared ? 1 : 0)
+                        .offset(y: hasAppeared ? 0 : 10)
+                }
 
-                // Greeting with persona name
+                // Greeting
                 VStack(spacing: 8) {
-                    Text("\(greeting), I'm \(activePersona.name)")
+                    Text(hasCustomPersonas ? "\(greeting), I'm \(displayName)" : greeting)
                         .font(theme.font(size: CGFloat(theme.titleSize) + 4, weight: .semibold))
                         .foregroundColor(theme.primaryText)
                         .opacity(hasAppeared ? 1 : 0)

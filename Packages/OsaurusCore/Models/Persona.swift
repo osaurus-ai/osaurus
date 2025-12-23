@@ -68,12 +68,12 @@ public struct Persona: Codable, Identifiable, Sendable, Equatable {
     /// Well-known UUID for the default Osaurus persona
     public static let defaultId = UUID(uuidString: "00000000-0000-0000-0000-000000000001")!
 
-    /// The default Osaurus persona - uses global settings
+    /// The default persona - uses global settings
     public static var `default`: Persona {
         Persona(
             id: defaultId,
-            name: "Osaurus",
-            description: "Your friendly AI assistant",
+            name: "Default",
+            description: "Uses your global chat settings",
             systemPrompt: "",  // Uses global system prompt from settings
             enabledTools: nil,
             themeId: nil,

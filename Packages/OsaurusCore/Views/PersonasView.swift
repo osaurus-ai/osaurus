@@ -26,6 +26,11 @@ struct PersonasView: View {
     @State private var importError: String?
     @State private var showExportSuccess = false
 
+    /// Custom personas only (excluding built-in)
+    private var customPersonas: [Persona] {
+        personaManager.personas.filter { !$0.isBuiltIn }
+    }
+
     var body: some View {
         VStack(spacing: 0) {
             // Header
@@ -35,30 +40,35 @@ struct PersonasView: View {
                 .animation(.spring(response: 0.4, dampingFraction: 0.8), value: hasAppeared)
 
             // Content
-            ScrollView {
-                LazyVStack(spacing: 12) {
-                    ForEach(personaManager.personas) { persona in
-                        PersonaCard(
-                            persona: persona,
-                            isActive: personaManager.activePersonaId == persona.id,
-                            onSelect: {
-                                personaManager.setActivePersona(persona.id)
-                            },
-                            onEdit: {
-                                editingPersona = persona
-                            },
-                            onExport: {
-                                exportPersona(persona)
-                            },
-                            onDelete: {
-                                personaManager.delete(id: persona.id)
-                            }
-                        )
+            if customPersonas.isEmpty {
+                emptyStateView
+                    .opacity(hasAppeared ? 1 : 0)
+            } else {
+                ScrollView {
+                    LazyVStack(spacing: 12) {
+                        ForEach(customPersonas) { persona in
+                            PersonaCard(
+                                persona: persona,
+                                isActive: personaManager.activePersonaId == persona.id,
+                                onSelect: {
+                                    personaManager.setActivePersona(persona.id)
+                                },
+                                onEdit: {
+                                    editingPersona = persona
+                                },
+                                onExport: {
+                                    exportPersona(persona)
+                                },
+                                onDelete: {
+                                    personaManager.delete(id: persona.id)
+                                }
+                            )
+                        }
                     }
+                    .padding(24)
                 }
-                .padding(24)
+                .opacity(hasAppeared ? 1 : 0)
             }
-            .opacity(hasAppeared ? 1 : 0)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(theme.primaryBackground)
@@ -172,6 +182,58 @@ struct PersonasView: View {
         .padding(.top, 24)
         .padding(.bottom, 16)
         .background(theme.secondaryBackground)
+    }
+
+    // MARK: - Empty State
+
+    private var emptyStateView: some View {
+        VStack(spacing: 24) {
+            Spacer()
+
+            VStack(spacing: 16) {
+                ZStack {
+                    Circle()
+                        .fill(theme.accentColor.opacity(0.1))
+                        .frame(width: 80, height: 80)
+
+                    Image(systemName: "person.crop.rectangle.stack")
+                        .font(.system(size: 32, weight: .medium))
+                        .foregroundColor(theme.accentColor)
+                }
+
+                VStack(spacing: 8) {
+                    Text("No Custom Personas")
+                        .font(.system(size: 20, weight: .semibold))
+                        .foregroundColor(theme.primaryText)
+
+                    Text("Create personas with custom system prompts, models, and settings for different use cases.")
+                        .font(.system(size: 14))
+                        .foregroundColor(theme.secondaryText)
+                        .multilineTextAlignment(.center)
+                        .frame(maxWidth: 400)
+                }
+
+                Button(action: { isCreating = true }) {
+                    HStack(spacing: 8) {
+                        Image(systemName: "plus")
+                            .font(.system(size: 12, weight: .semibold))
+                        Text("Create Your First Persona")
+                            .font(.system(size: 14, weight: .medium))
+                    }
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 20)
+                    .padding(.vertical, 12)
+                    .background(
+                        RoundedRectangle(cornerRadius: 10)
+                            .fill(theme.accentColor)
+                    )
+                }
+                .buttonStyle(PlainButtonStyle())
+            }
+
+            Spacer()
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     // MARK: - Import/Export
