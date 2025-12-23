@@ -19,11 +19,30 @@ struct ChatSessionSidebar: View {
     @Environment(\.colorScheme) private var colorScheme
     @State private var editingSessionId: UUID?
     @State private var editingTitle: String = ""
+    @State private var searchQuery: String = ""
+    @FocusState private var isSearchFocused: Bool
+
+    // MARK: - Computed Properties
+
+    private var filteredSessions: [ChatSessionData] {
+        guard !searchQuery.trimmingCharacters(in: .whitespaces).isEmpty else {
+            return manager.sessions
+        }
+        let query = searchQuery.lowercased()
+        return manager.sessions.filter { session in
+            session.title.lowercased().contains(query)
+        }
+    }
 
     var body: some View {
         VStack(spacing: 0) {
             // Header with New Chat button
             sidebarHeader
+
+            // Search field
+            searchField
+                .padding(.horizontal, 12)
+                .padding(.bottom, 8)
 
             Divider()
                 .opacity(0.3)
@@ -31,6 +50,8 @@ struct ChatSessionSidebar: View {
             // Session list
             if manager.sessions.isEmpty {
                 emptyState
+            } else if filteredSessions.isEmpty {
+                noResultsState
             } else {
                 sessionList
             }
@@ -69,6 +90,51 @@ struct ChatSessionSidebar: View {
         .padding(.vertical, 12)
     }
 
+    // MARK: - Search Field
+
+    private var searchField: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: 12, weight: .medium))
+                .foregroundColor(isSearchFocused ? theme.primaryText : theme.secondaryText.opacity(0.7))
+
+            TextField("Search conversations...", text: $searchQuery)
+                .textFieldStyle(.plain)
+                .font(.system(size: 12))
+                .foregroundColor(theme.primaryText)
+                .focused($isSearchFocused)
+
+            if !searchQuery.isEmpty {
+                Button(action: {
+                    withAnimation(theme.animationQuick()) {
+                        searchQuery = ""
+                    }
+                }) {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundColor(theme.secondaryText.opacity(0.7))
+                }
+                .buttonStyle(.plain)
+                .transition(.opacity.combined(with: .scale(scale: 0.8)))
+            }
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 7)
+        .background(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(theme.tertiaryBackground.opacity(colorScheme == .dark ? 0.6 : 0.8))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .stroke(
+                    isSearchFocused ? theme.accentColor.opacity(0.3) : Color.clear,
+                    lineWidth: 1
+                )
+        )
+        .animation(theme.animationQuick(), value: isSearchFocused)
+        .animation(theme.animationQuick(), value: searchQuery.isEmpty)
+    }
+
     // MARK: - Empty State
 
     private var emptyState: some View {
@@ -85,12 +151,57 @@ struct ChatSessionSidebar: View {
         .frame(maxWidth: .infinity)
     }
 
+    // MARK: - No Results State
+
+    private var noResultsState: some View {
+        VStack(spacing: 12) {
+            Spacer()
+
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: 24, weight: .light))
+                .foregroundColor(theme.secondaryText.opacity(0.4))
+
+            VStack(spacing: 4) {
+                Text("No matches found")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundColor(theme.secondaryText.opacity(0.8))
+
+                Text("for \"\(searchQuery)\"")
+                    .font(.system(size: 11))
+                    .foregroundColor(theme.secondaryText.opacity(0.6))
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+            }
+
+            Button(action: {
+                withAnimation(theme.animationQuick()) {
+                    searchQuery = ""
+                }
+            }) {
+                Text("Clear search")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundColor(theme.accentColor)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 6)
+                    .background(
+                        RoundedRectangle(cornerRadius: 6, style: .continuous)
+                            .fill(theme.accentColor.opacity(0.1))
+                    )
+            }
+            .buttonStyle(.plain)
+
+            Spacer()
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.horizontal, 16)
+    }
+
     // MARK: - Session List
 
     private var sessionList: some View {
         ScrollView {
             LazyVStack(spacing: 2) {
-                ForEach(manager.sessions) { session in
+                ForEach(filteredSessions) { session in
                     SessionRow(
                         session: session,
                         isSelected: session.id == currentSessionId,
