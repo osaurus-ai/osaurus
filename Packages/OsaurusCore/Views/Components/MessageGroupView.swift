@@ -22,6 +22,7 @@ struct MessageGroupView: View {
     let group: MessageGroup
     let width: CGFloat
     let isStreaming: Bool  // Global streaming state
+    let personaName: String  // Name to display for assistant messages
 
     // Actions
     let onCopy: (String) -> Void
@@ -39,7 +40,7 @@ struct MessageGroupView: View {
     }
 
     private var roleLabel: String {
-        group.role == .user ? "You" : "Assistant"
+        group.role == .user ? "You" : personaName
     }
 
     /// Calculate the actual content width

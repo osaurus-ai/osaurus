@@ -22,6 +22,8 @@ final class ChatSession: ObservableObject {
     @Published var hasAnyModel: Bool = false
     /// Per-session tool overrides. Empty = use global config, otherwise map of tool name -> enabled
     @Published var enabledToolOverrides: [String: Bool] = [:]
+    /// The persona this session belongs to
+    @Published var personaId: UUID?
 
     // MARK: - Persistence Properties
     @Published var sessionId: UUID?
@@ -176,8 +178,8 @@ final class ChatSession: ObservableObject {
     var estimatedContextTokens: Int {
         var total = 0
 
-        // System prompt
-        let systemPrompt = ChatConfigurationStore.load().systemPrompt
+        // System prompt (use persona's effective system prompt)
+        let systemPrompt = PersonaManager.shared.effectiveSystemPrompt(for: personaId ?? Persona.defaultId)
         if !systemPrompt.isEmpty {
             total += max(1, systemPrompt.count / 4)
         }
@@ -271,16 +273,28 @@ final class ChatSession: ObservableObject {
         createdAt = Date()
         updatedAt = Date()
         isDirty = false
+        // Keep current personaId - don't reset when creating new chat within same persona
 
-        // Apply configured default model for new chat
-        let chatConfig = ChatConfigurationStore.load()
-        if let defaultModel = chatConfig.defaultModel,
+        // Apply model from persona or global config
+        let effectiveModel = PersonaManager.shared.effectiveModel(for: personaId ?? Persona.defaultId)
+        if let defaultModel = effectiveModel,
             modelOptions.contains(where: { $0.id == defaultModel })
         {
             selectedModel = defaultModel
         } else {
             selectedModel = modelOptions.first?.id
         }
+
+        // Apply tool overrides from persona
+        if let toolOverrides = PersonaManager.shared.effectiveToolOverrides(for: personaId ?? Persona.defaultId) {
+            enabledToolOverrides = toolOverrides
+        }
+    }
+
+    /// Reset for a specific persona
+    func reset(for newPersonaId: UUID?) {
+        personaId = newPersonaId
+        reset()
     }
 
     // MARK: - Persistence Methods
@@ -295,7 +309,8 @@ final class ChatSession: ObservableObject {
             updatedAt: updatedAt,
             selectedModel: selectedModel,
             turns: turnData,
-            enabledToolOverrides: enabledToolOverrides.isEmpty ? nil : enabledToolOverrides
+            enabledToolOverrides: enabledToolOverrides.isEmpty ? nil : enabledToolOverrides,
+            personaId: personaId
         )
     }
 
@@ -335,6 +350,7 @@ final class ChatSession: ObservableObject {
         title = data.title
         createdAt = data.createdAt
         updatedAt = data.updatedAt
+        personaId = data.personaId
 
         // Restore saved model if available, otherwise use configured default
         if let savedModel = data.selectedModel,
@@ -342,9 +358,9 @@ final class ChatSession: ObservableObject {
         {
             selectedModel = savedModel
         } else {
-            // Fall back to configured default model or first available
-            let chatConfig = ChatConfigurationStore.load()
-            if let defaultModel = chatConfig.defaultModel,
+            // Fall back to persona's model, then global config, then first available
+            let effectiveModel = PersonaManager.shared.effectiveModel(for: data.personaId ?? Persona.defaultId)
+            if let defaultModel = effectiveModel,
                 modelOptions.contains(where: { $0.id == defaultModel })
             {
                 selectedModel = defaultModel
@@ -448,10 +464,16 @@ final class ChatSession: ObservableObject {
             do {
                 let engine = ChatEngine(source: .chatUI)
                 let chatCfg = ChatConfigurationStore.load()
-                let sys = chatCfg.systemPrompt.trimmingCharacters(in: .whitespacesAndNewlines)
-                // Use per-session tool overrides if any, otherwise use global config
+                // Use persona's system prompt if available, otherwise fall back to global
+                let sys = PersonaManager.shared.effectiveSystemPrompt(for: personaId ?? Persona.defaultId)
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                // Use per-session tool overrides if any, otherwise check persona, then global config
+                let effectiveOverrides: [String: Bool]? =
+                    enabledToolOverrides.isEmpty
+                    ? PersonaManager.shared.effectiveToolOverrides(for: personaId ?? Persona.defaultId)
+                    : enabledToolOverrides
                 let toolSpecs = ToolRegistry.shared.specs(
-                    withOverrides: enabledToolOverrides.isEmpty ? nil : enabledToolOverrides
+                    withOverrides: effectiveOverrides
                 )
 
                 // Estimate tokens for a message (heuristic: ~4 chars per token)
@@ -494,11 +516,15 @@ final class ChatSession: ObservableObject {
                     return chatCfg.contextLength ?? 8192
                 }()
 
+                // Get persona-specific generation settings early for context calculation
+                let effectiveMaxTokensForPersona = PersonaManager.shared.effectiveMaxTokens(
+                    for: personaId ?? Persona.defaultId
+                )
+
                 // Reserve space for model response
-                // If maxTokens is not explicitly set in config, use a reasonable default for reservation
+                // If maxTokens is not explicitly set in persona/config, use a reasonable default for reservation
                 // rather than the maximum possible (which would starve input context)
-                let configuredMaxTokens = chatCfg.maxTokens
-                let reserveResponseTokens = configuredMaxTokens ?? 4096
+                let reserveResponseTokens = effectiveMaxTokensForPersona ?? 4096
                 let availableContextTokens = max(2048, modelContextLength - reserveResponseTokens)
 
                 @MainActor
@@ -585,13 +611,16 @@ final class ChatSession: ObservableObject {
 
                 let maxAttempts = max(chatCfg.maxToolAttempts ?? 15, 1)
                 var attempts = 0
+                // Get persona-specific generation settings
+                let effectiveTemp = PersonaManager.shared.effectiveTemperature(for: personaId ?? Persona.defaultId)
+
                 outer: while attempts < maxAttempts {
                     attempts += 1
                     let req = ChatCompletionRequest(
                         model: selectedModel ?? "default",
                         messages: buildMessages(),
-                        temperature: chatCfg.temperature,
-                        max_tokens: chatCfg.maxTokens ?? 16384,
+                        temperature: effectiveTemp,
+                        max_tokens: effectiveMaxTokensForPersona ?? 16384,
                         stream: true,
                         top_p: chatCfg.topPOverride,
                         frequency_penalty: nil,
@@ -888,6 +917,7 @@ struct ChatView: View {
     @StateObject private var themeManager = ThemeManager.shared
     @StateObject private var session = ChatSession()
     @StateObject private var sessionsManager = ChatSessionsManager.shared
+    @StateObject private var personaManager = PersonaManager.shared
     @ObservedObject private var toolRegistry = ToolRegistry.shared
     @Environment(\.colorScheme) private var colorScheme
 
@@ -897,8 +927,14 @@ struct ChatView: View {
     @State private var keyMonitor: Any?
     @State private var isHeaderHovered: Bool = false
     @State private var showSidebar: Bool = false
+    @State private var savedGlobalThemeId: UUID?  // Global theme to restore when ChatView closes
 
     private var theme: ThemeProtocol { themeManager.currentTheme }
+
+    /// Sessions filtered by the active persona
+    private var filteredSessions: [ChatSessionData] {
+        sessionsManager.sessions(for: personaManager.activePersonaId)
+    }
 
     var body: some View {
         GeometryReader { proxy in
@@ -908,9 +944,16 @@ struct ChatView: View {
             HStack(spacing: 0) {
                 // Sidebar
                 if showSidebar {
-                    ZStack {
+                    VStack(spacing: 0) {
+                        // Persona picker
+                        PersonaPickerHeader(
+                            personas: personaManager.personas,
+                            activePersonaId: personaManager.activePersonaId,
+                            onSelectPersona: switchPersona
+                        )
+
                         ChatSessionSidebar(
-                            manager: sessionsManager,
+                            sessions: filteredSessions,
                             currentSessionId: session.sessionId,
                             onSelect: { data in
                                 // Don't reload if already on this session
@@ -968,6 +1011,8 @@ struct ChatView: View {
                                 ChatEmptyState(
                                     hasModels: true,
                                     selectedModel: session.selectedModel,
+                                    personas: personaManager.personas,
+                                    activePersonaId: personaManager.activePersonaId,
                                     onOpenModelManager: {
                                         AppDelegate.shared?.showManagementWindow(initialTab: .models)
                                     },
@@ -977,6 +1022,9 @@ struct ChatView: View {
                                         } : nil,
                                     onQuickAction: { prompt in
                                         session.input = prompt
+                                    },
+                                    onSelectPersona: { newPersonaId in
+                                        switchPersona(to: newPersonaId)
                                     }
                                 )
                                 .transition(.opacity.combined(with: .scale(scale: 0.98)))
@@ -1008,6 +1056,8 @@ struct ChatView: View {
                             ChatEmptyState(
                                 hasModels: false,
                                 selectedModel: nil,
+                                personas: personaManager.personas,
+                                activePersonaId: personaManager.activePersonaId,
                                 onOpenModelManager: {
                                     AppDelegate.shared?.showManagementWindow(initialTab: .models)
                                 },
@@ -1015,7 +1065,10 @@ struct ChatView: View {
                                     ? {
                                         session.selectedModel = session.modelOptions.first?.id ?? "foundation"
                                     } : nil,
-                                onQuickAction: { _ in }
+                                onQuickAction: { _ in },
+                                onSelectPersona: { newPersonaId in
+                                    switchPersona(to: newPersonaId)
+                                }
                             )
                         }
                     }
@@ -1050,13 +1103,24 @@ struct ChatView: View {
             setupKeyMonitor()
             session.refreshModelOptions()
             sessionsManager.refresh()
+            personaManager.refresh()
+            // Set initial persona for the session
+            if session.personaId == nil {
+                session.personaId = personaManager.activePersonaId
+            }
             // Set up callback for session changes
             session.onSessionChanged = { [weak sessionsManager] in
                 sessionsManager?.refresh()
             }
+            // Save the global theme before applying persona theme
+            savedGlobalThemeId = themeManager.activeCustomTheme?.metadata.id
+            // Apply the active persona's theme (if any)
+            applyPersonaTheme(for: personaManager.activePersonaId)
         }
         .onDisappear {
             cleanupKeyMonitor()
+            // Restore global theme when ChatView closes
+            restoreGlobalTheme()
         }
         .onChange(of: session.turns.isEmpty) { _, newValue in
             resizeWindowForContent(isEmpty: newValue)
@@ -1281,6 +1345,7 @@ struct ChatView: View {
 
     private func messageThread(_ width: CGFloat) -> some View {
         let groups = session.visibleGroups
+        let activePersonaName = personaManager.activePersona.name
 
         return ScrollViewReader { proxy in
             ScrollView {
@@ -1290,6 +1355,7 @@ struct ChatView: View {
                             group: group,
                             width: width,
                             isStreaming: session.isStreaming,
+                            personaName: activePersonaName,
                             onCopy: copyToPasteboard,
                             onEdit: { turnId, newContent in
                                 session.editAndRegenerate(turnId: turnId, newContent: newContent)
@@ -1374,6 +1440,50 @@ struct ChatView: View {
     private func copyToPasteboard(_ text: String) {
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(text, forType: .string)
+    }
+
+    private func switchPersona(to newPersonaId: UUID) {
+        // Save current session before switching personas
+        if !session.turns.isEmpty {
+            session.save()
+        }
+        // Switch to new persona
+        personaManager.setActivePersona(newPersonaId)
+        // Reset session for new persona
+        session.reset(for: newPersonaId)
+        sessionsManager.refresh()
+        // Apply the new persona's theme (if any)
+        applyPersonaTheme(for: newPersonaId)
+    }
+
+    /// Apply the persona's theme for ChatView, keeping track of global theme for restoration
+    private func applyPersonaTheme(for personaId: UUID) {
+        if let themeId = personaManager.themeId(for: personaId),
+            let personaTheme = themeManager.installedThemes.first(where: { $0.metadata.id == themeId })
+        {
+            // Apply the persona's custom theme
+            themeManager.applyCustomTheme(personaTheme)
+        } else if let savedId = savedGlobalThemeId,
+            let globalTheme = themeManager.installedThemes.first(where: { $0.metadata.id == savedId })
+        {
+            // No persona theme - restore global theme
+            themeManager.applyCustomTheme(globalTheme)
+        } else if savedGlobalThemeId == nil {
+            // No global theme was saved (user was using system theme) - clear custom theme
+            themeManager.clearCustomTheme()
+        }
+    }
+
+    /// Restore the global theme that was active before ChatView applied persona themes
+    private func restoreGlobalTheme() {
+        if let savedId = savedGlobalThemeId,
+            let globalTheme = themeManager.installedThemes.first(where: { $0.metadata.id == savedId })
+        {
+            themeManager.applyCustomTheme(globalTheme)
+        } else {
+            // No global theme was saved - use system appearance
+            themeManager.clearCustomTheme()
+        }
     }
 
     private func resizeWindowForContent(isEmpty: Bool) {
@@ -1518,6 +1628,93 @@ struct WindowAccessor: NSViewRepresentable {
         if window == nil {
             Task { @MainActor in
                 self.window = nsView.window
+            }
+        }
+    }
+}
+
+// MARK: - Persona Picker Header
+
+private struct PersonaPickerHeader: View {
+    let personas: [Persona]
+    let activePersonaId: UUID
+    let onSelectPersona: (UUID) -> Void
+
+    @Environment(\.theme) private var theme
+    @Environment(\.colorScheme) private var colorScheme
+    @State private var isHovered = false
+
+    private var activePersona: Persona {
+        personas.first { $0.id == activePersonaId } ?? Persona.default
+    }
+
+    var body: some View {
+        Menu {
+            ForEach(personas) { persona in
+                Button(action: { onSelectPersona(persona.id) }) {
+                    HStack {
+                        Text(persona.name)
+                        if persona.id == activePersonaId {
+                            Image(systemName: "checkmark")
+                        }
+                    }
+                }
+            }
+
+            Divider()
+
+            Button(action: {
+                AppDelegate.shared?.showManagementWindow(initialTab: .personas)
+            }) {
+                Label("Manage Personas", systemImage: "person.2.badge.gearshape")
+            }
+        } label: {
+            HStack(spacing: 8) {
+                // Persona avatar
+                ZStack {
+                    Circle()
+                        .fill(theme.accentColor.opacity(0.15))
+                    Text(activePersona.name.prefix(1).uppercased())
+                        .font(.system(size: 11, weight: .bold, design: .rounded))
+                        .foregroundColor(theme.accentColor)
+                }
+                .frame(width: 24, height: 24)
+
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(activePersona.name)
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundColor(theme.primaryText)
+
+                    if !activePersona.description.isEmpty {
+                        Text(activePersona.description)
+                            .font(.system(size: 10))
+                            .foregroundColor(theme.secondaryText)
+                            .lineLimit(1)
+                    }
+                }
+
+                Spacer()
+
+                Image(systemName: "chevron.up.chevron.down")
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundColor(theme.secondaryText)
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 10)
+            .background(
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(isHovered ? theme.tertiaryBackground : Color.clear)
+            )
+            .contentShape(Rectangle())
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .padding(.horizontal, 8)
+        .padding(.vertical, 8)
+        .background(theme.secondaryBackground.opacity(colorScheme == .dark ? 0.85 : 0.9))
+        .onHover { hovering in
+            withAnimation(theme.animationQuick()) {
+                isHovered = hovering
             }
         }
     }

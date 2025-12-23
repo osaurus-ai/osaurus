@@ -3,6 +3,7 @@ import SwiftUI
 // MARK: - Configuration View
 struct ConfigurationView: View {
     @StateObject private var themeManager = ThemeManager.shared
+    @StateObject private var personaManager = PersonaManager.shared
 
     /// Use computed property to always get the current theme from ThemeManager
     private var theme: ThemeProtocol { themeManager.currentTheme }
@@ -20,6 +21,7 @@ struct ConfigurationView: View {
     // Chat settings state
     @State private var tempChatHotkey: Hotkey? = nil
     @State private var tempDefaultModel: String? = nil
+    @State private var tempDefaultPersonaId: UUID = Persona.defaultId
     @State private var tempSystemPrompt: String = ""
     @State private var tempChatTemperature: String = ""
     @State private var tempChatMaxTokens: String = ""
@@ -74,6 +76,7 @@ struct ConfigurationView: View {
                         "Chat",
                         "Hotkey",
                         "Model",
+                        "Persona",
                         "System Prompt",
                         "Temperature",
                         "Max Tokens",
@@ -89,6 +92,17 @@ struct ConfigurationView: View {
                                 // Global Hotkey
                                 SettingsField(label: "Global Hotkey") {
                                     HotkeyRecorder(value: $tempChatHotkey)
+                                }
+
+                                // Default Persona
+                                SettingsField(
+                                    label: "Default Persona",
+                                    hint: "Persona to use when opening chat"
+                                ) {
+                                    DefaultPersonaPicker(
+                                        selection: $tempDefaultPersonaId,
+                                        personas: personaManager.personas
+                                    )
                                 }
 
                                 // Default Model
@@ -551,6 +565,7 @@ struct ConfigurationView: View {
         let chat = ChatConfigurationStore.load()
         tempChatHotkey = chat.hotkey
         tempDefaultModel = chat.defaultModel
+        tempDefaultPersonaId = personaManager.activePersonaId
         tempSystemPrompt = chat.systemPrompt
         tempChatTemperature = chat.temperature.map { String($0) } ?? ""
         tempChatMaxTokens = chat.maxTokens.map(String.init) ?? ""
@@ -596,6 +611,7 @@ struct ConfigurationView: View {
         // Chat settings - clear overrides to use defaults
         tempChatHotkey = chatDefaults.hotkey
         tempDefaultModel = nil
+        tempDefaultPersonaId = Persona.defaultId
         tempSystemPrompt = ""
         tempChatTemperature = ""
         tempChatMaxTokens = ""
@@ -746,6 +762,12 @@ struct ConfigurationView: View {
             defaultModel: tempDefaultModel
         )
         ChatConfigurationStore.save(chatCfg)
+
+        // Save default persona setting
+        let previousPersonaId = personaManager.activePersonaId
+        if tempDefaultPersonaId != previousPersonaId {
+            personaManager.setActivePersona(tempDefaultPersonaId)
+        }
 
         let hotkeyChanged = previousChatCfg.hotkey != chatCfg.hotkey
         let alwaysOnTopChanged = previousChatCfg.alwaysOnTop != chatCfg.alwaysOnTop
@@ -1406,6 +1428,82 @@ private struct DefaultModelPicker: View {
             }
         } label: {
             HStack {
+                Text(displayName)
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundColor(theme.primaryText)
+                    .lineLimit(1)
+
+                Spacer()
+
+                Image(systemName: "chevron.up.chevron.down")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundColor(theme.secondaryText)
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            .background(
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(theme.inputBackground)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 8)
+                            .stroke(theme.inputBorder, lineWidth: 1)
+                    )
+            )
+        }
+        .menuStyle(.borderlessButton)
+    }
+}
+
+// MARK: - Default Persona Picker
+
+private struct DefaultPersonaPicker: View {
+    @Environment(\.theme) private var theme
+    @Binding var selection: UUID
+    let personas: [Persona]
+
+    private var displayName: String {
+        if let persona = personas.first(where: { $0.id == selection }) {
+            return persona.name
+        }
+        return "Default"
+    }
+
+    var body: some View {
+        Menu {
+            ForEach(personas) { persona in
+                Button(action: { selection = persona.id }) {
+                    HStack {
+                        Text(persona.name)
+                        if persona.isBuiltIn {
+                            Text("Built-in")
+                                .foregroundColor(.secondary)
+                        }
+                        if selection == persona.id {
+                            Image(systemName: "checkmark")
+                        }
+                    }
+                }
+            }
+
+            Divider()
+
+            Button(action: {
+                AppDelegate.shared?.showManagementWindow(initialTab: .personas)
+            }) {
+                Label("Manage Personas", systemImage: "person.2.badge.gearshape")
+            }
+        } label: {
+            HStack {
+                // Persona avatar
+                ZStack {
+                    Circle()
+                        .fill(theme.accentColor.opacity(0.15))
+                    Text(displayName.prefix(1).uppercased())
+                        .font(.system(size: 10, weight: .bold, design: .rounded))
+                        .foregroundColor(theme.accentColor)
+                }
+                .frame(width: 20, height: 20)
+
                 Text(displayName)
                     .font(.system(size: 13, weight: .medium))
                     .foregroundColor(theme.primaryText)

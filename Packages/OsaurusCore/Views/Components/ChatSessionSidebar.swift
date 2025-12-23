@@ -8,7 +8,8 @@
 import SwiftUI
 
 struct ChatSessionSidebar: View {
-    @ObservedObject var manager: ChatSessionsManager
+    /// Sessions to display (already filtered by persona if needed)
+    let sessions: [ChatSessionData]
     let currentSessionId: UUID?
     let onSelect: (ChatSessionData) -> Void
     let onNewChat: () -> Void
@@ -26,10 +27,10 @@ struct ChatSessionSidebar: View {
 
     private var filteredSessions: [ChatSessionData] {
         guard !searchQuery.trimmingCharacters(in: .whitespaces).isEmpty else {
-            return manager.sessions
+            return sessions
         }
         let query = searchQuery.lowercased()
-        return manager.sessions.filter { session in
+        return sessions.filter { session in
             session.title.lowercased().contains(query)
         }
     }
@@ -48,7 +49,7 @@ struct ChatSessionSidebar: View {
                 .opacity(0.3)
 
             // Session list
-            if manager.sessions.isEmpty {
+            if sessions.isEmpty {
                 emptyState
             } else if filteredSessions.isEmpty {
                 noResultsState
@@ -407,7 +408,7 @@ private struct ActionButton: View {
     struct ChatSessionSidebar_Previews: PreviewProvider {
         static var previews: some View {
             ChatSessionSidebar(
-                manager: ChatSessionsManager.shared,
+                sessions: [],
                 currentSessionId: nil,
                 onSelect: { _ in },
                 onNewChat: {},
