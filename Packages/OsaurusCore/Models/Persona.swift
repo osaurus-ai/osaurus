@@ -132,10 +132,21 @@ extension Persona {
     }
 
     /// Import a persona from JSON data
+    /// Tools that don't exist in the current system will be filtered out
+    @MainActor
     public static func importFromJSON(_ data: Data) throws -> Persona {
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
         let exportData = try decoder.decode(ExportData.self, from: data)
-        return exportData.persona
+        var imported = exportData.persona
+
+        // Filter out tools that don't exist in the current registry
+        if let tools = imported.enabledTools {
+            let availableToolNames = Set(ToolRegistry.shared.listTools().map { $0.name })
+            let filteredTools = tools.filter { availableToolNames.contains($0.key) }
+            imported.enabledTools = filteredTools.isEmpty ? nil : filteredTools
+        }
+
+        return imported
     }
 }

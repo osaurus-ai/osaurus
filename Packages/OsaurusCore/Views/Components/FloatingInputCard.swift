@@ -16,6 +16,8 @@ struct FloatingInputCard: View {
     @Binding var enabledToolOverrides: [String: Bool]
     let modelOptions: [ModelOption]
     let availableTools: [ToolRegistry.ToolEntry]
+    /// Persona's tool overrides (if any). Used as base for diffing session overrides.
+    let personaToolOverrides: [String: Bool]?
     let isStreaming: Bool
     let supportsImages: Bool
     /// Current estimated context token count for the session
@@ -379,6 +381,7 @@ struct FloatingInputCard: View {
             ToolSelectorView(
                 tools: cachedTools,
                 enabledOverrides: $enabledToolOverrides,
+                personaToolOverrides: personaToolOverrides,
                 onDismiss: { showToolPicker = false }
             )
         }
@@ -853,6 +856,7 @@ extension NSImage {
                                 parameters: nil
                             ),
                         ],
+                        personaToolOverrides: nil,
                         isStreaming: false,
                         supportsImages: true,
                         estimatedContextTokens: 2450,

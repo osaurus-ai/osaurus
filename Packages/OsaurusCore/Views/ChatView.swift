@@ -1051,6 +1051,9 @@ struct ChatView: View {
                                 availableTools: ToolRegistry.shared.listTools(
                                     withOverrides: session.enabledToolOverrides
                                 ),
+                                personaToolOverrides: personaManager.effectiveToolOverrides(
+                                    for: session.personaId ?? Persona.defaultId
+                                ),
                                 isStreaming: session.isStreaming,
                                 supportsImages: session.selectedModelSupportsImages,
                                 estimatedContextTokens: session.estimatedContextTokens,

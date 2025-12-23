@@ -501,6 +501,13 @@ private struct PersonaEditorSheet: View {
     @State private var temperature: String = ""
     @State private var maxTokens: String = ""
     @State private var selectedThemeId: UUID?
+    @State private var enabledTools: [String: Bool] = [:]
+    @State private var showToolsSection = false
+
+    /// All available tools from the registry
+    private var availableTools: [ToolRegistry.ToolEntry] {
+        ToolRegistry.shared.listTools()
+    }
 
     private var isEditing: Bool {
         if case .edit = mode { return true }
@@ -651,6 +658,76 @@ private struct PersonaEditorSheet: View {
                         .pickerStyle(.menu)
                         .labelsHidden()
                     }
+
+                    Divider()
+                        .background(themeManager.currentTheme.primaryBorder)
+
+                    // Tools Configuration
+                    DisclosureGroup(isExpanded: $showToolsSection) {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text(
+                                "Override which tools are available for this persona. Unchecked tools will be disabled when using this persona."
+                            )
+                            .font(.system(size: 11))
+                            .foregroundColor(themeManager.currentTheme.tertiaryText)
+                            .padding(.bottom, 4)
+
+                            if availableTools.isEmpty {
+                                Text("No tools available")
+                                    .font(.system(size: 12))
+                                    .foregroundColor(themeManager.currentTheme.secondaryText)
+                                    .padding(.vertical, 8)
+                            } else {
+                                LazyVStack(spacing: 0) {
+                                    ForEach(availableTools, id: \.name) { tool in
+                                        ToolToggleRow(
+                                            tool: tool,
+                                            isEnabled: enabledTools[tool.name] ?? tool.enabled,
+                                            hasOverride: enabledTools[tool.name] != nil,
+                                            onToggle: { enabled in
+                                                enabledTools[tool.name] = enabled
+                                            },
+                                            onReset: {
+                                                enabledTools.removeValue(forKey: tool.name)
+                                            }
+                                        )
+                                    }
+                                }
+                                .background(
+                                    RoundedRectangle(cornerRadius: 8)
+                                        .fill(themeManager.currentTheme.inputBackground)
+                                        .overlay(
+                                            RoundedRectangle(cornerRadius: 8)
+                                                .stroke(themeManager.currentTheme.inputBorder, lineWidth: 1)
+                                        )
+                                )
+                            }
+
+                            if !enabledTools.isEmpty {
+                                Button(action: { enabledTools.removeAll() }) {
+                                    Text("Reset All to Default")
+                                        .font(.system(size: 11, weight: .medium))
+                                        .foregroundColor(themeManager.currentTheme.accentColor)
+                                }
+                                .buttonStyle(.plain)
+                                .padding(.top, 4)
+                            }
+                        }
+                        .padding(.top, 8)
+                    } label: {
+                        HStack(spacing: 8) {
+                            Image(systemName: "wrench.and.screwdriver")
+                                .font(.system(size: 12, weight: .medium))
+                            Text("Tools Configuration")
+                                .font(.system(size: 12, weight: .semibold))
+                            if !enabledTools.isEmpty {
+                                Text("(\(enabledTools.count) overrides)")
+                                    .font(.system(size: 11))
+                                    .foregroundColor(themeManager.currentTheme.tertiaryText)
+                            }
+                        }
+                        .foregroundColor(themeManager.currentTheme.secondaryText)
+                    }
                 }
                 .padding(20)
             }
@@ -673,7 +750,7 @@ private struct PersonaEditorSheet: View {
             }
             .padding(20)
         }
-        .frame(width: 520, height: 600)
+        .frame(width: 560, height: 700)
         .background(themeManager.currentTheme.primaryBackground)
         .onAppear {
             if case .edit(let persona) = mode {
@@ -684,6 +761,8 @@ private struct PersonaEditorSheet: View {
                 temperature = persona.temperature.map { String($0) } ?? ""
                 maxTokens = persona.maxTokens.map { String($0) } ?? ""
                 selectedThemeId = persona.themeId
+                enabledTools = persona.enabledTools ?? [:]
+                showToolsSection = !(persona.enabledTools?.isEmpty ?? true)
             }
         }
     }
@@ -697,7 +776,7 @@ private struct PersonaEditorSheet: View {
             name: trimmedName,
             description: description.trimmingCharacters(in: .whitespacesAndNewlines),
             systemPrompt: systemPrompt.trimmingCharacters(in: .whitespacesAndNewlines),
-            enabledTools: nil,  // TODO: Add tool configuration UI
+            enabledTools: enabledTools.isEmpty ? nil : enabledTools,
             themeId: selectedThemeId,
             defaultModel: defaultModel.isEmpty ? nil : defaultModel,
             temperature: Float(temperature),
@@ -708,6 +787,83 @@ private struct PersonaEditorSheet: View {
         )
 
         onSave(persona)
+    }
+}
+
+// MARK: - Tool Toggle Row
+
+private struct ToolToggleRow: View {
+    @StateObject private var themeManager = ThemeManager.shared
+
+    let tool: ToolRegistry.ToolEntry
+    let isEnabled: Bool
+    let hasOverride: Bool
+    let onToggle: (Bool) -> Void
+    let onReset: () -> Void
+
+    @State private var isHovered = false
+
+    var body: some View {
+        HStack(spacing: 12) {
+            // Tool info
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(spacing: 6) {
+                    Text(tool.name)
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundColor(themeManager.currentTheme.primaryText)
+
+                    if hasOverride {
+                        Text("Modified")
+                            .font(.system(size: 9, weight: .semibold))
+                            .foregroundColor(themeManager.currentTheme.accentColor)
+                            .padding(.horizontal, 5)
+                            .padding(.vertical, 1)
+                            .background(
+                                Capsule()
+                                    .fill(themeManager.currentTheme.accentColor.opacity(0.1))
+                            )
+                    }
+                }
+
+                Text(tool.description)
+                    .font(.system(size: 10))
+                    .foregroundColor(themeManager.currentTheme.tertiaryText)
+                    .lineLimit(1)
+            }
+
+            Spacer()
+
+            // Reset button (only when overridden)
+            if hasOverride && isHovered {
+                Button(action: onReset) {
+                    Image(systemName: "arrow.uturn.backward")
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundColor(themeManager.currentTheme.secondaryText)
+                }
+                .buttonStyle(.plain)
+                .help("Reset to default")
+            }
+
+            // Toggle
+            Toggle(
+                "",
+                isOn: Binding(
+                    get: { isEnabled },
+                    set: { onToggle($0) }
+                )
+            )
+            .toggleStyle(.switch)
+            .controlSize(.small)
+            .labelsHidden()
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(isHovered ? themeManager.currentTheme.tertiaryBackground.opacity(0.5) : Color.clear)
+        .onHover { hovering in
+            withAnimation(.easeOut(duration: 0.1)) {
+                isHovered = hovering
+            }
+        }
     }
 }
 
