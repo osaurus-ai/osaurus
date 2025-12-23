@@ -55,6 +55,25 @@ struct MessageGroupView: View {
         isStreaming && group.role == .assistant
     }
 
+    /// Groups consecutive tool-only turns together for unified rendering
+    private var groupedTurnContent: [(kind: TurnContentKind, turns: [ChatTurn])] {
+        var result: [(kind: TurnContentKind, turns: [ChatTurn])] = []
+
+        for turn in group.turns {
+            let isToolOnly = turn.content.isEmpty && (turn.toolCalls?.isEmpty == false)
+            let kind: TurnContentKind = isToolOnly ? .toolCalls : .content
+
+            // If same kind as previous, append to existing group
+            if let last = result.last, last.kind == kind {
+                result[result.count - 1].turns.append(turn)
+            } else {
+                result.append((kind: kind, turns: [turn]))
+            }
+        }
+
+        return result
+    }
+
     var body: some View {
         HStack(alignment: .top, spacing: 0) {
             // Continuous accent bar
@@ -66,22 +85,33 @@ struct MessageGroupView: View {
                 headerRow
                     .padding(.bottom, 8)
 
-                // Message turns
+                // Message turns - grouped by content type
                 VStack(alignment: .leading, spacing: 0) {
-                    ForEach(Array(group.turns.enumerated()), id: \.element.id) { index, turn in
-                        let isLatestInGroup = index == group.turns.count - 1
+                    ForEach(Array(groupedTurnContent.enumerated()), id: \.offset) { groupIndex, turnGroup in
+                        if turnGroup.kind == .toolCalls {
+                            // Render all tool calls from consecutive tool-only turns in one container
+                            GroupedToolCallsView(
+                                turns: turnGroup.turns,
+                                isStreaming: isStreaming
+                            )
+                            .padding(.top, groupIndex > 0 ? 8 : 0)
+                        } else {
+                            // Regular content turns
+                            ForEach(Array(turnGroup.turns.enumerated()), id: \.element.id) { turnIndex, turn in
+                                let isLatestInGroup =
+                                    groupIndex == groupedTurnContent.count - 1 && turnIndex == turnGroup.turns.count - 1
 
-                        MessageContent(
-                            turn: turn,
-                            availableWidth: contentWidth,
-                            isStreaming: isStreaming,
-                            isLatest: isLatestInGroup && isStreamingGroup,
-                            onCopy: onCopy,
-                            onEdit: onEdit
-                        )
-                        .padding(.top, spacingForTurn(at: index))
-                        // Allow edit via direct tap on user messages?
-                        // MessageContent handles its own editing state
+                                MessageContent(
+                                    turn: turn,
+                                    availableWidth: contentWidth,
+                                    isStreaming: isStreaming,
+                                    isLatest: isLatestInGroup && isStreamingGroup,
+                                    onCopy: onCopy,
+                                    onEdit: onEdit
+                                )
+                                .padding(.top, (groupIndex > 0 || turnIndex > 0) ? 16 : 0)
+                            }
+                        }
                     }
                 }
             }
@@ -93,10 +123,14 @@ struct MessageGroupView: View {
         .contentShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
         .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
         .onHover { hovering in
-            withAnimation(theme.animationQuick()) {
-                isHovered = hovering
-            }
+            // Use explicit animation only for hover state, not for child layouts
+            isHovered = hovering
         }
+    }
+
+    private enum TurnContentKind {
+        case content
+        case toolCalls
     }
 
     // MARK: - Helpers
@@ -224,5 +258,132 @@ struct MessageGroupView: View {
                 Color.clear
             }
         }
+    }
+}
+
+// MARK: - Grouped Tool Calls View
+
+/// Renders tool calls from multiple turns in a single grouped container
+struct GroupedToolCallsView: View {
+    let turns: [ChatTurn]
+    let isStreaming: Bool
+
+    @Environment(\.theme) private var theme
+    @State private var gradientRotation: Double = 0
+    @State private var showCompletionGlow: Bool = false
+
+    /// Collect all tool calls from all turns with their results
+    private var allToolCalls: [(call: ToolCall, result: String?, turnId: UUID)] {
+        var result: [(call: ToolCall, result: String?, turnId: UUID)] = []
+        for turn in turns {
+            if let calls = turn.toolCalls {
+                for call in calls {
+                    result.append((call: call, result: turn.toolResults[call.id], turnId: turn.id))
+                }
+            }
+        }
+        return result
+    }
+
+    /// Check if any tool call is still in progress
+    private var hasInProgressCall: Bool {
+        allToolCalls.contains { $0.result == nil }
+    }
+
+    /// Check if any tool call was rejected
+    private var hasRejectedCall: Bool {
+        allToolCalls.contains { $0.result?.hasPrefix("[REJECTED]") == true }
+    }
+
+    /// Border color based on state
+    private var completionBorderColor: Color {
+        if hasInProgressCall {
+            return theme.accentColor
+        } else if hasRejectedCall {
+            return theme.errorColor
+        } else {
+            return theme.successColor
+        }
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            ForEach(Array(allToolCalls.enumerated()), id: \.element.call.id) { index, item in
+                InlineToolCallView(
+                    call: item.call,
+                    result: item.result
+                )
+
+                // Divider between tool calls (not after last)
+                if index < allToolCalls.count - 1 {
+                    Divider()
+                        .background(theme.primaryBorder.opacity(0.15))
+                }
+            }
+        }
+        .background(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(theme.secondaryBackground.opacity(0.6))
+        )
+        // Border: animated gradient when in progress, colored when complete
+        .overlay(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .strokeBorder(
+                    hasInProgressCall
+                        ? AnyShapeStyle(animatedGradientBorder)
+                        : AnyShapeStyle(completionBorderColor.opacity(showCompletionGlow ? 0.6 : 0.25)),
+                    lineWidth: hasInProgressCall ? 1.5 : (showCompletionGlow ? 1.5 : 1)
+                )
+                .animation(.easeOut(duration: 0.8), value: showCompletionGlow)
+        )
+        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+        // Glow effect
+        .shadow(
+            color: hasInProgressCall
+                ? theme.accentColor.opacity(0.15)
+                : (showCompletionGlow ? completionBorderColor.opacity(0.2) : .clear),
+            radius: 8,
+            x: 0,
+            y: 2
+        )
+        .animation(.easeOut(duration: 0.8), value: showCompletionGlow)
+        .onAppear {
+            if hasInProgressCall {
+                startGradientAnimation()
+            }
+        }
+        .onChange(of: hasInProgressCall) { oldValue, inProgress in
+            if inProgress {
+                startGradientAnimation()
+            } else if oldValue {
+                // Just completed - show completion glow then fade
+                showCompletionGlow = true
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                    withAnimation(.easeOut(duration: 0.8)) {
+                        showCompletionGlow = false
+                    }
+                }
+            }
+        }
+    }
+
+    private func startGradientAnimation() {
+        withAnimation(.linear(duration: 3.0).repeatForever(autoreverses: false)) {
+            gradientRotation = 360
+        }
+    }
+
+    private var animatedGradientBorder: AngularGradient {
+        AngularGradient(
+            gradient: Gradient(colors: [
+                theme.accentColor.opacity(0.6),
+                theme.accentColor.opacity(0.2),
+                theme.accentColor.opacity(0.4),
+                theme.accentColor.opacity(0.2),
+                theme.accentColor.opacity(0.6),
+            ]),
+            center: .center,
+            angle: .degrees(gradientRotation)
+        )
     }
 }
