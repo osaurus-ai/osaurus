@@ -176,14 +176,22 @@ private struct SessionRow: View {
                     }
                     Spacer()
 
-                    // Delete button (visible on hover)
+                    // Action buttons (visible on hover)
                     if isHovered {
-                        Button(action: onDelete) {
-                            Image(systemName: "trash")
-                                .font(.system(size: 11, weight: .medium))
-                                .foregroundColor(theme.secondaryText)
+                        HStack(spacing: 4) {
+                            ActionButton(
+                                icon: "pencil",
+                                help: "Rename",
+                                action: onStartRename
+                            )
+
+                            ActionButton(
+                                icon: "trash",
+                                help: "Delete",
+                                action: onDelete
+                            )
                         }
-                        .buttonStyle(.plain)
+                        .transition(.opacity.combined(with: .scale(scale: 0.9)))
                     }
                 }
                 .padding(.horizontal, 10)
@@ -196,6 +204,10 @@ private struct SessionRow: View {
                 withAnimation(theme.animationQuick()) {
                     isHovered = hovering
                 }
+            }
+            .contextMenu {
+                Button("Rename", action: onStartRename)
+                Button("Delete", role: .destructive, action: onDelete)
             }
         }
     }
@@ -242,6 +254,38 @@ private struct SessionRow: View {
         let formatter = RelativeDateTimeFormatter()
         formatter.unitsStyle = .abbreviated
         return formatter.localizedString(for: date, relativeTo: Date())
+    }
+}
+
+// MARK: - Action Button
+
+private struct ActionButton: View {
+    let icon: String
+    let help: String
+    let action: () -> Void
+
+    @Environment(\.theme) private var theme
+    @State private var isHovered = false
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: icon)
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundColor(isHovered ? theme.primaryText : theme.secondaryText)
+                .frame(width: 24, height: 24)
+                .background(
+                    RoundedRectangle(cornerRadius: 5, style: .continuous)
+                        .fill(isHovered ? theme.secondaryBackground : Color.clear)
+                )
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help(help)
+        .onHover { hovering in
+            withAnimation(.easeInOut(duration: 0.15)) {
+                isHovered = hovering
+            }
+        }
     }
 }
 
