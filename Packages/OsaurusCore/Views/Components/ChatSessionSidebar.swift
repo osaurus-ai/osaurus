@@ -162,44 +162,45 @@ private struct SessionRow: View {
                 .background(rowBackground)
                 .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
         } else {
-            Button(action: onSelect) {
-                HStack {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(session.title)
-                            .font(.system(size: 12, weight: .medium))
-                            .foregroundColor(theme.primaryText)
-                            .lineLimit(1)
+            HStack {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(session.title)
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundColor(theme.primaryText)
+                        .lineLimit(1)
 
-                        Text(relativeDate(session.updatedAt))
-                            .font(.system(size: 10))
-                            .foregroundColor(theme.secondaryText.opacity(0.7))
-                    }
-                    Spacer()
-
-                    // Action buttons (visible on hover)
-                    if isHovered {
-                        HStack(spacing: 4) {
-                            ActionButton(
-                                icon: "pencil",
-                                help: "Rename",
-                                action: onStartRename
-                            )
-
-                            ActionButton(
-                                icon: "trash",
-                                help: "Delete",
-                                action: onDelete
-                            )
-                        }
-                        .transition(.opacity.combined(with: .scale(scale: 0.9)))
-                    }
+                    Text(relativeDate(session.updatedAt))
+                        .font(.system(size: 10))
+                        .foregroundColor(theme.secondaryText.opacity(0.7))
                 }
-                .padding(.horizontal, 10)
-                .padding(.vertical, 8)
-                .background(rowBackground)
-                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                Spacer()
+
+                // Action buttons (visible on hover)
+                if isHovered {
+                    HStack(spacing: 4) {
+                        ActionButton(
+                            icon: "pencil",
+                            help: "Rename",
+                            action: onStartRename
+                        )
+
+                        ActionButton(
+                            icon: "trash",
+                            help: "Delete",
+                            action: onDelete
+                        )
+                    }
+                    .transition(.opacity.combined(with: .scale(scale: 0.9)))
+                }
             }
-            .buttonStyle(.plain)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 8)
+            .background(rowBackground)
+            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .onTapGesture {
+                onSelect()
+            }
             .onHover { hovering in
                 withAnimation(theme.animationQuick()) {
                     isHovered = hovering
