@@ -385,6 +385,7 @@ struct ThemeBackgroundImage: View {
                     overlayColor.opacity(theme.backgroundOverlayOpacity)
                 }
             }
+            .allowsHitTesting(false)
         }
     }
 }

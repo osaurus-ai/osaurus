@@ -24,9 +24,6 @@ struct ChatSessionSidebar: View {
         VStack(spacing: 0) {
             // Header with New Chat button
             sidebarHeader
-                .onTapGesture {
-                    dismissEditing()
-                }
 
             Divider()
                 .opacity(0.3)
@@ -34,9 +31,6 @@ struct ChatSessionSidebar: View {
             // Session list
             if manager.sessions.isEmpty {
                 emptyState
-                    .onTapGesture {
-                        dismissEditing()
-                    }
             } else {
                 sessionList
             }
@@ -161,62 +155,53 @@ private struct SessionRow: View {
     @FocusState private var isTextFieldFocused: Bool
 
     var body: some View {
-        Group {
-            if isEditing {
-                editingView
-            } else {
-                normalView
+        if isEditing {
+            editingView
+                .padding(.horizontal, 10)
+                .padding(.vertical, 8)
+                .background(rowBackground)
+                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        } else {
+            Button(action: onSelect) {
+                HStack {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(session.title)
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundColor(theme.primaryText)
+                            .lineLimit(1)
+
+                        Text(relativeDate(session.updatedAt))
+                            .font(.system(size: 10))
+                            .foregroundColor(theme.secondaryText.opacity(0.7))
+                    }
+                    Spacer()
+
+                    // Delete button (visible on hover)
+                    if isHovered {
+                        Button(action: onDelete) {
+                            Image(systemName: "trash")
+                                .font(.system(size: 11, weight: .medium))
+                                .foregroundColor(theme.secondaryText)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+                .padding(.horizontal, 10)
+                .padding(.vertical, 8)
+                .background(rowBackground)
+                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
             }
-        }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 8)
-        .background(rowBackground)
-        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-        .contentShape(Rectangle())
-        .onHover { hovering in
-            withAnimation(theme.animationQuick()) {
-                isHovered = hovering
+            .buttonStyle(.plain)
+            .onHover { hovering in
+                withAnimation(theme.animationQuick()) {
+                    isHovered = hovering
+                }
             }
         }
     }
 
     private var normalView: some View {
-        HStack(spacing: 8) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(session.title)
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(theme.primaryText)
-                    .lineLimit(1)
-
-                Text(relativeDate(session.updatedAt))
-                    .font(.system(size: 10))
-                    .foregroundColor(theme.secondaryText.opacity(0.7))
-            }
-
-            Spacer()
-
-            // Delete button (visible on hover)
-            if isHovered {
-                Button(action: onDelete) {
-                    Image(systemName: "trash")
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundColor(theme.secondaryText)
-                }
-                .buttonStyle(.plain)
-                .help("Delete")
-                .transition(.opacity)
-            }
-        }
-        .contentShape(Rectangle())
-        .onTapGesture {
-            onSelect()
-        }
-        .gesture(
-            TapGesture(count: 2)
-                .onEnded {
-                    onStartRename()
-                }
-        )
+        EmptyView()  // Keeping for compilation but not used
     }
 
     private var editingView: some View {

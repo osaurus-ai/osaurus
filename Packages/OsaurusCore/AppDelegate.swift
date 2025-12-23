@@ -475,7 +475,7 @@ extension AppDelegate {
             win.standardWindowButton(.closeButton)?.isHidden = true
             win.titleVisibility = .hidden
             win.titlebarAppearsTransparent = true
-            win.isMovableByWindowBackground = true
+            win.isMovableByWindowBackground = false
             let chatConfig = ChatConfigurationStore.load()
             win.level = chatConfig.alwaysOnTop ? .floating : .normal
             if chatConfig.alwaysOnTop {
