@@ -34,8 +34,8 @@ public enum RemoteProviderAuthType: String, Codable, Sendable, CaseIterable {
 
 /// Type of remote provider (determines API format)
 public enum RemoteProviderType: String, Codable, Sendable, CaseIterable {
-    case openai = "openai"      // OpenAI-compatible API (default)
-    case anthropic = "anthropic" // Anthropic Messages API
+    case openai = "openai"  // OpenAI-compatible API (default)
+    case anthropic = "anthropic"  // Anthropic Messages API
 
     public var displayName: String {
         switch self {

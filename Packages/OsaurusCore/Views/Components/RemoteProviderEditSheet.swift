@@ -2,7 +2,7 @@
 //  RemoteProviderEditSheet.swift
 //  osaurus
 //
-//  Sheet for adding/editing remote OpenAI-compatible API providers.
+//  Sheet for adding/editing remote API providers (OpenAI, Anthropic, etc.).
 //
 
 import SwiftUI
@@ -268,7 +268,7 @@ struct RemoteProviderEditSheet: View {
                     .font(.system(size: 16, weight: .semibold))
                     .foregroundColor(theme.primaryText)
 
-                Text(isEditing ? "Modify your API connection" : "Connect to an OpenAI-compatible API")
+                Text(isEditing ? "Modify your API connection" : "Connect to a remote API provider")
                     .font(.system(size: 12))
                     .foregroundColor(theme.secondaryText)
             }

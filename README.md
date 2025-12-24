@@ -16,7 +16,7 @@
 <img width="372" height="222" alt="Screenshot 2025-12-15 at 4 17 47 PM" src="https://github.com/user-attachments/assets/c0fe3a6a-9d5b-4afe-886f-19077218dcc5" />
 </p>
 
-**Native macOS LLM server with MCP support.** Run local and remote language models on Apple Silicon with OpenAI-compatible APIs, tool calling, and a built-in plugin ecosystem.
+**Native macOS LLM server with MCP support.** Run local and remote language models on Apple Silicon with OpenAI & Anthropic compatible APIs, tool calling, and a built-in plugin ecosystem.
 
 Created by Dinoki Labs ([dinoki.ai](https://dinoki.ai))
 
@@ -41,7 +41,7 @@ After installing, launch from Spotlight (`⌘ Space` → "osaurus") or run `osau
 Osaurus is an all-in-one LLM server for macOS. It combines:
 
 - **MLX Runtime** — Optimized local inference for Apple Silicon using [MLX](https://github.com/ml-explore/mlx)
-- **Remote Providers** — Connect to OpenAI, OpenRouter, Ollama, LM Studio, or any OpenAI-compatible API
+- **Remote Providers** — Connect to Anthropic, OpenAI, OpenRouter, Ollama, LM Studio, or any compatible API
 - **OpenAI, Anthropic & Ollama APIs** — Drop-in compatible endpoints for existing tools
 - **MCP Server** — Expose tools to AI agents via Model Context Protocol
 - **Remote MCP Providers** — Connect to external MCP servers and aggregate their tools
@@ -54,7 +54,7 @@ Osaurus is an all-in-one LLM server for macOS. It combines:
 | Feature                  | Description                                                     |
 | ------------------------ | --------------------------------------------------------------- |
 | **Local LLM Server**     | Run Llama, Qwen, Gemma, Mistral, and more locally               |
-| **Remote Providers**     | OpenAI, OpenRouter, Ollama, LM Studio, or custom endpoints      |
+| **Remote Providers**     | Anthropic, OpenAI, OpenRouter, Ollama, LM Studio, or custom     |
 | **OpenAI Compatible**    | `/v1/chat/completions` with streaming and tool calling          |
 | **Anthropic Compatible** | `/messages` endpoint for Claude Code and Anthropic SDK clients  |
 | **MCP Server**           | Connect to Cursor, Claude Desktop, and other MCP clients        |
@@ -120,10 +120,11 @@ curl http://127.0.0.1:1337/v1/chat/completions \
 
 ### Remote Providers
 
-Connect to any OpenAI-compatible API to access cloud models alongside local ones.
+Connect to remote APIs to access cloud models alongside local ones.
 
 **Supported presets:**
 
+- **Anthropic** — Claude models with native API support
 - **OpenAI** — GPT-4o, o1, and other OpenAI models
 - **OpenRouter** — Access multiple providers through one API
 - **Ollama** — Connect to a local or remote Ollama instance

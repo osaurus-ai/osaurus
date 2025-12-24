@@ -260,10 +260,16 @@ public actor RemoteProviderService: ToolCapableService {
                                 do {
                                     if providerType == .anthropic {
                                         // Parse Anthropic SSE event
-                                        if let eventType = try? JSONDecoder().decode(AnthropicSSEEvent.self, from: jsonData) {
+                                        if let eventType = try? JSONDecoder().decode(
+                                            AnthropicSSEEvent.self,
+                                            from: jsonData
+                                        ) {
                                             switch eventType.type {
                                             case "content_block_delta":
-                                                if let deltaEvent = try? JSONDecoder().decode(ContentBlockDeltaEvent.self, from: jsonData) {
+                                                if let deltaEvent = try? JSONDecoder().decode(
+                                                    ContentBlockDeltaEvent.self,
+                                                    from: jsonData
+                                                ) {
                                                     if case .textDelta(let textDelta) = deltaEvent.delta {
                                                         var output = textDelta.text
                                                         for seq in stopSequences {
@@ -278,21 +284,29 @@ public actor RemoteProviderService: ToolCapableService {
                                                     } else if case .inputJsonDelta(let jsonDelta) = deltaEvent.delta {
                                                         // Accumulate tool call JSON
                                                         let idx = deltaEvent.index
-                                                        var current = accumulatedToolCalls[idx] ?? (id: nil, name: nil, args: "")
+                                                        var current =
+                                                            accumulatedToolCalls[idx] ?? (id: nil, name: nil, args: "")
                                                         current.args += jsonDelta.partial_json
                                                         accumulatedToolCalls[idx] = current
                                                     }
                                                 }
                                             case "content_block_start":
-                                                if let startEvent = try? JSONDecoder().decode(ContentBlockStartEvent.self, from: jsonData) {
+                                                if let startEvent = try? JSONDecoder().decode(
+                                                    ContentBlockStartEvent.self,
+                                                    from: jsonData
+                                                ) {
                                                     if case .toolUse(let toolBlock) = startEvent.content_block {
                                                         let idx = startEvent.index
-                                                        accumulatedToolCalls[idx] = (id: toolBlock.id, name: toolBlock.name, args: "")
+                                                        accumulatedToolCalls[idx] = (
+                                                            id: toolBlock.id, name: toolBlock.name, args: ""
+                                                        )
                                                     }
                                                 }
                                             case "message_stop":
                                                 // Check for accumulated tool calls before finishing
-                                                if let firstToolCall = accumulatedToolCalls.sorted(by: { $0.key < $1.key }).first,
+                                                if let firstToolCall = accumulatedToolCalls.sorted(by: {
+                                                    $0.key < $1.key
+                                                }).first,
                                                     let toolName = firstToolCall.value.name
                                                 {
                                                     continuation.finish(
@@ -578,10 +592,16 @@ public actor RemoteProviderService: ToolCapableService {
                                 do {
                                     if providerType == .anthropic {
                                         // Parse Anthropic SSE event
-                                        if let eventType = try? JSONDecoder().decode(AnthropicSSEEvent.self, from: jsonData) {
+                                        if let eventType = try? JSONDecoder().decode(
+                                            AnthropicSSEEvent.self,
+                                            from: jsonData
+                                        ) {
                                             switch eventType.type {
                                             case "content_block_delta":
-                                                if let deltaEvent = try? JSONDecoder().decode(ContentBlockDeltaEvent.self, from: jsonData) {
+                                                if let deltaEvent = try? JSONDecoder().decode(
+                                                    ContentBlockDeltaEvent.self,
+                                                    from: jsonData
+                                                ) {
                                                     if case .textDelta(let textDelta) = deltaEvent.delta {
                                                         var output = textDelta.text
                                                         for seq in stopSequences {
@@ -596,31 +616,46 @@ public actor RemoteProviderService: ToolCapableService {
                                                     } else if case .inputJsonDelta(let jsonDelta) = deltaEvent.delta {
                                                         // Accumulate tool call JSON
                                                         let idx = deltaEvent.index
-                                                        var current = accumulatedToolCalls[idx] ?? (id: nil, name: nil, args: "")
+                                                        var current =
+                                                            accumulatedToolCalls[idx] ?? (id: nil, name: nil, args: "")
                                                         current.args += jsonDelta.partial_json
                                                         accumulatedToolCalls[idx] = current
                                                     }
                                                 }
                                             case "content_block_start":
-                                                if let startEvent = try? JSONDecoder().decode(ContentBlockStartEvent.self, from: jsonData) {
+                                                if let startEvent = try? JSONDecoder().decode(
+                                                    ContentBlockStartEvent.self,
+                                                    from: jsonData
+                                                ) {
                                                     if case .toolUse(let toolBlock) = startEvent.content_block {
                                                         let idx = startEvent.index
-                                                        accumulatedToolCalls[idx] = (id: toolBlock.id, name: toolBlock.name, args: "")
-                                                        print("[Osaurus] Tool call detected: index=\(idx), name=\(toolBlock.name)")
+                                                        accumulatedToolCalls[idx] = (
+                                                            id: toolBlock.id, name: toolBlock.name, args: ""
+                                                        )
+                                                        print(
+                                                            "[Osaurus] Tool call detected: index=\(idx), name=\(toolBlock.name)"
+                                                        )
                                                     }
                                                 }
                                             case "message_delta":
-                                                if let deltaEvent = try? JSONDecoder().decode(MessageDeltaEvent.self, from: jsonData) {
+                                                if let deltaEvent = try? JSONDecoder().decode(
+                                                    MessageDeltaEvent.self,
+                                                    from: jsonData
+                                                ) {
                                                     if let stopReason = deltaEvent.delta.stop_reason {
                                                         lastFinishReason = stopReason
                                                     }
                                                 }
                                             case "message_stop":
                                                 // Check for accumulated tool calls before finishing
-                                                if let firstToolCall = accumulatedToolCalls.sorted(by: { $0.key < $1.key }).first,
+                                                if let firstToolCall = accumulatedToolCalls.sorted(by: {
+                                                    $0.key < $1.key
+                                                }).first,
                                                     let toolName = firstToolCall.value.name
                                                 {
-                                                    print("[Osaurus] Anthropic stream ended: Emitting tool call '\(toolName)'")
+                                                    print(
+                                                        "[Osaurus] Anthropic stream ended: Emitting tool call '\(toolName)'"
+                                                    )
                                                     continuation.finish(
                                                         throwing: ServiceToolInvocation(
                                                             toolName: toolName,
@@ -843,11 +878,13 @@ public actor RemoteProviderService: ToolCapableService {
                 case .toolUse(_, let id, let name, let input):
                     let argsData = try? JSONSerialization.data(withJSONObject: input.mapValues { $0.value })
                     let argsString = argsData.flatMap { String(data: $0, encoding: .utf8) } ?? "{}"
-                    toolCalls.append(ToolCall(
-                        id: id,
-                        type: "function",
-                        function: ToolCallFunction(name: name, arguments: argsString)
-                    ))
+                    toolCalls.append(
+                        ToolCall(
+                            id: id,
+                            type: "function",
+                            function: ToolCallFunction(name: name, arguments: argsString)
+                        )
+                    )
                 }
             }
 
@@ -901,10 +938,12 @@ private struct RemoteChatRequest: Encodable {
             case "user":
                 // Convert user messages
                 if let content = msg.content {
-                    anthropicMessages.append(AnthropicMessage(
-                        role: "user",
-                        content: .text(content)
-                    ))
+                    anthropicMessages.append(
+                        AnthropicMessage(
+                            role: "user",
+                            content: .text(content)
+                        )
+                    )
                 }
 
             case "assistant":
@@ -918,37 +957,48 @@ private struct RemoteChatRequest: Encodable {
                 if let toolCalls = msg.tool_calls {
                     for toolCall in toolCalls {
                         if let argsData = toolCall.function.arguments.data(using: .utf8),
-                           let argsDict = try? JSONSerialization.jsonObject(with: argsData) as? [String: Any] {
-                            blocks.append(.toolUse(AnthropicToolUseBlock(
-                                id: toolCall.id,
-                                name: toolCall.function.name,
-                                input: argsDict.mapValues { AnyCodableValue($0) }
-                            )))
+                            let argsDict = try? JSONSerialization.jsonObject(with: argsData) as? [String: Any]
+                        {
+                            blocks.append(
+                                .toolUse(
+                                    AnthropicToolUseBlock(
+                                        id: toolCall.id,
+                                        name: toolCall.function.name,
+                                        input: argsDict.mapValues { AnyCodableValue($0) }
+                                    )
+                                )
+                            )
                         }
                     }
                 }
 
                 if !blocks.isEmpty {
-                    anthropicMessages.append(AnthropicMessage(
-                        role: "assistant",
-                        content: .blocks(blocks)
-                    ))
+                    anthropicMessages.append(
+                        AnthropicMessage(
+                            role: "assistant",
+                            content: .blocks(blocks)
+                        )
+                    )
                 }
 
             case "tool":
                 // Convert tool results - Anthropic expects these as user messages with tool_result blocks
                 if let toolCallId = msg.tool_call_id, let content = msg.content {
-                    anthropicMessages.append(AnthropicMessage(
-                        role: "user",
-                        content: .blocks([
-                            .toolResult(AnthropicToolResultBlock(
-                                type: "tool_result",
-                                tool_use_id: toolCallId,
-                                content: .text(content),
-                                is_error: nil
-                            ))
-                        ])
-                    ))
+                    anthropicMessages.append(
+                        AnthropicMessage(
+                            role: "user",
+                            content: .blocks([
+                                .toolResult(
+                                    AnthropicToolResultBlock(
+                                        type: "tool_result",
+                                        tool_use_id: toolCallId,
+                                        content: .text(content),
+                                        is_error: nil
+                                    )
+                                )
+                            ])
+                        )
+                    )
                 }
 
             default:
@@ -1016,7 +1066,7 @@ extension RemoteProviderService {
         // Claude 3.7 (legacy)
         "claude-3-7-sonnet-latest",
         // Claude 3 (legacy)
-        "claude-3-haiku-20240307"
+        "claude-3-haiku-20240307",
     ]
 
     /// Fetch models from a remote provider and create a service instance
@@ -1084,7 +1134,7 @@ extension RemoteProviderService {
             "max_tokens": 1,
             "messages": [
                 ["role": "user", "content": "Hi"]
-            ]
+            ],
         ]
         request.httpBody = try JSONSerialization.data(withJSONObject: testBody)
 
