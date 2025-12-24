@@ -1025,7 +1025,7 @@ private struct RemoteChatRequest: Encodable {
             case .auto:
                 anthropicToolChoice = .auto
             case .none:
-                anthropicToolChoice = .none
+                anthropicToolChoice = AnthropicToolChoice.none
             case .function(let fn):
                 anthropicToolChoice = .tool(name: fn.function.name)
             }

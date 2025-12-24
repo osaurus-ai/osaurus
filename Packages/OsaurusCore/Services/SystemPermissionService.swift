@@ -391,7 +391,7 @@ final class SystemPermissionService: NSObject, ObservableObject, CLLocationManag
             }
 
             let granted: Bool = await Task.detached { [weak self] in
-                guard let self = self else { return false }
+                guard self != nil else { return false }
                 // Use debug test to trigger the prompt/check
                 let result = SystemPermissionService.debugTestNotesAccess()
                 return result.hasPrefix("SUCCESS")
@@ -414,7 +414,7 @@ final class SystemPermissionService: NSObject, ObservableObject, CLLocationManag
             }
 
             let granted: Bool = await Task.detached { [weak self] in
-                guard let self = self else { return false }
+                guard self != nil else { return false }
                 // Use debug test to trigger the prompt/check
                 let result = SystemPermissionService.debugTestMapsAccess()
                 return result.hasPrefix("SUCCESS")
