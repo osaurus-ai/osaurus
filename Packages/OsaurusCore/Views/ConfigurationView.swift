@@ -15,8 +15,7 @@ struct ConfigurationView: View {
     @State private var cliInstallMessage: String? = nil
     @State private var cliInstallSuccess: Bool = false
     @State private var hasAppeared = false
-    @State private var showSaveConfirmation = false
-    @State private var showResetConfirmation = false
+    @State private var successMessage: String?
 
     // Chat settings state
     @State private var tempChatHotkey: Hotkey? = nil
@@ -59,353 +58,322 @@ struct ConfigurationView: View {
     }
 
     var body: some View {
-        VStack(spacing: 0) {
-            // Header
-            headerView
-                .opacity(hasAppeared ? 1 : 0)
-                .offset(y: hasAppeared ? 0 : -10)
-                .animation(.spring(response: 0.4, dampingFraction: 0.8), value: hasAppeared)
+        ZStack {
+            VStack(spacing: 0) {
+                // Header
+                headerView
+                    .opacity(hasAppeared ? 1 : 0)
+                    .offset(y: hasAppeared ? 0 : -10)
+                    .animation(.spring(response: 0.4, dampingFraction: 0.8), value: hasAppeared)
 
-            // Scrollable content area
-            ScrollView {
-                VStack(alignment: .leading, spacing: 24) {
-                    // MARK: - Chat Section
-                    if matchesSearch(
-                        "Chat",
-                        "Hotkey",
-                        "Model",
-                        "Persona",
-                        "System Prompt",
-                        "Temperature",
-                        "Max Tokens",
-                        "Context Length",
-                        "Top P",
-                        "Tools",
-                        "Tool Call",
-                        "Always on Top",
-                        "Generation"
-                    ) {
-                        SettingsSection(title: "Chat", icon: "message") {
-                            VStack(alignment: .leading, spacing: 20) {
-                                // Global Hotkey
-                                SettingsField(label: "Global Hotkey") {
-                                    HotkeyRecorder(value: $tempChatHotkey)
-                                }
+                // Scrollable content area
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 24) {
+                        // MARK: - Chat Section
+                        if matchesSearch(
+                            "Chat",
+                            "Hotkey",
+                            "Model",
+                            "Persona",
+                            "System Prompt",
+                            "Temperature",
+                            "Max Tokens",
+                            "Context Length",
+                            "Top P",
+                            "Tools",
+                            "Tool Call",
+                            "Always on Top",
+                            "Generation"
+                        ) {
+                            SettingsSection(title: "Chat", icon: "message") {
+                                VStack(alignment: .leading, spacing: 20) {
+                                    // Global Hotkey
+                                    SettingsField(label: "Global Hotkey") {
+                                        HotkeyRecorder(value: $tempChatHotkey)
+                                    }
 
-                                // Default Persona
-                                SettingsField(
-                                    label: "Default Persona",
-                                    hint: "Persona to use when opening chat"
-                                ) {
-                                    DefaultPersonaPicker(
-                                        selection: $tempDefaultPersonaId,
-                                        personas: personaManager.personas
+                                    // Default Persona
+                                    SettingsField(
+                                        label: "Default Persona",
+                                        hint: "Persona to use when opening chat"
+                                    ) {
+                                        DefaultPersonaPicker(
+                                            selection: $tempDefaultPersonaId,
+                                            personas: personaManager.personas
+                                        )
+                                    }
+
+                                    // System Prompt
+                                    StyledSettingsTextArea(
+                                        label: "System Prompt",
+                                        text: $tempSystemPrompt,
+                                        placeholder: "Enter instructions for all chats...",
+                                        hint: "Optional. Shown as a system message for all chats."
                                     )
-                                }
 
-                                // System Prompt
-                                SettingsField(
-                                    label: "System Prompt",
-                                    hint: "Optional. Shown as a system message for all chats."
-                                ) {
-                                    TextEditor(text: $tempSystemPrompt)
-                                        .font(.system(size: 13, design: .monospaced))
-                                        .scrollContentBackground(.hidden)
-                                        .frame(minHeight: 80, maxHeight: 140)
-                                        .padding(8)
-                                        .background(
-                                            RoundedRectangle(cornerRadius: 8)
-                                                .fill(theme.inputBackground)
-                                                .overlay(
-                                                    RoundedRectangle(cornerRadius: 8)
-                                                        .stroke(theme.inputBorder, lineWidth: 1)
-                                                )
-                                        )
-                                        .foregroundColor(theme.primaryText)
-                                }
+                                    // Generation Settings
+                                    SettingsSubsection(label: "Generation") {
+                                        VStack(spacing: 12) {
+                                            settingsTextField(
+                                                label: "Temperature",
+                                                text: $tempChatTemperature,
+                                                placeholder: "0.7",
+                                                help: "Randomness (0–2). Values > 0.8 may cause erratic output"
+                                            )
+                                            settingsTextField(
+                                                label: "Max Tokens",
+                                                text: $tempChatMaxTokens,
+                                                placeholder: "16384",
+                                                help: "Maximum response tokens. Empty uses default 16384"
+                                            )
+                                            settingsTextField(
+                                                label: "Context Length",
+                                                text: $tempChatContextLength,
+                                                placeholder: "128000",
+                                                help:
+                                                    "Assumed context window for remote models. Empty uses default 128k"
+                                            )
+                                            settingsTextField(
+                                                label: "Top P Override",
+                                                text: $tempChatTopP,
+                                                placeholder: "",
+                                                help: "Override server Top P (0–1). Empty uses server default"
+                                            )
+                                        }
+                                    }
 
-                                // Generation Settings
-                                SettingsSubsection(label: "Generation") {
-                                    VStack(spacing: 12) {
+                                    // Tools Settings
+                                    SettingsSubsection(label: "Tools") {
                                         settingsTextField(
-                                            label: "Temperature",
-                                            text: $tempChatTemperature,
-                                            placeholder: "0.7",
-                                            help: "Randomness (0–2). Values > 0.8 may cause erratic output"
-                                        )
-                                        settingsTextField(
-                                            label: "Max Tokens",
-                                            text: $tempChatMaxTokens,
-                                            placeholder: "16384",
-                                            help: "Maximum response tokens. Empty uses default 16384"
-                                        )
-                                        settingsTextField(
-                                            label: "Context Length",
-                                            text: $tempChatContextLength,
-                                            placeholder: "128000",
-                                            help: "Assumed context window for remote models. Empty uses default 128k"
-                                        )
-                                        settingsTextField(
-                                            label: "Top P Override",
-                                            text: $tempChatTopP,
+                                            label: "Max Tool Attempts",
+                                            text: $tempChatMaxToolAttempts,
                                             placeholder: "",
-                                            help: "Override server Top P (0–1). Empty uses server default"
+                                            help: "Max consecutive tool calls (1–10). Empty uses no limit"
                                         )
                                     }
-                                }
 
-                                // Tools Settings
-                                SettingsSubsection(label: "Tools") {
-                                    settingsTextField(
-                                        label: "Max Tool Attempts",
-                                        text: $tempChatMaxToolAttempts,
-                                        placeholder: "",
-                                        help: "Max consecutive tool calls (1–10). Empty uses no limit"
-                                    )
-                                }
+                                    SettingsDivider()
 
-                                SettingsDivider()
-
-                                // Window Settings
-                                SettingsToggle(
-                                    title: "Always on Top",
-                                    description: "Keep chat window above other windows",
-                                    isOn: $tempChatAlwaysOnTop
-                                )
-                            }
-                        }
-                    }
-
-                    // MARK: - Server Section
-                    if matchesSearch("Server", "Port", "Network", "Expose", "CORS", "Origins", "Allowed Origins") {
-                        SettingsSection(title: "Server", icon: "network") {
-                            VStack(alignment: .leading, spacing: 20) {
-                                // Port
-                                SettingsField(label: "Port", hint: "Enter a port number between 1 and 65535") {
-                                    ZStack(alignment: .leading) {
-                                        if tempPortString.isEmpty {
-                                            Text("1337")
-                                                .font(.system(size: 13, design: .monospaced))
-                                                .foregroundColor(theme.placeholderText)
-                                                .padding(.leading, 12)
-                                                .allowsHitTesting(false)
-                                        }
-                                        TextField("", text: $tempPortString)
-                                            .textFieldStyle(.plain)
-                                            .font(.system(size: 13, design: .monospaced))
-                                            .padding(.horizontal, 12)
-                                            .padding(.vertical, 8)
-                                            .foregroundColor(theme.primaryText)
-                                    }
-                                    .background(
-                                        RoundedRectangle(cornerRadius: 8)
-                                            .fill(theme.inputBackground)
-                                            .overlay(
-                                                RoundedRectangle(cornerRadius: 8)
-                                                    .stroke(theme.inputBorder, lineWidth: 1)
-                                            )
-                                    )
-                                }
-
-                                // Network Exposure Toggle
-                                SettingsToggle(
-                                    title: "Expose to Network",
-                                    description: "Allow devices on your network to connect",
-                                    isOn: $tempExposeToNetwork
-                                )
-
-                                // CORS Settings
-                                SettingsField(
-                                    label: "Allowed Origins",
-                                    hint: "Comma-separated list. Use * for any origin, or leave empty to disable CORS"
-                                ) {
-                                    ZStack(alignment: .leading) {
-                                        if tempAllowedOrigins.isEmpty {
-                                            Text("https://example.com, https://app.localhost")
-                                                .font(.system(size: 13, design: .monospaced))
-                                                .foregroundColor(theme.placeholderText)
-                                                .padding(.leading, 12)
-                                                .allowsHitTesting(false)
-                                        }
-                                        TextField("", text: $tempAllowedOrigins)
-                                            .textFieldStyle(.plain)
-                                            .font(.system(size: 13, design: .monospaced))
-                                            .padding(.horizontal, 12)
-                                            .padding(.vertical, 8)
-                                            .foregroundColor(theme.primaryText)
-                                    }
-                                    .background(
-                                        RoundedRectangle(cornerRadius: 8)
-                                            .fill(theme.inputBackground)
-                                            .overlay(
-                                                RoundedRectangle(cornerRadius: 8)
-                                                    .stroke(theme.inputBorder, lineWidth: 1)
-                                            )
+                                    // Window Settings
+                                    SettingsToggle(
+                                        title: "Always on Top",
+                                        description: "Keep chat window above other windows",
+                                        isOn: $tempChatAlwaysOnTop
                                     )
                                 }
                             }
                         }
-                    }
 
-                    // MARK: - System Section
-                    if matchesSearch("System", "Login", "Start at Login", "CLI", "Command Line", "Install", "Symlink") {
-                        SettingsSection(title: "System", icon: "gear") {
-                            VStack(alignment: .leading, spacing: 20) {
-                                // Start at Login
-                                SettingsToggle(
-                                    title: "Start at Login",
-                                    description: "Launch Osaurus when you sign in",
-                                    isOn: $tempStartAtLogin
-                                )
+                        // MARK: - Server Section
+                        if matchesSearch("Server", "Port", "Network", "Expose", "CORS", "Origins", "Allowed Origins") {
+                            SettingsSection(title: "Server", icon: "network") {
+                                VStack(alignment: .leading, spacing: 20) {
+                                    // Port
+                                    StyledSettingsTextField(
+                                        label: "Port",
+                                        text: $tempPortString,
+                                        placeholder: "1337",
+                                        help: "Enter a port number between 1 and 65535"
+                                    )
 
-                                SettingsToggle(
-                                    title: "Hide Dock Icon",
-                                    description: "Run in menu bar only (requires restart)",
-                                    isOn: $tempHideDockIcon
-                                )
+                                    // Network Exposure Toggle
+                                    SettingsToggle(
+                                        title: "Expose to Network",
+                                        description: "Allow devices on your network to connect",
+                                        isOn: $tempExposeToNetwork
+                                    )
 
-                                SettingsDivider()
+                                    // CORS Settings
+                                    StyledSettingsTextField(
+                                        label: "Allowed Origins",
+                                        text: $tempAllowedOrigins,
+                                        placeholder: "https://example.com, https://app.localhost",
+                                        help: "Comma-separated list. Use * for any, empty to disable CORS"
+                                    )
+                                }
+                            }
+                        }
 
-                                // Command Line Tool
-                                SettingsSubsection(label: "Command Line Tool") {
-                                    VStack(alignment: .leading, spacing: 12) {
-                                        Text("Install the `osaurus` CLI into your PATH for terminal access.")
-                                            .font(.system(size: 12))
-                                            .foregroundColor(theme.tertiaryText)
+                        // MARK: - System Section
+                        if matchesSearch(
+                            "System",
+                            "Login",
+                            "Start at Login",
+                            "CLI",
+                            "Command Line",
+                            "Install",
+                            "Symlink"
+                        ) {
+                            SettingsSection(title: "System", icon: "gear") {
+                                VStack(alignment: .leading, spacing: 20) {
+                                    // Start at Login
+                                    SettingsToggle(
+                                        title: "Start at Login",
+                                        description: "Launch Osaurus when you sign in",
+                                        isOn: $tempStartAtLogin
+                                    )
 
-                                        HStack(spacing: 12) {
-                                            Button(action: { installCLI() }) {
-                                                Text("Install CLI")
-                                            }
-                                            .buttonStyle(SettingsButtonStyle())
-                                            .help("Create a symlink to the embedded CLI")
+                                    SettingsToggle(
+                                        title: "Hide Dock Icon",
+                                        description: "Run in menu bar only (requires restart)",
+                                        isOn: $tempHideDockIcon
+                                    )
 
-                                            if let message = cliInstallMessage {
-                                                HStack(spacing: 6) {
-                                                    Image(
-                                                        systemName: cliInstallSuccess
-                                                            ? "checkmark.circle.fill" : "exclamationmark.triangle.fill"
-                                                    )
-                                                    .font(.system(size: 12))
-                                                    Text(message)
-                                                        .font(.system(size: 11))
-                                                        .lineLimit(2)
+                                    SettingsDivider()
+
+                                    // Command Line Tool
+                                    SettingsSubsection(label: "Command Line Tool") {
+                                        VStack(alignment: .leading, spacing: 12) {
+                                            Text("Install the `osaurus` CLI into your PATH for terminal access.")
+                                                .font(.system(size: 12))
+                                                .foregroundColor(theme.tertiaryText)
+
+                                            HStack(spacing: 12) {
+                                                Button(action: { installCLI() }) {
+                                                    Text("Install CLI")
                                                 }
-                                                .foregroundColor(
-                                                    cliInstallSuccess ? theme.successColor : theme.warningColor
-                                                )
+                                                .buttonStyle(SettingsButtonStyle())
+                                                .help("Create a symlink to the embedded CLI")
+
+                                                if let message = cliInstallMessage {
+                                                    HStack(spacing: 6) {
+                                                        Image(
+                                                            systemName: cliInstallSuccess
+                                                                ? "checkmark.circle.fill"
+                                                                : "exclamationmark.triangle.fill"
+                                                        )
+                                                        .font(.system(size: 12))
+                                                        Text(message)
+                                                            .font(.system(size: 11))
+                                                            .lineLimit(2)
+                                                    }
+                                                    .foregroundColor(
+                                                        cliInstallSuccess ? theme.successColor : theme.warningColor
+                                                    )
+                                                }
                                             }
+
+                                            Text("If installed to ~/.local/bin, ensure it's in your PATH.")
+                                                .font(.system(size: 11))
+                                                .foregroundColor(theme.tertiaryText)
                                         }
-
-                                        Text("If installed to ~/.local/bin, ensure it's in your PATH.")
-                                            .font(.system(size: 11))
-                                            .foregroundColor(theme.tertiaryText)
                                     }
-                                }
 
-                                SettingsDivider()
+                                    SettingsDivider()
 
-                                // Storage
-                                SettingsSubsection(label: "Storage") {
-                                    DirectoryPickerView()
-                                }
-                            }
-                        }
-                    }
-
-                    // MARK: - Performance Section
-                    if matchesSearch(
-                        "Performance",
-                        "Top P",
-                        "KV Cache",
-                        "Quantization",
-                        "Prefill",
-                        "Max KV",
-                        "CPU",
-                        "Memory"
-                    ) {
-                        SettingsSection(title: "Performance", icon: "cpu") {
-                            VStack(alignment: .leading, spacing: 20) {
-                                // Generation
-                                SettingsSubsection(label: "Generation") {
-                                    VStack(spacing: 12) {
-                                        settingsTextField(
-                                            label: "Top P",
-                                            text: $tempTopP,
-                                            placeholder: "1.0",
-                                            help: "Controls diversity of generated text (0–1). Empty uses default 1.0"
-                                        )
-                                    }
-                                }
-
-                                // KV Cache Settings
-                                SettingsSubsection(label: "KV Cache") {
-                                    VStack(spacing: 12) {
-                                        settingsTextField(
-                                            label: "Cache Bits",
-                                            text: $tempKVBits,
-                                            placeholder: "",
-                                            help: "Quantization bits for KV cache. Empty disables quantization"
-                                        )
-                                        settingsTextField(
-                                            label: "Group Size",
-                                            text: $tempKVGroup,
-                                            placeholder: "64",
-                                            help: "Group size for KV quantization. Empty uses default 64"
-                                        )
-                                        settingsTextField(
-                                            label: "Quantized Start",
-                                            text: $tempQuantStart,
-                                            placeholder: "0",
-                                            help: "Starting layer for KV quantization. Empty uses default 0"
-                                        )
-                                        settingsTextField(
-                                            label: "Max Size",
-                                            text: $tempMaxKV,
-                                            placeholder: "8192",
-                                            help: "Maximum KV cache size in tokens. Empty uses default 8192"
-                                        )
-                                        settingsTextField(
-                                            label: "Prefill Step",
-                                            text: $tempPrefillStep,
-                                            placeholder: "512",
-                                            help: "Step size for prefill operations. Empty uses default 512"
-                                        )
-                                    }
-                                }
-
-                                SettingsDivider()
-
-                                // Eviction Policy
-                                SettingsSubsection(label: "Model Management") {
-                                    VStack(alignment: .leading, spacing: 10) {
-                                        Picker("", selection: $tempEvictionPolicy) {
-                                            ForEach(ModelEvictionPolicy.allCases, id: \.self) { policy in
-                                                Text(policy.rawValue).tag(policy)
-                                            }
-                                        }
-                                        .pickerStyle(.segmented)
-                                        .labelsHidden()
-
-                                        Text(tempEvictionPolicy.description)
-                                            .font(.system(size: 11))
-                                            .foregroundColor(theme.tertiaryText)
+                                    // Storage
+                                    SettingsSubsection(label: "Storage") {
+                                        DirectoryPickerView()
                                     }
                                 }
                             }
                         }
-                    }
 
-                    // MARK: - System Permissions Section
-                    if matchesSearch("Permissions", "Accessibility", "Automation", "Privacy", "Security") {
-                        SystemPermissionsSection()
+                        // MARK: - Performance Section
+                        if matchesSearch(
+                            "Performance",
+                            "Top P",
+                            "KV Cache",
+                            "Quantization",
+                            "Prefill",
+                            "Max KV",
+                            "CPU",
+                            "Memory"
+                        ) {
+                            SettingsSection(title: "Performance", icon: "cpu") {
+                                VStack(alignment: .leading, spacing: 20) {
+                                    // Generation
+                                    SettingsSubsection(label: "Generation") {
+                                        VStack(spacing: 12) {
+                                            settingsTextField(
+                                                label: "Top P",
+                                                text: $tempTopP,
+                                                placeholder: "1.0",
+                                                help:
+                                                    "Controls diversity of generated text (0–1). Empty uses default 1.0"
+                                            )
+                                        }
+                                    }
+
+                                    // KV Cache Settings
+                                    SettingsSubsection(label: "KV Cache") {
+                                        VStack(spacing: 12) {
+                                            settingsTextField(
+                                                label: "Cache Bits",
+                                                text: $tempKVBits,
+                                                placeholder: "",
+                                                help: "Quantization bits for KV cache. Empty disables quantization"
+                                            )
+                                            settingsTextField(
+                                                label: "Group Size",
+                                                text: $tempKVGroup,
+                                                placeholder: "64",
+                                                help: "Group size for KV quantization. Empty uses default 64"
+                                            )
+                                            settingsTextField(
+                                                label: "Quantized Start",
+                                                text: $tempQuantStart,
+                                                placeholder: "0",
+                                                help: "Starting layer for KV quantization. Empty uses default 0"
+                                            )
+                                            settingsTextField(
+                                                label: "Max Size",
+                                                text: $tempMaxKV,
+                                                placeholder: "8192",
+                                                help: "Maximum KV cache size in tokens. Empty uses default 8192"
+                                            )
+                                            settingsTextField(
+                                                label: "Prefill Step",
+                                                text: $tempPrefillStep,
+                                                placeholder: "512",
+                                                help: "Step size for prefill operations. Empty uses default 512"
+                                            )
+                                        }
+                                    }
+
+                                    SettingsDivider()
+
+                                    // Eviction Policy
+                                    SettingsSubsection(label: "Model Management") {
+                                        VStack(alignment: .leading, spacing: 10) {
+                                            Picker("", selection: $tempEvictionPolicy) {
+                                                ForEach(ModelEvictionPolicy.allCases, id: \.self) { policy in
+                                                    Text(policy.rawValue).tag(policy)
+                                                }
+                                            }
+                                            .pickerStyle(.segmented)
+                                            .labelsHidden()
+
+                                            Text(tempEvictionPolicy.description)
+                                                .font(.system(size: 11))
+                                                .foregroundColor(theme.tertiaryText)
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        // MARK: - System Permissions Section
+                        if matchesSearch("Permissions", "Accessibility", "Automation", "Privacy", "Security") {
+                            SystemPermissionsSection()
+                        }
                     }
+                    .padding(.horizontal, 24)
+                    .padding(.vertical, 24)
+                    .frame(maxWidth: 700)
                 }
-                .padding(.horizontal, 24)
-                .padding(.vertical, 24)
-                .frame(maxWidth: 700)
+                .opacity(hasAppeared ? 1 : 0)
             }
-            .opacity(hasAppeared ? 1 : 0)
+
+            // Success toast overlay
+            if let message = successMessage {
+                VStack {
+                    Spacer()
+                    successToast(message)
+                        .transition(.move(edge: .bottom).combined(with: .opacity))
+                        .padding(.bottom, 20)
+                }
+            }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(theme.primaryBackground)
@@ -414,6 +382,42 @@ struct ConfigurationView: View {
             loadConfiguration()
             withAnimation(.easeOut(duration: 0.25).delay(0.05)) {
                 hasAppeared = true
+            }
+        }
+    }
+
+    // MARK: - Success Toast
+
+    private func successToast(_ message: String) -> some View {
+        HStack(spacing: 10) {
+            Image(systemName: "checkmark.circle.fill")
+                .font(.system(size: 16))
+                .foregroundColor(theme.successColor)
+
+            Text(message)
+                .font(.system(size: 13, weight: .medium))
+                .foregroundColor(theme.primaryText)
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
+        .background(
+            Capsule()
+                .fill(theme.cardBackground)
+                .shadow(color: Color.black.opacity(0.15), radius: 10, x: 0, y: 4)
+        )
+        .overlay(
+            Capsule()
+                .stroke(theme.successColor.opacity(0.3), lineWidth: 1)
+        )
+    }
+
+    private func showSuccess(_ message: String) {
+        withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
+            successMessage = message
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
+            withAnimation(.easeOut(duration: 0.2)) {
+                successMessage = nil
             }
         }
     }
@@ -436,40 +440,35 @@ struct ConfigurationView: View {
                 Spacer()
 
                 HStack(spacing: 12) {
+                    // Reset button
                     Button(action: resetToDefaults) {
                         HStack(spacing: 6) {
-                            if showResetConfirmation {
-                                Image(systemName: "checkmark")
-                                    .font(.system(size: 12, weight: .semibold))
-                            } else {
-                                Image(systemName: "arrow.counterclockwise")
-                                    .font(.system(size: 12, weight: .medium))
-                            }
-                            Text(showResetConfirmation ? "Reset" : "Reset to Defaults")
+                            Image(systemName: "arrow.counterclockwise")
+                                .font(.system(size: 12, weight: .medium))
+                            Text("Reset")
                                 .font(.system(size: 13, weight: .medium))
                         }
-                        .foregroundColor(showResetConfirmation ? .white : theme.secondaryText)
+                        .foregroundColor(theme.secondaryText)
                         .padding(.horizontal, 14)
                         .padding(.vertical, 10)
                         .background(
                             RoundedRectangle(cornerRadius: 8)
-                                .fill(showResetConfirmation ? theme.warningColor : theme.tertiaryBackground)
+                                .fill(theme.tertiaryBackground)
                                 .overlay(
                                     RoundedRectangle(cornerRadius: 8)
-                                        .stroke(theme.inputBorder, lineWidth: showResetConfirmation ? 0 : 1)
+                                        .stroke(theme.inputBorder, lineWidth: 1)
                                 )
                         )
                     }
                     .buttonStyle(PlainButtonStyle())
                     .help("Reset all settings to recommended defaults")
 
+                    // Save button
                     Button(action: saveConfiguration) {
                         HStack(spacing: 6) {
-                            if showSaveConfirmation {
-                                Image(systemName: "checkmark")
-                                    .font(.system(size: 12, weight: .semibold))
-                            }
-                            Text(showSaveConfirmation ? "Saved" : "Save Changes")
+                            Image(systemName: "checkmark")
+                                .font(.system(size: 12, weight: .semibold))
+                            Text("Save Changes")
                                 .font(.system(size: 13, weight: .medium))
                         }
                         .foregroundColor(.white)
@@ -477,7 +476,7 @@ struct ConfigurationView: View {
                         .padding(.vertical, 10)
                         .background(
                             RoundedRectangle(cornerRadius: 8)
-                                .fill(showSaveConfirmation ? Color.green : theme.accentColor)
+                                .fill(theme.accentColor)
                         )
                     }
                     .buttonStyle(PlainButtonStyle())
@@ -499,45 +498,7 @@ struct ConfigurationView: View {
         placeholder: String,
         help: String
     ) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack {
-                Text(label)
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(theme.primaryText)
-
-                Spacer()
-
-                Text(help)
-                    .font(.system(size: 10))
-                    .foregroundColor(theme.tertiaryText)
-                    .lineLimit(1)
-            }
-
-            ZStack(alignment: .leading) {
-                // Custom placeholder for better visibility in light mode
-                if text.wrappedValue.isEmpty && !placeholder.isEmpty {
-                    Text(placeholder)
-                        .font(.system(size: 13, design: .monospaced))
-                        .foregroundColor(theme.placeholderText)
-                        .padding(.leading, 12)
-                        .allowsHitTesting(false)
-                }
-                TextField("", text: text)
-                    .textFieldStyle(.plain)
-                    .font(.system(size: 13, design: .monospaced))
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 8)
-                    .foregroundColor(theme.primaryText)
-            }
-            .background(
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(theme.inputBackground)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 8)
-                            .stroke(theme.inputBorder, lineWidth: 1)
-                    )
-            )
-        }
+        StyledSettingsTextField(label: label, text: text, placeholder: placeholder, help: help)
     }
 
     // MARK: - Configuration Loading
@@ -611,15 +572,8 @@ struct ConfigurationView: View {
         tempPrefillStep = ""
         tempEvictionPolicy = serverDefaults.modelEvictionPolicy
 
-        // Show confirmation
-        withAnimation(.easeInOut(duration: 0.2)) {
-            showResetConfirmation = true
-        }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
-            withAnimation(.easeInOut(duration: 0.2)) {
-                showResetConfirmation = false
-            }
-        }
+        // Show success toast
+        showSuccess("Settings reset to defaults")
     }
 
     // MARK: - Configuration Saving
@@ -781,15 +735,8 @@ struct ConfigurationView: View {
             }
         }
 
-        // Show confirmation
-        withAnimation(.easeInOut(duration: 0.2)) {
-            showSaveConfirmation = true
-        }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
-            withAnimation(.easeInOut(duration: 0.2)) {
-                showSaveConfirmation = false
-            }
-        }
+        // Show success toast
+        showSuccess("Settings saved successfully")
     }
 }
 
@@ -947,29 +894,43 @@ extension ConfigurationView {
 // MARK: - Reusable Settings Components
 
 private struct SettingsSection<Content: View>: View {
-    @Environment(\.theme) private var theme
+    @StateObject private var themeManager = ThemeManager.shared
+
     let title: String
     let icon: String
     @ViewBuilder let content: () -> Content
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            Label(title, systemImage: icon)
-                .font(.system(size: 14, weight: .semibold))
-                .foregroundColor(theme.primaryText)
+        VStack(alignment: .leading, spacing: 12) {
+            // Section header with icon and uppercase title
+            HStack(spacing: 8) {
+                Image(systemName: icon)
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundColor(themeManager.currentTheme.accentColor)
+
+                Text(title.uppercased())
+                    .font(.system(size: 11, weight: .bold))
+                    .foregroundColor(themeManager.currentTheme.secondaryText)
+                    .tracking(0.5)
+            }
 
             content()
         }
         .padding(16)
         .background(
             RoundedRectangle(cornerRadius: 12)
-                .fill(theme.secondaryBackground)
+                .fill(themeManager.currentTheme.cardBackground)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 12)
+                        .stroke(themeManager.currentTheme.cardBorder, lineWidth: 1)
+                )
         )
     }
 }
 
 private struct SettingsField<Content: View>: View {
-    @Environment(\.theme) private var theme
+    @StateObject private var themeManager = ThemeManager.shared
+
     let label: String
     var hint: String? = nil
     @ViewBuilder let content: () -> Content
@@ -977,47 +938,172 @@ private struct SettingsField<Content: View>: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text(label)
-                .font(.system(size: 12, weight: .medium))
-                .foregroundColor(theme.secondaryText)
+                .font(.system(size: 11, weight: .medium))
+                .foregroundColor(themeManager.currentTheme.secondaryText)
 
             content()
 
             if let hint = hint {
                 Text(hint)
                     .font(.system(size: 11))
-                    .foregroundColor(theme.tertiaryText)
+                    .foregroundColor(themeManager.currentTheme.tertiaryText)
             }
         }
     }
 }
 
 private struct SettingsSubsection<Content: View>: View {
-    @Environment(\.theme) private var theme
+    @StateObject private var themeManager = ThemeManager.shared
+
     let label: String
     @ViewBuilder let content: () -> Content
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text(label)
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundColor(theme.secondaryText)
-                .textCase(.uppercase)
-                .tracking(0.5)
+        VStack(alignment: .leading, spacing: 12) {
+            // Subsection header
+            HStack(spacing: 6) {
+                Rectangle()
+                    .fill(themeManager.currentTheme.accentColor)
+                    .frame(width: 3, height: 14)
+                    .clipShape(RoundedRectangle(cornerRadius: 1.5))
+
+                Text(label.uppercased())
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundColor(themeManager.currentTheme.tertiaryText)
+                    .tracking(0.5)
+            }
 
             content()
+                .padding(.leading, 9)
         }
-        .padding(.leading, 12)
-        .overlay(
-            Rectangle()
-                .fill(theme.accentColor.opacity(0.3))
-                .frame(width: 2),
-            alignment: .leading
-        )
+    }
+}
+
+// MARK: - Styled Settings Text Area
+
+private struct StyledSettingsTextArea: View {
+    @StateObject private var themeManager = ThemeManager.shared
+
+    let label: String
+    @Binding var text: String
+    let placeholder: String
+    let hint: String
+
+    @State private var isFocused = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(label)
+                .font(.system(size: 11, weight: .medium))
+                .foregroundColor(themeManager.currentTheme.secondaryText)
+
+            ZStack(alignment: .topLeading) {
+                // Themed placeholder overlay
+                if text.isEmpty {
+                    Text(placeholder)
+                        .font(.system(size: 13, design: .monospaced))
+                        .foregroundColor(themeManager.currentTheme.placeholderText)
+                        .padding(.top, 12)
+                        .padding(.leading, 12)
+                        .allowsHitTesting(false)
+                }
+
+                TextEditor(text: $text)
+                    .font(.system(size: 13, design: .monospaced))
+                    .foregroundColor(themeManager.currentTheme.primaryText)
+                    .scrollContentBackground(.hidden)
+                    .frame(minHeight: 100, maxHeight: 160)
+                    .padding(10)
+            }
+            .background(
+                RoundedRectangle(cornerRadius: 10)
+                    .fill(themeManager.currentTheme.inputBackground)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 10)
+                            .stroke(themeManager.currentTheme.inputBorder, lineWidth: 1)
+                    )
+            )
+
+            Text(hint)
+                .font(.system(size: 11))
+                .foregroundColor(themeManager.currentTheme.tertiaryText)
+        }
+    }
+}
+
+// MARK: - Styled Settings Text Field
+
+private struct StyledSettingsTextField: View {
+    @StateObject private var themeManager = ThemeManager.shared
+
+    let label: String
+    @Binding var text: String
+    let placeholder: String
+    let help: String
+
+    @State private var isFocused = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Text(label)
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundColor(themeManager.currentTheme.secondaryText)
+
+                Spacer()
+
+                Text(help)
+                    .font(.system(size: 10))
+                    .foregroundColor(themeManager.currentTheme.tertiaryText)
+                    .lineLimit(1)
+            }
+
+            HStack(spacing: 10) {
+                ZStack(alignment: .leading) {
+                    // Themed placeholder overlay
+                    if text.isEmpty && !placeholder.isEmpty {
+                        Text(placeholder)
+                            .font(.system(size: 13, design: .monospaced))
+                            .foregroundColor(themeManager.currentTheme.placeholderText)
+                            .allowsHitTesting(false)
+                    }
+
+                    TextField(
+                        "",
+                        text: $text,
+                        onEditingChanged: { editing in
+                            withAnimation(.easeOut(duration: 0.15)) {
+                                isFocused = editing
+                            }
+                        }
+                    )
+                    .textFieldStyle(.plain)
+                    .font(.system(size: 13, design: .monospaced))
+                    .foregroundColor(themeManager.currentTheme.primaryText)
+                }
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 10)
+            .background(
+                RoundedRectangle(cornerRadius: 10)
+                    .fill(themeManager.currentTheme.inputBackground)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 10)
+                            .stroke(
+                                isFocused
+                                    ? themeManager.currentTheme.accentColor.opacity(0.5)
+                                    : themeManager.currentTheme.inputBorder,
+                                lineWidth: isFocused ? 1.5 : 1
+                            )
+                    )
+            )
+        }
     }
 }
 
 private struct SettingsToggle: View {
-    @Environment(\.theme) private var theme
+    @StateObject private var themeManager = ThemeManager.shared
+
     let title: String
     let description: String
     @Binding var isOn: Bool
@@ -1027,34 +1113,42 @@ private struct SettingsToggle: View {
             VStack(alignment: .leading, spacing: 3) {
                 Text(title)
                     .font(.system(size: 13, weight: .medium))
-                    .foregroundStyle(theme.primaryText)
+                    .foregroundStyle(themeManager.currentTheme.primaryText)
                 Text(description)
                     .font(.system(size: 11))
-                    .foregroundStyle(theme.tertiaryText)
+                    .foregroundStyle(themeManager.currentTheme.tertiaryText)
             }
 
             Spacer()
 
             Toggle("", isOn: $isOn)
-                .toggleStyle(SwitchToggleStyle(tint: theme.accentColor))
+                .toggleStyle(SwitchToggleStyle(tint: themeManager.currentTheme.accentColor))
                 .labelsHidden()
         }
+        .padding(12)
+        .background(
+            RoundedRectangle(cornerRadius: 10)
+                .fill(themeManager.currentTheme.inputBackground)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 10)
+                        .stroke(themeManager.currentTheme.inputBorder, lineWidth: 1)
+                )
+        )
     }
 }
 
 private struct SettingsDivider: View {
-    @Environment(\.theme) private var theme
+    @StateObject private var themeManager = ThemeManager.shared
 
     var body: some View {
         Rectangle()
-            .fill(theme.primaryBorder)
+            .fill(themeManager.currentTheme.cardBorder)
             .frame(height: 1)
-            .opacity(0.6)
     }
 }
 
 private struct SettingsButtonStyle: ButtonStyle {
-    @Environment(\.theme) private var theme
+    @StateObject private var themeManager = ThemeManager.shared
     let isPrimary: Bool
 
     init(isPrimary: Bool = false) {
@@ -1064,43 +1158,51 @@ private struct SettingsButtonStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .font(.system(size: 13, weight: .medium))
-            .foregroundColor(isPrimary ? .white : theme.primaryText)
+            .foregroundColor(isPrimary ? .white : themeManager.currentTheme.primaryText)
             .padding(.horizontal, 14)
-            .padding(.vertical, 8)
+            .padding(.vertical, 10)
             .background(
                 RoundedRectangle(cornerRadius: 8)
-                    .fill(isPrimary ? theme.accentColor : theme.tertiaryBackground)
+                    .fill(
+                        isPrimary ? themeManager.currentTheme.accentColor : themeManager.currentTheme.tertiaryBackground
+                    )
                     .overlay(
                         RoundedRectangle(cornerRadius: 8)
-                            .stroke(isPrimary ? Color.clear : theme.inputBorder, lineWidth: 1)
+                            .stroke(isPrimary ? Color.clear : themeManager.currentTheme.inputBorder, lineWidth: 1)
                     )
             )
             .opacity(configuration.isPressed ? 0.8 : 1.0)
-            .scaleEffect(configuration.isPressed ? 0.98 : 1.0)
-            .animation(.easeOut(duration: 0.15), value: configuration.isPressed)
     }
 }
 
 // MARK: - System Permissions Section
 
 private struct SystemPermissionsSection: View {
-    @Environment(\.theme) private var theme
+    @StateObject private var themeManager = ThemeManager.shared
     @ObservedObject private var permissionService = SystemPermissionService.shared
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            Label("System Permissions", systemImage: "lock.shield")
-                .font(.system(size: 14, weight: .semibold))
-                .foregroundColor(theme.primaryText)
+        VStack(alignment: .leading, spacing: 12) {
+            // Section header with icon and uppercase title
+            HStack(spacing: 8) {
+                Image(systemName: "lock.shield")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundColor(themeManager.currentTheme.accentColor)
+
+                Text("SYSTEM PERMISSIONS")
+                    .font(.system(size: 11, weight: .bold))
+                    .foregroundColor(themeManager.currentTheme.secondaryText)
+                    .tracking(0.5)
+            }
 
             Text(
                 "Some plugins require additional system permissions to function. Grant permissions below to enable advanced features."
             )
             .font(.system(size: 12))
-            .foregroundColor(theme.secondaryText)
+            .foregroundColor(themeManager.currentTheme.secondaryText)
             .fixedSize(horizontal: false, vertical: true)
 
-            VStack(spacing: 12) {
+            VStack(spacing: 10) {
                 ForEach(SystemPermission.allCases, id: \.rawValue) { permission in
                     SystemPermissionRow(permission: permission)
                 }
@@ -1109,7 +1211,11 @@ private struct SystemPermissionsSection: View {
         .padding(16)
         .background(
             RoundedRectangle(cornerRadius: 12)
-                .fill(theme.secondaryBackground)
+                .fill(themeManager.currentTheme.cardBackground)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 12)
+                        .stroke(themeManager.currentTheme.cardBorder, lineWidth: 1)
+                )
         )
         .onAppear {
             permissionService.startPeriodicRefresh(interval: 2.0)
@@ -1123,12 +1229,13 @@ private struct SystemPermissionsSection: View {
 // MARK: - System Permission Row
 
 private struct SystemPermissionRow: View {
-    @Environment(\.theme) private var theme
+    @StateObject private var themeManager = ThemeManager.shared
     @ObservedObject private var permissionService = SystemPermissionService.shared
     let permission: SystemPermission
 
     @State private var isTesting = false
     @State private var testResult: String? = nil
+    @State private var isHovered = false
 
     private var isGranted: Bool {
         permissionService.permissionStates[permission] ?? false
@@ -1143,38 +1250,61 @@ private struct SystemPermissionRow: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 12) {
-                // Permission icon
+                // Permission icon with gradient background
                 ZStack {
-                    RoundedRectangle(cornerRadius: 8)
-                        .fill(isGranted ? theme.successColor.opacity(0.1) : theme.tertiaryBackground)
+                    RoundedRectangle(cornerRadius: 10)
+                        .fill(
+                            LinearGradient(
+                                colors: isGranted
+                                    ? [
+                                        themeManager.currentTheme.successColor.opacity(0.15),
+                                        themeManager.currentTheme.successColor.opacity(0.05),
+                                    ]
+                                    : [
+                                        themeManager.currentTheme.tertiaryBackground,
+                                        themeManager.currentTheme.tertiaryBackground.opacity(0.8),
+                                    ],
+                                startPoint: .topLeading,
+                                endPoint: .bottomTrailing
+                            )
+                        )
                     Image(systemName: permission.systemIconName)
                         .font(.system(size: 16, weight: .medium))
-                        .foregroundColor(isGranted ? theme.successColor : theme.secondaryText)
+                        .foregroundColor(
+                            isGranted ? themeManager.currentTheme.successColor : themeManager.currentTheme.secondaryText
+                        )
                 }
-                .frame(width: 36, height: 36)
+                .frame(width: 40, height: 40)
 
                 // Permission info
-                VStack(alignment: .leading, spacing: 3) {
+                VStack(alignment: .leading, spacing: 4) {
                     HStack(spacing: 6) {
                         Text(permission.displayName)
-                            .font(.system(size: 13, weight: .medium))
-                            .foregroundColor(theme.primaryText)
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundColor(themeManager.currentTheme.primaryText)
 
                         // Status badge
                         Text(isGranted ? "Granted" : "Not Granted")
-                            .font(.system(size: 10, weight: .semibold))
-                            .foregroundColor(isGranted ? theme.successColor : theme.warningColor)
+                            .font(.system(size: 9, weight: .bold))
+                            .foregroundColor(
+                                isGranted
+                                    ? themeManager.currentTheme.successColor : themeManager.currentTheme.warningColor
+                            )
                             .padding(.horizontal, 6)
                             .padding(.vertical, 2)
                             .background(
                                 Capsule()
-                                    .fill(isGranted ? theme.successColor.opacity(0.1) : theme.warningColor.opacity(0.1))
+                                    .fill(
+                                        isGranted
+                                            ? themeManager.currentTheme.successColor.opacity(0.1)
+                                            : themeManager.currentTheme.warningColor.opacity(0.1)
+                                    )
                             )
                     }
 
                     Text(permission.description)
                         .font(.system(size: 11))
-                        .foregroundColor(theme.tertiaryText)
+                        .foregroundColor(themeManager.currentTheme.tertiaryText)
                         .lineLimit(2)
                 }
 
@@ -1193,12 +1323,16 @@ private struct SystemPermissionRow: View {
                                     .font(.system(size: 12, weight: .medium))
                             }
                         }
-                        .foregroundColor(theme.primaryText)
+                        .foregroundColor(themeManager.currentTheme.primaryText)
                         .padding(.horizontal, 10)
                         .padding(.vertical, 6)
                         .background(
                             RoundedRectangle(cornerRadius: 6)
-                                .fill(theme.tertiaryBackground)
+                                .fill(themeManager.currentTheme.tertiaryBackground)
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 6)
+                                        .stroke(themeManager.currentTheme.inputBorder, lineWidth: 1)
+                                )
                         )
                         .buttonStyle(PlainButtonStyle())
                         .disabled(isTesting)
@@ -1216,12 +1350,16 @@ private struct SystemPermissionRow: View {
                                 Text("Settings")
                                     .font(.system(size: 12, weight: .medium))
                             }
-                            .foregroundColor(theme.secondaryText)
+                            .foregroundColor(themeManager.currentTheme.secondaryText)
                             .padding(.horizontal, 10)
                             .padding(.vertical, 6)
                             .background(
                                 RoundedRectangle(cornerRadius: 6)
-                                    .fill(theme.tertiaryBackground)
+                                    .fill(themeManager.currentTheme.tertiaryBackground)
+                                    .overlay(
+                                        RoundedRectangle(cornerRadius: 6)
+                                            .stroke(themeManager.currentTheme.inputBorder, lineWidth: 1)
+                                    )
                             )
                         }
                         .buttonStyle(PlainButtonStyle())
@@ -1240,7 +1378,7 @@ private struct SystemPermissionRow: View {
                             .padding(.vertical, 6)
                             .background(
                                 RoundedRectangle(cornerRadius: 6)
-                                    .fill(theme.accentColor)
+                                    .fill(themeManager.currentTheme.accentColor)
                             )
                         }
                         .buttonStyle(PlainButtonStyle())
@@ -1254,7 +1392,9 @@ private struct SystemPermissionRow: View {
                 HStack(alignment: .top, spacing: 6) {
                     Image(systemName: isSuccess ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
                         .font(.system(size: 12))
-                        .foregroundColor(isSuccess ? theme.successColor : theme.warningColor)
+                        .foregroundColor(
+                            isSuccess ? themeManager.currentTheme.successColor : themeManager.currentTheme.warningColor
+                        )
                         .padding(.top, 1)
 
                     VStack(alignment: .leading, spacing: 2) {
@@ -1262,33 +1402,50 @@ private struct SystemPermissionRow: View {
                             .font(.system(size: 11, design: .monospaced))
                             .lineLimit(4)
                             .textSelection(.enabled)
-                            .foregroundColor(isSuccess ? theme.successColor : theme.warningColor)
+                            .foregroundColor(
+                                isSuccess
+                                    ? themeManager.currentTheme.successColor : themeManager.currentTheme.warningColor
+                            )
 
                         if !isSuccess {
                             Text("Xcode builds need separate grants. Try 'tccutil reset AppleEvents' if stuck.")
                                 .font(.system(size: 10))
-                                .foregroundColor(theme.tertiaryText)
+                                .foregroundColor(themeManager.currentTheme.tertiaryText)
                                 .padding(.top, 2)
                         }
                     }
                 }
-                .padding(8)
+                .padding(10)
                 .background(
-                    RoundedRectangle(cornerRadius: 6)
-                        .fill((isSuccess ? theme.successColor : theme.warningColor).opacity(0.1))
+                    RoundedRectangle(cornerRadius: 8)
+                        .fill(
+                            (isSuccess
+                                ? themeManager.currentTheme.successColor : themeManager.currentTheme.warningColor)
+                                .opacity(0.1)
+                        )
                 )
-                .padding(.leading, 48)  // Align with text
+                .padding(.leading, 52)
             }
         }
-        .padding(12)
+        .padding(14)
         .background(
-            RoundedRectangle(cornerRadius: 10)
-                .fill(theme.inputBackground)
+            RoundedRectangle(cornerRadius: 12)
+                .fill(themeManager.currentTheme.inputBackground)
                 .overlay(
-                    RoundedRectangle(cornerRadius: 10)
-                        .stroke(isGranted ? theme.successColor.opacity(0.3) : theme.inputBorder, lineWidth: 1)
+                    RoundedRectangle(cornerRadius: 12)
+                        .stroke(
+                            isGranted
+                                ? themeManager.currentTheme.successColor.opacity(0.3)
+                                : themeManager.currentTheme.inputBorder,
+                            lineWidth: 1
+                        )
                 )
         )
+        .scaleEffect(isHovered ? 1.005 : 1.0)
+        .animation(.spring(response: 0.3, dampingFraction: 0.7), value: isHovered)
+        .onHover { hovering in
+            isHovered = hovering
+        }
     }
 
     private func runTest() {
@@ -1332,15 +1489,24 @@ private struct SystemPermissionRow: View {
 // MARK: - Default Persona Picker
 
 private struct DefaultPersonaPicker: View {
-    @Environment(\.theme) private var theme
+    @StateObject private var themeManager = ThemeManager.shared
     @Binding var selection: UUID
     let personas: [Persona]
+
+    @State private var isHovered = false
 
     private var displayName: String {
         if let persona = personas.first(where: { $0.id == selection }) {
             return persona.name
         }
         return "Default"
+    }
+
+    /// Generate a consistent color based on persona name
+    private var personaColor: Color {
+        let hash = abs(displayName.hashValue)
+        let hue = Double(hash % 360) / 360.0
+        return Color(hue: hue, saturation: 0.6, brightness: 0.8)
     }
 
     var body: some View {
@@ -1368,39 +1534,57 @@ private struct DefaultPersonaPicker: View {
                 Label("Manage Personas", systemImage: "person.2.badge.gearshape")
             }
         } label: {
-            HStack {
-                // Persona avatar
+            HStack(spacing: 10) {
+                // Persona avatar with colored ring
                 ZStack {
                     Circle()
-                        .fill(theme.accentColor.opacity(0.15))
+                        .fill(
+                            LinearGradient(
+                                colors: [personaColor.opacity(0.15), personaColor.opacity(0.05)],
+                                startPoint: .topLeading,
+                                endPoint: .bottomTrailing
+                            )
+                        )
+                    Circle()
+                        .strokeBorder(personaColor.opacity(0.4), lineWidth: 1.5)
                     Text(displayName.prefix(1).uppercased())
-                        .font(.system(size: 10, weight: .bold, design: .rounded))
-                        .foregroundColor(theme.accentColor)
+                        .font(.system(size: 11, weight: .bold, design: .rounded))
+                        .foregroundColor(personaColor)
                 }
-                .frame(width: 20, height: 20)
+                .frame(width: 24, height: 24)
 
                 Text(displayName)
                     .font(.system(size: 13, weight: .medium))
-                    .foregroundColor(theme.primaryText)
+                    .foregroundColor(themeManager.currentTheme.primaryText)
                     .lineLimit(1)
 
                 Spacer()
 
                 Image(systemName: "chevron.up.chevron.down")
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundColor(theme.secondaryText)
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundColor(themeManager.currentTheme.tertiaryText)
             }
             .padding(.horizontal, 12)
-            .padding(.vertical, 8)
+            .padding(.vertical, 10)
             .background(
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(theme.inputBackground)
+                RoundedRectangle(cornerRadius: 10)
+                    .fill(themeManager.currentTheme.inputBackground)
                     .overlay(
-                        RoundedRectangle(cornerRadius: 8)
-                            .stroke(theme.inputBorder, lineWidth: 1)
+                        RoundedRectangle(cornerRadius: 10)
+                            .stroke(
+                                isHovered
+                                    ? themeManager.currentTheme.accentColor.opacity(0.5)
+                                    : themeManager.currentTheme.inputBorder,
+                                lineWidth: isHovered ? 1.5 : 1
+                            )
                     )
             )
         }
         .menuStyle(.borderlessButton)
+        .onHover { hovering in
+            withAnimation(.easeOut(duration: 0.15)) {
+                isHovered = hovering
+            }
+        }
     }
 }

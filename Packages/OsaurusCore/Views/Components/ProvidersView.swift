@@ -465,7 +465,7 @@ private struct ProviderCard: View {
 // MARK: - Provider Edit Sheet
 
 private struct ProviderEditSheet: View {
-    @Environment(\.theme) private var theme
+    @StateObject private var themeManager = ThemeManager.shared
     @Environment(\.dismiss) private var dismiss
 
     let provider: MCPProvider?
@@ -501,217 +501,326 @@ private struct ProviderEditSheet: View {
     var body: some View {
         VStack(spacing: 0) {
             // Header
-            HStack {
-                Text(isEditing ? "Edit Provider" : "Add Provider")
-                    .font(.system(size: 17, weight: .semibold))
-                    .foregroundColor(theme.primaryText)
-                Spacer()
-                Button(action: { dismiss() }) {
-                    Image(systemName: "xmark.circle.fill")
-                        .font(.system(size: 20))
-                        .foregroundColor(theme.tertiaryText)
-                }
-                .buttonStyle(PlainButtonStyle())
-            }
-            .padding(20)
-
-            Divider()
+            sheetHeader
 
             // Content
             ScrollView {
-                VStack(alignment: .leading, spacing: 20) {
-                    // Basic section
-                    FormSection(title: "Basic") {
-                        FormField(label: "Name") {
-                            TextField("My MCP Server", text: $name)
-                                .textFieldStyle(.plain)
-                                .padding(10)
-                                .background(RoundedRectangle(cornerRadius: 8).fill(theme.tertiaryBackground))
-                        }
+                VStack(alignment: .leading, spacing: 16) {
+                    // Connection section
+                    EditorCard(title: "Connection", icon: "link") {
+                        VStack(alignment: .leading, spacing: 14) {
+                            MCPStyledTextField(
+                                label: "Name",
+                                placeholder: "My MCP Server",
+                                text: $name
+                            )
 
-                        FormField(label: "URL") {
-                            TextField("https://mcp.example.com", text: $url)
-                                .textFieldStyle(.plain)
-                                .font(.system(.body, design: .monospaced))
-                                .padding(10)
-                                .background(RoundedRectangle(cornerRadius: 8).fill(theme.tertiaryBackground))
-                        }
+                            MCPStyledTextField(
+                                label: "URL",
+                                placeholder: "https://mcp.example.com",
+                                text: $url,
+                                isMonospaced: true
+                            )
 
-                        FormField(label: "Bearer Token", hint: "Optional - stored securely in Keychain") {
-                            SecureField("Enter token", text: $token)
-                                .textFieldStyle(.plain)
-                                .padding(10)
-                                .background(RoundedRectangle(cornerRadius: 8).fill(theme.tertiaryBackground))
+                            MCPStyledSecureField(
+                                label: "Bearer Token",
+                                placeholder: "Optional - stored securely in Keychain",
+                                text: $token
+                            )
                         }
                     }
 
                     // Headers section
-                    FormSection(title: "Custom Headers", trailing: { addHeaderButton }) {
-                        if customHeaders.isEmpty {
-                            Text("No custom headers")
-                                .font(.system(size: 13))
-                                .foregroundColor(theme.tertiaryText)
-                                .padding(.vertical, 8)
-                        } else {
-                            ForEach($customHeaders) { $header in
-                                HeaderRow(header: $header) {
-                                    customHeaders.removeAll { $0.id == header.id }
+                    EditorCard(title: "Custom Headers", icon: "list.bullet.rectangle") {
+                        VStack(alignment: .leading, spacing: 12) {
+                            if customHeaders.isEmpty {
+                                HStack {
+                                    Text("No custom headers configured")
+                                        .font(.system(size: 13))
+                                        .foregroundColor(themeManager.currentTheme.tertiaryText)
+                                    Spacer()
+                                    addHeaderButton
+                                }
+                                .padding(.vertical, 4)
+                            } else {
+                                HStack {
+                                    Spacer()
+                                    addHeaderButton
+                                }
+                                ForEach($customHeaders) { $header in
+                                    HeaderRow(header: $header) {
+                                        customHeaders.removeAll { $0.id == header.id }
+                                    }
                                 }
                             }
                         }
                     }
 
                     // Advanced section
-                    VStack(alignment: .leading, spacing: 0) {
-                        Button(action: {
-                            withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
-                                showAdvanced.toggle()
-                            }
-                        }) {
-                            HStack {
-                                Image(systemName: "gearshape")
-                                    .font(.system(size: 12))
-                                Text("Advanced Settings")
-                                    .font(.system(size: 13, weight: .medium))
-                                Spacer()
-                                Image(systemName: "chevron.right")
-                                    .font(.system(size: 11, weight: .semibold))
-                                    .rotationEffect(.degrees(showAdvanced ? 90 : 0))
-                            }
-                            .foregroundColor(theme.secondaryText)
-                            .contentShape(Rectangle())
-                        }
-                        .buttonStyle(PlainButtonStyle())
-
-                        if showAdvanced {
-                            VStack(alignment: .leading, spacing: 20) {
-                                // Connection options
-                                VStack(spacing: 12) {
-                                    HStack {
-                                        Text("Enable Streaming")
-                                            .font(.system(size: 13))
-                                            .foregroundColor(theme.primaryText)
-                                        Spacer()
-                                        Toggle("", isOn: $streamingEnabled)
-                                            .toggleStyle(SwitchToggleStyle())
-                                            .labelsHidden()
-                                    }
-
-                                    HStack {
-                                        Text("Auto-connect on Launch")
-                                            .font(.system(size: 13))
-                                            .foregroundColor(theme.primaryText)
-                                        Spacer()
-                                        Toggle("", isOn: $autoConnect)
-                                            .toggleStyle(SwitchToggleStyle())
-                                            .labelsHidden()
-                                    }
+                    EditorCard(title: "Advanced", icon: "gearshape") {
+                        VStack(alignment: .leading, spacing: 0) {
+                            Button(action: {
+                                withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+                                    showAdvanced.toggle()
                                 }
+                            }) {
+                                HStack {
+                                    Text(showAdvanced ? "Hide advanced settings" : "Show advanced settings")
+                                        .font(.system(size: 13))
+                                        .foregroundColor(themeManager.currentTheme.accentColor)
+                                    Spacer()
+                                    Image(systemName: "chevron.right")
+                                        .font(.system(size: 11, weight: .semibold))
+                                        .foregroundColor(themeManager.currentTheme.tertiaryText)
+                                        .rotationEffect(.degrees(showAdvanced ? 90 : 0))
+                                }
+                                .contentShape(Rectangle())
+                            }
+                            .buttonStyle(PlainButtonStyle())
 
-                                Divider()
-
-                                // Timeout settings
+                            if showAdvanced {
                                 VStack(alignment: .leading, spacing: 16) {
-                                    FormField(label: "Discovery Timeout: \(Int(discoveryTimeout))s") {
-                                        Slider(value: $discoveryTimeout, in: 5 ... 60, step: 5)
-                                    }
+                                    Divider()
+                                        .padding(.vertical, 8)
 
-                                    FormField(label: "Tool Call Timeout: \(Int(toolCallTimeout))s") {
-                                        Slider(value: $toolCallTimeout, in: 10 ... 120, step: 5)
+                                    // Connection options
+                                    MCPToggleRow(
+                                        title: "Enable Streaming",
+                                        description: "Stream tool responses in real-time",
+                                        isOn: $streamingEnabled
+                                    )
+
+                                    MCPToggleRow(
+                                        title: "Auto-connect on Launch",
+                                        description: "Connect automatically when app starts",
+                                        isOn: $autoConnect
+                                    )
+
+                                    Divider()
+                                        .padding(.vertical, 4)
+
+                                    // Timeout settings
+                                    VStack(alignment: .leading, spacing: 16) {
+                                        VStack(alignment: .leading, spacing: 6) {
+                                            HStack {
+                                                Text("Discovery Timeout")
+                                                    .font(.system(size: 12, weight: .medium))
+                                                    .foregroundColor(themeManager.currentTheme.primaryText)
+                                                Spacer()
+                                                Text("\(Int(discoveryTimeout))s")
+                                                    .font(.system(size: 12, weight: .medium, design: .monospaced))
+                                                    .foregroundColor(themeManager.currentTheme.accentColor)
+                                            }
+                                            Slider(value: $discoveryTimeout, in: 5 ... 60, step: 5)
+                                                .tint(themeManager.currentTheme.accentColor)
+                                        }
+
+                                        VStack(alignment: .leading, spacing: 6) {
+                                            HStack {
+                                                Text("Tool Call Timeout")
+                                                    .font(.system(size: 12, weight: .medium))
+                                                    .foregroundColor(themeManager.currentTheme.primaryText)
+                                                Spacer()
+                                                Text("\(Int(toolCallTimeout))s")
+                                                    .font(.system(size: 12, weight: .medium, design: .monospaced))
+                                                    .foregroundColor(themeManager.currentTheme.accentColor)
+                                            }
+                                            Slider(value: $toolCallTimeout, in: 10 ... 120, step: 5)
+                                                .tint(themeManager.currentTheme.accentColor)
+                                        }
                                     }
                                 }
+                                .transition(.opacity.combined(with: .move(edge: .top)))
                             }
-                            .padding(.top, 12)
-                            .transition(.opacity.combined(with: .move(edge: .top)))
                         }
                     }
                 }
-                .padding(20)
+                .padding(24)
             }
-
-            Divider()
 
             // Footer
-            HStack(spacing: 12) {
-                Button(action: {
-                    if testResult != nil {
-                        // Reset state on tap if there's a result
-                        testResult = nil
-                    } else {
-                        testConnection()
-                    }
-                }) {
-                    HStack(spacing: 6) {
-                        Group {
-                            if isTesting {
-                                ProgressView().scaleEffect(0.6)
-                            } else if let result = testResult {
-                                switch result {
-                                case .success:
-                                    Image(systemName: "checkmark.circle.fill")
-                                        .font(.system(size: 12))
-                                case .failure:
-                                    Image(systemName: "xmark.circle.fill")
-                                        .font(.system(size: 12))
-                                }
-                            } else {
-                                Image(systemName: "antenna.radiowaves.left.and.right")
+            sheetFooter
+        }
+        .frame(width: 540, height: 640)
+        .background(themeManager.currentTheme.primaryBackground)
+        .clipShape(RoundedRectangle(cornerRadius: 16))
+        .overlay(
+            RoundedRectangle(cornerRadius: 16)
+                .stroke(themeManager.currentTheme.primaryBorder, lineWidth: 1)
+        )
+        .onAppear { loadProvider() }
+    }
+
+    // MARK: - Sheet Header
+
+    private var sheetHeader: some View {
+        HStack(spacing: 12) {
+            // Icon with gradient background
+            ZStack {
+                Circle()
+                    .fill(
+                        LinearGradient(
+                            colors: [
+                                themeManager.currentTheme.accentColor.opacity(0.2),
+                                themeManager.currentTheme.accentColor.opacity(0.05),
+                            ],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        )
+                    )
+                Image(systemName: isEditing ? "pencil.circle.fill" : "server.rack")
+                    .font(.system(size: 18, weight: .semibold))
+                    .foregroundStyle(
+                        LinearGradient(
+                            colors: [
+                                themeManager.currentTheme.accentColor,
+                                themeManager.currentTheme.accentColor.opacity(0.7),
+                            ],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        )
+                    )
+            }
+            .frame(width: 40, height: 40)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(isEditing ? "Edit MCP Provider" : "Add MCP Provider")
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundColor(themeManager.currentTheme.primaryText)
+
+                Text(isEditing ? "Modify your MCP server connection" : "Connect to a remote MCP server")
+                    .font(.system(size: 12))
+                    .foregroundColor(themeManager.currentTheme.secondaryText)
+            }
+
+            Spacer()
+
+            Button(action: { dismiss() }) {
+                Image(systemName: "xmark")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundColor(themeManager.currentTheme.secondaryText)
+                    .frame(width: 28, height: 28)
+                    .background(
+                        Circle()
+                            .fill(themeManager.currentTheme.tertiaryBackground)
+                    )
+            }
+            .buttonStyle(PlainButtonStyle())
+            .keyboardShortcut(.escape, modifiers: [])
+        }
+        .padding(.horizontal, 24)
+        .padding(.vertical, 20)
+        .background(
+            themeManager.currentTheme.secondaryBackground
+                .overlay(
+                    LinearGradient(
+                        colors: [
+                            themeManager.currentTheme.accentColor.opacity(0.03),
+                            Color.clear,
+                        ],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    )
+                )
+        )
+    }
+
+    // MARK: - Sheet Footer
+
+    private var sheetFooter: some View {
+        HStack(spacing: 12) {
+            // Test connection button
+            Button(action: {
+                if testResult != nil {
+                    testResult = nil
+                } else {
+                    testConnection()
+                }
+            }) {
+                HStack(spacing: 6) {
+                    Group {
+                        if isTesting {
+                            ProgressView().scaleEffect(0.6)
+                        } else if let result = testResult {
+                            switch result {
+                            case .success:
+                                Image(systemName: "checkmark.circle.fill")
+                                    .font(.system(size: 12))
+                            case .failure:
+                                Image(systemName: "xmark.circle.fill")
                                     .font(.system(size: 12))
                             }
-                        }
-                        .frame(width: 16, height: 16)
-
-                        if let result = testResult {
-                            switch result {
-                            case .success(let count):
-                                Text("Connected! (\(count) tools)")
-                                    .font(.system(size: 13, weight: .medium))
-                            case .failure:
-                                Text("Failed - Tap to retry")
-                                    .font(.system(size: 13, weight: .medium))
-                            }
                         } else {
-                            Text("Test Connection")
-                                .font(.system(size: 13, weight: .medium))
+                            Image(systemName: "antenna.radiowaves.left.and.right")
+                                .font(.system(size: 12))
                         }
                     }
-                    .foregroundColor(testResultColor)
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 10)
-                    .background(RoundedRectangle(cornerRadius: 8).fill(testResultBackground))
-                }
-                .buttonStyle(PlainButtonStyle())
-                .disabled(url.isEmpty || isTesting)
+                    .frame(width: 16, height: 16)
 
-                Spacer()
-
-                Button("Cancel") {
-                    dismiss()
+                    if let result = testResult {
+                        switch result {
+                        case .success(let count):
+                            Text("Connected! (\(count) tools)")
+                                .font(.system(size: 12, weight: .medium))
+                        case .failure:
+                            Text("Failed - Tap to retry")
+                                .font(.system(size: 12, weight: .medium))
+                        }
+                    } else {
+                        Text("Test")
+                            .font(.system(size: 12, weight: .medium))
+                    }
                 }
-                .buttonStyle(PlainButtonStyle())
-                .foregroundColor(theme.secondaryText)
-                .padding(.horizontal, 14)
-                .padding(.vertical, 10)
-
-                Button(action: save) {
-                    Text(isEditing ? "Save" : "Add Provider")
-                        .font(.system(size: 13, weight: .semibold))
-                        .foregroundColor(.white)
-                        .padding(.horizontal, 16)
-                        .padding(.vertical, 10)
-                        .background(
-                            RoundedRectangle(cornerRadius: 8)
-                                .fill(canSave ? theme.accentColor : theme.accentColor.opacity(0.5))
-                        )
-                }
-                .buttonStyle(PlainButtonStyle())
-                .disabled(!canSave)
+                .foregroundColor(testResultColor)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+                .background(RoundedRectangle(cornerRadius: 8).fill(testResultBackground))
             }
-            .padding(20)
+            .buttonStyle(PlainButtonStyle())
+            .disabled(url.isEmpty || isTesting)
+
+            // Keyboard hint
+            HStack(spacing: 4) {
+                Text("⌘")
+                    .font(.system(size: 10, weight: .medium, design: .rounded))
+                    .padding(.horizontal, 4)
+                    .padding(.vertical, 2)
+                    .background(
+                        RoundedRectangle(cornerRadius: 4)
+                            .fill(themeManager.currentTheme.tertiaryBackground)
+                    )
+                Text("+ Enter to save")
+                    .font(.system(size: 11))
+            }
+            .foregroundColor(themeManager.currentTheme.tertiaryText)
+
+            Spacer()
+
+            // Cancel
+            Button("Cancel") {
+                dismiss()
+            }
+            .buttonStyle(MCPSecondaryButtonStyle())
+
+            // Save/Add
+            Button(action: save) {
+                Text(isEditing ? "Save" : "Add Provider")
+            }
+            .buttonStyle(MCPPrimaryButtonStyle())
+            .disabled(!canSave)
+            .keyboardShortcut(.return, modifiers: .command)
         }
-        .frame(width: 520, height: 600)
-        .background(theme.primaryBackground)
-        .onAppear { loadProvider() }
+        .padding(.horizontal, 24)
+        .padding(.vertical, 16)
+        .background(
+            themeManager.currentTheme.secondaryBackground
+                .overlay(
+                    Rectangle()
+                        .fill(themeManager.currentTheme.primaryBorder)
+                        .frame(height: 1),
+                    alignment: .top
+                )
+        )
     }
 
     private var addHeaderButton: some View {
@@ -719,29 +828,35 @@ private struct ProviderEditSheet: View {
             customHeaders.append(HeaderEntry(key: "", value: "", isSecret: false))
         }) {
             HStack(spacing: 4) {
-                Image(systemName: "plus")
-                    .font(.system(size: 10, weight: .semibold))
-                Text("Add")
+                Image(systemName: "plus.circle.fill")
+                    .font(.system(size: 11))
+                Text("Add Header")
                     .font(.system(size: 11, weight: .medium))
             }
-            .foregroundColor(theme.accentColor)
+            .foregroundColor(themeManager.currentTheme.accentColor)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
+            .background(
+                RoundedRectangle(cornerRadius: 6)
+                    .fill(themeManager.currentTheme.accentColor.opacity(0.1))
+            )
         }
         .buttonStyle(PlainButtonStyle())
     }
 
     private var testResultColor: Color {
-        guard let result = testResult else { return theme.secondaryText }
+        guard let result = testResult else { return themeManager.currentTheme.secondaryText }
         switch result {
-        case .success: return theme.successColor
-        case .failure: return theme.errorColor
+        case .success: return themeManager.currentTheme.successColor
+        case .failure: return themeManager.currentTheme.errorColor
         }
     }
 
     private var testResultBackground: Color {
-        guard let result = testResult else { return theme.tertiaryBackground }
+        guard let result = testResult else { return themeManager.currentTheme.tertiaryBackground }
         switch result {
-        case .success: return theme.successColor.opacity(0.12)
-        case .failure: return theme.errorColor.opacity(0.12)
+        case .success: return themeManager.currentTheme.successColor.opacity(0.12)
+        case .failure: return themeManager.currentTheme.errorColor.opacity(0.12)
         }
     }
 
@@ -857,97 +972,354 @@ extension ProviderEditSheet.TestResult {
 // MARK: - Header Row
 
 private struct HeaderRow: View {
-    @Environment(\.theme) private var theme
+    @StateObject private var themeManager = ThemeManager.shared
     @Binding var header: ProviderEditSheet.HeaderEntry
     let onDelete: () -> Void
 
+    @State private var isKeyFocused = false
+    @State private var isValueFocused = false
+
     var body: some View {
         HStack(spacing: 8) {
-            TextField("Key", text: $header.key)
+            // Key field
+            ZStack(alignment: .leading) {
+                if header.key.isEmpty {
+                    Text("Key")
+                        .font(.system(size: 12, design: .monospaced))
+                        .foregroundColor(themeManager.currentTheme.placeholderText)
+                        .allowsHitTesting(false)
+                }
+                TextField(
+                    "",
+                    text: $header.key,
+                    onEditingChanged: { editing in
+                        withAnimation(.easeOut(duration: 0.15)) {
+                            isKeyFocused = editing
+                        }
+                    }
+                )
                 .textFieldStyle(.plain)
-                .font(.system(.body, design: .monospaced))
-                .padding(8)
-                .frame(width: 140)
-                .background(RoundedRectangle(cornerRadius: 6).fill(theme.tertiaryBackground))
-
-            if header.isSecret {
-                SecureField("Value (secret)", text: $header.value)
-                    .textFieldStyle(.plain)
-                    .padding(8)
-                    .background(RoundedRectangle(cornerRadius: 6).fill(theme.tertiaryBackground))
-            } else {
-                TextField("Value", text: $header.value)
-                    .textFieldStyle(.plain)
-                    .padding(8)
-                    .background(RoundedRectangle(cornerRadius: 6).fill(theme.tertiaryBackground))
+                .font(.system(size: 12, design: .monospaced))
+                .foregroundColor(themeManager.currentTheme.primaryText)
             }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 8)
+            .frame(width: 120)
+            .background(
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(themeManager.currentTheme.inputBackground)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 8)
+                            .stroke(
+                                isKeyFocused
+                                    ? themeManager.currentTheme.accentColor.opacity(0.5)
+                                    : themeManager.currentTheme.inputBorder,
+                                lineWidth: isKeyFocused ? 1.5 : 1
+                            )
+                    )
+            )
 
-            Toggle("Secret", isOn: $header.isSecret)
-                .toggleStyle(.checkbox)
-                .font(.system(size: 11))
-                .foregroundColor(theme.secondaryText)
+            // Value field
+            ZStack(alignment: .leading) {
+                if header.value.isEmpty {
+                    Text(header.isSecret ? "Secret value" : "Value")
+                        .font(.system(size: 12, design: .monospaced))
+                        .foregroundColor(themeManager.currentTheme.placeholderText)
+                        .allowsHitTesting(false)
+                }
+                if header.isSecret {
+                    SecureField("", text: $header.value)
+                        .textFieldStyle(.plain)
+                        .font(.system(size: 12, design: .monospaced))
+                        .foregroundColor(themeManager.currentTheme.primaryText)
+                } else {
+                    TextField(
+                        "",
+                        text: $header.value,
+                        onEditingChanged: { editing in
+                            withAnimation(.easeOut(duration: 0.15)) {
+                                isValueFocused = editing
+                            }
+                        }
+                    )
+                    .textFieldStyle(.plain)
+                    .font(.system(size: 12, design: .monospaced))
+                    .foregroundColor(themeManager.currentTheme.primaryText)
+                }
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 8)
+            .background(
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(themeManager.currentTheme.inputBackground)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 8)
+                            .stroke(
+                                isValueFocused
+                                    ? themeManager.currentTheme.accentColor.opacity(0.5)
+                                    : themeManager.currentTheme.inputBorder,
+                                lineWidth: isValueFocused ? 1.5 : 1
+                            )
+                    )
+            )
 
+            // Secret toggle
+            Button(action: { header.isSecret.toggle() }) {
+                HStack(spacing: 4) {
+                    Image(systemName: header.isSecret ? "lock.fill" : "lock.open")
+                        .font(.system(size: 10))
+                    Text(header.isSecret ? "Secret" : "Plain")
+                        .font(.system(size: 10, weight: .medium))
+                }
+                .foregroundColor(
+                    header.isSecret
+                        ? themeManager.currentTheme.accentColor
+                        : themeManager.currentTheme.tertiaryText
+                )
+                .padding(.horizontal, 8)
+                .padding(.vertical, 6)
+                .background(
+                    RoundedRectangle(cornerRadius: 6)
+                        .fill(
+                            header.isSecret
+                                ? themeManager.currentTheme.accentColor.opacity(0.1)
+                                : themeManager.currentTheme.tertiaryBackground
+                        )
+                )
+            }
+            .buttonStyle(PlainButtonStyle())
+
+            // Delete button
             Button(action: onDelete) {
-                Image(systemName: "minus.circle.fill")
-                    .foregroundColor(theme.errorColor.opacity(0.7))
+                Image(systemName: "trash")
+                    .font(.system(size: 11))
+                    .foregroundColor(themeManager.currentTheme.errorColor)
+                    .frame(width: 28, height: 28)
+                    .background(
+                        RoundedRectangle(cornerRadius: 6)
+                            .fill(themeManager.currentTheme.errorColor.opacity(0.1))
+                    )
             }
             .buttonStyle(PlainButtonStyle())
         }
     }
 }
 
-// MARK: - Form Components
+// MARK: - Styled Components
 
-private struct FormSection<Content: View, Trailing: View>: View {
-    @Environment(\.theme) private var theme
+private struct EditorCard<Content: View>: View {
+    @StateObject private var themeManager = ThemeManager.shared
     let title: String
-    let trailing: Trailing
+    let icon: String
     @ViewBuilder let content: () -> Content
-
-    init(
-        title: String,
-        @ViewBuilder trailing: () -> Trailing = { EmptyView() },
-        @ViewBuilder content: @escaping () -> Content
-    ) {
-        self.title = title
-        self.trailing = trailing()
-        self.content = content
-    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            HStack {
-                Text(title)
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundColor(theme.secondaryText)
-                Spacer()
-                trailing
+            HStack(spacing: 8) {
+                Image(systemName: icon)
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundColor(themeManager.currentTheme.accentColor)
+
+                Text(title.uppercased())
+                    .font(.system(size: 11, weight: .bold))
+                    .foregroundColor(themeManager.currentTheme.secondaryText)
+                    .tracking(0.5)
             }
+
             content()
+        }
+        .padding(16)
+        .background(
+            RoundedRectangle(cornerRadius: 12)
+                .fill(themeManager.currentTheme.cardBackground)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 12)
+                        .stroke(themeManager.currentTheme.cardBorder, lineWidth: 1)
+                )
+        )
+    }
+}
+
+private struct MCPStyledTextField: View {
+    @StateObject private var themeManager = ThemeManager.shared
+
+    let label: String
+    let placeholder: String
+    @Binding var text: String
+    var isMonospaced: Bool = false
+
+    @State private var isFocused = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(label)
+                .font(.system(size: 12, weight: .medium))
+                .foregroundColor(themeManager.currentTheme.primaryText)
+
+            ZStack(alignment: .leading) {
+                if text.isEmpty {
+                    Text(placeholder)
+                        .font(.system(size: 13, design: isMonospaced ? .monospaced : .default))
+                        .foregroundColor(themeManager.currentTheme.placeholderText)
+                        .allowsHitTesting(false)
+                }
+
+                TextField(
+                    "",
+                    text: $text,
+                    onEditingChanged: { editing in
+                        withAnimation(.easeOut(duration: 0.15)) {
+                            isFocused = editing
+                        }
+                    }
+                )
+                .textFieldStyle(.plain)
+                .font(.system(size: 13, design: isMonospaced ? .monospaced : .default))
+                .foregroundColor(themeManager.currentTheme.primaryText)
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 10)
+            .background(
+                RoundedRectangle(cornerRadius: 10)
+                    .fill(themeManager.currentTheme.inputBackground)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 10)
+                            .stroke(
+                                isFocused
+                                    ? themeManager.currentTheme.accentColor.opacity(0.5)
+                                    : themeManager.currentTheme.inputBorder,
+                                lineWidth: isFocused ? 1.5 : 1
+                            )
+                    )
+            )
         }
     }
 }
 
-private struct FormField<Content: View>: View {
-    @Environment(\.theme) private var theme
+private struct MCPStyledSecureField: View {
+    @StateObject private var themeManager = ThemeManager.shared
+
     let label: String
-    var hint: String? = nil
-    @ViewBuilder let content: () -> Content
+    let placeholder: String
+    @Binding var text: String
+
+    @State private var isFocused = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack {
                 Text(label)
                     .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(theme.primaryText)
-                if let hint = hint {
-                    Text("• \(hint)")
-                        .font(.system(size: 11))
-                        .foregroundColor(theme.tertiaryText)
-                }
+                    .foregroundColor(themeManager.currentTheme.primaryText)
+
+                Image(systemName: "lock.fill")
+                    .font(.system(size: 10))
+                    .foregroundColor(themeManager.currentTheme.tertiaryText)
             }
-            content()
+
+            ZStack(alignment: .leading) {
+                if text.isEmpty {
+                    Text(placeholder)
+                        .font(.system(size: 13, design: .monospaced))
+                        .foregroundColor(themeManager.currentTheme.placeholderText)
+                        .allowsHitTesting(false)
+                }
+
+                SecureField("", text: $text)
+                    .textFieldStyle(.plain)
+                    .font(.system(size: 13, design: .monospaced))
+                    .foregroundColor(themeManager.currentTheme.primaryText)
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 10)
+            .background(
+                RoundedRectangle(cornerRadius: 10)
+                    .fill(themeManager.currentTheme.inputBackground)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 10)
+                            .stroke(
+                                isFocused
+                                    ? themeManager.currentTheme.accentColor.opacity(0.5)
+                                    : themeManager.currentTheme.inputBorder,
+                                lineWidth: isFocused ? 1.5 : 1
+                            )
+                    )
+            )
         }
+    }
+}
+
+private struct MCPToggleRow: View {
+    @StateObject private var themeManager = ThemeManager.shared
+
+    let title: String
+    let description: String
+    @Binding var isOn: Bool
+
+    var body: some View {
+        HStack {
+            VStack(alignment: .leading, spacing: 3) {
+                Text(title)
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(themeManager.currentTheme.primaryText)
+                Text(description)
+                    .font(.system(size: 11))
+                    .foregroundStyle(themeManager.currentTheme.tertiaryText)
+            }
+
+            Spacer()
+
+            Toggle("", isOn: $isOn)
+                .toggleStyle(SwitchToggleStyle(tint: themeManager.currentTheme.accentColor))
+                .labelsHidden()
+        }
+        .padding(12)
+        .background(
+            RoundedRectangle(cornerRadius: 10)
+                .fill(themeManager.currentTheme.inputBackground)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 10)
+                        .stroke(themeManager.currentTheme.inputBorder, lineWidth: 1)
+                )
+        )
+    }
+}
+
+private struct MCPPrimaryButtonStyle: ButtonStyle {
+    @StateObject private var themeManager = ThemeManager.shared
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(.system(size: 13, weight: .semibold))
+            .foregroundColor(.white)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 10)
+            .background(
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(themeManager.currentTheme.accentColor)
+            )
+            .opacity(configuration.isPressed ? 0.8 : 1.0)
+    }
+}
+
+private struct MCPSecondaryButtonStyle: ButtonStyle {
+    @StateObject private var themeManager = ThemeManager.shared
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(.system(size: 13, weight: .medium))
+            .foregroundColor(themeManager.currentTheme.primaryText)
+            .padding(.horizontal, 14)
+            .padding(.vertical, 10)
+            .background(
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(themeManager.currentTheme.tertiaryBackground)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 8)
+                            .stroke(themeManager.currentTheme.inputBorder, lineWidth: 1)
+                    )
+            )
+            .opacity(configuration.isPressed ? 0.8 : 1.0)
     }
 }
 
