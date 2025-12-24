@@ -615,8 +615,8 @@ private struct PersonaCard: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            // Header row
-            HStack(alignment: .top, spacing: 12) {
+            // Header row - Name and actions only
+            HStack(alignment: .center, spacing: 12) {
                 // Avatar with colored ring
                 ZStack {
                     Circle()
@@ -632,36 +632,29 @@ private struct PersonaCard: View {
                         .strokeBorder(personaColor.opacity(0.4), lineWidth: 2)
 
                     Text(persona.name.prefix(1).uppercased())
-                        .font(.system(size: 18, weight: .bold, design: .rounded))
+                        .font(.system(size: 16, weight: .bold, design: .rounded))
                         .foregroundColor(personaColor)
                 }
-                .frame(width: 44, height: 44)
+                .frame(width: 36, height: 36)
 
-                // Name and description
-                VStack(alignment: .leading, spacing: 4) {
-                    HStack(spacing: 8) {
-                        Text(persona.name)
-                            .font(.system(size: 16, weight: .semibold))
-                            .foregroundColor(theme.primaryText)
-                            .lineLimit(1)
-
-                        if isActive {
-                            Image(systemName: "checkmark.circle.fill")
-                                .font(.system(size: 14))
-                                .foregroundColor(theme.successColor)
-                        }
-                    }
-
-                    Text(persona.description.isEmpty ? "No description" : persona.description)
-                        .font(.system(size: 13))
-                        .foregroundColor(theme.secondaryText)
+                // Name with active badge
+                HStack(spacing: 8) {
+                    Text(persona.name)
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundColor(theme.primaryText)
                         .lineLimit(1)
+
+                    if isActive {
+                        Image(systemName: "checkmark.circle.fill")
+                            .font(.system(size: 13))
+                            .foregroundColor(theme.successColor)
+                    }
                 }
 
                 Spacer(minLength: 8)
 
                 // Quick actions (visible on hover)
-                HStack(spacing: 6) {
+                HStack(spacing: 4) {
                     Group {
                         QuickActionButton(icon: "pencil", help: "Edit") {
                             onEdit()
@@ -697,9 +690,9 @@ private struct PersonaCard: View {
                         }
                     } label: {
                         Image(systemName: "ellipsis")
-                            .font(.system(size: 12, weight: .medium))
+                            .font(.system(size: 11, weight: .medium))
                             .foregroundColor(theme.secondaryText)
-                            .frame(width: 26, height: 26)
+                            .frame(width: 24, height: 24)
                             .background(
                                 Circle()
                                     .fill(theme.tertiaryBackground)
@@ -707,51 +700,67 @@ private struct PersonaCard: View {
                     }
                     .menuStyle(.borderlessButton)
                     .menuIndicator(.hidden)
-                    .frame(width: 26)
+                    .frame(width: 24)
                 }
             }
 
-            // System prompt preview
-            if !persona.systemPrompt.isEmpty {
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("SYSTEM PROMPT")
-                        .font(.system(size: 9, weight: .bold))
+            // Description section - always visible with fixed min height
+            Text(persona.description.isEmpty ? "No description provided" : persona.description)
+                .font(.system(size: 12))
+                .foregroundColor(persona.description.isEmpty ? theme.tertiaryText : theme.secondaryText)
+                .italic(persona.description.isEmpty)
+                .lineLimit(3)
+                .lineSpacing(2)
+                .frame(maxWidth: .infinity, minHeight: 44, alignment: .topLeading)
+
+            // System prompt section - always visible
+            VStack(alignment: .leading, spacing: 6) {
+                Text("SYSTEM PROMPT")
+                    .font(.system(size: 9, weight: .bold))
+                    .foregroundColor(theme.tertiaryText)
+                    .tracking(0.5)
+
+                if persona.systemPrompt.isEmpty {
+                    Text("No system prompt defined")
+                        .font(.system(size: 11))
                         .foregroundColor(theme.tertiaryText)
-                        .tracking(0.5)
-
+                        .italic()
+                        .frame(maxWidth: .infinity, minHeight: 52, alignment: .topLeading)
+                } else {
                     Text(persona.systemPrompt)
-                        .font(.system(size: 12, design: .monospaced))
+                        .font(.system(size: 11, design: .monospaced))
                         .foregroundColor(theme.secondaryText)
-                        .lineLimit(2)
-                        .lineSpacing(2)
-                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .lineLimit(4)
+                        .lineSpacing(3)
+                        .frame(maxWidth: .infinity, minHeight: 52, alignment: .topLeading)
                 }
-                .padding(10)
-                .background(
-                    RoundedRectangle(cornerRadius: 8)
-                        .fill(theme.inputBackground.opacity(0.6))
-                )
             }
+            .padding(10)
+            .background(
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(theme.inputBackground.opacity(0.5))
+            )
 
-            // Configuration preview badges
+            // Configuration badges - always visible with fixed height
             configurationBadges
+                .frame(minHeight: 26)
         }
-        .padding(16)
+        .padding(14)
         .background(
-            RoundedRectangle(cornerRadius: 14)
+            RoundedRectangle(cornerRadius: 12)
                 .fill(theme.cardBackground)
                 .overlay(
-                    RoundedRectangle(cornerRadius: 14)
+                    RoundedRectangle(cornerRadius: 12)
                         .stroke(
                             isActive ? theme.accentColor.opacity(0.4) : theme.cardBorder,
                             lineWidth: isActive ? 1.5 : 1
                         )
                 )
                 .shadow(
-                    color: isActive ? theme.accentColor.opacity(0.15) : Color.black.opacity(isHovered ? 0.1 : 0.05),
-                    radius: isHovered ? 12 : 6,
+                    color: isActive ? theme.accentColor.opacity(0.15) : Color.black.opacity(isHovered ? 0.08 : 0.04),
+                    radius: isHovered ? 10 : 5,
                     x: 0,
-                    y: isHovered ? 4 : 2
+                    y: isHovered ? 3 : 2
                 )
         )
         .scaleEffect(isHovered ? 1.01 : 1.0)
@@ -791,7 +800,7 @@ private struct PersonaCard: View {
 
         if hasBadges {
             ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 8) {
+                HStack(spacing: 6) {
                     // Model badge
                     if let model = persona.defaultModel {
                         ConfigBadge(
@@ -834,6 +843,22 @@ private struct PersonaCard: View {
                     }
                 }
             }
+        } else {
+            // Default state when no configuration overrides
+            HStack(spacing: 5) {
+                Image(systemName: "gearshape")
+                    .font(.system(size: 9, weight: .medium))
+                    .foregroundColor(theme.tertiaryText)
+                Text("Default configuration")
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundColor(theme.tertiaryText)
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 5)
+            .background(
+                Capsule()
+                    .fill(theme.tertiaryBackground.opacity(0.5))
+            )
         }
     }
 
@@ -894,17 +919,18 @@ private struct ConfigBadge: View {
     let color: Color
 
     var body: some View {
-        HStack(spacing: 5) {
+        HStack(spacing: 4) {
             Image(systemName: icon)
-                .font(.system(size: 9, weight: .semibold))
+                .font(.system(size: 8, weight: .semibold))
                 .foregroundColor(color)
 
             Text(text)
-                .font(.system(size: 10, weight: .medium))
+                .font(.system(size: 9, weight: .medium))
                 .foregroundColor(theme.secondaryText)
+                .lineLimit(1)
         }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 5)
+        .padding(.horizontal, 6)
+        .padding(.vertical, 4)
         .background(
             Capsule()
                 .fill(color.opacity(0.1))

@@ -1133,6 +1133,14 @@ struct ChatView: View {
             session.refreshModelOptions()
             sessionsManager.refresh()
         }
+        .onReceive(NotificationCenter.default.publisher(for: .activePersonaChanged)) { _ in
+            // Persona was changed externally (e.g., from PersonasView)
+            // Apply the new persona's theme immediately
+            let newPersonaId = personaManager.activePersonaId
+            applyPersonaTheme(for: newPersonaId, animated: true)
+            // If the current session belongs to a different persona, we may want to refresh sessions
+            sessionsManager.refresh()
+        }
         .onAppear {
             setupKeyMonitor()
             session.refreshModelOptions()
