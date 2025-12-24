@@ -214,6 +214,7 @@ extension PersonaManager {
     }
 
     /// Get the effective model for a persona
+    /// For custom personas without a model set, falls back to Default persona's model
     public func effectiveModel(for personaId: UUID) -> String? {
         guard let persona = persona(for: personaId) else {
             return ChatConfigurationStore.load().defaultModel
@@ -224,8 +225,8 @@ extension PersonaManager {
             return ChatConfigurationStore.load().defaultModel
         }
 
-        // Custom persona: use persona's model if set, otherwise nil (use first available)
-        return persona.defaultModel
+        // Custom persona: use persona's model if set, otherwise fall back to Default persona's model
+        return persona.defaultModel ?? ChatConfigurationStore.load().defaultModel
     }
 
     /// Get the effective temperature for a persona
@@ -275,6 +276,15 @@ extension PersonaManager {
     ///   - personaId: The persona to update
     ///   - model: The model ID to set as default (nil to clear/use global)
     public func updateDefaultModel(for personaId: UUID, model: String?) {
+        // Handle Default persona by saving to ChatConfiguration
+        if personaId == Persona.defaultId {
+            var config = ChatConfigurationStore.load()
+            config.defaultModel = model
+            ChatConfigurationStore.save(config)
+            return
+        }
+
+        // Handle custom personas
         guard var persona = persona(for: personaId) else { return }
         guard !persona.isBuiltIn else {
             print("[Osaurus] Cannot update built-in persona's model")

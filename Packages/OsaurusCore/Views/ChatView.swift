@@ -39,6 +39,9 @@ final class ChatSession: ObservableObject {
 
     private var currentTask: Task<Void, Never>?
     private var remoteModelsObserver: NSObjectProtocol?
+    private var modelSelectionCancellable: AnyCancellable?
+    /// Flag to prevent auto-persist during initial load or programmatic resets
+    private var isLoadingModel: Bool = false
 
     init() {
         // Build initial options list
@@ -46,6 +49,7 @@ final class ChatSession: ObservableObject {
         hasAnyModel = !modelOptions.isEmpty
 
         // Use configured default model if available, otherwise use first available
+        isLoadingModel = true
         let chatConfig = ChatConfigurationStore.load()
         if let defaultModel = chatConfig.defaultModel,
             modelOptions.contains(where: { $0.id == defaultModel })
@@ -54,6 +58,7 @@ final class ChatSession: ObservableObject {
         } else {
             selectedModel = modelOptions.first?.id
         }
+        isLoadingModel = false
 
         // Listen for remote provider model changes
         remoteModelsObserver = NotificationCenter.default.addObserver(
@@ -65,6 +70,17 @@ final class ChatSession: ObservableObject {
                 self?.refreshModelOptions()
             }
         }
+
+        // Auto-persist model selection changes
+        modelSelectionCancellable =
+            $selectedModel
+            .dropFirst()  // Skip initial value
+            .removeDuplicates()
+            .sink { [weak self] newModel in
+                guard let self = self, !self.isLoadingModel, let model = newModel else { return }
+                let pid = self.personaId ?? Persona.defaultId
+                PersonaManager.shared.updateDefaultModel(for: pid, model: model)
+            }
     }
 
     /// Build rich model options from all sources
@@ -119,7 +135,10 @@ final class ChatSession: ObservableObject {
         }
 
         modelOptions = newOptions
+        // Don't auto-persist when refreshing options (model list changed, not user selection)
+        isLoadingModel = true
         selectedModel = newSelected
+        isLoadingModel = false
         hasAnyModel = newHasAnyModel
     }
 
@@ -275,7 +294,8 @@ final class ChatSession: ObservableObject {
         isDirty = false
         // Keep current personaId - don't reset when creating new chat within same persona
 
-        // Apply model from persona or global config
+        // Apply model from persona or global config (don't auto-persist, it's already saved)
+        isLoadingModel = true
         let effectiveModel = PersonaManager.shared.effectiveModel(for: personaId ?? Persona.defaultId)
         if let defaultModel = effectiveModel,
             modelOptions.contains(where: { $0.id == defaultModel })
@@ -284,6 +304,7 @@ final class ChatSession: ObservableObject {
         } else {
             selectedModel = modelOptions.first?.id
         }
+        isLoadingModel = false
 
         // Apply tool overrides from persona
         if let toolOverrides = PersonaManager.shared.effectiveToolOverrides(for: personaId ?? Persona.defaultId) {
@@ -353,6 +374,8 @@ final class ChatSession: ObservableObject {
         personaId = data.personaId
 
         // Restore saved model if available, otherwise use configured default
+        // Don't auto-persist when loading - this is restoring existing state
+        isLoadingModel = true
         if let savedModel = data.selectedModel,
             modelOptions.contains(where: { $0.id == savedModel })
         {
@@ -368,6 +391,7 @@ final class ChatSession: ObservableObject {
                 selectedModel = modelOptions.first?.id
             }
         }
+        isLoadingModel = false
 
         turns = data.turns.map { ChatTurn(from: $0) }
         enabledToolOverrides = data.enabledToolOverrides ?? [:]
