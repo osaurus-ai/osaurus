@@ -928,7 +928,7 @@ struct ChatView: View {
     @State private var isHeaderHovered: Bool = false
     @State private var showSidebar: Bool = false
 
-    private var theme: ThemeProtocol { themeManager.currentTheme }
+    private var theme: ThemeProtocol { themeManager.chatTheme }
 
     /// Sessions filtered by the active persona
     private var filteredSessions: [ChatSessionData] {
@@ -1132,7 +1132,7 @@ struct ChatView: View {
         .onChange(of: session.turns.isEmpty) { _, newValue in
             resizeWindowForContent(isEmpty: newValue)
         }
-        .environment(\.theme, themeManager.currentTheme)
+        .environment(\.theme, themeManager.chatTheme)
         .tint(theme.accentColor)
     }
 
@@ -1464,35 +1464,24 @@ struct ChatView: View {
         applyPersonaTheme(for: newPersonaId, animated: true)
     }
 
-    /// Apply the persona's theme for ChatView
-    /// Uses persist: false to avoid overwriting the user's saved theme preference
+    /// Apply the persona's theme for ChatView only (does not affect management views)
     /// - Parameter animated: Whether to animate the transition (false for initial load to avoid flash)
     private func applyPersonaTheme(for personaId: UUID, animated: Bool = true) {
         if let themeId = personaManager.themeId(for: personaId),
             let personaTheme = themeManager.installedThemes.first(where: { $0.metadata.id == themeId })
         {
-            // Apply the persona's custom theme (temporary, don't persist)
-            themeManager.applyCustomTheme(personaTheme, persist: false, animated: animated)
-        } else if let savedTheme = ThemeConfigurationStore.loadActiveTheme() {
-            // No persona theme - apply the user's saved global theme (temporary, don't persist)
-            themeManager.applyCustomTheme(savedTheme, persist: false, animated: animated)
+            // Apply the persona's custom theme to chat only
+            themeManager.applyChatTheme(personaTheme, animated: animated)
         } else {
-            // No saved theme - use system appearance
-            themeManager.clearCustomTheme(persist: false, animated: animated)
+            // No persona theme - sync chat theme back to the global theme
+            themeManager.syncChatTheme(animated: animated)
         }
     }
 
-    /// Restore the global theme from disk when ChatView closes
-    /// Reads the saved theme directly to handle cases where user changed theme while ChatView was open
+    /// Restore the chat theme to match the global theme when ChatView closes
     private func restoreGlobalTheme() {
-        // Read the currently saved theme from disk (may have changed while ChatView was open)
-        // No animation needed when view is disappearing
-        if let savedTheme = ThemeConfigurationStore.loadActiveTheme() {
-            themeManager.applyCustomTheme(savedTheme, persist: false, animated: false)
-        } else {
-            // No saved theme - use system appearance
-            themeManager.clearCustomTheme(persist: false, animated: false)
-        }
+        // Sync chat theme back to the global theme (no animation when disappearing)
+        themeManager.syncChatTheme(animated: false)
     }
 
     private func resizeWindowForContent(isEmpty: Bool) {
