@@ -18,6 +18,7 @@ struct ChatSessionSidebar: View {
 
     @Environment(\.theme) private var theme
     @Environment(\.colorScheme) private var colorScheme
+    @StateObject private var personaManager = PersonaManager.shared
     @State private var editingSessionId: UUID?
     @State private var editingTitle: String = ""
     @State private var searchQuery: String = ""
@@ -57,7 +58,8 @@ struct ChatSessionSidebar: View {
                 sessionList
             }
         }
-        .frame(width: 240)
+        .frame(width: 240, alignment: .top)
+        .frame(maxHeight: .infinity, alignment: .top)
         .background(theme.secondaryBackground.opacity(colorScheme == .dark ? 0.85 : 0.9))
     }
 
@@ -88,7 +90,8 @@ struct ChatSessionSidebar: View {
             .help("New Chat")
         }
         .padding(.horizontal, 16)
-        .padding(.vertical, 12)
+        .padding(.top, 20)
+        .padding(.bottom, 8)
     }
 
     // MARK: - Search Field
@@ -205,6 +208,7 @@ struct ChatSessionSidebar: View {
                 ForEach(filteredSessions) { session in
                     SessionRow(
                         session: session,
+                        persona: personaManager.persona(for: session.personaId ?? Persona.defaultId),
                         isSelected: session.id == currentSessionId,
                         isEditing: editingSessionId == session.id,
                         editingTitle: $editingTitle,
@@ -253,6 +257,7 @@ struct ChatSessionSidebar: View {
 
 private struct SessionRow: View {
     let session: ChatSessionData
+    let persona: Persona?
     let isSelected: Bool
     let isEditing: Bool
     @Binding var editingTitle: String
@@ -266,6 +271,21 @@ private struct SessionRow: View {
     @State private var isHovered = false
     @FocusState private var isTextFieldFocused: Bool
 
+    /// Whether this is the default persona
+    private var isDefaultPersona: Bool {
+        guard let persona = persona else { return true }
+        return persona.isBuiltIn
+    }
+
+    /// Get a consistent color for the persona based on its ID
+    private var personaColor: Color {
+        guard let persona = persona, !persona.isBuiltIn else { return theme.secondaryText }
+        // Generate a consistent hue from the persona ID
+        let hash = persona.id.hashValue
+        let hue = Double(abs(hash) % 360) / 360.0
+        return Color(hue: hue, saturation: 0.6, brightness: 0.8)
+    }
+
     var body: some View {
         if isEditing {
             editingView
@@ -274,7 +294,14 @@ private struct SessionRow: View {
                 .background(rowBackground)
                 .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
         } else {
-            HStack {
+            HStack(spacing: 8) {
+                // Persona indicator
+                if isDefaultPersona {
+                    defaultPersonaIndicator
+                } else if let persona = persona {
+                    personaIndicatorView(persona)
+                }
+
                 VStack(alignment: .leading, spacing: 2) {
                     Text(session.title)
                         .font(.system(size: 12, weight: .medium))
@@ -323,6 +350,32 @@ private struct SessionRow: View {
                 Button("Delete", role: .destructive, action: onDelete)
             }
         }
+    }
+
+    /// Default persona indicator with person icon
+    private var defaultPersonaIndicator: some View {
+        Image(systemName: "person.fill")
+            .font(.system(size: 9, weight: .medium))
+            .foregroundColor(theme.secondaryText.opacity(0.6))
+            .frame(width: 18, height: 18)
+            .background(
+                Circle()
+                    .fill(theme.secondaryText.opacity(0.1))
+            )
+            .help("Default")
+    }
+
+    @ViewBuilder
+    private func personaIndicatorView(_ persona: Persona) -> some View {
+        Text(persona.name.prefix(1).uppercased())
+            .font(.system(size: 9, weight: .bold, design: .rounded))
+            .foregroundColor(personaColor)
+            .frame(width: 18, height: 18)
+            .background(
+                Circle()
+                    .fill(personaColor.opacity(0.15))
+            )
+            .help(persona.name)
     }
 
     private var normalView: some View {

@@ -50,14 +50,16 @@ final class ChatSessionsManager: ObservableObject {
     }
 
     /// Get sessions filtered by persona
-    /// - Parameter personaId: The persona ID to filter by. nil returns sessions for Default persona.
+    /// - Parameter personaId: The persona ID to filter by.
+    ///   When Default persona (or nil) is selected, returns ALL sessions from all personas.
+    ///   Otherwise returns only sessions belonging to the specified persona.
     func sessions(for personaId: UUID?) -> [ChatSessionData] {
-        // Normalize: nil and Default persona ID both mean "Default"
-        let targetId = personaId == Persona.defaultId ? nil : personaId
-        return sessions.filter { session in
-            let sessionPersonaId = session.personaId == Persona.defaultId ? nil : session.personaId
-            return sessionPersonaId == targetId
+        // When Default persona is selected, show ALL sessions
+        if personaId == nil || personaId == Persona.defaultId {
+            return sessions
         }
+        // Otherwise filter by persona
+        return sessions.filter { $0.personaId == personaId }
     }
 
     /// Save a session (updates the list)

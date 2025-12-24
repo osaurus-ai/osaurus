@@ -959,29 +959,15 @@ struct ChatView: View {
         sessionsManager.sessions(for: personaManager.activePersonaId)
     }
 
-    /// Whether there are any custom (non-built-in) personas
-    private var hasCustomPersonas: Bool {
-        personaManager.personas.contains { !$0.isBuiltIn }
-    }
-
     var body: some View {
         GeometryReader { proxy in
             let sidebarWidth: CGFloat = showSidebar ? 240 : 0
             let chatWidth = proxy.size.width - sidebarWidth
 
-            HStack(spacing: 0) {
+            HStack(alignment: .top, spacing: 0) {
                 // Sidebar
                 if showSidebar {
-                    VStack(spacing: 0) {
-                        // Only show persona picker if there are custom personas
-                        if hasCustomPersonas {
-                            PersonaPickerHeader(
-                                personas: personaManager.personas,
-                                activePersonaId: personaManager.activePersonaId,
-                                onSelectPersona: switchPersona
-                            )
-                        }
-
+                    VStack(alignment: .leading, spacing: 0) {
                         ChatSessionSidebar(
                             sessions: filteredSessions,
                             currentSessionId: session.sessionId,
@@ -998,14 +984,22 @@ struct ChatView: View {
                                 } else {
                                     session.load(from: data)
                                 }
+                                // Apply theme based on the session's persona
+                                let sessionPersonaId = data.personaId ?? Persona.defaultId
+                                applyPersonaTheme(for: sessionPersonaId, animated: true)
+                                // Update active persona to match session (for filter context)
+                                personaManager.setActivePersona(sessionPersonaId)
                                 isPinnedToBottom = true
                             },
                             onNewChat: {
-                                // Save current and create new
+                                // Save current and create new for the active persona filter
                                 if !session.turns.isEmpty {
                                     session.save()
                                 }
-                                session.reset()
+                                let newPersonaId = personaManager.activePersonaId
+                                session.reset(for: newPersonaId)
+                                // Apply theme for the new session's persona
+                                applyPersonaTheme(for: newPersonaId, animated: true)
                             },
                             onDelete: { id in
                                 sessionsManager.delete(id: id)
@@ -1019,7 +1013,8 @@ struct ChatView: View {
                             }
                         )
                     }
-                    .frame(width: 240)
+                    .frame(width: 240, alignment: .top)
+                    .frame(maxHeight: .infinity, alignment: .top)
                     .zIndex(1)
                     .transition(.move(edge: .leading))
                 }
@@ -1054,7 +1049,7 @@ struct ChatView: View {
                                         session.input = prompt
                                     },
                                     onSelectPersona: { newPersonaId in
-                                        switchPersona(to: newPersonaId)
+                                        switchToPersonaWithNewSession(to: newPersonaId)
                                     }
                                 )
                                 .transition(.opacity.combined(with: .scale(scale: 0.98)))
@@ -1101,7 +1096,7 @@ struct ChatView: View {
                                     } : nil,
                                 onQuickAction: { _ in },
                                 onSelectPersona: { newPersonaId in
-                                    switchPersona(to: newPersonaId)
+                                    switchToPersonaWithNewSession(to: newPersonaId)
                                 }
                             )
                         }
@@ -1134,11 +1129,8 @@ struct ChatView: View {
             sessionsManager.refresh()
         }
         .onReceive(NotificationCenter.default.publisher(for: .activePersonaChanged)) { _ in
-            // Persona was changed externally (e.g., from PersonasView)
-            // Apply the new persona's theme immediately
-            let newPersonaId = personaManager.activePersonaId
-            applyPersonaTheme(for: newPersonaId, animated: true)
-            // If the current session belongs to a different persona, we may want to refresh sessions
+            // Persona filter was changed - just refresh the sessions list
+            // Do NOT change the theme - theme is based on the current session's persona
             sessionsManager.refresh()
         }
         .onAppear {
@@ -1146,7 +1138,7 @@ struct ChatView: View {
             session.refreshModelOptions()
             sessionsManager.refresh()
             personaManager.refresh()
-            // Set initial persona for the session
+            // Set initial persona for the session based on active persona filter
             if session.personaId == nil {
                 session.personaId = personaManager.activePersonaId
             }
@@ -1154,8 +1146,9 @@ struct ChatView: View {
             session.onSessionChanged = { [weak sessionsManager] in
                 sessionsManager?.refresh()
             }
-            // Apply the active persona's theme immediately (no animation to avoid flash)
-            applyPersonaTheme(for: personaManager.activePersonaId, animated: false)
+            // Apply the session's persona theme immediately (no animation to avoid flash)
+            // Theme is based on the session's persona, not the active filter
+            applyPersonaTheme(for: session.personaId ?? Persona.defaultId, animated: false)
         }
         .onDisappear {
             cleanupKeyMonitor()
@@ -1372,7 +1365,10 @@ struct ChatView: View {
                     action: {
                         // Save current session before creating new
                         session.save()
-                        session.reset()
+                        let newPersonaId = personaManager.activePersonaId
+                        session.reset(for: newPersonaId)
+                        // Apply theme for the new session's persona
+                        applyPersonaTheme(for: newPersonaId, animated: true)
                     }
                 )
             }
@@ -1483,8 +1479,19 @@ struct ChatView: View {
         NSPasteboard.general.setString(text, forType: .string)
     }
 
-    private func switchPersona(to newPersonaId: UUID) {
-        // Save current session before switching personas
+    /// Change the persona filter (sidebar filter) without affecting the current session
+    /// The current session keeps its own persona and theme until a different session is loaded
+    private func changePersonaFilter(to newPersonaId: UUID) {
+        // Only change the filter - don't reset session or change theme
+        personaManager.setActivePersona(newPersonaId)
+        sessionsManager.refresh()
+        // Theme remains based on current session's persona, not the filter
+    }
+
+    /// Switch to a new persona and create a new session for it
+    /// Used when explicitly creating a new chat for a specific persona
+    private func switchToPersonaWithNewSession(to newPersonaId: UUID) {
+        // Save current session before switching
         if !session.turns.isEmpty {
             session.save()
         }
@@ -1659,93 +1666,6 @@ struct WindowAccessor: NSViewRepresentable {
         if window == nil {
             Task { @MainActor in
                 self.window = nsView.window
-            }
-        }
-    }
-}
-
-// MARK: - Persona Picker Header
-
-private struct PersonaPickerHeader: View {
-    let personas: [Persona]
-    let activePersonaId: UUID
-    let onSelectPersona: (UUID) -> Void
-
-    @Environment(\.theme) private var theme
-    @Environment(\.colorScheme) private var colorScheme
-    @State private var isHovered = false
-
-    private var activePersona: Persona {
-        personas.first { $0.id == activePersonaId } ?? Persona.default
-    }
-
-    var body: some View {
-        Menu {
-            ForEach(personas) { persona in
-                Button(action: { onSelectPersona(persona.id) }) {
-                    HStack {
-                        Text(persona.name)
-                        if persona.id == activePersonaId {
-                            Image(systemName: "checkmark")
-                        }
-                    }
-                }
-            }
-
-            Divider()
-
-            Button(action: {
-                AppDelegate.shared?.showManagementWindow(initialTab: .personas)
-            }) {
-                Label("Manage Personas", systemImage: "person.2.badge.gearshape")
-            }
-        } label: {
-            HStack(spacing: 8) {
-                // Persona avatar
-                ZStack {
-                    Circle()
-                        .fill(theme.accentColor.opacity(0.15))
-                    Text(activePersona.name.prefix(1).uppercased())
-                        .font(.system(size: 11, weight: .bold, design: .rounded))
-                        .foregroundColor(theme.accentColor)
-                }
-                .frame(width: 24, height: 24)
-
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(activePersona.name)
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundColor(theme.primaryText)
-
-                    if !activePersona.description.isEmpty {
-                        Text(activePersona.description)
-                            .font(.system(size: 10))
-                            .foregroundColor(theme.secondaryText)
-                            .lineLimit(1)
-                    }
-                }
-
-                Spacer()
-
-                Image(systemName: "chevron.up.chevron.down")
-                    .font(.system(size: 10, weight: .medium))
-                    .foregroundColor(theme.secondaryText)
-            }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 10)
-            .background(
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(isHovered ? theme.tertiaryBackground : Color.clear)
-            )
-            .contentShape(Rectangle())
-        }
-        .menuStyle(.borderlessButton)
-        .menuIndicator(.hidden)
-        .padding(.horizontal, 8)
-        .padding(.vertical, 8)
-        .background(theme.secondaryBackground.opacity(colorScheme == .dark ? 0.85 : 0.9))
-        .onHover { hovering in
-            withAnimation(theme.animationQuick()) {
-                isHovered = hovering
             }
         }
     }
