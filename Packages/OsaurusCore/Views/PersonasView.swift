@@ -382,7 +382,7 @@ private struct PersonaEmptyState: View {
     @State private var glowIntensity: CGFloat = 0.6
 
     var body: some View {
-        VStack(spacing: 32) {
+        VStack(spacing: 24) {
             Spacer()
 
             // Glowing icon
@@ -390,15 +390,15 @@ private struct PersonaEmptyState: View {
                 // Outer glow
                 Circle()
                     .fill(theme.accentColor)
-                    .frame(width: 100, height: 100)
-                    .blur(radius: 30)
+                    .frame(width: 88, height: 88)
+                    .blur(radius: 25)
                     .opacity(glowIntensity * 0.25)
 
                 // Inner glow
                 Circle()
                     .fill(theme.accentColor)
-                    .frame(width: 100, height: 100)
-                    .blur(radius: 15)
+                    .frame(width: 88, height: 88)
+                    .blur(radius: 12)
                     .opacity(glowIntensity * 0.15)
 
                 // Base circle with gradient
@@ -413,11 +413,11 @@ private struct PersonaEmptyState: View {
                             endPoint: .bottomTrailing
                         )
                     )
-                    .frame(width: 100, height: 100)
+                    .frame(width: 88, height: 88)
 
                 // Icon
                 Image(systemName: "theatermasks.fill")
-                    .font(.system(size: 40, weight: .medium))
+                    .font(.system(size: 36, weight: .medium))
                     .foregroundStyle(
                         LinearGradient(
                             colors: [theme.accentColor, theme.accentColor.opacity(0.7)],
@@ -431,63 +431,61 @@ private struct PersonaEmptyState: View {
             .animation(.spring(response: 0.5, dampingFraction: 0.7).delay(0.1), value: hasAppeared)
 
             // Text content
-            VStack(spacing: 10) {
+            VStack(spacing: 8) {
                 Text("Create Your First Persona")
-                    .font(.system(size: 24, weight: .bold, design: .rounded))
+                    .font(.system(size: 22, weight: .bold, design: .rounded))
                     .foregroundColor(theme.primaryText)
 
-                Text(
-                    "Personas let you create unique AI assistants with their own\npersonalities, prompts, tools, and visual styles."
-                )
-                .font(.system(size: 15))
-                .foregroundColor(theme.secondaryText)
-                .multilineTextAlignment(.center)
-                .lineSpacing(4)
+                Text("Custom AI assistants with unique prompts, tools, and styles.")
+                    .font(.system(size: 14))
+                    .foregroundColor(theme.secondaryText)
+                    .multilineTextAlignment(.center)
+                    .lineLimit(2)
             }
             .opacity(hasAppeared ? 1 : 0)
             .offset(y: hasAppeared ? 0 : 15)
             .animation(.spring(response: 0.5, dampingFraction: 0.8).delay(0.2), value: hasAppeared)
 
             // Example use cases
-            VStack(spacing: 12) {
+            VStack(spacing: 8) {
                 PersonaUseCaseRow(
-                    icon: "chevron.left.forwardslash.chevron.right",
-                    title: "Code Assistant",
-                    description: "Technical help with custom coding guidelines"
+                    icon: "calendar",
+                    title: "Daily Planner",
+                    description: "Manage your schedule"
                 )
                 PersonaUseCaseRow(
-                    icon: "pencil.line",
-                    title: "Writing Coach",
-                    description: "Creative writing with a specific tone and style"
+                    icon: "message.fill",
+                    title: "Message Assistant",
+                    description: "Draft and send texts"
                 )
                 PersonaUseCaseRow(
-                    icon: "brain.head.profile",
-                    title: "Research Helper",
-                    description: "In-depth analysis with academic rigor"
+                    icon: "map.fill",
+                    title: "Local Guide",
+                    description: "Find places nearby"
                 )
             }
-            .frame(maxWidth: 400)
+            .frame(maxWidth: 320)
             .opacity(hasAppeared ? 1 : 0)
             .offset(y: hasAppeared ? 0 : 20)
             .animation(.spring(response: 0.5, dampingFraction: 0.8).delay(0.3), value: hasAppeared)
 
             // Action buttons
-            HStack(spacing: 16) {
+            HStack(spacing: 12) {
                 Button(action: onImport) {
                     HStack(spacing: 6) {
                         Image(systemName: "square.and.arrow.down")
-                            .font(.system(size: 12, weight: .medium))
+                            .font(.system(size: 11, weight: .medium))
                         Text("Import")
-                            .font(.system(size: 14, weight: .medium))
+                            .font(.system(size: 13, weight: .medium))
                     }
                     .foregroundColor(theme.primaryText)
-                    .padding(.horizontal, 20)
-                    .padding(.vertical, 12)
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 10)
                     .background(
-                        RoundedRectangle(cornerRadius: 10)
+                        RoundedRectangle(cornerRadius: 8)
                             .fill(theme.tertiaryBackground)
                             .overlay(
-                                RoundedRectangle(cornerRadius: 10)
+                                RoundedRectangle(cornerRadius: 8)
                                     .stroke(theme.inputBorder, lineWidth: 1)
                             )
                     )
@@ -495,17 +493,17 @@ private struct PersonaEmptyState: View {
                 .buttonStyle(PlainButtonStyle())
 
                 Button(action: onCreate) {
-                    HStack(spacing: 8) {
+                    HStack(spacing: 6) {
                         Image(systemName: "plus")
-                            .font(.system(size: 12, weight: .semibold))
+                            .font(.system(size: 11, weight: .semibold))
                         Text("Create Persona")
-                            .font(.system(size: 14, weight: .semibold))
+                            .font(.system(size: 13, weight: .semibold))
                     }
                     .foregroundColor(.white)
-                    .padding(.horizontal, 24)
-                    .padding(.vertical, 12)
+                    .padding(.horizontal, 18)
+                    .padding(.vertical, 10)
                     .background(
-                        RoundedRectangle(cornerRadius: 10)
+                        RoundedRectangle(cornerRadius: 8)
                             .fill(theme.accentColor)
                     )
                 }
@@ -537,32 +535,32 @@ private struct PersonaUseCaseRow: View {
     let description: String
 
     var body: some View {
-        HStack(spacing: 14) {
+        HStack(spacing: 12) {
             Image(systemName: icon)
-                .font(.system(size: 14, weight: .medium))
+                .font(.system(size: 12, weight: .medium))
                 .foregroundColor(theme.accentColor)
-                .frame(width: 32, height: 32)
+                .frame(width: 28, height: 28)
                 .background(
-                    RoundedRectangle(cornerRadius: 8)
+                    RoundedRectangle(cornerRadius: 6)
                         .fill(theme.accentColor.opacity(0.1))
                 )
 
-            VStack(alignment: .leading, spacing: 2) {
-                Text(title)
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundColor(theme.primaryText)
+            Text(title)
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundColor(theme.primaryText)
+                .lineLimit(1)
 
-                Text(description)
-                    .font(.system(size: 12))
-                    .foregroundColor(theme.tertiaryText)
-            }
+            Text(description)
+                .font(.system(size: 11))
+                .foregroundColor(theme.tertiaryText)
+                .lineLimit(1)
 
-            Spacer()
+            Spacer(minLength: 0)
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 10)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
         .background(
-            RoundedRectangle(cornerRadius: 10)
+            RoundedRectangle(cornerRadius: 8)
                 .fill(theme.secondaryBackground.opacity(0.5))
         )
     }
@@ -1070,19 +1068,32 @@ private struct PersonaEditorSheet: View {
                     // System Prompt Section
                     EditorSection(title: "System Prompt", icon: "brain") {
                         VStack(alignment: .leading, spacing: 8) {
-                            TextEditor(text: $systemPrompt)
-                                .font(.system(size: 13, design: .monospaced))
-                                .scrollContentBackground(.hidden)
-                                .frame(minHeight: 140, maxHeight: 200)
-                                .padding(12)
-                                .background(
-                                    RoundedRectangle(cornerRadius: 10)
-                                        .fill(themeManager.currentTheme.inputBackground)
-                                        .overlay(
-                                            RoundedRectangle(cornerRadius: 10)
-                                                .stroke(themeManager.currentTheme.inputBorder, lineWidth: 1)
-                                        )
-                                )
+                            ZStack(alignment: .topLeading) {
+                                // Themed placeholder overlay
+                                if systemPrompt.isEmpty {
+                                    Text("Enter instructions for this persona...")
+                                        .font(.system(size: 13, design: .monospaced))
+                                        .foregroundColor(themeManager.currentTheme.placeholderText)
+                                        .padding(.top, 12)
+                                        .padding(.leading, 16)
+                                        .allowsHitTesting(false)
+                                }
+
+                                TextEditor(text: $systemPrompt)
+                                    .font(.system(size: 13, design: .monospaced))
+                                    .foregroundColor(themeManager.currentTheme.primaryText)
+                                    .scrollContentBackground(.hidden)
+                                    .frame(minHeight: 140, maxHeight: 200)
+                                    .padding(12)
+                            }
+                            .background(
+                                RoundedRectangle(cornerRadius: 10)
+                                    .fill(themeManager.currentTheme.inputBackground)
+                                    .overlay(
+                                        RoundedRectangle(cornerRadius: 10)
+                                            .stroke(themeManager.currentTheme.inputBorder, lineWidth: 1)
+                                    )
+                            )
 
                             Text(
                                 "Instructions that define this persona's behavior. Leave empty to use global settings."
@@ -1515,18 +1526,28 @@ private struct StyledTextField: View {
                     .frame(width: 16)
             }
 
-            TextField(
-                placeholder,
-                text: $text,
-                onEditingChanged: { editing in
-                    withAnimation(.easeOut(duration: 0.15)) {
-                        isFocused = editing
-                    }
+            ZStack(alignment: .leading) {
+                // Themed placeholder overlay
+                if text.isEmpty {
+                    Text(placeholder)
+                        .font(.system(size: 13))
+                        .foregroundColor(themeManager.currentTheme.placeholderText)
+                        .allowsHitTesting(false)
                 }
-            )
-            .textFieldStyle(.plain)
-            .font(.system(size: 13))
-            .foregroundColor(themeManager.currentTheme.primaryText)
+
+                TextField(
+                    "",
+                    text: $text,
+                    onEditingChanged: { editing in
+                        withAnimation(.easeOut(duration: 0.15)) {
+                            isFocused = editing
+                        }
+                    }
+                )
+                .textFieldStyle(.plain)
+                .font(.system(size: 13))
+                .foregroundColor(themeManager.currentTheme.primaryText)
+            }
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 10)
