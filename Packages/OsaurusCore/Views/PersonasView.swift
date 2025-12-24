@@ -1144,59 +1144,22 @@ private struct PersonaEditorSheet: View {
                     // Tools Configuration
                     EditorSection(title: "Tools", icon: "wrench.and.screwdriver") {
                         VStack(alignment: .leading, spacing: 12) {
-                            DisclosureGroup(isExpanded: $showToolsSection) {
-                                VStack(alignment: .leading, spacing: 8) {
-                                    if availableTools.isEmpty {
-                                        Text("No tools available")
-                                            .font(.system(size: 12))
-                                            .foregroundColor(themeManager.currentTheme.secondaryText)
-                                            .padding(.vertical, 8)
-                                    } else {
-                                        LazyVStack(spacing: 0) {
-                                            ForEach(availableTools, id: \.name) { tool in
-                                                ToolToggleRow(
-                                                    tool: tool,
-                                                    isEnabled: enabledTools[tool.name] ?? tool.enabled,
-                                                    hasOverride: enabledTools[tool.name] != nil,
-                                                    onToggle: { enabled in
-                                                        enabledTools[tool.name] = enabled
-                                                    },
-                                                    onReset: {
-                                                        enabledTools.removeValue(forKey: tool.name)
-                                                    }
-                                                )
-                                            }
-                                        }
-                                        .background(
-                                            RoundedRectangle(cornerRadius: 10)
-                                                .fill(themeManager.currentTheme.inputBackground)
-                                                .overlay(
-                                                    RoundedRectangle(cornerRadius: 10)
-                                                        .stroke(themeManager.currentTheme.inputBorder, lineWidth: 1)
-                                                )
-                                        )
-                                        .clipShape(RoundedRectangle(cornerRadius: 10))
-                                    }
-
-                                    if !enabledTools.isEmpty {
-                                        Button(action: { enabledTools.removeAll() }) {
-                                            HStack(spacing: 4) {
-                                                Image(systemName: "arrow.uturn.backward")
-                                                    .font(.system(size: 10))
-                                                Text("Reset All to Default")
-                                            }
-                                            .font(.system(size: 11, weight: .medium))
-                                            .foregroundColor(themeManager.currentTheme.accentColor)
-                                        }
-                                        .buttonStyle(.plain)
-                                        .padding(.top, 4)
-                                    }
+                            // Custom accordion header - fully clickable
+                            Button {
+                                withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+                                    showToolsSection.toggle()
                                 }
-                                .padding(.top, 12)
                             } label: {
                                 HStack(spacing: 8) {
+                                    Image(systemName: "chevron.right")
+                                        .font(.system(size: 10, weight: .semibold))
+                                        .foregroundColor(themeManager.currentTheme.tertiaryText)
+                                        .rotationEffect(.degrees(showToolsSection ? 90 : 0))
+
                                     Text(showToolsSection ? "Hide tool overrides" : "Configure tool overrides")
                                         .font(.system(size: 12, weight: .medium))
+                                        .foregroundColor(themeManager.currentTheme.secondaryText)
+
                                     if !enabledTools.isEmpty {
                                         Text("(\(enabledTools.count) modified)")
                                             .font(.system(size: 11))
@@ -1208,9 +1171,70 @@ private struct PersonaEditorSheet: View {
                                                     .fill(themeManager.currentTheme.accentColor.opacity(0.1))
                                             )
                                     }
+
+                                    Spacer()
                                 }
-                                .foregroundColor(themeManager.currentTheme.secondaryText)
+                                .padding(.vertical, 8)
+                                .padding(.horizontal, 10)
+                                .background(
+                                    RoundedRectangle(cornerRadius: 8)
+                                        .fill(themeManager.currentTheme.tertiaryBackground.opacity(0.5))
+                                )
+                                .contentShape(Rectangle())
                             }
+                            .buttonStyle(.plain)
+
+                            // Expandable content with height animation
+                            VStack(alignment: .leading, spacing: 8) {
+                                if availableTools.isEmpty {
+                                    Text("No tools available")
+                                        .font(.system(size: 12))
+                                        .foregroundColor(themeManager.currentTheme.secondaryText)
+                                        .padding(.vertical, 8)
+                                } else {
+                                    LazyVStack(spacing: 0) {
+                                        ForEach(availableTools, id: \.name) { tool in
+                                            ToolToggleRow(
+                                                tool: tool,
+                                                isEnabled: enabledTools[tool.name] ?? tool.enabled,
+                                                hasOverride: enabledTools[tool.name] != nil,
+                                                onToggle: { enabled in
+                                                    enabledTools[tool.name] = enabled
+                                                },
+                                                onReset: {
+                                                    enabledTools.removeValue(forKey: tool.name)
+                                                }
+                                            )
+                                        }
+                                    }
+                                    .background(
+                                        RoundedRectangle(cornerRadius: 10)
+                                            .fill(themeManager.currentTheme.inputBackground)
+                                            .overlay(
+                                                RoundedRectangle(cornerRadius: 10)
+                                                    .stroke(themeManager.currentTheme.inputBorder, lineWidth: 1)
+                                            )
+                                    )
+                                    .clipShape(RoundedRectangle(cornerRadius: 10))
+                                }
+
+                                if !enabledTools.isEmpty {
+                                    Button(action: { enabledTools.removeAll() }) {
+                                        HStack(spacing: 4) {
+                                            Image(systemName: "arrow.uturn.backward")
+                                                .font(.system(size: 10))
+                                            Text("Reset All to Default")
+                                        }
+                                        .font(.system(size: 11, weight: .medium))
+                                        .foregroundColor(themeManager.currentTheme.accentColor)
+                                    }
+                                    .buttonStyle(.plain)
+                                    .padding(.top, 4)
+                                }
+                            }
+                            .frame(maxHeight: showToolsSection ? .infinity : 0)
+                            .opacity(showToolsSection ? 1 : 0)
+                            .clipped()
 
                             Text("Override which tools are available when using this persona.")
                                 .font(.system(size: 11))
