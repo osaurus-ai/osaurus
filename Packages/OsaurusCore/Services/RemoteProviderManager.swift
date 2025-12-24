@@ -328,7 +328,7 @@ public final class RemoteProviderManager: ObservableObject {
         // Claude 3.7 (legacy)
         "claude-3-7-sonnet-latest",
         // Claude 3 (legacy)
-        "claude-3-haiku-20240307"
+        "claude-3-haiku-20240307",
     ]
 
     /// Test connection to a provider configuration without persisting
@@ -430,7 +430,9 @@ public final class RemoteProviderManager: ObservableObject {
     }
 
     /// Test Anthropic connection by making a minimal /messages request
-    private func testAnthropicConnection(tempProvider: RemoteProvider, testHeaders: [String: String]) async throws -> [String] {
+    private func testAnthropicConnection(tempProvider: RemoteProvider, testHeaders: [String: String]) async throws
+        -> [String]
+    {
         guard let url = tempProvider.url(for: "/messages") else {
             print("[Osaurus] Test Connection (Anthropic): Invalid URL")
             throw RemoteProviderError.invalidURL
@@ -459,7 +461,7 @@ public final class RemoteProviderManager: ObservableObject {
             "max_tokens": 1,
             "messages": [
                 ["role": "user", "content": "Hi"]
-            ]
+            ],
         ]
         request.httpBody = try JSONSerialization.data(withJSONObject: testBody)
 
@@ -488,7 +490,9 @@ public final class RemoteProviderManager: ObservableObject {
             }
 
             // Any 2xx or 4xx (except 401) means the connection works
-            print("[Osaurus] Test Connection (Anthropic): Success - returning \(Self.anthropicModels.count) known models")
+            print(
+                "[Osaurus] Test Connection (Anthropic): Success - returning \(Self.anthropicModels.count) known models"
+            )
             return Self.anthropicModels
         } catch let error as RemoteProviderError {
             throw error

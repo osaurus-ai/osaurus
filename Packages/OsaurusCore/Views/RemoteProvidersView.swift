@@ -2,7 +2,7 @@
 //  RemoteProvidersView.swift
 //  osaurus
 //
-//  View for managing remote OpenAI-compatible API providers.
+//  View for managing remote API providers (OpenAI, Anthropic, etc.).
 //
 
 import SwiftUI
@@ -105,7 +105,7 @@ struct RemoteProvidersView: View {
         let totalCount = manager.configuration.providers.count
 
         if totalCount == 0 {
-            return "Connect to remote OpenAI-compatible APIs"
+            return "Connect to remote API providers"
         } else if connectedCount == 0 {
             return "\(totalCount) provider\(totalCount == 1 ? "" : "s") configured"
         } else {
@@ -135,10 +135,12 @@ struct RemoteProvidersView: View {
                     .font(.system(size: 18, weight: .semibold))
                     .foregroundColor(theme.primaryText)
 
-                Text("Connect to OpenAI, Ollama, LM Studio, or any\nOpenAI-compatible API to access remote models.")
-                    .font(.system(size: 14))
-                    .foregroundColor(theme.secondaryText)
-                    .multilineTextAlignment(.center)
+                Text(
+                    "Connect to Anthropic, OpenAI, Ollama, LM Studio,\nor other compatible APIs to access remote models."
+                )
+                .font(.system(size: 14))
+                .foregroundColor(theme.secondaryText)
+                .multilineTextAlignment(.center)
             }
 
             Button(action: { showAddSheet = true }) {
