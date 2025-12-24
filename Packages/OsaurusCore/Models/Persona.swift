@@ -103,7 +103,7 @@ extension Persona {
         public init(persona: Persona) {
             self.version = 1
             // Create a copy without built-in flag for export
-            var exportedPersona = persona
+            let exportedPersona = persona
             // When exporting, we create a new instance that's not built-in
             self.persona = Persona(
                 id: UUID(),  // Generate new ID on export
