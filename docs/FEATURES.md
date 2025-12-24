@@ -8,25 +8,26 @@ Canonical reference for all Osaurus features, their status, and documentation.
 
 ## Feature Matrix
 
-| Feature                          | Status    | README Section     | Documentation                 | Code Location                                                              |
-| -------------------------------- | --------- | ------------------ | ----------------------------- | -------------------------------------------------------------------------- |
-| Local LLM Server (MLX)           | Stable    | "Key Features"     | OpenAI_API_GUIDE.md           | Services/MLXService.swift, Services/ModelRuntime/                          |
-| Remote Providers                 | Stable    | "Key Features"     | REMOTE_PROVIDERS.md           | Services/RemoteProviderManager.swift, Services/RemoteProviderService.swift |
-| Remote MCP Providers             | Stable    | "Key Features"     | REMOTE_MCP_PROVIDERS.md       | Services/MCPProviderManager.swift, Tools/MCPProviderTool.swift             |
-| MCP Server                       | Stable    | "MCP Server"       | (in README)                   | Networking/OsaurusServer.swift, Services/MCPServerManager.swift            |
-| Tools & Plugins                  | Stable    | "Tools & Plugins"  | PLUGIN_AUTHORING.md           | Tools/, Managers/PluginManager.swift                                       |
-| Developer Tools: Insights        | Stable    | "Developer Tools"  | DEVELOPER_TOOLS.md            | Views/InsightsView.swift, Services/InsightsService.swift                   |
-| Developer Tools: Server Explorer | Stable    | "Developer Tools"  | DEVELOPER_TOOLS.md            | Views/ServerView.swift                                                     |
-| Apple Foundation Models          | macOS 26+ | "What is Osaurus?" | (in README)                   | Services/FoundationModelService.swift                                      |
-| Menu Bar Chat                    | Stable    | "Highlights"       | (in README)                   | Views/ChatView.swift, Views/ChatOverlayView.swift                          |
-| Chat Session Management          | Stable    | "Highlights"       | (in README)                   | Managers/ChatSessionsManager.swift, Models/ChatSessionData.swift           |
-| Custom Themes                    | Stable    | "Highlights"       | (in README)                   | Views/ThemesView.swift, Views/Components/ThemeEditorView.swift             |
-| Model Manager                    | Stable    | "Highlights"       | (in README)                   | Views/ModelDownloadView.swift, Services/HuggingFaceService.swift           |
-| Shared Configuration             | Stable    | -                  | SHARED_CONFIGURATION_GUIDE.md | Services/SharedConfigurationService.swift                                  |
-| OpenAI API Compatibility         | Stable    | "API Endpoints"    | OpenAI_API_GUIDE.md           | Networking/HTTPHandler.swift, Models/OpenAIAPI.swift                       |
-| Anthropic API Compatibility      | Stable    | "API Endpoints"    | (in README)                   | Networking/HTTPHandler.swift, Models/AnthropicAPI.swift                    |
-| Ollama API Compatibility         | Stable    | "API Endpoints"    | (in README)                   | Networking/HTTPHandler.swift                                               |
-| CLI                              | Stable    | "CLI Reference"    | (in README)                   | Packages/OsaurusCLI/                                                       |
+| Feature                          | Status    | README Section     | Documentation                 | Code Location                                                                 |
+| -------------------------------- | --------- | ------------------ | ----------------------------- | ----------------------------------------------------------------------------- |
+| Local LLM Server (MLX)           | Stable    | "Key Features"     | OpenAI_API_GUIDE.md           | Services/MLXService.swift, Services/ModelRuntime/                             |
+| Remote Providers                 | Stable    | "Key Features"     | REMOTE_PROVIDERS.md           | Services/RemoteProviderManager.swift, Services/RemoteProviderService.swift    |
+| Remote MCP Providers             | Stable    | "Key Features"     | REMOTE_MCP_PROVIDERS.md       | Services/MCPProviderManager.swift, Tools/MCPProviderTool.swift                |
+| MCP Server                       | Stable    | "MCP Server"       | (in README)                   | Networking/OsaurusServer.swift, Services/MCPServerManager.swift               |
+| Tools & Plugins                  | Stable    | "Tools & Plugins"  | PLUGIN_AUTHORING.md           | Tools/, Managers/PluginManager.swift                                          |
+| Personas                         | Stable    | "Personas"         | (in README)                   | Managers/PersonaManager.swift, Models/Persona.swift, Views/PersonasView.swift |
+| Developer Tools: Insights        | Stable    | "Developer Tools"  | DEVELOPER_TOOLS.md            | Views/InsightsView.swift, Services/InsightsService.swift                      |
+| Developer Tools: Server Explorer | Stable    | "Developer Tools"  | DEVELOPER_TOOLS.md            | Views/ServerView.swift                                                        |
+| Apple Foundation Models          | macOS 26+ | "What is Osaurus?" | (in README)                   | Services/FoundationModelService.swift                                         |
+| Menu Bar Chat                    | Stable    | "Highlights"       | (in README)                   | Views/ChatView.swift, Views/ChatOverlayView.swift                             |
+| Chat Session Management          | Stable    | "Highlights"       | (in README)                   | Managers/ChatSessionsManager.swift, Models/ChatSessionData.swift              |
+| Custom Themes                    | Stable    | "Highlights"       | (in README)                   | Views/ThemesView.swift, Views/Components/ThemeEditorView.swift                |
+| Model Manager                    | Stable    | "Highlights"       | (in README)                   | Views/ModelDownloadView.swift, Services/HuggingFaceService.swift              |
+| Shared Configuration             | Stable    | -                  | SHARED_CONFIGURATION_GUIDE.md | Services/SharedConfigurationService.swift                                     |
+| OpenAI API Compatibility         | Stable    | "API Endpoints"    | OpenAI_API_GUIDE.md           | Networking/HTTPHandler.swift, Models/OpenAIAPI.swift                          |
+| Anthropic API Compatibility      | Stable    | "API Endpoints"    | (in README)                   | Networking/HTTPHandler.swift, Models/AnthropicAPI.swift                       |
+| Ollama API Compatibility         | Stable    | "API Endpoints"    | (in README)                   | Networking/HTTPHandler.swift                                                  |
+| CLI                              | Stable    | "CLI Reference"    | (in README)                   | Packages/OsaurusCLI/                                                          |
 
 ---
 
@@ -43,6 +44,7 @@ Canonical reference for all Osaurus features, their status, and documentation.
 │  │   ├── ModelDownloadView (Models)                                      │
 │  │   ├── RemoteProvidersView (Providers)                                 │
 │  │   ├── ToolsManagerView (Tools)                                        │
+│  │   ├── PersonasView (Personas)                                         │
 │  │   ├── ThemesView (Themes)                                             │
 │  │   ├── InsightsView (Developer: Insights)                              │
 │  │   ├── ServerView (Developer: Server Explorer)                         │
@@ -61,6 +63,8 @@ Canonical reference for all Osaurus features, their status, and documentation.
 │  │   ├── ToolRegistry                                                    │
 │  │   ├── PluginManager                                                   │
 │  │   └── MCPProviderTool (Wrapped remote MCP tools)                      │
+│  ├── Personas                                                            │
+│  │   └── PersonaManager (Persona lifecycle and active persona)           │
 │  └── Utilities                                                           │
 │      ├── InsightsService (Request logging)                               │
 │      ├── HuggingFaceService (Model downloads)                            │
@@ -231,6 +235,40 @@ Canonical reference for all Osaurus features, their status, and documentation.
 - Import/export themes as JSON files
 - Live preview while editing
 - Background options: solid, gradient, or image
+
+---
+
+### Personas
+
+**Purpose:** Create custom AI assistant personalities with unique behaviors, capabilities, and visual styles.
+
+**Components:**
+
+- `Models/Persona.swift` — Persona data model with export/import support
+- `Models/PersonaStore.swift` — Persona persistence (JSON files)
+- `Managers/PersonaManager.swift` — Persona lifecycle and active persona management
+- `Views/PersonasView.swift` — Persona gallery and management UI
+
+**Features:**
+
+- **Custom System Prompts** — Define unique instructions for each persona
+- **Tool Configuration** — Enable or disable specific tools per persona
+- **Visual Themes** — Assign a custom theme that activates with the persona
+- **Generation Settings** — Configure default model, temperature, and max tokens
+- **Import/Export** — Share personas as JSON files for backup or sharing
+- **Live Switching** — Click to activate a persona, theme updates automatically
+
+**Persona Properties:**
+| Property | Description |
+|----------|-------------|
+| `name` | Display name (required) |
+| `description` | Brief description of the persona |
+| `systemPrompt` | Instructions prepended to all chats |
+| `enabledTools` | Map of tool name → enabled/disabled |
+| `themeId` | Optional custom theme to apply |
+| `defaultModel` | Optional model ID for this persona |
+| `temperature` | Optional temperature override |
+| `maxTokens` | Optional max tokens override |
 
 ---
 

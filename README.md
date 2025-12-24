@@ -46,6 +46,7 @@ Osaurus is an all-in-one LLM server for macOS. It combines:
 - **MCP Server** — Expose tools to AI agents via Model Context Protocol
 - **Remote MCP Providers** — Connect to external MCP servers and aggregate their tools
 - **Plugin System** — Extend functionality with community and custom tools
+- **Personas** — Create custom AI assistants with unique prompts, tools, and visual themes
 - **Developer Tools** — Built-in insights and server explorer for debugging
 - **Apple Foundation Models** — Use the system model on macOS 26+ (Tahoe)
 
@@ -60,6 +61,7 @@ Osaurus is an all-in-one LLM server for macOS. It combines:
 | **MCP Server**           | Connect to Cursor, Claude Desktop, and other MCP clients        |
 | **Remote MCP Providers** | Aggregate tools from external MCP servers                       |
 | **Tools & Plugins**      | Browser automation, file system, git, web search, and more      |
+| **Personas**             | Custom AI assistants with unique prompts, tools, and themes     |
 | **Custom Themes**        | Create, import, and export themes with full color customization |
 | **Developer Tools**      | Request insights, API explorer, and live endpoint testing       |
 | **Menu Bar Chat**        | Chat overlay with session history, context tracking (`⌘;`)      |
@@ -188,6 +190,27 @@ osaurus tools create MyPlugin --language swift
 ```
 
 See the [Plugin Authoring Guide](docs/PLUGIN_AUTHORING.md) for details.
+
+### Personas
+
+Create custom AI assistant personalities with unique behaviors, capabilities, and styles.
+
+Each persona can have:
+
+- **Custom System Prompt** — Define unique instructions and personality
+- **Tool Configuration** — Enable or disable specific tools per persona
+- **Visual Theme** — Assign a custom theme that activates with the persona
+- **Model & Generation Settings** — Set default model, temperature, and max tokens
+- **Import/Export** — Share personas as JSON files
+
+Use cases:
+
+- **Code Assistant** — Focused on programming with code-related tools enabled
+- **Daily Planner** — Calendar and reminders integration
+- **Research Helper** — Web search and note-taking tools enabled
+- **Creative Writer** — Higher temperature, no tool access for pure generation
+
+Access via Management window (`⌘ Shift M`) → **Personas**.
 
 ### Developer Tools
 
