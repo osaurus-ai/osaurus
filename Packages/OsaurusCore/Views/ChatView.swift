@@ -1121,8 +1121,8 @@ struct ChatView: View {
             session.onSessionChanged = { [weak sessionsManager] in
                 sessionsManager?.refresh()
             }
-            // Apply the active persona's theme (if any)
-            applyPersonaTheme(for: personaManager.activePersonaId)
+            // Apply the active persona's theme immediately (no animation to avoid flash)
+            applyPersonaTheme(for: personaManager.activePersonaId, animated: false)
         }
         .onDisappear {
             cleanupKeyMonitor()
@@ -1460,24 +1460,25 @@ struct ChatView: View {
         // Reset session for new persona
         session.reset(for: newPersonaId)
         sessionsManager.refresh()
-        // Apply the new persona's theme (if any)
-        applyPersonaTheme(for: newPersonaId)
+        // Apply the new persona's theme (if any) with animation
+        applyPersonaTheme(for: newPersonaId, animated: true)
     }
 
     /// Apply the persona's theme for ChatView
     /// Uses persist: false to avoid overwriting the user's saved theme preference
-    private func applyPersonaTheme(for personaId: UUID) {
+    /// - Parameter animated: Whether to animate the transition (false for initial load to avoid flash)
+    private func applyPersonaTheme(for personaId: UUID, animated: Bool = true) {
         if let themeId = personaManager.themeId(for: personaId),
             let personaTheme = themeManager.installedThemes.first(where: { $0.metadata.id == themeId })
         {
             // Apply the persona's custom theme (temporary, don't persist)
-            themeManager.applyCustomTheme(personaTheme, persist: false)
+            themeManager.applyCustomTheme(personaTheme, persist: false, animated: animated)
         } else if let savedTheme = ThemeConfigurationStore.loadActiveTheme() {
             // No persona theme - apply the user's saved global theme (temporary, don't persist)
-            themeManager.applyCustomTheme(savedTheme, persist: false)
+            themeManager.applyCustomTheme(savedTheme, persist: false, animated: animated)
         } else {
             // No saved theme - use system appearance
-            themeManager.clearCustomTheme(persist: false)
+            themeManager.clearCustomTheme(persist: false, animated: animated)
         }
     }
 
@@ -1485,11 +1486,12 @@ struct ChatView: View {
     /// Reads the saved theme directly to handle cases where user changed theme while ChatView was open
     private func restoreGlobalTheme() {
         // Read the currently saved theme from disk (may have changed while ChatView was open)
+        // No animation needed when view is disappearing
         if let savedTheme = ThemeConfigurationStore.loadActiveTheme() {
-            themeManager.applyCustomTheme(savedTheme, persist: false)
+            themeManager.applyCustomTheme(savedTheme, persist: false, animated: false)
         } else {
             // No saved theme - use system appearance
-            themeManager.clearCustomTheme(persist: false)
+            themeManager.clearCustomTheme(persist: false, animated: false)
         }
     }
 

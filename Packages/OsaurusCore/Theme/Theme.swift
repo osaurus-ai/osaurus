@@ -551,20 +551,27 @@ class ThemeManager: ObservableObject {
     /// - Parameters:
     ///   - theme: The theme to apply
     ///   - persist: Whether to save the theme ID to disk (default: true). Set to false for temporary theme changes like persona themes.
-    func applyCustomTheme(_ theme: CustomTheme, persist: Bool = true) {
+    ///   - animated: Whether to animate the theme transition (default: true). Set to false for instant changes on initial load.
+    func applyCustomTheme(_ theme: CustomTheme, persist: Bool = true, animated: Bool = true) {
         activeCustomTheme = theme
         if persist {
             ThemeConfigurationStore.saveActiveThemeId(theme.metadata.id)
         }
 
-        withAnimation(.easeInOut(duration: 0.3)) {
+        if animated {
+            withAnimation(.easeInOut(duration: 0.3)) {
+                currentTheme = CustomizableTheme(config: theme)
+            }
+        } else {
             currentTheme = CustomizableTheme(config: theme)
         }
     }
 
     /// Clear custom theme and revert to system appearance
-    /// - Parameter persist: Whether to save the cleared state to disk (default: true). Set to false for temporary theme changes.
-    func clearCustomTheme(persist: Bool = true) {
+    /// - Parameters:
+    ///   - persist: Whether to save the cleared state to disk (default: true). Set to false for temporary theme changes.
+    ///   - animated: Whether to animate the theme transition (default: true). Set to false for instant changes.
+    func clearCustomTheme(persist: Bool = true, animated: Bool = true) {
         activeCustomTheme = nil
         if persist {
             ThemeConfigurationStore.saveActiveThemeId(nil)
@@ -572,14 +579,22 @@ class ThemeManager: ObservableObject {
 
         // Apply the appropriate built-in theme based on current appearance mode
         if let builtInTheme = Self.resolveBuiltInTheme(for: appearanceMode, from: installedThemes) {
-            withAnimation(.easeInOut(duration: 0.3)) {
+            if animated {
+                withAnimation(.easeInOut(duration: 0.3)) {
+                    currentTheme = CustomizableTheme(config: builtInTheme)
+                }
+            } else {
                 currentTheme = CustomizableTheme(config: builtInTheme)
             }
         } else {
             // Fallback to default CustomTheme
             let fallbackTheme =
                 Self.isDarkMode(for: appearanceMode) ? CustomTheme.darkDefault : CustomTheme.lightDefault
-            withAnimation(.easeInOut(duration: 0.3)) {
+            if animated {
+                withAnimation(.easeInOut(duration: 0.3)) {
+                    currentTheme = CustomizableTheme(config: fallbackTheme)
+                }
+            } else {
                 currentTheme = CustomizableTheme(config: fallbackTheme)
             }
         }
