@@ -10,6 +10,7 @@ import SwiftUI
 // MARK: - Provider Presets
 
 enum ProviderPreset: String, CaseIterable, Identifiable {
+    case anthropic = "Anthropic"
     case openai = "OpenAI"
     case ollama = "Ollama"
     case lmstudio = "LM Studio"
@@ -20,6 +21,7 @@ enum ProviderPreset: String, CaseIterable, Identifiable {
 
     var icon: String {
         switch self {
+        case .anthropic: return "brain.head.profile"
         case .openai: return "sparkles"
         case .ollama: return "cube.fill"
         case .lmstudio: return "desktopcomputer"
@@ -30,6 +32,7 @@ enum ProviderPreset: String, CaseIterable, Identifiable {
 
     var description: String {
         switch self {
+        case .anthropic: return "Claude models"
         case .openai: return "GPT-4o, o1, etc."
         case .ollama: return "Local models"
         case .lmstudio: return "Local inference"
@@ -40,6 +43,7 @@ enum ProviderPreset: String, CaseIterable, Identifiable {
 
     var gradient: [Color] {
         switch self {
+        case .anthropic: return [Color(red: 0.85, green: 0.55, blue: 0.35), Color(red: 0.75, green: 0.4, blue: 0.25)]
         case .openai: return [Color(red: 0.0, green: 0.65, blue: 0.52), Color(red: 0.0, green: 0.5, blue: 0.4)]
         case .ollama: return [Color(red: 0.3, green: 0.5, blue: 0.9), Color(red: 0.2, green: 0.35, blue: 0.7)]
         case .lmstudio: return [Color(red: 0.7, green: 0.45, blue: 0.9), Color(red: 0.5, green: 0.3, blue: 0.7)]
@@ -55,10 +59,21 @@ enum ProviderPreset: String, CaseIterable, Identifiable {
         let port: Int?
         let basePath: String
         let authType: RemoteProviderAuthType
+        let providerType: RemoteProviderType
     }
 
     var configuration: Configuration {
         switch self {
+        case .anthropic:
+            return Configuration(
+                name: "Anthropic",
+                host: "api.anthropic.com",
+                providerProtocol: .https,
+                port: nil,
+                basePath: "/v1",
+                authType: .apiKey,
+                providerType: .anthropic
+            )
         case .openai:
             return Configuration(
                 name: "OpenAI",
@@ -66,7 +81,8 @@ enum ProviderPreset: String, CaseIterable, Identifiable {
                 providerProtocol: .https,
                 port: nil,
                 basePath: "/v1",
-                authType: .apiKey
+                authType: .apiKey,
+                providerType: .openai
             )
         case .ollama:
             return Configuration(
@@ -75,7 +91,8 @@ enum ProviderPreset: String, CaseIterable, Identifiable {
                 providerProtocol: .http,
                 port: 11434,
                 basePath: "/v1",
-                authType: .none
+                authType: .none,
+                providerType: .openai
             )
         case .lmstudio:
             return Configuration(
@@ -84,7 +101,8 @@ enum ProviderPreset: String, CaseIterable, Identifiable {
                 providerProtocol: .http,
                 port: 1234,
                 basePath: "/v1",
-                authType: .none
+                authType: .none,
+                providerType: .openai
             )
         case .openrouter:
             return Configuration(
@@ -93,7 +111,8 @@ enum ProviderPreset: String, CaseIterable, Identifiable {
                 providerProtocol: .https,
                 port: nil,
                 basePath: "/api/v1",
-                authType: .apiKey
+                authType: .apiKey,
+                providerType: .openai
             )
         case .custom:
             return Configuration(
@@ -102,7 +121,8 @@ enum ProviderPreset: String, CaseIterable, Identifiable {
                 providerProtocol: .https,
                 port: nil,
                 basePath: "/v1",
-                authType: .none
+                authType: .none,
+                providerType: .openai
             )
         }
     }
@@ -132,6 +152,9 @@ struct RemoteProviderEditSheet: View {
     // Authentication
     @State private var authType: RemoteProviderAuthType = .none
     @State private var apiKey: String = ""
+
+    // Provider type
+    @State private var providerType: RemoteProviderType = .openai
 
     // Custom headers
     @State private var customHeaders: [HeaderEntry] = []
@@ -782,6 +805,7 @@ struct RemoteProviderEditSheet: View {
         portString = config.port.map { String($0) } ?? ""
         basePath = config.basePath
         authType = config.authType
+        providerType = config.providerType
         testResult = nil
     }
 
@@ -795,6 +819,7 @@ struct RemoteProviderEditSheet: View {
         }
         basePath = provider.basePath
         authType = provider.authType
+        providerType = provider.providerType
         timeout = provider.timeout
         customHeaders = provider.customHeaders.map { HeaderEntry(key: $0.key, value: $0.value, isSecret: false) }
         for key in provider.secretHeaderKeys {
@@ -820,6 +845,7 @@ struct RemoteProviderEditSheet: View {
                     port: port,
                     basePath: trimmedBasePath,
                     authType: authType,
+                    providerType: providerType,
                     apiKey: testApiKey,
                     headers: headers
                 )
@@ -861,6 +887,7 @@ struct RemoteProviderEditSheet: View {
             basePath: basePath,
             customHeaders: regularHeaders,
             authType: authType,
+            providerType: providerType,
             enabled: provider?.enabled ?? true,
             autoConnect: true,
             timeout: timeout,
