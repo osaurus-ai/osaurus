@@ -1535,28 +1535,14 @@ private struct DefaultPersonaPicker: View {
             }
         } label: {
             HStack(spacing: 10) {
-                // Persona avatar with colored ring
-                ZStack {
-                    Circle()
-                        .fill(
-                            LinearGradient(
-                                colors: [personaColor.opacity(0.15), personaColor.opacity(0.05)],
-                                startPoint: .topLeading,
-                                endPoint: .bottomTrailing
-                            )
-                        )
-                    Circle()
-                        .strokeBorder(personaColor.opacity(0.4), lineWidth: 1.5)
-                    Text(displayName.prefix(1).uppercased())
-                        .font(.system(size: 11, weight: .bold, design: .rounded))
-                        .foregroundColor(personaColor)
-                }
-                .frame(width: 24, height: 24)
+                // Persona icon
+                Image(systemName: "person.circle.fill")
+                    .font(.system(size: 16, weight: .medium))
+                    .foregroundColor(personaColor)
 
                 Text(displayName)
                     .font(.system(size: 13, weight: .medium))
                     .foregroundColor(themeManager.currentTheme.primaryText)
-                    .lineLimit(1)
 
                 Spacer()
 
