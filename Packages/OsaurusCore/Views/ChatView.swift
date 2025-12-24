@@ -927,7 +927,6 @@ struct ChatView: View {
     @State private var keyMonitor: Any?
     @State private var isHeaderHovered: Bool = false
     @State private var showSidebar: Bool = false
-    @State private var savedGlobalThemeId: UUID?  // Global theme to restore when ChatView closes
 
     private var theme: ThemeProtocol { themeManager.currentTheme }
 
@@ -1122,8 +1121,6 @@ struct ChatView: View {
             session.onSessionChanged = { [weak sessionsManager] in
                 sessionsManager?.refresh()
             }
-            // Save the global theme before applying persona theme
-            savedGlobalThemeId = themeManager.activeCustomTheme?.metadata.id
             // Apply the active persona's theme (if any)
             applyPersonaTheme(for: personaManager.activePersonaId)
         }
@@ -1467,33 +1464,32 @@ struct ChatView: View {
         applyPersonaTheme(for: newPersonaId)
     }
 
-    /// Apply the persona's theme for ChatView, keeping track of global theme for restoration
+    /// Apply the persona's theme for ChatView
+    /// Uses persist: false to avoid overwriting the user's saved theme preference
     private func applyPersonaTheme(for personaId: UUID) {
         if let themeId = personaManager.themeId(for: personaId),
             let personaTheme = themeManager.installedThemes.first(where: { $0.metadata.id == themeId })
         {
-            // Apply the persona's custom theme
-            themeManager.applyCustomTheme(personaTheme)
-        } else if let savedId = savedGlobalThemeId,
-            let globalTheme = themeManager.installedThemes.first(where: { $0.metadata.id == savedId })
-        {
-            // No persona theme - restore global theme
-            themeManager.applyCustomTheme(globalTheme)
-        } else if savedGlobalThemeId == nil {
-            // No global theme was saved (user was using system theme) - clear custom theme
-            themeManager.clearCustomTheme()
+            // Apply the persona's custom theme (temporary, don't persist)
+            themeManager.applyCustomTheme(personaTheme, persist: false)
+        } else if let savedTheme = ThemeConfigurationStore.loadActiveTheme() {
+            // No persona theme - apply the user's saved global theme (temporary, don't persist)
+            themeManager.applyCustomTheme(savedTheme, persist: false)
+        } else {
+            // No saved theme - use system appearance
+            themeManager.clearCustomTheme(persist: false)
         }
     }
 
-    /// Restore the global theme that was active before ChatView applied persona themes
+    /// Restore the global theme from disk when ChatView closes
+    /// Reads the saved theme directly to handle cases where user changed theme while ChatView was open
     private func restoreGlobalTheme() {
-        if let savedId = savedGlobalThemeId,
-            let globalTheme = themeManager.installedThemes.first(where: { $0.metadata.id == savedId })
-        {
-            themeManager.applyCustomTheme(globalTheme)
+        // Read the currently saved theme from disk (may have changed while ChatView was open)
+        if let savedTheme = ThemeConfigurationStore.loadActiveTheme() {
+            themeManager.applyCustomTheme(savedTheme, persist: false)
         } else {
-            // No global theme was saved - use system appearance
-            themeManager.clearCustomTheme()
+            // No saved theme - use system appearance
+            themeManager.clearCustomTheme(persist: false)
         }
     }
 

@@ -548,9 +548,14 @@ class ThemeManager: ObservableObject {
     }
 
     /// Apply a custom theme
-    func applyCustomTheme(_ theme: CustomTheme) {
+    /// - Parameters:
+    ///   - theme: The theme to apply
+    ///   - persist: Whether to save the theme ID to disk (default: true). Set to false for temporary theme changes like persona themes.
+    func applyCustomTheme(_ theme: CustomTheme, persist: Bool = true) {
         activeCustomTheme = theme
-        ThemeConfigurationStore.saveActiveThemeId(theme.metadata.id)
+        if persist {
+            ThemeConfigurationStore.saveActiveThemeId(theme.metadata.id)
+        }
 
         withAnimation(.easeInOut(duration: 0.3)) {
             currentTheme = CustomizableTheme(config: theme)
@@ -558,9 +563,12 @@ class ThemeManager: ObservableObject {
     }
 
     /// Clear custom theme and revert to system appearance
-    func clearCustomTheme() {
+    /// - Parameter persist: Whether to save the cleared state to disk (default: true). Set to false for temporary theme changes.
+    func clearCustomTheme(persist: Bool = true) {
         activeCustomTheme = nil
-        ThemeConfigurationStore.saveActiveThemeId(nil)
+        if persist {
+            ThemeConfigurationStore.saveActiveThemeId(nil)
+        }
 
         // Apply the appropriate built-in theme based on current appearance mode
         if let builtInTheme = Self.resolveBuiltInTheme(for: appearanceMode, from: installedThemes) {
