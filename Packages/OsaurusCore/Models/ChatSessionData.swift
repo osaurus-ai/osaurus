@@ -17,6 +17,8 @@ struct ChatSessionData: Codable, Identifiable, Sendable {
     var turns: [ChatTurnData]
     /// Per-session tool overrides. nil = use global config, otherwise map of tool name -> enabled
     var enabledToolOverrides: [String: Bool]?
+    /// The persona this session belongs to. nil = Default persona
+    var personaId: UUID?
 
     init(
         id: UUID = UUID(),
@@ -25,7 +27,8 @@ struct ChatSessionData: Codable, Identifiable, Sendable {
         updatedAt: Date = Date(),
         selectedModel: String? = nil,
         turns: [ChatTurnData] = [],
-        enabledToolOverrides: [String: Bool]? = nil
+        enabledToolOverrides: [String: Bool]? = nil,
+        personaId: UUID? = nil
     ) {
         self.id = id
         self.title = title
@@ -34,9 +37,10 @@ struct ChatSessionData: Codable, Identifiable, Sendable {
         self.selectedModel = selectedModel
         self.turns = turns
         self.enabledToolOverrides = enabledToolOverrides
+        self.personaId = personaId
     }
 
-    // Custom decoder for backward compatibility with sessions saved before enabledToolOverrides was added
+    // Custom decoder for backward compatibility with sessions saved before enabledToolOverrides/personaId were added
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         id = try container.decode(UUID.self, forKey: .id)
@@ -46,10 +50,11 @@ struct ChatSessionData: Codable, Identifiable, Sendable {
         selectedModel = try container.decodeIfPresent(String.self, forKey: .selectedModel)
         turns = try container.decode([ChatTurnData].self, forKey: .turns)
         enabledToolOverrides = try container.decodeIfPresent([String: Bool].self, forKey: .enabledToolOverrides)
+        personaId = try container.decodeIfPresent(UUID.self, forKey: .personaId)
     }
 
     private enum CodingKeys: String, CodingKey {
-        case id, title, createdAt, updatedAt, selectedModel, turns, enabledToolOverrides
+        case id, title, createdAt, updatedAt, selectedModel, turns, enabledToolOverrides, personaId
     }
 
     /// Generate a title from the first user message

@@ -11,17 +11,23 @@ import SwiftUI
 struct ChatEmptyState: View {
     let hasModels: Bool
     let selectedModel: String?
+    let personas: [Persona]
+    let activePersonaId: UUID
     let onOpenModelManager: () -> Void
     let onUseFoundation: (() -> Void)?
     let onQuickAction: (String) -> Void
+    let onSelectPersona: (UUID) -> Void
 
     @StateObject private var modelManager = ModelManager.shared
-    @State private var shimmerPhase: CGFloat = 0
     @State private var glowIntensity: CGFloat = 0.6
     @State private var hasAppeared = false
     @State private var isVisible = false
     @Environment(\.theme) private var theme
     @Environment(\.colorScheme) private var colorScheme
+
+    private var activePersona: Persona {
+        personas.first { $0.id == activePersonaId } ?? Persona.default
+    }
 
     /// Top suggested models to display in empty state
     private var topSuggestions: [MLXModel] {
@@ -66,22 +72,25 @@ struct ChatEmptyState: View {
 
     private var readyState: some View {
         VStack(spacing: 32) {
-            // Greeting
-            VStack(spacing: 12) {
-                // Animated accent line
-                accentLine
-                    .opacity(hasAppeared ? 1 : 0)
-                    .offset(y: hasAppeared ? 0 : 10)
+            // Greeting section
+            VStack(spacing: 20) {
+                // Greeting text
+                VStack(spacing: 8) {
+                    Text(greeting)
+                        .font(theme.font(size: CGFloat(theme.titleSize) + 4, weight: .semibold))
+                        .foregroundColor(theme.primaryText)
+                        .opacity(hasAppeared ? 1 : 0)
+                        .offset(y: hasAppeared ? 0 : 15)
 
-                Text(greeting)
-                    .font(theme.font(size: CGFloat(theme.titleSize) + 4, weight: .semibold))
-                    .foregroundColor(theme.primaryText)
-                    .opacity(hasAppeared ? 1 : 0)
-                    .offset(y: hasAppeared ? 0 : 15)
+                    Text("How can I help you today?")
+                        .font(theme.font(size: CGFloat(theme.bodySize) + 2))
+                        .foregroundColor(theme.secondaryText)
+                        .opacity(hasAppeared ? 1 : 0)
+                        .offset(y: hasAppeared ? 0 : 10)
+                }
 
-                Text("How can I help you today?")
-                    .font(theme.font(size: CGFloat(theme.bodySize) + 2))
-                    .foregroundColor(theme.secondaryText)
+                // Persona selector - always visible
+                personaDropdown
                     .opacity(hasAppeared ? 1 : 0)
                     .offset(y: hasAppeared ? 0 : 10)
             }
@@ -220,41 +229,66 @@ struct ChatEmptyState: View {
         .padding(.horizontal, 40)
     }
 
-    // MARK: - Accent Line
+    // MARK: - Persona Dropdown
 
-    private var accentLine: some View {
-        ZStack {
-            // Outer glow layer
-            RoundedRectangle(cornerRadius: 3)
-                .fill(theme.accentColor)
-                .blur(radius: 8)
-                .opacity(glowIntensity * 0.5)
+    private var personaDropdown: some View {
+        Menu {
+            ForEach(personas) { persona in
+                Button(action: { onSelectPersona(persona.id) }) {
+                    HStack {
+                        Text(persona.name)
+                        if persona.id == activePersonaId {
+                            Spacer()
+                            Image(systemName: "checkmark")
+                                .font(.system(size: 12, weight: .medium))
+                        }
+                    }
+                }
+            }
 
-            // Inner glow layer
-            RoundedRectangle(cornerRadius: 2)
-                .fill(theme.accentColor)
-                .blur(radius: 4)
-                .opacity(glowIntensity * 0.7)
+            Divider()
 
-            // Main solid bar
-            RoundedRectangle(cornerRadius: 2)
-                .fill(theme.accentColor)
+            Button(action: {
+                AppDelegate.shared?.showManagementWindow(initialTab: .personas)
+            }) {
+                Label("Manage Personas...", systemImage: "person.2.badge.gearshape")
+            }
+        } label: {
+            HStack(spacing: 8) {
+                // Persona icon
+                Image(systemName: "person.circle.fill")
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundColor(theme.accentColor)
 
-            // Shimmer highlight overlay
-            RoundedRectangle(cornerRadius: 2)
-                .fill(
-                    LinearGradient(
-                        colors: [
-                            Color.clear,
-                            Color.white.opacity(0.6),
-                            Color.clear,
-                        ],
-                        startPoint: UnitPoint(x: shimmerPhase - 0.3, y: 0.5),
-                        endPoint: UnitPoint(x: shimmerPhase + 0.1, y: 0.5)
+                Text(activePersona.name)
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundColor(theme.primaryText)
+
+                Image(systemName: "chevron.up.chevron.down")
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundColor(theme.tertiaryText)
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 8)
+            .background(
+                Capsule()
+                    .fill(theme.secondaryBackground.opacity(colorScheme == .dark ? 0.5 : 0.7))
+                    .overlay(
+                        Capsule()
+                            .strokeBorder(theme.primaryBorder.opacity(0.3), lineWidth: 1)
                     )
-                )
+            )
         }
-        .frame(width: 64, height: 4)
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .onHover { hovering in
+            if hovering {
+                NSCursor.pointingHand.push()
+            } else {
+                NSCursor.pop()
+            }
+        }
     }
 
     // MARK: - Quick Actions
@@ -314,11 +348,6 @@ struct ChatEmptyState: View {
 
     private func startGradientAnimation() {
         guard isVisible else { return }
-        // Shimmer animation - smooth continuous flow
-        withAnimation(.easeInOut(duration: 2).repeatForever(autoreverses: true)) {
-            shimmerPhase = 1.5
-        }
-
         // Glow pulse animation - subtle breathing effect
         withAnimation(.easeInOut(duration: 1.5).repeatForever(autoreverses: true)) {
             glowIntensity = 1.0
@@ -328,7 +357,6 @@ struct ChatEmptyState: View {
     private func stopGradientAnimation() {
         // Reset animation values without animation to stop the repeating animations
         withAnimation(.linear(duration: 0)) {
-            shimmerPhase = 0
             glowIntensity = 0.6
         }
         hasAppeared = false
@@ -532,9 +560,12 @@ private struct SuggestedModelCard: View {
                 ChatEmptyState(
                     hasModels: true,
                     selectedModel: "foundation",
+                    personas: [.default],
+                    activePersonaId: Persona.default.id,
                     onOpenModelManager: {},
                     onUseFoundation: {},
-                    onQuickAction: { _ in }
+                    onQuickAction: { _ in },
+                    onSelectPersona: { _ in }
                 )
             }
             .frame(width: 700, height: 600)
@@ -544,9 +575,12 @@ private struct SuggestedModelCard: View {
                 ChatEmptyState(
                     hasModels: false,
                     selectedModel: nil,
+                    personas: [.default],
+                    activePersonaId: Persona.default.id,
                     onOpenModelManager: {},
                     onUseFoundation: {},
-                    onQuickAction: { _ in }
+                    onQuickAction: { _ in },
+                    onSelectPersona: { _ in }
                 )
             }
             .frame(width: 700, height: 600)

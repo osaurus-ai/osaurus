@@ -458,6 +458,7 @@ class ThemeManager: ObservableObject {
     static let shared = ThemeManager()
 
     @Published var currentTheme: ThemeProtocol
+    @Published var chatTheme: ThemeProtocol
     @Published private(set) var appearanceMode: AppearanceMode = .system
     @Published private(set) var activeCustomTheme: CustomTheme?
     @Published private(set) var installedThemes: [CustomTheme] = []
@@ -483,20 +484,26 @@ class ThemeManager: ObservableObject {
         if let customTheme = ThemeConfigurationStore.loadActiveTheme() {
             print("[Osaurus] ThemeManager: Restoring active theme '\(customTheme.metadata.name)'")
             self.activeCustomTheme = customTheme
-            self.currentTheme = CustomizableTheme(config: customTheme)
+            let themeInstance = CustomizableTheme(config: customTheme)
+            self.currentTheme = themeInstance
+            self.chatTheme = themeInstance
         } else {
             // No user-selected theme - use the built-in Dark/Light theme based on appearance mode
             // Don't set activeCustomTheme so appearance mode changes will work
             let builtInTheme = Self.resolveBuiltInTheme(for: config.appearanceMode, from: loadedThemes)
             if let theme = builtInTheme {
                 print("[Osaurus] ThemeManager: Using built-in '\(theme.metadata.name)' theme (auto)")
-                self.currentTheme = CustomizableTheme(config: theme)
+                let themeInstance = CustomizableTheme(config: theme)
+                self.currentTheme = themeInstance
+                self.chatTheme = themeInstance
             } else {
                 // Fallback to default CustomTheme if built-in themes aren't installed
                 print("[Osaurus] ThemeManager: No built-in theme found, using fallback")
                 let fallbackTheme =
                     Self.isDarkMode(for: config.appearanceMode) ? CustomTheme.darkDefault : CustomTheme.lightDefault
-                self.currentTheme = CustomizableTheme(config: fallbackTheme)
+                let themeInstance = CustomizableTheme(config: fallbackTheme)
+                self.currentTheme = themeInstance
+                self.chatTheme = themeInstance
             }
         }
 
@@ -535,44 +542,80 @@ class ThemeManager: ObservableObject {
 
         // Apply the appropriate built-in theme
         if let builtInTheme = Self.resolveBuiltInTheme(for: mode, from: installedThemes) {
+            let themeInstance = CustomizableTheme(config: builtInTheme)
             withAnimation(.easeInOut(duration: 0.3)) {
-                currentTheme = CustomizableTheme(config: builtInTheme)
+                currentTheme = themeInstance
+                chatTheme = themeInstance
             }
         } else {
             // Fallback to default CustomTheme
             let fallbackTheme = Self.isDarkMode(for: mode) ? CustomTheme.darkDefault : CustomTheme.lightDefault
+            let themeInstance = CustomizableTheme(config: fallbackTheme)
             withAnimation(.easeInOut(duration: 0.3)) {
-                currentTheme = CustomizableTheme(config: fallbackTheme)
+                currentTheme = themeInstance
+                chatTheme = themeInstance
             }
         }
     }
 
-    /// Apply a custom theme
-    func applyCustomTheme(_ theme: CustomTheme) {
+    /// Apply a custom theme (global - affects both management and chat views)
+    /// - Parameters:
+    ///   - theme: The theme to apply
+    ///   - persist: Whether to save the theme ID to disk (default: true). Set to false for temporary theme changes like persona themes.
+    ///   - animated: Whether to animate the theme transition (default: true). Set to false for instant changes on initial load.
+    func applyCustomTheme(_ theme: CustomTheme, persist: Bool = true, animated: Bool = true) {
         activeCustomTheme = theme
-        ThemeConfigurationStore.saveActiveThemeId(theme.metadata.id)
+        if persist {
+            ThemeConfigurationStore.saveActiveThemeId(theme.metadata.id)
+        }
 
-        withAnimation(.easeInOut(duration: 0.3)) {
-            currentTheme = CustomizableTheme(config: theme)
+        let themeInstance = CustomizableTheme(config: theme)
+        if animated {
+            withAnimation(.easeInOut(duration: 0.3)) {
+                currentTheme = themeInstance
+                chatTheme = themeInstance
+            }
+        } else {
+            currentTheme = themeInstance
+            chatTheme = themeInstance
         }
     }
 
-    /// Clear custom theme and revert to system appearance
-    func clearCustomTheme() {
+    /// Clear custom theme and revert to system appearance (global - affects both management and chat views)
+    /// - Parameters:
+    ///   - persist: Whether to save the cleared state to disk (default: true). Set to false for temporary theme changes.
+    ///   - animated: Whether to animate the theme transition (default: true). Set to false for instant changes.
+    func clearCustomTheme(persist: Bool = true, animated: Bool = true) {
         activeCustomTheme = nil
-        ThemeConfigurationStore.saveActiveThemeId(nil)
+        if persist {
+            ThemeConfigurationStore.saveActiveThemeId(nil)
+        }
 
         // Apply the appropriate built-in theme based on current appearance mode
         if let builtInTheme = Self.resolveBuiltInTheme(for: appearanceMode, from: installedThemes) {
-            withAnimation(.easeInOut(duration: 0.3)) {
-                currentTheme = CustomizableTheme(config: builtInTheme)
+            let themeInstance = CustomizableTheme(config: builtInTheme)
+            if animated {
+                withAnimation(.easeInOut(duration: 0.3)) {
+                    currentTheme = themeInstance
+                    chatTheme = themeInstance
+                }
+            } else {
+                currentTheme = themeInstance
+                chatTheme = themeInstance
             }
         } else {
             // Fallback to default CustomTheme
             let fallbackTheme =
                 Self.isDarkMode(for: appearanceMode) ? CustomTheme.darkDefault : CustomTheme.lightDefault
-            withAnimation(.easeInOut(duration: 0.3)) {
-                currentTheme = CustomizableTheme(config: fallbackTheme)
+            let themeInstance = CustomizableTheme(config: fallbackTheme)
+            if animated {
+                withAnimation(.easeInOut(duration: 0.3)) {
+                    currentTheme = themeInstance
+                    chatTheme = themeInstance
+                }
+            } else {
+                currentTheme = themeInstance
+                chatTheme = themeInstance
             }
         }
     }
@@ -649,15 +692,50 @@ class ThemeManager: ObservableObject {
 
         // Apply the appropriate built-in theme
         if let builtInTheme = Self.resolveBuiltInTheme(for: .system, from: installedThemes) {
+            let themeInstance = CustomizableTheme(config: builtInTheme)
             withAnimation(.easeInOut(duration: 0.3)) {
-                currentTheme = CustomizableTheme(config: builtInTheme)
+                currentTheme = themeInstance
+                chatTheme = themeInstance
             }
         } else {
             // Fallback to default CustomTheme
             let fallbackTheme = Self.isDarkMode(for: .system) ? CustomTheme.darkDefault : CustomTheme.lightDefault
+            let themeInstance = CustomizableTheme(config: fallbackTheme)
             withAnimation(.easeInOut(duration: 0.3)) {
-                currentTheme = CustomizableTheme(config: fallbackTheme)
+                currentTheme = themeInstance
+                chatTheme = themeInstance
             }
+        }
+    }
+
+    // MARK: - Chat Theme (Persona-specific)
+
+    /// Apply a theme only to the chat view (does not affect management views)
+    /// Used for persona-specific theming
+    /// - Parameters:
+    ///   - theme: The theme to apply to chat
+    ///   - animated: Whether to animate the theme transition
+    func applyChatTheme(_ theme: CustomTheme, animated: Bool = true) {
+        let themeInstance = CustomizableTheme(config: theme)
+        if animated {
+            withAnimation(.easeInOut(duration: 0.3)) {
+                chatTheme = themeInstance
+            }
+        } else {
+            chatTheme = themeInstance
+        }
+    }
+
+    /// Sync chat theme back to the current global theme
+    /// Called when leaving chat or when persona has no custom theme
+    /// - Parameter animated: Whether to animate the theme transition
+    func syncChatTheme(animated: Bool = true) {
+        if animated {
+            withAnimation(.easeInOut(duration: 0.3)) {
+                chatTheme = currentTheme
+            }
+        } else {
+            chatTheme = currentTheme
         }
     }
 }

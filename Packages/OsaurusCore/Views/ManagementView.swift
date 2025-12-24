@@ -14,6 +14,7 @@ enum ManagementTab: String, CaseIterable {
     case models
     case providers
     case tools
+    case personas
     case themes
     case insights
     case server
@@ -24,6 +25,7 @@ enum ManagementTab: String, CaseIterable {
         case .models: return "cube.box.fill"
         case .providers: return "cloud.fill"
         case .tools: return "wrench.and.screwdriver.fill"
+        case .personas: return "person.2.fill"
         case .themes: return "paintpalette.fill"
         case .insights: return "chart.bar.doc.horizontal"
         case .server: return "server.rack"
@@ -36,6 +38,7 @@ enum ManagementTab: String, CaseIterable {
         case .models: return "Models"
         case .providers: return "Providers"
         case .tools: return "Tools"
+        case .personas: return "Personas"
         case .themes: return "Themes"
         case .insights: return "Insights"
         case .server: return "Server"
@@ -71,9 +74,12 @@ struct ManagementView: View {
 
     @StateObject private var remoteProviderManager = RemoteProviderManager.shared
 
+    @StateObject private var personaManager = PersonaManager.shared
+
     private var sidebarItems: [SidebarItemData] {
         let connectedProviders = remoteProviderManager.providerStates.values.filter { $0.isConnected }.count
         let customThemeCount = themeManager.installedThemes.filter { !$0.isBuiltIn }.count
+        let customPersonaCount = personaManager.personas.filter { !$0.isBuiltIn }.count
 
         return [
             SidebarItemData(
@@ -92,6 +98,12 @@ struct ManagementView: View {
                 icon: ManagementTab.tools.icon,
                 label: ManagementTab.tools.label,
                 badge: repoService.updatesAvailableCount > 0 ? repoService.updatesAvailableCount : nil
+            ),
+            SidebarItemData(
+                id: ManagementTab.personas.rawValue,
+                icon: ManagementTab.personas.icon,
+                label: ManagementTab.personas.label,
+                badge: customPersonaCount > 0 ? customPersonaCount : nil
             ),
             SidebarItemData(
                 id: ManagementTab.insights.rawValue,
@@ -134,6 +146,8 @@ struct ManagementView: View {
                     RemoteProvidersView()
                 case ManagementTab.tools.rawValue:
                     ToolsManagerView()
+                case ManagementTab.personas.rawValue:
+                    PersonasView()
                 case ManagementTab.themes.rawValue:
                     ThemesView()
                 case ManagementTab.insights.rawValue:

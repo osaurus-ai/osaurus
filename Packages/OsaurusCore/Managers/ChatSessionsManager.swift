@@ -33,18 +33,31 @@ final class ChatSessionsManager: ObservableObject {
 
     /// Create a new session and return its ID
     @discardableResult
-    func createNew(selectedModel: String? = nil) -> UUID {
+    func createNew(selectedModel: String? = nil, personaId: UUID? = nil) -> UUID {
         let session = ChatSessionData(
             id: UUID(),
             title: "New Chat",
             createdAt: Date(),
             updatedAt: Date(),
             selectedModel: selectedModel,
-            turns: []
+            turns: [],
+            enabledToolOverrides: nil,
+            personaId: personaId
         )
         ChatSessionStore.save(session)
         refresh()
         return session.id
+    }
+
+    /// Get sessions filtered by persona
+    /// - Parameter personaId: The persona ID to filter by. nil returns sessions for Default persona.
+    func sessions(for personaId: UUID?) -> [ChatSessionData] {
+        // Normalize: nil and Default persona ID both mean "Default"
+        let targetId = personaId == Persona.defaultId ? nil : personaId
+        return sessions.filter { session in
+            let sessionPersonaId = session.personaId == Persona.defaultId ? nil : session.personaId
+            return sessionPersonaId == targetId
+        }
     }
 
     /// Save a session (updates the list)

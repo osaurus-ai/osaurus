@@ -10,6 +10,8 @@ import SwiftUI
 struct ModelPickerView: View {
     let options: [ModelOption]
     @Binding var selectedModel: String?
+    /// The currently active persona ID (nil or Persona.defaultId means use global config)
+    let personaId: UUID?
     let onDismiss: () -> Void
 
     @State private var searchText: String = ""
@@ -74,19 +76,46 @@ struct ModelPickerView: View {
         }
     }
 
+    /// Whether we're using a custom persona (not the built-in Default)
+    private var isCustomPersona: Bool {
+        guard let pid = personaId else { return false }
+        return pid != Persona.defaultId
+    }
+
     private func loadDefaultModel() {
-        let config = ChatConfigurationStore.load()
-        defaultModelId = config.defaultModel
+        if isCustomPersona, let pid = personaId {
+            // Load persona-specific default model
+            defaultModelId = PersonaManager.shared.effectiveModel(for: pid)
+        } else {
+            // Load global default model
+            let config = ChatConfigurationStore.load()
+            defaultModelId = config.defaultModel
+        }
     }
 
     private func setDefaultModel(_ id: String) {
-        var config = ChatConfigurationStore.load()
-        config.defaultModel = id
-        ChatConfigurationStore.save(config)
-        defaultModelId = id
+        if isCustomPersona, let pid = personaId {
+            // Update persona's default model
+            PersonaManager.shared.updateDefaultModel(for: pid, model: id)
+            defaultModelId = id
+        } else {
+            // Update global default model
+            var config = ChatConfigurationStore.load()
+            config.defaultModel = id
+            ChatConfigurationStore.save(config)
+            defaultModelId = id
+        }
     }
 
     // MARK: - Header
+
+    /// Label for the default model indicator (persona vs global)
+    private var defaultLabel: String {
+        if isCustomPersona {
+            return "Persona default"
+        }
+        return "Default"
+    }
 
     private var header: some View {
         HStack {
@@ -97,7 +126,7 @@ struct ModelPickerView: View {
 
                 if let defaultName = defaultModelName {
                     HStack(spacing: 6) {
-                        Text("Default: \(defaultName)")
+                        Text("\(defaultLabel): \(defaultName)")
                             .font(.system(size: 10))
                             .foregroundColor(theme.secondaryText)
                             .lineLimit(1)
@@ -185,6 +214,7 @@ struct ModelPickerView: View {
                                 model: model,
                                 isSelected: selectedModel == model.id,
                                 isDefault: defaultModelId == model.id,
+                                isCustomPersona: isCustomPersona,
                                 onSelect: {
                                     selectedModel = model.id
                                     onDismiss()
@@ -245,11 +275,22 @@ private struct ModelRowItem: View {
     let model: ModelOption
     let isSelected: Bool
     let isDefault: Bool
+    let isCustomPersona: Bool
     let onSelect: () -> Void
     let onSetDefault: () -> Void
 
     @State private var isHovered: Bool = false
     @Environment(\.theme) private var theme
+
+    /// Help text when the model is already the default
+    private var defaultHelpText: String {
+        isCustomPersona ? "Current persona default" : "Current default model"
+    }
+
+    /// Help text for setting as default
+    private var setDefaultHelpText: String {
+        isCustomPersona ? "Set as persona default" : "Set as default model"
+    }
 
     var body: some View {
         HStack(spacing: 12) {
@@ -314,7 +355,7 @@ private struct ModelRowItem: View {
                         )
                 }
                 .buttonStyle(.plain)
-                .help(isDefault ? "Current default model" : "Set as default model")
+                .help(isDefault ? defaultHelpText : setDefaultHelpText)
             }
 
             // Checkmark for selected
@@ -400,6 +441,7 @@ private struct MetadataBadge: View {
                         ),
                     ],
                     selectedModel: $selected,
+                    personaId: nil,
                     onDismiss: {}
                 )
                 .padding()

@@ -16,6 +16,8 @@ struct FloatingInputCard: View {
     @Binding var enabledToolOverrides: [String: Bool]
     let modelOptions: [ModelOption]
     let availableTools: [ToolRegistry.ToolEntry]
+    /// Persona's tool overrides (if any). Used as base for diffing session overrides.
+    let personaToolOverrides: [String: Bool]?
     let isStreaming: Bool
     let supportsImages: Bool
     /// Current estimated context token count for the session
@@ -24,6 +26,8 @@ struct FloatingInputCard: View {
     let onStop: () -> Void
     /// Trigger to focus the input field (increment to focus)
     var focusTrigger: Int = 0
+    /// Current persona ID (used for persona-specific default model)
+    var personaId: UUID? = nil
 
     // Local state for text input to prevent parent re-renders on every keystroke
     @State private var localText: String = ""
@@ -310,6 +314,7 @@ struct FloatingInputCard: View {
             ModelPickerView(
                 options: cachedModelOptions,
                 selectedModel: $selectedModel,
+                personaId: personaId,
                 onDismiss: dismissModelPicker
             )
         }
@@ -379,6 +384,7 @@ struct FloatingInputCard: View {
             ToolSelectorView(
                 tools: cachedTools,
                 enabledOverrides: $enabledToolOverrides,
+                personaToolOverrides: personaToolOverrides,
                 onDismiss: { showToolPicker = false }
             )
         }
@@ -853,6 +859,7 @@ extension NSImage {
                                 parameters: nil
                             ),
                         ],
+                        personaToolOverrides: nil,
                         isStreaming: false,
                         supportsImages: true,
                         estimatedContextTokens: 2450,
