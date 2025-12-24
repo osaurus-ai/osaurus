@@ -10,12 +10,11 @@ import SwiftUI
 struct ModelPickerView: View {
     let options: [ModelOption]
     @Binding var selectedModel: String?
-    /// The currently active persona ID (nil or Persona.defaultId means use global config)
+    /// The currently active persona ID (kept for compatibility but no longer used for pin logic)
     let personaId: UUID?
     let onDismiss: () -> Void
 
     @State private var searchText: String = ""
-    @State private var defaultModelId: String?
     @Environment(\.theme) private var theme
     @Environment(\.colorScheme) private var colorScheme
 
@@ -25,18 +24,6 @@ struct ModelPickerView: View {
 
     private var groupedOptions: [(source: ModelOption.Source, models: [ModelOption])] {
         filteredOptions.groupedBySource()
-    }
-
-    /// Get the display name for the selected model
-    private var selectedModelName: String? {
-        guard let id = selectedModel else { return nil }
-        return options.first { $0.id == id }?.displayName
-    }
-
-    /// Get the display name for the default model
-    private var defaultModelName: String? {
-        guard let id = defaultModelId else { return nil }
-        return options.first { $0.id == id }?.displayName
     }
 
     var body: some View {
@@ -71,78 +58,15 @@ struct ModelPickerView: View {
             RoundedRectangle(cornerRadius: 12, style: .continuous)
                 .strokeBorder(theme.primaryBorder.opacity(0.3), lineWidth: 0.5)
         )
-        .onAppear {
-            loadDefaultModel()
-        }
-    }
-
-    /// Whether we're using a custom persona (not the built-in Default)
-    private var isCustomPersona: Bool {
-        guard let pid = personaId else { return false }
-        return pid != Persona.defaultId
-    }
-
-    private func loadDefaultModel() {
-        if isCustomPersona, let pid = personaId {
-            // Load persona-specific default model
-            defaultModelId = PersonaManager.shared.effectiveModel(for: pid)
-        } else {
-            // Load global default model
-            let config = ChatConfigurationStore.load()
-            defaultModelId = config.defaultModel
-        }
-    }
-
-    private func setDefaultModel(_ id: String) {
-        if isCustomPersona, let pid = personaId {
-            // Update persona's default model
-            PersonaManager.shared.updateDefaultModel(for: pid, model: id)
-            defaultModelId = id
-        } else {
-            // Update global default model
-            var config = ChatConfigurationStore.load()
-            config.defaultModel = id
-            ChatConfigurationStore.save(config)
-            defaultModelId = id
-        }
     }
 
     // MARK: - Header
 
-    /// Label for the default model indicator (persona vs global)
-    private var defaultLabel: String {
-        if isCustomPersona {
-            return "Persona default"
-        }
-        return "Default"
-    }
-
     private var header: some View {
         HStack {
-            VStack(alignment: .leading, spacing: 2) {
-                Text("Available Models")
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundColor(theme.primaryText)
-
-                if let defaultName = defaultModelName {
-                    HStack(spacing: 6) {
-                        Text("\(defaultLabel): \(defaultName)")
-                            .font(.system(size: 10))
-                            .foregroundColor(theme.secondaryText)
-                            .lineLimit(1)
-
-                        if selectedModel != defaultModelId {
-                            Button("Reset") {
-                                selectedModel = defaultModelId
-                                onDismiss()
-                            }
-                            .font(.system(size: 10, weight: .medium))
-                            .foregroundColor(theme.accentColor)
-                            .buttonStyle(.plain)
-                        }
-                    }
-                }
-            }
+            Text("Available Models")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundColor(theme.primaryText)
 
             Spacer()
 
@@ -213,14 +137,9 @@ struct ModelPickerView: View {
                             ModelRowItem(
                                 model: model,
                                 isSelected: selectedModel == model.id,
-                                isDefault: defaultModelId == model.id,
-                                isCustomPersona: isCustomPersona,
                                 onSelect: {
                                     selectedModel = model.id
                                     onDismiss()
-                                },
-                                onSetDefault: {
-                                    setDefaultModel(model.id)
                                 }
                             )
                         }
@@ -274,23 +193,10 @@ struct ModelPickerView: View {
 private struct ModelRowItem: View {
     let model: ModelOption
     let isSelected: Bool
-    let isDefault: Bool
-    let isCustomPersona: Bool
     let onSelect: () -> Void
-    let onSetDefault: () -> Void
 
     @State private var isHovered: Bool = false
     @Environment(\.theme) private var theme
-
-    /// Help text when the model is already the default
-    private var defaultHelpText: String {
-        isCustomPersona ? "Current persona default" : "Current default model"
-    }
-
-    /// Help text for setting as default
-    private var setDefaultHelpText: String {
-        isCustomPersona ? "Set as persona default" : "Set as default model"
-    }
 
     var body: some View {
         HStack(spacing: 12) {
@@ -341,22 +247,6 @@ private struct ModelRowItem: View {
             }
 
             Spacer()
-
-            // Default Toggle (Pin)
-            if isDefault || isHovered {
-                Button(action: onSetDefault) {
-                    Image(systemName: isDefault ? "pin.fill" : "pin")
-                        .font(.system(size: 12))
-                        .foregroundColor(isDefault ? theme.accentColor : theme.tertiaryText)
-                        .padding(4)
-                        .background(
-                            Circle()
-                                .fill(isDefault ? theme.accentColor.opacity(0.1) : Color.clear)
-                        )
-                }
-                .buttonStyle(.plain)
-                .help(isDefault ? defaultHelpText : setDefaultHelpText)
-            }
 
             // Checkmark for selected
             if isSelected {
