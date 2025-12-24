@@ -145,8 +145,8 @@ public actor RemoteProviderService: ToolCapableService {
             throw RemoteProviderServiceError.requestFailed("HTTP \(httpResponse.statusCode): \(errorMessage)")
         }
 
-        let chatResponse = try JSONDecoder().decode(ChatCompletionResponse.self, from: data)
-        return chatResponse.choices.first?.message.content ?? ""
+        let (content, _) = try parseResponse(data)
+        return content ?? ""
     }
 
     func streamDeltas(
@@ -175,6 +175,7 @@ public actor RemoteProviderService: ToolCapableService {
 
         let urlRequest = try buildURLRequest(for: request)
         let currentSession = self.session
+        let providerType = self.provider.providerType
 
         let (stream, continuation) = AsyncThrowingStream<String, Error>.makeStream()
 
@@ -235,7 +236,7 @@ public actor RemoteProviderService: ToolCapableService {
                         if line.hasPrefix("data: ") {
                             let dataContent = String(line.dropFirst(6))
 
-                            // Check for stream end
+                            // Check for stream end (OpenAI format)
                             if dataContent.trimmingCharacters(in: .whitespaces) == "[DONE]" {
                                 // Check for accumulated tool calls before finishing
                                 if let firstToolCall = accumulatedToolCalls.sorted(by: { $0.key < $1.key }).first,
@@ -254,61 +255,116 @@ public actor RemoteProviderService: ToolCapableService {
                                 return
                             }
 
-                            // Parse JSON chunk
+                            // Parse JSON chunk based on provider type
                             if let jsonData = dataContent.data(using: .utf8) {
                                 do {
-                                    let chunk = try JSONDecoder().decode(ChatCompletionChunk.self, from: jsonData)
-                                    if let delta = chunk.choices.first?.delta.content, !delta.isEmpty {
-                                        // Check stop sequences
-                                        var output = delta
-                                        for seq in stopSequences {
-                                            if let range = output.range(of: seq) {
-                                                output = String(output[..<range.lowerBound])
-                                                continuation.yield(output)
+                                    if providerType == .anthropic {
+                                        // Parse Anthropic SSE event
+                                        if let eventType = try? JSONDecoder().decode(AnthropicSSEEvent.self, from: jsonData) {
+                                            switch eventType.type {
+                                            case "content_block_delta":
+                                                if let deltaEvent = try? JSONDecoder().decode(ContentBlockDeltaEvent.self, from: jsonData) {
+                                                    if case .textDelta(let textDelta) = deltaEvent.delta {
+                                                        var output = textDelta.text
+                                                        for seq in stopSequences {
+                                                            if let range = output.range(of: seq) {
+                                                                output = String(output[..<range.lowerBound])
+                                                                continuation.yield(output)
+                                                                continuation.finish()
+                                                                return
+                                                            }
+                                                        }
+                                                        continuation.yield(output)
+                                                    } else if case .inputJsonDelta(let jsonDelta) = deltaEvent.delta {
+                                                        // Accumulate tool call JSON
+                                                        let idx = deltaEvent.index
+                                                        var current = accumulatedToolCalls[idx] ?? (id: nil, name: nil, args: "")
+                                                        current.args += jsonDelta.partial_json
+                                                        accumulatedToolCalls[idx] = current
+                                                    }
+                                                }
+                                            case "content_block_start":
+                                                if let startEvent = try? JSONDecoder().decode(ContentBlockStartEvent.self, from: jsonData) {
+                                                    if case .toolUse(let toolBlock) = startEvent.content_block {
+                                                        let idx = startEvent.index
+                                                        accumulatedToolCalls[idx] = (id: toolBlock.id, name: toolBlock.name, args: "")
+                                                    }
+                                                }
+                                            case "message_stop":
+                                                // Check for accumulated tool calls before finishing
+                                                if let firstToolCall = accumulatedToolCalls.sorted(by: { $0.key < $1.key }).first,
+                                                    let toolName = firstToolCall.value.name
+                                                {
+                                                    continuation.finish(
+                                                        throwing: ServiceToolInvocation(
+                                                            toolName: toolName,
+                                                            jsonArguments: firstToolCall.value.args,
+                                                            toolCallId: firstToolCall.value.id
+                                                        )
+                                                    )
+                                                    return
+                                                }
                                                 continuation.finish()
                                                 return
+                                            default:
+                                                break
                                             }
                                         }
-                                        continuation.yield(output)
-                                    }
-
-                                    // Accumulate tool calls by index
-                                    if let toolCalls = chunk.choices.first?.delta.tool_calls {
-                                        for toolCall in toolCalls {
-                                            let idx = toolCall.index ?? 0
-                                            var current =
-                                                accumulatedToolCalls[idx] ?? (id: nil, name: nil, args: "")
-
-                                            if let id = toolCall.id {
-                                                current.id = id
+                                    } else {
+                                        // OpenAI format
+                                        let chunk = try JSONDecoder().decode(ChatCompletionChunk.self, from: jsonData)
+                                        if let delta = chunk.choices.first?.delta.content, !delta.isEmpty {
+                                            // Check stop sequences
+                                            var output = delta
+                                            for seq in stopSequences {
+                                                if let range = output.range(of: seq) {
+                                                    output = String(output[..<range.lowerBound])
+                                                    continuation.yield(output)
+                                                    continuation.finish()
+                                                    return
+                                                }
                                             }
-                                            if let name = toolCall.function?.name {
-                                                current.name = name
-                                            }
-                                            if let args = toolCall.function?.arguments {
-                                                current.args += args
-                                            }
-                                            accumulatedToolCalls[idx] = current
+                                            continuation.yield(output)
                                         }
-                                    }
 
-                                    // Check for finish reason - emit tool calls if we have any
-                                    if let finishReason = chunk.choices.first?.finish_reason,
-                                        !finishReason.isEmpty,
-                                        !accumulatedToolCalls.isEmpty
-                                    {
-                                        if let firstToolCall = accumulatedToolCalls.sorted(by: { $0.key < $1.key })
-                                            .first,
-                                            let toolName = firstToolCall.value.name
+                                        // Accumulate tool calls by index
+                                        if let toolCalls = chunk.choices.first?.delta.tool_calls {
+                                            for toolCall in toolCalls {
+                                                let idx = toolCall.index ?? 0
+                                                var current =
+                                                    accumulatedToolCalls[idx] ?? (id: nil, name: nil, args: "")
+
+                                                if let id = toolCall.id {
+                                                    current.id = id
+                                                }
+                                                if let name = toolCall.function?.name {
+                                                    current.name = name
+                                                }
+                                                if let args = toolCall.function?.arguments {
+                                                    current.args += args
+                                                }
+                                                accumulatedToolCalls[idx] = current
+                                            }
+                                        }
+
+                                        // Check for finish reason - emit tool calls if we have any
+                                        if let finishReason = chunk.choices.first?.finish_reason,
+                                            !finishReason.isEmpty,
+                                            !accumulatedToolCalls.isEmpty
                                         {
-                                            continuation.finish(
-                                                throwing: ServiceToolInvocation(
-                                                    toolName: toolName,
-                                                    jsonArguments: firstToolCall.value.args,
-                                                    toolCallId: firstToolCall.value.id
+                                            if let firstToolCall = accumulatedToolCalls.sorted(by: { $0.key < $1.key })
+                                                .first,
+                                                let toolName = firstToolCall.value.name
+                                            {
+                                                continuation.finish(
+                                                    throwing: ServiceToolInvocation(
+                                                        toolName: toolName,
+                                                        jsonArguments: firstToolCall.value.args,
+                                                        toolCallId: firstToolCall.value.id
+                                                    )
                                                 )
-                                            )
-                                            return
+                                                return
+                                            }
                                         }
                                     }
                                 } catch {
@@ -393,12 +449,10 @@ public actor RemoteProviderService: ToolCapableService {
             throw RemoteProviderServiceError.requestFailed("HTTP \(httpResponse.statusCode): \(errorMessage)")
         }
 
-        let chatResponse = try JSONDecoder().decode(ChatCompletionResponse.self, from: data)
+        let (content, toolCalls) = try parseResponse(data)
 
         // Check for tool calls
-        if let toolCalls = chatResponse.choices.first?.message.tool_calls,
-            let firstCall = toolCalls.first
-        {
+        if let toolCalls = toolCalls, let firstCall = toolCalls.first {
             throw ServiceToolInvocation(
                 toolName: firstCall.function.name,
                 jsonArguments: firstCall.function.arguments,
@@ -406,7 +460,7 @@ public actor RemoteProviderService: ToolCapableService {
             )
         }
 
-        return chatResponse.choices.first?.message.content ?? ""
+        return content ?? ""
     }
 
     func streamWithTools(
@@ -436,6 +490,7 @@ public actor RemoteProviderService: ToolCapableService {
 
         let urlRequest = try buildURLRequest(for: request)
         let currentSession = self.session
+        let providerType = self.provider.providerType
 
         let (stream, continuation) = AsyncThrowingStream<String, Error>.makeStream()
 
@@ -521,72 +576,135 @@ public actor RemoteProviderService: ToolCapableService {
 
                             if let jsonData = dataContent.data(using: .utf8) {
                                 do {
-                                    let chunk = try JSONDecoder().decode(ChatCompletionChunk.self, from: jsonData)
-
-                                    // Handle content delta
-                                    if let delta = chunk.choices.first?.delta.content, !delta.isEmpty {
-                                        var output = delta
-                                        for seq in stopSequences {
-                                            if let range = output.range(of: seq) {
-                                                output = String(output[..<range.lowerBound])
-                                                continuation.yield(output)
+                                    if providerType == .anthropic {
+                                        // Parse Anthropic SSE event
+                                        if let eventType = try? JSONDecoder().decode(AnthropicSSEEvent.self, from: jsonData) {
+                                            switch eventType.type {
+                                            case "content_block_delta":
+                                                if let deltaEvent = try? JSONDecoder().decode(ContentBlockDeltaEvent.self, from: jsonData) {
+                                                    if case .textDelta(let textDelta) = deltaEvent.delta {
+                                                        var output = textDelta.text
+                                                        for seq in stopSequences {
+                                                            if let range = output.range(of: seq) {
+                                                                output = String(output[..<range.lowerBound])
+                                                                continuation.yield(output)
+                                                                continuation.finish()
+                                                                return
+                                                            }
+                                                        }
+                                                        continuation.yield(output)
+                                                    } else if case .inputJsonDelta(let jsonDelta) = deltaEvent.delta {
+                                                        // Accumulate tool call JSON
+                                                        let idx = deltaEvent.index
+                                                        var current = accumulatedToolCalls[idx] ?? (id: nil, name: nil, args: "")
+                                                        current.args += jsonDelta.partial_json
+                                                        accumulatedToolCalls[idx] = current
+                                                    }
+                                                }
+                                            case "content_block_start":
+                                                if let startEvent = try? JSONDecoder().decode(ContentBlockStartEvent.self, from: jsonData) {
+                                                    if case .toolUse(let toolBlock) = startEvent.content_block {
+                                                        let idx = startEvent.index
+                                                        accumulatedToolCalls[idx] = (id: toolBlock.id, name: toolBlock.name, args: "")
+                                                        print("[Osaurus] Tool call detected: index=\(idx), name=\(toolBlock.name)")
+                                                    }
+                                                }
+                                            case "message_delta":
+                                                if let deltaEvent = try? JSONDecoder().decode(MessageDeltaEvent.self, from: jsonData) {
+                                                    if let stopReason = deltaEvent.delta.stop_reason {
+                                                        lastFinishReason = stopReason
+                                                    }
+                                                }
+                                            case "message_stop":
+                                                // Check for accumulated tool calls before finishing
+                                                if let firstToolCall = accumulatedToolCalls.sorted(by: { $0.key < $1.key }).first,
+                                                    let toolName = firstToolCall.value.name
+                                                {
+                                                    print("[Osaurus] Anthropic stream ended: Emitting tool call '\(toolName)'")
+                                                    continuation.finish(
+                                                        throwing: ServiceToolInvocation(
+                                                            toolName: toolName,
+                                                            jsonArguments: firstToolCall.value.args,
+                                                            toolCallId: firstToolCall.value.id
+                                                        )
+                                                    )
+                                                    return
+                                                }
                                                 continuation.finish()
                                                 return
+                                            default:
+                                                break
                                             }
                                         }
-                                        continuation.yield(output)
-                                    }
+                                    } else {
+                                        // OpenAI format
+                                        let chunk = try JSONDecoder().decode(ChatCompletionChunk.self, from: jsonData)
 
-                                    // Handle tool call deltas - track by index for multiple parallel tool calls
-                                    if let toolCalls = chunk.choices.first?.delta.tool_calls {
-                                        for toolCall in toolCalls {
-                                            let idx = toolCall.index ?? 0
-                                            var current =
-                                                accumulatedToolCalls[idx] ?? (id: nil, name: nil, args: "")
-
-                                            // Preserve tool call ID from the stream
-                                            if let id = toolCall.id {
-                                                current.id = id
+                                        // Handle content delta
+                                        if let delta = chunk.choices.first?.delta.content, !delta.isEmpty {
+                                            var output = delta
+                                            for seq in stopSequences {
+                                                if let range = output.range(of: seq) {
+                                                    output = String(output[..<range.lowerBound])
+                                                    continuation.yield(output)
+                                                    continuation.finish()
+                                                    return
+                                                }
                                             }
-                                            if let name = toolCall.function?.name {
-                                                current.name = name
-                                                print("[Osaurus] Tool call detected: index=\(idx), name=\(name)")
-                                            }
-                                            if let args = toolCall.function?.arguments {
-                                                current.args += args
-                                            }
-                                            accumulatedToolCalls[idx] = current
+                                            continuation.yield(output)
                                         }
-                                    }
 
-                                    // Check finish reason - handle various formats from different providers
-                                    if let finishReason = chunk.choices.first?.finish_reason,
-                                        !finishReason.isEmpty
-                                    {
-                                        lastFinishReason = finishReason
-                                        print(
-                                            "[Osaurus] Received finish_reason: '\(finishReason)', accumulated tool calls: \(accumulatedToolCalls.count)"
-                                        )
+                                        // Handle tool call deltas - track by index for multiple parallel tool calls
+                                        if let toolCalls = chunk.choices.first?.delta.tool_calls {
+                                            for toolCall in toolCalls {
+                                                let idx = toolCall.index ?? 0
+                                                var current =
+                                                    accumulatedToolCalls[idx] ?? (id: nil, name: nil, args: "")
 
-                                        // Emit tool call if we have accumulated data and finish reason indicates tool calls
-                                        // Some providers use "tool_calls", others might use "function_call" or just "stop"
-                                        if !accumulatedToolCalls.isEmpty {
-                                            if let firstToolCall = accumulatedToolCalls.sorted(by: {
-                                                $0.key < $1.key
-                                            }).first,
-                                                let toolName = firstToolCall.value.name
-                                            {
-                                                print(
-                                                    "[Osaurus] Emitting tool call '\(toolName)' on finish_reason '\(finishReason)'"
-                                                )
-                                                continuation.finish(
-                                                    throwing: ServiceToolInvocation(
-                                                        toolName: toolName,
-                                                        jsonArguments: firstToolCall.value.args,
-                                                        toolCallId: firstToolCall.value.id
+                                                // Preserve tool call ID from the stream
+                                                if let id = toolCall.id {
+                                                    current.id = id
+                                                }
+                                                if let name = toolCall.function?.name {
+                                                    current.name = name
+                                                    print("[Osaurus] Tool call detected: index=\(idx), name=\(name)")
+                                                }
+                                                if let args = toolCall.function?.arguments {
+                                                    current.args += args
+                                                }
+                                                accumulatedToolCalls[idx] = current
+                                            }
+                                        }
+
+                                        // Check finish reason - handle various formats from different providers
+                                        if let finishReason = chunk.choices.first?.finish_reason,
+                                            !finishReason.isEmpty
+                                        {
+                                            lastFinishReason = finishReason
+                                            print(
+                                                "[Osaurus] Received finish_reason: '\(finishReason)', accumulated tool calls: \(accumulatedToolCalls.count)"
+                                            )
+
+                                            // Emit tool call if we have accumulated data and finish reason indicates tool calls
+                                            // Some providers use "tool_calls", others might use "function_call" or just "stop"
+                                            if !accumulatedToolCalls.isEmpty {
+                                                if let firstToolCall = accumulatedToolCalls.sorted(by: {
+                                                    $0.key < $1.key
+                                                }).first,
+                                                    let toolName = firstToolCall.value.name
+                                                {
+                                                    print(
+                                                        "[Osaurus] Emitting tool call '\(toolName)' on finish_reason '\(finishReason)'"
                                                     )
-                                                )
-                                                return
+                                                    continuation.finish(
+                                                        throwing: ServiceToolInvocation(
+                                                            toolName: toolName,
+                                                            jsonArguments: firstToolCall.value.args,
+                                                            toolCallId: firstToolCall.value.id
+                                                        )
+                                                    )
+                                                    return
+                                                }
                                             }
                                         }
                                     }
@@ -667,7 +785,8 @@ public actor RemoteProviderService: ToolCapableService {
 
     /// Build a URLRequest for the chat completions endpoint
     private func buildURLRequest(for request: RemoteChatRequest) throws -> URLRequest {
-        guard let url = provider.url(for: "/chat/completions") else {
+        let endpoint = provider.providerType.chatEndpoint
+        guard let url = provider.url(for: endpoint) else {
             throw RemoteProviderServiceError.invalidURL
         }
 
@@ -675,24 +794,79 @@ public actor RemoteProviderService: ToolCapableService {
         urlRequest.httpMethod = "POST"
         urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
 
+        // Set Accept header based on streaming mode
+        if request.stream {
+            urlRequest.setValue("text/event-stream", forHTTPHeaderField: "Accept")
+        } else {
+            urlRequest.setValue("application/json", forHTTPHeaderField: "Accept")
+        }
+
         // Add provider headers (including auth)
         for (key, value) in provider.resolvedHeaders() {
             urlRequest.setValue(value, forHTTPHeaderField: key)
         }
 
-        // Encode request body
+        // Encode request body based on provider type
         let encoder = JSONEncoder()
         encoder.outputFormatting = .prettyPrinted
-        let bodyData = try encoder.encode(request)
+
+        let bodyData: Data
+        switch provider.providerType {
+        case .anthropic:
+            let anthropicRequest = request.toAnthropicRequest()
+            bodyData = try encoder.encode(anthropicRequest)
+        case .openai:
+            bodyData = try encoder.encode(request)
+        }
         urlRequest.httpBody = bodyData
 
         // Debug: print the request body
         if let jsonString = String(data: bodyData, encoding: .utf8) {
-            print("[Osaurus] Remote Provider Request Body:\n\(jsonString)")
+            print("[Osaurus] Remote Provider (\(provider.providerType.rawValue)) Request Body:\n\(jsonString)")
         }
 
         return urlRequest
     }
+
+    /// Parse response based on provider type
+    private func parseResponse(_ data: Data) throws -> (content: String?, toolCalls: [ToolCall]?) {
+        switch provider.providerType {
+        case .anthropic:
+            let response = try JSONDecoder().decode(AnthropicMessagesResponse.self, from: data)
+            var textContent = ""
+            var toolCalls: [ToolCall] = []
+
+            for block in response.content {
+                switch block {
+                case .text(_, let text):
+                    textContent += text
+                case .toolUse(_, let id, let name, let input):
+                    let argsData = try? JSONSerialization.data(withJSONObject: input.mapValues { $0.value })
+                    let argsString = argsData.flatMap { String(data: $0, encoding: .utf8) } ?? "{}"
+                    toolCalls.append(ToolCall(
+                        id: id,
+                        type: "function",
+                        function: ToolCallFunction(name: name, arguments: argsString)
+                    ))
+                }
+            }
+
+            return (textContent.isEmpty ? nil : textContent, toolCalls.isEmpty ? nil : toolCalls)
+
+        case .openai:
+            let response = try JSONDecoder().decode(ChatCompletionResponse.self, from: data)
+            let content = response.choices.first?.message.content
+            let toolCalls = response.choices.first?.message.tool_calls
+            return (content, toolCalls)
+        }
+    }
+}
+
+// MARK: - Helper for Anthropic SSE Event Type Detection
+
+/// Simple struct to decode Anthropic SSE event type
+private struct AnthropicSSEEvent: Decodable {
+    let type: String
 }
 
 // MARK: - Request/Response Models for Remote Provider
@@ -710,13 +884,152 @@ private struct RemoteChatRequest: Encodable {
     var stop: [String]?
     let tools: [Tool]?
     let tool_choice: ToolChoiceOption?
+
+    /// Convert to Anthropic Messages API request format
+    func toAnthropicRequest() -> AnthropicMessagesRequest {
+        var systemContent: AnthropicSystemContent? = nil
+        var anthropicMessages: [AnthropicMessage] = []
+
+        for msg in messages {
+            switch msg.role {
+            case "system":
+                // Collect system messages
+                if let content = msg.content {
+                    systemContent = .text(content)
+                }
+
+            case "user":
+                // Convert user messages
+                if let content = msg.content {
+                    anthropicMessages.append(AnthropicMessage(
+                        role: "user",
+                        content: .text(content)
+                    ))
+                }
+
+            case "assistant":
+                // Convert assistant messages, including tool calls
+                var blocks: [AnthropicContentBlock] = []
+
+                if let content = msg.content, !content.isEmpty {
+                    blocks.append(.text(AnthropicTextBlock(text: content)))
+                }
+
+                if let toolCalls = msg.tool_calls {
+                    for toolCall in toolCalls {
+                        if let argsData = toolCall.function.arguments.data(using: .utf8),
+                           let argsDict = try? JSONSerialization.jsonObject(with: argsData) as? [String: Any] {
+                            blocks.append(.toolUse(AnthropicToolUseBlock(
+                                id: toolCall.id,
+                                name: toolCall.function.name,
+                                input: argsDict.mapValues { AnyCodableValue($0) }
+                            )))
+                        }
+                    }
+                }
+
+                if !blocks.isEmpty {
+                    anthropicMessages.append(AnthropicMessage(
+                        role: "assistant",
+                        content: .blocks(blocks)
+                    ))
+                }
+
+            case "tool":
+                // Convert tool results - Anthropic expects these as user messages with tool_result blocks
+                if let toolCallId = msg.tool_call_id, let content = msg.content {
+                    anthropicMessages.append(AnthropicMessage(
+                        role: "user",
+                        content: .blocks([
+                            .toolResult(AnthropicToolResultBlock(
+                                type: "tool_result",
+                                tool_use_id: toolCallId,
+                                content: .text(content),
+                                is_error: nil
+                            ))
+                        ])
+                    ))
+                }
+
+            default:
+                break
+            }
+        }
+
+        // Convert tools
+        var anthropicTools: [AnthropicTool]? = nil
+        if let tools = tools {
+            anthropicTools = tools.map { tool in
+                AnthropicTool(
+                    name: tool.function.name,
+                    description: tool.function.description,
+                    input_schema: tool.function.parameters
+                )
+            }
+        }
+
+        // Convert tool choice
+        var anthropicToolChoice: AnthropicToolChoice? = nil
+        if let choice = tool_choice {
+            switch choice {
+            case .auto:
+                anthropicToolChoice = .auto
+            case .none:
+                anthropicToolChoice = .none
+            case .function(let fn):
+                anthropicToolChoice = .tool(name: fn.function.name)
+            }
+        }
+
+        return AnthropicMessagesRequest(
+            model: model,
+            max_tokens: max_completion_tokens ?? 4096,
+            system: systemContent,
+            messages: anthropicMessages,
+            stream: stream,
+            temperature: temperature.map { Double($0) },
+            top_p: top_p.map { Double($0) },
+            top_k: nil,
+            stop_sequences: stop,
+            tools: anthropicTools,
+            tool_choice: anthropicToolChoice,
+            metadata: nil
+        )
+    }
 }
 
 // MARK: - Static Factory for Creating Services
 
 extension RemoteProviderService {
+    /// Known Anthropic models (Anthropic doesn't have a /models endpoint)
+    /// Using aliases where available for cleaner names
+    private static let anthropicModels = [
+        // Claude 4.5 (current)
+        "claude-sonnet-4-5",
+        "claude-haiku-4-5",
+        "claude-opus-4-5",
+        // Claude 4.1 (legacy)
+        "claude-opus-4-1",
+        // Claude 4 (legacy)
+        "claude-sonnet-4-0",
+        "claude-opus-4-0",
+        // Claude 3.7 (legacy)
+        "claude-3-7-sonnet-latest",
+        // Claude 3 (legacy)
+        "claude-3-haiku-20240307"
+    ]
+
     /// Fetch models from a remote provider and create a service instance
     public static func fetchModels(from provider: RemoteProvider) async throws -> [String] {
+        // Anthropic doesn't have a /models endpoint, so we return known models
+        // and validate the API key with a minimal request
+        if provider.providerType == .anthropic {
+            // Validate the API key by making a minimal request
+            try await validateAnthropicConnection(provider: provider)
+            return anthropicModels
+        }
+
+        // OpenAI-compatible providers use /models endpoint
         guard let url = provider.url(for: "/models") else {
             throw RemoteProviderServiceError.invalidURL
         }
@@ -748,5 +1061,52 @@ extension RemoteProviderService {
         // Parse models response
         let modelsResponse = try JSONDecoder().decode(ModelsResponse.self, from: data)
         return modelsResponse.data.map { $0.id }
+    }
+
+    /// Validate Anthropic connection by making a minimal API request
+    private static func validateAnthropicConnection(provider: RemoteProvider) async throws {
+        guard let url = provider.url(for: "/messages") else {
+            throw RemoteProviderServiceError.invalidURL
+        }
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+
+        // Add provider headers
+        for (key, value) in provider.resolvedHeaders() {
+            request.setValue(value, forHTTPHeaderField: key)
+        }
+
+        // Minimal valid request to test authentication
+        let testBody: [String: Any] = [
+            "model": "claude-3-haiku-20240307",
+            "max_tokens": 1,
+            "messages": [
+                ["role": "user", "content": "Hi"]
+            ]
+        ]
+        request.httpBody = try JSONSerialization.data(withJSONObject: testBody)
+
+        let config = URLSessionConfiguration.default
+        config.timeoutIntervalForRequest = min(provider.timeout, 30)
+        let session = URLSession(configuration: config)
+
+        let (data, response) = try await session.data(for: request)
+
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw RemoteProviderServiceError.invalidResponse
+        }
+
+        // 401 = invalid API key, 400 = might be rate limit or other issue
+        // 200 = success (we made a valid request)
+        // 529 = overloaded (but connection works)
+        if httpResponse.statusCode == 401 {
+            throw RemoteProviderServiceError.requestFailed("Invalid API key")
+        } else if httpResponse.statusCode >= 500 {
+            let errorMessage = String(data: data, encoding: .utf8) ?? "Server error"
+            throw RemoteProviderServiceError.requestFailed("HTTP \(httpResponse.statusCode): \(errorMessage)")
+        }
+        // Any 2xx or 4xx (except 401) means the connection works
     }
 }

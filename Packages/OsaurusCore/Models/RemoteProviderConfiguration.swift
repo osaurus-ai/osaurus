@@ -30,9 +30,36 @@ public enum RemoteProviderAuthType: String, Codable, Sendable, CaseIterable {
     case apiKey = "apiKey"
 }
 
+// MARK: - Provider Type
+
+/// Type of remote provider (determines API format)
+public enum RemoteProviderType: String, Codable, Sendable, CaseIterable {
+    case openai = "openai"      // OpenAI-compatible API (default)
+    case anthropic = "anthropic" // Anthropic Messages API
+
+    public var displayName: String {
+        switch self {
+        case .openai: return "OpenAI Compatible"
+        case .anthropic: return "Anthropic"
+        }
+    }
+
+    public var chatEndpoint: String {
+        switch self {
+        case .openai: return "/chat/completions"
+        case .anthropic: return "/messages"
+        }
+    }
+
+    public var modelsEndpoint: String {
+        // Both use /models but response format differs
+        return "/models"
+    }
+}
+
 // MARK: - Remote Provider Model
 
-/// Represents a remote OpenAI-compatible API provider configuration
+/// Represents a remote API provider configuration
 public struct RemoteProvider: Codable, Identifiable, Sendable, Equatable {
     public let id: UUID
     public var name: String
@@ -42,6 +69,7 @@ public struct RemoteProvider: Codable, Identifiable, Sendable, Equatable {
     public var basePath: String
     public var customHeaders: [String: String]
     public var authType: RemoteProviderAuthType
+    public var providerType: RemoteProviderType
     public var enabled: Bool
     public var autoConnect: Bool
     public var timeout: TimeInterval
@@ -51,7 +79,7 @@ public struct RemoteProvider: Codable, Identifiable, Sendable, Equatable {
 
     private enum CodingKeys: String, CodingKey {
         case id, name, host, providerProtocol, port, basePath
-        case customHeaders, authType, enabled, autoConnect, timeout
+        case customHeaders, authType, providerType, enabled, autoConnect, timeout
         case secretHeaderKeys
     }
 
@@ -64,6 +92,7 @@ public struct RemoteProvider: Codable, Identifiable, Sendable, Equatable {
         basePath: String = "/v1",
         customHeaders: [String: String] = [:],
         authType: RemoteProviderAuthType = .none,
+        providerType: RemoteProviderType = .openai,
         enabled: Bool = true,
         autoConnect: Bool = true,
         timeout: TimeInterval = 60,
@@ -77,10 +106,29 @@ public struct RemoteProvider: Codable, Identifiable, Sendable, Equatable {
         self.basePath = basePath
         self.customHeaders = customHeaders
         self.authType = authType
+        self.providerType = providerType
         self.enabled = enabled
         self.autoConnect = autoConnect
         self.timeout = timeout
         self.secretHeaderKeys = secretHeaderKeys
+    }
+
+    // Custom decoder to handle missing providerType for backward compatibility
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(UUID.self, forKey: .id)
+        name = try container.decode(String.self, forKey: .name)
+        host = try container.decode(String.self, forKey: .host)
+        providerProtocol = try container.decode(RemoteProviderProtocol.self, forKey: .providerProtocol)
+        port = try container.decodeIfPresent(Int.self, forKey: .port)
+        basePath = try container.decode(String.self, forKey: .basePath)
+        customHeaders = try container.decode([String: String].self, forKey: .customHeaders)
+        authType = try container.decode(RemoteProviderAuthType.self, forKey: .authType)
+        providerType = try container.decodeIfPresent(RemoteProviderType.self, forKey: .providerType) ?? .openai
+        enabled = try container.decode(Bool.self, forKey: .enabled)
+        autoConnect = try container.decode(Bool.self, forKey: .autoConnect)
+        timeout = try container.decode(TimeInterval.self, forKey: .timeout)
+        secretHeaderKeys = try container.decode([String].self, forKey: .secretHeaderKeys)
     }
 
     /// Get the effective port (uses protocol default if not specified)
@@ -171,9 +219,18 @@ public struct RemoteProvider: Codable, Identifiable, Sendable, Equatable {
             }
         }
 
-        // Add API key if configured
+        // Add API key if configured (format differs by provider type)
         if authType == .apiKey, let apiKey = getAPIKey(), !apiKey.isEmpty {
-            headers["Authorization"] = "Bearer \(apiKey)"
+            switch providerType {
+            case .anthropic:
+                headers["x-api-key"] = apiKey
+                // Add required Anthropic version header if not already set
+                if headers["anthropic-version"] == nil {
+                    headers["anthropic-version"] = "2023-06-01"
+                }
+            case .openai:
+                headers["Authorization"] = "Bearer \(apiKey)"
+            }
         }
 
         return headers

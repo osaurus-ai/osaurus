@@ -313,6 +313,24 @@ public final class RemoteProviderManager: ObservableObject {
 
     // MARK: - Test Connection
 
+    /// Known Anthropic models (Anthropic doesn't have a /models endpoint)
+    /// Using aliases where available for cleaner names
+    private static let anthropicModels = [
+        // Claude 4.5 (current)
+        "claude-sonnet-4-5",
+        "claude-haiku-4-5",
+        "claude-opus-4-5",
+        // Claude 4.1 (legacy)
+        "claude-opus-4-1",
+        // Claude 4 (legacy)
+        "claude-sonnet-4-0",
+        "claude-opus-4-0",
+        // Claude 3.7 (legacy)
+        "claude-3-7-sonnet-latest",
+        // Claude 3 (legacy)
+        "claude-3-haiku-20240307"
+    ]
+
     /// Test connection to a provider configuration without persisting
     public func testConnection(
         host: String,
@@ -320,6 +338,7 @@ public final class RemoteProviderManager: ObservableObject {
         port: Int?,
         basePath: String,
         authType: RemoteProviderAuthType,
+        providerType: RemoteProviderType = .openai,
         apiKey: String?,
         headers: [String: String]
     ) async throws -> [String] {
@@ -332,6 +351,7 @@ public final class RemoteProviderManager: ObservableObject {
             basePath: basePath,
             customHeaders: headers,
             authType: authType,
+            providerType: providerType,
             enabled: true,
             autoConnect: false,
             timeout: 30
@@ -340,9 +360,24 @@ public final class RemoteProviderManager: ObservableObject {
         // Manually add API key to headers for test (since it's not in Keychain)
         var testHeaders = headers
         if authType == .apiKey, let apiKey = apiKey, !apiKey.isEmpty {
-            testHeaders["Authorization"] = "Bearer \(apiKey)"
+            switch providerType {
+            case .anthropic:
+                testHeaders["x-api-key"] = apiKey
+                // Add required Anthropic version header if not already set
+                if testHeaders["anthropic-version"] == nil {
+                    testHeaders["anthropic-version"] = "2023-06-01"
+                }
+            case .openai:
+                testHeaders["Authorization"] = "Bearer \(apiKey)"
+            }
         }
 
+        // Anthropic doesn't have a /models endpoint, so we test with a minimal /messages request
+        if providerType == .anthropic {
+            return try await testAnthropicConnection(tempProvider: tempProvider, testHeaders: testHeaders)
+        }
+
+        // OpenAI-compatible providers use /models endpoint
         guard let url = tempProvider.url(for: "/models") else {
             print("[Osaurus] Test Connection: Invalid URL")
             throw RemoteProviderError.invalidURL
@@ -358,8 +393,8 @@ public final class RemoteProviderManager: ObservableObject {
         // Add headers
         for (key, value) in testHeaders {
             // Don't log the full auth header for security
-            if key.lowercased() == "authorization" {
-                print("[Osaurus] Test Connection: Adding header \(key)=Bearer ***")
+            if key.lowercased() == "authorization" || key.lowercased() == "x-api-key" {
+                print("[Osaurus] Test Connection: Adding header \(key)=***")
             } else {
                 print("[Osaurus] Test Connection: Adding header \(key)=\(value)")
             }
@@ -390,6 +425,75 @@ public final class RemoteProviderManager: ObservableObject {
             throw error
         } catch {
             print("[Osaurus] Test Connection: Network error: \(error)")
+            throw RemoteProviderError.connectionFailed(error.localizedDescription)
+        }
+    }
+
+    /// Test Anthropic connection by making a minimal /messages request
+    private func testAnthropicConnection(tempProvider: RemoteProvider, testHeaders: [String: String]) async throws -> [String] {
+        guard let url = tempProvider.url(for: "/messages") else {
+            print("[Osaurus] Test Connection (Anthropic): Invalid URL")
+            throw RemoteProviderError.invalidURL
+        }
+
+        print("[Osaurus] Test Connection (Anthropic): Requesting \(url.absoluteString)")
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.timeoutInterval = 30
+
+        // Add headers
+        for (key, value) in testHeaders {
+            if key.lowercased() == "x-api-key" {
+                print("[Osaurus] Test Connection (Anthropic): Adding header \(key)=***")
+            } else {
+                print("[Osaurus] Test Connection (Anthropic): Adding header \(key)=\(value)")
+            }
+            request.setValue(value, forHTTPHeaderField: key)
+        }
+
+        // Minimal valid request to test authentication
+        let testBody: [String: Any] = [
+            "model": "claude-3-haiku-20240307",
+            "max_tokens": 1,
+            "messages": [
+                ["role": "user", "content": "Hi"]
+            ]
+        ]
+        request.httpBody = try JSONSerialization.data(withJSONObject: testBody)
+
+        do {
+            let (data, response) = try await URLSession.shared.data(for: request)
+
+            guard let httpResponse = response as? HTTPURLResponse else {
+                print("[Osaurus] Test Connection (Anthropic): Invalid response type")
+                throw RemoteProviderError.connectionFailed("Invalid response")
+            }
+
+            print("[Osaurus] Test Connection (Anthropic): HTTP \(httpResponse.statusCode)")
+
+            // 401 = invalid API key
+            if httpResponse.statusCode == 401 {
+                let errorMessage = String(data: data, encoding: .utf8) ?? "Invalid API key"
+                print("[Osaurus] Test Connection (Anthropic): Auth error: \(errorMessage)")
+                throw RemoteProviderError.connectionFailed("Invalid API key")
+            }
+
+            // 5xx = server errors
+            if httpResponse.statusCode >= 500 {
+                let errorMessage = String(data: data, encoding: .utf8) ?? "Server error"
+                print("[Osaurus] Test Connection (Anthropic): Server error: \(errorMessage)")
+                throw RemoteProviderError.connectionFailed("HTTP \(httpResponse.statusCode): \(errorMessage)")
+            }
+
+            // Any 2xx or 4xx (except 401) means the connection works
+            print("[Osaurus] Test Connection (Anthropic): Success - returning \(Self.anthropicModels.count) known models")
+            return Self.anthropicModels
+        } catch let error as RemoteProviderError {
+            throw error
+        } catch {
+            print("[Osaurus] Test Connection (Anthropic): Network error: \(error)")
             throw RemoteProviderError.connectionFailed(error.localizedDescription)
         }
     }
