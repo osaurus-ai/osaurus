@@ -269,4 +269,21 @@ extension PersonaManager {
 
         return persona.themeId
     }
+
+    /// Update the default model for a persona
+    /// - Parameters:
+    ///   - personaId: The persona to update
+    ///   - model: The model ID to set as default (nil to clear/use global)
+    public func updateDefaultModel(for personaId: UUID, model: String?) {
+        guard var persona = persona(for: personaId) else { return }
+        guard !persona.isBuiltIn else {
+            print("[Osaurus] Cannot update built-in persona's model")
+            return
+        }
+
+        persona.defaultModel = model
+        persona.updatedAt = Date()
+        PersonaStore.save(persona)
+        refresh()
+    }
 }

@@ -1058,7 +1058,8 @@ struct ChatView: View {
                                 estimatedContextTokens: session.estimatedContextTokens,
                                 onSend: { session.sendCurrent() },
                                 onStop: { session.stop() },
-                                focusTrigger: focusTrigger
+                                focusTrigger: focusTrigger,
+                                personaId: session.personaId
                             )
                         } else {
                             // No models empty state

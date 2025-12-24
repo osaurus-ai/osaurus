@@ -26,6 +26,8 @@ struct FloatingInputCard: View {
     let onStop: () -> Void
     /// Trigger to focus the input field (increment to focus)
     var focusTrigger: Int = 0
+    /// Current persona ID (used for persona-specific default model)
+    var personaId: UUID? = nil
 
     // Local state for text input to prevent parent re-renders on every keystroke
     @State private var localText: String = ""
@@ -312,6 +314,7 @@ struct FloatingInputCard: View {
             ModelPickerView(
                 options: cachedModelOptions,
                 selectedModel: $selectedModel,
+                personaId: personaId,
                 onDismiss: dismissModelPicker
             )
         }

@@ -997,6 +997,38 @@ private struct PersonaEditorSheet: View {
         ToolRegistry.shared.listTools()
     }
 
+    /// All available models for selection
+    private var availableModelOptions: [ModelOption] {
+        var options: [ModelOption] = []
+
+        // Add foundation model first if available
+        if FoundationModelService.isDefaultModelAvailable() {
+            options.append(.foundation())
+        }
+
+        // Add local MLX models
+        let localModels = ModelManager.discoverLocalModels()
+        for model in localModels {
+            options.append(.fromMLXModel(model))
+        }
+
+        // Add remote provider models
+        let remoteModels = RemoteProviderManager.shared.cachedAvailableModels()
+        for providerInfo in remoteModels {
+            for modelId in providerInfo.models {
+                options.append(
+                    .fromRemoteModel(
+                        modelId: modelId,
+                        providerName: providerInfo.providerName,
+                        providerId: providerInfo.providerId
+                    )
+                )
+            }
+        }
+
+        return options
+    }
+
     private var isEditing: Bool {
         if case .edit = mode { return true }
         return false
@@ -1096,6 +1128,18 @@ private struct PersonaEditorSheet: View {
                     // Model & Generation Section
                     EditorSection(title: "Model Settings", icon: "cpu") {
                         VStack(spacing: 16) {
+                            // Default Model Picker
+                            VStack(alignment: .leading, spacing: 6) {
+                                Label("Default Model", systemImage: "cube.fill")
+                                    .font(.system(size: 11, weight: .medium))
+                                    .foregroundColor(themeManager.currentTheme.secondaryText)
+
+                                ModelPickerDropdown(
+                                    selectedModel: $defaultModel,
+                                    availableModels: availableModelOptions
+                                )
+                            }
+
                             HStack(spacing: 16) {
                                 // Temperature
                                 VStack(alignment: .leading, spacing: 6) {
@@ -1672,6 +1716,105 @@ private struct ToolToggleRow: View {
                 isHovered = hovering
             }
         }
+    }
+}
+
+// MARK: - Model Picker Dropdown
+
+private struct ModelPickerDropdown: View {
+    @StateObject private var themeManager = ThemeManager.shared
+    @Binding var selectedModel: String
+    let availableModels: [ModelOption]
+
+    /// Display name for the selected model (or "Use Global Default" if empty)
+    private var displayName: String {
+        if selectedModel.isEmpty {
+            return "Use Global Default"
+        }
+        if let option = availableModels.first(where: { $0.id == selectedModel }) {
+            return option.displayName
+        }
+        // Fallback: show the raw ID formatted nicely
+        if let last = selectedModel.split(separator: "/").last {
+            return String(last)
+        }
+        return selectedModel
+    }
+
+    var body: some View {
+        Menu {
+            // Default option (uses global)
+            Button {
+                selectedModel = ""
+            } label: {
+                HStack {
+                    Text("Use Global Default")
+                    if selectedModel.isEmpty {
+                        Image(systemName: "checkmark")
+                    }
+                }
+            }
+
+            Divider()
+
+            // Group models by source
+            let grouped = availableModels.groupedBySource()
+
+            ForEach(grouped, id: \.source) { group in
+                Section(group.source.displayName) {
+                    ForEach(group.models) { model in
+                        Button {
+                            selectedModel = model.id
+                        } label: {
+                            HStack {
+                                Text(model.displayName)
+                                if model.isVLM {
+                                    Image(systemName: "eye")
+                                }
+                                if selectedModel == model.id {
+                                    Image(systemName: "checkmark")
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        } label: {
+            HStack(spacing: 8) {
+                if !selectedModel.isEmpty {
+                    Circle()
+                        .fill(Color.green)
+                        .frame(width: 6, height: 6)
+                }
+
+                Text(displayName)
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundColor(
+                        selectedModel.isEmpty
+                            ? themeManager.currentTheme.tertiaryText
+                            : themeManager.currentTheme.primaryText
+                    )
+                    .lineLimit(1)
+
+                Spacer()
+
+                Image(systemName: "chevron.up.chevron.down")
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundColor(themeManager.currentTheme.tertiaryText)
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 10)
+            .background(
+                RoundedRectangle(cornerRadius: 10)
+                    .fill(themeManager.currentTheme.inputBackground)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 10)
+                            .stroke(themeManager.currentTheme.inputBorder, lineWidth: 1)
+                    )
+            )
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
     }
 }
 
