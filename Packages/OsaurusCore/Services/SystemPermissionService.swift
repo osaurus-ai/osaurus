@@ -6,6 +6,7 @@
 //
 
 @preconcurrency import AppKit
+import AVFoundation
 import Contacts
 import CoreLocation
 import EventKit
@@ -90,6 +91,8 @@ final class SystemPermissionService: NSObject, ObservableObject, CLLocationManag
             return checkContactsPermission()
         case .disk:
             return checkDiskPermission()
+        case .microphone:
+            return checkMicrophonePermission()
         }
     }
 
@@ -199,6 +202,8 @@ final class SystemPermissionService: NSObject, ObservableObject, CLLocationManag
             requestContactsPermission()
         case .disk:
             requestDiskPermission()
+        case .microphone:
+            requestMicrophonePermission()
         }
     }
 
@@ -556,6 +561,28 @@ final class SystemPermissionService: NSObject, ObservableObject, CLLocationManag
         // macOS doesn't allow programmatic FDA requests.
         // We can only open System Settings for the user to grant it manually.
         openSystemSettings(for: .disk)
+    }
+
+    // MARK: - Microphone Permission
+
+    private func checkMicrophonePermission() -> Bool {
+        switch AVCaptureDevice.authorizationStatus(for: .audio) {
+        case .authorized:
+            return true
+        case .notDetermined, .denied, .restricted:
+            return false
+        @unknown default:
+            return false
+        }
+    }
+
+    private func requestMicrophonePermission() {
+        Task {
+            let granted = await AVCaptureDevice.requestAccess(for: .audio)
+            await MainActor.run {
+                self.setPermission(.microphone, isGranted: granted)
+            }
+        }
     }
 
     // MARK: - Bulk Checks

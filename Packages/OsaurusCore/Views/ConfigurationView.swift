@@ -353,6 +353,11 @@ struct ConfigurationView: View {
                             }
                         }
 
+                        // MARK: - Voice Section
+                        if matchesSearch("Voice", "Whisper", "Transcription", "Model", "Language", "Speech") {
+                            VoiceSettingsSection()
+                        }
+
                         // MARK: - System Permissions Section
                         if matchesSearch("Permissions", "Accessibility", "Automation", "Privacy", "Security") {
                             SystemPermissionsSection()
@@ -1172,6 +1177,370 @@ private struct SettingsButtonStyle: ButtonStyle {
                     )
             )
             .opacity(configuration.isPressed ? 0.8 : 1.0)
+    }
+}
+
+// MARK: - Voice Settings Section
+
+private struct VoiceSettingsSection: View {
+    @StateObject private var themeManager = ThemeManager.shared
+    @StateObject private var modelManager = WhisperModelManager.shared
+    @StateObject private var whisperService = WhisperKitService.shared
+
+    @State private var tempLanguageHint: String = ""
+    @State private var tempTask: TranscriptionTask = .transcribe
+    @State private var tempWordTimestamps: Bool = false
+    @State private var tempEnabled: Bool = true
+    @State private var hasLoadedConfig = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            // Section header with icon and uppercase title
+            HStack(spacing: 8) {
+                Image(systemName: "waveform")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundColor(themeManager.currentTheme.accentColor)
+
+                Text("VOICE")
+                    .font(.system(size: 11, weight: .bold))
+                    .foregroundColor(themeManager.currentTheme.secondaryText)
+                    .tracking(0.5)
+            }
+
+            VStack(alignment: .leading, spacing: 20) {
+                // Enable Voice Toggle
+                SettingsToggle(
+                    title: "Enable Voice Features",
+                    description: "Enable WhisperKit transcription and voice input",
+                    isOn: $tempEnabled
+                )
+                .onChange(of: tempEnabled) { _, newValue in
+                    saveVoiceConfig()
+                }
+
+                SettingsDivider()
+
+                // Default Model Picker
+                VoiceSettingsSubsection(label: "Model") {
+                    VStack(alignment: .leading, spacing: 10) {
+                        VoiceModelPicker(
+                            selection: Binding(
+                                get: { modelManager.selectedModelId ?? "" },
+                                set: { modelManager.setDefaultModel($0.isEmpty ? nil : $0) }
+                            ),
+                            models: modelManager.availableModels.filter { $0.isDownloaded }
+                        )
+
+                        if modelManager.downloadedModelsCount == 0 {
+                            HStack(spacing: 6) {
+                                Image(systemName: "info.circle")
+                                    .font(.system(size: 11))
+                                    .foregroundColor(themeManager.currentTheme.warningColor)
+                                Text("No models downloaded. Visit the Voice tab to download models.")
+                                    .font(.system(size: 11))
+                                    .foregroundColor(themeManager.currentTheme.warningColor)
+                            }
+                        }
+                    }
+                }
+
+                // Language Hint
+                VoiceSettingsSubsection(label: "Language") {
+                    VStack(spacing: 12) {
+                        VoiceSettingsTextField(
+                            label: "Language Hint",
+                            text: $tempLanguageHint,
+                            placeholder: "en",
+                            help: "ISO 639-1 code (e.g., en, es, ja). Leave empty for auto-detection"
+                        )
+                        .onChange(of: tempLanguageHint) { _, _ in
+                            saveVoiceConfig()
+                        }
+                    }
+                }
+
+                // Transcription Task
+                VoiceSettingsSubsection(label: "Task") {
+                    VStack(alignment: .leading, spacing: 10) {
+                        Picker("", selection: $tempTask) {
+                            ForEach(TranscriptionTask.allCases, id: \.self) { task in
+                                Text(task.displayName).tag(task)
+                            }
+                        }
+                        .pickerStyle(.segmented)
+                        .labelsHidden()
+                        .onChange(of: tempTask) { _, _ in
+                            saveVoiceConfig()
+                        }
+
+                        Text(
+                            tempTask == .transcribe
+                                ? "Transcribe audio to text in the original language"
+                                : "Translate audio to English text"
+                        )
+                        .font(.system(size: 11))
+                        .foregroundColor(themeManager.currentTheme.tertiaryText)
+                    }
+                }
+
+                SettingsDivider()
+
+                // Advanced Options
+                SettingsToggle(
+                    title: "Word Timestamps",
+                    description: "Include word-level timing in transcription results",
+                    isOn: $tempWordTimestamps
+                )
+                .onChange(of: tempWordTimestamps) { _, _ in
+                    saveVoiceConfig()
+                }
+
+                // Status info
+                HStack(spacing: 12) {
+                    // Model status
+                    HStack(spacing: 6) {
+                        Circle()
+                            .fill(
+                                whisperService.isModelLoaded
+                                    ? themeManager.currentTheme.successColor
+                                    : themeManager.currentTheme.tertiaryText
+                            )
+                            .frame(width: 8, height: 8)
+                        Text(whisperService.isModelLoaded ? "Model Loaded" : "Model Not Loaded")
+                            .font(.system(size: 11))
+                            .foregroundColor(themeManager.currentTheme.secondaryText)
+                    }
+
+                    Spacer()
+
+                    // Quick link to Voice tab
+                    Button(action: {
+                        AppDelegate.shared?.showManagementWindow(initialTab: .voice)
+                    }) {
+                        HStack(spacing: 4) {
+                            Image(systemName: "arrow.right.circle")
+                                .font(.system(size: 11))
+                            Text("Open Voice Tab")
+                                .font(.system(size: 11, weight: .medium))
+                        }
+                        .foregroundColor(themeManager.currentTheme.accentColor)
+                    }
+                    .buttonStyle(PlainButtonStyle())
+                }
+                .padding(10)
+                .background(
+                    RoundedRectangle(cornerRadius: 8)
+                        .fill(themeManager.currentTheme.tertiaryBackground)
+                )
+            }
+        }
+        .padding(16)
+        .background(
+            RoundedRectangle(cornerRadius: 12)
+                .fill(themeManager.currentTheme.cardBackground)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 12)
+                        .stroke(themeManager.currentTheme.cardBorder, lineWidth: 1)
+                )
+        )
+        .onAppear {
+            if !hasLoadedConfig {
+                loadVoiceConfig()
+                hasLoadedConfig = true
+            }
+        }
+    }
+
+    private func loadVoiceConfig() {
+        let config = WhisperConfigurationStore.load()
+        tempLanguageHint = config.languageHint ?? ""
+        tempTask = config.task
+        tempWordTimestamps = config.wordTimestamps
+        tempEnabled = config.enabled
+    }
+
+    private func saveVoiceConfig() {
+        var config = WhisperConfigurationStore.load()
+        config.languageHint = tempLanguageHint.isEmpty ? nil : tempLanguageHint
+        config.task = tempTask
+        config.wordTimestamps = tempWordTimestamps
+        config.enabled = tempEnabled
+        WhisperConfigurationStore.save(config)
+    }
+}
+
+// MARK: - Voice Settings Subsection
+
+private struct VoiceSettingsSubsection<Content: View>: View {
+    @StateObject private var themeManager = ThemeManager.shared
+
+    let label: String
+    @ViewBuilder let content: () -> Content
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 6) {
+                Rectangle()
+                    .fill(themeManager.currentTheme.accentColor)
+                    .frame(width: 3, height: 14)
+                    .clipShape(RoundedRectangle(cornerRadius: 1.5))
+
+                Text(label.uppercased())
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundColor(themeManager.currentTheme.tertiaryText)
+                    .tracking(0.5)
+            }
+
+            content()
+                .padding(.leading, 9)
+        }
+    }
+}
+
+// MARK: - Voice Settings Text Field
+
+private struct VoiceSettingsTextField: View {
+    @StateObject private var themeManager = ThemeManager.shared
+
+    let label: String
+    @Binding var text: String
+    let placeholder: String
+    let help: String
+
+    @State private var isFocused = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Text(label)
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundColor(themeManager.currentTheme.secondaryText)
+
+                Spacer()
+
+                Text(help)
+                    .font(.system(size: 10))
+                    .foregroundColor(themeManager.currentTheme.tertiaryText)
+                    .lineLimit(1)
+            }
+
+            HStack(spacing: 10) {
+                ZStack(alignment: .leading) {
+                    if text.isEmpty && !placeholder.isEmpty {
+                        Text(placeholder)
+                            .font(.system(size: 13, design: .monospaced))
+                            .foregroundColor(themeManager.currentTheme.placeholderText)
+                            .allowsHitTesting(false)
+                    }
+
+                    TextField(
+                        "",
+                        text: $text,
+                        onEditingChanged: { editing in
+                            withAnimation(.easeOut(duration: 0.15)) {
+                                isFocused = editing
+                            }
+                        }
+                    )
+                    .textFieldStyle(.plain)
+                    .font(.system(size: 13, design: .monospaced))
+                    .foregroundColor(themeManager.currentTheme.primaryText)
+                }
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 10)
+            .background(
+                RoundedRectangle(cornerRadius: 10)
+                    .fill(themeManager.currentTheme.inputBackground)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 10)
+                            .stroke(
+                                isFocused
+                                    ? themeManager.currentTheme.accentColor.opacity(0.5)
+                                    : themeManager.currentTheme.inputBorder,
+                                lineWidth: isFocused ? 1.5 : 1
+                            )
+                    )
+            )
+        }
+    }
+}
+
+// MARK: - Voice Model Picker
+
+private struct VoiceModelPicker: View {
+    @StateObject private var themeManager = ThemeManager.shared
+    @Binding var selection: String
+    let models: [WhisperModel]
+
+    @State private var isHovered = false
+
+    private var displayName: String {
+        if let model = models.first(where: { $0.id == selection }) {
+            return model.name
+        }
+        return "Select a model"
+    }
+
+    var body: some View {
+        Menu {
+            if models.isEmpty {
+                Text("No models downloaded")
+                    .foregroundColor(.secondary)
+            } else {
+                ForEach(models) { model in
+                    Button(action: { selection = model.id }) {
+                        HStack {
+                            Text(model.name)
+                            if model.isRecommended {
+                                Text("Recommended")
+                                    .foregroundColor(.secondary)
+                            }
+                            if selection == model.id {
+                                Image(systemName: "checkmark")
+                            }
+                        }
+                    }
+                }
+            }
+        } label: {
+            HStack(spacing: 10) {
+                Image(systemName: "waveform")
+                    .font(.system(size: 16, weight: .medium))
+                    .foregroundColor(themeManager.currentTheme.accentColor)
+
+                Text(displayName)
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundColor(themeManager.currentTheme.primaryText)
+
+                Spacer()
+
+                Image(systemName: "chevron.up.chevron.down")
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundColor(themeManager.currentTheme.tertiaryText)
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 10)
+            .background(
+                RoundedRectangle(cornerRadius: 10)
+                    .fill(themeManager.currentTheme.inputBackground)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 10)
+                            .stroke(
+                                isHovered
+                                    ? themeManager.currentTheme.accentColor.opacity(0.5)
+                                    : themeManager.currentTheme.inputBorder,
+                                lineWidth: isHovered ? 1.5 : 1
+                            )
+                    )
+            )
+        }
+        .menuStyle(.borderlessButton)
+        .onHover { hovering in
+            withAnimation(.easeOut(duration: 0.15)) {
+                isHovered = hovering
+            }
+        }
     }
 }
 
