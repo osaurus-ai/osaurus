@@ -227,7 +227,7 @@ struct PersonasView: View {
                         HStack(spacing: 6) {
                             Image(systemName: "plus")
                                 .font(.system(size: 12, weight: .semibold))
-                            Text("New Persona")
+                            Text("Create Persona")
                                 .font(.system(size: 13, weight: .medium))
                         }
                         .foregroundColor(.white)
