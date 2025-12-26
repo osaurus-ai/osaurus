@@ -56,19 +56,27 @@ struct MessageGroupView: View {
         isStreaming && group.role == .assistant
     }
 
+    private struct TurnContentGroup: Identifiable {
+        let id: String
+        let kind: TurnContentKind
+        var turns: [ChatTurn]
+    }
+
     /// Groups consecutive tool-only turns together for unified rendering
-    private var groupedTurnContent: [(kind: TurnContentKind, turns: [ChatTurn])] {
-        var result: [(kind: TurnContentKind, turns: [ChatTurn])] = []
+    private var groupedTurnContent: [TurnContentGroup] {
+        var result: [TurnContentGroup] = []
 
         for turn in group.turns {
             let isToolOnly = turn.content.isEmpty && (turn.toolCalls?.isEmpty == false)
             let kind: TurnContentKind = isToolOnly ? .toolCalls : .content
 
             // If same kind as previous, append to existing group
-            if let last = result.last, last.kind == kind {
+            if var last = result.last, last.kind == kind {
                 result[result.count - 1].turns.append(turn)
             } else {
-                result.append((kind: kind, turns: [turn]))
+                // Use first turn's ID as stable identifier for the group
+                let stableId = "\(kind)-\(turn.id.uuidString)"
+                result.append(TurnContentGroup(id: stableId, kind: kind, turns: [turn]))
             }
         }
 
@@ -88,7 +96,8 @@ struct MessageGroupView: View {
 
                 // Message turns - grouped by content type
                 VStack(alignment: .leading, spacing: 0) {
-                    ForEach(Array(groupedTurnContent.enumerated()), id: \.offset) { groupIndex, turnGroup in
+                    let groups = groupedTurnContent
+                    ForEach(Array(groups.enumerated()), id: \.element.id) { groupIndex, turnGroup in
                         if turnGroup.kind == .toolCalls {
                             // Render all tool calls from consecutive tool-only turns in one container
                             GroupedToolCallsView(
@@ -100,7 +109,7 @@ struct MessageGroupView: View {
                             // Regular content turns
                             ForEach(Array(turnGroup.turns.enumerated()), id: \.element.id) { turnIndex, turn in
                                 let isLatestInGroup =
-                                    groupIndex == groupedTurnContent.count - 1 && turnIndex == turnGroup.turns.count - 1
+                                    groupIndex == groups.count - 1 && turnIndex == turnGroup.turns.count - 1
 
                                 MessageContent(
                                     turn: turn,
