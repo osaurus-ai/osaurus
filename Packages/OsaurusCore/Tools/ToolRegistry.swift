@@ -95,6 +95,13 @@ final class ToolRegistry: ObservableObject {
 
     /// Execute a tool by name with raw JSON arguments
     func execute(name: String, argumentsJSON: String) async throws -> String {
+        return try await execute(name: name, argumentsJSON: argumentsJSON, overrides: nil)
+    }
+
+    /// Execute a tool by name with raw JSON arguments and optional per-session overrides
+    /// - Parameter overrides: Per-session tool enablement. nil = use global config only.
+    ///   If provided, keys in the map override global settings for those tools.
+    func execute(name: String, argumentsJSON: String, overrides: [String: Bool]?) async throws -> String {
         guard let tool = toolsByName[name] else {
             throw NSError(
                 domain: "ToolRegistry",
@@ -102,7 +109,14 @@ final class ToolRegistry: ObservableObject {
                 userInfo: [NSLocalizedDescriptionKey: "Unknown tool: \(name)"]
             )
         }
-        guard configuration.isEnabled(name: name) else {
+        // Check per-session override first, fall back to global config
+        let isEnabled: Bool
+        if let overrides = overrides, let override = overrides[name] {
+            isEnabled = override
+        } else {
+            isEnabled = configuration.isEnabled(name: name)
+        }
+        guard isEnabled else {
             throw NSError(
                 domain: "ToolRegistry",
                 code: 2,

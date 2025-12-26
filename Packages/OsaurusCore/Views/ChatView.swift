@@ -892,7 +892,8 @@ final class ChatSession: ObservableObject {
 
                             resultText = try await ToolRegistry.shared.execute(
                                 name: inv.toolName,
-                                argumentsJSON: inv.jsonArguments
+                                argumentsJSON: inv.jsonArguments,
+                                overrides: effectiveOverrides
                             )
 
                             // Log tool success (truncated result)
