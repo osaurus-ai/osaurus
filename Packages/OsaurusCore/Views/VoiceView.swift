@@ -120,7 +120,6 @@ private struct VoiceMainTab: View {
     @StateObject private var modelManager = WhisperModelManager.shared
 
     @State private var transcriptionText: String = ""
-    @State private var isProcessing: Bool = false
     @State private var errorMessage: String?
 
     var body: some View {
@@ -134,11 +133,6 @@ private struct VoiceMainTab: View {
 
                 // Recording Test Card
                 recordingTestCard
-
-                // Transcription Result
-                if !transcriptionText.isEmpty {
-                    transcriptionResultCard
-                }
 
                 Spacer()
             }
@@ -332,13 +326,71 @@ private struct VoiceMainTab: View {
 
     private var recordingTestCard: some View {
         VStack(alignment: .leading, spacing: 16) {
-            Text("Test Voice Input")
-                .font(.system(size: 15, weight: .semibold))
-                .foregroundColor(theme.primaryText)
+            HStack {
+                Text("Real-time Transcription")
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundColor(theme.primaryText)
 
-            Text("Record a short audio clip to test transcription")
+                Spacer()
+
+                if whisperService.isRecording {
+                    // Live recording indicator
+                    HStack(spacing: 6) {
+                        Circle()
+                            .fill(theme.errorColor)
+                            .frame(width: 8, height: 8)
+                            .modifier(PulseAnimation())
+                        Text("LIVE")
+                            .font(.system(size: 10, weight: .bold))
+                            .foregroundColor(theme.errorColor)
+                    }
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 4)
+                    .background(
+                        Capsule()
+                            .fill(theme.errorColor.opacity(0.1))
+                    )
+                }
+            }
+
+            Text("Speak and see your words transcribed in real-time")
                 .font(.system(size: 12))
                 .foregroundColor(theme.secondaryText)
+
+            // Audio level visualization
+            if whisperService.isRecording {
+                AudioLevelView(level: whisperService.audioLevel)
+                    .frame(height: 40)
+            }
+
+            // Live transcription display
+            VStack(alignment: .leading, spacing: 8) {
+                if whisperService.isRecording || !whisperService.currentTranscription.isEmpty {
+                    Text(
+                        whisperService.currentTranscription.isEmpty
+                            ? "Listening..." : whisperService.currentTranscription
+                    )
+                    .font(.system(size: 15))
+                    .foregroundColor(
+                        whisperService.currentTranscription.isEmpty ? theme.tertiaryText : theme.primaryText
+                    )
+                    .italic(whisperService.currentTranscription.isEmpty)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(16)
+                    .background(
+                        RoundedRectangle(cornerRadius: 12)
+                            .fill(theme.inputBackground)
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 12)
+                                    .stroke(
+                                        whisperService.isRecording ? theme.accentColor.opacity(0.5) : theme.inputBorder,
+                                        lineWidth: whisperService.isRecording ? 2 : 1
+                                    )
+                            )
+                    )
+                    .animation(.easeOut(duration: 0.2), value: whisperService.currentTranscription)
+                }
+            }
 
             HStack(spacing: 16) {
                 // Record button
@@ -346,7 +398,7 @@ private struct VoiceMainTab: View {
                     HStack(spacing: 8) {
                         Image(systemName: whisperService.isRecording ? "stop.fill" : "mic.fill")
                             .font(.system(size: 16, weight: .medium))
-                        Text(whisperService.isRecording ? "Stop Recording" : "Start Recording")
+                        Text(whisperService.isRecording ? "Stop" : "Start Recording")
                             .font(.system(size: 14, weight: .medium))
                     }
                     .foregroundColor(.white)
@@ -358,34 +410,34 @@ private struct VoiceMainTab: View {
                     )
                 }
                 .buttonStyle(PlainButtonStyle())
-                .disabled(!whisperService.microphonePermissionGranted || !whisperService.isModelLoaded || isProcessing)
+                .disabled(!whisperService.microphonePermissionGranted || !whisperService.isModelLoaded)
                 .opacity(
-                    (!whisperService.microphonePermissionGranted || !whisperService.isModelLoaded || isProcessing)
+                    (!whisperService.microphonePermissionGranted || !whisperService.isModelLoaded)
                         ? 0.5 : 1
                 )
 
-                if isProcessing {
-                    HStack(spacing: 8) {
-                        ProgressView()
-                            .scaleEffect(0.8)
-                        Text("Transcribing...")
-                            .font(.system(size: 13))
-                            .foregroundColor(theme.secondaryText)
+                if !whisperService.currentTranscription.isEmpty && !whisperService.isRecording {
+                    Button(action: {
+                        whisperService.clearTranscription()
+                    }) {
+                        HStack(spacing: 6) {
+                            Image(systemName: "trash")
+                                .font(.system(size: 12))
+                            Text("Clear")
+                                .font(.system(size: 13, weight: .medium))
+                        }
+                        .foregroundColor(theme.secondaryText)
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 10)
+                        .background(
+                            RoundedRectangle(cornerRadius: 8)
+                                .fill(theme.tertiaryBackground)
+                        )
                     }
+                    .buttonStyle(PlainButtonStyle())
                 }
 
-                if whisperService.isRecording {
-                    // Recording indicator
-                    HStack(spacing: 6) {
-                        Circle()
-                            .fill(theme.errorColor)
-                            .frame(width: 8, height: 8)
-                            .opacity(0.8)
-                        Text("Recording")
-                            .font(.system(size: 13, weight: .medium))
-                            .foregroundColor(theme.errorColor)
-                    }
-                }
+                Spacer()
             }
 
             if !whisperService.isModelLoaded && modelManager.downloadedModelsCount > 0 {
@@ -405,51 +457,6 @@ private struct VoiceMainTab: View {
                 .overlay(
                     RoundedRectangle(cornerRadius: 16)
                         .stroke(theme.cardBorder, lineWidth: 1)
-                )
-        )
-    }
-
-    // MARK: - Transcription Result Card
-
-    private var transcriptionResultCard: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack {
-                Text("Transcription Result")
-                    .font(.system(size: 15, weight: .semibold))
-                    .foregroundColor(theme.primaryText)
-
-                Spacer()
-
-                Button(action: { transcriptionText = "" }) {
-                    Image(systemName: "xmark.circle.fill")
-                        .font(.system(size: 16))
-                        .foregroundColor(theme.tertiaryText)
-                }
-                .buttonStyle(PlainButtonStyle())
-            }
-
-            Text(transcriptionText)
-                .font(.system(size: 14))
-                .foregroundColor(theme.primaryText)
-                .textSelection(.enabled)
-                .padding(16)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .background(
-                    RoundedRectangle(cornerRadius: 10)
-                        .fill(theme.inputBackground)
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 10)
-                                .stroke(theme.inputBorder, lineWidth: 1)
-                        )
-                )
-        }
-        .padding(20)
-        .background(
-            RoundedRectangle(cornerRadius: 16)
-                .fill(theme.cardBackground)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 16)
-                        .stroke(theme.successColor.opacity(0.3), lineWidth: 1)
                 )
         )
     }
@@ -485,34 +492,90 @@ private struct VoiceMainTab: View {
 
     private func toggleRecording() {
         if whisperService.isRecording {
-            // Stop and transcribe
-            guard let audioURL = whisperService.stopRecording() else { return }
-            isProcessing = true
+            // Stop streaming transcription
+            Task {
+                let finalText = await whisperService.stopStreamingTranscription()
+                await MainActor.run {
+                    transcriptionText = finalText
+                }
+            }
+        } else {
+            // Start streaming transcription
+            transcriptionText = ""
+            errorMessage = nil
             Task {
                 do {
-                    let result = try await whisperService.transcribe(audioURL: audioURL)
-                    await MainActor.run {
-                        transcriptionText = result.text
-                        isProcessing = false
-                    }
+                    try await whisperService.startStreamingTranscription()
                 } catch {
                     await MainActor.run {
                         errorMessage = error.localizedDescription
-                        isProcessing = false
                     }
-                }
-                whisperService.cleanupRecording()
-            }
-        } else {
-            // Start recording
-            Task {
-                do {
-                    _ = try await whisperService.startRecording()
-                } catch {
-                    errorMessage = error.localizedDescription
                 }
             }
         }
+    }
+}
+
+// MARK: - Audio Level View
+
+private struct AudioLevelView: View {
+    let level: Float
+    @Environment(\.theme) private var theme
+
+    private let barCount = 20
+
+    var body: some View {
+        HStack(spacing: 3) {
+            ForEach(0 ..< barCount, id: \.self) { index in
+                let threshold = Float(index) / Float(barCount)
+                let isActive = level > threshold
+
+                RoundedRectangle(cornerRadius: 2)
+                    .fill(barColor(for: index, isActive: isActive))
+                    .frame(width: 8)
+                    .scaleEffect(y: isActive ? 1.0 : 0.3, anchor: .bottom)
+                    .animation(.spring(response: 0.15, dampingFraction: 0.6), value: isActive)
+            }
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 8)
+        .background(
+            RoundedRectangle(cornerRadius: 10)
+                .fill(theme.inputBackground)
+        )
+    }
+
+    private func barColor(for index: Int, isActive: Bool) -> Color {
+        if !isActive {
+            return theme.tertiaryBackground
+        }
+        let ratio = Float(index) / Float(barCount)
+        if ratio < 0.5 {
+            return theme.successColor
+        } else if ratio < 0.8 {
+            return theme.warningColor
+        } else {
+            return theme.errorColor
+        }
+    }
+}
+
+// MARK: - Pulse Animation
+
+private struct PulseAnimation: ViewModifier {
+    @State private var isAnimating = false
+
+    func body(content: Content) -> some View {
+        content
+            .opacity(isAnimating ? 0.4 : 1.0)
+            .animation(
+                Animation.easeInOut(duration: 0.8)
+                    .repeatForever(autoreverses: true),
+                value: isAnimating
+            )
+            .onAppear {
+                isAnimating = true
+            }
     }
 }
 

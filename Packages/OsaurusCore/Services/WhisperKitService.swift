@@ -5,8 +5,9 @@
 //  Core service wrapping WhisperKit for audio transcription.
 //
 
-import AVFoundation
+@preconcurrency import AVFoundation
 import Foundation
+import os
 
 @preconcurrency import WhisperKit
 
@@ -51,6 +52,7 @@ public struct TranscriptionSegment: Sendable {
 public enum WhisperKitError: Error, LocalizedError {
     case noModelSelected
     case modelNotDownloaded
+    case modelNotLoaded
     case pipelineNotInitialized
     case transcriptionFailed(String)
     case microphonePermissionDenied
@@ -63,6 +65,8 @@ public enum WhisperKitError: Error, LocalizedError {
             return "No WhisperKit model selected. Please download and select a model."
         case .modelNotDownloaded:
             return "The selected model is not downloaded."
+        case .modelNotLoaded:
+            return "No model loaded. Please load a model first."
         case .pipelineNotInitialized:
             return "WhisperKit pipeline is not initialized."
         case .transcriptionFailed(let message):
@@ -339,15 +343,21 @@ public final class WhisperKitService: ObservableObject {
         }
     }
 
-    // MARK: - Audio Recording (for testing)
+    // MARK: - Streaming Transcription
 
-    private var audioRecorder: AVAudioRecorder?
-    private var recordingURL: URL?
+    private var audioEngine: AVAudioEngine?
+    private let audioBuffer = ThreadSafeAudioBuffer()
+    private var transcriptionWorker: TranscriptionWorker?
 
     @Published public var isRecording: Bool = false
+    @Published public var currentTranscription: String = ""
+    @Published public var confirmedTranscription: String = ""
+    @Published public var audioLevel: Float = 0.0  // 0.0 to 1.0 for visualization
 
-    /// Start recording audio for testing
-    public func startRecording() async throws -> URL {
+    /// Start streaming transcription
+    public func startStreamingTranscription() async throws {
+        guard !isRecording else { return }
+
         if !microphonePermissionGranted {
             let granted = await requestMicrophonePermission()
             if !granted {
@@ -355,43 +365,445 @@ public final class WhisperKitService: ObservableObject {
             }
         }
 
-        let tempDir = FileManager.default.temporaryDirectory
-        let recordingURL = tempDir.appendingPathComponent("osaurus_recording_\(UUID().uuidString).wav")
-        self.recordingURL = recordingURL
+        guard let whisperKit = whisperKit else {
+            throw WhisperKitError.modelNotLoaded
+        }
 
-        let settings: [String: Any] = [
-            AVFormatIDKey: Int(kAudioFormatLinearPCM),
-            AVSampleRateKey: 16000,
-            AVNumberOfChannelsKey: 1,
-            AVLinearPCMBitDepthKey: 16,
-            AVLinearPCMIsFloatKey: false,
-            AVLinearPCMIsBigEndianKey: false,
-        ]
+        // Reset state
+        audioBuffer.clear()
+        audioBuffer.setActive(true)
+        currentTranscription = ""
+        confirmedTranscription = ""
+        audioLevel = 0.0
 
-        do {
-            audioRecorder = try AVAudioRecorder(url: recordingURL, settings: settings)
-            audioRecorder?.prepareToRecord()
-            audioRecorder?.record()
-            isRecording = true
-            return recordingURL
-        } catch {
-            throw WhisperKitError.transcriptionFailed("Failed to start recording: \(error.localizedDescription)")
+        // Setup engine off-main-thread to safely handle graph setup and tap installation
+        // This avoids _dispatch_assert_queue_fail assertions from CoreAudio/RealtimeMessenger
+        let (engine, format) = try await Task.detached(priority: .userInitiated) {
+            () -> (AVAudioEngine, AVAudioFormat) in
+            let engine = AVAudioEngine()
+            let inputNode = engine.inputNode
+            let tapFormat = inputNode.outputFormat(forBus: 0)
+
+            guard tapFormat.sampleRate > 0, tapFormat.channelCount > 0 else {
+                // Try to fallback to standard format if output format is invalid (rare but possible)
+                let inputFormat = inputNode.inputFormat(forBus: 0)
+                if inputFormat.sampleRate > 0 {
+                    return (engine, inputFormat)
+                }
+                throw WhisperKitError.transcriptionFailed("Invalid input audio format: \(tapFormat)")
+            }
+
+            return (engine, tapFormat)
+        }.value
+
+        self.audioEngine = engine
+        let tapFormat = format
+
+        // Initialize Worker
+        transcriptionWorker = TranscriptionWorker(
+            whisperKit: whisperKit,
+            audioBuffer: audioBuffer,
+            inputFormat: tapFormat
+        )
+        let bufferRef = audioBuffer
+
+        // Install tap and start engine on background task
+        try await Task.detached(priority: .userInitiated) { [bufferRef] in
+            let inputNode = engine.inputNode
+
+            // Install tap
+            inputNode.installTap(onBus: 0, bufferSize: 4096, format: tapFormat) { buffer, time in
+                guard bufferRef.isActive else { return }
+
+                // Just copy raw samples to buffer
+                guard let floatData = buffer.floatChannelData?[0] else { return }
+                let frameCount = Int(buffer.frameLength)
+                guard frameCount > 0 else { return }
+
+                // Calculate Level (RMS) for UI
+                var sum: Float = 0
+                for i in 0 ..< frameCount {
+                    sum += floatData[i] * floatData[i]
+                }
+                let rms = sqrt(sum / Float(frameCount))
+                bufferRef.setLevel(min(1.0, rms * 10))
+
+                // Append samples
+                let samples = Array(UnsafeBufferPointer(start: floatData, count: frameCount))
+                bufferRef.append(samples)
+            }
+
+            engine.prepare()
+            try engine.start()
+        }.value
+
+        isRecording = true
+
+        // Start a level polling task for UI updates
+        Task { @MainActor [weak self] in
+            while let self = self, bufferRef.isActive {
+                self.audioLevel = bufferRef.getLevel()
+                try? await Task.sleep(nanoseconds: 50_000_000)  // 50ms for smooth animation
+            }
+            self?.audioLevel = 0
+        }
+
+        // Start streaming transcription task
+        Task {
+            guard let worker = transcriptionWorker else { return }
+            for await update in await worker.start() {
+                switch update {
+                case .partial(let text):
+                    self.currentTranscription = text
+                case .final(let text):
+                    if self.confirmedTranscription.isEmpty {
+                        self.confirmedTranscription = text
+                    } else {
+                        self.confirmedTranscription += " " + text
+                    }
+                    self.currentTranscription = ""
+                }
+            }
         }
     }
 
-    /// Stop recording and return the audio file URL
-    public func stopRecording() -> URL? {
-        audioRecorder?.stop()
-        audioRecorder = nil
+    /// Stop streaming transcription and get final result
+    public func stopStreamingTranscription() async -> String {
+        // Stop the streaming first
+        audioBuffer.setActive(false)
+        await transcriptionWorker?.stop()
+        transcriptionWorker = nil
+
+        audioEngine?.inputNode.removeTap(onBus: 0)
+        audioEngine?.stop()
+        audioEngine = nil
+
         isRecording = false
-        return recordingURL
+
+        // Final transcription of complete buffer
+        let finalBuffer = audioBuffer.getAndClear()
+
+        // Use hardcoded 16000 since minBufferSamples is gone/private
+        if finalBuffer.count > 16000, let whisperKit = whisperKit {
+            do {
+                let options = DecodingOptions(
+                    task: .transcribe,
+                    language: "en",
+                    usePrefillPrompt: true,
+                    wordTimestamps: false
+                )
+
+                let results = try await whisperKit.transcribe(audioArray: finalBuffer, decodeOptions: options)
+
+                if let result = results.first {
+                    let finalText = result.text.trimmingCharacters(in: CharacterSet.whitespacesAndNewlines)
+                    await MainActor.run {
+                        if self.confirmedTranscription.isEmpty {
+                            self.confirmedTranscription = finalText
+                        } else {
+                            self.confirmedTranscription += " " + finalText
+                        }
+                        self.currentTranscription = ""
+                    }
+                    return finalText
+                }
+            } catch {
+                print("[WhisperKitService] Final transcription error: \(error)")
+            }
+        }
+
+        return currentTranscription
     }
 
-    /// Clean up recording file
-    public func cleanupRecording() {
-        if let url = recordingURL {
-            try? FileManager.default.removeItem(at: url)
-            recordingURL = nil
+    /// Clear transcription state
+    public func clearTranscription() {
+        currentTranscription = ""
+        confirmedTranscription = ""
+        audioBuffer.clear()
+    }
+}
+
+// MARK: - Transcription Worker
+
+private enum TranscriptionUpdate: Sendable {
+    case partial(String)
+    case final(String)
+}
+
+private actor TranscriptionWorker {
+    private let whisperKit: WhisperKit
+    private let audioBuffer: ThreadSafeAudioBuffer
+    private var task: Task<Void, Never>?
+    private var continuation: AsyncStream<TranscriptionUpdate>.Continuation?
+    private let inputFormat: AVAudioFormat
+    private let targetFormat: AVAudioFormat
+    private var converter: AVAudioConverter?
+
+    // VAD Parameters
+    private let silenceThresholdSeconds: Double = 0.5
+    private let maxSegmentDurationSeconds: Double = 30.0
+    private let speechEnergyThreshold: Float = 0.05
+    private let minSamples = 16000  // 1 second
+
+    init(whisperKit: WhisperKit, audioBuffer: ThreadSafeAudioBuffer, inputFormat: AVAudioFormat) {
+        self.whisperKit = whisperKit
+        self.audioBuffer = audioBuffer
+        self.inputFormat = inputFormat
+        self.targetFormat = AVAudioFormat(
+            commonFormat: .pcmFormatFloat32,
+            sampleRate: 16000,
+            channels: 1,
+            interleaved: false
+        )!
+    }
+
+    func start() -> AsyncStream<TranscriptionUpdate> {
+        let stream = AsyncStream<TranscriptionUpdate> { continuation in
+            self.continuation = continuation
+        }
+
+        task = Task { [weak self] in
+            await self?.runLoop()
+        }
+
+        return stream
+    }
+
+    func stop() {
+        task?.cancel()
+        continuation?.finish()
+        task = nil
+        continuation = nil
+    }
+
+    private func runLoop() async {
+        print("[TranscriptionWorker] Streaming task started")
+
+        self.converter = AVAudioConverter(from: inputFormat, to: targetFormat)
+        if self.converter == nil {
+            print("[TranscriptionWorker] Failed to create audio converter")
+        }
+
+        var lastSpeechTime = Date()
+        var isSpeaking = false
+        var segmentStartTime = Date()
+        var accumulatedSamples: [Float] = []
+
+        while !Task.isCancelled && audioBuffer.isActive {
+            do {
+                try await Task.sleep(nanoseconds: 100_000_000)  // Check every 100ms
+
+                guard audioBuffer.isActive else { break }
+
+                // Fetch new raw samples and clear from buffer
+                let rawSamples = audioBuffer.getAndClear()
+                if !rawSamples.isEmpty {
+                    let converted = convertTo16kHz(rawSamples)
+                    accumulatedSamples.append(contentsOf: converted)
+                }
+
+                // Calculate level from recent samples for VAD (approximate)
+                // We use the last chunk or a window of accumulated samples
+                let vadWindowSize = 1600  // 100ms at 16kHz
+                let vadSamples = accumulatedSamples.suffix(vadWindowSize)
+                let level: Float
+                if !vadSamples.isEmpty {
+                    let sum = vadSamples.reduce(0) { $0 + $1 * $1 }
+                    level = sqrt(sum / Float(vadSamples.count)) * 10  // Scale roughly like the tap
+                } else {
+                    level = 0
+                }
+
+                let now = Date()
+
+                // VAD Logic
+                if level > speechEnergyThreshold {
+                    if !isSpeaking {
+                        isSpeaking = true
+                        segmentStartTime = now
+                    }
+                    lastSpeechTime = now
+                }
+
+                let silenceDuration = now.timeIntervalSince(lastSpeechTime)
+                let segmentDuration = now.timeIntervalSince(segmentStartTime)
+
+                // 1. End of Speech Detected (Silence)
+                if isSpeaking && silenceDuration > silenceThresholdSeconds {
+                    await finalizeSegment(accumulatedSamples)
+                    accumulatedSamples = []
+                    isSpeaking = false
+                }
+                // 2. Max Duration Reached
+                else if isSpeaking && segmentDuration > maxSegmentDurationSeconds {
+                    await finalizeSegment(accumulatedSamples)
+                    accumulatedSamples = []
+                    isSpeaking = false
+                }
+                // 3. Ongoing Speech - Update Preview (every 1s roughly)
+                else if isSpeaking && accumulatedSamples.count > minSamples {
+                    if segmentDuration > 1.0 {
+                        await updatePreview(accumulatedSamples)
+                    }
+                }
+                // 4. Clean up noise if too long without speech
+                else if !isSpeaking && accumulatedSamples.count > 16000 * 5 {
+                    // Keep a rolling buffer of silence/noise to allow for pickup, but don't grow forever
+                    accumulatedSamples = Array(accumulatedSamples.suffix(16000))
+                }
+            } catch {
+                print("[TranscriptionWorker] Streaming task error: \(error)")
+                break
+            }
+        }
+        continuation?.finish()
+    }
+
+    private func convertTo16kHz(_ samples: [Float]) -> [Float] {
+        guard let converter = converter else { return [] }
+
+        let inputFrameCount = AVAudioFrameCount(samples.count)
+        guard let inputBuffer = AVAudioPCMBuffer(pcmFormat: inputFormat, frameCapacity: inputFrameCount) else {
+            return []
+        }
+
+        inputBuffer.frameLength = inputFrameCount
+        if let channelData = inputBuffer.floatChannelData?[0] {
+            // Unsafe copy
+            samples.withUnsafeBufferPointer { ptr in
+                channelData.update(from: ptr.baseAddress!, count: samples.count)
+            }
+        }
+
+        let ratio = targetFormat.sampleRate / inputFormat.sampleRate
+        let outputFrameCapacity = AVAudioFrameCount(Double(inputFrameCount) * ratio) + 100  // Padding
+
+        guard let outputBuffer = AVAudioPCMBuffer(pcmFormat: targetFormat, frameCapacity: outputFrameCapacity) else {
+            return []
+        }
+
+        var error: NSError?
+        let inputBlock: AVAudioConverterInputBlock = { _, outStatus in
+            outStatus.pointee = .haveData
+            return inputBuffer
+        }
+
+        converter.convert(to: outputBuffer, error: &error, withInputFrom: inputBlock)
+
+        if let error = error {
+            print("[TranscriptionWorker] Conversion error: \(error)")
+            return []
+        }
+
+        if let floatData = outputBuffer.floatChannelData?[0] {
+            return Array(UnsafeBufferPointer(start: floatData, count: Int(outputBuffer.frameLength)))
+        }
+
+        return []
+    }
+
+    private func finalizeSegment(_ buffer: [Float]) async {
+        guard !buffer.isEmpty else { return }
+
+        do {
+            let options = DecodingOptions(
+                task: .transcribe,
+                language: "en",
+                usePrefillPrompt: true,
+                wordTimestamps: false
+            )
+
+            let results = try await whisperKit.transcribe(audioArray: buffer, decodeOptions: options)
+            if let result = results.first {
+                let text = result.text.trimmingCharacters(in: CharacterSet.whitespacesAndNewlines)
+                if !text.isEmpty {
+                    continuation?.yield(.final(text))
+                }
+            }
+        } catch {
+            print("[TranscriptionWorker] Finalize error: \(error)")
+        }
+    }
+
+    private func updatePreview(_ buffer: [Float]) async {
+        do {
+            let options = DecodingOptions(
+                task: .transcribe,
+                language: "en",
+                wordTimestamps: false
+            )
+
+            let results = try await whisperKit.transcribe(audioArray: buffer, decodeOptions: options)
+            if let result = results.first {
+                let text = result.text.trimmingCharacters(in: CharacterSet.whitespacesAndNewlines)
+                continuation?.yield(.partial(text))
+            }
+        } catch {
+            // Ignore preview errors
+        }
+    }
+}
+
+// MARK: - Thread-Safe Audio Buffer
+
+/// Thread-safe audio buffer for real-time audio capture
+private final class ThreadSafeAudioBuffer: @unchecked Sendable {
+    private var samples: [Float] = []
+    private var _isActive: Bool = false
+    private var _level: Float = 0.0
+    private let lock = OSAllocatedUnfairLock()
+
+    var isActive: Bool {
+        lock.withLock { _isActive }
+    }
+
+    func setActive(_ active: Bool) {
+        lock.withLock { _isActive = active }
+    }
+
+    func setLevel(_ level: Float) {
+        lock.withLock { _level = level }
+    }
+
+    func getLevel() -> Float {
+        lock.withLock { _level }
+    }
+
+    func append(_ newSamples: [Float]) {
+        lock.withLock {
+            if _isActive {
+                samples.append(contentsOf: newSamples)
+            }
+        }
+    }
+
+    func getSamples() -> [Float] {
+        lock.withLock { samples }
+    }
+
+    func getAndClear() -> [Float] {
+        lock.withLock {
+            let current = samples
+            samples = []
+            // Do not deactivate on getAndClear for streaming flow,
+            // but for stopStreaming we might want to.
+            // However, caller usually handles state.
+            // Let's just return data and clear buffer.
+            return current
+        }
+    }
+
+    func resetBuffer() {
+        lock.withLock {
+            samples = []
+        }
+    }
+
+    func clear() {
+        lock.withLock {
+            samples = []
+            _isActive = false
+            _level = 0.0
         }
     }
 }
