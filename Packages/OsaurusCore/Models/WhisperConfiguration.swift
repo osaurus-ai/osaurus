@@ -27,6 +27,9 @@ public struct WhisperConfiguration: Codable, Equatable, Sendable {
     /// Selected audio input device unique ID (nil = system default)
     public var selectedInputDeviceId: String?
 
+    /// Selected audio input source type (microphone or system audio)
+    public var selectedInputSource: AudioInputSource
+
     private enum CodingKeys: String, CodingKey {
         case defaultModel
         case languageHint
@@ -34,6 +37,7 @@ public struct WhisperConfiguration: Codable, Equatable, Sendable {
         case wordTimestamps
         case task
         case selectedInputDeviceId
+        case selectedInputSource
     }
 
     public init(from decoder: Decoder) throws {
@@ -46,6 +50,9 @@ public struct WhisperConfiguration: Codable, Equatable, Sendable {
             try container.decodeIfPresent(Bool.self, forKey: .wordTimestamps) ?? defaults.wordTimestamps
         self.task = try container.decodeIfPresent(TranscriptionTask.self, forKey: .task) ?? defaults.task
         self.selectedInputDeviceId = try container.decodeIfPresent(String.self, forKey: .selectedInputDeviceId)
+        self.selectedInputSource =
+            try container.decodeIfPresent(AudioInputSource.self, forKey: .selectedInputSource)
+            ?? defaults.selectedInputSource
     }
 
     public init(
@@ -54,7 +61,8 @@ public struct WhisperConfiguration: Codable, Equatable, Sendable {
         enabled: Bool = true,
         wordTimestamps: Bool = false,
         task: TranscriptionTask = .transcribe,
-        selectedInputDeviceId: String? = nil
+        selectedInputDeviceId: String? = nil,
+        selectedInputSource: AudioInputSource = .microphone
     ) {
         self.defaultModel = defaultModel
         self.languageHint = languageHint
@@ -62,6 +70,7 @@ public struct WhisperConfiguration: Codable, Equatable, Sendable {
         self.wordTimestamps = wordTimestamps
         self.task = task
         self.selectedInputDeviceId = selectedInputDeviceId
+        self.selectedInputSource = selectedInputSource
     }
 
     /// Default configuration
@@ -72,8 +81,31 @@ public struct WhisperConfiguration: Codable, Equatable, Sendable {
             enabled: true,
             wordTimestamps: false,
             task: .transcribe,
-            selectedInputDeviceId: nil
+            selectedInputDeviceId: nil,
+            selectedInputSource: .microphone
         )
+    }
+}
+
+/// Audio input source type
+public enum AudioInputSource: String, Codable, Equatable, CaseIterable, Sendable {
+    /// Microphone input (built-in or external)
+    case microphone
+    /// System audio capture (audio from apps, browser, etc.)
+    case systemAudio
+
+    public var displayName: String {
+        switch self {
+        case .microphone: return "Microphone"
+        case .systemAudio: return "System Audio"
+        }
+    }
+
+    public var iconName: String {
+        switch self {
+        case .microphone: return "mic.fill"
+        case .systemAudio: return "speaker.wave.2.fill"
+        }
     }
 }
 

@@ -117,6 +117,39 @@ public final class AudioInputManager: ObservableObject {
         }
     }
 
+    /// Currently selected input source (microphone or system audio)
+    @Published public var selectedInputSource: AudioInputSource = .microphone {
+        didSet {
+            if oldValue != selectedInputSource {
+                persistSelection()
+            }
+        }
+    }
+
+    // MARK: - System Audio Status (delegated from SystemAudioCaptureManager)
+
+    /// Whether system audio capture is available on this system (macOS 12.3+)
+    public var isSystemAudioAvailable: Bool {
+        SystemAudioCaptureManager.shared.isAvailable
+    }
+
+    /// Whether we have screen recording permission (required for system audio)
+    public var hasSystemAudioPermission: Bool {
+        SystemAudioCaptureManager.shared.hasPermission
+    }
+
+    /// Request screen recording permission for system audio capture
+    public func requestSystemAudioPermission() {
+        SystemAudioCaptureManager.shared.requestPermission()
+    }
+
+    /// Check/refresh system audio permission status
+    public func checkSystemAudioPermission() async {
+        if #available(macOS 12.3, *) {
+            await SystemAudioCaptureManager.shared.checkPermission()
+        }
+    }
+
     private var deviceObservers: [NSObjectProtocol] = []
 
     private init() {
@@ -316,11 +349,13 @@ public final class AudioInputManager: ObservableObject {
     private func loadPersistedSelection() {
         let config = WhisperConfigurationStore.load()
         selectedDeviceId = config.selectedInputDeviceId
+        selectedInputSource = config.selectedInputSource
     }
 
     private func persistSelection() {
         var config = WhisperConfigurationStore.load()
         config.selectedInputDeviceId = selectedDeviceId
+        config.selectedInputSource = selectedInputSource
         WhisperConfigurationStore.save(config)
     }
 }
@@ -439,6 +474,13 @@ public final class SystemAudioCaptureManager: NSObject, ObservableObject {
 
         guard !isCapturing else { return }
 
+        // Clear any previous stream
+        if let existingStream = stream {
+            try? await existingStream.stopCapture()
+            stream = nil
+            streamOutput = nil
+        }
+
         // Get shareable content
         let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: false)
 
@@ -449,36 +491,50 @@ public final class SystemAudioCaptureManager: NSObject, ObservableObject {
 
         let filter = SCContentFilter(display: display, excludingWindows: [])
 
-        // Configure stream for audio only
+        // Configure stream for audio capture
         let configuration = SCStreamConfiguration()
         configuration.capturesAudio = true
         configuration.excludesCurrentProcessAudio = true  // Don't capture our own audio
         configuration.sampleRate = 16000  // WhisperKit's preferred sample rate
         configuration.channelCount = 1  // Mono for transcription
 
-        // We don't need video, but ScreenCaptureKit requires some video config
-        configuration.width = 1
-        configuration.height = 1
-        configuration.minimumFrameInterval = CMTime(value: 1, timescale: 1)  // Minimal video
+        // Video configuration - use display size but minimal frame rate
+        // Using 1x1 can cause stream creation to fail on some systems
+        configuration.width = Int(display.width)
+        configuration.height = Int(display.height)
+        configuration.minimumFrameInterval = CMTime(value: 1, timescale: 1)  // 1 fps minimal
+        configuration.showsCursor = false
+        configuration.pixelFormat = kCVPixelFormatType_32BGRA
 
-        // Create stream
-        let stream = SCStream(filter: filter, configuration: configuration, delegate: nil)
-
-        // Create output handler
+        // Create output handler first
         let output = SystemAudioStreamOutput { [weak self] samples in
             self?.appendSamples(samples)
         }
         self.streamOutput = output
 
-        try stream.addStreamOutput(output, type: .audio, sampleHandlerQueue: .global(qos: .userInitiated))
+        // Create stream with self as delegate for error handling
+        let newStream = SCStream(filter: filter, configuration: configuration, delegate: self)
 
-        // Start the stream
-        try await stream.startCapture()
+        // Store stream reference before starting (prevent deallocation)
+        self.stream = newStream
 
-        self.stream = stream
-        isCapturing = true
+        do {
+            try newStream.addStreamOutput(output, type: .audio, sampleHandlerQueue: .global(qos: .userInitiated))
 
-        print("[SystemAudioCaptureManager] Started capturing system audio")
+            // Start the stream
+            try await newStream.startCapture()
+
+            isCapturing = true
+            print("[SystemAudioCaptureManager] Started capturing system audio")
+        } catch {
+            // Clean up on failure
+            self.stream = nil
+            self.streamOutput = nil
+            print("[SystemAudioCaptureManager] Failed to start capture: \(error)")
+            throw WhisperKitError.transcriptionFailed(
+                "Failed to start system audio capture: \(error.localizedDescription)"
+            )
+        }
     }
 
     /// Stop capturing system audio
@@ -508,6 +564,20 @@ public final class SystemAudioCaptureManager: NSObject, ObservableObject {
 
     private nonisolated func appendSamples(_ samples: [Float]) {
         sampleBuffer.append(samples)
+    }
+}
+
+// MARK: - SCStreamDelegate
+
+@available(macOS 12.3, *)
+extension SystemAudioCaptureManager: SCStreamDelegate {
+    public nonisolated func stream(_ stream: SCStream, didStopWithError error: Error) {
+        print("[SystemAudioCaptureManager] Stream stopped with error: \(error)")
+        Task { @MainActor in
+            self.isCapturing = false
+            self.stream = nil
+            self.streamOutput = nil
+        }
     }
 }
 
@@ -836,6 +906,11 @@ public final class WhisperKitService: ObservableObject {
     private let audioBuffer = ThreadSafeAudioBuffer()
     private var transcriptionWorker: TranscriptionWorker?
 
+    /// Whether we're currently using system audio capture (vs microphone)
+    private var isUsingSystemAudio: Bool = false
+    /// Task for polling system audio samples
+    private var systemAudioPollingTask: Task<Void, Never>?
+
     @Published public var isRecording: Bool = false
     @Published public var currentTranscription: String = ""
     @Published public var confirmedTranscription: String = ""
@@ -848,11 +923,28 @@ public final class WhisperKitService: ObservableObject {
         // 1. Clean up previous state strictly
         await teardownAudioEngine()
 
-        // 2. Check Permissions & Model
-        if !microphonePermissionGranted {
-            let granted = await requestMicrophonePermission()
-            if !granted {
-                throw WhisperKitError.microphonePermissionDenied
+        // Get the selected input source
+        let inputSource = AudioInputManager.shared.selectedInputSource
+
+        // 2. Check Permissions & Model based on input source
+        if inputSource == .microphone {
+            if !microphonePermissionGranted {
+                let granted = await requestMicrophonePermission()
+                if !granted {
+                    throw WhisperKitError.microphonePermissionDenied
+                }
+            }
+        } else {
+            // System audio requires screen recording permission
+            if #available(macOS 12.3, *) {
+                await SystemAudioCaptureManager.shared.checkPermission()
+                if !SystemAudioCaptureManager.shared.hasPermission {
+                    throw WhisperKitError.transcriptionFailed(
+                        "Screen recording permission required for system audio capture"
+                    )
+                }
+            } else {
+                throw WhisperKitError.transcriptionFailed("System audio capture requires macOS 12.3 or later")
             }
         }
 
@@ -866,46 +958,90 @@ public final class WhisperKitService: ObservableObject {
         currentTranscription = ""
         confirmedTranscription = ""
         audioLevel = 0.0
+        isUsingSystemAudio = (inputSource == .systemAudio)
 
-        // 4. Resolve Device ID
-        // We resolve this on the MainActor before moving to the detached task
-        let selectedId = AudioInputManager.shared.selectedDeviceId
-        var targetDeviceId: AudioDeviceID? = nil
+        // Get configuration
+        let config = WhisperConfigurationStore.load()
+        let decodingTask: DecodingTask = config.task == .translate ? .translate : .transcribe
 
-        if let selectedId {
-            targetDeviceId = AudioInputManager.shared.getAudioDeviceId(for: selectedId)
-            if targetDeviceId == nil {
-                print("[WhisperKitService] WARNING: Could not find AudioDeviceID for UID: \(selectedId)")
+        if inputSource == .microphone {
+            // 4a. Microphone path: Resolve Device ID
+            let selectedId = AudioInputManager.shared.selectedDeviceId
+            var targetDeviceId: AudioDeviceID? = nil
+
+            if let selectedId {
+                targetDeviceId = AudioInputManager.shared.getAudioDeviceId(for: selectedId)
+                if targetDeviceId == nil {
+                    print("[WhisperKitService] WARNING: Could not find AudioDeviceID for UID: \(selectedId)")
+                }
             }
-        }
 
-        // 5. Setup Audio Engine
-        do {
-            let (engine, tapFormat) = try await setupAudioEngine(targetDeviceId: targetDeviceId, buffer: audioBuffer)
-            self.audioEngine = engine
+            // 5a. Setup Audio Engine
+            do {
+                let (engine, tapFormat) = try await setupAudioEngine(
+                    targetDeviceId: targetDeviceId,
+                    buffer: audioBuffer
+                )
+                self.audioEngine = engine
 
-            // 6. Start Worker
-            let config = WhisperConfigurationStore.load()
-            let decodingTask: DecodingTask = config.task == .translate ? .translate : .transcribe
+                // 6a. Start Worker with microphone format
+                transcriptionWorker = TranscriptionWorker(
+                    whisperKit: whisperKit,
+                    audioBuffer: audioBuffer,
+                    inputFormat: tapFormat,
+                    transcriptionTask: decodingTask,
+                    languageHint: config.languageHint
+                )
 
-            transcriptionWorker = TranscriptionWorker(
-                whisperKit: whisperKit,
-                audioBuffer: audioBuffer,
-                inputFormat: tapFormat,
-                transcriptionTask: decodingTask,
-                languageHint: config.languageHint
-            )
+                isRecording = true
 
-            isRecording = true
+                // 7a. Start Processing
+                startAudioLevelMonitoring()
+                startWorkerProcessing()
 
-            // 7. Start Processing
-            startAudioLevelMonitoring()
-            startWorkerProcessing()
+            } catch {
+                await teardownAudioEngine()
+                throw error
+            }
+        } else {
+            // 4b. System Audio path
+            if #available(macOS 12.3, *) {
+                do {
+                    try await SystemAudioCaptureManager.shared.startCapture()
 
-        } catch {
-            // Ensure we clean up if setup failed
-            await teardownAudioEngine()
-            throw error
+                    // System audio is already at 16kHz mono, create format for worker
+                    guard
+                        let systemAudioFormat = AVAudioFormat(
+                            commonFormat: .pcmFormatFloat32,
+                            sampleRate: 16000,
+                            channels: 1,
+                            interleaved: false
+                        )
+                    else {
+                        throw WhisperKitError.transcriptionFailed("Failed to create audio format for system audio")
+                    }
+
+                    // 6b. Start Worker with 16kHz format (no conversion needed)
+                    transcriptionWorker = TranscriptionWorker(
+                        whisperKit: whisperKit,
+                        audioBuffer: audioBuffer,
+                        inputFormat: systemAudioFormat,
+                        transcriptionTask: decodingTask,
+                        languageHint: config.languageHint
+                    )
+
+                    isRecording = true
+
+                    // 7b. Start polling system audio samples into the buffer
+                    startSystemAudioPolling()
+                    startAudioLevelMonitoring()
+                    startWorkerProcessing()
+
+                } catch {
+                    await teardownAudioEngine()
+                    throw error
+                }
+            }
         }
     }
 
@@ -964,6 +1100,18 @@ public final class WhisperKitService: ObservableObject {
         await transcriptionWorker?.stop()
         transcriptionWorker = nil
 
+        // Stop system audio polling if active
+        systemAudioPollingTask?.cancel()
+        systemAudioPollingTask = nil
+
+        // Stop system audio capture if we were using it
+        if isUsingSystemAudio {
+            if #available(macOS 12.3, *) {
+                await SystemAudioCaptureManager.shared.stopCapture()
+            }
+            isUsingSystemAudio = false
+        }
+
         // Stop engine and remove tap
         if let engine = audioEngine {
             print("[WhisperKitService] Tearing down audio engine...")
@@ -978,6 +1126,30 @@ public final class WhisperKitService: ObservableObject {
 
             // Allow Core Audio to cleanup to prevent "thread already exists" errors
             try? await Task.sleep(nanoseconds: 200_000_000)  // 200ms
+        }
+    }
+
+    /// Start polling system audio samples into the audio buffer
+    private func startSystemAudioPolling() {
+        let bufferRef = audioBuffer
+        systemAudioPollingTask = Task { @MainActor [weak self] in
+            print("[WhisperKitService] Started system audio polling")
+            while let self = self, bufferRef.isActive {
+                // Get samples from SystemAudioCaptureManager
+                let samples = SystemAudioCaptureManager.shared.getAndClearSamples()
+                if !samples.isEmpty {
+                    bufferRef.append(samples)
+
+                    // Calculate audio level for visualization
+                    let sum = samples.reduce(0) { $0 + $1 * $1 }
+                    let rms = sqrt(sum / Float(samples.count))
+                    bufferRef.setLevel(min(1.0, rms * 10))
+                }
+
+                // Poll every 50ms
+                try? await Task.sleep(nanoseconds: 50_000_000)
+            }
+            print("[WhisperKitService] System audio polling stopped")
         }
     }
 

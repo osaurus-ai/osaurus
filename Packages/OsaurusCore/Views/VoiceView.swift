@@ -119,6 +119,7 @@ private struct VoiceMainTab: View {
     @StateObject private var whisperService = WhisperKitService.shared
     @StateObject private var modelManager = WhisperModelManager.shared
     @StateObject private var audioInputManager = AudioInputManager.shared
+    @StateObject private var systemAudioManager = SystemAudioCaptureManager.shared
 
     @State private var transcriptionText: String = ""
     @State private var errorMessage: String?
@@ -330,11 +331,12 @@ private struct VoiceMainTab: View {
 
     private var inputDeviceCard: some View {
         VStack(alignment: .leading, spacing: 16) {
+            // Header
             HStack(spacing: 12) {
                 ZStack {
                     RoundedRectangle(cornerRadius: 12)
                         .fill(theme.accentColor.opacity(0.15))
-                    Image(systemName: "speaker.wave.2")
+                    Image(systemName: audioInputManager.selectedInputSource.iconName)
                         .font(.system(size: 20, weight: .medium))
                         .foregroundColor(theme.accentColor)
                 }
@@ -345,54 +347,72 @@ private struct VoiceMainTab: View {
                         .font(.system(size: 15, weight: .semibold))
                         .foregroundColor(theme.primaryText)
 
-                    Text(
-                        audioInputManager.selectedDevice?.name ?? "System Default"
-                    )
-                    .font(.system(size: 12))
-                    .foregroundColor(theme.secondaryText)
+                    Text(inputSourceDescription)
+                        .font(.system(size: 12))
+                        .foregroundColor(theme.secondaryText)
                 }
 
                 Spacer()
 
-                // Refresh button
-                Button(action: { audioInputManager.refreshDevices() }) {
-                    Image(systemName: "arrow.clockwise")
-                        .font(.system(size: 14, weight: .medium))
-                        .foregroundColor(theme.secondaryText)
-                        .padding(8)
-                        .background(
-                            RoundedRectangle(cornerRadius: 8)
-                                .fill(theme.tertiaryBackground)
-                        )
+                // Refresh button (only for microphone mode)
+                if audioInputManager.selectedInputSource == .microphone {
+                    Button(action: { audioInputManager.refreshDevices() }) {
+                        Image(systemName: "arrow.clockwise")
+                            .font(.system(size: 14, weight: .medium))
+                            .foregroundColor(theme.secondaryText)
+                            .padding(8)
+                            .background(
+                                RoundedRectangle(cornerRadius: 8)
+                                    .fill(theme.tertiaryBackground)
+                            )
+                    }
+                    .buttonStyle(PlainButtonStyle())
+                    .help("Refresh available devices")
                 }
-                .buttonStyle(PlainButtonStyle())
-                .help("Refresh available devices")
             }
 
-            // Device picker
+            // Input Source Picker
             VStack(alignment: .leading, spacing: 8) {
-                Text("Select Input Device")
+                Text("Input Source")
                     .font(.system(size: 11, weight: .medium))
                     .foregroundColor(theme.secondaryText)
 
-                AudioInputDevicePicker(
-                    selection: Binding(
-                        get: { audioInputManager.selectedDeviceId },
-                        set: { audioInputManager.selectDevice($0) }
-                    ),
-                    devices: audioInputManager.availableDevices
+                AudioInputSourcePicker(
+                    selection: $audioInputManager.selectedInputSource,
+                    isSystemAudioAvailable: systemAudioManager.isAvailable
                 )
             }
 
-            if audioInputManager.availableDevices.isEmpty {
-                HStack(spacing: 6) {
-                    Image(systemName: "info.circle")
-                        .font(.system(size: 11))
-                        .foregroundColor(theme.warningColor)
-                    Text("No audio input devices found. Check your system preferences.")
-                        .font(.system(size: 11))
-                        .foregroundColor(theme.warningColor)
+            // Conditional content based on source type
+            if audioInputManager.selectedInputSource == .microphone {
+                // Microphone device picker
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Select Input Device")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundColor(theme.secondaryText)
+
+                    AudioInputDevicePicker(
+                        selection: Binding(
+                            get: { audioInputManager.selectedDeviceId },
+                            set: { audioInputManager.selectDevice($0) }
+                        ),
+                        devices: audioInputManager.availableDevices
+                    )
                 }
+
+                if audioInputManager.availableDevices.isEmpty {
+                    HStack(spacing: 6) {
+                        Image(systemName: "info.circle")
+                            .font(.system(size: 11))
+                            .foregroundColor(theme.warningColor)
+                        Text("No audio input devices found. Check your system preferences.")
+                            .font(.system(size: 11))
+                            .foregroundColor(theme.warningColor)
+                    }
+                }
+            } else {
+                // System Audio content
+                systemAudioContent
             }
         }
         .padding(20)
@@ -404,6 +424,107 @@ private struct VoiceMainTab: View {
                         .stroke(theme.cardBorder, lineWidth: 1)
                 )
         )
+    }
+
+    /// Description text for the current input source
+    private var inputSourceDescription: String {
+        switch audioInputManager.selectedInputSource {
+        case .microphone:
+            return audioInputManager.selectedDevice?.name ?? "System Default"
+        case .systemAudio:
+            if !systemAudioManager.isAvailable {
+                return "Requires macOS 12.3+"
+            } else if !systemAudioManager.hasPermission {
+                return "Permission required"
+            } else {
+                return "Computer audio"
+            }
+        }
+    }
+
+    /// System audio specific content (permission UI, info)
+    @ViewBuilder
+    private var systemAudioContent: some View {
+        if !systemAudioManager.isAvailable {
+            // Not available on this macOS version
+            HStack(spacing: 8) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .font(.system(size: 14))
+                    .foregroundColor(theme.warningColor)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("System audio requires macOS 12.3 or later")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundColor(theme.primaryText)
+                    Text("Your current macOS version does not support system audio capture.")
+                        .font(.system(size: 11))
+                        .foregroundColor(theme.secondaryText)
+                }
+            }
+            .padding(12)
+            .background(
+                RoundedRectangle(cornerRadius: 10)
+                    .fill(theme.warningColor.opacity(0.1))
+            )
+        } else if !systemAudioManager.hasPermission {
+            // Permission needed
+            HStack(spacing: 12) {
+                Image(systemName: "rectangle.inset.filled.and.person.filled")
+                    .font(.system(size: 20))
+                    .foregroundColor(theme.warningColor)
+
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Screen Recording Permission Required")
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundColor(theme.primaryText)
+                    Text("System audio capture requires screen recording permission in System Settings.")
+                        .font(.system(size: 11))
+                        .foregroundColor(theme.secondaryText)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
+                Spacer()
+
+                Button(action: {
+                    systemAudioManager.requestPermission()
+                }) {
+                    Text("Grant Access")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundColor(.white)
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 8)
+                        .background(
+                            RoundedRectangle(cornerRadius: 8)
+                                .fill(theme.accentColor)
+                        )
+                }
+                .buttonStyle(PlainButtonStyle())
+            }
+            .padding(12)
+            .background(
+                RoundedRectangle(cornerRadius: 10)
+                    .fill(theme.warningColor.opacity(0.1))
+            )
+        } else {
+            // Permission granted - show info
+            HStack(spacing: 8) {
+                Image(systemName: "checkmark.circle.fill")
+                    .font(.system(size: 14))
+                    .foregroundColor(theme.successColor)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("System audio capture ready")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundColor(theme.primaryText)
+                    Text("Audio from apps, browsers, and other sources will be transcribed.")
+                        .font(.system(size: 11))
+                        .foregroundColor(theme.secondaryText)
+                }
+            }
+            .padding(12)
+            .background(
+                RoundedRectangle(cornerRadius: 10)
+                    .fill(theme.successColor.opacity(0.1))
+            )
+        }
     }
 
     // MARK: - Recording Test Card
@@ -640,6 +761,58 @@ private struct AudioLevelView: View {
             return theme.warningColor
         } else {
             return theme.errorColor
+        }
+    }
+}
+
+// MARK: - Audio Input Source Picker
+
+private struct AudioInputSourcePicker: View {
+    @Environment(\.theme) private var theme
+    @Binding var selection: AudioInputSource
+    let isSystemAudioAvailable: Bool
+
+    var body: some View {
+        HStack(spacing: 8) {
+            ForEach(AudioInputSource.allCases, id: \.self) { source in
+                let isSelected = selection == source
+                let isDisabled = source == .systemAudio && !isSystemAudioAvailable
+
+                Button(action: {
+                    if !isDisabled {
+                        withAnimation(.easeInOut(duration: 0.2)) {
+                            selection = source
+                        }
+                    }
+                }) {
+                    HStack(spacing: 6) {
+                        Image(systemName: source.iconName)
+                            .font(.system(size: 12, weight: .medium))
+                        Text(source.displayName)
+                            .font(.system(size: 12, weight: .medium))
+                    }
+                    .foregroundColor(
+                        isDisabled ? theme.tertiaryText : (isSelected ? .white : theme.primaryText)
+                    )
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 8)
+                    .background(
+                        RoundedRectangle(cornerRadius: 8)
+                            .fill(
+                                isSelected
+                                    ? theme.accentColor
+                                    : (isDisabled ? theme.tertiaryBackground.opacity(0.5) : theme.tertiaryBackground)
+                            )
+                    )
+                }
+                .buttonStyle(PlainButtonStyle())
+                .disabled(isDisabled)
+                .help(
+                    isDisabled ? "Requires macOS 12.3+" : source.displayName
+                )
+            }
+
+            Spacer()
         }
     }
 }
