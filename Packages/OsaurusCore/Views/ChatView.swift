@@ -1183,7 +1183,7 @@ struct ChatView: View {
                 // Solid backing layer for text contrast - uses theme glass opacity to determine
                 // how solid the background should be (higher glass opacity = more solid backing)
                 // Minimum backing ensures readable text even with low theme opacity settings
-                let baseBackingOpacity = colorScheme == .dark ? 0.6 : 0.7
+                let baseBackingOpacity = theme.isDark ? 0.6 : 0.7
                 let themeBoost = theme.glassOpacityPrimary * 0.8  // Theme can add up to ~0.15 more
                 let backingOpacity = min(0.92, baseBackingOpacity + themeBoost)
 

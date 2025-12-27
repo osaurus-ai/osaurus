@@ -60,7 +60,13 @@ struct ChatSessionSidebar: View {
         }
         .frame(width: 240, alignment: .top)
         .frame(maxHeight: .infinity, alignment: .top)
-        .background(theme.secondaryBackground.opacity(colorScheme == .dark ? 0.85 : 0.9))
+        .background {
+            if theme.glassEnabled {
+                ThemedGlassSurface(cornerRadius: 0)
+            } else {
+                theme.secondaryBackground
+            }
+        }
     }
 
     private func dismissEditing() {
@@ -102,11 +108,18 @@ struct ChatSessionSidebar: View {
                 .font(.system(size: 12, weight: .medium))
                 .foregroundColor(isSearchFocused ? theme.primaryText : theme.secondaryText.opacity(0.7))
 
-            TextField("Search conversations...", text: $searchQuery)
-                .textFieldStyle(.plain)
-                .font(.system(size: 12))
-                .foregroundColor(theme.primaryText)
-                .focused($isSearchFocused)
+            ZStack(alignment: .leading) {
+                if searchQuery.isEmpty {
+                    Text("Search conversations...")
+                        .font(.system(size: 12))
+                        .foregroundColor(theme.secondaryText.opacity(0.7))
+                }
+                TextField("", text: $searchQuery)
+                    .textFieldStyle(.plain)
+                    .font(.system(size: 12))
+                    .foregroundColor(theme.primaryText)
+                    .focused($isSearchFocused)
+            }
 
             if !searchQuery.isEmpty {
                 Button(action: {
@@ -126,7 +139,7 @@ struct ChatSessionSidebar: View {
         .padding(.vertical, 7)
         .background(
             RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .fill(theme.tertiaryBackground.opacity(colorScheme == .dark ? 0.6 : 0.8))
+                .fill(theme.isDark ? theme.primaryBackground.opacity(0.5) : theme.tertiaryBackground.opacity(0.8))
         )
         .overlay(
             RoundedRectangle(cornerRadius: 8, style: .continuous)
@@ -310,7 +323,7 @@ private struct SessionRow: View {
 
                     Text(relativeDate(session.updatedAt))
                         .font(.system(size: 10))
-                        .foregroundColor(theme.secondaryText.opacity(0.7))
+                        .foregroundColor(theme.secondaryText.opacity(0.85))
                 }
                 Spacer()
 
@@ -356,7 +369,7 @@ private struct SessionRow: View {
     private var defaultPersonaIndicator: some View {
         Image(systemName: "person.fill")
             .font(.system(size: 9, weight: .medium))
-            .foregroundColor(theme.secondaryText.opacity(0.6))
+            .foregroundColor(theme.secondaryText.opacity(0.8))
             .frame(width: 18, height: 18)
             .background(
                 Circle()
