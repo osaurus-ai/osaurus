@@ -845,21 +845,10 @@ public final class WhisperKitService: ObservableObject {
     public func startStreamingTranscription() async throws {
         guard !isRecording else { return }
 
-        // IMPORTANT: Clean up any previous audio engine that might still be lingering
-        // This prevents "there already is a thread" errors
-        if let existingEngine = audioEngine {
-            print("[WhisperKitService] Cleaning up previous audio engine...")
-            existingEngine.inputNode.removeTap(onBus: 0)
-            existingEngine.stop()
-            audioEngine = nil
-            // Give the audio system time to release resources
-            try? await Task.sleep(nanoseconds: 100_000_000)  // 100ms
-        }
+        // 1. Clean up previous state strictly
+        await teardownAudioEngine()
 
-        // Also stop any existing worker
-        await transcriptionWorker?.stop()
-        transcriptionWorker = nil
-
+        // 2. Check Permissions & Model
         if !microphonePermissionGranted {
             let granted = await requestMicrophonePermission()
             if !granted {
@@ -871,202 +860,52 @@ public final class WhisperKitService: ObservableObject {
             throw WhisperKitError.modelNotLoaded
         }
 
-        // Reset state
+        // 3. Reset State
         audioBuffer.clear()
         audioBuffer.setActive(true)
         currentTranscription = ""
         confirmedTranscription = ""
         audioLevel = 0.0
 
-        // Get selected input device ID
-        let selectedDeviceId = AudioInputManager.shared.selectedDeviceId
-        let targetDeviceId: AudioDeviceID?
-        if let selectedDeviceId {
-            targetDeviceId = AudioInputManager.shared.getAudioDeviceId(for: selectedDeviceId)
-            if let targetDeviceId {
-                print(
-                    "[WhisperKitService] Selected device UID: \(selectedDeviceId) -> AudioDeviceID: \(targetDeviceId)"
-                )
-            } else {
-                print("[WhisperKitService] WARNING: Could not find AudioDeviceID for UID: \(selectedDeviceId)")
+        // 4. Resolve Device ID
+        // We resolve this on the MainActor before moving to the detached task
+        let selectedId = AudioInputManager.shared.selectedDeviceId
+        var targetDeviceId: AudioDeviceID? = nil
+
+        if let selectedId {
+            targetDeviceId = AudioInputManager.shared.getAudioDeviceId(for: selectedId)
+            if targetDeviceId == nil {
+                print("[WhisperKitService] WARNING: Could not find AudioDeviceID for UID: \(selectedId)")
             }
-        } else {
-            targetDeviceId = nil
-            print("[WhisperKitService] No device selected, will use system default")
         }
 
-        // Get configuration for transcription
-        let config = WhisperConfigurationStore.load()
-        let decodingTask: DecodingTask = config.task == .translate ? .translate : .transcribe
+        // 5. Setup Audio Engine
+        do {
+            let (engine, tapFormat) = try await setupAudioEngine(targetDeviceId: targetDeviceId, buffer: audioBuffer)
+            self.audioEngine = engine
 
-        let bufferRef = audioBuffer
+            // 6. Start Worker
+            let config = WhisperConfigurationStore.load()
+            let decodingTask: DecodingTask = config.task == .translate ? .translate : .transcribe
 
-        // Setup engine off-main-thread to safely handle graph setup and tap installation
-        // This avoids _dispatch_assert_queue_fail assertions from CoreAudio/RealtimeMessenger
-        let (engine, tapFormat) = try await Task.detached(priority: .userInitiated) {
-            [bufferRef]
-            () -> (AVAudioEngine, AVAudioFormat) in
-            let engine = AVAudioEngine()
-            let inputNode = engine.inputNode
-
-            // Log current device before change
-            if let currentDevice = Self.getCurrentInputDevice(for: inputNode) {
-                print("[WhisperKitService] Current input device before change: \(currentDevice)")
-            }
-
-            // Set the input device if specified
-            if let deviceId = targetDeviceId {
-                print("[WhisperKitService] Attempting to set input device to: \(deviceId)")
-                Self.setInputDevice(deviceId, for: inputNode)
-
-                // Verify the device was set
-                if let newDevice = Self.getCurrentInputDevice(for: inputNode) {
-                    print("[WhisperKitService] Input device after change: \(newDevice)")
-                    if newDevice != deviceId {
-                        print("[WhisperKitService] WARNING: Device change may not have taken effect!")
-                    }
-                }
-            } else {
-                print("[WhisperKitService] Using system default input device")
-            }
-
-            // Now get the hardware format - this is what the device actually produces
-            // We must use this format, NOT outputFormat which may be cached/incorrect
-            let hwFormat = inputNode.inputFormat(forBus: 0)
-            print(
-                "[WhisperKitService] Hardware input format: \(hwFormat.sampleRate)Hz, \(hwFormat.channelCount) channels"
+            transcriptionWorker = TranscriptionWorker(
+                whisperKit: whisperKit,
+                audioBuffer: audioBuffer,
+                inputFormat: tapFormat,
+                transcriptionTask: decodingTask,
+                languageHint: config.languageHint
             )
 
-            // Use the hardware format directly - this is the actual format from the device
-            var tapFormat: AVAudioFormat
-            if hwFormat.sampleRate > 0 && hwFormat.channelCount > 0 {
-                // Create a clean format matching the hardware
-                tapFormat = AVAudioFormat(
-                    commonFormat: .pcmFormatFloat32,
-                    sampleRate: hwFormat.sampleRate,
-                    channels: 1,
-                    interleaved: false
-                )!
-            } else {
-                // Fallback to common format
-                tapFormat = AVAudioFormat(
-                    commonFormat: .pcmFormatFloat32,
-                    sampleRate: 48000,
-                    channels: 1,
-                    interleaved: false
-                )!
-                print("[WhisperKitService] WARNING: Using fallback format 48000Hz")
-            }
+            isRecording = true
 
-            print("[WhisperKitService] Using tap format: \(tapFormat.sampleRate)Hz, \(tapFormat.channelCount) channels")
+            // 7. Start Processing
+            startAudioLevelMonitoring()
+            startWorkerProcessing()
 
-            // Install tap with explicit hardware format - DO NOT use nil or outputFormat
-            // as they may be cached from previous sessions
-            var hasLoggedActualFormat = false
-            inputNode.installTap(onBus: 0, bufferSize: 4096, format: tapFormat) { buffer, _ in
-                guard bufferRef.isActive else { return }
-
-                // Log actual buffer format once for debugging
-                if !hasLoggedActualFormat {
-                    hasLoggedActualFormat = true
-                    print(
-                        "[WhisperKitService] Actual buffer format: \(buffer.format.sampleRate)Hz, \(buffer.format.channelCount) channels"
-                    )
-                }
-
-                // Get actual format from the buffer
-                guard let floatData = buffer.floatChannelData?[0] else { return }
-                let frameCount = Int(buffer.frameLength)
-                guard frameCount > 0 else { return }
-
-                // Calculate Level (RMS) for UI
-                var sum: Float = 0
-                for i in 0 ..< frameCount {
-                    sum += floatData[i] * floatData[i]
-                }
-                let rms = sqrt(sum / Float(frameCount))
-                bufferRef.setLevel(min(1.0, rms * 10))
-
-                // Append samples
-                let samples = Array(UnsafeBufferPointer(start: floatData, count: frameCount))
-                bufferRef.append(samples)
-            }
-
-            // Prepare and start the engine with retry
-            engine.prepare()
-
-            var startAttempts = 0
-            let maxAttempts = 3
-            var lastError: Error?
-
-            while startAttempts < maxAttempts {
-                do {
-                    try engine.start()
-                    print("[WhisperKitService] Audio engine started successfully on attempt \(startAttempts + 1)")
-                    lastError = nil
-                    break
-                } catch {
-                    lastError = error
-                    startAttempts += 1
-                    print("[WhisperKitService] Engine start attempt \(startAttempts) failed: \(error)")
-                    if startAttempts < maxAttempts {
-                        // Wait before retry
-                        try? await Task.sleep(nanoseconds: 200_000_000)
-                        engine.prepare()
-                    }
-                }
-            }
-
-            if let error = lastError {
-                throw error
-            }
-
-            return (engine, tapFormat)
-        }.value
-
-        self.audioEngine = engine
-
-        // Initialize Worker with the actual tap format
-        transcriptionWorker = TranscriptionWorker(
-            whisperKit: whisperKit,
-            audioBuffer: audioBuffer,
-            inputFormat: tapFormat,
-            transcriptionTask: decodingTask,
-            languageHint: config.languageHint
-        )
-
-        isRecording = true
-
-        // Start a level polling task for UI updates
-        Task { @MainActor [weak self] in
-            while let self = self, bufferRef.isActive {
-                self.audioLevel = bufferRef.getLevel()
-                try? await Task.sleep(nanoseconds: 50_000_000)  // 50ms for smooth animation
-            }
-            self?.audioLevel = 0
-        }
-
-        // Start streaming transcription task
-        Task {
-            guard let worker = transcriptionWorker else {
-                print("[WhisperKitService] No transcription worker available")
-                return
-            }
-            print("[WhisperKitService] Starting to consume worker updates")
-            for await update in await worker.start() {
-                switch update {
-                case .partial(let text):
-                    self.currentTranscription = text
-                case .final(let text):
-                    if self.confirmedTranscription.isEmpty {
-                        self.confirmedTranscription = text
-                    } else {
-                        self.confirmedTranscription += " " + text
-                    }
-                    self.currentTranscription = ""
-                }
-            }
-            print("[WhisperKitService] Worker updates stream finished")
+        } catch {
+            // Ensure we clean up if setup failed
+            await teardownAudioEngine()
+            throw error
         }
     }
 
@@ -1074,12 +913,8 @@ public final class WhisperKitService: ObservableObject {
     public func stopStreamingTranscription() async -> String {
         // Stop the streaming first
         audioBuffer.setActive(false)
-        await transcriptionWorker?.stop()
-        transcriptionWorker = nil
 
-        audioEngine?.inputNode.removeTap(onBus: 0)
-        audioEngine?.stop()
-        audioEngine = nil
+        await teardownAudioEngine()
 
         isRecording = false
 
@@ -1119,6 +954,153 @@ public final class WhisperKitService: ObservableObject {
         }
 
         return currentTranscription
+    }
+
+    // MARK: - Audio Engine Helpers
+
+    /// Teardown the audio engine and worker to ensure a clean state
+    private func teardownAudioEngine() async {
+        // Stop worker first
+        await transcriptionWorker?.stop()
+        transcriptionWorker = nil
+
+        // Stop engine and remove tap
+        if let engine = audioEngine {
+            print("[WhisperKitService] Tearing down audio engine...")
+            if engine.isRunning {
+                engine.stop()
+            }
+            // Remove tap if it exists (safe to call even if not)
+            engine.inputNode.removeTap(onBus: 0)
+
+            // Release engine
+            audioEngine = nil
+
+            // Allow Core Audio to cleanup to prevent "thread already exists" errors
+            try? await Task.sleep(nanoseconds: 200_000_000)  // 200ms
+        }
+    }
+
+    /// Setup the audio engine in a detached task
+    private func setupAudioEngine(targetDeviceId: AudioDeviceID?, buffer: ThreadSafeAudioBuffer) async throws -> (
+        AVAudioEngine, AVAudioFormat
+    ) {
+        // Use detached task to avoid blocking main thread with CoreAudio operations
+        return try await Task.detached(priority: .userInitiated) { () -> (AVAudioEngine, AVAudioFormat) in
+            let engine = AVAudioEngine()
+            let inputNode = engine.inputNode
+
+            // 1. Set Input Device if requested
+            if let deviceId = targetDeviceId {
+                print("[WhisperKitService] Setting input device to AudioDeviceID: \(deviceId)")
+                Self.setInputDevice(deviceId, for: inputNode)
+            } else {
+                print("[WhisperKitService] Using system default input device")
+            }
+
+            // 2. Determine Format
+            // CRITICAL: Get format *after* setting device to ensure it matches the actual hardware
+            let hwFormat = inputNode.inputFormat(forBus: 0)
+            print(
+                "[WhisperKitService] Hardware input format: \(hwFormat.sampleRate)Hz, \(hwFormat.channelCount) channels"
+            )
+
+            // Create a compatible tap format (Float32, 1 channel)
+            // If hardware is 0Hz/0ch (error state), fallback to 48kHz
+            let sampleRate = hwFormat.sampleRate > 0 ? hwFormat.sampleRate : 48000
+            guard
+                let tapFormat = AVAudioFormat(
+                    commonFormat: .pcmFormatFloat32,
+                    sampleRate: sampleRate,
+                    channels: 1,
+                    interleaved: false
+                )
+            else {
+                throw WhisperKitError.transcriptionFailed("Failed to create audio format")
+            }
+
+            print("[WhisperKitService] Using tap format: \(tapFormat.sampleRate)Hz")
+
+            // 3. Install Tap
+            inputNode.installTap(onBus: 0, bufferSize: 4096, format: tapFormat) { tapBuffer, _ in
+                guard buffer.isActive else { return }
+
+                // Process audio buffer
+                guard let floatData = tapBuffer.floatChannelData?[0] else { return }
+                let frameCount = Int(tapBuffer.frameLength)
+                guard frameCount > 0 else { return }
+
+                // Calculate RMS for UI
+                var sum: Float = 0
+                for i in 0 ..< frameCount {
+                    let sample = floatData[i]
+                    sum += sample * sample
+                }
+                let rms = sqrt(sum / Float(frameCount))
+                buffer.setLevel(min(1.0, rms * 10))
+
+                // Append samples
+                let samples = Array(UnsafeBufferPointer(start: floatData, count: frameCount))
+                buffer.append(samples)
+            }
+
+            // 4. Start Engine with Retry Logic
+            engine.prepare()
+
+            var lastError: Error?
+            for attempt in 1 ... 3 {
+                do {
+                    try engine.start()
+                    print("[WhisperKitService] Audio engine started successfully on attempt \(attempt)")
+                    lastError = nil
+                    break
+                } catch {
+                    print("[WhisperKitService] Engine start attempt \(attempt) failed: \(error)")
+                    lastError = error
+                    // Backoff before retry
+                    try? await Task.sleep(nanoseconds: UInt64(attempt * 200_000_000))
+                    engine.prepare()
+                }
+            }
+
+            if let error = lastError {
+                throw error
+            }
+
+            return (engine, tapFormat)
+        }.value
+    }
+
+    private func startAudioLevelMonitoring() {
+        let bufferRef = audioBuffer
+        Task { @MainActor [weak self] in
+            while let self = self, bufferRef.isActive {
+                self.audioLevel = bufferRef.getLevel()
+                try? await Task.sleep(nanoseconds: 50_000_000)  // 50ms
+            }
+            self?.audioLevel = 0
+        }
+    }
+
+    private func startWorkerProcessing() {
+        guard let worker = transcriptionWorker else { return }
+        Task {
+            print("[WhisperKitService] Starting to consume worker updates")
+            for await update in await worker.start() {
+                switch update {
+                case .partial(let text):
+                    self.currentTranscription = text
+                case .final(let text):
+                    if self.confirmedTranscription.isEmpty {
+                        self.confirmedTranscription = text
+                    } else {
+                        self.confirmedTranscription += " " + text
+                    }
+                    self.currentTranscription = ""
+                }
+            }
+            print("[WhisperKitService] Worker updates stream finished")
+        }
     }
 
     /// Clear transcription state
