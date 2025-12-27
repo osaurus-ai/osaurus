@@ -32,6 +32,8 @@ enum SystemPermission: String, CaseIterable, Codable, Sendable {
     case disk
     /// Microphone access permission (for voice transcription)
     case microphone
+    /// Screen Recording permission (for system audio capture)
+    case screenRecording = "screen_recording"
 
     /// Human-readable name for UI display
     var displayName: String {
@@ -58,6 +60,8 @@ enum SystemPermission: String, CaseIterable, Codable, Sendable {
             return "Full Disk Access"
         case .microphone:
             return "Microphone"
+        case .screenRecording:
+            return "Screen Recording"
         }
     }
 
@@ -86,6 +90,8 @@ enum SystemPermission: String, CaseIterable, Codable, Sendable {
             return "Allows plugins to access protected files like the Messages database and other app data."
         case .microphone:
             return "Allows voice transcription using the microphone for speech-to-text."
+        case .screenRecording:
+            return "Allows capturing system audio for transcription. Screen content is not recorded."
         }
     }
 
@@ -114,6 +120,8 @@ enum SystemPermission: String, CaseIterable, Codable, Sendable {
             return "disk"
         case .microphone:
             return "mic"
+        case .screenRecording:
+            return "display"
         }
     }
 
@@ -142,6 +150,8 @@ enum SystemPermission: String, CaseIterable, Codable, Sendable {
             return "externaldrive.fill.badge.checkmark"
         case .microphone:
             return "mic.fill"
+        case .screenRecording:
+            return "rectangle.inset.filled.on.rectangle"
         }
     }
 
@@ -181,6 +191,9 @@ enum SystemPermission: String, CaseIterable, Codable, Sendable {
         case .microphone:
             // Opens Privacy & Security > Microphone
             return URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone")
+        case .screenRecording:
+            // Opens Privacy & Security > Screen Recording
+            return URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture")
         }
     }
 }

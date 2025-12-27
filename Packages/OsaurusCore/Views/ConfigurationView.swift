@@ -1186,6 +1186,7 @@ private struct VoiceSettingsSection: View {
     @StateObject private var themeManager = ThemeManager.shared
     @StateObject private var modelManager = WhisperModelManager.shared
     @StateObject private var whisperService = WhisperKitService.shared
+    @StateObject private var audioInputManager = AudioInputManager.shared
 
     @State private var tempLanguageHint: String = ""
     @State private var tempTask: TranscriptionTask = .transcribe
@@ -1240,6 +1241,38 @@ private struct VoiceSettingsSection: View {
                                     .font(.system(size: 11))
                                     .foregroundColor(themeManager.currentTheme.warningColor)
                             }
+                        }
+                    }
+                }
+
+                // Input Device Picker
+                VoiceSettingsSubsection(label: "Input Device") {
+                    VStack(alignment: .leading, spacing: 10) {
+                        VoiceInputDevicePicker(
+                            selection: Binding(
+                                get: { audioInputManager.selectedDeviceId },
+                                set: { audioInputManager.selectDevice($0) }
+                            ),
+                            devices: audioInputManager.availableDevices
+                        )
+
+                        HStack(spacing: 8) {
+                            Text("\(audioInputManager.availableDevices.count) devices available")
+                                .font(.system(size: 11))
+                                .foregroundColor(themeManager.currentTheme.tertiaryText)
+
+                            Spacer()
+
+                            Button(action: { audioInputManager.refreshDevices() }) {
+                                HStack(spacing: 4) {
+                                    Image(systemName: "arrow.clockwise")
+                                        .font(.system(size: 10))
+                                    Text("Refresh")
+                                        .font(.system(size: 11, weight: .medium))
+                                }
+                                .foregroundColor(themeManager.currentTheme.accentColor)
+                            }
+                            .buttonStyle(PlainButtonStyle())
                         }
                     }
                 }
@@ -1512,6 +1545,95 @@ private struct VoiceModelPicker: View {
                 Text(displayName)
                     .font(.system(size: 13, weight: .medium))
                     .foregroundColor(themeManager.currentTheme.primaryText)
+
+                Spacer()
+
+                Image(systemName: "chevron.up.chevron.down")
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundColor(themeManager.currentTheme.tertiaryText)
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 10)
+            .background(
+                RoundedRectangle(cornerRadius: 10)
+                    .fill(themeManager.currentTheme.inputBackground)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 10)
+                            .stroke(
+                                isHovered
+                                    ? themeManager.currentTheme.accentColor.opacity(0.5)
+                                    : themeManager.currentTheme.inputBorder,
+                                lineWidth: isHovered ? 1.5 : 1
+                            )
+                    )
+            )
+        }
+        .menuStyle(.borderlessButton)
+        .onHover { hovering in
+            withAnimation(.easeOut(duration: 0.15)) {
+                isHovered = hovering
+            }
+        }
+    }
+}
+
+// MARK: - Voice Input Device Picker
+
+private struct VoiceInputDevicePicker: View {
+    @StateObject private var themeManager = ThemeManager.shared
+    @Binding var selection: String?
+    let devices: [AudioInputDevice]
+
+    @State private var isHovered = false
+
+    private var displayName: String {
+        if let selectedId = selection,
+            let device = devices.first(where: { $0.id == selectedId })
+        {
+            return device.name
+        }
+        return "System Default"
+    }
+
+    var body: some View {
+        Menu {
+            // System Default option
+            Button(action: { selection = nil }) {
+                HStack {
+                    Text("System Default")
+                    if selection == nil {
+                        Image(systemName: "checkmark")
+                    }
+                }
+            }
+
+            Divider()
+
+            // Available devices
+            ForEach(devices) { device in
+                Button(action: { selection = device.id }) {
+                    HStack {
+                        Text(device.name)
+                        if device.isDefault {
+                            Text("(Default)")
+                                .foregroundColor(.secondary)
+                        }
+                        if selection == device.id {
+                            Image(systemName: "checkmark")
+                        }
+                    }
+                }
+            }
+        } label: {
+            HStack(spacing: 10) {
+                Image(systemName: "mic.fill")
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundColor(themeManager.currentTheme.accentColor)
+
+                Text(displayName)
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundColor(themeManager.currentTheme.primaryText)
+                    .lineLimit(1)
 
                 Spacer()
 

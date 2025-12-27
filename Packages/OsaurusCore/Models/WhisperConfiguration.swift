@@ -24,12 +24,16 @@ public struct WhisperConfiguration: Codable, Equatable, Sendable {
     /// Task type: "transcribe" or "translate"
     public var task: TranscriptionTask
 
+    /// Selected audio input device unique ID (nil = system default)
+    public var selectedInputDeviceId: String?
+
     private enum CodingKeys: String, CodingKey {
         case defaultModel
         case languageHint
         case enabled
         case wordTimestamps
         case task
+        case selectedInputDeviceId
     }
 
     public init(from decoder: Decoder) throws {
@@ -41,6 +45,7 @@ public struct WhisperConfiguration: Codable, Equatable, Sendable {
         self.wordTimestamps =
             try container.decodeIfPresent(Bool.self, forKey: .wordTimestamps) ?? defaults.wordTimestamps
         self.task = try container.decodeIfPresent(TranscriptionTask.self, forKey: .task) ?? defaults.task
+        self.selectedInputDeviceId = try container.decodeIfPresent(String.self, forKey: .selectedInputDeviceId)
     }
 
     public init(
@@ -48,13 +53,15 @@ public struct WhisperConfiguration: Codable, Equatable, Sendable {
         languageHint: String? = nil,
         enabled: Bool = true,
         wordTimestamps: Bool = false,
-        task: TranscriptionTask = .transcribe
+        task: TranscriptionTask = .transcribe,
+        selectedInputDeviceId: String? = nil
     ) {
         self.defaultModel = defaultModel
         self.languageHint = languageHint
         self.enabled = enabled
         self.wordTimestamps = wordTimestamps
         self.task = task
+        self.selectedInputDeviceId = selectedInputDeviceId
     }
 
     /// Default configuration
@@ -64,7 +71,8 @@ public struct WhisperConfiguration: Codable, Equatable, Sendable {
             languageHint: nil,
             enabled: true,
             wordTimestamps: false,
-            task: .transcribe
+            task: .transcribe,
+            selectedInputDeviceId: nil
         )
     }
 }

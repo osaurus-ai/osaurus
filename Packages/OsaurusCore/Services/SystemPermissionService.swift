@@ -93,6 +93,8 @@ final class SystemPermissionService: NSObject, ObservableObject, CLLocationManag
             return checkDiskPermission()
         case .microphone:
             return checkMicrophonePermission()
+        case .screenRecording:
+            return checkScreenRecordingPermission()
         }
     }
 
@@ -204,6 +206,8 @@ final class SystemPermissionService: NSObject, ObservableObject, CLLocationManag
             requestDiskPermission()
         case .microphone:
             requestMicrophonePermission()
+        case .screenRecording:
+            requestScreenRecordingPermission()
         }
     }
 
@@ -583,6 +587,33 @@ final class SystemPermissionService: NSObject, ObservableObject, CLLocationManag
                 self.setPermission(.microphone, isGranted: granted)
             }
         }
+    }
+
+    // MARK: - Screen Recording Permission (for System Audio)
+
+    private func checkScreenRecordingPermission() -> Bool {
+        // ScreenCaptureKit requires screen recording permission to capture system audio
+        // We check by attempting to get shareable content - this triggers the permission check
+        // For a quick check, we use CGWindowListCopyWindowInfo which requires screen recording
+        if let windowList = CGWindowListCopyWindowInfo(.optionOnScreenOnly, kCGNullWindowID) as? [[String: Any]] {
+            // If we can read window names, we have permission
+            for window in windowList {
+                if let name = window[kCGWindowName as String] as? String, !name.isEmpty {
+                    return true
+                }
+            }
+            // If we got windows but no names, we might not have permission
+            // Try a different check - if we have any windows at all, we likely have permission
+            return !windowList.isEmpty
+        }
+        return false
+    }
+
+    private func requestScreenRecordingPermission() {
+        // macOS doesn't allow programmatic screen recording permission requests.
+        // We can only open System Settings for the user to grant it manually.
+        // Attempting to use ScreenCaptureKit will trigger the system prompt.
+        openSystemSettings(for: .screenRecording)
     }
 
     // MARK: - Bulk Checks

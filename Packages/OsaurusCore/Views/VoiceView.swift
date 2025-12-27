@@ -118,6 +118,7 @@ private struct VoiceMainTab: View {
     @Environment(\.theme) private var theme
     @StateObject private var whisperService = WhisperKitService.shared
     @StateObject private var modelManager = WhisperModelManager.shared
+    @StateObject private var audioInputManager = AudioInputManager.shared
 
     @State private var transcriptionText: String = ""
     @State private var errorMessage: String?
@@ -130,6 +131,9 @@ private struct VoiceMainTab: View {
 
                 // Model Selection Card
                 modelSelectionCard
+
+                // Input Device Selection Card
+                inputDeviceCard
 
                 // Recording Test Card
                 recordingTestCard
@@ -309,6 +313,86 @@ private struct VoiceMainTab: View {
                     RoundedRectangle(cornerRadius: 8)
                         .fill(theme.errorColor.opacity(0.1))
                 )
+            }
+        }
+        .padding(20)
+        .background(
+            RoundedRectangle(cornerRadius: 16)
+                .fill(theme.cardBackground)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 16)
+                        .stroke(theme.cardBorder, lineWidth: 1)
+                )
+        )
+    }
+
+    // MARK: - Input Device Card
+
+    private var inputDeviceCard: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            HStack(spacing: 12) {
+                ZStack {
+                    RoundedRectangle(cornerRadius: 12)
+                        .fill(theme.accentColor.opacity(0.15))
+                    Image(systemName: "speaker.wave.2")
+                        .font(.system(size: 20, weight: .medium))
+                        .foregroundColor(theme.accentColor)
+                }
+                .frame(width: 48, height: 48)
+
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Audio Input")
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundColor(theme.primaryText)
+
+                    Text(
+                        audioInputManager.selectedDevice?.name ?? "System Default"
+                    )
+                    .font(.system(size: 12))
+                    .foregroundColor(theme.secondaryText)
+                }
+
+                Spacer()
+
+                // Refresh button
+                Button(action: { audioInputManager.refreshDevices() }) {
+                    Image(systemName: "arrow.clockwise")
+                        .font(.system(size: 14, weight: .medium))
+                        .foregroundColor(theme.secondaryText)
+                        .padding(8)
+                        .background(
+                            RoundedRectangle(cornerRadius: 8)
+                                .fill(theme.tertiaryBackground)
+                        )
+                }
+                .buttonStyle(PlainButtonStyle())
+                .help("Refresh available devices")
+            }
+
+            // Device picker
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Select Input Device")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundColor(theme.secondaryText)
+
+                AudioInputDevicePicker(
+                    selection: Binding(
+                        get: { audioInputManager.selectedDeviceId },
+                        set: { audioInputManager.selectDevice($0) }
+                    ),
+                    devices: audioInputManager.availableDevices
+                )
+            }
+
+            if audioInputManager.availableDevices.isEmpty {
+                HStack(spacing: 6) {
+                    Image(systemName: "info.circle")
+                        .font(.system(size: 11))
+                        .foregroundColor(theme.warningColor)
+                    Text("No audio input devices found. Check your system preferences.")
+                        .font(.system(size: 11))
+                        .foregroundColor(theme.warningColor)
+                }
             }
         }
         .padding(20)
@@ -556,6 +640,95 @@ private struct AudioLevelView: View {
             return theme.warningColor
         } else {
             return theme.errorColor
+        }
+    }
+}
+
+// MARK: - Audio Input Device Picker
+
+private struct AudioInputDevicePicker: View {
+    @Environment(\.theme) private var theme
+    @Binding var selection: String?
+    let devices: [AudioInputDevice]
+
+    @State private var isHovered = false
+
+    private var displayName: String {
+        if let selectedId = selection,
+            let device = devices.first(where: { $0.id == selectedId })
+        {
+            return device.name
+        }
+        return "System Default"
+    }
+
+    var body: some View {
+        Menu {
+            // System Default option
+            Button(action: { selection = nil }) {
+                HStack {
+                    Text("System Default")
+                    if selection == nil {
+                        Image(systemName: "checkmark")
+                    }
+                }
+            }
+
+            Divider()
+
+            // Available devices
+            ForEach(devices) { device in
+                Button(action: { selection = device.id }) {
+                    HStack {
+                        Text(device.name)
+                        if device.isDefault {
+                            Text("(Default)")
+                                .foregroundColor(.secondary)
+                        }
+                        if selection == device.id {
+                            Image(systemName: "checkmark")
+                        }
+                    }
+                }
+            }
+        } label: {
+            HStack(spacing: 10) {
+                Image(systemName: "mic.fill")
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundColor(theme.accentColor)
+
+                Text(displayName)
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundColor(theme.primaryText)
+                    .lineLimit(1)
+
+                Spacer()
+
+                Image(systemName: "chevron.up.chevron.down")
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundColor(theme.tertiaryText)
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 10)
+            .background(
+                RoundedRectangle(cornerRadius: 10)
+                    .fill(theme.inputBackground)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 10)
+                            .stroke(
+                                isHovered
+                                    ? theme.accentColor.opacity(0.5)
+                                    : theme.inputBorder,
+                                lineWidth: isHovered ? 1.5 : 1
+                            )
+                    )
+            )
+        }
+        .menuStyle(.borderlessButton)
+        .onHover { hovering in
+            withAnimation(.easeOut(duration: 0.15)) {
+                isHovered = hovering
+            }
         }
     }
 }
