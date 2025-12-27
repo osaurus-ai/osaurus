@@ -1939,7 +1939,6 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         }
 
         let modelParam = parsed.fields["model"]
-        let language = parsed.fields["language"]
         let responseFormat = parsed.fields["response_format"] ?? "json"
 
         Task(priority: .userInitiated) {
@@ -2078,7 +2077,6 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         var result = MultipartParseResult()
 
         let boundaryData = ("--" + boundary).data(using: .utf8)!
-        let endBoundaryData = ("--" + boundary + "--").data(using: .utf8)!
         let crlfData = "\r\n".data(using: .utf8)!
         let doubleCrlfData = "\r\n\r\n".data(using: .utf8)!
 
@@ -2122,14 +2120,12 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 continue
             }
 
-            var contentDisposition: String?
             var fieldName: String?
             var fileName: String?
 
             for line in headerString.split(separator: "\r\n") {
                 let lineStr = String(line)
                 if lineStr.lowercased().hasPrefix("content-disposition:") {
-                    contentDisposition = lineStr
                     // Extract name
                     if let nameRange = lineStr.range(of: "name=\"") {
                         let nameStart = nameRange.upperBound

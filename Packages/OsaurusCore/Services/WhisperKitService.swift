@@ -218,7 +218,7 @@ public final class WhisperKitService: ObservableObject {
         }
 
         // Get the selected model from manager
-        guard let selectedModel = await WhisperModelManager.shared.selectedModel else {
+        guard let selectedModel = WhisperModelManager.shared.selectedModel else {
             throw WhisperKitError.noModelSelected
         }
 
@@ -248,7 +248,7 @@ public final class WhisperKitService: ObservableObject {
 
         do {
             // Get configuration
-            let config = await WhisperConfigurationStore.load()
+            let config = WhisperConfigurationStore.load()
 
             // Configure decoding options
             let options = DecodingOptions(
@@ -306,7 +306,7 @@ public final class WhisperKitService: ObservableObject {
                 return int16Buffer.map { Float($0) / Float(Int16.max) }
             }
 
-            let config = await WhisperConfigurationStore.load()
+            let config = WhisperConfigurationStore.load()
 
             let options = DecodingOptions(
                 task: config.task == .translate ? .translate : .transcribe,
