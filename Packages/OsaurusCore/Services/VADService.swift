@@ -331,6 +331,12 @@ public final class VADService: ObservableObject {
         }
 
         print("[VADService] Resuming after chat closed...")
+
+        // Clear any stale transcription before resuming
+        whisperService.clearTranscription()
+        accumulatedTranscription = ""
+        lastTranscription = ""
+
         do {
             try await start()
             print("[VADService] Successfully resumed")
