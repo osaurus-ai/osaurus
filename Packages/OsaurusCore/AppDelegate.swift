@@ -133,13 +133,26 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegat
             VADMenuBarController.shared.show()
         }
 
-        // Auto-start VAD if enabled
+        // Auto-start VAD if enabled (with delay to wait for model loading)
         if vadConfig.vadModeEnabled && !vadConfig.enabledPersonaIds.isEmpty {
             Task { @MainActor in
-                do {
-                    try await VADService.shared.start()
-                } catch {
-                    print("[AppDelegate] Failed to start VAD service: \(error)")
+                // Wait for WhisperKit model to be loaded (up to 30 seconds)
+                let whisperService = WhisperKitService.shared
+                var attempts = 0
+                while !whisperService.isModelLoaded && attempts < 60 {
+                    try? await Task.sleep(nanoseconds: 500_000_000)  // 500ms
+                    attempts += 1
+                }
+
+                if whisperService.isModelLoaded {
+                    do {
+                        try await VADService.shared.start()
+                        print("[AppDelegate] VAD service started successfully on app launch")
+                    } catch {
+                        print("[AppDelegate] Failed to start VAD service: \(error)")
+                    }
+                } else {
+                    print("[AppDelegate] VAD service not started - model not loaded after 30 seconds")
                 }
             }
         }
@@ -169,6 +182,22 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegat
             name: NSNotification.Name("ShowVoiceSettings"),
             object: nil
         )
+
+        // Listen for chat view closed to resume VAD
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleChatViewClosed(_:)),
+            name: .chatViewClosed,
+            object: nil
+        )
+    }
+
+    @objc private func handleChatViewClosed(_ notification: Notification) {
+        print("[AppDelegate] Chat view closed, checking if VAD should resume...")
+        Task { @MainActor in
+            // Resume VAD if it was paused
+            await VADService.shared.resumeAfterChat()
+        }
     }
 
     @objc private func handleVADPersonaDetected(_ notification: Notification) {
@@ -181,14 +210,17 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegat
             PersonaManager.shared.setActivePersona(detection.personaId)
 
             // Show chat overlay with the activated persona
+            print("[AppDelegate] Calling showChatOverlay...")
             showChatOverlay()
+            print("[AppDelegate] showChatOverlay completed, chatWindow visible: \(chatWindow?.isVisible ?? false)")
 
-            // Optionally start voice input if configured
+            // Start voice input in chat after a delay (let VAD stop and UI settle)
             let vadConfig = VADConfigurationStore.load()
             if vadConfig.autoStartVoiceInput {
-                // Post notification to trigger voice input in chat view
+                try? await Task.sleep(nanoseconds: 800_000_000)  // 800ms - give time for VAD to fully stop
+                print("[AppDelegate] Triggering voice input in chat")
                 NotificationCenter.default.post(
-                    name: NSNotification.Name("StartVoiceInput"),
+                    name: .startVoiceInputInChat,
                     object: nil
                 )
             }
@@ -371,6 +403,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegat
         let popover = NSPopover()
         popover.behavior = .transient
         popover.animates = true
+        popover.delegate = self
 
         let themeManager = ThemeManager.shared
         let contentView = ContentView()
@@ -383,6 +416,14 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegat
 
         popover.show(relativeTo: statusButton.bounds, of: statusButton, preferredEdge: .minY)
         NSApp.activate(ignoringOtherApps: true)
+    }
+
+    // MARK: - NSPopoverDelegate
+
+    public func popoverDidClose(_ notification: Notification) {
+        print("[AppDelegate] Popover closed, posting chatViewClosed notification")
+        // Post notification so VAD can resume
+        NotificationCenter.default.post(name: .chatViewClosed, object: nil)
     }
 
 }
@@ -536,7 +577,9 @@ extension AppDelegate {
     }
 
     @MainActor func showChatOverlay() {
+        print("[AppDelegate] showChatOverlay: chatWindow exists = \(chatWindow != nil)")
         if chatWindow == nil {
+            print("[AppDelegate] Creating new chat window...")
             let themeManager = ThemeManager.shared
             let root = ChatView()
                 .environmentObject(serverController)
@@ -581,19 +624,75 @@ extension AppDelegate {
             chatWindow = win
             // Pre-layout before showing to avoid initial jank
             controller.view.layoutSubtreeIfNeeded()
+
+            // Force the app and window to the very front - use aggressive approach
+            print("[AppDelegate] Activating app and showing window...")
+
+            // Unhide app first
+            NSApp.unhide(nil)
+
+            // Use modal panel level to guarantee visibility over everything
+            win.level = .modalPanel
+
+            // Activate and show
             NSApp.activate(ignoringOtherApps: true)
-            chatWindow?.makeKeyAndOrderFront(nil)
+            win.makeKeyAndOrderFront(nil)
+            win.orderFrontRegardless()
+
+            // Also ensure it's the key window
+            win.makeKey()
+
+            print(
+                "[AppDelegate] Window shown, frame: \(win.frame), isVisible: \(win.isVisible), level: \(win.level.rawValue)"
+            )
+
+            // Restore normal level after a brief moment (if not configured as always-on-top)
+            if !chatConfig.alwaysOnTop {
+                Task { @MainActor in
+                    try? await Task.sleep(nanoseconds: 500_000_000)  // 500ms
+                    win.level = .normal
+                }
+            }
+
             Task { @MainActor in
                 NotificationCenter.default.post(name: .chatOverlayActivated, object: nil)
             }
             return
         }
 
-        guard let win = chatWindow else { return }
+        guard let win = chatWindow else {
+            print("[AppDelegate] ERROR: chatWindow is nil after creation block!")
+            return
+        }
+
+        print("[AppDelegate] Reusing existing chat window, activating...")
+
+        // Unhide app first
+        NSApp.unhide(nil)
+
+        // Force the app and window to the very front
         NSApp.activate(ignoringOtherApps: true)
         if win.isMiniaturized { win.deminiaturize(nil) }
         centerWindowOnActiveScreen(win)
+
+        // Use modal panel level to guarantee visibility
+        let originalLevel = win.level
+        win.level = .modalPanel
         win.makeKeyAndOrderFront(nil)
+        win.orderFrontRegardless()
+        win.makeKey()
+
+        print("[AppDelegate] Window re-shown, frame: \(win.frame), isVisible: \(win.isVisible)")
+
+        // Restore original level after a brief moment (if not configured as always-on-top)
+        let chatConfig = ChatConfigurationStore.load()
+        if !chatConfig.alwaysOnTop {
+            Task { @MainActor in
+                try? await Task.sleep(nanoseconds: 500_000_000)  // 500ms
+                win.level = originalLevel
+            }
+        }
+
         Task { @MainActor in
             NotificationCenter.default.post(name: .chatOverlayActivated, object: nil)
         }
@@ -601,6 +700,9 @@ extension AppDelegate {
 
     @MainActor func closeChatOverlay() {
         chatWindow?.orderOut(nil)
+        // Notify that chat is closed so VAD can resume
+        print("[AppDelegate] Chat overlay closed via closeChatOverlay")
+        NotificationCenter.default.post(name: .chatViewClosed, object: nil)
     }
 
     @MainActor func applyChatWindowLevel() {
@@ -719,5 +821,10 @@ extension AppDelegate {
     public func windowWillClose(_ notification: Notification) {
         guard let win = notification.object as? NSWindow else { return }
         if win == managementWindow { managementWindow = nil }
+        if win == chatWindow {
+            print("[AppDelegate] Chat window closing via windowWillClose, posting chatViewClosed notification")
+            NotificationCenter.default.post(name: .chatViewClosed, object: nil)
+            chatWindow = nil
+        }
     }
 }

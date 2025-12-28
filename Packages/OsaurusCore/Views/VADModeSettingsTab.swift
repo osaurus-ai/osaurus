@@ -103,6 +103,20 @@ struct VADModeSettingsTab: View {
                 hasLoadedSettings = true
             }
         }
+        .onDisappear {
+            // Clean up test if running when navigating away
+            if isTestingVAD {
+                isTestingVAD = false
+                Task {
+                    // Resume VAD if it should be running
+                    if vadEnabled {
+                        try? await vadService.start()
+                    } else {
+                        _ = await whisperService.stopStreamingTranscription()
+                    }
+                }
+            }
+        }
     }
 
     // MARK: - VAD Toggle Card
@@ -648,20 +662,37 @@ struct VADModeSettingsTab: View {
 
     private func toggleTest() {
         if isTestingVAD {
+            // Stop testing
+            isTestingVAD = false
             Task {
-                _ = await whisperService.stopStreamingTranscription()
-                isTestingVAD = false
+                // If VAD was enabled before test, resume it
+                if vadEnabled {
+                    try? await vadService.start()
+                } else {
+                    _ = await whisperService.stopStreamingTranscription()
+                }
             }
         } else {
+            // Start testing - pause VAD if running
             testError = nil
             testDetection = nil
             testTranscription = ""
             Task {
+                // Pause VAD if it's running (it uses the same transcription)
+                if vadService.state == .listening {
+                    await vadService.pause()
+                }
+
                 do {
+                    // Start fresh transcription for testing
                     try await whisperService.startStreamingTranscription()
                     isTestingVAD = true
                 } catch {
                     testError = error.localizedDescription
+                    // Resume VAD if it was paused
+                    if vadEnabled {
+                        try? await vadService.start()
+                    }
                 }
             }
         }
@@ -681,6 +712,17 @@ struct VADModeSettingsTab: View {
         )
         if let detection = detector.detect(in: text) {
             testDetection = detection
+
+            // Auto-reset after showing the match for 2 seconds
+            Task { @MainActor in
+                try? await Task.sleep(nanoseconds: 2_000_000_000)
+                // Only reset if still testing and same detection
+                if isTestingVAD {
+                    testTranscription = ""
+                    testDetection = nil
+                    whisperService.clearTranscription()
+                }
+            }
         }
     }
 }

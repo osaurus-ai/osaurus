@@ -3,7 +3,7 @@
 //  osaurus
 //
 //  Always-on Voice Activity Detection service for wake-word persona activation.
-//  Continuously listens for persona names and triggers activation.
+//  Uses WhisperKitService for transcription to avoid audio conflicts.
 //
 
 import AVFoundation
@@ -11,11 +11,11 @@ import Combine
 import Foundation
 import os
 
-@preconcurrency import WhisperKit
-
 /// Notification posted when a persona wake-word is detected
 extension Notification.Name {
-    static let vadPersonaDetected = Notification.Name("vadPersonaDetected")
+    public static let vadPersonaDetected = Notification.Name("vadPersonaDetected")
+    public static let startVoiceInputInChat = Notification.Name("startVoiceInputInChat")
+    public static let chatViewClosed = Notification.Name("chatViewClosed")
 }
 
 /// Result of a VAD detection
@@ -36,6 +36,7 @@ public enum VADServiceState: Equatable, Sendable {
 }
 
 /// Always-on listening service for wake-word detection
+/// Uses WhisperKitService's audio infrastructure to avoid conflicts
 @MainActor
 public final class VADService: ObservableObject {
     public static let shared = VADService()
@@ -46,24 +47,27 @@ public final class VADService: ObservableObject {
     @Published public private(set) var isEnabled: Bool = false
     @Published public private(set) var lastDetection: VADDetectionResult?
     @Published public private(set) var audioLevel: Float = 0.0
+    @Published public private(set) var lastTranscription: String = ""
 
     // MARK: - Private Properties
 
-    private var audioEngine: AVAudioEngine?
-    private var whisperKit: WhisperKit?
     private var configuration: VADConfiguration = .default
     private var personaDetector: PersonaNameDetector?
-    private var processingTask: Task<Void, Never>?
-    private var audioBuffer: VADAudioBuffer?
-    private var isProcessingAudio = false
+    private var cancellables = Set<AnyCancellable>()
+    private var whisperService: WhisperKitService { WhisperKitService.shared }
 
-    // Audio processing parameters
-    private let sampleRate: Double = 16000
-    private let bufferDuration: TimeInterval = 3.0  // Process every 3 seconds
-    private let overlapDuration: TimeInterval = 1.0  // Keep 1 second overlap
+    // Debounce detection to avoid duplicate triggers
+    private var lastDetectionTime: Date = .distantPast
+    private let detectionCooldown: TimeInterval = 3.0  // Seconds before detecting same persona again
+
+    // Accumulate transcription for better detection
+    private var accumulatedTranscription: String = ""
+    private var lastTranscriptionUpdate: Date = Date()
+    private let transcriptionResetInterval: TimeInterval = 5.0  // Reset after silence
 
     private init() {
         loadConfiguration()
+        setupObservers()
     }
 
     // MARK: - Public Methods
@@ -71,43 +75,67 @@ public final class VADService: ObservableObject {
     /// Load configuration and update state
     public func loadConfiguration() {
         configuration = VADConfigurationStore.load()
-        isEnabled = configuration.vadModeEnabled
 
         // Update persona detector with enabled personas
         personaDetector = PersonaNameDetector(
             enabledPersonaIds: configuration.enabledPersonaIds,
             customWakePhrase: configuration.customWakePhrase
         )
+
+        print("[VADService] Loaded configuration with \(configuration.enabledPersonaIds.count) enabled personas")
     }
 
     /// Start VAD listening
     public func start() async throws {
-        guard !isEnabled || state != .listening else { return }
+        guard state != .listening else {
+            print("[VADService] Already listening, skipping start")
+            return
+        }
 
         loadConfiguration()
 
         guard configuration.vadModeEnabled else {
+            print("[VADService] VAD mode is not enabled")
             throw VADError.notEnabled
         }
 
         guard !configuration.enabledPersonaIds.isEmpty || !configuration.customWakePhrase.isEmpty else {
+            print("[VADService] No personas enabled for VAD")
             throw VADError.noPersonasEnabled
         }
 
+        print("[VADService] Starting with \(configuration.enabledPersonaIds.count) enabled personas")
+
         state = .starting
 
+        // Ensure model is loaded
+        if !whisperService.isModelLoaded {
+            // Try to load the model
+            guard let selectedModel = WhisperModelManager.shared.selectedModel else {
+                state = .error("No model selected")
+                throw VADError.noModelSelected
+            }
+
+            do {
+                try await whisperService.loadModel(selectedModel.id)
+            } catch {
+                state = .error("Failed to load model: \(error.localizedDescription)")
+                throw VADError.modelNotDownloaded
+            }
+        }
+
+        // Start streaming transcription in VAD background mode
         do {
-            // Initialize WhisperKit if needed
-            try await initializeWhisperKit()
+            // Enable background mode to prevent accidental stops
+            whisperService.isVADBackgroundMode = true
 
-            // Setup audio engine
-            try await setupAudioEngine()
-
+            try await whisperService.startStreamingTranscription()
             state = .listening
             isEnabled = true
-
-            print("[VADService] Started listening for wake words")
+            accumulatedTranscription = ""
+            print("[VADService] Started listening for wake words (background mode enabled)")
         } catch {
+            whisperService.isVADBackgroundMode = false
             state = .error(error.localizedDescription)
             throw error
         }
@@ -115,16 +143,20 @@ public final class VADService: ObservableObject {
 
     /// Stop VAD listening
     public func stop() async {
-        processingTask?.cancel()
-        processingTask = nil
+        guard state == .listening || state == .starting else { return }
 
-        await teardownAudioEngine()
+        // Disable background mode and force stop
+        whisperService.isVADBackgroundMode = false
+        _ = await whisperService.stopStreamingTranscription(force: true)
+        whisperService.clearTranscription()
 
         state = .idle
         isEnabled = false
         audioLevel = 0
+        accumulatedTranscription = ""
+        lastTranscription = ""
 
-        print("[VADService] Stopped listening")
+        print("[VADService] Stopped listening (background mode disabled)")
     }
 
     /// Toggle VAD on/off
@@ -136,220 +168,174 @@ public final class VADService: ObservableObject {
         }
     }
 
-    /// Update configuration and restart if needed
-    public func updateConfiguration(_ newConfig: VADConfiguration) async throws {
-        let wasListening = state == .listening
+    /// Pause VAD temporarily (e.g., when chat voice input is active or testing)
+    public func pause() async {
+        guard state == .listening || state == .starting else { return }
+        print("[VADService] Pausing temporarily")
 
-        if wasListening {
-            await stop()
-        }
+        // Disable background mode first
+        whisperService.isVADBackgroundMode = false
 
-        configuration = newConfig
-        VADConfigurationStore.save(newConfig)
-        loadConfiguration()
+        // Stop the transcription so chat can start fresh
+        _ = await whisperService.stopStreamingTranscription(force: true)
+        whisperService.clearTranscription()
 
-        if newConfig.vadModeEnabled && wasListening {
-            try await start()
-        }
+        state = .idle
+        // Keep isEnabled = true so we know to resume later
+        print("[VADService] Paused - transcription stopped, ready for chat voice input")
+    }
+
+    /// Resume VAD after pause
+    public func resume() async throws {
+        guard isEnabled && state == .idle else { return }
+        print("[VADService] Resuming after chat voice input")
+        try await start()
     }
 
     // MARK: - Private Methods
 
-    private func initializeWhisperKit() async throws {
-        guard whisperKit == nil else { return }
-
-        // Use the same model as WhisperKitService
-        guard let selectedModel = WhisperModelManager.shared.selectedModel else {
-            throw VADError.noModelSelected
-        }
-
-        let modelFolder = WhisperModelManager.whisperModelsDirectory
-            .appendingPathComponent("models/argmaxinc/whisperkit-coreml", isDirectory: true)
-            .appendingPathComponent(selectedModel.id, isDirectory: true)
-
-        guard FileManager.default.fileExists(atPath: modelFolder.path) else {
-            throw VADError.modelNotDownloaded
-        }
-
-        let config = WhisperKitConfig(
-            modelFolder: modelFolder.path,
-            computeOptions: ModelComputeOptions(
-                audioEncoderCompute: .cpuAndNeuralEngine,
-                textDecoderCompute: .cpuAndNeuralEngine
-            ),
-            verbose: false,
-            logLevel: .error,
-            prewarm: true,
-            load: true,
-            useBackgroundDownloadSession: false
-        )
-
-        whisperKit = try await WhisperKit(config)
-    }
-
-    private func setupAudioEngine() async throws {
-        await teardownAudioEngine()
-
-        let engine = AVAudioEngine()
-        let inputNode = engine.inputNode
-
-        // Get input format
-        let hwFormat = inputNode.inputFormat(forBus: 0)
-        let actualSampleRate = hwFormat.sampleRate > 0 ? hwFormat.sampleRate : 48000
-
-        guard
-            let tapFormat = AVAudioFormat(
-                commonFormat: .pcmFormatFloat32,
-                sampleRate: actualSampleRate,
-                channels: 1,
-                interleaved: false
-            )
-        else {
-            throw VADError.audioSetupFailed("Failed to create audio format")
-        }
-
-        // Create audio buffer for continuous processing
-        audioBuffer = VADAudioBuffer(
-            sampleRate: actualSampleRate,
-            bufferDuration: bufferDuration,
-            overlapDuration: overlapDuration
-        )
-
-        // Install tap
-        inputNode.installTap(onBus: 0, bufferSize: 4096, format: tapFormat) { [weak self] buffer, _ in
-            guard let self = self, self.state == .listening else { return }
-
-            guard let floatData = buffer.floatChannelData?[0] else { return }
-            let frameCount = Int(buffer.frameLength)
-            guard frameCount > 0 else { return }
-
-            // Calculate audio level
-            var sum: Float = 0
-            for i in 0 ..< frameCount {
-                sum += floatData[i] * floatData[i]
+    private func setupObservers() {
+        // Observe transcription changes from WhisperKitService
+        whisperService.$currentTranscription
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] transcription in
+                self?.handleTranscription(transcription, isConfirmed: false)
             }
-            let rms = sqrt(sum / Float(frameCount))
+            .store(in: &cancellables)
 
-            Task { @MainActor in
-                self.audioLevel = min(1.0, rms * 10)
+        whisperService.$confirmedTranscription
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] transcription in
+                self?.handleTranscription(transcription, isConfirmed: true)
             }
+            .store(in: &cancellables)
 
-            // Add samples to buffer
-            let samples = Array(UnsafeBufferPointer(start: floatData, count: frameCount))
-            self.audioBuffer?.append(samples)
-
-            // Check if buffer is ready for processing
-            if let buffer = self.audioBuffer, buffer.isReady && !self.isProcessingAudio {
-                self.processAudioBuffer()
+        // Observe audio level
+        whisperService.$audioLevel
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] level in
+                guard let self = self, self.state == .listening else { return }
+                self.audioLevel = level
             }
-        }
+            .store(in: &cancellables)
 
-        engine.prepare()
+        // Observe recording state - auto-restart if stopped unexpectedly
+        whisperService.$isRecording
+            .receive(on: DispatchQueue.main)
+            .dropFirst()  // Ignore initial value
+            .sink { [weak self] isRecording in
+                guard let self = self else { return }
 
-        do {
-            try engine.start()
-            self.audioEngine = engine
-        } catch {
-            throw VADError.audioSetupFailed(error.localizedDescription)
-        }
-    }
-
-    private func teardownAudioEngine() async {
-        if let engine = audioEngine {
-            if engine.isRunning {
-                engine.stop()
-            }
-            engine.inputNode.removeTap(onBus: 0)
-            audioEngine = nil
-        }
-        audioBuffer = nil
-    }
-
-    private func processAudioBuffer() {
-        guard let buffer = audioBuffer, !isProcessingAudio else { return }
-
-        isProcessingAudio = true
-        let samples = buffer.getAndAdvance()
-
-        Task { @MainActor in
-            defer { isProcessingAudio = false }
-
-            guard state == .listening else { return }
-
-            // Check energy threshold
-            let energy = samples.reduce(0) { $0 + $1 * $1 } / Float(samples.count)
-            let threshold = configuration.wakeWordSensitivity.energyThreshold
-
-            guard energy > threshold else {
-                // Too quiet, likely no speech
-                return
-            }
-
-            state = .processing
-
-            do {
-                // Resample to 16kHz if needed
-                let processedSamples: [Float]
-                if let buffer = audioBuffer, buffer.sampleRate != 16000 {
-                    processedSamples = resample(samples, from: buffer.sampleRate, to: 16000)
-                } else {
-                    processedSamples = samples
+                // Update state based on recording
+                if isRecording && self.state == .starting {
+                    self.state = .listening
                 }
 
-                // Transcribe
-                guard let whisperKit = whisperKit else { return }
-
-                let options = DecodingOptions(
-                    task: .transcribe,
-                    language: "en",  // VAD typically works best with English wake words
-                    wordTimestamps: false
-                )
-
-                let results = try await whisperKit.transcribe(audioArray: processedSamples, decodeOptions: options)
-
-                if let result = results.first {
-                    let transcription = result.text.trimmingCharacters(in: .whitespacesAndNewlines)
-
-                    // Check for persona name
-                    if let detection = personaDetector?.detect(in: transcription) {
-                        lastDetection = detection
-
-                        // Post notification
-                        NotificationCenter.default.post(
-                            name: .vadPersonaDetected,
-                            object: detection
-                        )
-
-                        print("[VADService] Detected persona: \(detection.personaName) in '\(transcription)'")
+                // If VAD should be running but recording stopped, try to restart after a delay
+                if self.isEnabled && self.configuration.vadModeEnabled && !isRecording && self.state != .idle {
+                    print("[VADService] Recording stopped, attempting restart in 1 second...")
+                    Task { @MainActor in
+                        try? await Task.sleep(nanoseconds: 1_000_000_000)
+                        // Only restart if still supposed to be enabled
+                        if self.isEnabled && self.configuration.vadModeEnabled && self.state != .listening {
+                            print("[VADService] Restarting VAD...")
+                            try? await self.start()
+                        }
                     }
                 }
-            } catch {
-                print("[VADService] Transcription error: \(error)")
             }
+            .store(in: &cancellables)
+    }
 
-            state = .listening
+    private func handleTranscription(_ transcription: String, isConfirmed: Bool) {
+        guard state == .listening else { return }
+        guard !transcription.isEmpty else { return }
+
+        let now = Date()
+
+        // Reset accumulated transcription after silence
+        if now.timeIntervalSince(lastTranscriptionUpdate) > transcriptionResetInterval {
+            accumulatedTranscription = ""
+        }
+        lastTranscriptionUpdate = now
+
+        // Update accumulated transcription
+        if isConfirmed {
+            accumulatedTranscription = transcription
+        } else {
+            // Combine confirmed and current
+            let fullText =
+                whisperService.confirmedTranscription.isEmpty
+                ? transcription
+                : whisperService.confirmedTranscription + " " + transcription
+            accumulatedTranscription = fullText
+        }
+
+        lastTranscription = accumulatedTranscription
+
+        // Check for persona detection
+        checkForPersonaDetection(in: accumulatedTranscription)
+    }
+
+    private func checkForPersonaDetection(in text: String) {
+        guard let detector = personaDetector else { return }
+
+        // Check cooldown
+        let now = Date()
+        guard now.timeIntervalSince(lastDetectionTime) >= detectionCooldown else { return }
+
+        if let detection = detector.detect(in: text) {
+            lastDetectionTime = now
+            lastDetection = detection
+
+            print(
+                "[VADService] ✅ Detected persona: \(detection.personaName) with confidence \(detection.confidence) in '\(text)'"
+            )
+
+            // Pause VAD (will resume when ChatView closes)
+            Task {
+                await self.pause()
+
+                // Clear transcription to avoid re-detecting same phrase
+                whisperService.clearTranscription()
+                accumulatedTranscription = ""
+                lastTranscription = ""
+
+                // Post notification to open chat with voice mode
+                NotificationCenter.default.post(
+                    name: .vadPersonaDetected,
+                    object: detection
+                )
+            }
         }
     }
 
-    private func resample(_ samples: [Float], from inputRate: Double, to outputRate: Double) -> [Float] {
-        let ratio = outputRate / inputRate
-        let outputCount = Int(Double(samples.count) * ratio)
+    /// Resume VAD after chat view closes (called externally)
+    public func resumeAfterChat() async {
+        // Reload configuration in case it changed
+        loadConfiguration()
 
-        var output = [Float](repeating: 0, count: outputCount)
+        print(
+            "[VADService] Resume check: vadModeEnabled=\(configuration.vadModeEnabled), state=\(state), isEnabled=\(isEnabled)"
+        )
 
-        for i in 0 ..< outputCount {
-            let srcIndex = Double(i) / ratio
-            let srcIndexInt = Int(srcIndex)
-            let frac = Float(srcIndex - Double(srcIndexInt))
-
-            if srcIndexInt + 1 < samples.count {
-                output[i] = samples[srcIndexInt] * (1 - frac) + samples[srcIndexInt + 1] * frac
-            } else if srcIndexInt < samples.count {
-                output[i] = samples[srcIndexInt]
-            }
+        guard configuration.vadModeEnabled else {
+            print("[VADService] Not resuming - VAD mode is disabled")
+            return
         }
 
-        return output
+        guard state == .idle else {
+            print("[VADService] Not resuming - state is \(state), not idle")
+            return
+        }
+
+        print("[VADService] Resuming after chat closed...")
+        do {
+            try await start()
+            print("[VADService] Successfully resumed")
+        } catch {
+            print("[VADService] Failed to resume: \(error)")
+        }
     }
 }
 
@@ -375,63 +361,5 @@ public enum VADError: Error, LocalizedError {
         case .audioSetupFailed(let reason):
             return "Audio setup failed: \(reason)"
         }
-    }
-}
-
-// MARK: - VAD Audio Buffer
-
-/// Circular audio buffer for continuous VAD processing
-private final class VADAudioBuffer {
-    let sampleRate: Double
-    let bufferDuration: TimeInterval
-    let overlapDuration: TimeInterval
-
-    private var samples: [Float] = []
-    private let lock = NSLock()
-
-    var bufferSamples: Int { Int(sampleRate * bufferDuration) }
-    var overlapSamples: Int { Int(sampleRate * overlapDuration) }
-
-    var isReady: Bool {
-        lock.lock()
-        defer { lock.unlock() }
-        return samples.count >= bufferSamples
-    }
-
-    init(sampleRate: Double, bufferDuration: TimeInterval, overlapDuration: TimeInterval) {
-        self.sampleRate = sampleRate
-        self.bufferDuration = bufferDuration
-        self.overlapDuration = overlapDuration
-    }
-
-    func append(_ newSamples: [Float]) {
-        lock.lock()
-        defer { lock.unlock() }
-
-        samples.append(contentsOf: newSamples)
-
-        // Limit buffer size to prevent unbounded growth
-        let maxSize = bufferSamples * 3
-        if samples.count > maxSize {
-            samples = Array(samples.suffix(bufferSamples))
-        }
-    }
-
-    func getAndAdvance() -> [Float] {
-        lock.lock()
-        defer { lock.unlock() }
-
-        guard samples.count >= bufferSamples else { return [] }
-
-        // Get buffer
-        let buffer = Array(samples.prefix(bufferSamples))
-
-        // Keep overlap
-        let dropCount = bufferSamples - overlapSamples
-        if samples.count > dropCount {
-            samples = Array(samples.dropFirst(dropCount))
-        }
-
-        return buffer
     }
 }

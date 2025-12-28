@@ -954,6 +954,9 @@ public final class WhisperKitService: ObservableObject {
     @Published public var confirmedTranscription: String = ""
     @Published public var audioLevel: Float = 0.0  // 0.0 to 1.0 for visualization
 
+    /// When true, prevents stopStreamingTranscription from actually stopping (for VAD background mode)
+    public var isVADBackgroundMode: Bool = false
+
     /// Start streaming transcription
     public func startStreamingTranscription() async throws {
         guard !isRecording else { return }
@@ -1090,7 +1093,14 @@ public final class WhisperKitService: ObservableObject {
     }
 
     /// Stop streaming transcription and get final result
-    public func stopStreamingTranscription() async -> String {
+    /// - Parameter force: If true, stops even if VAD background mode is active
+    public func stopStreamingTranscription(force: Bool = false) async -> String {
+        // Don't stop if VAD background mode is active (unless forced)
+        if isVADBackgroundMode && !force {
+            print("[WhisperKitService] Ignoring stop request - VAD background mode active")
+            return confirmedTranscription + " " + currentTranscription
+        }
+
         // Stop the streaming first
         audioBuffer.setActive(false)
 

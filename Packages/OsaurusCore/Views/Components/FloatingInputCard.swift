@@ -170,6 +170,12 @@ struct FloatingInputCard: View {
             setupKeyMonitor()
             loadVoiceConfig()
         }
+        .onReceive(NotificationCenter.default.publisher(for: .startVoiceInputInChat)) { _ in
+            // Start voice input when triggered by VAD
+            if isVoiceAvailable && !showVoiceOverlay {
+                startVoiceInput()
+            }
+        }
         .onDisappear {
             cleanupKeyMonitor()
             // Stop any active voice recording
