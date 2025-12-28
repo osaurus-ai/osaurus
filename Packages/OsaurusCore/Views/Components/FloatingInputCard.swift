@@ -318,6 +318,8 @@ struct FloatingInputCard: View {
     private func sendVoiceMessage(_ message: String) {
         Task {
             _ = await whisperService.stopStreamingTranscription()
+            // Clear transcription so next voice input starts fresh
+            whisperService.clearTranscription()
         }
         voiceInputState = .idle
         showVoiceOverlay = false
