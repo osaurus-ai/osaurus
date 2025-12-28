@@ -48,6 +48,8 @@ Osaurus is an all-in-one LLM server for macOS. It combines:
 - **Plugin System** — Extend functionality with community and custom tools
 - **Personas** — Create custom AI assistants with unique prompts, tools, and visual themes
 - **Developer Tools** — Built-in insights and server explorer for debugging
+- **Voice Input** — Speech-to-text using WhisperKit with real-time on-device transcription
+- **VAD Mode** — Always-on listening with wake-word activation for hands-free persona access
 - **Apple Foundation Models** — Use the system model on macOS 26+ (Tahoe)
 
 ### Highlights
@@ -65,6 +67,8 @@ Osaurus is an all-in-one LLM server for macOS. It combines:
 | **Custom Themes**        | Create, import, and export themes with full color customization |
 | **Developer Tools**      | Request insights, API explorer, and live endpoint testing       |
 | **Menu Bar Chat**        | Chat overlay with session history, context tracking (`⌘;`)      |
+| **Voice Input**          | Speech-to-text with WhisperKit, real-time transcription         |
+| **VAD Mode**             | Always-on listening with wake-word persona activation           |
 | **Model Manager**        | Download and manage models from Hugging Face                    |
 
 ---
@@ -234,6 +238,36 @@ Access via Management window (`⌘ Shift M`) → **Insights** or **Server**.
 
 See [Developer Tools Guide](docs/DEVELOPER_TOOLS.md) for details.
 
+### Voice Input
+
+Speech-to-text powered by [WhisperKit](https://github.com/argmaxinc/WhisperKit) — fully local, private, on-device transcription.
+
+**Features:**
+
+- **Real-time transcription** — See your words as you speak
+- **Multiple Whisper models** — From Tiny (75 MB) to Large V3 (3 GB)
+- **Microphone or system audio** — Transcribe your voice or computer audio
+- **Configurable sensitivity** — Adjust for quiet or noisy environments
+- **Auto-send with confirmation** — Hands-free message sending
+
+**VAD Mode (Voice Activity Detection):**
+
+Activate personas hands-free by saying their name or a custom wake phrase.
+
+- Say a persona's name (e.g., "Hey Code Assistant") to open chat
+- Automatic voice input starts after activation
+- Menu bar indicator shows listening status
+- Configurable silence timeout and auto-close
+
+**Setup:**
+
+1. Open Management window (`⌘ Shift M`) → **Voice**
+2. Grant microphone permission
+3. Download a Whisper model
+4. Test your voice input
+
+See [Voice Input Guide](docs/VOICE_INPUT.md) for details.
+
 ---
 
 ## CLI Reference
@@ -298,6 +332,8 @@ print(response.choices[0].message.content)
 - Xcode 16.4+ (to build from source)
 
 Models are stored at `~/MLXModels` by default. Override with `OSU_MODELS_DIR`.
+
+Whisper models are stored at `~/.osaurus/whisper-models`.
 
 ---
 
