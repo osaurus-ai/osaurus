@@ -1726,8 +1726,9 @@ public protocol VADDelegate: AnyObject {
     func vadDidFail(error: Error)
 }
 
-/// Placeholder for VAD configuration - to be implemented
-public struct VADConfiguration {
+/// Audio-level VAD settings for speech detection during transcription
+/// (Separate from VADConfiguration which handles persona wake-word activation)
+public struct VADAudioSettings {
     /// Minimum duration of silence to consider speech ended (seconds)
     public var silenceThreshold: Double = 0.5
 

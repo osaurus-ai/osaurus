@@ -43,6 +43,12 @@ struct FloatingInputCard: View {
     // Cache tool list to prevent popover refresh during streaming
     @State private var cachedTools: [ToolRegistry.ToolEntry] = []
 
+    // MARK: - Voice Input State
+    @StateObject private var whisperService = WhisperKitService.shared
+    @State private var voiceInputState: VoiceInputState = .idle
+    @State private var showVoiceOverlay = false
+    @State private var voiceConfig = WhisperConfiguration.default
+
     // TextEditor should grow up to ~6 lines before scrolling
     private var inputFontSize: CGFloat { CGFloat(theme.bodySize) }
     private let maxVisibleLines: CGFloat = 6
@@ -91,29 +97,66 @@ struct FloatingInputCard: View {
         return nil
     }
 
-    var body: some View {
-        VStack(spacing: 12) {
-            // Model and tool selector chips
-            if modelOptions.count > 1 || !availableTools.isEmpty || displayContextTokens > 0 {
-                selectorRow
-                    .padding(.top, 8)
-            }
+    /// Whether voice input is available (enabled + model loaded + permission granted)
+    private var isVoiceAvailable: Bool {
+        voiceConfig.enabled && voiceConfig.voiceInputEnabled && whisperService.isModelLoaded
+            && whisperService.microphonePermissionGranted
+    }
 
-            // Main input card (with inline images)
-            inputCard
+    /// Whether voice is in a recording/active state
+    private var isVoiceActive: Bool {
+        voiceInputState != .idle
+    }
+
+    var body: some View {
+        ZStack(alignment: .bottom) {
+            VStack(spacing: 12) {
+                // Model and tool selector chips
+                if modelOptions.count > 1 || !availableTools.isEmpty || displayContextTokens > 0 {
+                    selectorRow
+                        .padding(.top, 8)
+                }
+
+                // Main input card (with inline images)
+                inputCard
+            }
+            .padding(.horizontal, 20)
+            .padding(.bottom, 20)
+            .onDrop(of: [UTType.image], isTargeted: $isDragOver) { providers in
+                handleImageDrop(providers)
+            }
+            .blur(radius: showVoiceOverlay ? 2 : 0)
+            .opacity(showVoiceOverlay ? 0.3 : 1)
+
+            // Voice input overlay
+            if showVoiceOverlay {
+                VoiceInputOverlay(
+                    state: $voiceInputState,
+                    audioLevel: whisperService.audioLevel,
+                    transcription: whisperService.currentTranscription,
+                    confirmedText: whisperService.confirmedTranscription,
+                    pauseDuration: voiceConfig.pauseDuration,
+                    confirmationDelay: voiceConfig.confirmationDelay,
+                    onCancel: { cancelVoiceInput() },
+                    onSend: { message in sendVoiceMessage(message) },
+                    onEdit: { transferToTextInput() }
+                )
+                .transition(.move(edge: .bottom).combined(with: .opacity))
+            }
         }
-        .padding(.horizontal, 20)
-        .padding(.bottom, 20)
-        .onDrop(of: [UTType.image], isTargeted: $isDragOver) { providers in
-            handleImageDrop(providers)
-        }
+        .animation(.spring(response: 0.35, dampingFraction: 0.8), value: showVoiceOverlay)
         .onAppear {
             // Sync initial value from binding
             localText = text
             setupKeyMonitor()
+            loadVoiceConfig()
         }
         .onDisappear {
             cleanupKeyMonitor()
+            // Stop any active voice recording
+            if isVoiceActive {
+                cancelVoiceInput()
+            }
         }
         .onChange(of: text) { _, newValue in
             // Sync from binding when it changes externally (e.g., quick actions)
@@ -127,6 +170,79 @@ struct FloatingInputCard: View {
                 isFocused = true
             }
         }
+        .onChange(of: whisperService.isRecording) { _, isRecording in
+            // Sync voice state with service
+            if isRecording && voiceInputState == .idle {
+                voiceInputState = .recording
+            }
+        }
+    }
+
+    // MARK: - Voice Input Methods
+
+    private func loadVoiceConfig() {
+        voiceConfig = WhisperConfigurationStore.load()
+    }
+
+    private func startVoiceInput() {
+        guard isVoiceAvailable else { return }
+
+        voiceInputState = .recording
+        showVoiceOverlay = true
+
+        Task {
+            do {
+                try await whisperService.startStreamingTranscription()
+            } catch {
+                print("[FloatingInputCard] Failed to start voice input: \(error)")
+                voiceInputState = .idle
+                showVoiceOverlay = false
+            }
+        }
+    }
+
+    private func cancelVoiceInput() {
+        Task {
+            _ = await whisperService.stopStreamingTranscription()
+            whisperService.clearTranscription()
+        }
+        voiceInputState = .idle
+        showVoiceOverlay = false
+    }
+
+    private func sendVoiceMessage(_ message: String) {
+        Task {
+            _ = await whisperService.stopStreamingTranscription()
+        }
+        voiceInputState = .idle
+        showVoiceOverlay = false
+
+        // Send the voice message
+        text = message
+        onSend()
+    }
+
+    private func transferToTextInput() {
+        // Transfer transcription to text input and close overlay
+        let transcribedText = [
+            whisperService.confirmedTranscription,
+            whisperService.currentTranscription,
+        ]
+        .filter { !$0.isEmpty }
+        .joined(separator: " ")
+
+        Task {
+            _ = await whisperService.stopStreamingTranscription()
+            whisperService.clearTranscription()
+        }
+
+        voiceInputState = .idle
+        showVoiceOverlay = false
+
+        // Set the text input
+        localText = transcribedText
+        text = transcribedText
+        isFocused = true
     }
 
     private func syncAndSend() {
@@ -419,9 +535,15 @@ struct FloatingInputCard: View {
                 inlinePendingImagesPreview
             }
 
-            // Input row with text and action button
+            // Input row with text, voice, and action button
             HStack(alignment: .bottom, spacing: 12) {
                 textInputArea
+
+                // Voice input button (when available)
+                if isVoiceAvailable && !isStreaming {
+                    voiceInputButton
+                }
+
                 actionButton
             }
         }
@@ -447,6 +569,31 @@ struct FloatingInputCard: View {
         )
         .animation(theme.springAnimation(), value: isFocused)
         .animation(theme.animationQuick(), value: isDragOver)
+    }
+
+    // MARK: - Voice Input Button
+
+    private var voiceInputButton: some View {
+        Button(action: { startVoiceInput() }) {
+            ZStack {
+                // Microphone icon
+                Image(systemName: "mic.fill")
+                    .font(.system(size: 16, weight: .medium))
+                    .foregroundColor(theme.secondaryText)
+            }
+            .frame(width: 32, height: 32)
+            .background(
+                Circle()
+                    .fill(theme.tertiaryBackground)
+            )
+            .overlay(
+                Circle()
+                    .stroke(theme.primaryBorder.opacity(0.3), lineWidth: 1)
+            )
+        }
+        .buttonStyle(.plain)
+        .help("Voice input (speak to type)")
+        .transition(.scale.combined(with: .opacity))
     }
 
     // MARK: - Image Attachment Button

@@ -116,6 +116,95 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegat
         Task { @MainActor in
             await WhisperKitService.shared.autoLoadIfNeeded()
         }
+
+        // Initialize VAD service if enabled
+        initializeVADService()
+
+        // Setup VAD detection notification listener
+        setupVADNotifications()
+    }
+
+    // MARK: - VAD Service
+
+    private func initializeVADService() {
+        // Check if VAD mode is enabled and start if so
+        let vadConfig = VADConfigurationStore.load()
+        if vadConfig.vadModeEnabled && vadConfig.menuBarVisible {
+            VADMenuBarController.shared.show()
+        }
+
+        // Auto-start VAD if enabled
+        if vadConfig.vadModeEnabled && !vadConfig.enabledPersonaIds.isEmpty {
+            Task { @MainActor in
+                do {
+                    try await VADService.shared.start()
+                } catch {
+                    print("[AppDelegate] Failed to start VAD service: \(error)")
+                }
+            }
+        }
+    }
+
+    private func setupVADNotifications() {
+        // Listen for persona detection from VAD service
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleVADPersonaDetected(_:)),
+            name: .vadPersonaDetected,
+            object: nil
+        )
+
+        // Listen for requests to show main window
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleShowMainWindow(_:)),
+            name: NSNotification.Name("ShowMainWindow"),
+            object: nil
+        )
+
+        // Listen for requests to show voice settings
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleShowVoiceSettings(_:)),
+            name: NSNotification.Name("ShowVoiceSettings"),
+            object: nil
+        )
+    }
+
+    @objc private func handleVADPersonaDetected(_ notification: Notification) {
+        guard let detection = notification.object as? VADDetectionResult else { return }
+
+        Task { @MainActor in
+            print("[AppDelegate] VAD detected persona: \(detection.personaName)")
+
+            // Activate the detected persona
+            PersonaManager.shared.setActivePersona(detection.personaId)
+
+            // Show chat overlay with the activated persona
+            showChatOverlay()
+
+            // Optionally start voice input if configured
+            let vadConfig = VADConfigurationStore.load()
+            if vadConfig.autoStartVoiceInput {
+                // Post notification to trigger voice input in chat view
+                NotificationCenter.default.post(
+                    name: NSNotification.Name("StartVoiceInput"),
+                    object: nil
+                )
+            }
+        }
+    }
+
+    @objc private func handleShowMainWindow(_ notification: Notification) {
+        Task { @MainActor in
+            showChatOverlay()
+        }
+    }
+
+    @objc private func handleShowVoiceSettings(_ notification: Notification) {
+        Task { @MainActor in
+            showManagementWindow(initialTab: .voice)
+        }
     }
 
     public func application(_ application: NSApplication, open urls: [URL]) {

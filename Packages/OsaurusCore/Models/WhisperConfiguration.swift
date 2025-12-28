@@ -30,6 +30,17 @@ public struct WhisperConfiguration: Codable, Equatable, Sendable {
     /// Voice activity detection sensitivity level
     public var sensitivity: VoiceSensitivity
 
+    // MARK: - Voice Input Settings (for ChatView)
+
+    /// Whether voice input is enabled in ChatView
+    public var voiceInputEnabled: Bool
+
+    /// Seconds of silence before triggering auto-send (0 = disabled, manual send only)
+    public var pauseDuration: Double
+
+    /// Seconds to show confirmation before auto-sending (1-5 seconds)
+    public var confirmationDelay: Double
+
     private enum CodingKeys: String, CodingKey {
         case defaultModel
         case languageHint
@@ -38,6 +49,9 @@ public struct WhisperConfiguration: Codable, Equatable, Sendable {
         case selectedInputDeviceId
         case selectedInputSource
         case sensitivity
+        case voiceInputEnabled
+        case pauseDuration
+        case confirmationDelay
     }
 
     public init(from decoder: Decoder) throws {
@@ -55,6 +69,15 @@ public struct WhisperConfiguration: Codable, Equatable, Sendable {
         self.sensitivity =
             try container.decodeIfPresent(VoiceSensitivity.self, forKey: .sensitivity)
             ?? defaults.sensitivity
+        self.voiceInputEnabled =
+            try container.decodeIfPresent(Bool.self, forKey: .voiceInputEnabled)
+            ?? defaults.voiceInputEnabled
+        self.pauseDuration =
+            try container.decodeIfPresent(Double.self, forKey: .pauseDuration)
+            ?? defaults.pauseDuration
+        self.confirmationDelay =
+            try container.decodeIfPresent(Double.self, forKey: .confirmationDelay)
+            ?? defaults.confirmationDelay
     }
 
     public init(
@@ -64,7 +87,10 @@ public struct WhisperConfiguration: Codable, Equatable, Sendable {
         wordTimestamps: Bool = false,
         selectedInputDeviceId: String? = nil,
         selectedInputSource: AudioInputSource = .microphone,
-        sensitivity: VoiceSensitivity = .medium
+        sensitivity: VoiceSensitivity = .medium,
+        voiceInputEnabled: Bool = true,
+        pauseDuration: Double = 1.5,
+        confirmationDelay: Double = 2.0
     ) {
         self.defaultModel = defaultModel
         self.languageHint = languageHint
@@ -73,6 +99,9 @@ public struct WhisperConfiguration: Codable, Equatable, Sendable {
         self.selectedInputDeviceId = selectedInputDeviceId
         self.selectedInputSource = selectedInputSource
         self.sensitivity = sensitivity
+        self.voiceInputEnabled = voiceInputEnabled
+        self.pauseDuration = pauseDuration
+        self.confirmationDelay = confirmationDelay
     }
 
     /// Default configuration
@@ -84,7 +113,10 @@ public struct WhisperConfiguration: Codable, Equatable, Sendable {
             wordTimestamps: false,
             selectedInputDeviceId: nil,
             selectedInputSource: .microphone,
-            sensitivity: .medium
+            sensitivity: .medium,
+            voiceInputEnabled: true,
+            pauseDuration: 1.5,
+            confirmationDelay: 2.0
         )
     }
 }

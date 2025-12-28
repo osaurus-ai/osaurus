@@ -2,7 +2,8 @@
 //  VoiceView.swift
 //  osaurus
 //
-//  Main Voice management view with sub-tabs for testing and model management.
+//  Main Voice management view with sub-tabs for setup, voice input settings,
+//  VAD mode configuration, and model management.
 //
 
 import SwiftUI
@@ -10,7 +11,9 @@ import SwiftUI
 // MARK: - Voice Tab Enum
 
 enum VoiceTab: String, CaseIterable, AnimatedTabItem {
-    case main = "Voice"
+    case setup = "Setup"
+    case voiceInput = "Voice Input"
+    case vadMode = "VAD Mode"
     case models = "Models"
 
     var title: String { rawValue }
@@ -101,9 +104,15 @@ struct VoiceView: View {
 
     private var theme: ThemeProtocol { themeManager.currentTheme }
 
-    @State private var selectedTab: VoiceTab = .main
+    @State private var selectedTab: VoiceTab = .setup
     @State private var hasAppeared = false
     @State private var voiceEnabled: Bool = true
+
+    /// Whether setup is complete (permissions granted + model downloaded)
+    private var isSetupComplete: Bool {
+        whisperService.microphonePermissionGranted && modelManager.downloadedModelsCount > 0
+            && modelManager.selectedModel != nil
+    }
 
     private func loadVoiceEnabled() {
         let config = WhisperConfigurationStore.load()
@@ -133,8 +142,12 @@ struct VoiceView: View {
             // Content based on tab
             Group {
                 switch selectedTab {
-                case .main:
-                    VoiceMainTab()
+                case .setup:
+                    VoiceSetupTab(onComplete: { selectedTab = .voiceInput })
+                case .voiceInput:
+                    VoiceInputSettingsTab()
+                case .vadMode:
+                    VADModeSettingsTab()
                 case .models:
                     VoiceModelsTab()
                 }
@@ -146,6 +159,12 @@ struct VoiceView: View {
         .environment(\.theme, themeManager.currentTheme)
         .onAppear {
             loadVoiceEnabled()
+            // Auto-select appropriate tab based on setup state
+            if isSetupComplete {
+                selectedTab = .voiceInput
+            } else {
+                selectedTab = .setup
+            }
             withAnimation(.easeOut(duration: 0.25).delay(0.05)) {
                 hasAppeared = true
             }
@@ -162,7 +181,7 @@ struct VoiceView: View {
                         .font(.system(size: 28, weight: .bold, design: .rounded))
                         .foregroundColor(theme.primaryText)
 
-                    Text("\(modelManager.downloadedModelsCount) models • \(modelManager.totalDownloadedSizeString)")
+                    Text(headerSubtitle)
                         .font(.system(size: 14))
                         .foregroundColor(theme.secondaryText)
                 }
@@ -170,36 +189,7 @@ struct VoiceView: View {
                 Spacer()
 
                 // Status indicator
-                if whisperService.isLoadingModel {
-                    HStack(spacing: 6) {
-                        ProgressView()
-                            .scaleEffect(0.6)
-                        Text("Loading...")
-                            .font(.system(size: 12, weight: .medium))
-                            .foregroundColor(theme.secondaryText)
-                    }
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 6)
-                    .background(
-                        Capsule()
-                            .fill(theme.tertiaryBackground)
-                    )
-                } else if whisperService.isModelLoaded {
-                    HStack(spacing: 6) {
-                        Circle()
-                            .fill(theme.successColor)
-                            .frame(width: 8, height: 8)
-                        Text("Ready")
-                            .font(.system(size: 12, weight: .medium))
-                            .foregroundColor(theme.successColor)
-                    }
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 6)
-                    .background(
-                        Capsule()
-                            .fill(theme.successColor.opacity(0.1))
-                    )
-                }
+                statusIndicator
 
                 // Enable Voice Toggle
                 Toggle(
@@ -230,6 +220,65 @@ struct VoiceView: View {
         .padding(.top, 24)
         .padding(.bottom, 16)
         .background(theme.secondaryBackground)
+    }
+
+    private var headerSubtitle: String {
+        if !isSetupComplete {
+            return "Complete setup to enable voice"
+        } else if modelManager.downloadedModelsCount > 0 {
+            return "\(modelManager.downloadedModelsCount) models • \(modelManager.totalDownloadedSizeString)"
+        } else {
+            return "Voice transcription ready"
+        }
+    }
+
+    @ViewBuilder
+    private var statusIndicator: some View {
+        if whisperService.isLoadingModel {
+            HStack(spacing: 6) {
+                ProgressView()
+                    .scaleEffect(0.6)
+                Text("Loading...")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundColor(theme.secondaryText)
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 6)
+            .background(
+                Capsule()
+                    .fill(theme.tertiaryBackground)
+            )
+        } else if whisperService.isModelLoaded {
+            HStack(spacing: 6) {
+                Circle()
+                    .fill(theme.successColor)
+                    .frame(width: 8, height: 8)
+                Text("Ready")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundColor(theme.successColor)
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 6)
+            .background(
+                Capsule()
+                    .fill(theme.successColor.opacity(0.1))
+            )
+        } else if !isSetupComplete {
+            HStack(spacing: 6) {
+                Circle()
+                    .fill(theme.warningColor)
+                    .frame(width: 8, height: 8)
+                Text("Setup Required")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundColor(theme.warningColor)
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 6)
+            .background(
+                Capsule()
+                    .fill(theme.warningColor.opacity(0.1))
+            )
+        }
     }
 }
 
