@@ -214,6 +214,12 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegat
             showChatOverlay()
             print("[AppDelegate] showChatOverlay completed, chatWindow visible: \(chatWindow?.isVisible ?? false)")
 
+            // Request a new session for this persona (VAD should always start fresh)
+            NotificationCenter.default.post(
+                name: .vadStartNewSession,
+                object: detection.personaId
+            )
+
             // Start voice input in chat after a delay (let VAD stop and UI settle)
             let vadConfig = VADConfigurationStore.load()
             if vadConfig.autoStartVoiceInput {

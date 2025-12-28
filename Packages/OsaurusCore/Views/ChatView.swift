@@ -1134,6 +1134,20 @@ struct ChatView: View {
             // Do NOT change the theme - theme is based on the current session's persona
             sessionsManager.refresh()
         }
+        .onReceive(NotificationCenter.default.publisher(for: .vadStartNewSession)) { notification in
+            // VAD requested a new session for a specific persona
+            if let personaId = notification.object as? UUID {
+                // Save current session if it has content
+                if !session.turns.isEmpty {
+                    session.save()
+                }
+                // Reset to new session for the detected persona
+                session.reset(for: personaId)
+                sessionsManager.refresh()
+                // Apply the persona's theme
+                applyPersonaTheme(for: personaId, animated: false)
+            }
+        }
         .onAppear {
             setupKeyMonitor()
             session.refreshModelOptions()

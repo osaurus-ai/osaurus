@@ -16,6 +16,7 @@ extension Notification.Name {
     public static let vadPersonaDetected = Notification.Name("vadPersonaDetected")
     public static let startVoiceInputInChat = Notification.Name("startVoiceInputInChat")
     public static let chatViewClosed = Notification.Name("chatViewClosed")
+    public static let vadStartNewSession = Notification.Name("vadStartNewSession")
 }
 
 /// Result of a VAD detection

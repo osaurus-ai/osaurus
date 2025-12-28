@@ -53,6 +53,9 @@ struct FloatingInputCard: View {
     @State private var lastSpeechTime: Date = Date()
     @State private var isPauseDetectionActive: Bool = false
 
+    /// When true, voice input auto-restarts after AI responds (continuous conversation mode)
+    @State private var isContinuousVoiceMode: Bool = false
+
     /// Threshold for considering audio as "speech" vs "silence"
     private let speechThreshold: Float = 0.05
 
@@ -171,9 +174,22 @@ struct FloatingInputCard: View {
             loadVoiceConfig()
         }
         .onReceive(NotificationCenter.default.publisher(for: .startVoiceInputInChat)) { _ in
-            // Start voice input when triggered by VAD
+            // Start voice input when triggered by VAD - enable continuous mode
             if isVoiceAvailable && !showVoiceOverlay {
+                isContinuousVoiceMode = true
                 startVoiceInput()
+            }
+        }
+        .onChange(of: isStreaming) { wasStreaming, nowStreaming in
+            // When AI finishes responding and we're in continuous voice mode, restart voice input
+            if wasStreaming && !nowStreaming && isContinuousVoiceMode {
+                // Small delay to let UI settle
+                Task { @MainActor in
+                    try? await Task.sleep(nanoseconds: 500_000_000)  // 500ms
+                    if isContinuousVoiceMode && isVoiceAvailable && !showVoiceOverlay {
+                        startVoiceInput()
+                    }
+                }
             }
         }
         .onDisappear {
@@ -266,6 +282,7 @@ struct FloatingInputCard: View {
 
     private func cancelVoiceInput() {
         isPauseDetectionActive = false
+        isContinuousVoiceMode = false  // Exit continuous mode on cancel
         Task {
             _ = await whisperService.stopStreamingTranscription()
             whisperService.clearTranscription()
@@ -326,6 +343,7 @@ struct FloatingInputCard: View {
 
         voiceInputState = .idle
         showVoiceOverlay = false
+        isContinuousVoiceMode = false  // Exit continuous mode when switching to text
 
         // Set the text input
         localText = transcribedText
