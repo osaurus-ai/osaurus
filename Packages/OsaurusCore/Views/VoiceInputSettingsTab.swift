@@ -46,6 +46,9 @@ struct VoiceInputSettingsTab: View {
         config.languageHint = languageHint.isEmpty ? nil : languageHint
         config.sensitivity = sensitivity
         WhisperConfigurationStore.save(config)
+
+        // Notify other views of the configuration change
+        NotificationCenter.default.post(name: .voiceConfigurationChanged, object: nil)
     }
 
     /// Display name for the currently selected language

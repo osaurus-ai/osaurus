@@ -106,29 +106,11 @@ struct VoiceView: View {
 
     @State private var selectedTab: VoiceTab = .setup
     @State private var hasAppeared = false
-    @State private var voiceEnabled: Bool = true
 
     /// Whether setup is complete (permissions granted + model downloaded)
     private var isSetupComplete: Bool {
         whisperService.microphonePermissionGranted && modelManager.downloadedModelsCount > 0
             && modelManager.selectedModel != nil
-    }
-
-    private func loadVoiceEnabled() {
-        let config = WhisperConfigurationStore.load()
-        voiceEnabled = config.enabled
-    }
-
-    private func toggleVoiceEnabled(_ enabled: Bool) {
-        var config = WhisperConfigurationStore.load()
-        config.enabled = enabled
-        WhisperConfigurationStore.save(config)
-        voiceEnabled = enabled
-
-        // Trigger auto-load/unload
-        Task {
-            await whisperService.autoLoadIfNeeded()
-        }
     }
 
     var body: some View {
@@ -158,7 +140,6 @@ struct VoiceView: View {
         .background(theme.primaryBackground)
         .environment(\.theme, themeManager.currentTheme)
         .onAppear {
-            loadVoiceEnabled()
             // Auto-select appropriate tab based on setup state
             if isSetupComplete {
                 selectedTab = .voiceInput
@@ -190,18 +171,6 @@ struct VoiceView: View {
 
                 // Status indicator
                 statusIndicator
-
-                // Enable Voice Toggle
-                Toggle(
-                    "",
-                    isOn: Binding(
-                        get: { voiceEnabled },
-                        set: { toggleVoiceEnabled($0) }
-                    )
-                )
-                .toggleStyle(SwitchToggleStyle(tint: theme.accentColor))
-                .labelsHidden()
-                .help(voiceEnabled ? "Voice features enabled" : "Voice features disabled")
             }
 
             // Tab selector

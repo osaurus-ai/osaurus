@@ -118,7 +118,7 @@ struct FloatingInputCard: View {
 
     /// Whether voice input is available (enabled + model loaded + permission granted)
     private var isVoiceAvailable: Bool {
-        voiceConfig.enabled && voiceConfig.voiceInputEnabled && whisperService.isModelLoaded
+        voiceConfig.voiceInputEnabled && whisperService.isModelLoaded
             && whisperService.microphonePermissionGranted
     }
 
@@ -187,6 +187,10 @@ struct FloatingInputCard: View {
                 lastVoiceActivityTime = Date()
                 startVoiceInput()
             }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .voiceConfigurationChanged)) { _ in
+            // Reload voice config when settings change
+            loadVoiceConfig()
         }
         .onChange(of: isStreaming) { wasStreaming, nowStreaming in
             // When AI finishes responding and we're in continuous voice mode, restart voice input
@@ -369,7 +373,7 @@ struct FloatingInputCard: View {
             whisperService.clearTranscription()
 
             // Reset VAD state to idle so it can resume
-            await VADService.shared.resetToIdle()
+            VADService.shared.resetToIdle()
 
             // Small delay to ensure audio system settles
             try? await Task.sleep(nanoseconds: 300_000_000)  // 300ms

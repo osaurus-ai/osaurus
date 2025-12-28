@@ -769,19 +769,9 @@ public final class WhisperKitService: ObservableObject {
         print("[WhisperKitService] Model unloaded")
     }
 
-    /// Auto-load the model if voice features are enabled and a default model is selected
+    /// Auto-load the model if a default model is selected
     /// Call this when voice settings change or on app launch
     public func autoLoadIfNeeded() async {
-        let config = WhisperConfigurationStore.load()
-
-        // If voice features are disabled, unload any loaded model
-        guard config.enabled else {
-            if isModelLoaded {
-                unloadModel()
-            }
-            return
-        }
-
         // If no model is selected, nothing to load
         guard let selectedModel = WhisperModelManager.shared.selectedModel else {
             return

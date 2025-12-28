@@ -18,6 +18,7 @@ extension Notification.Name {
     public static let chatViewClosed = Notification.Name("chatViewClosed")
     public static let vadStartNewSession = Notification.Name("vadStartNewSession")
     public static let closeChatOverlay = Notification.Name("closeChatOverlay")
+    public static let voiceConfigurationChanged = Notification.Name("voiceConfigurationChanged")
 }
 
 /// Result of a VAD detection

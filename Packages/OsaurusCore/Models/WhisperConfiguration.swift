@@ -15,9 +15,6 @@ public struct WhisperConfiguration: Codable, Equatable, Sendable {
     /// Language hint for transcription (ISO 639-1 code, e.g., "en", "es", "ja")
     public var languageHint: String?
 
-    /// Whether voice features are enabled
-    public var enabled: Bool
-
     /// Whether to use word-level timestamps
     public var wordTimestamps: Bool
 
@@ -44,7 +41,6 @@ public struct WhisperConfiguration: Codable, Equatable, Sendable {
     private enum CodingKeys: String, CodingKey {
         case defaultModel
         case languageHint
-        case enabled
         case wordTimestamps
         case selectedInputDeviceId
         case selectedInputSource
@@ -59,7 +55,6 @@ public struct WhisperConfiguration: Codable, Equatable, Sendable {
         let defaults = WhisperConfiguration.default
         self.defaultModel = try container.decodeIfPresent(String.self, forKey: .defaultModel)
         self.languageHint = try container.decodeIfPresent(String.self, forKey: .languageHint)
-        self.enabled = try container.decodeIfPresent(Bool.self, forKey: .enabled) ?? defaults.enabled
         self.wordTimestamps =
             try container.decodeIfPresent(Bool.self, forKey: .wordTimestamps) ?? defaults.wordTimestamps
         self.selectedInputDeviceId = try container.decodeIfPresent(String.self, forKey: .selectedInputDeviceId)
@@ -83,7 +78,6 @@ public struct WhisperConfiguration: Codable, Equatable, Sendable {
     public init(
         defaultModel: String? = nil,
         languageHint: String? = nil,
-        enabled: Bool = true,
         wordTimestamps: Bool = false,
         selectedInputDeviceId: String? = nil,
         selectedInputSource: AudioInputSource = .microphone,
@@ -94,7 +88,6 @@ public struct WhisperConfiguration: Codable, Equatable, Sendable {
     ) {
         self.defaultModel = defaultModel
         self.languageHint = languageHint
-        self.enabled = enabled
         self.wordTimestamps = wordTimestamps
         self.selectedInputDeviceId = selectedInputDeviceId
         self.selectedInputSource = selectedInputSource
@@ -109,7 +102,6 @@ public struct WhisperConfiguration: Codable, Equatable, Sendable {
         WhisperConfiguration(
             defaultModel: nil,
             languageHint: nil,
-            enabled: true,
             wordTimestamps: false,
             selectedInputDeviceId: nil,
             selectedInputSource: .microphone,

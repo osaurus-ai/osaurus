@@ -53,6 +53,8 @@ struct VoiceSetupTab: View {
     @State private var testTranscription: String = ""
     @State private var isTestingVoice = false
     @State private var testError: String?
+    @State private var hasAppeared = false
+    @State private var glowIntensity: CGFloat = 0.6
 
     /// Whether all setup steps are complete
     private var isSetupComplete: Bool {
@@ -77,6 +79,9 @@ struct VoiceSetupTab: View {
             VStack(spacing: 32) {
                 // Progress indicator
                 setupProgressIndicator
+                    .opacity(hasAppeared ? 1 : 0)
+                    .offset(y: hasAppeared ? 0 : -10)
+                    .animation(.spring(response: 0.5, dampingFraction: 0.8).delay(0.1), value: hasAppeared)
 
                 // Current step content
                 VStack(spacing: 24) {
@@ -97,6 +102,13 @@ struct VoiceSetupTab: View {
         }
         .onAppear {
             updateCurrentStep()
+            withAnimation(.easeOut(duration: 0.3).delay(0.05)) {
+                hasAppeared = true
+            }
+            // Start glow animation
+            withAnimation(.easeInOut(duration: 2).repeatForever(autoreverses: true)) {
+                glowIntensity = 1.0
+            }
         }
         .onChange(of: whisperService.microphonePermissionGranted) { _, _ in
             updateCurrentStep()
@@ -125,12 +137,30 @@ struct VoiceSetupTab: View {
                 let isCompleted = isStepComplete(step)
 
                 HStack(spacing: 0) {
-                    // Step circle
+                    // Step circle with glow for active step
                     ZStack {
+                        // Glow effect for active step
+                        if isActive {
+                            Circle()
+                                .fill(theme.accentColor)
+                                .frame(width: 36, height: 36)
+                                .blur(radius: 10)
+                                .opacity(glowIntensity * 0.4)
+                        }
+
                         Circle()
                             .fill(
                                 isCompleted
-                                    ? theme.successColor : (isActive ? theme.accentColor : theme.tertiaryBackground)
+                                    ? AnyShapeStyle(theme.successColor)
+                                    : (isActive
+                                        ? AnyShapeStyle(
+                                            LinearGradient(
+                                                colors: [theme.accentColor, theme.accentColor.opacity(0.8)],
+                                                startPoint: .topLeading,
+                                                endPoint: .bottomTrailing
+                                            )
+                                        )
+                                        : AnyShapeStyle(theme.tertiaryBackground))
                             )
                             .frame(width: 36, height: 36)
 
@@ -160,84 +190,121 @@ struct VoiceSetupTab: View {
     // MARK: - Microphone Step
 
     private var microphoneStepContent: some View {
-        VStack(spacing: 24) {
-            // Icon
+        let iconColor = whisperService.microphonePermissionGranted ? theme.successColor : theme.accentColor
+
+        return VStack(spacing: 24) {
+            // Glowing icon
             ZStack {
+                // Outer glow
+                Circle()
+                    .fill(iconColor)
+                    .frame(width: 88, height: 88)
+                    .blur(radius: 25)
+                    .opacity(glowIntensity * 0.25)
+
+                // Inner glow
+                Circle()
+                    .fill(iconColor)
+                    .frame(width: 88, height: 88)
+                    .blur(radius: 12)
+                    .opacity(glowIntensity * 0.15)
+
+                // Base circle with gradient
                 Circle()
                     .fill(
-                        whisperService.microphonePermissionGranted
-                            ? theme.successColor.opacity(0.15)
-                            : theme.accentColor.opacity(0.15)
+                        LinearGradient(
+                            colors: [
+                                iconColor.opacity(0.15),
+                                iconColor.opacity(0.05),
+                            ],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        )
                     )
-                    .frame(width: 80, height: 80)
+                    .frame(width: 88, height: 88)
 
+                // Icon
                 Image(systemName: whisperService.microphonePermissionGranted ? "mic.fill" : "mic.slash.fill")
                     .font(.system(size: 36, weight: .medium))
-                    .foregroundColor(
-                        whisperService.microphonePermissionGranted
-                            ? theme.successColor
-                            : theme.accentColor
+                    .foregroundStyle(
+                        LinearGradient(
+                            colors: [iconColor, iconColor.opacity(0.7)],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        )
                     )
             }
+            .opacity(hasAppeared ? 1 : 0)
+            .scaleEffect(hasAppeared ? 1 : 0.8)
+            .animation(.spring(response: 0.5, dampingFraction: 0.7).delay(0.15), value: hasAppeared)
 
             // Title and description
             VStack(spacing: 8) {
                 Text("Microphone Access")
-                    .font(.system(size: 24, weight: .bold))
+                    .font(.system(size: 22, weight: .bold, design: .rounded))
                     .foregroundColor(theme.primaryText)
 
                 Text("Osaurus needs microphone access to transcribe your voice into text.")
-                    .font(.system(size: 15))
+                    .font(.system(size: 14))
                     .foregroundColor(theme.secondaryText)
                     .multilineTextAlignment(.center)
+                    .lineLimit(2)
             }
+            .opacity(hasAppeared ? 1 : 0)
+            .offset(y: hasAppeared ? 0 : 15)
+            .animation(.spring(response: 0.5, dampingFraction: 0.8).delay(0.2), value: hasAppeared)
 
             // Status or action
-            if whisperService.microphonePermissionGranted {
-                HStack(spacing: 8) {
-                    Image(systemName: "checkmark.circle.fill")
-                        .foregroundColor(theme.successColor)
-                    Text("Microphone access granted")
-                        .font(.system(size: 14, weight: .medium))
-                        .foregroundColor(theme.successColor)
-                }
-                .padding()
-                .background(
-                    RoundedRectangle(cornerRadius: 12)
-                        .fill(theme.successColor.opacity(0.1))
-                )
+            Group {
+                if whisperService.microphonePermissionGranted {
+                    HStack(spacing: 8) {
+                        Image(systemName: "checkmark.circle.fill")
+                            .foregroundColor(theme.successColor)
+                        Text("Microphone access granted")
+                            .font(.system(size: 14, weight: .medium))
+                            .foregroundColor(theme.successColor)
+                    }
+                    .padding()
+                    .background(
+                        RoundedRectangle(cornerRadius: 12)
+                            .fill(theme.successColor.opacity(0.1))
+                    )
 
-                // Continue button
-                Button(action: { currentStep = .model }) {
-                    Text("Continue")
-                        .font(.system(size: 15, weight: .semibold))
-                        .foregroundColor(.white)
-                        .padding(.horizontal, 32)
-                        .padding(.vertical, 12)
-                        .background(
-                            RoundedRectangle(cornerRadius: 10)
-                                .fill(theme.accentColor)
-                        )
-                }
-                .buttonStyle(.plain)
-            } else {
-                Button(action: requestMicrophonePermission) {
-                    Text("Grant Microphone Access")
-                        .font(.system(size: 15, weight: .semibold))
-                        .foregroundColor(.white)
-                        .padding(.horizontal, 32)
-                        .padding(.vertical, 12)
-                        .background(
-                            RoundedRectangle(cornerRadius: 10)
-                                .fill(theme.accentColor)
-                        )
-                }
-                .buttonStyle(.plain)
+                    // Continue button
+                    Button(action: { currentStep = .model }) {
+                        Text("Continue")
+                            .font(.system(size: 15, weight: .semibold))
+                            .foregroundColor(.white)
+                            .padding(.horizontal, 32)
+                            .padding(.vertical, 12)
+                            .background(
+                                RoundedRectangle(cornerRadius: 10)
+                                    .fill(theme.accentColor)
+                            )
+                    }
+                    .buttonStyle(.plain)
+                } else {
+                    Button(action: requestMicrophonePermission) {
+                        Text("Grant Microphone Access")
+                            .font(.system(size: 15, weight: .semibold))
+                            .foregroundColor(.white)
+                            .padding(.horizontal, 32)
+                            .padding(.vertical, 12)
+                            .background(
+                                RoundedRectangle(cornerRadius: 10)
+                                    .fill(theme.accentColor)
+                            )
+                    }
+                    .buttonStyle(.plain)
 
-                Text("Click the button and allow access when prompted")
-                    .font(.system(size: 12))
-                    .foregroundColor(theme.tertiaryText)
+                    Text("Click the button and allow access when prompted")
+                        .font(.system(size: 12))
+                        .foregroundColor(theme.tertiaryText)
+                }
             }
+            .opacity(hasAppeared ? 1 : 0)
+            .offset(y: hasAppeared ? 0 : 10)
+            .animation(.spring(response: 0.5, dampingFraction: 0.8).delay(0.3), value: hasAppeared)
         }
         .padding(32)
         .background(
@@ -248,6 +315,8 @@ struct VoiceSetupTab: View {
                         .stroke(theme.cardBorder, lineWidth: 1)
                 )
         )
+        .opacity(hasAppeared ? 1 : 0)
+        .animation(.spring(response: 0.5, dampingFraction: 0.8).delay(0.1), value: hasAppeared)
     }
 
     private func requestMicrophonePermission() {
@@ -259,91 +328,128 @@ struct VoiceSetupTab: View {
     // MARK: - Model Step
 
     private var modelStepContent: some View {
-        VStack(spacing: 24) {
-            // Icon
+        let iconColor = modelManager.downloadedModelsCount > 0 ? theme.successColor : theme.accentColor
+
+        return VStack(spacing: 24) {
+            // Glowing icon
             ZStack {
+                // Outer glow
+                Circle()
+                    .fill(iconColor)
+                    .frame(width: 88, height: 88)
+                    .blur(radius: 25)
+                    .opacity(glowIntensity * 0.25)
+
+                // Inner glow
+                Circle()
+                    .fill(iconColor)
+                    .frame(width: 88, height: 88)
+                    .blur(radius: 12)
+                    .opacity(glowIntensity * 0.15)
+
+                // Base circle with gradient
                 Circle()
                     .fill(
-                        modelManager.downloadedModelsCount > 0
-                            ? theme.successColor.opacity(0.15)
-                            : theme.accentColor.opacity(0.15)
+                        LinearGradient(
+                            colors: [
+                                iconColor.opacity(0.15),
+                                iconColor.opacity(0.05),
+                            ],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        )
                     )
-                    .frame(width: 80, height: 80)
+                    .frame(width: 88, height: 88)
 
+                // Icon
                 Image(
                     systemName: modelManager.downloadedModelsCount > 0
                         ? "checkmark.circle.fill" : "arrow.down.circle.fill"
                 )
                 .font(.system(size: 36, weight: .medium))
-                .foregroundColor(
-                    modelManager.downloadedModelsCount > 0
-                        ? theme.successColor
-                        : theme.accentColor
+                .foregroundStyle(
+                    LinearGradient(
+                        colors: [iconColor, iconColor.opacity(0.7)],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    )
                 )
             }
+            .opacity(hasAppeared ? 1 : 0)
+            .scaleEffect(hasAppeared ? 1 : 0.8)
+            .animation(.spring(response: 0.5, dampingFraction: 0.7).delay(0.15), value: hasAppeared)
 
             // Title and description
             VStack(spacing: 8) {
                 Text("Download Whisper Model")
-                    .font(.system(size: 24, weight: .bold))
+                    .font(.system(size: 22, weight: .bold, design: .rounded))
                     .foregroundColor(theme.primaryText)
 
                 Text(
                     "A Whisper model is required for speech-to-text. We recommend starting with a smaller model for faster performance."
                 )
-                .font(.system(size: 15))
+                .font(.system(size: 14))
                 .foregroundColor(theme.secondaryText)
                 .multilineTextAlignment(.center)
+                .lineLimit(2)
             }
+            .opacity(hasAppeared ? 1 : 0)
+            .offset(y: hasAppeared ? 0 : 15)
+            .animation(.spring(response: 0.5, dampingFraction: 0.8).delay(0.2), value: hasAppeared)
 
             // Model options
-            if modelManager.downloadedModelsCount > 0 && modelManager.selectedModel != nil {
-                HStack(spacing: 8) {
-                    Image(systemName: "checkmark.circle.fill")
-                        .foregroundColor(theme.successColor)
-                    Text("Model ready: \(modelManager.selectedModel?.name ?? "")")
-                        .font(.system(size: 14, weight: .medium))
-                        .foregroundColor(theme.successColor)
-                }
-                .padding()
-                .background(
-                    RoundedRectangle(cornerRadius: 12)
-                        .fill(theme.successColor.opacity(0.1))
-                )
-
-                Button(action: { currentStep = .test }) {
-                    Text("Continue")
-                        .font(.system(size: 15, weight: .semibold))
-                        .foregroundColor(.white)
-                        .padding(.horizontal, 32)
-                        .padding(.vertical, 12)
-                        .background(
-                            RoundedRectangle(cornerRadius: 10)
-                                .fill(theme.accentColor)
-                        )
-                }
-                .buttonStyle(.plain)
-            } else {
-                // Recommended models
-                VStack(spacing: 12) {
-                    ForEach(modelManager.availableModels.filter { $0.isRecommended }.prefix(2)) { model in
-                        RecommendedModelRow(model: model)
-                    }
-                }
-                .padding(.horizontal)
-
-                if modelManager.downloadStates.values.contains(where: {
-                    if case .downloading = $0 { return true } else { return false }
-                }) {
+            Group {
+                if modelManager.downloadedModelsCount > 0 && modelManager.selectedModel != nil {
                     HStack(spacing: 8) {
-                        ProgressView()
-                            .scaleEffect(0.8)
-                        Text("Downloading...")
-                            .font(.system(size: 14))
-                            .foregroundColor(theme.secondaryText)
+                        Image(systemName: "checkmark.circle.fill")
+                            .foregroundColor(theme.successColor)
+                        Text("Model ready: \(modelManager.selectedModel?.name ?? "")")
+                            .font(.system(size: 14, weight: .medium))
+                            .foregroundColor(theme.successColor)
+                    }
+                    .padding()
+                    .background(
+                        RoundedRectangle(cornerRadius: 12)
+                            .fill(theme.successColor.opacity(0.1))
+                    )
+
+                    Button(action: { currentStep = .test }) {
+                        Text("Continue")
+                            .font(.system(size: 15, weight: .semibold))
+                            .foregroundColor(.white)
+                            .padding(.horizontal, 32)
+                            .padding(.vertical, 12)
+                            .background(
+                                RoundedRectangle(cornerRadius: 10)
+                                    .fill(theme.accentColor)
+                            )
+                    }
+                    .buttonStyle(.plain)
+                } else {
+                    // Recommended models
+                    VStack(spacing: 12) {
+                        ForEach(modelManager.availableModels.filter { $0.isRecommended }.prefix(2)) { model in
+                            RecommendedModelRow(model: model)
+                        }
+                    }
+                    .padding(.horizontal)
+
+                    if modelManager.downloadStates.values.contains(where: {
+                        if case .downloading = $0 { return true } else { return false }
+                    }) {
+                        HStack(spacing: 8) {
+                            ProgressView()
+                                .scaleEffect(0.8)
+                            Text("Downloading...")
+                                .font(.system(size: 14))
+                                .foregroundColor(theme.secondaryText)
+                        }
                     }
                 }
             }
+            .opacity(hasAppeared ? 1 : 0)
+            .offset(y: hasAppeared ? 0 : 10)
+            .animation(.spring(response: 0.5, dampingFraction: 0.8).delay(0.3), value: hasAppeared)
         }
         .padding(32)
         .background(
@@ -354,34 +460,76 @@ struct VoiceSetupTab: View {
                         .stroke(theme.cardBorder, lineWidth: 1)
                 )
         )
+        .opacity(hasAppeared ? 1 : 0)
+        .animation(.spring(response: 0.5, dampingFraction: 0.8).delay(0.1), value: hasAppeared)
     }
 
     // MARK: - Test Step
 
     private var testStepContent: some View {
-        VStack(spacing: 24) {
-            // Icon
-            ZStack {
-                Circle()
-                    .fill(theme.accentColor.opacity(0.15))
-                    .frame(width: 80, height: 80)
+        let iconColor = theme.accentColor
 
+        return VStack(spacing: 24) {
+            // Glowing icon
+            ZStack {
+                // Outer glow
+                Circle()
+                    .fill(iconColor)
+                    .frame(width: 88, height: 88)
+                    .blur(radius: 25)
+                    .opacity(glowIntensity * 0.25)
+
+                // Inner glow
+                Circle()
+                    .fill(iconColor)
+                    .frame(width: 88, height: 88)
+                    .blur(radius: 12)
+                    .opacity(glowIntensity * 0.15)
+
+                // Base circle with gradient
+                Circle()
+                    .fill(
+                        LinearGradient(
+                            colors: [
+                                iconColor.opacity(0.15),
+                                iconColor.opacity(0.05),
+                            ],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        )
+                    )
+                    .frame(width: 88, height: 88)
+
+                // Icon
                 Image(systemName: "waveform")
                     .font(.system(size: 36, weight: .medium))
-                    .foregroundColor(theme.accentColor)
+                    .foregroundStyle(
+                        LinearGradient(
+                            colors: [iconColor, iconColor.opacity(0.7)],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        )
+                    )
             }
+            .opacity(hasAppeared ? 1 : 0)
+            .scaleEffect(hasAppeared ? 1 : 0.8)
+            .animation(.spring(response: 0.5, dampingFraction: 0.7).delay(0.15), value: hasAppeared)
 
             // Title and description
             VStack(spacing: 8) {
                 Text("Test Your Voice")
-                    .font(.system(size: 24, weight: .bold))
+                    .font(.system(size: 22, weight: .bold, design: .rounded))
                     .foregroundColor(theme.primaryText)
 
                 Text("Speak into your microphone to verify voice recognition is working correctly.")
-                    .font(.system(size: 15))
+                    .font(.system(size: 14))
                     .foregroundColor(theme.secondaryText)
                     .multilineTextAlignment(.center)
+                    .lineLimit(2)
             }
+            .opacity(hasAppeared ? 1 : 0)
+            .offset(y: hasAppeared ? 0 : 15)
+            .animation(.spring(response: 0.5, dampingFraction: 0.8).delay(0.2), value: hasAppeared)
 
             // Waveform visualization
             if isTestingVoice {
@@ -409,6 +557,9 @@ struct VoiceSetupTab: View {
                             )
                     )
             )
+            .opacity(hasAppeared ? 1 : 0)
+            .offset(y: hasAppeared ? 0 : 10)
+            .animation(.spring(response: 0.5, dampingFraction: 0.8).delay(0.25), value: hasAppeared)
 
             // Error message
             if let error = testError {
@@ -454,6 +605,9 @@ struct VoiceSetupTab: View {
                     .buttonStyle(.plain)
                 }
             }
+            .opacity(hasAppeared ? 1 : 0)
+            .offset(y: hasAppeared ? 0 : 10)
+            .animation(.spring(response: 0.5, dampingFraction: 0.8).delay(0.3), value: hasAppeared)
 
             // Skip button
             Button(action: { onComplete?() }) {
@@ -462,6 +616,8 @@ struct VoiceSetupTab: View {
                     .foregroundColor(theme.tertiaryText)
             }
             .buttonStyle(.plain)
+            .opacity(hasAppeared ? 1 : 0)
+            .animation(.spring(response: 0.5, dampingFraction: 0.8).delay(0.35), value: hasAppeared)
         }
         .padding(32)
         .background(
@@ -472,6 +628,8 @@ struct VoiceSetupTab: View {
                         .stroke(theme.cardBorder, lineWidth: 1)
                 )
         )
+        .opacity(hasAppeared ? 1 : 0)
+        .animation(.spring(response: 0.5, dampingFraction: 0.8).delay(0.1), value: hasAppeared)
         .onChange(of: whisperService.currentTranscription) { _, newValue in
             testTranscription = newValue
         }
