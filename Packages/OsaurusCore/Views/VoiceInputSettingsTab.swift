@@ -592,10 +592,12 @@ struct VoiceInputSettingsTab: View {
 
             // Transcription display
             VStack(alignment: .leading, spacing: 8) {
-                let displayText =
-                    whisperService.confirmedTranscription.isEmpty
-                    ? whisperService.currentTranscription
-                    : whisperService.confirmedTranscription + " " + whisperService.currentTranscription
+                let displayText: String = {
+                    guard isTestingVoice else { return "" }
+                    return whisperService.confirmedTranscription.isEmpty
+                        ? whisperService.currentTranscription
+                        : whisperService.confirmedTranscription + " " + whisperService.currentTranscription
+                }()
 
                 Text(displayText.isEmpty ? "Speak and see your words here..." : displayText)
                     .font(.system(size: 15))

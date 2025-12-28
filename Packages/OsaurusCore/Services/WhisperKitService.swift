@@ -1178,7 +1178,7 @@ public final class WhisperKitService: ObservableObject {
         let bufferRef = audioBuffer
         systemAudioPollingTask = Task { @MainActor [weak self] in
             print("[WhisperKitService] Started system audio polling")
-            while let self = self, bufferRef.isActive {
+            while let _ = self, bufferRef.isActive {
                 // Get samples from SystemAudioCaptureManager
                 let samples = SystemAudioCaptureManager.shared.getAndClearSamples()
                 if !samples.isEmpty {
@@ -1613,7 +1613,7 @@ private actor TranscriptionWorker {
             let results = try await whisperKit.transcribe(audioArray: buffer, decodeOptions: options)
             if let result = results.first {
                 print(
-                    "[TranscriptionWorker] Result - language=\(result.language ?? "unknown"), text=\(result.text.prefix(50))..."
+                    "[TranscriptionWorker] Result - language=\(result.language), text=\(result.text.prefix(50))..."
                 )
                 let text = result.text.trimmingCharacters(in: CharacterSet.whitespacesAndNewlines)
                 if !text.isEmpty {

@@ -631,10 +631,12 @@ struct VoiceSetupTab: View {
         .opacity(hasAppeared ? 1 : 0)
         .animation(.spring(response: 0.5, dampingFraction: 0.8).delay(0.1), value: hasAppeared)
         .onChange(of: whisperService.currentTranscription) { _, newValue in
-            testTranscription = newValue
+            if isTestingVoice {
+                testTranscription = newValue
+            }
         }
         .onChange(of: whisperService.confirmedTranscription) { _, newValue in
-            if !newValue.isEmpty {
+            if isTestingVoice && !newValue.isEmpty {
                 testTranscription = newValue
             }
         }
