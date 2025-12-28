@@ -9,7 +9,7 @@
 import CoreAudio
 import Foundation
 import os
-import ScreenCaptureKit
+@preconcurrency import ScreenCaptureKit
 
 @preconcurrency import WhisperKit
 

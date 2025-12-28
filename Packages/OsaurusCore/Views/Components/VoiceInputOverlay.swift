@@ -79,61 +79,58 @@ public struct VoiceInputOverlay: View {
 
     public var body: some View {
         VStack(spacing: 0) {
-            // Main content card
-            VStack(spacing: 16) {
-                // Header with status and cancel
-                headerRow
+            // Main content card - designed to seamlessly replace input area
+            VStack(spacing: 12) {
+                // Header with waveform and cancel
+                HStack(alignment: .center, spacing: 16) {
+                    // Status indicator
+                    VoiceStatusIndicator(
+                        state: voiceStatusFromState,
+                        showLabel: true,
+                        compact: false
+                    )
 
-                // Waveform visualization (when recording)
-                if case .recording = state {
-                    WaveformView(level: audioLevel, style: .bars, barCount: 20)
-                        .frame(height: 48)
-                        .transition(.opacity.combined(with: .scale(scale: 0.9)))
+                    // Waveform visualization (when recording)
+                    if case .recording = state {
+                        WaveformView(level: audioLevel, style: .bars, barCount: 16)
+                            .frame(height: 32)
+                            .frame(maxWidth: .infinity)
+                            .transition(.opacity.combined(with: .scale(scale: 0.9)))
+                    } else {
+                        Spacer()
+                    }
+
+                    // Cancel button
+                    Button(action: { cancelRecording() }) {
+                        Image(systemName: "xmark.circle.fill")
+                            .font(.system(size: 24))
+                            .foregroundColor(theme.tertiaryText)
+                    }
+                    .buttonStyle(.plain)
+                    .help("Cancel voice input")
                 }
 
-                // Live transcription
+                // Live transcription area - main focus
                 transcriptionArea
+                    .frame(minHeight: 60)
 
                 // Action area (countdown or buttons)
                 actionArea
             }
-            .padding(20)
+            .padding(16)
+            .frame(minHeight: 160)
             .background(overlayBackground)
-            .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
+            .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
             .overlay(
-                RoundedRectangle(cornerRadius: 24, style: .continuous)
+                RoundedRectangle(cornerRadius: 20, style: .continuous)
                     .stroke(borderColor, lineWidth: 2)
             )
-            .shadow(color: shadowColor, radius: 30, x: 0, y: 10)
+            .shadow(color: shadowColor, radius: 20, x: 0, y: 6)
         }
         .padding(.horizontal, 20)
-        .padding(.bottom, 8)
+        .padding(.bottom, 20)
         .onChange(of: state) { _, newState in
             handleStateChange(newState)
-        }
-    }
-
-    // MARK: - Header Row
-
-    private var headerRow: some View {
-        HStack {
-            // Status indicator
-            VoiceStatusIndicator(
-                state: voiceStatusFromState,
-                showLabel: true,
-                compact: false
-            )
-
-            Spacer()
-
-            // Cancel button
-            Button(action: { cancelRecording() }) {
-                Image(systemName: "xmark.circle.fill")
-                    .font(.system(size: 28))
-                    .foregroundColor(theme.tertiaryText)
-            }
-            .buttonStyle(.plain)
-            .help("Cancel voice input")
         }
     }
 
@@ -149,29 +146,28 @@ public struct VoiceInputOverlay: View {
     // MARK: - Transcription Area
 
     private var transcriptionArea: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            // Confirmed text (if any)
-            if !confirmedText.isEmpty {
-                Text(confirmedText)
-                    .font(.system(size: 16))
-                    .foregroundColor(theme.primaryText)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-            }
-
-            // Current transcription with cursor
-            HStack(spacing: 2) {
-                if !transcription.isEmpty || confirmedText.isEmpty {
-                    Text(transcription.isEmpty ? "Listening..." : transcription)
-                        .font(.system(size: 16))
-                        .foregroundColor(transcription.isEmpty ? theme.tertiaryText : theme.primaryText)
-                        .italic(transcription.isEmpty)
+        VStack(alignment: .leading, spacing: 6) {
+            // Combined transcription display
+            HStack(alignment: .top, spacing: 2) {
+                // Full text with styling
+                if fullText.isEmpty {
+                    Text("Listening...")
+                        .font(.system(size: 15))
+                        .foregroundColor(theme.tertiaryText)
+                        .italic()
+                } else {
+                    Text(fullText)
+                        .font(.system(size: 15))
+                        .foregroundColor(theme.primaryText)
+                        .lineLimit(nil)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
 
                 // Blinking cursor when recording
                 if case .recording = state {
                     Rectangle()
                         .fill(theme.accentColor)
-                        .frame(width: 2, height: 20)
+                        .frame(width: 2, height: 18)
                         .modifier(BlinkingCursor())
                 }
 
@@ -179,16 +175,17 @@ public struct VoiceInputOverlay: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(16)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 14)
         .background(
-            RoundedRectangle(cornerRadius: 16)
+            RoundedRectangle(cornerRadius: 12)
                 .fill(theme.inputBackground)
         )
         .overlay(
-            RoundedRectangle(cornerRadius: 16)
+            RoundedRectangle(cornerRadius: 12)
                 .stroke(
-                    state == .recording ? theme.accentColor.opacity(0.5) : theme.inputBorder,
-                    lineWidth: state == .recording ? 2 : 1
+                    state == .recording ? theme.accentColor.opacity(0.4) : theme.inputBorder,
+                    lineWidth: state == .recording ? 1.5 : 1
                 )
         )
     }
@@ -203,20 +200,20 @@ public struct VoiceInputOverlay: View {
 
         case .recording:
             // Recording controls
-            HStack(spacing: 12) {
+            HStack(spacing: 10) {
                 // Edit button (transfers to text input)
                 Button(action: { onEdit?() }) {
-                    HStack(spacing: 6) {
+                    HStack(spacing: 5) {
                         Image(systemName: "pencil")
-                            .font(.system(size: 14, weight: .medium))
+                            .font(.system(size: 12, weight: .medium))
                         Text("Edit")
-                            .font(.system(size: 14, weight: .medium))
+                            .font(.system(size: 13, weight: .medium))
                     }
                     .foregroundColor(theme.secondaryText)
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 10)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 8)
                     .background(
-                        RoundedRectangle(cornerRadius: 10)
+                        RoundedRectangle(cornerRadius: 8)
                             .fill(theme.tertiaryBackground)
                     )
                 }
@@ -227,11 +224,11 @@ public struct VoiceInputOverlay: View {
                 Spacer()
 
                 // Speak hint
-                HStack(spacing: 6) {
+                HStack(spacing: 5) {
                     Image(systemName: "waveform")
-                        .font(.system(size: 12))
+                        .font(.system(size: 11))
                     Text("Pause to send")
-                        .font(.system(size: 12))
+                        .font(.system(size: 11))
                 }
                 .foregroundColor(theme.tertiaryText)
             }

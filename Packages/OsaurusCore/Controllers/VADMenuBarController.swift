@@ -190,14 +190,17 @@ public final class VADMenuBarController: ObservableObject {
     private func startPulseAnimation() {
         guard pulseTimer == nil else { return }
 
-        var isPulsed = false
         pulseTimer = Timer.scheduledTimer(withTimeInterval: 0.8, repeats: true) { [weak self] _ in
-            guard let button = self?.statusItem?.button else { return }
+            DispatchQueue.main.async {
+                guard let self = self, let button = self.statusItem?.button else { return }
 
-            isPulsed.toggle()
-            NSAnimationContext.runAnimationGroup { context in
-                context.duration = 0.4
-                button.alphaValue = isPulsed ? 0.6 : 1.0
+                let currentAlpha = button.alphaValue
+                let targetAlpha: CGFloat = currentAlpha < 0.9 ? 1.0 : 0.6
+
+                NSAnimationContext.runAnimationGroup { context in
+                    context.duration = 0.4
+                    button.alphaValue = targetAlpha
+                }
             }
         }
     }
