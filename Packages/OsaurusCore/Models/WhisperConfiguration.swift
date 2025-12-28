@@ -21,23 +21,23 @@ public struct WhisperConfiguration: Codable, Equatable, Sendable {
     /// Whether to use word-level timestamps
     public var wordTimestamps: Bool
 
-    /// Task type: "transcribe" or "translate"
-    public var task: TranscriptionTask
-
     /// Selected audio input device unique ID (nil = system default)
     public var selectedInputDeviceId: String?
 
     /// Selected audio input source type (microphone or system audio)
     public var selectedInputSource: AudioInputSource
 
+    /// Voice activity detection sensitivity level
+    public var sensitivity: VoiceSensitivity
+
     private enum CodingKeys: String, CodingKey {
         case defaultModel
         case languageHint
         case enabled
         case wordTimestamps
-        case task
         case selectedInputDeviceId
         case selectedInputSource
+        case sensitivity
     }
 
     public init(from decoder: Decoder) throws {
@@ -48,11 +48,13 @@ public struct WhisperConfiguration: Codable, Equatable, Sendable {
         self.enabled = try container.decodeIfPresent(Bool.self, forKey: .enabled) ?? defaults.enabled
         self.wordTimestamps =
             try container.decodeIfPresent(Bool.self, forKey: .wordTimestamps) ?? defaults.wordTimestamps
-        self.task = try container.decodeIfPresent(TranscriptionTask.self, forKey: .task) ?? defaults.task
         self.selectedInputDeviceId = try container.decodeIfPresent(String.self, forKey: .selectedInputDeviceId)
         self.selectedInputSource =
             try container.decodeIfPresent(AudioInputSource.self, forKey: .selectedInputSource)
             ?? defaults.selectedInputSource
+        self.sensitivity =
+            try container.decodeIfPresent(VoiceSensitivity.self, forKey: .sensitivity)
+            ?? defaults.sensitivity
     }
 
     public init(
@@ -60,17 +62,17 @@ public struct WhisperConfiguration: Codable, Equatable, Sendable {
         languageHint: String? = nil,
         enabled: Bool = true,
         wordTimestamps: Bool = false,
-        task: TranscriptionTask = .transcribe,
         selectedInputDeviceId: String? = nil,
-        selectedInputSource: AudioInputSource = .microphone
+        selectedInputSource: AudioInputSource = .microphone,
+        sensitivity: VoiceSensitivity = .medium
     ) {
         self.defaultModel = defaultModel
         self.languageHint = languageHint
         self.enabled = enabled
         self.wordTimestamps = wordTimestamps
-        self.task = task
         self.selectedInputDeviceId = selectedInputDeviceId
         self.selectedInputSource = selectedInputSource
+        self.sensitivity = sensitivity
     }
 
     /// Default configuration
@@ -80,9 +82,9 @@ public struct WhisperConfiguration: Codable, Equatable, Sendable {
             languageHint: nil,
             enabled: true,
             wordTimestamps: false,
-            task: .transcribe,
             selectedInputDeviceId: nil,
-            selectedInputSource: .microphone
+            selectedInputSource: .microphone,
+            sensitivity: .medium
         )
     }
 }
@@ -109,17 +111,46 @@ public enum AudioInputSource: String, Codable, Equatable, CaseIterable, Sendable
     }
 }
 
-/// Transcription task type
-public enum TranscriptionTask: String, Codable, CaseIterable, Sendable {
-    /// Transcribe audio to text in the original language
-    case transcribe
-    /// Translate audio to English text
-    case translate
+/// Voice activity detection sensitivity level
+public enum VoiceSensitivity: String, Codable, CaseIterable, Sendable {
+    /// Less sensitive - requires louder, clearer speech
+    case low
+    /// Balanced sensitivity (default)
+    case medium
+    /// More sensitive - picks up quieter speech, longer pauses
+    case high
 
     public var displayName: String {
         switch self {
-        case .transcribe: return "Transcribe"
-        case .translate: return "Translate to English"
+        case .low: return "Low"
+        case .medium: return "Medium"
+        case .high: return "High"
+        }
+    }
+
+    public var description: String {
+        switch self {
+        case .low: return "Requires louder speech, faster response"
+        case .medium: return "Balanced for normal conversation"
+        case .high: return "Picks up quiet speech, waits longer for pauses"
+        }
+    }
+
+    /// Energy threshold for voice detection (lower = more sensitive)
+    public var energyThreshold: Float {
+        switch self {
+        case .low: return 0.08
+        case .medium: return 0.05
+        case .high: return 0.02
+        }
+    }
+
+    /// Silence duration to consider speech ended (higher = waits longer)
+    public var silenceThresholdSeconds: Double {
+        switch self {
+        case .low: return 0.3
+        case .medium: return 0.5
+        case .high: return 0.8
         }
     }
 }

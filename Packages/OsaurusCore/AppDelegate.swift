@@ -111,6 +111,11 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegat
 
         // Setup global hotkey for Chat overlay (configured)
         applyChatHotkey()
+
+        // Auto-load whisper model if voice features are enabled
+        Task { @MainActor in
+            await WhisperKitService.shared.autoLoadIfNeeded()
+        }
     }
 
     public func application(_ application: NSApplication, open urls: [URL]) {

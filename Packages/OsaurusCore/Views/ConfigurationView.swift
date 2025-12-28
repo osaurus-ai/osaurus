@@ -1186,12 +1186,8 @@ private struct VoiceSettingsSection: View {
     @StateObject private var themeManager = ThemeManager.shared
     @StateObject private var modelManager = WhisperModelManager.shared
     @StateObject private var whisperService = WhisperKitService.shared
-    @StateObject private var audioInputManager = AudioInputManager.shared
 
-    @State private var tempLanguageHint: String = ""
-    @State private var tempTask: TranscriptionTask = .transcribe
     @State private var tempWordTimestamps: Bool = false
-    @State private var tempEnabled: Bool = true
     @State private var hasLoadedConfig = false
 
     var body: some View {
@@ -1202,123 +1198,19 @@ private struct VoiceSettingsSection: View {
                     .font(.system(size: 12, weight: .semibold))
                     .foregroundColor(themeManager.currentTheme.accentColor)
 
-                Text("VOICE")
+                Text("VOICE (ADVANCED)")
                     .font(.system(size: 11, weight: .bold))
                     .foregroundColor(themeManager.currentTheme.secondaryText)
                     .tracking(0.5)
             }
 
             VStack(alignment: .leading, spacing: 20) {
-                // Enable Voice Toggle
-                SettingsToggle(
-                    title: "Enable Voice Features",
-                    description: "Enable WhisperKit transcription and voice input",
-                    isOn: $tempEnabled
-                )
-                .onChange(of: tempEnabled) { _, newValue in
-                    saveVoiceConfig()
-                }
+                // Info text
+                Text("Configure voice settings directly in the Voice tab. Advanced options below.")
+                    .font(.system(size: 12))
+                    .foregroundColor(themeManager.currentTheme.secondaryText)
 
-                SettingsDivider()
-
-                // Default Model Picker
-                VoiceSettingsSubsection(label: "Model") {
-                    VStack(alignment: .leading, spacing: 10) {
-                        VoiceModelPicker(
-                            selection: Binding(
-                                get: { modelManager.selectedModelId ?? "" },
-                                set: { modelManager.setDefaultModel($0.isEmpty ? nil : $0) }
-                            ),
-                            models: modelManager.availableModels.filter { $0.isDownloaded }
-                        )
-
-                        if modelManager.downloadedModelsCount == 0 {
-                            HStack(spacing: 6) {
-                                Image(systemName: "info.circle")
-                                    .font(.system(size: 11))
-                                    .foregroundColor(themeManager.currentTheme.warningColor)
-                                Text("No models downloaded. Visit the Voice tab to download models.")
-                                    .font(.system(size: 11))
-                                    .foregroundColor(themeManager.currentTheme.warningColor)
-                            }
-                        }
-                    }
-                }
-
-                // Input Device Picker
-                VoiceSettingsSubsection(label: "Input Device") {
-                    VStack(alignment: .leading, spacing: 10) {
-                        VoiceInputDevicePicker(
-                            selection: Binding(
-                                get: { audioInputManager.selectedDeviceId },
-                                set: { audioInputManager.selectDevice($0) }
-                            ),
-                            devices: audioInputManager.availableDevices
-                        )
-
-                        HStack(spacing: 8) {
-                            Text("\(audioInputManager.availableDevices.count) devices available")
-                                .font(.system(size: 11))
-                                .foregroundColor(themeManager.currentTheme.tertiaryText)
-
-                            Spacer()
-
-                            Button(action: { audioInputManager.refreshDevices() }) {
-                                HStack(spacing: 4) {
-                                    Image(systemName: "arrow.clockwise")
-                                        .font(.system(size: 10))
-                                    Text("Refresh")
-                                        .font(.system(size: 11, weight: .medium))
-                                }
-                                .foregroundColor(themeManager.currentTheme.accentColor)
-                            }
-                            .buttonStyle(PlainButtonStyle())
-                        }
-                    }
-                }
-
-                // Language Hint
-                VoiceSettingsSubsection(label: "Language") {
-                    VStack(spacing: 12) {
-                        VoiceSettingsTextField(
-                            label: "Language Hint",
-                            text: $tempLanguageHint,
-                            placeholder: "en",
-                            help: "ISO 639-1 code (e.g., en, es, ja). Leave empty for auto-detection"
-                        )
-                        .onChange(of: tempLanguageHint) { _, _ in
-                            saveVoiceConfig()
-                        }
-                    }
-                }
-
-                // Transcription Task
-                VoiceSettingsSubsection(label: "Task") {
-                    VStack(alignment: .leading, spacing: 10) {
-                        Picker("", selection: $tempTask) {
-                            ForEach(TranscriptionTask.allCases, id: \.self) { task in
-                                Text(task.displayName).tag(task)
-                            }
-                        }
-                        .pickerStyle(.segmented)
-                        .labelsHidden()
-                        .onChange(of: tempTask) { _, _ in
-                            saveVoiceConfig()
-                        }
-
-                        Text(
-                            tempTask == .transcribe
-                                ? "Transcribe audio to text in the original language"
-                                : "Translate audio to English text"
-                        )
-                        .font(.system(size: 11))
-                        .foregroundColor(themeManager.currentTheme.tertiaryText)
-                    }
-                }
-
-                SettingsDivider()
-
-                // Advanced Options
+                // Advanced Options - Word Timestamps
                 SettingsToggle(
                     title: "Word Timestamps",
                     description: "Include word-level timing in transcription results",
@@ -1332,14 +1224,20 @@ private struct VoiceSettingsSection: View {
                 HStack(spacing: 12) {
                     // Model status
                     HStack(spacing: 6) {
-                        Circle()
-                            .fill(
-                                whisperService.isModelLoaded
-                                    ? themeManager.currentTheme.successColor
-                                    : themeManager.currentTheme.tertiaryText
-                            )
-                            .frame(width: 8, height: 8)
-                        Text(whisperService.isModelLoaded ? "Model Loaded" : "Model Not Loaded")
+                        if whisperService.isLoadingModel {
+                            ProgressView()
+                                .scaleEffect(0.5)
+                                .frame(width: 8, height: 8)
+                        } else {
+                            Circle()
+                                .fill(
+                                    whisperService.isModelLoaded
+                                        ? themeManager.currentTheme.successColor
+                                        : themeManager.currentTheme.tertiaryText
+                                )
+                                .frame(width: 8, height: 8)
+                        }
+                        Text(modelStatusText)
                             .font(.system(size: 11))
                             .foregroundColor(themeManager.currentTheme.secondaryText)
                     }
@@ -1384,20 +1282,31 @@ private struct VoiceSettingsSection: View {
         }
     }
 
+    private var modelStatusText: String {
+        if whisperService.isLoadingModel {
+            return "Loading model..."
+        } else if whisperService.isModelLoaded {
+            if let modelId = whisperService.loadedModelId,
+                let model = modelManager.availableModels.first(where: { $0.id == modelId })
+            {
+                return model.name
+            }
+            return "Model Loaded"
+        } else if modelManager.downloadedModelsCount == 0 {
+            return "No models downloaded"
+        } else {
+            return "Model not loaded"
+        }
+    }
+
     private func loadVoiceConfig() {
         let config = WhisperConfigurationStore.load()
-        tempLanguageHint = config.languageHint ?? ""
-        tempTask = config.task
         tempWordTimestamps = config.wordTimestamps
-        tempEnabled = config.enabled
     }
 
     private func saveVoiceConfig() {
         var config = WhisperConfigurationStore.load()
-        config.languageHint = tempLanguageHint.isEmpty ? nil : tempLanguageHint
-        config.task = tempTask
         config.wordTimestamps = tempWordTimestamps
-        config.enabled = tempEnabled
         WhisperConfigurationStore.save(config)
     }
 }

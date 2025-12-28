@@ -16,6 +16,82 @@ enum VoiceTab: String, CaseIterable, AnimatedTabItem {
     var title: String { rawValue }
 }
 
+// MARK: - Supported Languages
+
+/// Languages supported by Whisper for transcription/translation
+enum SupportedLanguage: CaseIterable {
+    case english
+    case spanish
+    case french
+    case german
+    case italian
+    case portuguese
+    case dutch
+    case russian
+    case chinese
+    case japanese
+    case korean
+    case arabic
+    case hindi
+    case polish
+    case turkish
+    case vietnamese
+    case thai
+    case indonesian
+    case ukrainian
+    case swedish
+
+    var code: String {
+        switch self {
+        case .english: return "en"
+        case .spanish: return "es"
+        case .french: return "fr"
+        case .german: return "de"
+        case .italian: return "it"
+        case .portuguese: return "pt"
+        case .dutch: return "nl"
+        case .russian: return "ru"
+        case .chinese: return "zh"
+        case .japanese: return "ja"
+        case .korean: return "ko"
+        case .arabic: return "ar"
+        case .hindi: return "hi"
+        case .polish: return "pl"
+        case .turkish: return "tr"
+        case .vietnamese: return "vi"
+        case .thai: return "th"
+        case .indonesian: return "id"
+        case .ukrainian: return "uk"
+        case .swedish: return "sv"
+        }
+    }
+
+    var displayName: String {
+        switch self {
+        case .english: return "English"
+        case .spanish: return "Spanish"
+        case .french: return "French"
+        case .german: return "German"
+        case .italian: return "Italian"
+        case .portuguese: return "Portuguese"
+        case .dutch: return "Dutch"
+        case .russian: return "Russian"
+        case .chinese: return "Chinese"
+        case .japanese: return "Japanese"
+        case .korean: return "Korean"
+        case .arabic: return "Arabic"
+        case .hindi: return "Hindi"
+        case .polish: return "Polish"
+        case .turkish: return "Turkish"
+        case .vietnamese: return "Vietnamese"
+        case .thai: return "Thai"
+        case .indonesian: return "Indonesian"
+        case .ukrainian: return "Ukrainian"
+        case .swedish: return "Swedish"
+        }
+    }
+}
+
 // MARK: - Voice View
 
 struct VoiceView: View {
@@ -27,6 +103,24 @@ struct VoiceView: View {
 
     @State private var selectedTab: VoiceTab = .main
     @State private var hasAppeared = false
+    @State private var voiceEnabled: Bool = true
+
+    private func loadVoiceEnabled() {
+        let config = WhisperConfigurationStore.load()
+        voiceEnabled = config.enabled
+    }
+
+    private func toggleVoiceEnabled(_ enabled: Bool) {
+        var config = WhisperConfigurationStore.load()
+        config.enabled = enabled
+        WhisperConfigurationStore.save(config)
+        voiceEnabled = enabled
+
+        // Trigger auto-load/unload
+        Task {
+            await whisperService.autoLoadIfNeeded()
+        }
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -51,6 +145,7 @@ struct VoiceView: View {
         .background(theme.primaryBackground)
         .environment(\.theme, themeManager.currentTheme)
         .onAppear {
+            loadVoiceEnabled()
             withAnimation(.easeOut(duration: 0.25).delay(0.05)) {
                 hasAppeared = true
             }
@@ -75,7 +170,21 @@ struct VoiceView: View {
                 Spacer()
 
                 // Status indicator
-                if whisperService.isModelLoaded {
+                if whisperService.isLoadingModel {
+                    HStack(spacing: 6) {
+                        ProgressView()
+                            .scaleEffect(0.6)
+                        Text("Loading...")
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundColor(theme.secondaryText)
+                    }
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 6)
+                    .background(
+                        Capsule()
+                            .fill(theme.tertiaryBackground)
+                    )
+                } else if whisperService.isModelLoaded {
                     HStack(spacing: 6) {
                         Circle()
                             .fill(theme.successColor)
@@ -91,6 +200,18 @@ struct VoiceView: View {
                             .fill(theme.successColor.opacity(0.1))
                     )
                 }
+
+                // Enable Voice Toggle
+                Toggle(
+                    "",
+                    isOn: Binding(
+                        get: { voiceEnabled },
+                        set: { toggleVoiceEnabled($0) }
+                    )
+                )
+                .toggleStyle(SwitchToggleStyle(tint: theme.accentColor))
+                .labelsHidden()
+                .help(voiceEnabled ? "Voice features enabled" : "Voice features disabled")
             }
 
             // Tab selector
@@ -123,6 +244,66 @@ private struct VoiceMainTab: View {
 
     @State private var transcriptionText: String = ""
     @State private var errorMessage: String?
+    @State private var isStartingRecording: Bool = false
+
+    // Voice settings state
+    @State private var languageHint: String = ""
+    @State private var sensitivity: VoiceSensitivity = .medium
+    @State private var hasLoadedSettings = false
+
+    private func loadSettings() {
+        let config = WhisperConfigurationStore.load()
+        languageHint = config.languageHint ?? ""
+        sensitivity = config.sensitivity
+        print(
+            "[VoiceView] Loaded settings - language=\(languageHint.isEmpty ? "auto" : languageHint), sensitivity=\(sensitivity)"
+        )
+    }
+
+    private func saveSettings() {
+        var config = WhisperConfigurationStore.load()
+        config.languageHint = languageHint.isEmpty ? nil : languageHint
+        config.sensitivity = sensitivity
+        WhisperConfigurationStore.save(config)
+        print(
+            "[VoiceView] Saved settings - language=\(languageHint.isEmpty ? "auto" : languageHint), sensitivity=\(sensitivity)"
+        )
+    }
+
+    /// Display name for the currently selected language
+    private var selectedLanguageDisplayName: String {
+        if languageHint.isEmpty {
+            return "Auto-detect"
+        }
+        if let lang = SupportedLanguage.allCases.first(where: { $0.code == languageHint }) {
+            return lang.displayName
+        }
+        return languageHint.uppercased()
+    }
+
+    /// Whether recording can be started
+    private var canStartRecording: Bool {
+        // Can record if we have mic permission and either a model is loaded or can be loaded
+        guard whisperService.microphonePermissionGranted else { return false }
+        guard !isStartingRecording && !whisperService.isLoadingModel else { return false }
+
+        // Need at least one downloaded model with a default selected
+        guard modelManager.downloadedModelsCount > 0 else { return false }
+        guard modelManager.selectedModel != nil else { return false }
+
+        return true
+    }
+
+    /// Text for the record button
+    private var recordButtonText: String {
+        if whisperService.isRecording {
+            return "Stop"
+        } else if isStartingRecording || whisperService.isLoadingModel {
+            return "Loading..."
+        } else {
+            return "Start Recording"
+        }
+    }
 
     var body: some View {
         ScrollView {
@@ -136,6 +317,9 @@ private struct VoiceMainTab: View {
                 // Input Device Selection Card
                 inputDeviceCard
 
+                // Voice Settings Card
+                voiceSettingsCard
+
                 // Recording Test Card
                 recordingTestCard
 
@@ -143,6 +327,12 @@ private struct VoiceMainTab: View {
             }
             .padding(24)
             .frame(maxWidth: 700)
+        }
+        .onAppear {
+            if !hasLoadedSettings {
+                loadSettings()
+                hasLoadedSettings = true
+            }
         }
     }
 
@@ -527,6 +717,177 @@ private struct VoiceMainTab: View {
         }
     }
 
+    // MARK: - Voice Settings Card
+
+    private var voiceSettingsCard: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            HStack(spacing: 12) {
+                ZStack {
+                    RoundedRectangle(cornerRadius: 12)
+                        .fill(theme.accentColor.opacity(0.15))
+                    Image(systemName: "gearshape.fill")
+                        .font(.system(size: 20, weight: .medium))
+                        .foregroundColor(theme.accentColor)
+                }
+                .frame(width: 48, height: 48)
+
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Voice Settings")
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundColor(theme.primaryText)
+
+                    Text("Configure transcription behavior")
+                        .font(.system(size: 12))
+                        .foregroundColor(theme.secondaryText)
+                }
+
+                Spacer()
+            }
+
+            // Language Picker
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Speaking Language")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundColor(theme.secondaryText)
+
+                Menu {
+                    Button(action: {
+                        languageHint = ""; saveSettings()
+                    }) {
+                        HStack {
+                            Text("Auto-detect")
+                            if languageHint.isEmpty {
+                                Image(systemName: "checkmark")
+                            }
+                        }
+                    }
+
+                    Divider()
+
+                    ForEach(SupportedLanguage.allCases, id: \.code) { lang in
+                        Button(action: {
+                            languageHint = lang.code; saveSettings()
+                        }) {
+                            HStack {
+                                Text(lang.displayName)
+                                if languageHint == lang.code {
+                                    Image(systemName: "checkmark")
+                                }
+                            }
+                        }
+                    }
+                } label: {
+                    HStack(spacing: 10) {
+                        Image(systemName: "globe")
+                            .font(.system(size: 14))
+                            .foregroundColor(theme.accentColor)
+
+                        Text(selectedLanguageDisplayName)
+                            .font(.system(size: 13, weight: .medium))
+                            .foregroundColor(theme.primaryText)
+
+                        Spacer()
+
+                        Image(systemName: "chevron.up.chevron.down")
+                            .font(.system(size: 10, weight: .medium))
+                            .foregroundColor(theme.tertiaryText)
+                    }
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 10)
+                    .background(
+                        RoundedRectangle(cornerRadius: 10)
+                            .fill(theme.inputBackground)
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 10)
+                                    .stroke(theme.inputBorder, lineWidth: 1)
+                            )
+                    )
+                }
+                .menuStyle(.borderlessButton)
+                .disabled(whisperService.isRecording)
+                .opacity(whisperService.isRecording ? 0.5 : 1)
+
+                Text("Audio will be transcribed in this language")
+                    .font(.system(size: 11))
+                    .foregroundColor(theme.tertiaryText)
+            }
+
+            // Sensitivity Picker
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Sensitivity")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundColor(theme.secondaryText)
+
+                Picker("", selection: $sensitivity) {
+                    ForEach(VoiceSensitivity.allCases, id: \.self) { level in
+                        Text(level.displayName).tag(level)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .disabled(whisperService.isRecording)
+                .opacity(whisperService.isRecording ? 0.5 : 1)
+                .onChange(of: sensitivity) { _, _ in
+                    saveSettings()
+                }
+
+                Text(whisperService.isRecording ? "Stop recording to change sensitivity" : sensitivity.description)
+                    .font(.system(size: 11))
+                    .foregroundColor(whisperService.isRecording ? theme.warningColor : theme.tertiaryText)
+            }
+
+            // Warning for English-only model with non-English settings
+            if let warning = modelCompatibilityWarning {
+                HStack(alignment: .top, spacing: 8) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .font(.system(size: 14))
+                        .foregroundColor(theme.warningColor)
+
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(warning.title)
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundColor(theme.primaryText)
+                        Text(warning.message)
+                            .font(.system(size: 11))
+                            .foregroundColor(theme.secondaryText)
+                    }
+                }
+                .padding(12)
+                .background(
+                    RoundedRectangle(cornerRadius: 10)
+                        .fill(theme.warningColor.opacity(0.1))
+                )
+            }
+        }
+        .padding(20)
+        .background(
+            RoundedRectangle(cornerRadius: 16)
+                .fill(theme.cardBackground)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 16)
+                        .stroke(theme.cardBorder, lineWidth: 1)
+                )
+        )
+    }
+
+    /// Warning message if model doesn't support current settings
+    private var modelCompatibilityWarning: (title: String, message: String)? {
+        guard let selectedModel = modelManager.selectedModel else { return nil }
+
+        // Check if using English-only model with non-English language
+        if selectedModel.isEnglishOnly {
+            if !languageHint.isEmpty && languageHint != "en" {
+                return (
+                    title: "English-only model selected",
+                    message:
+                        "The model \"\(selectedModel.name)\" can only transcribe English. Select a multilingual model (without '.en') to transcribe \(selectedLanguageDisplayName)."
+                )
+            }
+        }
+
+        return nil
+    }
+
     // MARK: - Recording Test Card
 
     private var recordingTestCard: some View {
@@ -601,9 +962,15 @@ private struct VoiceMainTab: View {
                 // Record button
                 Button(action: toggleRecording) {
                     HStack(spacing: 8) {
-                        Image(systemName: whisperService.isRecording ? "stop.fill" : "mic.fill")
-                            .font(.system(size: 16, weight: .medium))
-                        Text(whisperService.isRecording ? "Stop" : "Start Recording")
+                        if isStartingRecording || whisperService.isLoadingModel {
+                            ProgressView()
+                                .scaleEffect(0.7)
+                                .frame(width: 16, height: 16)
+                        } else {
+                            Image(systemName: whisperService.isRecording ? "stop.fill" : "mic.fill")
+                                .font(.system(size: 16, weight: .medium))
+                        }
+                        Text(recordButtonText)
                             .font(.system(size: 14, weight: .medium))
                     }
                     .foregroundColor(.white)
@@ -615,11 +982,8 @@ private struct VoiceMainTab: View {
                     )
                 }
                 .buttonStyle(PlainButtonStyle())
-                .disabled(!whisperService.microphonePermissionGranted || !whisperService.isModelLoaded)
-                .opacity(
-                    (!whisperService.microphonePermissionGranted || !whisperService.isModelLoaded)
-                        ? 0.5 : 1
-                )
+                .disabled(!canStartRecording)
+                .opacity(!canStartRecording ? 0.5 : 1)
 
                 if !whisperService.currentTranscription.isEmpty && !whisperService.isRecording {
                     Button(action: {
@@ -645,12 +1009,12 @@ private struct VoiceMainTab: View {
                 Spacer()
             }
 
-            if !whisperService.isModelLoaded && modelManager.downloadedModelsCount > 0 {
-                Text("Load a model to enable voice input")
+            if modelManager.downloadedModelsCount == 0 {
+                Text("Download a Whisper model from the Models tab to get started")
                     .font(.system(size: 11))
                     .foregroundColor(theme.tertiaryText)
-            } else if modelManager.downloadedModelsCount == 0 {
-                Text("Download a Whisper model from the Models tab to get started")
+            } else if modelManager.selectedModel == nil {
+                Text("Select a default model from the Models tab")
                     .font(.system(size: 11))
                     .foregroundColor(theme.tertiaryText)
             }
@@ -705,14 +1069,19 @@ private struct VoiceMainTab: View {
                 }
             }
         } else {
-            // Start streaming transcription
+            // Start streaming transcription (model will auto-load if needed)
             transcriptionText = ""
             errorMessage = nil
+            isStartingRecording = true
             Task {
                 do {
                     try await whisperService.startStreamingTranscription()
+                    await MainActor.run {
+                        isStartingRecording = false
+                    }
                 } catch {
                     await MainActor.run {
+                        isStartingRecording = false
                         errorMessage = error.localizedDescription
                     }
                 }

@@ -766,6 +766,44 @@ public final class WhisperKitService: ObservableObject {
         whisperKit = nil
         isModelLoaded = false
         loadedModelId = nil
+        print("[WhisperKitService] Model unloaded")
+    }
+
+    /// Auto-load the model if voice features are enabled and a default model is selected
+    /// Call this when voice settings change or on app launch
+    public func autoLoadIfNeeded() async {
+        let config = WhisperConfigurationStore.load()
+
+        // If voice features are disabled, unload any loaded model
+        guard config.enabled else {
+            if isModelLoaded {
+                unloadModel()
+            }
+            return
+        }
+
+        // If no model is selected, nothing to load
+        guard let selectedModel = WhisperModelManager.shared.selectedModel else {
+            return
+        }
+
+        // If model is not downloaded, can't load
+        guard selectedModel.isDownloaded else {
+            return
+        }
+
+        // If the selected model is already loaded, nothing to do
+        if isModelLoaded && loadedModelId == selectedModel.id {
+            return
+        }
+
+        // Load the model
+        do {
+            try await loadModel(selectedModel.id)
+            print("[WhisperKitService] Auto-loaded model: \(selectedModel.id)")
+        } catch {
+            print("[WhisperKitService] Failed to auto-load model: \(error)")
+        }
     }
 
     /// Ensure a model is loaded, using the default if needed
@@ -809,7 +847,7 @@ public final class WhisperKitService: ObservableObject {
 
             // Configure decoding options
             let options = DecodingOptions(
-                task: config.task == .translate ? .translate : .transcribe,
+                task: .transcribe,
                 language: config.languageHint,
                 wordTimestamps: config.wordTimestamps
             )
@@ -866,7 +904,7 @@ public final class WhisperKitService: ObservableObject {
             let config = WhisperConfigurationStore.load()
 
             let options = DecodingOptions(
-                task: config.task == .translate ? .translate : .transcribe,
+                task: .transcribe,
                 language: config.languageHint,
                 wordTimestamps: config.wordTimestamps
             )
@@ -948,6 +986,9 @@ public final class WhisperKitService: ObservableObject {
             }
         }
 
+        // Auto-load model if needed
+        try await ensureModelLoaded()
+
         guard let whisperKit = whisperKit else {
             throw WhisperKitError.modelNotLoaded
         }
@@ -962,7 +1003,10 @@ public final class WhisperKitService: ObservableObject {
 
         // Get configuration
         let config = WhisperConfigurationStore.load()
-        let decodingTask: DecodingTask = config.task == .translate ? .translate : .transcribe
+
+        print("[WhisperKitService] Starting transcription with:")
+        print("[WhisperKitService]   - Language: \(config.languageHint ?? "auto-detect")")
+        print("[WhisperKitService]   - Sensitivity: \(config.sensitivity)")
 
         if inputSource == .microphone {
             // 4a. Microphone path: Resolve Device ID
@@ -989,8 +1033,8 @@ public final class WhisperKitService: ObservableObject {
                     whisperKit: whisperKit,
                     audioBuffer: audioBuffer,
                     inputFormat: tapFormat,
-                    transcriptionTask: decodingTask,
-                    languageHint: config.languageHint
+                    languageHint: config.languageHint,
+                    sensitivity: config.sensitivity
                 )
 
                 isRecording = true
@@ -1026,8 +1070,8 @@ public final class WhisperKitService: ObservableObject {
                         whisperKit: whisperKit,
                         audioBuffer: audioBuffer,
                         inputFormat: systemAudioFormat,
-                        transcriptionTask: decodingTask,
-                        languageHint: config.languageHint
+                        languageHint: config.languageHint,
+                        sensitivity: config.sensitivity
                     )
 
                     isRecording = true
@@ -1064,7 +1108,7 @@ public final class WhisperKitService: ObservableObject {
                 let config = WhisperConfigurationStore.load()
 
                 let options = DecodingOptions(
-                    task: config.task == .translate ? .translate : .transcribe,
+                    task: .transcribe,
                     language: config.languageHint,
                     usePrefillPrompt: true,
                     wordTimestamps: false
@@ -1352,26 +1396,24 @@ private actor TranscriptionWorker {
     private var converter: AVAudioConverter?
 
     // Configuration from WhisperConfigurationStore
-    private let transcriptionTask: DecodingTask
     private let languageHint: String?
 
-    // VAD Parameters
-    private let silenceThresholdSeconds: Double = 0.5
+    // VAD Parameters (configured via sensitivity)
+    private let silenceThresholdSeconds: Double
     private let maxSegmentDurationSeconds: Double = 30.0
-    private let speechEnergyThreshold: Float = 0.05
+    private let speechEnergyThreshold: Float
     private let minSamples = 16000  // 1 second
 
     init(
         whisperKit: WhisperKit,
         audioBuffer: ThreadSafeAudioBuffer,
         inputFormat: AVAudioFormat,
-        transcriptionTask: DecodingTask = .transcribe,
-        languageHint: String? = nil
+        languageHint: String? = nil,
+        sensitivity: VoiceSensitivity = .medium
     ) {
         self.whisperKit = whisperKit
         self.audioBuffer = audioBuffer
         self.inputFormat = inputFormat
-        self.transcriptionTask = transcriptionTask
         self.languageHint = languageHint
         self.targetFormat = AVAudioFormat(
             commonFormat: .pcmFormatFloat32,
@@ -1379,6 +1421,10 @@ private actor TranscriptionWorker {
             channels: 1,
             interleaved: false
         )!
+
+        // Apply sensitivity-based VAD thresholds
+        self.speechEnergyThreshold = sensitivity.energyThreshold
+        self.silenceThresholdSeconds = sensitivity.silenceThresholdSeconds
     }
 
     func start() -> AsyncStream<TranscriptionUpdate> {
@@ -1555,8 +1601,10 @@ private actor TranscriptionWorker {
         guard !buffer.isEmpty else { return }
 
         do {
+            print("[TranscriptionWorker] Finalizing segment with language=\(languageHint ?? "auto")")
+
             let options = DecodingOptions(
-                task: transcriptionTask,
+                task: .transcribe,
                 language: languageHint,
                 usePrefillPrompt: true,
                 wordTimestamps: false
@@ -1564,6 +1612,9 @@ private actor TranscriptionWorker {
 
             let results = try await whisperKit.transcribe(audioArray: buffer, decodeOptions: options)
             if let result = results.first {
+                print(
+                    "[TranscriptionWorker] Result - language=\(result.language ?? "unknown"), text=\(result.text.prefix(50))..."
+                )
                 let text = result.text.trimmingCharacters(in: CharacterSet.whitespacesAndNewlines)
                 if !text.isEmpty {
                     continuation?.yield(.final(text))
@@ -1577,7 +1628,7 @@ private actor TranscriptionWorker {
     private func updatePreview(_ buffer: [Float]) async {
         do {
             let options = DecodingOptions(
-                task: transcriptionTask,
+                task: .transcribe,
                 language: languageHint,
                 wordTimestamps: false
             )
