@@ -24,6 +24,7 @@ struct VADModeSettingsTab: View {
     @State private var menuBarVisible: Bool = true
     @State private var autoStartVoiceInput: Bool = true
     @State private var customWakePhrase: String = ""
+    @State private var silenceTimeoutSeconds: Double = 30.0
     @State private var hasLoadedSettings = false
 
     // Test state
@@ -40,6 +41,7 @@ struct VADModeSettingsTab: View {
         menuBarVisible = config.menuBarVisible
         autoStartVoiceInput = config.autoStartVoiceInput
         customWakePhrase = config.customWakePhrase
+        silenceTimeoutSeconds = config.silenceTimeoutSeconds
     }
 
     private func saveSettings() {
@@ -49,7 +51,8 @@ struct VADModeSettingsTab: View {
             wakeWordSensitivity: wakeWordSensitivity,
             menuBarVisible: menuBarVisible,
             autoStartVoiceInput: autoStartVoiceInput,
-            customWakePhrase: customWakePhrase
+            customWakePhrase: customWakePhrase,
+            silenceTimeoutSeconds: silenceTimeoutSeconds
         )
         VADConfigurationStore.save(config)
         vadService.loadConfiguration()
@@ -492,6 +495,46 @@ struct VADModeSettingsTab: View {
                 isOn: $autoStartVoiceInput,
                 onChange: { saveSettings() }
             )
+
+            Divider()
+                .background(theme.cardBorder)
+
+            // Silence timeout
+            VStack(alignment: .leading, spacing: 8) {
+                HStack {
+                    Text("Silence Timeout")
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundColor(theme.primaryText)
+                    Spacer()
+                    Text(silenceTimeoutFormatted)
+                        .font(.system(size: 13, weight: .medium, design: .monospaced))
+                        .foregroundColor(theme.accentColor)
+                }
+
+                Text("Auto-close chat window after this duration of silence")
+                    .font(.system(size: 12))
+                    .foregroundColor(theme.secondaryText)
+
+                Slider(
+                    value: $silenceTimeoutSeconds,
+                    in: 10 ... 120,
+                    step: 5
+                ) {
+                    Text("Silence Timeout")
+                } minimumValueLabel: {
+                    Text("10s")
+                        .font(.system(size: 10))
+                        .foregroundColor(theme.tertiaryText)
+                } maximumValueLabel: {
+                    Text("2m")
+                        .font(.system(size: 10))
+                        .foregroundColor(theme.tertiaryText)
+                }
+                .tint(theme.accentColor)
+                .onChange(of: silenceTimeoutSeconds) { _, _ in
+                    saveSettings()
+                }
+            }
         }
         .padding(20)
         .background(
@@ -502,6 +545,20 @@ struct VADModeSettingsTab: View {
                         .stroke(theme.cardBorder, lineWidth: 1)
                 )
         )
+    }
+
+    private var silenceTimeoutFormatted: String {
+        if silenceTimeoutSeconds >= 60 {
+            let minutes = Int(silenceTimeoutSeconds) / 60
+            let seconds = Int(silenceTimeoutSeconds) % 60
+            if seconds == 0 {
+                return "\(minutes)m"
+            } else {
+                return "\(minutes)m \(seconds)s"
+            }
+        } else {
+            return "\(Int(silenceTimeoutSeconds))s"
+        }
     }
 
     // MARK: - Test Area Card

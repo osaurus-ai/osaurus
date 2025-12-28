@@ -190,6 +190,14 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegat
             name: .chatViewClosed,
             object: nil
         )
+
+        // Listen for requests to close chat overlay (from silence timeout)
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleCloseChatOverlay(_:)),
+            name: .closeChatOverlay,
+            object: nil
+        )
     }
 
     @objc private func handleChatViewClosed(_ notification: Notification) {
@@ -197,6 +205,13 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegat
         Task { @MainActor in
             // Resume VAD if it was paused
             await VADService.shared.resumeAfterChat()
+        }
+    }
+
+    @objc private func handleCloseChatOverlay(_ notification: Notification) {
+        print("[AppDelegate] Close chat overlay requested (silence timeout)")
+        Task { @MainActor in
+            closeChatOverlay()
         }
     }
 

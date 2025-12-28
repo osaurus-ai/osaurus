@@ -17,6 +17,7 @@ extension Notification.Name {
     public static let startVoiceInputInChat = Notification.Name("startVoiceInputInChat")
     public static let chatViewClosed = Notification.Name("chatViewClosed")
     public static let vadStartNewSession = Notification.Name("vadStartNewSession")
+    public static let closeChatOverlay = Notification.Name("closeChatOverlay")
 }
 
 /// Result of a VAD detection
@@ -193,6 +194,13 @@ public final class VADService: ObservableObject {
         try await start()
     }
 
+    /// Reset state to idle (called when exiting continuous voice mode)
+    public func resetToIdle() {
+        print("[VADService] Resetting state to idle (was: \(state))")
+        state = .idle
+        // Keep isEnabled true so resumeAfterChat knows to restart
+    }
+
     // MARK: - Private Methods
 
     private func setupObservers() {
@@ -331,6 +339,9 @@ public final class VADService: ObservableObject {
         }
 
         print("[VADService] Resuming after chat closed...")
+
+        // Wait for audio system to settle before restarting
+        try? await Task.sleep(nanoseconds: 500_000_000)  // 500ms
 
         // Clear any stale transcription before resuming
         whisperService.clearTranscription()
