@@ -37,7 +37,7 @@ public struct WindowConfiguration: Sendable {
 
     public static let chat = WindowConfiguration(
         identifier: .chat,
-        defaultSize: NSSize(width: 720, height: 550),
+        defaultSize: NSSize(width: 800, height: 610),
         styleMask: [.titled, .resizable, .fullSizeContentView],
         usePanel: true,
         titlebarAppearsTransparent: true,
@@ -290,6 +290,10 @@ public final class WindowManager: NSObject, ObservableObject {
 
         // Pre-layout to avoid jank
         hostingController.view.layoutSubtreeIfNeeded()
+
+        // Force set content size again to ensure we start with the intended size
+        // This prevents the window from starting at 0x0 or wrong size if layoutSubtreeIfNeeded did something unexpected
+        window.setContentSize(config.defaultSize)
 
         // Register with manager
         register(window, as: config.identifier)

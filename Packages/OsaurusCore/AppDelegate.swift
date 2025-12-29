@@ -658,9 +658,13 @@ extension AppDelegate {
 // MARK: - Chat Overlay Window
 extension AppDelegate {
     @MainActor private func toggleChatOverlay() {
-        WindowManager.shared.toggle(.chat)
-        if WindowManager.shared.isVisible(.chat) {
-            NotificationCenter.default.post(name: .chatOverlayActivated, object: nil)
+        if WindowManager.shared.window(for: .chat) == nil {
+            showChatOverlay()
+        } else {
+            WindowManager.shared.toggle(.chat)
+            if WindowManager.shared.isVisible(.chat) {
+                NotificationCenter.default.post(name: .chatOverlayActivated, object: nil)
+            }
         }
     }
 
