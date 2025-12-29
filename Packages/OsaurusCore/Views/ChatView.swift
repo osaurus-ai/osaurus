@@ -1566,9 +1566,33 @@ struct ChatView: View {
         })
     }
 
-    // Key monitor for Enter to send is now handled by FloatingInputCard
+    // Key monitor for Esc to cancel voice or close window
     private func setupKeyMonitor() {
-        // No-op: key handling moved to FloatingInputCard for proper local state sync
+        if keyMonitor != nil { return }
+
+        // Monitor for KeyDown events in the local event loop
+        keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+            // Esc key code is 53
+            if event.keyCode == 53 {
+                // Check if voice input is active
+                if WhisperKitService.shared.isRecording {
+                    // Stage 1: Cancel voice input
+                    print("[ChatView] Esc pressed: Cancelling voice input")
+                    Task {
+                        // Stop streaming and clear transcription
+                        _ = await WhisperKitService.shared.stopStreamingTranscription()
+                        await WhisperKitService.shared.clearTranscription()
+                    }
+                    return nil  // Swallow event
+                } else {
+                    // Stage 2: Close chat window
+                    print("[ChatView] Esc pressed: Closing chat window")
+                    AppDelegate.shared?.closeChatOverlay()
+                    return nil  // Swallow event
+                }
+            }
+            return event
+        }
     }
 
     private func cleanupKeyMonitor() {

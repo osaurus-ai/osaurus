@@ -166,6 +166,15 @@ public final class WindowManager: NSObject, ObservableObject {
         // Restore normal level and behavior after a brief moment
         Task { @MainActor in
             try? await Task.sleep(nanoseconds: 500_000_000)  // 500ms
+
+            // Critical check: Ensure window is still visible before restoring state.
+            // If the user closed the window during this delay, we must abort to avoid
+            // inadvertently re-showing or modifying a closed/hidden window.
+            guard self.isVisible(identifier) else {
+                print("[WindowManager] Window \(identifier) hidden during transition, aborting restore")
+                return
+            }
+
             window.level = originalLevel
             window.collectionBehavior = isPinned ? [.canJoinAllSpaces, .fullScreenAuxiliary] : originalBehavior
 
