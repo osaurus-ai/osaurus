@@ -248,6 +248,11 @@ struct FloatingInputCard: View {
                 lastSpeechTime = Date()
                 isPauseDetectionActive = voiceConfig.pauseDuration > 0
             } else if !isRecording {
+                // If service stopped recording (e.g. via Esc key in ChatView), sync local state
+                if voiceInputState != .idle {
+                    voiceInputState = .idle
+                    showVoiceOverlay = false
+                }
                 isPauseDetectionActive = false
             }
         }

@@ -26,7 +26,6 @@ struct ConfigurationView: View {
     @State private var tempChatContextLength: String = ""
     @State private var tempChatTopP: String = ""
     @State private var tempChatMaxToolAttempts: String = ""
-    @State private var tempChatAlwaysOnTop: Bool = false
 
     // Server settings state
     @State private var tempAllowedOrigins: String = ""
@@ -82,7 +81,6 @@ struct ConfigurationView: View {
                             "Top P",
                             "Tools",
                             "Tool Call",
-                            "Always on Top",
                             "Generation"
                         ) {
                             SettingsSection(title: "Chat", icon: "message") {
@@ -152,14 +150,6 @@ struct ConfigurationView: View {
                                         )
                                     }
 
-                                    SettingsDivider()
-
-                                    // Window Settings
-                                    SettingsToggle(
-                                        title: "Always on Top",
-                                        description: "Keep chat window above other windows",
-                                        isOn: $tempChatAlwaysOnTop
-                                    )
                                 }
                             }
                         }
@@ -524,7 +514,6 @@ struct ConfigurationView: View {
         tempChatContextLength = chat.contextLength.map(String.init) ?? ""
         tempChatTopP = chat.topPOverride.map { String($0) } ?? ""
         tempChatMaxToolAttempts = chat.maxToolAttempts.map(String.init) ?? ""
-        tempChatAlwaysOnTop = chat.alwaysOnTop
 
         let defaults = ServerConfiguration.default
         tempTopP = configuration.genTopP == defaults.genTopP ? "" : String(configuration.genTopP)
@@ -566,7 +555,6 @@ struct ConfigurationView: View {
         tempChatContextLength = ""
         tempChatTopP = ""
         tempChatMaxToolAttempts = ""
-        tempChatAlwaysOnTop = chatDefaults.alwaysOnTop
 
         // Performance settings - clear to use defaults
         tempTopP = ""
@@ -701,7 +689,6 @@ struct ConfigurationView: View {
             contextLength: parsedContext,
             topPOverride: parsedTopP,
             maxToolAttempts: parsedMaxToolAttempts,
-            alwaysOnTop: tempChatAlwaysOnTop,
             defaultModel: existingDefaultModel
         )
         ChatConfigurationStore.save(chatCfg)
@@ -713,16 +700,10 @@ struct ConfigurationView: View {
         }
 
         let hotkeyChanged = previousChatCfg.hotkey != chatCfg.hotkey
-        let alwaysOnTopChanged = previousChatCfg.alwaysOnTop != chatCfg.alwaysOnTop
 
         // Apply hotkey without relaunch (only if it changed)
         if hotkeyChanged {
             AppDelegate.shared?.applyChatHotkey()
-        }
-
-        // Apply chat window level immediately (only if it changed)
-        if alwaysOnTopChanged {
-            AppDelegate.shared?.applyChatWindowLevel()
         }
 
         // Apply login item state (only if it changed)

@@ -1390,6 +1390,7 @@ struct ChatView: View {
                     }
                 )
             }
+            PinButton()
             CloseButton(action: { AppDelegate.shared?.closeChatOverlay() })
         }
         .padding(16)
@@ -1565,9 +1566,33 @@ struct ChatView: View {
         })
     }
 
-    // Key monitor for Enter to send is now handled by FloatingInputCard
+    // Key monitor for Esc to cancel voice or close window
     private func setupKeyMonitor() {
-        // No-op: key handling moved to FloatingInputCard for proper local state sync
+        if keyMonitor != nil { return }
+
+        // Monitor for KeyDown events in the local event loop
+        keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+            // Esc key code is 53
+            if event.keyCode == 53 {
+                // Check if voice input is active
+                if WhisperKitService.shared.isRecording {
+                    // Stage 1: Cancel voice input
+                    print("[ChatView] Esc pressed: Cancelling voice input")
+                    Task {
+                        // Stop streaming and clear transcription
+                        _ = await WhisperKitService.shared.stopStreamingTranscription()
+                        await WhisperKitService.shared.clearTranscription()
+                    }
+                    return nil  // Swallow event
+                } else {
+                    // Stage 2: Close chat window
+                    print("[ChatView] Esc pressed: Closing chat window")
+                    AppDelegate.shared?.closeChatOverlay()
+                    return nil  // Swallow event
+                }
+            }
+            return event
+        }
     }
 
     private func cleanupKeyMonitor() {
@@ -1664,6 +1689,43 @@ private struct CloseButton: View {
             }
         }
         .help("Close")
+    }
+}
+
+// MARK: - Pin Button
+
+private struct PinButton: View {
+    @ObservedObject private var windowManager = WindowManager.shared
+
+    @State private var isHovered = false
+    @Environment(\.theme) private var theme
+
+    private var isPinned: Bool {
+        windowManager.isPinned(.chat)
+    }
+
+    var body: some View {
+        Button {
+            windowManager.togglePinned(.chat)
+        } label: {
+            Image(systemName: isPinned ? "pin.fill" : "pin")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundColor(isPinned ? theme.accentColor : (isHovered ? theme.primaryText : theme.secondaryText))
+                .frame(width: 28, height: 28)
+                .background(
+                    Circle()
+                        .fill(theme.secondaryBackground.opacity(isHovered ? 0.8 : 0.5))
+                )
+                .rotationEffect(.degrees(isPinned ? 0 : 45))
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering in
+            withAnimation(theme.animationQuick()) {
+                isHovered = hovering
+            }
+        }
+        .help(isPinned ? "Unpin from top" : "Pin to top")
+        .animation(theme.animationQuick(), value: isPinned)
     }
 }
 

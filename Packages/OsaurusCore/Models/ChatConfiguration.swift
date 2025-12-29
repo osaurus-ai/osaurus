@@ -38,8 +38,6 @@ public struct ChatConfiguration: Codable, Equatable, Sendable {
     public var topPOverride: Float?
     /// Optional per-chat limit on consecutive tool attempts (nil uses default)
     public var maxToolAttempts: Int?
-    /// Whether the chat window should float above other windows
-    public var alwaysOnTop: Bool
     /// Default model for new chat sessions (nil uses first available)
     public var defaultModel: String?
 
@@ -51,7 +49,6 @@ public struct ChatConfiguration: Codable, Equatable, Sendable {
         contextLength: Int? = nil,
         topPOverride: Float? = nil,
         maxToolAttempts: Int? = nil,
-        alwaysOnTop: Bool = false,
         defaultModel: String? = nil
     ) {
         self.hotkey = hotkey
@@ -61,7 +58,6 @@ public struct ChatConfiguration: Codable, Equatable, Sendable {
         self.contextLength = contextLength
         self.topPOverride = topPOverride
         self.maxToolAttempts = maxToolAttempts
-        self.alwaysOnTop = alwaysOnTop
         self.defaultModel = defaultModel
     }
 
@@ -77,8 +73,7 @@ public struct ChatConfiguration: Codable, Equatable, Sendable {
             maxTokens: 16384,  // High default to support long generations (essays, code, etc.)
             contextLength: 128000,  // Default to 128k for modern remote models
             topPOverride: nil,
-            maxToolAttempts: 15,  // Increased from 3 to support longer agentic workflows
-            alwaysOnTop: false
+            maxToolAttempts: 15  // Increased from 3 to support longer agentic workflows
         )
     }
 }
