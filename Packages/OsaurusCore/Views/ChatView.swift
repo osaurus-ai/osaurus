@@ -1390,6 +1390,7 @@ struct ChatView: View {
                     }
                 )
             }
+            PinButton()
             CloseButton(action: { AppDelegate.shared?.closeChatOverlay() })
         }
         .padding(16)
@@ -1664,6 +1665,43 @@ private struct CloseButton: View {
             }
         }
         .help("Close")
+    }
+}
+
+// MARK: - Pin Button
+
+private struct PinButton: View {
+    @ObservedObject private var windowManager = WindowManager.shared
+
+    @State private var isHovered = false
+    @Environment(\.theme) private var theme
+
+    private var isPinned: Bool {
+        windowManager.isPinned(.chat)
+    }
+
+    var body: some View {
+        Button {
+            windowManager.togglePinned(.chat)
+        } label: {
+            Image(systemName: isPinned ? "pin.fill" : "pin")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundColor(isPinned ? theme.accentColor : (isHovered ? theme.primaryText : theme.secondaryText))
+                .frame(width: 28, height: 28)
+                .background(
+                    Circle()
+                        .fill(theme.secondaryBackground.opacity(isHovered ? 0.8 : 0.5))
+                )
+                .rotationEffect(.degrees(isPinned ? 0 : 45))
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering in
+            withAnimation(theme.animationQuick()) {
+                isHovered = hovering
+            }
+        }
+        .help(isPinned ? "Unpin from top" : "Pin to top")
+        .animation(theme.animationQuick(), value: isPinned)
     }
 }
 
