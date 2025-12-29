@@ -42,18 +42,22 @@ struct ChatEmptyState: View {
     ]
 
     var body: some View {
-        VStack(spacing: 0) {
-            Spacer()
+        GeometryReader { geometry in
+            ScrollView(.vertical, showsIndicators: false) {
+                VStack(spacing: 0) {
+                    Spacer(minLength: 20)
 
-            if hasModels {
-                readyState
-            } else {
-                noModelsState
+                    if hasModels {
+                        readyState
+                    } else {
+                        noModelsState
+                    }
+
+                    Spacer(minLength: 20)
+                }
+                .frame(maxWidth: .infinity, minHeight: geometry.size.height)
             }
-
-            Spacer()
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .onAppear {
             isVisible = true
             withAnimation(theme.animationSlow().delay(0.1)) {

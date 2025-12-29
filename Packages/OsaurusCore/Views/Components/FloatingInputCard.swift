@@ -726,89 +726,69 @@ struct FloatingInputCard: View {
     // MARK: - Input Card
 
     private var inputCard: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 0) {
             // Inline pending images (compact, inside the card)
             if !pendingImages.isEmpty {
                 inlinePendingImagesPreview
+                    .padding(.horizontal, 12)
+                    .padding(.top, 10)
             }
 
-            // Input row with text, voice, and action button
-            HStack(alignment: .bottom, spacing: 12) {
-                textInputArea
+            // Clean text input area (no overlapping buttons)
+            textInputArea
+                .padding(.horizontal, 12)
+                .padding(.top, pendingImages.isEmpty ? 10 : 6)
+                .padding(.bottom, 6)
 
-                // Voice input button (when available)
-                if isVoiceAvailable && !isStreaming {
-                    voiceInputButton
-                }
+            // Subtle separator
+            Rectangle()
+                .fill(theme.primaryBorder.opacity(0.15))
+                .frame(height: 1)
+                .padding(.horizontal, 12)
 
-                actionButton
-            }
+            // Bottom button bar with all action buttons
+            buttonBar
+                .padding(.horizontal, 12)
+                .padding(.vertical, 6)
         }
-        .padding(12)
+        .fixedSize(horizontal: false, vertical: true)
         .background(cardBackground)
         .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: 20, style: .continuous)
                 .strokeBorder(effectiveBorderStyle, lineWidth: isDragOver ? 2 : (isFocused ? 1.5 : 0.5))
         )
-        .overlay(alignment: .bottomLeading) {
-            // Floating image attachment button (only for VLM models)
-            if supportsImages {
-                imageAttachButton
-                    .offset(x: 10, y: -10)
-            }
-        }
         .shadow(
             color: shadowColor,
             radius: isFocused ? 24 : 12,
             x: 0,
             y: isFocused ? 8 : 4
         )
-        .animation(theme.springAnimation(), value: isFocused)
-        .animation(theme.animationQuick(), value: isDragOver)
+        .animation(.easeOut(duration: 0.15), value: isFocused)
+        .animation(.easeOut(duration: 0.1), value: isDragOver)
     }
 
     // MARK: - Voice Input Button
 
     private var voiceInputButton: some View {
         Button(action: { startVoiceInput() }) {
-            ZStack {
-                // Microphone icon
-                Image(systemName: "mic.fill")
-                    .font(.system(size: 16, weight: .medium))
-                    .foregroundColor(theme.secondaryText)
-            }
-            .frame(width: 32, height: 32)
-            .background(
-                Circle()
-                    .fill(theme.tertiaryBackground)
-            )
-            .overlay(
-                Circle()
-                    .stroke(theme.primaryBorder.opacity(0.3), lineWidth: 1)
-            )
-        }
-        .buttonStyle(.plain)
-        .help("Voice input (speak to type)")
-        .transition(.scale.combined(with: .opacity))
-    }
-
-    // MARK: - Image Attachment Button
-
-    private var imageAttachButton: some View {
-        Button(action: pickImage) {
-            Image(systemName: "photo.badge.plus")
-                .font(.system(size: 16, weight: .medium))
+            Image(systemName: "mic.fill")
+                .font(theme.font(size: CGFloat(theme.captionSize), weight: .medium))
                 .foregroundColor(theme.secondaryText)
                 .frame(width: 32, height: 32)
                 .background(
                     Circle()
-                        .fill(theme.secondaryBackground.opacity(0.8))
-                        .shadow(color: .black.opacity(0.2), radius: 4, x: 0, y: 2)
+                        .fill(theme.tertiaryBackground.opacity(0.8))
+                )
+                .overlay(
+                    Circle()
+                        .stroke(theme.primaryBorder.opacity(0.2), lineWidth: 1)
                 )
         }
         .buttonStyle(.plain)
-        .help("Attach image (or paste/drag)")
+        .help("Voice input (speak to type)")
+        .transition(.opacity.combined(with: .scale(scale: 0.96)))
+        .animation(.easeOut(duration: 0.1), value: isVoiceAvailable)
     }
 
     private func pickImage() {
@@ -866,9 +846,7 @@ struct FloatingInputCard: View {
             isFocused: $isFocused,
             maxHeight: maxHeight
         )
-        .frame(minHeight: 60)
-        .fixedSize(horizontal: false, vertical: true)
-        .padding(.vertical, 2)
+        .frame(maxHeight: maxHeight)
         .overlay(alignment: .topLeading) {
             // Placeholder - uses theme body size
             if showPlaceholder {
@@ -892,6 +870,53 @@ struct FloatingInputCard: View {
         )
     }
 
+    // MARK: - Button Bar
+
+    private var buttonBar: some View {
+        HStack(spacing: 8) {
+            // Left side buttons
+            HStack(spacing: 6) {
+                // Media attachment button (when model supports images)
+                if supportsImages {
+                    mediaButton
+                }
+
+                // Voice input button (when available and not streaming)
+                if isVoiceAvailable && !isStreaming {
+                    voiceInputButton
+                }
+            }
+
+            Spacer()
+
+            // Right side - Send/Stop button
+            actionButton
+        }
+    }
+
+    // MARK: - Media Button
+
+    private var mediaButton: some View {
+        Button(action: pickImage) {
+            Image(systemName: "photo.badge.plus")
+                .font(theme.font(size: CGFloat(theme.captionSize), weight: .medium))
+                .foregroundColor(theme.secondaryText)
+                .frame(width: 32, height: 32)
+                .background(
+                    Circle()
+                        .fill(theme.tertiaryBackground.opacity(0.8))
+                )
+                .overlay(
+                    Circle()
+                        .stroke(theme.primaryBorder.opacity(0.2), lineWidth: 1)
+                )
+        }
+        .buttonStyle(.plain)
+        .help("Attach image (or paste/drag)")
+        .scaleEffect(1.0)
+        .animation(.easeOut(duration: 0.1), value: pendingImages.count)
+    }
+
     // MARK: - Action Button
 
     private var actionButton: some View {
@@ -902,21 +927,21 @@ struct FloatingInputCard: View {
                     .font(theme.font(size: CGFloat(theme.bodySize), weight: .semibold))
                     .foregroundColor(isStreaming ? .white : theme.primaryBackground)
                     .opacity(isStreaming ? 0 : 1)
-                    .scaleEffect(isStreaming ? 0.5 : 1)
+                    .scaleEffect(isStreaming ? 0.96 : 1)
 
                 // Stop icon
                 RoundedRectangle(cornerRadius: 3)
                     .fill(.white)
                     .frame(width: 10, height: 10)
                     .opacity(isStreaming ? 1 : 0)
-                    .scaleEffect(isStreaming ? 1 : 0.5)
+                    .scaleEffect(isStreaming ? 1 : 0.96)
             }
             .frame(width: 32, height: 32)
             .background(buttonBackground)
             .clipShape(Circle())
             .shadow(
                 color: buttonShadowColor,
-                radius: 8,
+                radius: 6,
                 x: 0,
                 y: 2
             )
@@ -924,8 +949,8 @@ struct FloatingInputCard: View {
         .buttonStyle(.plain)
         .disabled(!canSend && !isStreaming)
         .opacity(!canSend && !isStreaming ? 0.5 : 1)
-        .animation(theme.springAnimation(), value: isStreaming)
-        .animation(theme.animationQuick(), value: canSend)
+        .animation(.easeOut(duration: 0.15), value: isStreaming)
+        .animation(.easeOut(duration: 0.1), value: canSend)
     }
 
     private var buttonBackground: some ShapeStyle {
