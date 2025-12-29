@@ -195,6 +195,9 @@ struct FloatingInputCard: View {
         .onChange(of: isStreaming) { wasStreaming, nowStreaming in
             // When AI finishes responding and we're in continuous voice mode, restart voice input
             if wasStreaming && !nowStreaming && isContinuousVoiceMode {
+                // Reset silence timeout for the new turn
+                lastVoiceActivityTime = Date()
+
                 // Small delay to let UI settle
                 Task { @MainActor in
                     try? await Task.sleep(nanoseconds: 500_000_000)  // 500ms
@@ -329,9 +332,10 @@ struct FloatingInputCard: View {
     }
 
     private func checkForSilenceTimeout() {
-        // Only check when in continuous voice mode
+        // Only check when in continuous voice mode and it's the user's turn (not streaming)
         guard isContinuousVoiceMode,
             showVoiceOverlay,
+            !isStreaming,  // Only count timeout when it's user's turn
             vadConfig.silenceTimeoutSeconds > 0
         else { return }
 
