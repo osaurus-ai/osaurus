@@ -40,10 +40,10 @@ struct EditableTextView: NSViewRepresentable {
         textView.drawsBackground = false
         textView.backgroundColor = .clear
 
-        // Layout
+        // Layout - align with placeholder padding (.leading: 6, .top: 2)
         textView.textContainer?.lineFragmentPadding = 0
         textView.textContainer?.widthTracksTextView = true
-        textView.textContainerInset = .zero
+        textView.textContainerInset = NSSize(width: 6, height: 2)
         textView.isVerticallyResizable = true
         textView.isHorizontallyResizable = false
         textView.autoresizingMask = [.width]
@@ -120,8 +120,9 @@ struct EditableTextView: NSViewRepresentable {
 // Custom ScrollView that reports content size
 final class AutoSizingScrollView: NSScrollView {
     override var intrinsicContentSize: NSSize {
-        // Return document view's size
-        return documentView?.intrinsicContentSize ?? NSSize(width: NSView.noIntrinsicMetric, height: 50)
+        // Return document view's intrinsic size (already capped by maxHeight in CustomNSTextView)
+        let docSize = documentView?.intrinsicContentSize ?? NSSize(width: NSView.noIntrinsicMetric, height: 20)
+        return docSize
     }
 }
 
@@ -138,11 +139,15 @@ final class CustomNSTextView: NSTextView {
         layoutManager.ensureLayout(for: textContainer)
         let usedRect = layoutManager.usedRect(for: textContainer)
 
-        // Add a small buffer for cursor/line height
-        let height = max(usedRect.height, font?.pointSize ?? 14)
+        // Use single line height as minimum (compact when empty)
+        let lineHeight = font?.pointSize ?? 14
+        let contentHeight = max(usedRect.height, lineHeight)
 
-        // Cap at maxHeight
-        let constrainedHeight = min(height, maxHeight)
+        // Add textContainerInset (top + bottom padding)
+        let totalHeight = contentHeight + textContainerInset.height * 2
+
+        // Cap at maxHeight for scrolling behavior
+        let constrainedHeight = min(totalHeight, maxHeight)
 
         // We return noIntrinsicMetric for width so it fills available width
         return NSSize(width: NSView.noIntrinsicMetric, height: constrainedHeight)
