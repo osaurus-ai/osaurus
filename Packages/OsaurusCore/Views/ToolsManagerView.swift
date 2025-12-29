@@ -25,6 +25,12 @@ struct ToolsManagerView: View {
     @State private var hasAppeared = false
     @State private var isRefreshingInstalled = false
 
+    // Cache filtered results to improve performance
+    @State private var filteredEntries: [ToolRegistry.ToolEntry] = []
+    @State private var filteredPlugins: [PluginState] = []
+    @State private var installedPluginsWithTools: [(plugin: PluginState, tools: [ToolRegistry.ToolEntry])] = []
+    @State private var remoteProviderTools: [(provider: MCPProvider, tools: [ToolRegistry.ToolEntry])] = []
+
     var body: some View {
         VStack(spacing: 0) {
             contentView
@@ -47,13 +53,15 @@ struct ToolsManagerView: View {
                 hasAppeared = true
             }
         }
-        .onChange(of: searchText) { _, _ in reload() }
+        .task(id: searchText) { await updateFilteredLists() }
+        .task(id: repoService.plugins) { await updateFilteredLists() }
         .onReceive(NotificationCenter.default.publisher(for: .toolsListChanged)) { _ in
             reload()
         }
         .onReceive(NotificationCenter.default.publisher(for: Foundation.Notification.Name.mcpProviderStatusChanged)) {
             _ in
             reload()
+            Task { await updateFilteredLists() }
         }
     }
 
@@ -199,49 +207,6 @@ struct ToolsManagerView: View {
         return count
     }
 
-    /// Remote provider tools grouped by provider
-    private var remoteProviderTools: [(provider: MCPProvider, tools: [ToolRegistry.ToolEntry])] {
-        let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-
-        return providerManager.configuration.providers
-            .filter { provider in
-                // Only include connected providers
-                providerManager.providerStates[provider.id]?.isConnected == true
-            }
-            .compactMap { provider -> (provider: MCPProvider, tools: [ToolRegistry.ToolEntry])? in
-                // Get the tool name prefix for this provider
-                let safeProviderName = provider.name
-                    .lowercased()
-                    .replacingOccurrences(of: " ", with: "_")
-                    .replacingOccurrences(of: "-", with: "_")
-                    .filter { $0.isLetter || $0.isNumber || $0 == "_" }
-                let prefix = "\(safeProviderName)_"
-
-                // Filter tools that belong to this provider
-                var matchedTools = toolEntries.filter { $0.name.hasPrefix(prefix) }
-
-                // Apply search filter
-                if !query.isEmpty {
-                    let providerMatches =
-                        provider.name.lowercased().contains(query)
-                        || provider.url.lowercased().contains(query)
-
-                    if !providerMatches {
-                        matchedTools = matchedTools.filter { tool in
-                            tool.name.lowercased().contains(query)
-                                || tool.description.lowercased().contains(query)
-                        }
-                    }
-
-                    if matchedTools.isEmpty && !providerMatches { return nil }
-                }
-
-                if matchedTools.isEmpty { return nil }
-                return (provider, matchedTools)
-            }
-            .sorted { $0.provider.name < $1.provider.name }
-    }
-
     private var availableToolsTabContent: some View {
         ScrollView {
             LazyVStack(spacing: 16) {
@@ -306,6 +271,7 @@ struct ToolsManagerView: View {
                 }
             }
             .padding(24)
+            .frame(maxWidth: .infinity)
         }
     }
 
@@ -340,6 +306,7 @@ struct ToolsManagerView: View {
                 }
             }
             .padding(24)
+            .frame(maxWidth: .infinity)
         }
     }
 
@@ -379,73 +346,138 @@ struct ToolsManagerView: View {
 
     // MARK: - Helpers
 
-    private var filteredEntries: [ToolRegistry.ToolEntry] {
+    private func updateFilteredLists() async {
+        // Run on detached task to avoid blocking main thread
         let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !query.isEmpty else { return toolEntries }
-        return toolEntries.filter { e in
-            let candidates = [e.name.lowercased(), e.description.lowercased()]
-            let q = query.lowercased()
-            return candidates.contains { SearchService.fuzzyMatch(query: q, in: $0) }
-        }
-    }
+        let queryLower = query.lowercased()
+        let currentToolEntries = toolEntries
+        let currentPlugins = repoService.plugins
+        let currentProviders = providerManager.configuration.providers
+        let currentProviderStates = providerManager.providerStates
 
-    private var filteredPlugins: [PluginState] {
-        let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !query.isEmpty else { return repoService.plugins }
-        let q = query.lowercased()
-        return repoService.plugins.filter { plugin in
-            let candidates = [
-                plugin.spec.plugin_id.lowercased(),
-                (plugin.spec.name ?? "").lowercased(),
-                (plugin.spec.description ?? "").lowercased(),
-            ]
-            return candidates.contains { SearchService.fuzzyMatch(query: q, in: $0) }
-        }
-    }
+        // Perform filtering in background
+        let (filteredEntriesResult, filteredPluginsResult, installedPluginsResult, remoteToolsResult) =
+            await Task.detached(priority: .userInitiated) {
 
-    /// Installed plugins with their tool entries (includes plugins with load errors)
-    private var installedPluginsWithTools: [(plugin: PluginState, tools: [ToolRegistry.ToolEntry])] {
-        let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-
-        return repoService.plugins
-            .filter { $0.isInstalled }
-            .compactMap { plugin -> (plugin: PluginState, tools: [ToolRegistry.ToolEntry])? in
-                let specTools = plugin.spec.capabilities?.tools ?? []
-                let toolNames = Set(specTools.map { $0.name })
-                var matchedTools = toolEntries.filter { toolNames.contains($0.name) }
-
-                // Apply search filter
-                if !query.isEmpty {
-                    let pluginMatches = [
-                        plugin.spec.plugin_id.lowercased(),
-                        (plugin.spec.name ?? "").lowercased(),
-                        (plugin.spec.description ?? "").lowercased(),
-                    ].contains { SearchService.fuzzyMatch(query: query, in: $0) }
-
-                    if !pluginMatches {
-                        matchedTools = matchedTools.filter { tool in
-                            let candidates = [tool.name.lowercased(), tool.description.lowercased()]
-                            return candidates.contains { SearchService.fuzzyMatch(query: query, in: $0) }
-                        }
+                // 1. Filtered Entries (for counts)
+                let filteredEntries: [ToolRegistry.ToolEntry]
+                if query.isEmpty {
+                    filteredEntries = currentToolEntries
+                } else {
+                    filteredEntries = currentToolEntries.filter { e in
+                        let candidates = [e.name.lowercased(), e.description.lowercased()]
+                        return candidates.contains { SearchService.fuzzyMatch(query: queryLower, in: $0) }
                     }
-
-                    // Exclude only if no search match and not a failed plugin
-                    if matchedTools.isEmpty && !pluginMatches && !plugin.hasLoadError { return nil }
                 }
 
-                // Include plugins with load errors even if no tools are registered
-                // This allows users to see and troubleshoot failed plugins
-                if matchedTools.isEmpty && !plugin.hasLoadError { return nil }
+                // 2. Filtered Plugins (for Repository tab)
+                let filteredPlugins: [PluginState]
+                if query.isEmpty {
+                    filteredPlugins = currentPlugins
+                } else {
+                    filteredPlugins = currentPlugins.filter { plugin in
+                        let candidates = [
+                            plugin.spec.plugin_id.lowercased(),
+                            (plugin.spec.name ?? "").lowercased(),
+                            (plugin.spec.description ?? "").lowercased(),
+                        ]
+                        return candidates.contains { SearchService.fuzzyMatch(query: queryLower, in: $0) }
+                    }
+                }
 
-                return (plugin, matchedTools)
-            }
-            .sorted {
-                ($0.plugin.spec.name ?? $0.plugin.spec.plugin_id) < ($1.plugin.spec.name ?? $1.plugin.spec.plugin_id)
-            }
+                // 3. Installed Plugins with Tools (for Available tab)
+                let installedPlugins =
+                    currentPlugins
+                    .filter { $0.isInstalled }
+                    .compactMap { plugin -> (plugin: PluginState, tools: [ToolRegistry.ToolEntry])? in
+                        let specTools = plugin.spec.capabilities?.tools ?? []
+                        let toolNames = Set(specTools.map { $0.name })
+                        var matchedTools = currentToolEntries.filter { toolNames.contains($0.name) }
+
+                        // Apply search filter
+                        if !query.isEmpty {
+                            let pluginMatches = [
+                                plugin.spec.plugin_id.lowercased(),
+                                (plugin.spec.name ?? "").lowercased(),
+                                (plugin.spec.description ?? "").lowercased(),
+                            ].contains { SearchService.fuzzyMatch(query: queryLower, in: $0) }
+
+                            if !pluginMatches {
+                                matchedTools = matchedTools.filter { tool in
+                                    let candidates = [tool.name.lowercased(), tool.description.lowercased()]
+                                    return candidates.contains { SearchService.fuzzyMatch(query: queryLower, in: $0) }
+                                }
+                            }
+
+                            // Exclude only if no search match and not a failed plugin
+                            if matchedTools.isEmpty && !pluginMatches && !plugin.hasLoadError { return nil }
+                        }
+
+                        // Include plugins with load errors even if no tools are registered
+                        if matchedTools.isEmpty && !plugin.hasLoadError { return nil }
+
+                        return (plugin, matchedTools)
+                    }
+                    .sorted {
+                        ($0.plugin.spec.name ?? $0.plugin.spec.plugin_id)
+                            < ($1.plugin.spec.name ?? $1.plugin.spec.plugin_id)
+                    }
+
+                // 4. Remote Provider Tools (for Available tab)
+                let remoteTools =
+                    currentProviders
+                    .filter { provider in
+                        // Only include connected providers
+                        currentProviderStates[provider.id]?.isConnected == true
+                    }
+                    .compactMap { provider -> (provider: MCPProvider, tools: [ToolRegistry.ToolEntry])? in
+                        // Get the tool name prefix for this provider
+                        let safeProviderName = provider.name
+                            .lowercased()
+                            .replacingOccurrences(of: " ", with: "_")
+                            .replacingOccurrences(of: "-", with: "_")
+                            .filter { $0.isLetter || $0.isNumber || $0 == "_" }
+                        let prefix = "\(safeProviderName)_"
+
+                        // Filter tools that belong to this provider
+                        var matchedTools = currentToolEntries.filter { $0.name.hasPrefix(prefix) }
+
+                        // Apply search filter
+                        if !query.isEmpty {
+                            let providerMatches =
+                                provider.name.lowercased().contains(queryLower)
+                                || provider.url.lowercased().contains(queryLower)
+
+                            if !providerMatches {
+                                matchedTools = matchedTools.filter { tool in
+                                    tool.name.lowercased().contains(queryLower)
+                                        || tool.description.lowercased().contains(queryLower)
+                                }
+                            }
+
+                            if matchedTools.isEmpty && !providerMatches { return nil }
+                        }
+
+                        if matchedTools.isEmpty { return nil }
+                        return (provider, matchedTools)
+                    }
+                    .sorted { $0.provider.name < $1.provider.name }
+
+                return (filteredEntries, filteredPlugins, installedPlugins, remoteTools)
+            }.value
+
+        guard !Task.isCancelled else { return }
+
+        // Update state on main thread
+        filteredEntries = filteredEntriesResult
+        filteredPlugins = filteredPluginsResult
+        installedPluginsWithTools = installedPluginsResult
+        remoteProviderTools = remoteToolsResult
     }
 
     private func reload() {
         toolEntries = ToolRegistry.shared.listTools()
+        Task { await updateFilteredLists() }
     }
 }
 
@@ -703,6 +735,8 @@ private struct RemoteToolRow: View {
     let providerName: String
     let onChange: () -> Void
 
+    @State private var policyInfo: ToolRegistry.ToolPolicyInfo?
+
     /// Display name without provider prefix
     private var displayName: String {
         let safeProviderName =
@@ -719,8 +753,6 @@ private struct RemoteToolRow: View {
     }
 
     var body: some View {
-        let info = ToolRegistry.shared.policyInfo(for: entry.name)
-
         HStack(spacing: 10) {
             // Tool icon
             ZStack {
@@ -746,11 +778,12 @@ private struct RemoteToolRow: View {
             Spacer()
 
             // Permission policy dropdown
-            if let info = info {
+            if let info = policyInfo {
                 Menu {
                     Button {
                         ToolRegistry.shared.setPolicy(.auto, for: entry.name)
                         onChange()
+                        updatePolicyInfo()
                     } label: {
                         HStack {
                             Image(systemName: "sparkles")
@@ -760,6 +793,7 @@ private struct RemoteToolRow: View {
                     Button {
                         ToolRegistry.shared.setPolicy(.ask, for: entry.name)
                         onChange()
+                        updatePolicyInfo()
                     } label: {
                         HStack {
                             Image(systemName: "questionmark.circle")
@@ -769,6 +803,7 @@ private struct RemoteToolRow: View {
                     Button {
                         ToolRegistry.shared.setPolicy(.deny, for: entry.name)
                         onChange()
+                        updatePolicyInfo()
                     } label: {
                         HStack {
                             Image(systemName: "xmark.circle")
@@ -818,6 +853,16 @@ private struct RemoteToolRow: View {
             RoundedRectangle(cornerRadius: 8)
                 .fill(theme.tertiaryBackground.opacity(0.5))
         )
+        .onAppear {
+            updatePolicyInfo()
+        }
+        .onChange(of: entry.name) { _, _ in
+            updatePolicyInfo()
+        }
+    }
+
+    private func updatePolicyInfo() {
+        policyInfo = ToolRegistry.shared.policyInfo(for: entry.name)
     }
 
     private func iconForPolicy(_ policy: ToolPermissionPolicy) -> String {
@@ -853,20 +898,8 @@ private struct InstalledPluginCard: View {
     @State private var errorMessage: String?
     @State private var showError: Bool = false
 
-    /// Check if any tools in this plugin have missing system permissions
-    private var missingSystemPermissions: [SystemPermission] {
-        var missing = Set<SystemPermission>()
-        for tool in tools {
-            if let info = ToolRegistry.shared.policyInfo(for: tool.name) {
-                for (perm, granted) in info.systemPermissionStates {
-                    if !granted {
-                        missing.insert(perm)
-                    }
-                }
-            }
-        }
-        return Array(missing).sorted { $0.rawValue < $1.rawValue }
-    }
+    // Cache permission status to avoid re-calculation in body
+    @State private var missingSystemPermissions: [SystemPermission] = []
 
     private var hasMissingPermissions: Bool {
         !missingSystemPermissions.isEmpty
@@ -1109,6 +1142,7 @@ private struct InstalledPluginCard: View {
                         ForEach(missingSystemPermissions, id: \.rawValue) { perm in
                             Button(action: {
                                 SystemPermissionService.shared.requestPermission(perm)
+                                updatePermissions()
                                 onChange()
                             }) {
                                 HStack(spacing: 6) {
@@ -1185,16 +1219,35 @@ private struct InstalledPluginCard: View {
         }
         .opacity(hasAppeared ? 1 : 0)
         .onAppear {
+            updatePermissions()
             let delay = Double(animationIndex) * 0.03
             withAnimation(.easeOut(duration: 0.25).delay(delay)) {
                 hasAppeared = true
             }
+        }
+        .onChange(of: tools.map { $0.id }) { _, _ in
+            updatePermissions()
         }
         .alert("Error", isPresented: $showError) {
             Button("OK", role: .cancel) {}
         } message: {
             Text(errorMessage ?? "Unknown error")
         }
+    }
+
+    private func updatePermissions() {
+        // Calculate missing permissions once and cache it
+        var missing = Set<SystemPermission>()
+        for tool in tools {
+            if let info = ToolRegistry.shared.policyInfo(for: tool.name) {
+                for (perm, granted) in info.systemPermissionStates {
+                    if !granted {
+                        missing.insert(perm)
+                    }
+                }
+            }
+        }
+        missingSystemPermissions = Array(missing).sorted { $0.rawValue < $1.rawValue }
     }
 
     private var cardBackground: some View {
@@ -1298,14 +1351,14 @@ private struct InstalledToolRow: View {
     let entry: ToolRegistry.ToolEntry
     let onChange: () -> Void
 
+    @State private var policyInfo: ToolRegistry.ToolPolicyInfo?
+
     private var hasMissingSystemPermissions: Bool {
-        guard let info = ToolRegistry.shared.policyInfo(for: entry.name) else { return false }
+        guard let info = policyInfo else { return false }
         return info.systemPermissionStates.values.contains(false)
     }
 
     var body: some View {
-        let info = ToolRegistry.shared.policyInfo(for: entry.name)
-
         HStack(spacing: 10) {
             // Tool icon with warning overlay if system permissions missing
             ZStack {
@@ -1357,11 +1410,12 @@ private struct InstalledToolRow: View {
             Spacer()
 
             // Permission policy dropdown
-            if let info = info {
+            if let info = policyInfo {
                 Menu {
                     Button {
                         ToolRegistry.shared.setPolicy(.auto, for: entry.name)
                         onChange()
+                        updatePolicyInfo()
                     } label: {
                         HStack {
                             Image(systemName: "sparkles")
@@ -1373,6 +1427,7 @@ private struct InstalledToolRow: View {
                     Button {
                         ToolRegistry.shared.setPolicy(.ask, for: entry.name)
                         onChange()
+                        updatePolicyInfo()
                     } label: {
                         HStack {
                             Image(systemName: "questionmark.circle")
@@ -1384,6 +1439,7 @@ private struct InstalledToolRow: View {
                     Button {
                         ToolRegistry.shared.setPolicy(.deny, for: entry.name)
                         onChange()
+                        updatePolicyInfo()
                     } label: {
                         HStack {
                             Image(systemName: "xmark.circle")
@@ -1435,6 +1491,16 @@ private struct InstalledToolRow: View {
             RoundedRectangle(cornerRadius: 8)
                 .fill(theme.tertiaryBackground.opacity(0.5))
         )
+        .onAppear {
+            updatePolicyInfo()
+        }
+        .onChange(of: entry.name) { _, _ in
+            updatePolicyInfo()
+        }
+    }
+
+    private func updatePolicyInfo() {
+        policyInfo = ToolRegistry.shared.policyInfo(for: entry.name)
     }
 
     private func iconForPolicy(_ policy: ToolPermissionPolicy) -> String {
