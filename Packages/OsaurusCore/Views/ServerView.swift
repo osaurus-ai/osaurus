@@ -7,6 +7,7 @@
 
 import AppKit
 import SwiftUI
+import UniformTypeIdentifiers
 
 struct ServerView: View {
     @StateObject private var themeManager = ThemeManager.shared
@@ -173,34 +174,61 @@ struct ServerView: View {
 
                         VStack(spacing: 2) {
                             ForEach(group.endpoints, id: \.path) { endpoint in
-                                EndpointRow(
-                                    endpoint: endpoint,
-                                    serverURL: serverURL,
-                                    isServerRunning: server.isRunning,
-                                    isExpanded: expandedEndpoint == endpoint.path,
-                                    isLoading: loadingEndpoints.contains(endpoint.path),
-                                    editablePayload: binding(for: endpoint),
-                                    response: endpointResponses[endpoint.path],
-                                    onToggleExpand: {
-                                        withAnimation(.easeInOut(duration: 0.2)) {
-                                            if expandedEndpoint == endpoint.path {
-                                                expandedEndpoint = nil
-                                            } else {
-                                                expandedEndpoint = endpoint.path
-                                                // Initialize payload if not set
-                                                if editablePayloads[endpoint.path] == nil {
-                                                    editablePayloads[endpoint.path] = endpoint.examplePayload ?? "{}"
+                                if endpoint.isAudioEndpoint {
+                                    TranscriptionTestRow(
+                                        endpoint: endpoint,
+                                        serverURL: serverURL,
+                                        isServerRunning: server.isRunning,
+                                        isExpanded: expandedEndpoint == endpoint.path,
+                                        isLoading: loadingEndpoints.contains(endpoint.path),
+                                        response: endpointResponses[endpoint.path],
+                                        onToggleExpand: {
+                                            withAnimation(.easeInOut(duration: 0.2)) {
+                                                if expandedEndpoint == endpoint.path {
+                                                    expandedEndpoint = nil
+                                                } else {
+                                                    expandedEndpoint = endpoint.path
                                                 }
                                             }
+                                        },
+                                        onTest: { audioData in
+                                            runAudioTranscriptionTest(endpoint, audioData: audioData)
+                                        },
+                                        onClearResponse: {
+                                            endpointResponses[endpoint.path] = nil
                                         }
-                                    },
-                                    onTest: {
-                                        runEndpointTest(endpoint)
-                                    },
-                                    onClearResponse: {
-                                        endpointResponses[endpoint.path] = nil
-                                    }
-                                )
+                                    )
+                                } else {
+                                    EndpointRow(
+                                        endpoint: endpoint,
+                                        serverURL: serverURL,
+                                        isServerRunning: server.isRunning,
+                                        isExpanded: expandedEndpoint == endpoint.path,
+                                        isLoading: loadingEndpoints.contains(endpoint.path),
+                                        editablePayload: binding(for: endpoint),
+                                        response: endpointResponses[endpoint.path],
+                                        onToggleExpand: {
+                                            withAnimation(.easeInOut(duration: 0.2)) {
+                                                if expandedEndpoint == endpoint.path {
+                                                    expandedEndpoint = nil
+                                                } else {
+                                                    expandedEndpoint = endpoint.path
+                                                    // Initialize payload if not set
+                                                    if editablePayloads[endpoint.path] == nil {
+                                                        editablePayloads[endpoint.path] =
+                                                            endpoint.examplePayload ?? "{}"
+                                                    }
+                                                }
+                                            }
+                                        },
+                                        onTest: {
+                                            runEndpointTest(endpoint)
+                                        },
+                                        onClearResponse: {
+                                            endpointResponses[endpoint.path] = nil
+                                        }
+                                    )
+                                }
                             }
                         }
                     }
@@ -218,6 +246,7 @@ struct ServerView: View {
         switch category {
         case .core: return "server.rack"
         case .chat: return "bubble.left.and.bubble.right"
+        case .audio: return "waveform"
         case .mcp: return "wrench.and.screwdriver"
         }
     }
@@ -226,6 +255,7 @@ struct ServerView: View {
         switch category {
         case .core: return .blue
         case .chat: return .green
+        case .audio: return .orange
         case .mcp: return .purple
         }
     }
@@ -353,6 +383,82 @@ struct ServerView: View {
             }
         }
     }
+
+    private func runAudioTranscriptionTest(_ endpoint: APIEndpoint, audioData: Data) {
+        guard server.isRunning else { return }
+
+        // Get the selected model
+        let modelId = WhisperModelManager.shared.selectedModel?.id ?? "whisper-1"
+
+        // Expand and mark as loading
+        withAnimation(.easeInOut(duration: 0.2)) {
+            expandedEndpoint = endpoint.path
+            loadingEndpoints.insert(endpoint.path)
+        }
+
+        Task {
+            let startTime = Date()
+            do {
+                let url = URL(string: "\(serverURL)\(endpoint.path)")!
+                var request = URLRequest(url: url)
+                request.httpMethod = "POST"
+
+                // Create multipart/form-data
+                let boundary = "Boundary-\(UUID().uuidString)"
+                request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
+
+                var body = Data()
+
+                // Add file field
+                body.append("--\(boundary)\r\n".data(using: .utf8)!)
+                body.append(
+                    "Content-Disposition: form-data; name=\"file\"; filename=\"recording.wav\"\r\n".data(using: .utf8)!
+                )
+                body.append("Content-Type: audio/wav\r\n\r\n".data(using: .utf8)!)
+                body.append(audioData)
+                body.append("\r\n".data(using: .utf8)!)
+
+                // Add model field
+                body.append("--\(boundary)\r\n".data(using: .utf8)!)
+                body.append("Content-Disposition: form-data; name=\"model\"\r\n\r\n".data(using: .utf8)!)
+                body.append(modelId.data(using: .utf8)!)
+                body.append("\r\n".data(using: .utf8)!)
+
+                // Close boundary
+                body.append("--\(boundary)--\r\n".data(using: .utf8)!)
+
+                request.httpBody = body
+
+                let (data, response) = try await URLSession.shared.data(for: request)
+
+                let durationMs = Date().timeIntervalSince(startTime) * 1000
+                let statusCode = (response as? HTTPURLResponse)?.statusCode ?? 0
+
+                await MainActor.run {
+                    endpointResponses[endpoint.path] = EndpointTestResult(
+                        endpoint: endpoint,
+                        statusCode: statusCode,
+                        body: data,
+                        duration: durationMs / 1000,
+                        error: nil
+                    )
+                    loadingEndpoints.remove(endpoint.path)
+                }
+            } catch {
+                let durationMs = Date().timeIntervalSince(startTime) * 1000
+                await MainActor.run {
+                    endpointResponses[endpoint.path] = EndpointTestResult(
+                        endpoint: endpoint,
+                        statusCode: 0,
+                        body: Data(),
+                        duration: durationMs / 1000,
+                        error: error.localizedDescription
+                    )
+                    loadingEndpoints.remove(endpoint.path)
+                }
+            }
+        }
+    }
 }
 
 // MARK: - API Endpoint Model
@@ -364,10 +470,30 @@ struct APIEndpoint {
     let compatibility: String?
     let category: EndpointCategory
     let examplePayload: String?
+    let isAudioEndpoint: Bool
+
+    init(
+        method: String,
+        path: String,
+        description: String,
+        compatibility: String?,
+        category: EndpointCategory,
+        examplePayload: String?,
+        isAudioEndpoint: Bool = false
+    ) {
+        self.method = method
+        self.path = path
+        self.description = description
+        self.compatibility = compatibility
+        self.category = category
+        self.examplePayload = examplePayload
+        self.isAudioEndpoint = isAudioEndpoint
+    }
 
     enum EndpointCategory: String {
         case core = "Core"
         case chat = "Chat"
+        case audio = "Audio"
         case mcp = "MCP"
     }
 
@@ -484,6 +610,16 @@ struct APIEndpoint {
                     }
                     """
             ),
+            // Audio endpoints
+            APIEndpoint(
+                method: "POST",
+                path: "/audio/transcriptions",
+                description: "Transcribe audio to text",
+                compatibility: "OpenAI",
+                category: .audio,
+                examplePayload: nil,
+                isAudioEndpoint: true
+            ),
             // MCP endpoints
             APIEndpoint(
                 method: "GET",
@@ -518,7 +654,7 @@ struct APIEndpoint {
     }
 
     static var groupedEndpoints: [(category: EndpointCategory, endpoints: [APIEndpoint])] {
-        let categories: [EndpointCategory] = [.core, .chat, .mcp]
+        let categories: [EndpointCategory] = [.core, .chat, .audio, .mcp]
         return categories.map { cat in
             (category: cat, endpoints: allEndpoints.filter { $0.category == cat })
         }
@@ -943,6 +1079,481 @@ private struct EndpointRow: View {
         case "MCP": return .purple
         default: return theme.accentColor
         }
+    }
+}
+
+// MARK: - Transcription Test Row
+
+private struct TranscriptionTestRow: View {
+    @Environment(\.theme) private var theme
+    @StateObject private var modelManager = WhisperModelManager.shared
+
+    let endpoint: APIEndpoint
+    let serverURL: String
+    let isServerRunning: Bool
+    let isExpanded: Bool
+    let isLoading: Bool
+    let response: EndpointTestResult?
+    let onToggleExpand: () -> Void
+    let onTest: (Data) -> Void
+    let onClearResponse: () -> Void
+
+    @State private var isHovering = false
+    @State private var selectedFileURL: URL?
+    @State private var selectedFileName: String?
+    @State private var audioData: Data?
+    @State private var fileError: String?
+
+    var body: some View {
+        VStack(spacing: 0) {
+            // Main row - clickable header
+            Button(action: {
+                if isServerRunning {
+                    onToggleExpand()
+                }
+            }) {
+                HStack(spacing: 12) {
+                    // Method badge
+                    Text(endpoint.method)
+                        .font(.system(size: 10, weight: .bold, design: .monospaced))
+                        .foregroundColor(.blue)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .background(
+                            RoundedRectangle(cornerRadius: 4)
+                                .fill(Color.blue.opacity(0.15))
+                        )
+                        .frame(width: 50)
+
+                    // Path
+                    Text(endpoint.path)
+                        .font(.system(size: 13, weight: .medium, design: .monospaced))
+                        .foregroundColor(theme.primaryText)
+
+                    // Compatibility badge
+                    if let compat = endpoint.compatibility {
+                        Text(compat)
+                            .font(.system(size: 9, weight: .semibold))
+                            .foregroundColor(.green)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(
+                                RoundedRectangle(cornerRadius: 4)
+                                    .fill(Color.green.opacity(0.1))
+                            )
+                    }
+
+                    Spacer()
+
+                    // Description
+                    Text(endpoint.description)
+                        .font(.system(size: 11))
+                        .foregroundColor(theme.tertiaryText)
+                        .lineLimit(1)
+
+                    // Status indicator
+                    if isLoading {
+                        ProgressView()
+                            .scaleEffect(0.6)
+                            .frame(width: 20, height: 20)
+                    } else if let resp = response {
+                        Text("\(resp.statusCode)")
+                            .font(.system(size: 10, weight: .bold, design: .monospaced))
+                            .foregroundColor(.white)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 3)
+                            .background(
+                                RoundedRectangle(cornerRadius: 4)
+                                    .fill(resp.isSuccess ? Color.green : Color.red)
+                            )
+                    }
+
+                    // Expand chevron
+                    Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundColor(theme.tertiaryText)
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 10)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(PlainButtonStyle())
+            .disabled(!isServerRunning)
+            .background(
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(isHovering || isExpanded ? theme.tertiaryBackground.opacity(0.5) : Color.clear)
+            )
+            .onHover { hovering in
+                withAnimation(.easeOut(duration: 0.15)) {
+                    isHovering = hovering
+                }
+            }
+
+            // Expandable content
+            if isExpanded {
+                VStack(spacing: 0) {
+                    Divider()
+                        .background(theme.primaryBorder.opacity(0.3))
+
+                    HStack(alignment: .top, spacing: 16) {
+                        // LEFT: Request Panel
+                        VStack(alignment: .leading, spacing: 12) {
+                            HStack {
+                                Label("Request", systemImage: "arrow.up.circle.fill")
+                                    .font(.system(size: 11, weight: .semibold))
+                                    .foregroundColor(theme.secondaryText)
+
+                                Spacer()
+                            }
+
+                            // Model display
+                            VStack(alignment: .leading, spacing: 6) {
+                                Text("Model")
+                                    .font(.system(size: 10, weight: .medium))
+                                    .foregroundColor(theme.tertiaryText)
+
+                                HStack(spacing: 8) {
+                                    Image(systemName: "waveform")
+                                        .font(.system(size: 12))
+                                        .foregroundColor(.orange)
+
+                                    if let model = modelManager.selectedModel {
+                                        Text(model.name)
+                                            .font(.system(size: 12, weight: .medium))
+                                            .foregroundColor(theme.primaryText)
+                                    } else {
+                                        Text("No model selected")
+                                            .font(.system(size: 12, weight: .medium))
+                                            .foregroundColor(theme.tertiaryText)
+                                            .italic()
+                                    }
+                                }
+                                .padding(.horizontal, 12)
+                                .padding(.vertical, 8)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .background(
+                                    RoundedRectangle(cornerRadius: 6)
+                                        .fill(theme.inputBackground)
+                                        .overlay(
+                                            RoundedRectangle(cornerRadius: 6)
+                                                .stroke(theme.inputBorder, lineWidth: 1)
+                                        )
+                                )
+                            }
+
+                            // Audio file section
+                            VStack(alignment: .leading, spacing: 6) {
+                                Text("Audio File")
+                                    .font(.system(size: 10, weight: .medium))
+                                    .foregroundColor(theme.tertiaryText)
+
+                                if let fileName = selectedFileName {
+                                    // File selected - inline display
+                                    HStack(spacing: 10) {
+                                        Image(systemName: "waveform")
+                                            .font(.system(size: 12))
+                                            .foregroundColor(theme.accentColor)
+
+                                        Text(fileName)
+                                            .font(.system(size: 12, weight: .medium))
+                                            .foregroundColor(theme.primaryText)
+                                            .lineLimit(1)
+
+                                        if let data = audioData {
+                                            Text("(\(formatFileSize(data.count)))")
+                                                .font(.system(size: 11))
+                                                .foregroundColor(theme.tertiaryText)
+                                        }
+
+                                        Spacer()
+
+                                        Button(action: clearFile) {
+                                            Image(systemName: "xmark")
+                                                .font(.system(size: 10, weight: .medium))
+                                                .foregroundColor(theme.tertiaryText)
+                                        }
+                                        .buttonStyle(PlainButtonStyle())
+                                        .help("Remove file")
+                                    }
+                                    .padding(.horizontal, 12)
+                                    .padding(.vertical, 10)
+                                    .background(
+                                        RoundedRectangle(cornerRadius: 6)
+                                            .fill(theme.inputBackground)
+                                            .overlay(
+                                                RoundedRectangle(cornerRadius: 6)
+                                                    .stroke(theme.inputBorder, lineWidth: 1)
+                                            )
+                                    )
+                                } else {
+                                    // Empty state - prompt to select
+                                    HStack(spacing: 8) {
+                                        Image(systemName: "doc.badge.plus")
+                                            .font(.system(size: 12))
+                                            .foregroundColor(theme.tertiaryText)
+
+                                        Text("No file selected")
+                                            .font(.system(size: 12))
+                                            .foregroundColor(theme.tertiaryText)
+                                            .italic()
+
+                                        Spacer()
+
+                                        Text("WAV, MP3, M4A")
+                                            .font(.system(size: 10))
+                                            .foregroundColor(theme.tertiaryText.opacity(0.7))
+                                    }
+                                    .padding(.horizontal, 12)
+                                    .padding(.vertical, 10)
+                                    .background(
+                                        RoundedRectangle(cornerRadius: 6)
+                                            .fill(theme.inputBackground)
+                                            .overlay(
+                                                RoundedRectangle(cornerRadius: 6)
+                                                    .stroke(theme.inputBorder, lineWidth: 1)
+                                            )
+                                    )
+                                }
+
+                                // Error display
+                                if let error = fileError {
+                                    HStack(spacing: 6) {
+                                        Image(systemName: "exclamationmark.triangle.fill")
+                                            .font(.system(size: 10))
+                                        Text(error)
+                                            .font(.system(size: 11))
+                                    }
+                                    .foregroundColor(theme.errorColor)
+                                    .padding(.top, 4)
+                                }
+                            }
+
+                            // Action buttons - matching EndpointRow style
+                            HStack(spacing: 8) {
+                                // Choose file button (secondary style)
+                                Button(action: selectFile) {
+                                    HStack(spacing: 6) {
+                                        Image(systemName: "folder")
+                                            .font(.system(size: 10))
+                                        Text("Choose File")
+                                            .font(.system(size: 11, weight: .medium))
+                                    }
+                                    .foregroundColor(theme.secondaryText)
+                                    .padding(.horizontal, 12)
+                                    .padding(.vertical, 8)
+                                    .background(
+                                        RoundedRectangle(cornerRadius: 6)
+                                            .fill(theme.tertiaryBackground)
+                                    )
+                                }
+                                .buttonStyle(PlainButtonStyle())
+
+                                // Send button (primary style - matches EndpointRow)
+                                Button(action: sendFile) {
+                                    HStack(spacing: 6) {
+                                        if isLoading {
+                                            ProgressView()
+                                                .scaleEffect(0.7)
+                                                .frame(width: 12, height: 12)
+                                        } else {
+                                            Image(systemName: "paperplane.fill")
+                                                .font(.system(size: 10))
+                                        }
+                                        Text(isLoading ? "Sending..." : "Send Request")
+                                            .font(.system(size: 11, weight: .semibold))
+                                    }
+                                    .foregroundColor(.white)
+                                    .frame(maxWidth: .infinity, minHeight: 18)
+                                    .padding(.vertical, 8)
+                                    .background(
+                                        RoundedRectangle(cornerRadius: 6)
+                                            .fill(
+                                                audioData != nil && !isLoading
+                                                    ? theme.accentColor : theme.tertiaryText
+                                            )
+                                    )
+                                }
+                                .buttonStyle(PlainButtonStyle())
+                                .disabled(audioData == nil || isLoading)
+                            }
+                        }
+                        .frame(maxWidth: .infinity)
+
+                        // Divider between panels
+                        Rectangle()
+                            .fill(theme.primaryBorder.opacity(0.3))
+                            .frame(width: 1)
+
+                        // RIGHT: Response Panel
+                        VStack(alignment: .leading, spacing: 8) {
+                            HStack {
+                                Label("Response", systemImage: "arrow.down.circle.fill")
+                                    .font(.system(size: 11, weight: .semibold))
+                                    .foregroundColor(theme.secondaryText)
+
+                                Spacer()
+
+                                if let resp = response {
+                                    Text(String(format: "%.0fms", resp.duration * 1000))
+                                        .font(.system(size: 10, design: .monospaced))
+                                        .foregroundColor(theme.tertiaryText)
+
+                                    Button(action: {
+                                        NSPasteboard.general.clearContents()
+                                        NSPasteboard.general.setString(resp.formattedBody, forType: .string)
+                                    }) {
+                                        Image(systemName: "doc.on.doc")
+                                            .font(.system(size: 10))
+                                            .foregroundColor(theme.tertiaryText)
+                                    }
+                                    .buttonStyle(PlainButtonStyle())
+                                    .help("Copy response")
+
+                                    Button(action: onClearResponse) {
+                                        Image(systemName: "xmark")
+                                            .font(.system(size: 10))
+                                            .foregroundColor(theme.tertiaryText)
+                                    }
+                                    .buttonStyle(PlainButtonStyle())
+                                    .help("Clear response")
+                                }
+                            }
+
+                            if isLoading {
+                                VStack {
+                                    ProgressView()
+                                        .scaleEffect(0.8)
+                                    Text("Transcribing audio...")
+                                        .font(.system(size: 11))
+                                        .foregroundColor(theme.tertiaryText)
+                                }
+                                .frame(maxWidth: .infinity, minHeight: 120)
+                                .background(
+                                    RoundedRectangle(cornerRadius: 6)
+                                        .fill(theme.codeBlockBackground)
+                                )
+                            } else if let resp = response {
+                                ScrollView {
+                                    Text(resp.formattedBody)
+                                        .font(.system(size: 11, design: .monospaced))
+                                        .foregroundColor(resp.isSuccess ? theme.primaryText : theme.errorColor)
+                                        .textSelection(.enabled)
+                                        .frame(maxWidth: .infinity, alignment: .leading)
+                                        .padding(8)
+                                }
+                                .frame(minHeight: 120, maxHeight: 200)
+                                .background(
+                                    RoundedRectangle(cornerRadius: 6)
+                                        .fill(theme.codeBlockBackground)
+                                        .overlay(
+                                            RoundedRectangle(cornerRadius: 6)
+                                                .stroke(
+                                                    resp.isSuccess ? Color.green.opacity(0.3) : Color.red.opacity(0.3),
+                                                    lineWidth: 1
+                                                )
+                                        )
+                                )
+                            } else {
+                                VStack(spacing: 8) {
+                                    Image(systemName: "text.bubble")
+                                        .font(.system(size: 24))
+                                        .foregroundColor(theme.tertiaryText.opacity(0.5))
+                                    Text("Select an audio file and send to see transcription")
+                                        .font(.system(size: 11))
+                                        .foregroundColor(theme.tertiaryText)
+                                }
+                                .frame(maxWidth: .infinity, minHeight: 120)
+                                .background(
+                                    RoundedRectangle(cornerRadius: 6)
+                                        .fill(theme.codeBlockBackground)
+                                )
+                            }
+                        }
+                        .frame(maxWidth: .infinity)
+                    }
+                    .padding(16)
+                }
+                .background(theme.tertiaryBackground.opacity(0.3))
+                .clipShape(RoundedRectangle(cornerRadius: 8))
+                .transition(.opacity.combined(with: .scale(scale: 0.98, anchor: .top)))
+            }
+        }
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(isExpanded ? theme.secondaryBackground : Color.clear)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8)
+                        .stroke(isExpanded ? theme.primaryBorder.opacity(0.5) : Color.clear, lineWidth: 1)
+                )
+        )
+        .animation(.easeInOut(duration: 0.2), value: isExpanded)
+    }
+
+    // MARK: - File Selection
+
+    private func selectFile() {
+        let panel = NSOpenPanel()
+        panel.allowsMultipleSelection = false
+        panel.canChooseDirectories = false
+        panel.canChooseFiles = true
+        panel.allowedContentTypes = [
+            .audio,
+            .wav,
+            .mp3,
+            .mpeg4Audio,
+        ]
+        panel.message = "Select an audio file to transcribe"
+        panel.prompt = "Select"
+
+        if panel.runModal() == .OK, let url = panel.url {
+            loadFile(from: url)
+        }
+    }
+
+    private func loadFile(from url: URL) {
+        fileError = nil
+
+        do {
+            // Start accessing security-scoped resource
+            let accessing = url.startAccessingSecurityScopedResource()
+            defer {
+                if accessing {
+                    url.stopAccessingSecurityScopedResource()
+                }
+            }
+
+            let data = try Data(contentsOf: url)
+
+            // Check file size (max 25MB like OpenAI)
+            if data.count > 25 * 1024 * 1024 {
+                fileError = "File too large (max 25MB)"
+                return
+            }
+
+            audioData = data
+            selectedFileURL = url
+            selectedFileName = url.lastPathComponent
+        } catch {
+            fileError = "Failed to read file: \(error.localizedDescription)"
+        }
+    }
+
+    private func clearFile() {
+        audioData = nil
+        selectedFileURL = nil
+        selectedFileName = nil
+        fileError = nil
+    }
+
+    private func sendFile() {
+        guard let data = audioData else { return }
+        onTest(data)
+    }
+
+    private func formatFileSize(_ bytes: Int) -> String {
+        let formatter = ByteCountFormatter()
+        formatter.countStyle = .file
+        return formatter.string(fromByteCount: Int64(bytes))
     }
 }
 
