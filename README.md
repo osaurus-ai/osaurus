@@ -256,7 +256,7 @@ Activate personas hands-free by saying their name or a custom wake phrase.
 
 - Say a persona's name (e.g., "Hey Code Assistant") to open chat
 - Automatic voice input starts after activation
-- Menu bar indicator shows listening status
+- **Status indicators:** Blue pulsing dot on menu bar icon when listening, toggle button in popover
 - Configurable silence timeout and auto-close
 
 **Setup:**
