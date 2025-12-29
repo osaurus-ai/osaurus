@@ -953,7 +953,7 @@ struct ChatView: View {
     @State private var isHeaderHovered: Bool = false
     @State private var showSidebar: Bool = false
     @State private var lastScrollTime: Date = .distantPast
-    
+
     private static let scrollThrottleInterval: TimeInterval = 0.15
 
     private var theme: ThemeProtocol { themeManager.chatTheme }
@@ -1446,7 +1446,8 @@ struct ChatView: View {
             }
             .onChange(of: session.scrollTick) { _, _ in
                 guard isPinnedToBottom,
-                      Date().timeIntervalSince(lastScrollTime) >= Self.scrollThrottleInterval else { return }
+                    Date().timeIntervalSince(lastScrollTime) >= Self.scrollThrottleInterval
+                else { return }
                 lastScrollTime = .now
                 proxy.scrollTo("BOTTOM", anchor: .bottom)
             }
