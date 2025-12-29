@@ -228,23 +228,23 @@ VAD Mode enables hands-free persona activation. Say a persona's name (or a custo
 | **Enabled Personas**       | Which personas respond to wake-words  | None         |
 | **Custom Wake Phrase**     | Optional activation phrase            | Empty        |
 | **Wake-Word Sensitivity**  | Detection threshold                   | Medium       |
-| **Menu Bar Visible**       | Show status indicator                 | On           |
 | **Auto-Start Voice Input** | Begin recording after activation      | On           |
 | **Silence Timeout**        | Auto-close after N seconds of silence | 0 (disabled) |
 
-### Menu Bar Indicator
+### Status Indicators
 
-When VAD is active, a menu bar icon shows:
+VAD status is shown in two places:
 
-- **Waveform icon** — VAD is listening
-- **Pulsing animation** — Audio activity detected
-- **Click** — Opens quick controls menu
+**Menu Bar Icon** — The main Osaurus menu bar icon shows a status dot:
 
-Menu options:
+- **Blue pulsing dot** (top-right) — VAD is listening for wake-words
+- **Orange dot** — VAD is processing speech
+- **No dot** — VAD is inactive
 
-- Toggle VAD on/off
-- View listening status
-- Access voice settings
+**Popover Controls** — Click the Osaurus menu bar icon to access:
+
+- **Waveform button** — Toggle VAD on/off with visual status
+- The button shows green when listening, gray when off
 
 ---
 
@@ -278,7 +278,6 @@ struct VADConfiguration {
     var vadModeEnabled: Bool           // Master toggle
     var enabledPersonaIds: [UUID]      // Personas for wake-words
     var wakeWordSensitivity: VoiceSensitivity
-    var menuBarVisible: Bool           // Show indicator
     var autoStartVoiceInput: Bool      // Auto-record after activation
     var customWakePhrase: String       // e.g., "Hey Osaurus"
     var silenceTimeoutSeconds: Double  // Auto-close timeout
@@ -361,9 +360,9 @@ Leave empty for auto-detection.
    - Say the full persona name
    - Wait for detection (2-3 second cooldown between detections)
 
-4. **Check the menu bar indicator**
-   - Should show waveform icon when listening
-   - Pulsing when audio detected
+4. **Check the status indicators**
+   - The Osaurus menu bar icon should show a blue pulsing dot (top-right) when VAD is listening
+   - Click the menu bar icon and check the waveform button shows green
 
 ### System Audio Not Capturing
 

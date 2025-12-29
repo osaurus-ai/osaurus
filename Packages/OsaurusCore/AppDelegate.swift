@@ -20,6 +20,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegat
     let updater = UpdaterViewModel()
 
     private var activityDot: NSView?
+    private var vadDot: NSView?
     private var managementWindow: NSWindow?
     private var chatWindow: NSWindow?
 
@@ -85,6 +86,26 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegat
                 layer.borderColor = NSColor.white.withAlphaComponent(0.9).cgColor
             }
             activityDot = dot
+
+            // Add a VAD status dot at the top-right of the status bar button (blue/purple for VAD listening)
+            let vDot = NSView()
+            vDot.wantsLayer = true
+            vDot.translatesAutoresizingMaskIntoConstraints = false
+            vDot.isHidden = true
+            button.addSubview(vDot)
+            NSLayoutConstraint.activate([
+                vDot.trailingAnchor.constraint(equalTo: button.trailingAnchor, constant: -3),
+                vDot.topAnchor.constraint(equalTo: button.topAnchor, constant: 3),
+                vDot.widthAnchor.constraint(equalToConstant: 7),
+                vDot.heightAnchor.constraint(equalToConstant: 7),
+            ])
+            if let layer = vDot.layer {
+                layer.backgroundColor = NSColor.systemBlue.cgColor
+                layer.cornerRadius = 3.5
+                layer.borderWidth = 1
+                layer.borderColor = NSColor.white.withAlphaComponent(0.9).cgColor
+            }
+            vadDot = vDot
         }
         statusItem = item
         updateStatusItemAndMenu()
@@ -127,13 +148,8 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegat
     // MARK: - VAD Service
 
     private func initializeVADService() {
-        // Check if VAD mode is enabled and start if so
-        let vadConfig = VADConfigurationStore.load()
-        if vadConfig.vadModeEnabled && vadConfig.menuBarVisible {
-            VADMenuBarController.shared.show()
-        }
-
         // Auto-start VAD if enabled (with delay to wait for model loading)
+        let vadConfig = VADConfigurationStore.load()
         if vadConfig.vadModeEnabled && !vadConfig.enabledPersonaIds.isEmpty {
             Task { @MainActor in
                 // Wait for WhisperKit model to be loaded (up to 30 seconds)
@@ -329,6 +345,14 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegat
             }
             .store(in: &cancellables)
 
+        // Observe VAD service state for menu bar indicator
+        VADService.shared.$state
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _ in
+                self?.updateStatusItemAndMenu()
+            }
+            .store(in: &cancellables)
+
         // Publish shared configuration on state/config/address changes
         Publishers.CombineLatest3(
             serverController.$serverHealth,
@@ -397,6 +421,52 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegat
             if serverController.activeRequestCount > 0 {
                 tooltip += " — Generating…"
             }
+
+            // Update VAD status dot
+            let vadState = VADService.shared.state
+            if let vDot = vadDot {
+                switch vadState {
+                case .listening:
+                    vDot.isHidden = false
+                    if let layer = vDot.layer {
+                        layer.backgroundColor = NSColor.systemBlue.cgColor
+                        // Add pulse animation for listening state
+                        if layer.animation(forKey: "vadPulse") == nil {
+                            let anim = CABasicAnimation(keyPath: "opacity")
+                            anim.fromValue = 1.0
+                            anim.toValue = 0.4
+                            anim.duration = 1.2
+                            anim.autoreverses = true
+                            anim.repeatCount = .infinity
+                            layer.add(anim, forKey: "vadPulse")
+                        }
+                    }
+                    tooltip += " — Voice: Listening"
+
+                case .processing:
+                    vDot.isHidden = false
+                    if let layer = vDot.layer {
+                        layer.backgroundColor = NSColor.systemOrange.cgColor
+                        layer.removeAnimation(forKey: "vadPulse")
+                    }
+                    tooltip += " — Voice: Processing"
+
+                case .error:
+                    vDot.isHidden = false
+                    if let layer = vDot.layer {
+                        layer.backgroundColor = NSColor.systemRed.cgColor
+                        layer.removeAnimation(forKey: "vadPulse")
+                    }
+                    tooltip += " — Voice: Error"
+
+                default:
+                    if let layer = vDot.layer {
+                        layer.removeAnimation(forKey: "vadPulse")
+                    }
+                    vDot.isHidden = true
+                }
+            }
+
             // Advertise MCP HTTP endpoints on the same port
             tooltip += " — MCP: /mcp/*"
             button.toolTip = tooltip

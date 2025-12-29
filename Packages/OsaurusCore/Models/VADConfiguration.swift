@@ -20,9 +20,6 @@ public struct VADConfiguration: Codable, Equatable, Sendable {
     /// Sensitivity level for wake-word detection
     public var wakeWordSensitivity: VoiceSensitivity
 
-    /// Whether to show the VAD status indicator in the menu bar
-    public var menuBarVisible: Bool
-
     /// Whether to automatically start voice input after persona activation
     public var autoStartVoiceInput: Bool
 
@@ -36,7 +33,6 @@ public struct VADConfiguration: Codable, Equatable, Sendable {
         case vadModeEnabled
         case enabledPersonaIds
         case wakeWordSensitivity
-        case menuBarVisible
         case autoStartVoiceInput
         case customWakePhrase
         case silenceTimeoutSeconds
@@ -54,9 +50,6 @@ public struct VADConfiguration: Codable, Equatable, Sendable {
         self.wakeWordSensitivity =
             try container.decodeIfPresent(VoiceSensitivity.self, forKey: .wakeWordSensitivity)
             ?? defaults.wakeWordSensitivity
-        self.menuBarVisible =
-            try container.decodeIfPresent(Bool.self, forKey: .menuBarVisible)
-            ?? defaults.menuBarVisible
         self.autoStartVoiceInput =
             try container.decodeIfPresent(Bool.self, forKey: .autoStartVoiceInput)
             ?? defaults.autoStartVoiceInput
@@ -72,7 +65,6 @@ public struct VADConfiguration: Codable, Equatable, Sendable {
         vadModeEnabled: Bool = false,
         enabledPersonaIds: [UUID] = [],
         wakeWordSensitivity: VoiceSensitivity = .medium,
-        menuBarVisible: Bool = true,
         autoStartVoiceInput: Bool = true,
         customWakePhrase: String = "",
         silenceTimeoutSeconds: Double = 30.0
@@ -80,7 +72,6 @@ public struct VADConfiguration: Codable, Equatable, Sendable {
         self.vadModeEnabled = vadModeEnabled
         self.enabledPersonaIds = enabledPersonaIds
         self.wakeWordSensitivity = wakeWordSensitivity
-        self.menuBarVisible = menuBarVisible
         self.autoStartVoiceInput = autoStartVoiceInput
         self.customWakePhrase = customWakePhrase
         self.silenceTimeoutSeconds = silenceTimeoutSeconds
@@ -92,7 +83,6 @@ public struct VADConfiguration: Codable, Equatable, Sendable {
             vadModeEnabled: false,
             enabledPersonaIds: [],
             wakeWordSensitivity: .medium,
-            menuBarVisible: true,
             autoStartVoiceInput: true,
             customWakePhrase: "",
             silenceTimeoutSeconds: 30.0  // 30 seconds of silence to auto-close

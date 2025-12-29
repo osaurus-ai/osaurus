@@ -21,7 +21,6 @@ struct VADModeSettingsTab: View {
     @State private var vadEnabled: Bool = false
     @State private var enabledPersonaIds: [UUID] = []
     @State private var wakeWordSensitivity: VoiceSensitivity = .medium
-    @State private var menuBarVisible: Bool = true
     @State private var autoStartVoiceInput: Bool = true
     @State private var customWakePhrase: String = ""
     @State private var silenceTimeoutSeconds: Double = 30.0
@@ -38,7 +37,6 @@ struct VADModeSettingsTab: View {
         vadEnabled = config.vadModeEnabled
         enabledPersonaIds = config.enabledPersonaIds
         wakeWordSensitivity = config.wakeWordSensitivity
-        menuBarVisible = config.menuBarVisible
         autoStartVoiceInput = config.autoStartVoiceInput
         customWakePhrase = config.customWakePhrase
         silenceTimeoutSeconds = config.silenceTimeoutSeconds
@@ -49,7 +47,6 @@ struct VADModeSettingsTab: View {
             vadModeEnabled: vadEnabled,
             enabledPersonaIds: enabledPersonaIds,
             wakeWordSensitivity: wakeWordSensitivity,
-            menuBarVisible: menuBarVisible,
             autoStartVoiceInput: autoStartVoiceInput,
             customWakePhrase: customWakePhrase,
             silenceTimeoutSeconds: silenceTimeoutSeconds
@@ -476,17 +473,6 @@ struct VADModeSettingsTab: View {
 
                 Spacer()
             }
-
-            // Menu bar visibility
-            ToggleSettingRow(
-                title: "Show Menu Bar Icon",
-                description: "Display VAD status in the menu bar",
-                isOn: $menuBarVisible,
-                onChange: { saveSettings() }
-            )
-
-            Divider()
-                .background(theme.cardBorder)
 
             // Auto-start voice input
             ToggleSettingRow(

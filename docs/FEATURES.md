@@ -28,7 +28,7 @@ Canonical reference for all Osaurus features, their status, and documentation.
 | Anthropic API Compatibility      | Stable    | "API Endpoints"    | (in README)                   | Networking/HTTPHandler.swift, Models/AnthropicAPI.swift                       |
 | Ollama API Compatibility         | Stable    | "API Endpoints"    | (in README)                   | Networking/HTTPHandler.swift                                                  |
 | Voice Input (WhisperKit)         | Stable    | "Voice Input"      | VOICE_INPUT.md                | Services/WhisperKitService.swift, Managers/WhisperModelManager.swift          |
-| VAD Mode                         | Stable    | "Voice Input"      | VOICE_INPUT.md                | Services/VADService.swift, Controllers/VADMenuBarController.swift             |
+| VAD Mode                         | Stable    | "Voice Input"      | VOICE_INPUT.md                | Services/VADService.swift, Views/ContentView.swift (VAD controls)             |
 | CLI                              | Stable    | "CLI Reference"    | (in README)                   | Packages/OsaurusCLI/                                                          |
 
 ---
@@ -369,7 +369,8 @@ Canonical reference for all Osaurus features, their status, and documentation.
 
 - `Services/VADService.swift` — Always-on listening and wake-word detection
 - `Models/VADConfiguration.swift` — VAD settings and enabled personas
-- `Controllers/VADMenuBarController.swift` — Menu bar status indicator
+- `Views/ContentView.swift` — VAD toggle button in popover
+- `AppDelegate.swift` — VAD status indicator in menu bar icon
 - `Models/PersonaNameDetector.swift` — Persona name matching logic
 
 **Features:**
@@ -390,7 +391,6 @@ Canonical reference for all Osaurus features, their status, and documentation.
 | `enabledPersonaIds`     | UUIDs of personas that respond to wake-words |
 | `customWakePhrase`      | Optional phrase like "Hey Osaurus"           |
 | `wakeWordSensitivity`   | Detection sensitivity level                  |
-| `menuBarVisible`        | Show/hide the menu bar indicator             |
 | `autoStartVoiceInput`   | Start recording after activation             |
 | `silenceTimeoutSeconds` | Auto-close timeout (0 = disabled)            |
 
