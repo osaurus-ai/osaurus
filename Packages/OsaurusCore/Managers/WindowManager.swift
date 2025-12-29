@@ -76,19 +76,6 @@ public final class WindowManager: NSObject, ObservableObject {
     private override init() {
         super.init()
         loadPinnedState()
-
-        // Sync chat window pinned state from ChatConfiguration (source of truth for user preference)
-        syncChatPinnedStateFromConfiguration()
-    }
-
-    /// Sync the chat window's pinned state from ChatConfiguration
-    private func syncChatPinnedStateFromConfiguration() {
-        let chatConfig = ChatConfigurationStore.load()
-        if chatConfig.alwaysOnTop {
-            pinnedWindows.insert(.chat)
-        } else {
-            pinnedWindows.remove(.chat)
-        }
     }
 
     // MARK: - Window Registration
@@ -155,14 +142,8 @@ public final class WindowManager: NSObject, ObservableObject {
         let originalLevel = isPinned ? NSWindow.Level.floating : NSWindow.Level.normal
         window.level = .screenSaver  // Higher than modalPanel
 
-        // Activate app using the appropriate API for the macOS version
-        if #available(macOS 14.0, *) {
-            NSApp.activate()
-        } else {
-            NSApp.activate(ignoringOtherApps: true)
-        }
-
-        // Also yank focus using NSRunningApplication
+        // Activate app and yank focus
+        NSApp.activate()
         _ = NSRunningApplication.current.activate(options: .activateIgnoringOtherApps)
 
         window.makeKeyAndOrderFront(nil)
@@ -235,15 +216,6 @@ public final class WindowManager: NSObject, ObservableObject {
 
         // Persist the pinned state
         savePinnedState()
-
-        // Also update ChatConfiguration for chat window (keep in sync)
-        if identifier == .chat {
-            var chatConfig = ChatConfigurationStore.load()
-            if chatConfig.alwaysOnTop != pinned {
-                chatConfig.alwaysOnTop = pinned
-                ChatConfigurationStore.save(chatConfig)
-            }
-        }
 
         print("[WindowManager] \(identifier) pinned: \(pinned)")
     }

@@ -696,13 +696,6 @@ extension AppDelegate {
         print("[AppDelegate] Chat overlay closed via closeChatOverlay")
         NotificationCenter.default.post(name: .chatViewClosed, object: nil)
     }
-
-    @MainActor func applyChatWindowLevel() {
-        // This is now handled by WindowManager.setPinned()
-        // Kept for backwards compatibility but delegates to WindowManager
-        let chatConfig = ChatConfigurationStore.load()
-        WindowManager.shared.setPinned(.chat, pinned: chatConfig.alwaysOnTop)
-    }
 }
 
 extension Notification.Name {
