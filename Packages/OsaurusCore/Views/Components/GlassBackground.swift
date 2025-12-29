@@ -238,6 +238,7 @@ struct GlassSurface: View {
     var bottomTrailingRadius: CGFloat?
     var material: NSVisualEffectView.Material = .hudWindow
     @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.theme) private var theme
 
     private var hasCustomCorners: Bool {
         topLeadingRadius != nil || bottomLeadingRadius != nil || topTrailingRadius != nil
@@ -268,8 +269,8 @@ struct GlassSurface: View {
                 .fill(
                     LinearGradient(
                         gradient: Gradient(colors: [
-                            Color.white.opacity(colorScheme == .dark ? 0.08 : 0.5),
-                            Color.white.opacity(colorScheme == .dark ? 0.03 : 0.35),
+                            Color.white.opacity(theme.isDark ? 0.08 : 0.5),
+                            Color.white.opacity(theme.isDark ? 0.03 : 0.35),
                         ]),
                         startPoint: .topLeading,
                         endPoint: .bottomTrailing
@@ -280,8 +281,8 @@ struct GlassSurface: View {
                     .fill(
                         LinearGradient(
                             gradient: Gradient(colors: [
-                                Color.white.opacity(colorScheme == .dark ? 0.08 : 0.5),
-                                Color.white.opacity(colorScheme == .dark ? 0.03 : 0.35),
+                                Color.white.opacity(theme.isDark ? 0.08 : 0.5),
+                                Color.white.opacity(theme.isDark ? 0.03 : 0.35),
                             ]),
                             startPoint: .topLeading,
                             endPoint: .bottomTrailing
@@ -333,9 +334,11 @@ struct ThemedGlassSurface: View {
 
     @ViewBuilder
     private var gradientOverlay: some View {
+        let baseColor: Color = theme.isDark ? .black : .white
+        let darkBoost = 0.45
         let gradientColors = [
-            Color.white.opacity(colorScheme == .dark ? theme.glassOpacityPrimary : 0.5),
-            Color.white.opacity(colorScheme == .dark ? theme.glassOpacitySecondary : 0.35),
+            baseColor.opacity(theme.isDark ? darkBoost + theme.glassOpacityPrimary : theme.glassOpacityPrimary),
+            baseColor.opacity(theme.isDark ? darkBoost + theme.glassOpacitySecondary : theme.glassOpacitySecondary),
         ]
 
         if hasCustomCorners {

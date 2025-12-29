@@ -25,7 +25,7 @@ struct GlassMessageBubble: View {
                 )
                 .background(
                     RoundedRectangle(cornerRadius: 20, style: .continuous)
-                        .fill(Color.white.opacity(colorScheme == .dark ? 0.1 : 0.2))
+                        .fill(Color.white.opacity(theme.isDark ? 0.1 : 0.2))
                         .blur(radius: 20)
                         .offset(x: 0, y: 2)
                 )
@@ -48,7 +48,7 @@ struct GlassMessageBubble: View {
                     lineWidth: 0.5
                 )
                 .blur(radius: 1)
-                .opacity(colorScheme == .dark ? 0.5 : 0.8)
+                .opacity(theme.isDark ? 0.5 : 0.8)
         }
         .shadow(
             color: shadowColor,
@@ -61,7 +61,7 @@ struct GlassMessageBubble: View {
     private var glassBackground: some ShapeStyle {
         if role == .user {
             // Use theme accent color for user messages - opacity scales with theme glass settings
-            let baseOpacity = colorScheme == .dark ? 0.18 : 0.15
+            let baseOpacity = theme.isDark ? 0.18 : 0.15
             let boost = theme.glassOpacityPrimary * 0.5
             return LinearGradient(
                 colors: [
@@ -74,7 +74,7 @@ struct GlassMessageBubble: View {
         } else {
             // Use theme secondary background for assistant messages
             // Ensures readable text while respecting theme customization
-            let baseOpacity = colorScheme == .dark ? 0.7 : 0.8
+            let baseOpacity = theme.isDark ? 0.7 : 0.8
             let boost = theme.glassOpacityPrimary * 0.8
             return LinearGradient(
                 colors: [

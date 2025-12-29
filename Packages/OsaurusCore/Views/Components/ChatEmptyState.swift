@@ -272,7 +272,7 @@ struct ChatEmptyState: View {
             .padding(.vertical, 8)
             .background(
                 Capsule()
-                    .fill(theme.secondaryBackground.opacity(colorScheme == .dark ? 0.5 : 0.7))
+                    .fill(theme.secondaryBackground.opacity(theme.isDark ? 0.5 : 0.7))
                     .overlay(
                         Capsule()
                             .strokeBorder(theme.primaryBorder.opacity(0.3), lineWidth: 1)
@@ -324,7 +324,7 @@ struct ChatEmptyState: View {
         .padding(.vertical, 6)
         .background(
             Capsule()
-                .fill(theme.secondaryBackground.opacity(colorScheme == .dark ? 0.5 : 0.8))
+                .fill(theme.secondaryBackground.opacity(theme.isDark ? 0.5 : 0.8))
         )
     }
 
@@ -409,14 +409,14 @@ private struct QuickActionButton: View {
                     .fill(
                         isHovered
                             ? theme.secondaryBackground
-                            : theme.secondaryBackground.opacity(colorScheme == .dark ? 0.5 : 0.8)
+                            : theme.secondaryBackground.opacity(theme.isDark ? 0.5 : 0.8)
                     )
                     .overlay(
                         RoundedRectangle(cornerRadius: 12, style: .continuous)
                             .strokeBorder(
                                 isHovered
                                     ? theme.primaryBorder
-                                    : theme.primaryBorder.opacity(colorScheme == .dark ? 0.3 : 0.5),
+                                    : theme.primaryBorder.opacity(theme.isDark ? 0.3 : 0.5),
                                 lineWidth: 1
                             )
                     )
@@ -529,13 +529,13 @@ private struct SuggestedModelCard: View {
             .padding(16)
             .background(
                 RoundedRectangle(cornerRadius: 16, style: .continuous)
-                    .fill(theme.secondaryBackground.opacity(isHovered ? 0.8 : (colorScheme == .dark ? 0.5 : 0.8)))
+                    .fill(theme.secondaryBackground.opacity(isHovered ? 0.8 : (theme.isDark ? 0.5 : 0.8)))
                     .overlay(
                         RoundedRectangle(cornerRadius: 16, style: .continuous)
                             .strokeBorder(
                                 isHovered
                                     ? theme.accentColor.opacity(0.3)
-                                    : theme.primaryBorder.opacity(colorScheme == .dark ? 0.3 : 0.5),
+                                    : theme.primaryBorder.opacity(theme.isDark ? 0.3 : 0.5),
                                 lineWidth: 1
                             )
                     )

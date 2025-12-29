@@ -59,6 +59,9 @@ protocol ThemeProtocol {
     // Cursor
     var cursorColor: Color { get }
 
+    // Appearance
+    var isDark: Bool { get }
+
     // Glass specific
     var glassEnabled: Bool { get }
     var glassOpacityPrimary: Double { get }
@@ -257,6 +260,8 @@ struct LightTheme: ThemeProtocol {
     // Shadows - Warm and soft
     let shadowColor = Color(hex: "1a1a18")
     let shadowOpacity: Double = 0.08
+
+    let isDark = false
 }
 
 // MARK: - Dark Theme
@@ -334,6 +339,8 @@ struct DarkTheme: ThemeProtocol {
     // Shadows - Deep and rich
     let shadowColor = Color.black
     let shadowOpacity: Double = 0.4
+
+    let isDark = true
 }
 
 // MARK: - Customizable Theme (Wraps CustomTheme)
@@ -396,6 +403,9 @@ struct CustomizableTheme: ThemeProtocol {
 
     // Cursor
     var cursorColor: Color { Color(themeHex: config.colors.cursorColor) }
+
+    // Appearance
+    var isDark: Bool { config.isDark }
 
     // Glass specific
     var glassOpacityPrimary: Double { config.glass.opacityPrimary }

@@ -468,6 +468,7 @@ public struct CustomTheme: Codable, Equatable, Sendable {
 
     /// Whether this is a built-in theme (cannot be deleted)
     public var isBuiltIn: Bool
+    public var isDark: Bool
 
     public init(
         metadata: ThemeMetadata = ThemeMetadata(),
@@ -477,7 +478,8 @@ public struct CustomTheme: Codable, Equatable, Sendable {
         typography: ThemeTypography = ThemeTypography(),
         animationConfig: ThemeAnimation = ThemeAnimation(),
         shadows: ThemeShadows = ThemeShadows(),
-        isBuiltIn: Bool = false
+        isBuiltIn: Bool = false,
+        isDark: Bool = true
     ) {
         self.metadata = metadata
         self.colors = colors
@@ -487,6 +489,7 @@ public struct CustomTheme: Codable, Equatable, Sendable {
         self.animationConfig = animationConfig
         self.shadows = shadows
         self.isBuiltIn = isBuiltIn
+        self.isDark = isDark
     }
 
     /// Default dark theme
@@ -503,7 +506,8 @@ public struct CustomTheme: Codable, Equatable, Sendable {
             typography: .default,
             animationConfig: .default,
             shadows: .darkDefaults,
-            isBuiltIn: true
+            isBuiltIn: true,
+            isDark: true
         )
     }
 
@@ -521,7 +525,8 @@ public struct CustomTheme: Codable, Equatable, Sendable {
             typography: .default,
             animationConfig: .default,
             shadows: .lightDefaults,
-            isBuiltIn: true
+            isBuiltIn: true,
+            isDark: false
         )
     }
 
@@ -589,7 +594,8 @@ public struct CustomTheme: Codable, Equatable, Sendable {
                 cardShadowY: 6,
                 cardShadowYHover: 10
             ),
-            isBuiltIn: true
+            isBuiltIn: true,
+            isDark: true
         )
     }
 
@@ -651,7 +657,8 @@ public struct CustomTheme: Codable, Equatable, Sendable {
                 cardShadowY: 3,
                 cardShadowYHover: 7
             ),
-            isBuiltIn: true
+            isBuiltIn: true,
+            isDark: true
         )
     }
 
@@ -728,7 +735,8 @@ public struct CustomTheme: Codable, Equatable, Sendable {
                 cardShadowY: 2,
                 cardShadowYHover: 5
             ),
-            isBuiltIn: true
+            isBuiltIn: true,
+            isDark: false
         )
     }
 

@@ -942,7 +942,7 @@ struct FloatingInputCard: View {
 
             // Tint overlay - stronger in light mode for contrast
             RoundedRectangle(cornerRadius: 20, style: .continuous)
-                .fill(theme.primaryBackground.opacity(colorScheme == .dark ? 0.6 : 0.85))
+                .fill(theme.primaryBackground.opacity(theme.isDark ? 0.6 : 0.85))
         }
     }
 
