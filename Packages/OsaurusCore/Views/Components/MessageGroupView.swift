@@ -71,7 +71,7 @@ struct MessageGroupView: View {
             let kind: TurnContentKind = isToolOnly ? .toolCalls : .content
 
             // If same kind as previous, append to existing group
-            if var last = result.last, last.kind == kind {
+            if let last = result.last, last.kind == kind {
                 result[result.count - 1].turns.append(turn)
             } else {
                 // Use first turn's ID as stable identifier for the group

@@ -1581,7 +1581,7 @@ struct ChatView: View {
                     Task {
                         // Stop streaming and clear transcription
                         _ = await WhisperKitService.shared.stopStreamingTranscription()
-                        await WhisperKitService.shared.clearTranscription()
+                        WhisperKitService.shared.clearTranscription()
                     }
                     return nil  // Swallow event
                 } else {

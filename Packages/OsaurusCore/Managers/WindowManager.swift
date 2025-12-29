@@ -144,7 +144,11 @@ public final class WindowManager: NSObject, ObservableObject {
 
         // Activate app and yank focus
         NSApp.activate()
-        _ = NSRunningApplication.current.activate(options: .activateIgnoringOtherApps)
+        if #available(macOS 14.0, *) {
+            _ = NSRunningApplication.current.activate(options: .activateAllWindows)
+        } else {
+            _ = NSRunningApplication.current.activate(options: .activateIgnoringOtherApps)
+        }
 
         window.makeKeyAndOrderFront(nil)
         window.orderFrontRegardless()
