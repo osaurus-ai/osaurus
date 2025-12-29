@@ -198,6 +198,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 handleMCPCallTool(head: head, context: context, startTime: startTime, userAgent: userAgent)
             } else if head.method == .POST, path == "/messages" {
                 handleAnthropicMessages(head: head, context: context, startTime: startTime, userAgent: userAgent)
+            } else if head.method == .POST, path == "/audio/transcriptions" {
+                handleAudioTranscriptions(head: head, context: context, startTime: startTime, userAgent: userAgent)
             } else {
                 var headers = [("Content-Type", "text/plain; charset=utf-8")]
                 headers.append(contentsOf: stateRef.value.corsHeaders)
@@ -1845,6 +1847,317 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
     @inline(__always)
     private func executeOnLoop(_ loop: EventLoop, _ block: @escaping @Sendable () -> Void) {
         if loop.inEventLoop { block() } else { loop.execute { block() } }
+    }
+
+    // MARK: - Audio Transcriptions (OpenAI Whisper API Compatible)
+
+    private func handleAudioTranscriptions(
+        head: HTTPRequestHead,
+        context: ChannelHandlerContext,
+        startTime: Date,
+        userAgent: String?
+    ) {
+        let data: Data
+        if let body = stateRef.value.requestBodyBuffer {
+            var bodyCopy = body
+            let bytes = bodyCopy.readBytes(length: bodyCopy.readableBytes) ?? []
+            data = Data(bytes)
+        } else {
+            data = Data()
+        }
+
+        let cors = stateRef.value.corsHeaders
+        let loop = context.eventLoop
+        let ctx = NIOLoopBound(context, eventLoop: loop)
+        let hop: (@escaping @Sendable () -> Void) -> Void = { block in
+            if loop.inEventLoop { block() } else { loop.execute { block() } }
+        }
+
+        // Capture for logging
+        let logStartTime = startTime
+        let logUserAgent = userAgent
+        let logSelf = self
+
+        // Parse Content-Type to get boundary
+        guard let contentType = head.headers.first(name: "Content-Type"),
+            contentType.contains("multipart/form-data"),
+            let boundary = extractBoundary(from: contentType)
+        else {
+            let errorBody =
+                #"{"error":{"message":"Invalid content type. Expected multipart/form-data","type":"invalid_request_error"}}"#
+            hop {
+                var headers = [("Content-Type", "application/json; charset=utf-8")]
+                headers.append(contentsOf: cors)
+                self.sendResponse(
+                    context: ctx.value,
+                    version: head.version,
+                    status: .badRequest,
+                    headers: headers,
+                    body: errorBody
+                )
+            }
+            logSelf.logRequest(
+                method: "POST",
+                path: "/audio/transcriptions",
+                userAgent: logUserAgent,
+                requestBody: nil,
+                responseBody: errorBody,
+                responseStatus: 400,
+                startTime: logStartTime,
+                errorMessage: "Invalid content type"
+            )
+            return
+        }
+
+        // Parse multipart form data
+        let parsed = parseMultipartFormData(data: data, boundary: boundary)
+
+        guard let audioData = parsed.file else {
+            let errorBody = #"{"error":{"message":"Missing audio file in request","type":"invalid_request_error"}}"#
+            hop {
+                var headers = [("Content-Type", "application/json; charset=utf-8")]
+                headers.append(contentsOf: cors)
+                self.sendResponse(
+                    context: ctx.value,
+                    version: head.version,
+                    status: .badRequest,
+                    headers: headers,
+                    body: errorBody
+                )
+            }
+            logSelf.logRequest(
+                method: "POST",
+                path: "/audio/transcriptions",
+                userAgent: logUserAgent,
+                requestBody: nil,
+                responseBody: errorBody,
+                responseStatus: 400,
+                startTime: logStartTime,
+                errorMessage: "Missing audio file"
+            )
+            return
+        }
+
+        let modelParam = parsed.fields["model"]
+        let responseFormat = parsed.fields["response_format"] ?? "json"
+
+        Task(priority: .userInitiated) {
+            do {
+                // Write audio data to temp file
+                let tempDir = FileManager.default.temporaryDirectory
+                let audioURL = tempDir.appendingPathComponent("osaurus_transcription_\(UUID().uuidString).wav")
+                try audioData.write(to: audioURL)
+
+                defer {
+                    try? FileManager.default.removeItem(at: audioURL)
+                }
+
+                // Get WhisperKitService and transcribe
+                let service = await MainActor.run { WhisperKitService.shared }
+                let result = try await service.transcribe(audioURL: audioURL)
+
+                // Format response based on response_format
+                let responseBody: String
+                if responseFormat == "text" {
+                    responseBody = result.text
+                } else if responseFormat == "verbose_json" {
+                    var response: [String: Any] = [
+                        "text": result.text,
+                        "task": "transcribe",
+                    ]
+                    if let lang = result.language {
+                        response["language"] = lang
+                    }
+                    if let duration = result.durationSeconds {
+                        response["duration"] = duration
+                    }
+                    var segments: [[String: Any]] = []
+                    for segment in result.segments {
+                        var seg: [String: Any] = [
+                            "id": segment.id,
+                            "text": segment.text,
+                            "start": segment.start,
+                            "end": segment.end,
+                        ]
+                        if let tokens = segment.tokens {
+                            seg["tokens"] = tokens
+                        }
+                        segments.append(seg)
+                    }
+                    response["segments"] = segments
+                    let jsonData = try JSONSerialization.data(withJSONObject: response)
+                    responseBody = String(decoding: jsonData, as: UTF8.self)
+                } else {
+                    // Default JSON format
+                    let response = ["text": result.text]
+                    let jsonData = try JSONEncoder().encode(response)
+                    responseBody = String(decoding: jsonData, as: UTF8.self)
+                }
+
+                hop {
+                    var headers: [(String, String)]
+                    if responseFormat == "text" {
+                        headers = [("Content-Type", "text/plain; charset=utf-8")]
+                    } else {
+                        headers = [("Content-Type", "application/json; charset=utf-8")]
+                    }
+                    headers.append(contentsOf: cors)
+                    self.sendResponse(
+                        context: ctx.value,
+                        version: head.version,
+                        status: .ok,
+                        headers: headers,
+                        body: responseBody
+                    )
+                }
+
+                logSelf.logRequest(
+                    method: "POST",
+                    path: "/audio/transcriptions",
+                    userAgent: logUserAgent,
+                    requestBody: nil,
+                    responseBody: responseBody,
+                    responseStatus: 200,
+                    startTime: logStartTime,
+                    model: modelParam
+                )
+            } catch {
+                let errorBody = #"{"error":{"message":"\#(error.localizedDescription)","type":"api_error"}}"#
+                hop {
+                    var headers = [("Content-Type", "application/json; charset=utf-8")]
+                    headers.append(contentsOf: cors)
+                    self.sendResponse(
+                        context: ctx.value,
+                        version: head.version,
+                        status: .internalServerError,
+                        headers: headers,
+                        body: errorBody
+                    )
+                }
+                logSelf.logRequest(
+                    method: "POST",
+                    path: "/audio/transcriptions",
+                    userAgent: logUserAgent,
+                    requestBody: nil,
+                    responseBody: errorBody,
+                    responseStatus: 500,
+                    startTime: logStartTime,
+                    errorMessage: error.localizedDescription
+                )
+            }
+        }
+    }
+
+    // MARK: - Multipart Form Data Parsing
+
+    private func extractBoundary(from contentType: String) -> String? {
+        // Parse: multipart/form-data; boundary=----WebKitFormBoundary...
+        let parts = contentType.components(separatedBy: ";")
+        for part in parts {
+            let trimmed = part.trimmingCharacters(in: .whitespaces)
+            if trimmed.lowercased().hasPrefix("boundary=") {
+                var boundary = String(trimmed.dropFirst("boundary=".count))
+                // Remove quotes if present
+                if boundary.hasPrefix("\"") && boundary.hasSuffix("\"") {
+                    boundary = String(boundary.dropFirst().dropLast())
+                }
+                return boundary
+            }
+        }
+        return nil
+    }
+
+    private struct MultipartParseResult {
+        var file: Data?
+        var filename: String?
+        var fields: [String: String] = [:]
+    }
+
+    private func parseMultipartFormData(data: Data, boundary: String) -> MultipartParseResult {
+        var result = MultipartParseResult()
+
+        let boundaryData = ("--" + boundary).data(using: .utf8)!
+        let crlfData = "\r\n".data(using: .utf8)!
+        let doubleCrlfData = "\r\n\r\n".data(using: .utf8)!
+
+        // Split by boundary
+        var ranges: [Range<Data.Index>] = []
+        var searchStart = data.startIndex
+        while let range = data.range(of: boundaryData, in: searchStart ..< data.endIndex) {
+            ranges.append(range)
+            searchStart = range.upperBound
+        }
+
+        // Process each part
+        for i in 0 ..< (ranges.count - 1) {
+            let partStart = ranges[i].upperBound
+            let partEnd = ranges[i + 1].lowerBound
+
+            // Skip leading CRLF
+            var contentStart = partStart
+            if data[contentStart ..< min(contentStart + 2, partEnd)] == crlfData {
+                contentStart = contentStart + 2
+            }
+
+            // Find headers end (double CRLF)
+            guard let headerEnd = data.range(of: doubleCrlfData, in: contentStart ..< partEnd) else {
+                continue
+            }
+
+            let headerData = data[contentStart ..< headerEnd.lowerBound]
+            let bodyStart = headerEnd.upperBound
+            var bodyEnd = partEnd
+
+            // Trim trailing CRLF from body
+            if bodyEnd >= 2 && data[bodyEnd - 2 ..< bodyEnd] == crlfData {
+                bodyEnd = bodyEnd - 2
+            }
+
+            let bodyData = data[bodyStart ..< bodyEnd]
+
+            // Parse headers
+            guard let headerString = String(data: headerData, encoding: .utf8) else {
+                continue
+            }
+
+            var fieldName: String?
+            var fileName: String?
+
+            for line in headerString.split(separator: "\r\n") {
+                let lineStr = String(line)
+                if lineStr.lowercased().hasPrefix("content-disposition:") {
+                    // Extract name
+                    if let nameRange = lineStr.range(of: "name=\"") {
+                        let nameStart = nameRange.upperBound
+                        if let nameEndRange = lineStr.range(of: "\"", range: nameStart ..< lineStr.endIndex) {
+                            fieldName = String(lineStr[nameStart ..< nameEndRange.lowerBound])
+                        }
+                    }
+                    // Extract filename
+                    if let fnRange = lineStr.range(of: "filename=\"") {
+                        let fnStart = fnRange.upperBound
+                        if let fnEndRange = lineStr.range(of: "\"", range: fnStart ..< lineStr.endIndex) {
+                            fileName = String(lineStr[fnStart ..< fnEndRange.lowerBound])
+                        }
+                    }
+                }
+            }
+
+            guard let name = fieldName else { continue }
+
+            if fileName != nil {
+                // This is a file field
+                result.file = Data(bodyData)
+                result.filename = fileName
+            } else {
+                // This is a regular field
+                if let value = String(data: bodyData, encoding: .utf8) {
+                    result.fields[name] = value
+                }
+            }
+        }
+
+        return result
     }
 
     // MARK: - Request Logging

@@ -287,6 +287,9 @@ private struct BottomActionBar: View {
 
                 Spacer()
 
+                // VAD Toggle Button
+                VADToggleButton()
+
                 CircularIconButton(systemName: "gearshape", help: "Settings") {
                     AppDelegate.shared?.showManagementWindow()
                 }
@@ -300,6 +303,119 @@ private struct BottomActionBar: View {
                 CircularIconButton(systemName: "power", help: "Quit") {
                     NSApp.terminate(nil)
                 }
+            }
+        }
+    }
+}
+
+// MARK: - VAD Toggle Button
+private struct VADToggleButton: View {
+    @Environment(\.theme) private var theme
+    @StateObject private var vadService = VADService.shared
+    @StateObject private var whisperModelManager = WhisperModelManager.shared
+
+    @State private var isHovering = false
+    @State private var pulseAnimation = false
+
+    /// Whether VAD can be toggled (requirements met)
+    private var canToggleVAD: Bool {
+        whisperModelManager.selectedModel != nil && whisperModelManager.downloadedModelsCount > 0
+    }
+
+    /// Whether VAD mode is configured (has enabled personas)
+    private var isVADConfigured: Bool {
+        let config = VADConfigurationStore.load()
+        return config.vadModeEnabled && !config.enabledPersonaIds.isEmpty
+    }
+
+    private var isActive: Bool {
+        vadService.state == .listening || vadService.state == .processing
+    }
+
+    private var iconColor: Color {
+        guard canToggleVAD && isVADConfigured else {
+            return theme.tertiaryText
+        }
+        switch vadService.state {
+        case .listening:
+            return theme.successColor
+        case .processing:
+            return theme.warningColor
+        case .error:
+            return theme.errorColor
+        default:
+            return theme.primaryText
+        }
+    }
+
+    private var tooltipText: String {
+        if !canToggleVAD {
+            return "Voice Detection: No model selected"
+        }
+        if !isVADConfigured {
+            return "Voice Detection: Not configured"
+        }
+        switch vadService.state {
+        case .idle:
+            return "Voice Detection: Off — Click to start"
+        case .starting:
+            return "Voice Detection: Starting..."
+        case .listening:
+            return "Voice Detection: Listening — Click to stop"
+        case .processing:
+            return "Voice Detection: Processing..."
+        case .error(let msg):
+            return "Voice Detection Error: \(msg)"
+        }
+    }
+
+    var body: some View {
+        Button(action: toggleVAD) {
+            Image(systemName: isActive ? "waveform.circle.fill" : "waveform.circle")
+                .font(.system(size: 14))
+                .foregroundColor(iconColor)
+                .scaleEffect(pulseAnimation && vadService.state == .listening ? 1.08 : 1.0)
+                .frame(width: 28, height: 28)
+                .background(
+                    Circle()
+                        .fill(isActive ? iconColor.opacity(0.15) : theme.buttonBackground)
+                        .overlay(
+                            Circle()
+                                .stroke(isActive ? iconColor.opacity(0.3) : theme.buttonBorder, lineWidth: 1)
+                        )
+                )
+        }
+        .buttonStyle(PlainButtonStyle())
+        .disabled(!canToggleVAD || !isVADConfigured)
+        .opacity(canToggleVAD && isVADConfigured ? 1.0 : 0.4)
+        .help(tooltipText)
+        .onAppear {
+            startPulseIfNeeded()
+        }
+        .onChange(of: vadService.state) { _, newState in
+            startPulseIfNeeded(for: newState)
+        }
+    }
+
+    private func toggleVAD() {
+        Task {
+            do {
+                try await vadService.toggle()
+            } catch {
+                print("[VADToggleButton] Failed to toggle VAD: \(error)")
+            }
+        }
+    }
+
+    private func startPulseIfNeeded(for state: VADServiceState? = nil) {
+        let currentState = state ?? vadService.state
+        if currentState == .listening {
+            withAnimation(.easeInOut(duration: 1.0).repeatForever(autoreverses: true)) {
+                pulseAnimation = true
+            }
+        } else {
+            withAnimation(.easeInOut(duration: 0.2)) {
+                pulseAnimation = false
             }
         }
     }

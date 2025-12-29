@@ -18,6 +18,7 @@ let package = Package(
             revision: "74f85d9505032ec3403c94ba159472244fe78767"
         ),
         .package(url: "https://github.com/huggingface/swift-transformers", from: "1.1.2"),
+        .package(url: "https://github.com/argmaxinc/WhisperKit", from: "0.15.0"),
         .package(path: "../OsaurusRepository"),
     ],
     targets: [
@@ -35,6 +36,7 @@ let package = Package(
                 .product(name: "MLXVLM", package: "mlx-swift-lm"),
                 .product(name: "MLXLMCommon", package: "mlx-swift-lm"),
                 .product(name: "Hub", package: "swift-transformers"),
+                .product(name: "WhisperKit", package: "WhisperKit"),
                 .product(name: "OsaurusRepository", package: "OsaurusRepository"),
             ],
             path: ".",

@@ -15,6 +15,7 @@ enum ManagementTab: String, CaseIterable {
     case providers
     case tools
     case personas
+    case voice
     case themes
     case insights
     case server
@@ -26,6 +27,7 @@ enum ManagementTab: String, CaseIterable {
         case .providers: return "cloud.fill"
         case .tools: return "wrench.and.screwdriver.fill"
         case .personas: return "person.2.fill"
+        case .voice: return "waveform"
         case .themes: return "paintpalette.fill"
         case .insights: return "chart.bar.doc.horizontal"
         case .server: return "server.rack"
@@ -39,6 +41,7 @@ enum ManagementTab: String, CaseIterable {
         case .providers: return "Providers"
         case .tools: return "Tools"
         case .personas: return "Personas"
+        case .voice: return "Voice"
         case .themes: return "Themes"
         case .insights: return "Insights"
         case .server: return "Server"
@@ -106,6 +109,11 @@ struct ManagementView: View {
                 badge: customPersonaCount > 0 ? customPersonaCount : nil
             ),
             SidebarItemData(
+                id: ManagementTab.voice.rawValue,
+                icon: ManagementTab.voice.icon,
+                label: ManagementTab.voice.label
+            ),
+            SidebarItemData(
                 id: ManagementTab.insights.rawValue,
                 icon: ManagementTab.insights.icon,
                 label: ManagementTab.insights.label
@@ -148,6 +156,8 @@ struct ManagementView: View {
                     ToolsManagerView()
                 case ManagementTab.personas.rawValue:
                     PersonasView()
+                case ManagementTab.voice.rawValue:
+                    VoiceView()
                 case ManagementTab.themes.rawValue:
                     ThemesView()
                 case ManagementTab.insights.rawValue:

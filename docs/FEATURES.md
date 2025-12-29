@@ -27,6 +27,8 @@ Canonical reference for all Osaurus features, their status, and documentation.
 | OpenAI API Compatibility         | Stable    | "API Endpoints"    | OpenAI_API_GUIDE.md           | Networking/HTTPHandler.swift, Models/OpenAIAPI.swift                          |
 | Anthropic API Compatibility      | Stable    | "API Endpoints"    | (in README)                   | Networking/HTTPHandler.swift, Models/AnthropicAPI.swift                       |
 | Ollama API Compatibility         | Stable    | "API Endpoints"    | (in README)                   | Networking/HTTPHandler.swift                                                  |
+| Voice Input (WhisperKit)         | Stable    | "Voice Input"      | VOICE_INPUT.md                | Services/WhisperKitService.swift, Managers/WhisperModelManager.swift          |
+| VAD Mode                         | Stable    | "Voice Input"      | VOICE_INPUT.md                | Services/VADService.swift, Views/ContentView.swift (VAD controls)             |
 | CLI                              | Stable    | "CLI Reference"    | (in README)                   | Packages/OsaurusCLI/                                                          |
 
 ---
@@ -48,6 +50,7 @@ Canonical reference for all Osaurus features, their status, and documentation.
 │  │   ├── ThemesView (Themes)                                             │
 │  │   ├── InsightsView (Developer: Insights)                              │
 │  │   ├── ServerView (Developer: Server Explorer)                         │
+│  │   ├── VoiceView (Voice Input & VAD Settings)                          │
 │  │   └── ConfigurationView (Settings)                                    │
 ├─────────────────────────────────────────────────────────────────────────┤
 │  Services Layer                                                          │
@@ -65,6 +68,11 @@ Canonical reference for all Osaurus features, their status, and documentation.
 │  │   └── MCPProviderTool (Wrapped remote MCP tools)                      │
 │  ├── Personas                                                            │
 │  │   └── PersonaManager (Persona lifecycle and active persona)           │
+│  ├── Voice/Audio                                                         │
+│  │   ├── WhisperKitService (Speech-to-text transcription)                │
+│  │   ├── WhisperModelManager (Whisper model downloads)                   │
+│  │   ├── VADService (Voice activity detection, wake-word)                │
+│  │   └── AudioInputManager (Microphone/system audio selection)           │
 │  └── Utilities                                                           │
 │      ├── InsightsService (Request logging)                               │
 │      ├── HuggingFaceService (Model downloads)                            │
@@ -314,6 +322,88 @@ Canonical reference for all Osaurus features, their status, and documentation.
 
 ---
 
+### Voice Input (WhisperKit)
+
+**Purpose:** Provide speech-to-text transcription using on-device WhisperKit models.
+
+**Components:**
+
+- `Services/WhisperKitService.swift` — Core transcription service with streaming support
+- `Managers/WhisperModelManager.swift` — Model download and selection
+- `Models/WhisperConfiguration.swift` — Voice input settings
+- `Views/VoiceView.swift` — Voice settings UI
+- `Views/VoiceSetupTab.swift` — Guided setup wizard
+- `Views/Components/VoiceInputOverlay.swift` — Voice input UI in chat
+
+**Features:**
+
+- **Real-time streaming transcription** — See words as you speak
+- **Multiple Whisper models** — Tiny (75 MB) to Large V3 (3 GB)
+- **English-only and multilingual** — Choose based on your needs
+- **Microphone input** — Built-in or external device selection
+- **System audio capture** — Transcribe computer audio (macOS 12.3+)
+- **Configurable sensitivity** — Low, Medium, High thresholds
+- **Auto-send with confirmation** — Hands-free message sending
+- **Pause duration control** — Adjust silence detection timing
+
+**Configuration:**
+
+| Setting               | Description                                   |
+| --------------------- | --------------------------------------------- |
+| `defaultModel`        | Selected Whisper model ID                     |
+| `languageHint`        | ISO 639-1 language code (e.g., "en", "es")    |
+| `sensitivity`         | Voice detection sensitivity (low/medium/high) |
+| `pauseDuration`       | Seconds of silence before auto-send           |
+| `confirmationDelay`   | Seconds to show confirmation before sending   |
+| `selectedInputSource` | Microphone or system audio                    |
+
+**Model Storage:** `~/.osaurus/whisper-models/`
+
+---
+
+### VAD Mode (Voice Activity Detection)
+
+**Purpose:** Enable hands-free persona activation through wake-word detection.
+
+**Components:**
+
+- `Services/VADService.swift` — Always-on listening and wake-word detection
+- `Models/VADConfiguration.swift` — VAD settings and enabled personas
+- `Views/ContentView.swift` — VAD toggle button in popover
+- `AppDelegate.swift` — VAD status indicator in menu bar icon
+- `Models/PersonaNameDetector.swift` — Persona name matching logic
+
+**Features:**
+
+- **Wake-word activation** — Say a persona's name to open chat
+- **Custom wake phrase** — Set a phrase like "Hey Osaurus"
+- **Per-persona enablement** — Choose which personas respond to voice
+- **Menu bar indicator** — Shows listening status with audio level
+- **Auto-start voice input** — Begin recording after activation
+- **Silence timeout** — Auto-close chat after inactivity
+- **Background listening** — Continues when chat is closed
+
+**Configuration:**
+
+| Setting                 | Description                                  |
+| ----------------------- | -------------------------------------------- |
+| `vadModeEnabled`        | Master toggle for VAD mode                   |
+| `enabledPersonaIds`     | UUIDs of personas that respond to wake-words |
+| `customWakePhrase`      | Optional phrase like "Hey Osaurus"           |
+| `wakeWordSensitivity`   | Detection sensitivity level                  |
+| `autoStartVoiceInput`   | Start recording after activation             |
+| `silenceTimeoutSeconds` | Auto-close timeout (0 = disabled)            |
+
+**Workflow:**
+
+1. VAD listens in background using WhisperKit
+2. Transcription is checked for persona names or wake phrase
+3. On match, chat opens with the detected persona
+4. Voice input starts automatically (if enabled)
+5. After chat closes, VAD resumes listening
+
+---
+
 ## Documentation Index
 
 | Document                                                       | Purpose                                           |
@@ -323,6 +413,7 @@ Canonical reference for all Osaurus features, their status, and documentation.
 | [REMOTE_PROVIDERS.md](REMOTE_PROVIDERS.md)                     | Remote provider setup and configuration           |
 | [REMOTE_MCP_PROVIDERS.md](REMOTE_MCP_PROVIDERS.md)             | Remote MCP provider setup                         |
 | [DEVELOPER_TOOLS.md](DEVELOPER_TOOLS.md)                       | Insights and Server Explorer guide                |
+| [VOICE_INPUT.md](VOICE_INPUT.md)                               | Voice input, WhisperKit, and VAD mode guide       |
 | [PLUGIN_AUTHORING.md](PLUGIN_AUTHORING.md)                     | Creating custom plugins                           |
 | [OpenAI_API_GUIDE.md](OpenAI_API_GUIDE.md)                     | API usage, tool calling, streaming                |
 | [SHARED_CONFIGURATION_GUIDE.md](SHARED_CONFIGURATION_GUIDE.md) | Shared configuration for teams                    |
