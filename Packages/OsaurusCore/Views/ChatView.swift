@@ -952,6 +952,9 @@ struct ChatView: View {
     @State private var keyMonitor: Any?
     @State private var isHeaderHovered: Bool = false
     @State private var showSidebar: Bool = false
+    @State private var lastScrollTime: Date = .distantPast
+    
+    private static let scrollThrottleInterval: TimeInterval = 0.15
 
     private var theme: ThemeProtocol { themeManager.chatTheme }
 
@@ -1442,11 +1445,10 @@ struct ChatView: View {
                 }
             }
             .onChange(of: session.scrollTick) { _, _ in
-                if isPinnedToBottom {
-                    // No animation during streaming to prevent UI jumpiness
-                    // The scrollTick is updated during streaming buffer flushes
-                    proxy.scrollTo("BOTTOM", anchor: .bottom)
-                }
+                guard isPinnedToBottom,
+                      Date().timeIntervalSince(lastScrollTime) >= Self.scrollThrottleInterval else { return }
+                lastScrollTime = .now
+                proxy.scrollTo("BOTTOM", anchor: .bottom)
             }
             .onReceive(NotificationCenter.default.publisher(for: .chatOverlayActivated)) { _ in
                 proxy.scrollTo("BOTTOM", anchor: .bottom)
