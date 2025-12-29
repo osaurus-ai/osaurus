@@ -127,6 +127,18 @@ struct FloatingInputCard: View {
         voiceInputState != .idle
     }
 
+    /// Current silence duration for pause detection visualization
+    private var currentSilenceDuration: Double {
+        guard case .recording = voiceInputState else { return 0 }
+        return Date().timeIntervalSince(lastSpeechTime)
+    }
+
+    /// Current silence duration for VAD timeout visualization
+    private var vadSilenceDuration: Double {
+        guard isContinuousVoiceMode, showVoiceOverlay, !isStreaming else { return 0 }
+        return Date().timeIntervalSince(lastVoiceActivityTime)
+    }
+
     var body: some View {
         VStack(spacing: 12) {
             // Model and tool selector chips (always visible)
@@ -146,6 +158,9 @@ struct FloatingInputCard: View {
                     confirmedText: whisperService.confirmedTranscription,
                     pauseDuration: voiceConfig.pauseDuration,
                     confirmationDelay: voiceConfig.confirmationDelay,
+                    silenceDuration: currentSilenceDuration,
+                    silenceTimeoutDuration: isContinuousVoiceMode ? vadConfig.silenceTimeoutSeconds : 0,
+                    isContinuousMode: isContinuousVoiceMode,
                     onCancel: { cancelVoiceInput() },
                     onSend: { message in sendVoiceMessage(message) },
                     onEdit: { transferToTextInput() }
@@ -195,6 +210,9 @@ struct FloatingInputCard: View {
         .onChange(of: isStreaming) { wasStreaming, nowStreaming in
             // When AI finishes responding and we're in continuous voice mode, restart voice input
             if wasStreaming && !nowStreaming && isContinuousVoiceMode {
+                // Reset silence timeout for the new turn
+                lastVoiceActivityTime = Date()
+
                 // Small delay to let UI settle
                 Task { @MainActor in
                     try? await Task.sleep(nanoseconds: 500_000_000)  // 500ms
@@ -329,9 +347,10 @@ struct FloatingInputCard: View {
     }
 
     private func checkForSilenceTimeout() {
-        // Only check when in continuous voice mode
+        // Only check when in continuous voice mode and it's the user's turn (not streaming)
         guard isContinuousVoiceMode,
             showVoiceOverlay,
+            !isStreaming,  // Only count timeout when it's user's turn
             vadConfig.silenceTimeoutSeconds > 0
         else { return }
 
