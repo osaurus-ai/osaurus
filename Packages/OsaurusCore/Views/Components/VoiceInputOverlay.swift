@@ -34,6 +34,15 @@ public struct VoiceInputOverlay: View {
     let pauseDuration: Double
     let confirmationDelay: Double
 
+    /// Current silence duration (for pause detection ring)
+    var silenceDuration: Double = 0
+
+    /// Silence timeout for VAD continuous mode (0 = disabled)
+    var silenceTimeoutDuration: Double = 0
+
+    /// Whether in continuous voice mode (VAD)
+    var isContinuousMode: Bool = false
+
     /// Callbacks
     var onCancel: (() -> Void)?
     var onSend: ((String) -> Void)?
@@ -51,6 +60,9 @@ public struct VoiceInputOverlay: View {
         confirmedText: String,
         pauseDuration: Double = 1.5,
         confirmationDelay: Double = 2.0,
+        silenceDuration: Double = 0,
+        silenceTimeoutDuration: Double = 0,
+        isContinuousMode: Bool = false,
         onCancel: (() -> Void)? = nil,
         onSend: ((String) -> Void)? = nil,
         onEdit: (() -> Void)? = nil
@@ -61,6 +73,9 @@ public struct VoiceInputOverlay: View {
         self.confirmedText = confirmedText
         self.pauseDuration = pauseDuration
         self.confirmationDelay = confirmationDelay
+        self.silenceDuration = silenceDuration
+        self.silenceTimeoutDuration = silenceTimeoutDuration
+        self.isContinuousMode = isContinuousMode
         self.onCancel = onCancel
         self.onSend = onSend
         self.onEdit = onEdit
@@ -79,10 +94,10 @@ public struct VoiceInputOverlay: View {
 
     public var body: some View {
         VStack(spacing: 0) {
-            // Main content card - designed to seamlessly replace input area
+            // Main content card
             VStack(spacing: 12) {
-                // Header with waveform and cancel
-                HStack(alignment: .center, spacing: 16) {
+                // Header with status and controls
+                HStack(alignment: .center, spacing: 12) {
                     // Status indicator
                     VoiceStatusIndicator(
                         state: voiceStatusFromState,
@@ -93,24 +108,37 @@ public struct VoiceInputOverlay: View {
                     // Waveform visualization (when recording)
                     if case .recording = state {
                         WaveformView(level: audioLevel, style: .bars, barCount: 16)
-                            .frame(height: 32)
+                            .frame(height: 28)
                             .frame(maxWidth: .infinity)
-                            .transition(.opacity.combined(with: .scale(scale: 0.9)))
+                            .transition(.opacity)
                     } else {
                         Spacer()
                     }
 
+                    // Silence timeout hint (VAD mode)
+                    if isContinuousMode && silenceTimeoutDuration > 0 {
+                        SilenceTimeoutIndicator(
+                            silenceDuration: silenceDuration,
+                            timeoutDuration: silenceTimeoutDuration
+                        )
+                    }
+
                     // Cancel button
                     Button(action: { cancelRecording() }) {
-                        Image(systemName: "xmark.circle.fill")
-                            .font(.system(size: 24))
+                        Image(systemName: "xmark")
+                            .font(.system(size: 12, weight: .medium))
                             .foregroundColor(theme.tertiaryText)
+                            .padding(8)
+                            .background(
+                                Circle()
+                                    .fill(theme.tertiaryBackground)
+                            )
                     }
                     .buttonStyle(.plain)
                     .help("Cancel voice input")
                 }
 
-                // Live transcription area - main focus
+                // Live transcription area
                 transcriptionArea
                     .frame(minHeight: 60)
 
@@ -120,12 +148,12 @@ public struct VoiceInputOverlay: View {
             .padding(16)
             .frame(minHeight: 160)
             .background(overlayBackground)
-            .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+            .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
             .overlay(
-                RoundedRectangle(cornerRadius: 20, style: .continuous)
-                    .stroke(borderColor, lineWidth: 2)
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    .stroke(borderColor, lineWidth: 1)
             )
-            .shadow(color: shadowColor, radius: 20, x: 0, y: 6)
+            .shadow(color: shadowColor, radius: 12, x: 0, y: 4)
         }
         .padding(.horizontal, 20)
         .padding(.bottom, 20)
@@ -223,26 +251,24 @@ public struct VoiceInputOverlay: View {
 
                 Spacer()
 
-                // Speak hint
-                HStack(spacing: 5) {
-                    Image(systemName: "waveform")
-                        .font(.system(size: 11))
-                    Text("Pause to send")
-                        .font(.system(size: 11))
+                // Pause hint with subtle progress
+                if pauseDuration > 0 {
+                    PauseDetectionRing(
+                        silenceDuration: silenceDuration,
+                        pauseThreshold: pauseDuration,
+                        audioLevel: audioLevel
+                    )
                 }
-                .foregroundColor(theme.tertiaryText)
             }
 
-        case .paused(let remaining):
-            // Countdown to send
-            CountdownTimerView(
+        case .paused:
+            // Clean countdown card - use countdownRemaining which is updated by timer
+            CountdownRingButton(
                 duration: confirmationDelay,
-                remaining: remaining,
-                label: "Sending message...",
-                onComplete: { sendMessage() },
-                onCancel: { resumeRecording() }
+                remaining: countdownRemaining,
+                onTap: { resumeRecording() }
             )
-            .transition(.opacity.combined(with: .scale(scale: 0.95)))
+            .transition(.opacity)
 
         case .sending:
             // Sending indicator
@@ -250,11 +276,11 @@ public struct VoiceInputOverlay: View {
                 ProgressView()
                     .scaleEffect(0.8)
                 Text("Sending...")
-                    .font(.system(size: 14, weight: .medium))
+                    .font(.system(size: 13, weight: .medium))
                     .foregroundColor(theme.secondaryText)
             }
             .frame(maxWidth: .infinity)
-            .padding(.vertical, 12)
+            .padding(.vertical, 10)
         }
     }
 
@@ -264,34 +290,30 @@ public struct VoiceInputOverlay: View {
         ZStack {
             // Frosted glass effect
             if #available(macOS 13.0, *) {
-                RoundedRectangle(cornerRadius: 24, style: .continuous)
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
                     .fill(.ultraThinMaterial)
             } else {
-                RoundedRectangle(cornerRadius: 24, style: .continuous)
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
                     .fill(theme.cardBackground.opacity(0.95))
             }
 
             // Tint overlay
-            RoundedRectangle(cornerRadius: 24, style: .continuous)
-                .fill(theme.cardBackground.opacity(0.7))
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .fill(theme.cardBackground.opacity(0.8))
         }
     }
 
     private var borderColor: Color {
         switch state {
-        case .recording: return theme.accentColor.opacity(0.5)
-        case .paused: return theme.warningColor.opacity(0.5)
-        case .sending: return theme.successColor.opacity(0.5)
+        case .recording: return theme.cardBorder
+        case .paused: return theme.accentColor.opacity(0.3)
+        case .sending: return theme.successColor.opacity(0.3)
         default: return theme.cardBorder
         }
     }
 
     private var shadowColor: Color {
-        switch state {
-        case .recording: return theme.accentColor.opacity(0.2)
-        case .paused: return theme.warningColor.opacity(0.2)
-        default: return Color.black.opacity(0.15)
-        }
+        Color.black.opacity(0.1)
     }
 
     // MARK: - Actions
@@ -369,7 +391,7 @@ private struct BlinkingCursor: ViewModifier {
 
 #if DEBUG
     struct VoiceInputOverlay_Previews: PreviewProvider {
-        struct PreviewWrapper: View {
+        struct RecordingPreview: View {
             @State private var state: VoiceInputState = .recording
 
             var body: some View {
@@ -387,18 +409,56 @@ private struct BlinkingCursor: ViewModifier {
                             confirmedText: "",
                             pauseDuration: 1.5,
                             confirmationDelay: 2.0,
+                            silenceDuration: 0.8,
+                            silenceTimeoutDuration: 30.0,
+                            isContinuousMode: true,
                             onCancel: { print("Cancelled") },
                             onSend: { text in print("Send: \(text)") },
                             onEdit: { print("Edit") }
                         )
                     }
                 }
-                .frame(width: 500, height: 400)
+                .frame(width: 500, height: 450)
+            }
+        }
+
+        struct CountdownPreview: View {
+            @State private var state: VoiceInputState = .paused(remaining: 1.8)
+
+            var body: some View {
+                ZStack(alignment: .bottom) {
+                    Color(hex: "0f0f10")
+                        .ignoresSafeArea()
+
+                    VStack {
+                        Spacer()
+
+                        VoiceInputOverlay(
+                            state: $state,
+                            audioLevel: 0.0,
+                            transcription: "",
+                            confirmedText: "What's the weather like today?",
+                            pauseDuration: 1.5,
+                            confirmationDelay: 2.0,
+                            silenceDuration: 1.5,
+                            onCancel: { print("Cancelled") },
+                            onSend: { text in print("Send: \(text)") },
+                            onEdit: { print("Edit") }
+                        )
+                    }
+                }
+                .frame(width: 500, height: 450)
             }
         }
 
         static var previews: some View {
-            PreviewWrapper()
+            Group {
+                RecordingPreview()
+                    .previewDisplayName("Recording")
+
+                CountdownPreview()
+                    .previewDisplayName("Countdown")
+            }
         }
     }
 #endif

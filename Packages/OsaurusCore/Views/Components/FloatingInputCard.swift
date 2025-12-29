@@ -127,6 +127,18 @@ struct FloatingInputCard: View {
         voiceInputState != .idle
     }
 
+    /// Current silence duration for pause detection visualization
+    private var currentSilenceDuration: Double {
+        guard case .recording = voiceInputState else { return 0 }
+        return Date().timeIntervalSince(lastSpeechTime)
+    }
+
+    /// Current silence duration for VAD timeout visualization
+    private var vadSilenceDuration: Double {
+        guard isContinuousVoiceMode, showVoiceOverlay, !isStreaming else { return 0 }
+        return Date().timeIntervalSince(lastVoiceActivityTime)
+    }
+
     var body: some View {
         VStack(spacing: 12) {
             // Model and tool selector chips (always visible)
@@ -146,6 +158,9 @@ struct FloatingInputCard: View {
                     confirmedText: whisperService.confirmedTranscription,
                     pauseDuration: voiceConfig.pauseDuration,
                     confirmationDelay: voiceConfig.confirmationDelay,
+                    silenceDuration: currentSilenceDuration,
+                    silenceTimeoutDuration: isContinuousVoiceMode ? vadConfig.silenceTimeoutSeconds : 0,
+                    isContinuousMode: isContinuousVoiceMode,
                     onCancel: { cancelVoiceInput() },
                     onSend: { message in sendVoiceMessage(message) },
                     onEdit: { transferToTextInput() }

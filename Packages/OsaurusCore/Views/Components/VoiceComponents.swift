@@ -475,6 +475,258 @@ private struct PulseModifier: ViewModifier {
     }
 }
 
+// MARK: - Countdown Ring Button
+
+/// Clean, minimal countdown indicator with progress ring
+public struct CountdownRingButton: View {
+    /// Total duration in seconds
+    let duration: Double
+
+    /// Time remaining in seconds
+    let remaining: Double
+
+    /// Called when tapped (to cancel/resume)
+    var onTap: (() -> Void)?
+
+    @Environment(\.theme) private var theme
+
+    public init(
+        duration: Double,
+        remaining: Double,
+        size: CGFloat = 80,
+        onTap: (() -> Void)? = nil
+    ) {
+        self.duration = duration
+        self.remaining = remaining
+        self.onTap = onTap
+    }
+
+    /// Progress from 0 (just started) to 1 (complete)
+    private var progress: Double {
+        guard duration > 0 else { return 0 }
+        return 1.0 - (remaining / duration)
+    }
+
+    /// Current second for display
+    private var currentSecond: Int {
+        Int(ceil(remaining))
+    }
+
+    public var body: some View {
+        Button(action: { onTap?() }) {
+            HStack(spacing: 14) {
+                // Circular progress
+                ZStack {
+                    // Track
+                    Circle()
+                        .stroke(theme.tertiaryBackground, lineWidth: 3)
+                        .frame(width: 36, height: 36)
+
+                    // Progress (depletes)
+                    Circle()
+                        .trim(from: 0, to: 1.0 - progress)
+                        .stroke(
+                            theme.accentColor,
+                            style: StrokeStyle(lineWidth: 3, lineCap: .round)
+                        )
+                        .frame(width: 36, height: 36)
+                        .rotationEffect(.degrees(-90))
+                        .animation(.linear(duration: 0.1), value: progress)
+
+                    // Number
+                    Text("\(currentSecond)")
+                        .font(.system(size: 14, weight: .semibold, design: .monospaced))
+                        .foregroundColor(theme.primaryText)
+                }
+
+                // Label
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Sending...")
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundColor(theme.primaryText)
+                    Text("Tap to cancel")
+                        .font(.system(size: 11))
+                        .foregroundColor(theme.tertiaryText)
+                }
+
+                Spacer()
+
+                // Cancel icon
+                Image(systemName: "xmark")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundColor(theme.tertiaryText)
+                    .padding(8)
+                    .background(
+                        Circle()
+                            .fill(theme.tertiaryBackground)
+                    )
+            }
+            .padding(14)
+            .background(
+                RoundedRectangle(cornerRadius: 12)
+                    .fill(theme.cardBackground)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 12)
+                            .stroke(theme.accentColor.opacity(0.3), lineWidth: 1)
+                    )
+            )
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+// MARK: - Pause Detection Ring
+
+/// Subtle inline progress bar showing silence accumulation
+public struct PauseDetectionRing: View {
+    /// Current silence duration in seconds
+    let silenceDuration: Double
+
+    /// Pause threshold (silence required to trigger countdown)
+    let pauseThreshold: Double
+
+    /// Current audio level (0.0 to 1.0)
+    let audioLevel: Float
+
+    /// Size (unused, kept for API compatibility)
+    var size: CGFloat = 60
+
+    @Environment(\.theme) private var theme
+
+    public init(
+        silenceDuration: Double,
+        pauseThreshold: Double,
+        audioLevel: Float,
+        size: CGFloat = 60
+    ) {
+        self.silenceDuration = silenceDuration
+        self.pauseThreshold = pauseThreshold
+        self.audioLevel = audioLevel
+        self.size = size
+    }
+
+    /// Progress from 0 to 1
+    private var progress: Double {
+        guard pauseThreshold > 0 else { return 0 }
+        return min(1.0, silenceDuration / pauseThreshold)
+    }
+
+    /// Whether voice is currently detected
+    private var isSpeaking: Bool {
+        audioLevel > 0.05
+    }
+
+    public var body: some View {
+        HStack(spacing: 8) {
+            // Mic indicator
+            Image(systemName: isSpeaking ? "waveform" : "mic.fill")
+                .font(.system(size: 12, weight: .medium))
+                .foregroundColor(isSpeaking ? theme.accentColor : theme.secondaryText)
+
+            // Progress bar (only show when there's silence building)
+            if progress > 0.1 && !isSpeaking {
+                GeometryReader { geo in
+                    ZStack(alignment: .leading) {
+                        // Track
+                        RoundedRectangle(cornerRadius: 2)
+                            .fill(theme.tertiaryBackground)
+                            .frame(height: 3)
+
+                        // Progress
+                        RoundedRectangle(cornerRadius: 2)
+                            .fill(progress > 0.7 ? theme.warningColor : theme.accentColor.opacity(0.6))
+                            .frame(width: geo.size.width * progress, height: 3)
+                            .animation(.easeOut(duration: 0.15), value: progress)
+                    }
+                }
+                .frame(width: 40, height: 3)
+            }
+
+            Text(isSpeaking ? "Listening" : "Pause to send")
+                .font(.system(size: 11))
+                .foregroundColor(theme.tertiaryText)
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
+        .background(
+            Capsule()
+                .fill(theme.tertiaryBackground.opacity(0.5))
+        )
+    }
+}
+
+// MARK: - Silence Timeout Indicator
+
+/// Subtle timeout hint shown when silence is detected in VAD mode
+public struct SilenceTimeoutIndicator: View {
+    /// Current silence duration in seconds
+    let silenceDuration: Double
+
+    /// Total timeout duration in seconds
+    let timeoutDuration: Double
+
+    /// Size (unused, kept for API compatibility)
+    var size: CGFloat = 120
+
+    /// Whether to show countdown
+    var showCountdown: Bool = true
+
+    @Environment(\.theme) private var theme
+
+    public init(
+        silenceDuration: Double,
+        timeoutDuration: Double,
+        size: CGFloat = 120,
+        showCountdown: Bool = true
+    ) {
+        self.silenceDuration = silenceDuration
+        self.timeoutDuration = timeoutDuration
+        self.size = size
+        self.showCountdown = showCountdown
+    }
+
+    /// Remaining time in seconds
+    private var remainingTime: Double {
+        max(0, timeoutDuration - silenceDuration)
+    }
+
+    /// Only show when silence is significant
+    private var shouldShow: Bool {
+        silenceDuration > 5.0 && remainingTime < 20
+    }
+
+    /// Text color based on urgency
+    private var textColor: Color {
+        if remainingTime < 5 {
+            return theme.errorColor
+        } else if remainingTime < 10 {
+            return theme.warningColor
+        } else {
+            return theme.tertiaryText
+        }
+    }
+
+    public var body: some View {
+        if shouldShow {
+            HStack(spacing: 4) {
+                Image(systemName: "clock")
+                    .font(.system(size: 9))
+                Text("Closing in \(Int(remainingTime))s")
+                    .font(.system(size: 10, weight: .medium))
+            }
+            .foregroundColor(textColor)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
+            .background(
+                Capsule()
+                    .fill(theme.tertiaryBackground.opacity(0.8))
+            )
+            .transition(.opacity)
+            .animation(.easeInOut(duration: 0.2), value: shouldShow)
+        }
+    }
+}
+
 // MARK: - Countdown Timer View
 
 /// Shows a countdown with circular progress for auto-send confirmation
@@ -572,7 +824,7 @@ public struct CountdownTimerView: View {
 #if DEBUG
     struct VoiceComponents_Previews: PreviewProvider {
         static var previews: some View {
-            VStack(spacing: 24) {
+            VStack(spacing: 20) {
                 // Waveform styles
                 HStack(spacing: 20) {
                     WaveformView(level: 0.6, style: .bars)
@@ -596,16 +848,56 @@ public struct CountdownTimerView: View {
                     VoiceStatusIndicator(state: .ready)
                 }
 
-                // Countdown timer
-                CountdownTimerView(
-                    duration: 3.0,
-                    remaining: 2.0,
-                    label: "Sending message..."
-                )
+                Divider()
+
+                // Pause detection indicator
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Pause Detection")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundColor(.gray)
+
+                    HStack(spacing: 16) {
+                        PauseDetectionRing(
+                            silenceDuration: 0.3,
+                            pauseThreshold: 1.5,
+                            audioLevel: 0.4
+                        )
+
+                        PauseDetectionRing(
+                            silenceDuration: 1.2,
+                            pauseThreshold: 1.5,
+                            audioLevel: 0.0
+                        )
+                    }
+                }
+
+                // Countdown button
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Countdown")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundColor(.gray)
+
+                    CountdownRingButton(
+                        duration: 3.0,
+                        remaining: 1.8
+                    )
+                }
+
+                // Silence timeout
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Silence Timeout")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundColor(.gray)
+
+                    SilenceTimeoutIndicator(
+                        silenceDuration: 18,
+                        timeoutDuration: 30
+                    )
+                }
             }
-            .padding()
-            .frame(width: 500)
-            .background(Color(hex: "1a1a1a"))
+            .padding(24)
+            .frame(width: 400)
+            .background(Color(hex: "0c0c0b"))
         }
     }
 #endif
