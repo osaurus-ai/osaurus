@@ -11,7 +11,7 @@ import QuartzCore
 import SwiftUI
 
 @MainActor
-public final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSPopoverDelegate {
+public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     static weak var shared: AppDelegate?
     let serverController = ServerController()
     private var statusItem: NSStatusItem?
@@ -21,8 +21,6 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegat
 
     private var activityDot: NSView?
     private var vadDot: NSView?
-    private var managementWindow: NSWindow?
-    private var chatWindow: NSWindow?
 
     public func applicationDidFinishLaunching(_ notification: Notification) {
         AppDelegate.shared = self
@@ -243,7 +241,9 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegat
             // Show chat overlay with the activated persona
             print("[AppDelegate] Calling showChatOverlay...")
             showChatOverlay()
-            print("[AppDelegate] showChatOverlay completed, chatWindow visible: \(chatWindow?.isVisible ?? false)")
+            print(
+                "[AppDelegate] showChatOverlay completed, chatWindow visible: \(WindowManager.shared.isVisible(.chat))"
+            )
 
             // Request a new session for this persona (VAD should always start fresh)
             NotificationCenter.default.post(
@@ -657,173 +657,51 @@ extension AppDelegate {
 
 // MARK: - Chat Overlay Window
 extension AppDelegate {
-    private func setupChatHotKey() {}
-
     @MainActor private func toggleChatOverlay() {
-        if let win = chatWindow, win.isVisible {
-            closeChatOverlay()
-        } else {
-            showChatOverlay()
-        }
-    }
-
-    @MainActor func showChatOverlay() {
-        print("[AppDelegate] showChatOverlay: chatWindow exists = \(chatWindow != nil)")
-        if chatWindow == nil {
-            print("[AppDelegate] Creating new chat window...")
-            let themeManager = ThemeManager.shared
-            let root = ChatView()
-                .environmentObject(serverController)
-                .environment(\.theme, themeManager.currentTheme)
-
-            let controller = NSHostingController(rootView: root)
-            // Create already centered on the active screen to avoid any reposition jank
-            // Match the empty state ideal height for proper centering
-            let defaultSize = NSSize(width: 720, height: 550)
-            let mouse = NSEvent.mouseLocation
-            let screen = NSScreen.screens.first { NSMouseInRect(mouse, $0.frame, false) } ?? NSScreen.main
-            let initialRect: NSRect
-            if let s = screen {
-                initialRect = centeredRect(size: defaultSize, on: s)
-            } else {
-                initialRect = NSRect(x: 0, y: 0, width: defaultSize.width, height: defaultSize.height)
-            }
-            let win = NSPanel(
-                contentRect: initialRect,
-                styleMask: [.titled, .resizable, .fullSizeContentView],
-                backing: .buffered,
-                defer: false
-            )
-            // Enable glass-style translucency
-            win.isOpaque = false
-            win.backgroundColor = .clear
-            win.hasShadow = true
-            win.standardWindowButton(.miniaturizeButton)?.isHidden = true
-            win.standardWindowButton(.zoomButton)?.isHidden = true
-            win.standardWindowButton(.closeButton)?.isHidden = true
-            win.titleVisibility = .hidden
-            win.titlebarAppearsTransparent = true
-            win.isMovableByWindowBackground = false
-            let chatConfig = ChatConfigurationStore.load()
-            win.level = chatConfig.alwaysOnTop ? .floating : .normal
-            if chatConfig.alwaysOnTop {
-                win.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
-            }
-            win.contentViewController = controller
-            win.delegate = self
-            win.animationBehavior = .none
-            chatWindow = win
-            // Pre-layout before showing to avoid initial jank
-            controller.view.layoutSubtreeIfNeeded()
-
-            // Force the app and window to the very front - use aggressive approach
-            print("[AppDelegate] Activating app and showing window...")
-
-            // Unhide app first
-            NSApp.unhide(nil)
-
-            // Use modal panel level to guarantee visibility over everything
-            win.level = .modalPanel
-
-            // Activate and show
-            NSApp.activate(ignoringOtherApps: true)
-            win.makeKeyAndOrderFront(nil)
-            win.orderFrontRegardless()
-
-            // Also ensure it's the key window
-            win.makeKey()
-
-            print(
-                "[AppDelegate] Window shown, frame: \(win.frame), isVisible: \(win.isVisible), level: \(win.level.rawValue)"
-            )
-
-            // Restore normal level after a brief moment (if not configured as always-on-top)
-            if !chatConfig.alwaysOnTop {
-                Task { @MainActor in
-                    try? await Task.sleep(nanoseconds: 500_000_000)  // 500ms
-                    win.level = .normal
-                }
-            }
-
-            Task { @MainActor in
-                NotificationCenter.default.post(name: .chatOverlayActivated, object: nil)
-            }
-            return
-        }
-
-        guard let win = chatWindow else {
-            print("[AppDelegate] ERROR: chatWindow is nil after creation block!")
-            return
-        }
-
-        print("[AppDelegate] Reusing existing chat window, activating...")
-
-        // Unhide app first
-        NSApp.unhide(nil)
-
-        // Force the app and window to the very front
-        NSApp.activate(ignoringOtherApps: true)
-        if win.isMiniaturized { win.deminiaturize(nil) }
-        centerWindowOnActiveScreen(win)
-
-        // Use modal panel level to guarantee visibility
-        let originalLevel = win.level
-        win.level = .modalPanel
-        win.makeKeyAndOrderFront(nil)
-        win.orderFrontRegardless()
-        win.makeKey()
-
-        print("[AppDelegate] Window re-shown, frame: \(win.frame), isVisible: \(win.isVisible)")
-
-        // Restore original level after a brief moment (if not configured as always-on-top)
-        let chatConfig = ChatConfigurationStore.load()
-        if !chatConfig.alwaysOnTop {
-            Task { @MainActor in
-                try? await Task.sleep(nanoseconds: 500_000_000)  // 500ms
-                win.level = originalLevel
-            }
-        }
-
-        Task { @MainActor in
+        WindowManager.shared.toggle(.chat)
+        if WindowManager.shared.isVisible(.chat) {
             NotificationCenter.default.post(name: .chatOverlayActivated, object: nil)
         }
     }
 
+    @MainActor func showChatOverlay() {
+        let windowManager = WindowManager.shared
+
+        // Create window if it doesn't exist
+        if windowManager.window(for: .chat) == nil {
+            print("[AppDelegate] Creating new chat window via WindowManager...")
+            let themeManager = ThemeManager.shared
+
+            let window = windowManager.createWindow(config: .chat) {
+                ChatView()
+                    .environmentObject(self.serverController)
+                    .environment(\.theme, themeManager.currentTheme)
+            }
+
+            // Apply glass-style translucency to the panel
+            window.isOpaque = false
+            window.backgroundColor = .clear
+            window.hasShadow = true
+        }
+
+        // Show the window (WindowManager handles activation and focus)
+        windowManager.show(.chat)
+
+        print("[AppDelegate] Chat window shown, visible: \(windowManager.isVisible(.chat))")
+        NotificationCenter.default.post(name: .chatOverlayActivated, object: nil)
+    }
+
     @MainActor func closeChatOverlay() {
-        chatWindow?.orderOut(nil)
-        // Notify that chat is closed so VAD can resume
+        WindowManager.shared.hide(.chat)
         print("[AppDelegate] Chat overlay closed via closeChatOverlay")
         NotificationCenter.default.post(name: .chatViewClosed, object: nil)
     }
 
     @MainActor func applyChatWindowLevel() {
-        guard let win = chatWindow else { return }
+        // This is now handled by WindowManager.setPinned()
+        // Kept for backwards compatibility but delegates to WindowManager
         let chatConfig = ChatConfigurationStore.load()
-        win.level = chatConfig.alwaysOnTop ? .floating : .normal
-    }
-}
-
-// MARK: - Chat Overlay Helpers
-extension AppDelegate {
-    fileprivate func centerWindowOnActiveScreen(_ window: NSWindow) {
-        let mouse = NSEvent.mouseLocation
-        let screen = NSScreen.screens.first { NSMouseInRect(mouse, $0.frame, false) } ?? NSScreen.main
-        guard let s = screen else {
-            window.center()
-            return
-        }
-        // Use visibleFrame to avoid menu bar and dock overlap
-        let vf = s.visibleFrame
-        let size = window.frame.size
-        let x = vf.midX - size.width / 2
-        let y = vf.midY - size.height / 2
-        window.setFrameOrigin(NSPoint(x: x, y: y))
-    }
-
-    fileprivate func centeredRect(size: NSSize, on screen: NSScreen) -> NSRect {
-        let vf = screen.visibleFrame
-        let origin = NSPoint(x: vf.midX - size.width / 2, y: vf.midY - size.height / 2)
-        return NSRect(origin: origin, size: size)
+        WindowManager.shared.setPinned(.chat, pinned: chatConfig.alwaysOnTop)
     }
 }
 
@@ -839,6 +717,8 @@ extension AppDelegate {
         deeplinkModelId: String? = nil,
         deeplinkFile: String? = nil
     ) {
+        let windowManager = WindowManager.shared
+
         let presentWindow: () -> Void = { [weak self] in
             guard let self = self else { return }
 
@@ -852,49 +732,21 @@ extension AppDelegate {
             .environmentObject(self.updater)
             .environment(\.theme, themeManager.currentTheme)
 
-            let hostingController = NSHostingController(rootView: root)
-
-            if let window = self.managementWindow {
-                window.contentViewController = hostingController
-                if window.isMiniaturized { window.deminiaturize(nil) }
-                NSApp.activate(ignoringOtherApps: true)
-                self.centerWindowOnActiveScreen(window)
-                window.makeKeyAndOrderFront(nil)
-                window.orderFrontRegardless()
+            // Reuse existing window if it exists
+            if let existingWindow = windowManager.window(for: .management) {
+                existingWindow.contentViewController = NSHostingController(rootView: root)
+                windowManager.show(.management, center: false)  // Don't re-center if user moved it
                 NSLog("[Management] Reused existing window and brought to front")
                 return
             }
 
-            // Calculate centered position on active screen before creating window
-            let defaultSize = NSSize(width: 900, height: 640)
-            let mouse = NSEvent.mouseLocation
-            let screen = NSScreen.screens.first { NSMouseInRect(mouse, $0.frame, false) } ?? NSScreen.main
-            let initialRect: NSRect
-            if let s = screen {
-                initialRect = self.centeredRect(size: defaultSize, on: s)
-            } else {
-                initialRect = NSRect(x: 0, y: 0, width: defaultSize.width, height: defaultSize.height)
+            // Create new management window via WindowManager
+            let window = windowManager.createWindow(config: .management) {
+                root
             }
-
-            let window = NSWindow(
-                contentRect: initialRect,
-                styleMask: [.titled, .closable, .fullSizeContentView],
-                backing: .buffered,
-                defer: false
-            )
-            window.titleVisibility = .hidden
-            window.titlebarAppearsTransparent = true
-            window.isMovableByWindowBackground = true
-            window.standardWindowButton(.miniaturizeButton)?.isHidden = true
-            window.standardWindowButton(.zoomButton)?.isHidden = true
-            window.contentViewController = hostingController
-            window.delegate = self
             window.isReleasedWhenClosed = false
-            self.managementWindow = window
 
-            NSApp.activate(ignoringOtherApps: true)
-            window.makeKeyAndOrderFront(nil)
-            window.orderFrontRegardless()
+            windowManager.show(.management)
             NSLog("[Management] Created new window and presented")
         }
 
@@ -906,16 +758,6 @@ extension AppDelegate {
             }
         } else {
             presentWindow()
-        }
-    }
-
-    public func windowWillClose(_ notification: Notification) {
-        guard let win = notification.object as? NSWindow else { return }
-        if win == managementWindow { managementWindow = nil }
-        if win == chatWindow {
-            print("[AppDelegate] Chat window closing via windowWillClose, posting chatViewClosed notification")
-            NotificationCenter.default.post(name: .chatViewClosed, object: nil)
-            chatWindow = nil
         }
     }
 }
