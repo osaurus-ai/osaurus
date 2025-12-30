@@ -103,6 +103,9 @@ struct VADModeSettingsTab: View {
                 hasLoadedSettings = true
             }
         }
+        .onReceive(NotificationCenter.default.publisher(for: .voiceConfigurationChanged)) { _ in
+            loadSettings()
+        }
         .onDisappear {
             // Clean up test if running when navigating away
             if isTestingVAD {

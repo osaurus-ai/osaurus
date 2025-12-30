@@ -148,16 +148,18 @@ public final class VADService: ObservableObject {
     public func stop() async {
         guard state == .listening || state == .starting else { return }
 
-        // Disable background mode and force stop
-        whisperService.isVADBackgroundMode = false
-        _ = await whisperService.stopStreamingTranscription(force: true)
-        whisperService.clearTranscription()
-
+        // Update state first to prevent auto-restart logic from triggering
+        // when isRecording changes to false
         state = .idle
         isEnabled = false
         audioLevel = 0
         accumulatedTranscription = ""
         lastTranscription = ""
+
+        // Disable background mode and force stop
+        whisperService.isVADBackgroundMode = false
+        _ = await whisperService.stopStreamingTranscription(force: true)
+        whisperService.clearTranscription()
 
         print("[VADService] Stopped listening (background mode disabled)")
     }
@@ -176,6 +178,10 @@ public final class VADService: ObservableObject {
         guard state == .listening || state == .starting else { return }
         print("[VADService] Pausing temporarily")
 
+        // Update state first to prevent auto-restart logic from triggering
+        state = .idle
+        // Keep isEnabled = true so we know to resume later
+
         // Disable background mode first
         whisperService.isVADBackgroundMode = false
 
@@ -183,8 +189,6 @@ public final class VADService: ObservableObject {
         _ = await whisperService.stopStreamingTranscription(force: true)
         whisperService.clearTranscription()
 
-        state = .idle
-        // Keep isEnabled = true so we know to resume later
         print("[VADService] Paused - transcription stopped, ready for chat voice input")
     }
 
@@ -205,6 +209,14 @@ public final class VADService: ObservableObject {
     // MARK: - Private Methods
 
     private func setupObservers() {
+        // Observe configuration changes
+        NotificationCenter.default.publisher(for: .voiceConfigurationChanged)
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                self?.loadConfiguration()
+            }
+            .store(in: &cancellables)
+
         // Observe transcription changes from WhisperKitService
         whisperService.$currentTranscription
             .receive(on: DispatchQueue.main)

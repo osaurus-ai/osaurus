@@ -323,19 +323,33 @@ private struct VADToggleButton: View {
     }
 
     /// Whether VAD mode is configured (has enabled personas)
+    /// Note: We ignore vadModeEnabled here because the button itself acts as the toggle for it.
     private var isVADConfigured: Bool {
         let config = VADConfigurationStore.load()
-        return config.vadModeEnabled && !config.enabledPersonaIds.isEmpty
+        // If personas are configured, we can toggle VAD mode
+        return !config.enabledPersonaIds.isEmpty
     }
 
     private var isActive: Bool {
         vadService.state == .listening || vadService.state == .processing
     }
 
+    private var isVADEnabledGlobally: Bool {
+        let config = VADConfigurationStore.load()
+        return config.vadModeEnabled
+    }
+
     private var iconColor: Color {
         guard canToggleVAD && isVADConfigured else {
             return theme.tertiaryText
         }
+
+        // If VAD is disabled in settings, show as inactive (gray/tertiary)
+        // unless it's running for some reason (state error?)
+        if !isVADEnabledGlobally && vadService.state == .idle {
+            return theme.tertiaryText
+        }
+
         switch vadService.state {
         case .listening:
             return theme.successColor
@@ -353,15 +367,20 @@ private struct VADToggleButton: View {
             return "Voice Detection: No model selected"
         }
         if !isVADConfigured {
-            return "Voice Detection: Not configured"
+            return "Voice Detection: Not configured (Select personas in settings)"
         }
+
+        if !isVADEnabledGlobally {
+            return "Voice Detection: Disabled — Click to enable"
+        }
+
         switch vadService.state {
         case .idle:
-            return "Voice Detection: Off — Click to start"
+            return "Voice Detection: Ready — Click to disable"
         case .starting:
             return "Voice Detection: Starting..."
         case .listening:
-            return "Voice Detection: Listening — Click to stop"
+            return "Voice Detection: Listening — Click to disable"
         case .processing:
             return "Voice Detection: Processing..."
         case .error(let msg):
@@ -399,10 +418,29 @@ private struct VADToggleButton: View {
 
     private func toggleVAD() {
         Task {
+            // Act as a global toggle
+            var config = VADConfigurationStore.load()
+            let newState = !config.vadModeEnabled
+            config.vadModeEnabled = newState
+            VADConfigurationStore.save(config)
+
+            // Reload service configuration
+            vadService.loadConfiguration()
+
             do {
-                try await vadService.toggle()
+                if newState {
+                    try await vadService.start()
+                } else {
+                    await vadService.stop()
+                }
             } catch {
                 print("[VADToggleButton] Failed to toggle VAD: \(error)")
+                // Revert if start failed (optional, but good UX)
+                if newState {
+                    config.vadModeEnabled = false
+                    VADConfigurationStore.save(config)
+                    vadService.loadConfiguration()
+                }
             }
         }
     }
