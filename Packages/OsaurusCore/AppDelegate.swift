@@ -693,6 +693,42 @@ extension Notification.Name {
     static let toolsListChanged = Notification.Name("toolsListChanged")
 }
 
+// MARK: - Acknowledgements Window
+extension AppDelegate {
+    private static var acknowledgementsWindow: NSWindow?
+
+    @MainActor public func showAcknowledgements() {
+        // Reuse existing window if already open
+        if let existingWindow = Self.acknowledgementsWindow, existingWindow.isVisible {
+            existingWindow.makeKeyAndOrderFront(nil)
+            NSApp.activate(ignoringOtherApps: true)
+            return
+        }
+
+        let themeManager = ThemeManager.shared
+        let contentView = AcknowledgementsView()
+            .environment(\.theme, themeManager.currentTheme)
+
+        let hostingController = NSHostingController(rootView: contentView)
+
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 600, height: 500),
+            styleMask: [.titled, .closable, .resizable],
+            backing: .buffered,
+            defer: false
+        )
+        window.title = "Acknowledgements"
+        window.contentViewController = hostingController
+        window.center()
+        window.isReleasedWhenClosed = false
+
+        Self.acknowledgementsWindow = window
+
+        window.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+    }
+}
+
 // MARK: Management Window
 extension AppDelegate {
     @MainActor func showManagementWindow(
