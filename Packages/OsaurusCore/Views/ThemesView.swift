@@ -173,100 +173,21 @@ struct ThemesView: View {
     // MARK: - Header
 
     private var headerView: some View {
-        VStack(spacing: 16) {
-            HStack {
-                VStack(alignment: .leading, spacing: 4) {
-                    HStack(spacing: 10) {
-                        Text("Themes")
-                            .font(.system(size: 28, weight: .bold, design: .rounded))
-                            .foregroundColor(theme.primaryText)
-
-                        // Total count badge
-                        if !isLoading && !installedThemes.isEmpty {
-                            Text("\(installedThemes.count)")
-                                .font(.system(size: 12, weight: .semibold))
-                                .foregroundColor(theme.secondaryText)
-                                .padding(.horizontal, 8)
-                                .padding(.vertical, 3)
-                                .background(
-                                    Capsule()
-                                        .fill(theme.tertiaryBackground)
-                                )
-                        }
-                    }
-
-                    Text("Customize the look and feel of your chat interface")
-                        .font(.system(size: 14))
-                        .foregroundColor(theme.secondaryText)
-                }
-
-                Spacer()
-
-                HStack(spacing: 12) {
-                    // Refresh button
-                    Button(action: { loadThemes() }) {
-                        Image(systemName: "arrow.clockwise")
-                            .font(.system(size: 12, weight: .medium))
-                            .foregroundColor(theme.secondaryText)
-                            .frame(width: 36, height: 36)
-                            .background(
-                                RoundedRectangle(cornerRadius: 8)
-                                    .fill(theme.tertiaryBackground)
-                                    .overlay(
-                                        RoundedRectangle(cornerRadius: 8)
-                                            .stroke(theme.inputBorder, lineWidth: 1)
-                                    )
-                            )
-                    }
-                    .buttonStyle(PlainButtonStyle())
-                    .help("Refresh themes")
-
-                    // Import button
-                    Button(action: { showingImporter = true }) {
-                        HStack(spacing: 6) {
-                            Image(systemName: "square.and.arrow.down")
-                                .font(.system(size: 12, weight: .medium))
-                            Text("Import")
-                                .font(.system(size: 13, weight: .medium))
-                        }
-                        .foregroundColor(theme.primaryText)
-                        .padding(.horizontal, 14)
-                        .padding(.vertical, 10)
-                        .background(
-                            RoundedRectangle(cornerRadius: 8)
-                                .fill(theme.tertiaryBackground)
-                                .overlay(
-                                    RoundedRectangle(cornerRadius: 8)
-                                        .stroke(theme.inputBorder, lineWidth: 1)
-                                )
-                        )
-                    }
-                    .buttonStyle(PlainButtonStyle())
-
-                    // Create new theme button
-                    Button(action: createNewTheme) {
-                        HStack(spacing: 6) {
-                            Image(systemName: "plus")
-                                .font(.system(size: 12, weight: .semibold))
-                            Text("Create Theme")
-                                .font(.system(size: 13, weight: .medium))
-                        }
-                        .foregroundColor(.white)
-                        .padding(.horizontal, 16)
-                        .padding(.vertical, 10)
-                        .background(
-                            RoundedRectangle(cornerRadius: 8)
-                                .fill(theme.accentColor)
-                        )
-                    }
-                    .buttonStyle(PlainButtonStyle())
-                }
+        ManagerHeaderWithActions(
+            title: "Themes",
+            subtitle: "Customize the look and feel of your chat interface",
+            count: isLoading || installedThemes.isEmpty ? nil : installedThemes.count
+        ) {
+            HeaderIconButton("arrow.clockwise", help: "Refresh themes") {
+                loadThemes()
+            }
+            HeaderSecondaryButton("Import", icon: "square.and.arrow.down") {
+                showingImporter = true
+            }
+            HeaderPrimaryButton("Create Theme", icon: "plus") {
+                createNewTheme()
             }
         }
-        .padding(.horizontal, 24)
-        .padding(.top, 24)
-        .padding(.bottom, 16)
-        .background(theme.secondaryBackground)
     }
 
     // MARK: - Loading & Error States

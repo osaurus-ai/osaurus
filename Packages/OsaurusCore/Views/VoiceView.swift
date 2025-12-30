@@ -155,40 +155,19 @@ struct VoiceView: View {
     // MARK: - Header View
 
     private var headerView: some View {
-        VStack(spacing: 16) {
-            HStack {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Voice")
-                        .font(.system(size: 28, weight: .bold, design: .rounded))
-                        .foregroundColor(theme.primaryText)
-
-                    Text(headerSubtitle)
-                        .font(.system(size: 14))
-                        .foregroundColor(theme.secondaryText)
-                }
-
-                Spacer()
-
-                // Status indicator
-                statusIndicator
-            }
-
-            // Tab selector
-            HStack {
-                AnimatedTabSelector(
-                    selection: $selectedTab,
-                    counts: [
-                        .models: modelManager.downloadedModelsCount
-                    ]
-                )
-
-                Spacer()
-            }
+        ManagerHeaderWithTabs(
+            title: "Voice",
+            subtitle: headerSubtitle
+        ) {
+            statusIndicator
+        } tabsRow: {
+            HeaderTabsRow(
+                selection: $selectedTab,
+                counts: [
+                    .models: modelManager.downloadedModelsCount
+                ]
+            )
         }
-        .padding(.horizontal, 24)
-        .padding(.top, 24)
-        .padding(.bottom, 16)
-        .background(theme.secondaryBackground)
     }
 
     private var headerSubtitle: String {

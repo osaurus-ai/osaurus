@@ -100,59 +100,38 @@ struct ModelDownloadView: View {
     // MARK: - Header View
 
     private var headerView: some View {
-        VStack(spacing: 16) {
-            // Title row
-            HStack {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Models")
-                        .font(.system(size: 28, weight: .bold, design: .rounded))
-                        .foregroundColor(theme.primaryText)
-
-                    Text("\(completedDownloadedModelsCount) downloaded • \(modelManager.totalDownloadedSizeString)")
-                        .font(.system(size: 14))
-                        .foregroundColor(theme.secondaryText)
-                }
-
-                Spacer()
-
-                // Download status indicator (shown when downloads are active)
-                if modelManager.activeDownloadsCount > 0 {
-                    DownloadStatusIndicator(
-                        activeCount: modelManager.activeDownloadsCount,
-                        averageProgress: averageDownloadProgress,
-                        onTap: {
-                            withAnimation(.easeOut(duration: 0.2)) {
-                                selectedTab = .downloaded
-                            }
+        ManagerHeaderWithTabs(
+            title: "Models",
+            subtitle: "\(completedDownloadedModelsCount) downloaded • \(modelManager.totalDownloadedSizeString)"
+        ) {
+            // Download status indicator (shown when downloads are active)
+            if modelManager.activeDownloadsCount > 0 {
+                DownloadStatusIndicator(
+                    activeCount: modelManager.activeDownloadsCount,
+                    averageProgress: averageDownloadProgress,
+                    onTap: {
+                        withAnimation(.easeOut(duration: 0.2)) {
+                            selectedTab = .downloaded
                         }
-                    )
-                    .transition(.scale.combined(with: .opacity))
-                }
-            }
-
-            // Tabs + Search row
-            HStack(spacing: 16) {
-                AnimatedTabSelector(
-                    selection: $selectedTab,
-                    counts: [
-                        .all: filteredModels.count,
-                        .suggested: filteredSuggestedModels.count,
-                        .downloaded: completedDownloadedModelsCount,
-                    ],
-                    badges: modelManager.activeDownloadsCount > 0
-                        ? [.downloaded: modelManager.activeDownloadsCount]
-                        : nil
+                    }
                 )
-
-                Spacer()
-
-                SearchField(text: $searchText, placeholder: "Search models")
+                .transition(.scale.combined(with: .opacity))
             }
+        } tabsRow: {
+            HeaderTabsRow(
+                selection: $selectedTab,
+                counts: [
+                    .all: filteredModels.count,
+                    .suggested: filteredSuggestedModels.count,
+                    .downloaded: completedDownloadedModelsCount,
+                ],
+                badges: modelManager.activeDownloadsCount > 0
+                    ? [.downloaded: modelManager.activeDownloadsCount]
+                    : nil,
+                searchText: $searchText,
+                searchPlaceholder: "Search models"
+            )
         }
-        .padding(.horizontal, 24)
-        .padding(.top, 24)
-        .padding(.bottom, 16)
-        .background(theme.secondaryBackground)
     }
 
     // MARK: - Model List View
