@@ -2,7 +2,8 @@
 //  ChatEmptyState.swift
 //  osaurus
 //
-//  Cinematic empty state with animated gradient and quick actions
+//  Immersive empty state with ambient floating orbs, prominent persona selector,
+//  and staggered entrance animations for a polished first impression.
 //
 
 import AppKit
@@ -43,19 +44,25 @@ struct ChatEmptyState: View {
 
     var body: some View {
         GeometryReader { geometry in
-            ScrollView(.vertical, showsIndicators: false) {
-                VStack(spacing: 0) {
-                    Spacer(minLength: 20)
+            ZStack {
+                // Ambient floating orbs background
+                AmbientOrbsView(isVisible: isVisible, hasAppeared: hasAppeared)
 
-                    if hasModels {
-                        readyState
-                    } else {
-                        noModelsState
+                // Main content
+                ScrollView(.vertical, showsIndicators: false) {
+                    VStack(spacing: 0) {
+                        Spacer(minLength: 20)
+
+                        if hasModels {
+                            readyState
+                        } else {
+                            noModelsState
+                        }
+
+                        Spacer(minLength: 20)
                     }
-
-                    Spacer(minLength: 20)
+                    .frame(maxWidth: .infinity, minHeight: geometry.size.height)
                 }
-                .frame(maxWidth: .infinity, minHeight: geometry.size.height)
             }
         }
         .onAppear {
@@ -78,42 +85,56 @@ struct ChatEmptyState: View {
         VStack(spacing: 32) {
             // Greeting section
             VStack(spacing: 20) {
-                // Greeting text
+                // Greeting text - staggered entrance
                 VStack(spacing: 8) {
                     Text(greeting)
                         .font(theme.font(size: CGFloat(theme.titleSize) + 4, weight: .semibold))
                         .foregroundColor(theme.primaryText)
                         .opacity(hasAppeared ? 1 : 0)
-                        .offset(y: hasAppeared ? 0 : 15)
+                        .offset(y: hasAppeared ? 0 : 20)
+                        .animation(theme.springAnimation().delay(0.05), value: hasAppeared)
 
                     Text("How can I help you today?")
                         .font(theme.font(size: CGFloat(theme.bodySize) + 2))
                         .foregroundColor(theme.secondaryText)
                         .opacity(hasAppeared ? 1 : 0)
-                        .offset(y: hasAppeared ? 0 : 10)
+                        .offset(y: hasAppeared ? 0 : 15)
+                        .animation(theme.springAnimation().delay(0.12), value: hasAppeared)
                 }
 
-                // Persona selector - always visible
-                personaDropdown
+                // Persona selector - prominent card with delayed entrance
+                personaCard
                     .opacity(hasAppeared ? 1 : 0)
-                    .offset(y: hasAppeared ? 0 : 10)
+                    .offset(y: hasAppeared ? 0 : 12)
+                    .scaleEffect(hasAppeared ? 1 : 0.97)
+                    .animation(theme.springAnimation().delay(0.2), value: hasAppeared)
             }
-            .animation(theme.springAnimation().delay(0.1), value: hasAppeared)
 
-            // Quick actions
-            quickActionsGrid
-                .opacity(hasAppeared ? 1 : 0)
-                .offset(y: hasAppeared ? 0 : 20)
-                .animation(theme.springAnimation().delay(0.25), value: hasAppeared)
-
-            // Model indicator
-            if let model = selectedModel {
-                modelIndicator(model)
-                    .opacity(hasAppeared ? 1 : 0)
-                    .animation(.easeOut(duration: 0.4).delay(0.4), value: hasAppeared)
-            }
+            // Quick actions with staggered entrance
+            staggeredQuickActions
         }
         .padding(.horizontal, 40)
+    }
+
+    private var staggeredQuickActions: some View {
+        LazyVGrid(
+            columns: [
+                GridItem(.flexible(), spacing: 12),
+                GridItem(.flexible(), spacing: 12),
+            ],
+            spacing: 12
+        ) {
+            ForEach(Array(quickActions.enumerated()), id: \.element.id) { index, action in
+                QuickActionButton(action: action, onTap: onQuickAction)
+                    .opacity(hasAppeared ? 1 : 0)
+                    .offset(y: hasAppeared ? 0 : 15)
+                    .animation(
+                        theme.springAnimation().delay(0.3 + Double(index) * 0.05),
+                        value: hasAppeared
+                    )
+            }
+        }
+        .frame(maxWidth: 440)
     }
 
     // MARK: - No Models State
@@ -233,9 +254,22 @@ struct ChatEmptyState: View {
         .padding(.horizontal, 40)
     }
 
-    // MARK: - Persona Dropdown
+    // MARK: - Persona Card
 
-    private var personaDropdown: some View {
+    @State private var isPersonaHovered = false
+
+    /// Get a preview of the persona's system prompt (truncated)
+    private var personaDescriptionPreview: String {
+        let systemPrompt = activePersona.systemPrompt
+        if systemPrompt.isEmpty {
+            return "A helpful AI assistant"
+        }
+        // Take first 80 characters and add ellipsis if truncated
+        let preview = String(systemPrompt.prefix(80))
+        return preview.count < systemPrompt.count ? "\(preview)..." : preview
+    }
+
+    private var personaCard: some View {
         Menu {
             ForEach(personas) { persona in
                 Button(action: { onSelectPersona(persona.id) }) {
@@ -258,78 +292,76 @@ struct ChatEmptyState: View {
                 Label("Manage Personas...", systemImage: "person.2.badge.gearshape")
             }
         } label: {
-            HStack(spacing: 8) {
-                // Persona icon
-                Image(systemName: "person.circle.fill")
-                    .font(.system(size: 14, weight: .medium))
-                    .foregroundColor(theme.accentColor)
+            HStack(spacing: 14) {
+                // Persona avatar
+                ZStack {
+                    Circle()
+                        .fill(
+                            LinearGradient(
+                                colors: [
+                                    theme.accentColor.opacity(0.2),
+                                    theme.accentColor.opacity(0.1),
+                                ],
+                                startPoint: .topLeading,
+                                endPoint: .bottomTrailing
+                            )
+                        )
+                        .frame(width: 44, height: 44)
 
-                Text(activePersona.name)
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundColor(theme.primaryText)
+                    Image(systemName: "person.fill")
+                        .font(.system(size: 18, weight: .medium))
+                        .foregroundColor(theme.accentColor)
+                }
 
-                Image(systemName: "chevron.up.chevron.down")
-                    .font(.system(size: 9, weight: .semibold))
-                    .foregroundColor(theme.tertiaryText)
+                // Persona info
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack(spacing: 6) {
+                        Text(activePersona.name)
+                            .font(theme.font(size: CGFloat(theme.bodySize) + 1, weight: .semibold))
+                            .foregroundColor(theme.primaryText)
+
+                        Image(systemName: "chevron.down")
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundColor(theme.tertiaryText)
+                    }
+
+                    Text(personaDescriptionPreview)
+                        .font(theme.font(size: CGFloat(theme.captionSize)))
+                        .foregroundColor(theme.secondaryText)
+                        .lineLimit(1)
+                }
+
+                Spacer(minLength: 0)
             }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 8)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 12)
+            .frame(maxWidth: 320)
             .background(
-                Capsule()
-                    .fill(theme.secondaryBackground.opacity(theme.isDark ? 0.5 : 0.7))
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .fill(theme.secondaryBackground.opacity(isPersonaHovered ? 0.9 : (theme.isDark ? 0.6 : 0.8)))
                     .overlay(
-                        Capsule()
-                            .strokeBorder(theme.primaryBorder.opacity(0.3), lineWidth: 1)
+                        RoundedRectangle(cornerRadius: 14, style: .continuous)
+                            .strokeBorder(
+                                isPersonaHovered
+                                    ? theme.accentColor.opacity(0.3)
+                                    : theme.primaryBorder.opacity(theme.isDark ? 0.3 : 0.5),
+                                lineWidth: 1
+                            )
                     )
             )
         }
         .menuStyle(.borderlessButton)
         .menuIndicator(.hidden)
-        .fixedSize()
         .onHover { hovering in
+            withAnimation(theme.animationQuick()) {
+                isPersonaHovered = hovering
+            }
             if hovering {
                 NSCursor.pointingHand.push()
             } else {
                 NSCursor.pop()
             }
         }
-    }
-
-    // MARK: - Quick Actions
-
-    private var quickActionsGrid: some View {
-        LazyVGrid(
-            columns: [
-                GridItem(.flexible(), spacing: 12),
-                GridItem(.flexible(), spacing: 12),
-            ],
-            spacing: 12
-        ) {
-            ForEach(quickActions) { action in
-                QuickActionButton(action: action, onTap: onQuickAction)
-            }
-        }
-        .frame(maxWidth: 440)
-    }
-
-    // MARK: - Model Indicator
-
-    private func modelIndicator(_ model: String) -> some View {
-        HStack(spacing: 6) {
-            Circle()
-                .fill(Color.green)
-                .frame(width: 6, height: 6)
-
-            Text("Using \(displayModelName(model))")
-                .font(.system(size: 12))
-                .foregroundColor(theme.secondaryText)
-        }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 6)
-        .background(
-            Capsule()
-                .fill(theme.secondaryBackground.opacity(theme.isDark ? 0.5 : 0.8))
-        )
     }
 
     // MARK: - Helpers
@@ -342,12 +374,6 @@ struct ChatEmptyState: View {
         case 17 ..< 22: return "Good evening"
         default: return "Hello"
         }
-    }
-
-    private func displayModelName(_ raw: String) -> String {
-        if raw.lowercased() == "foundation" { return "Foundation" }
-        if let last = raw.split(separator: "/").last { return String(last) }
-        return raw
     }
 
     private func startGradientAnimation() {
@@ -552,6 +578,85 @@ private struct SuggestedModelCard: View {
             }
         }
         .frame(maxWidth: 520)
+    }
+}
+
+// MARK: - Ambient Orbs Animation
+
+private struct Orb: Identifiable {
+    let id = UUID()
+    let baseSize: CGFloat
+    let xOffset: CGFloat  // Normalized -1 to 1
+    let yOffset: CGFloat  // Normalized -1 to 1
+    let phaseOffset: Double
+    let speed: Double
+    let opacity: Double
+    let blurRadius: CGFloat
+}
+
+private struct AmbientOrbsView: View {
+    let isVisible: Bool
+    let hasAppeared: Bool
+
+    @Environment(\.theme) private var theme
+
+    private let orbs: [Orb] = [
+        Orb(baseSize: 180, xOffset: -0.35, yOffset: -0.25, phaseOffset: 0, speed: 0.4, opacity: 0.25, blurRadius: 50),
+        Orb(baseSize: 140, xOffset: 0.4, yOffset: -0.15, phaseOffset: 1.5, speed: 0.55, opacity: 0.20, blurRadius: 45),
+        Orb(baseSize: 160, xOffset: 0.25, yOffset: 0.35, phaseOffset: 3.0, speed: 0.45, opacity: 0.18, blurRadius: 50),
+        Orb(baseSize: 100, xOffset: -0.3, yOffset: 0.4, phaseOffset: 4.5, speed: 0.6, opacity: 0.22, blurRadius: 40),
+    ]
+
+    var body: some View {
+        TimelineView(.animation(minimumInterval: 1.0 / 30.0)) { timeline in
+            GeometryReader { geometry in
+                let time = timeline.date.timeIntervalSinceReferenceDate
+
+                ZStack {
+                    ForEach(orbs) { orb in
+                        orbView(orb: orb, time: time, size: geometry.size)
+                    }
+                }
+            }
+        }
+        .opacity(hasAppeared ? 1 : 0)
+        .animation(.easeOut(duration: 1.0), value: hasAppeared)
+        .allowsHitTesting(false)
+    }
+
+    private func orbView(orb: Orb, time: TimeInterval, size: CGSize) -> some View {
+        let animatedTime = time * orb.speed + orb.phaseOffset
+
+        // Create gentle floating motion
+        let xDrift = sin(animatedTime * 0.8) * 20 + cos(animatedTime * 0.5) * 10
+        let yDrift = cos(animatedTime * 0.6) * 15 + sin(animatedTime * 0.4) * 8
+
+        // Subtle breathing/pulsing
+        let breathe = 1.0 + sin(animatedTime * 1.2) * 0.08
+
+        // Calculate position from normalized offset
+        let centerX = size.width / 2 + orb.xOffset * size.width * 0.4
+        let centerY = size.height / 2 + orb.yOffset * size.height * 0.35
+
+        return Circle()
+            .fill(
+                RadialGradient(
+                    colors: [
+                        theme.accentColor.opacity(orb.opacity * 2.0),
+                        theme.accentColor.opacity(orb.opacity),
+                        theme.accentColor.opacity(0),
+                    ],
+                    center: .center,
+                    startRadius: 0,
+                    endRadius: orb.baseSize * 0.7
+                )
+            )
+            .frame(width: orb.baseSize * breathe, height: orb.baseSize * breathe)
+            .blur(radius: orb.blurRadius)
+            .position(
+                x: centerX + xDrift,
+                y: centerY + yDrift
+            )
     }
 }
 
