@@ -128,7 +128,7 @@ public final class AudioInputManager: ObservableObject {
 
     // MARK: - System Audio Status (delegated from SystemAudioCaptureManager)
 
-    /// Whether system audio capture is available on this system (macOS 12.3+)
+    /// Whether system audio capture is available on this system
     public var isSystemAudioAvailable: Bool {
         SystemAudioCaptureManager.shared.isAvailable
     }
@@ -145,9 +145,7 @@ public final class AudioInputManager: ObservableObject {
 
     /// Check/refresh system audio permission status
     public func checkSystemAudioPermission() async {
-        if #available(macOS 12.3, *) {
-            await SystemAudioCaptureManager.shared.checkPermission()
-        }
+        await SystemAudioCaptureManager.shared.checkPermission()
     }
 
     private var deviceObservers: [NSObjectProtocol] = []
@@ -167,7 +165,18 @@ public final class AudioInputManager: ObservableObject {
     // MARK: - Public Methods
 
     /// Refresh the list of available audio input devices
+    /// Note: Only enumerates devices if microphone permission is already granted
+    /// to avoid triggering permission dialogs on device enumeration.
     public func refreshDevices() {
+        // Check if microphone permission is already granted before enumerating devices
+        // This prevents triggering the permission dialog during device enumeration
+        let status = AVCaptureDevice.authorizationStatus(for: .audio)
+        guard status == .authorized else {
+            // Clear devices if permission not granted
+            availableDevices = []
+            return
+        }
+
         let discoverySession = AVCaptureDevice.DiscoverySession(
             deviceTypes: [.microphone, .external],
             mediaType: .audio,
@@ -390,7 +399,7 @@ private final class SystemAudioSampleBuffer: @unchecked Sendable {
 
 // MARK: - System Audio Capture Manager
 
-/// Manages system audio capture using ScreenCaptureKit (macOS 12.3+)
+/// Manages system audio capture using ScreenCaptureKit
 /// This allows capturing audio from the computer (apps, browser, etc.)
 @MainActor
 public final class SystemAudioCaptureManager: NSObject, ObservableObject {
@@ -418,22 +427,16 @@ public final class SystemAudioCaptureManager: NSObject, ObservableObject {
 
     // MARK: - Public Methods
 
-    /// Check if ScreenCaptureKit is available and we have permission
+    /// Check if ScreenCaptureKit is available on this system
+    /// Note: Does NOT automatically check permission to avoid triggering permission dialogs on init.
+    /// Call checkPermission() explicitly when the user wants to enable system audio.
     public func checkAvailability() {
-        // ScreenCaptureKit requires macOS 12.3+
-        if #available(macOS 12.3, *) {
-            isAvailable = true
-            Task {
-                await checkPermission()
-            }
-        } else {
-            isAvailable = false
-            hasPermission = false
-        }
+        isAvailable = true
+        // Don't automatically check permission here - it triggers the screen recording dialog.
+        // Permission will be checked when user explicitly tries to use system audio.
     }
 
     /// Check if we have screen recording permission (required for system audio)
-    @available(macOS 12.3, *)
     public func checkPermission() async {
         do {
             // Attempting to get shareable content will check/request permission
@@ -450,23 +453,20 @@ public final class SystemAudioCaptureManager: NSObject, ObservableObject {
 
     /// Request permission by triggering the system prompt
     public func requestPermission() {
-        if #available(macOS 12.3, *) {
-            Task {
-                await checkPermission()
-                if !hasPermission {
-                    // Open System Settings if permission wasn't granted
-                    if let url = URL(
-                        string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture"
-                    ) {
-                        NSWorkspace.shared.open(url)
-                    }
+        Task {
+            await checkPermission()
+            if !hasPermission {
+                // Open System Settings if permission wasn't granted
+                if let url = URL(
+                    string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture"
+                ) {
+                    NSWorkspace.shared.open(url)
                 }
             }
         }
     }
 
     /// Start capturing system audio
-    @available(macOS 12.3, *)
     public func startCapture() async throws {
         guard isAvailable else {
             throw WhisperKitError.transcriptionFailed("System audio capture not available on this macOS version")
@@ -538,7 +538,6 @@ public final class SystemAudioCaptureManager: NSObject, ObservableObject {
     }
 
     /// Stop capturing system audio
-    @available(macOS 12.3, *)
     public func stopCapture() async {
         guard isCapturing, let stream = stream else { return }
 
@@ -569,7 +568,6 @@ public final class SystemAudioCaptureManager: NSObject, ObservableObject {
 
 // MARK: - SCStreamDelegate
 
-@available(macOS 12.3, *)
 extension SystemAudioCaptureManager: SCStreamDelegate {
     public nonisolated func stream(_ stream: SCStream, didStopWithError error: Error) {
         print("[SystemAudioCaptureManager] Stream stopped with error: \(error)")
@@ -583,7 +581,6 @@ extension SystemAudioCaptureManager: SCStreamDelegate {
 
 // MARK: - System Audio Stream Output
 
-@available(macOS 12.3, *)
 private class SystemAudioStreamOutput: NSObject, SCStreamOutput {
     private let onSamples: ([Float]) -> Void
 
@@ -682,11 +679,21 @@ public final class WhisperKitService: ObservableObject {
 
         switch status {
         case .authorized:
-            await MainActor.run { microphonePermissionGranted = true }
+            await MainActor.run {
+                microphonePermissionGranted = true
+                // Refresh audio devices now that we have permission
+                AudioInputManager.shared.refreshDevices()
+            }
             return true
         case .notDetermined:
             let granted = await AVCaptureDevice.requestAccess(for: .audio)
-            await MainActor.run { microphonePermissionGranted = granted }
+            await MainActor.run {
+                microphonePermissionGranted = granted
+                if granted {
+                    // Refresh audio devices now that we have permission
+                    AudioInputManager.shared.refreshDevices()
+                }
+            }
             return granted
         case .denied, .restricted:
             await MainActor.run { microphonePermissionGranted = false }
@@ -967,15 +974,11 @@ public final class WhisperKitService: ObservableObject {
             }
         } else {
             // System audio requires screen recording permission
-            if #available(macOS 12.3, *) {
-                await SystemAudioCaptureManager.shared.checkPermission()
-                if !SystemAudioCaptureManager.shared.hasPermission {
-                    throw WhisperKitError.transcriptionFailed(
-                        "Screen recording permission required for system audio capture"
-                    )
-                }
-            } else {
-                throw WhisperKitError.transcriptionFailed("System audio capture requires macOS 12.3 or later")
+            await SystemAudioCaptureManager.shared.checkPermission()
+            if !SystemAudioCaptureManager.shared.hasPermission {
+                throw WhisperKitError.transcriptionFailed(
+                    "Screen recording permission required for system audio capture"
+                )
             }
         }
 
@@ -1042,42 +1045,40 @@ public final class WhisperKitService: ObservableObject {
             }
         } else {
             // 4b. System Audio path
-            if #available(macOS 12.3, *) {
-                do {
-                    try await SystemAudioCaptureManager.shared.startCapture()
+            do {
+                try await SystemAudioCaptureManager.shared.startCapture()
 
-                    // System audio is already at 16kHz mono, create format for worker
-                    guard
-                        let systemAudioFormat = AVAudioFormat(
-                            commonFormat: .pcmFormatFloat32,
-                            sampleRate: 16000,
-                            channels: 1,
-                            interleaved: false
-                        )
-                    else {
-                        throw WhisperKitError.transcriptionFailed("Failed to create audio format for system audio")
-                    }
-
-                    // 6b. Start Worker with 16kHz format (no conversion needed)
-                    transcriptionWorker = TranscriptionWorker(
-                        whisperKit: whisperKit,
-                        audioBuffer: audioBuffer,
-                        inputFormat: systemAudioFormat,
-                        languageHint: config.languageHint,
-                        sensitivity: config.sensitivity
+                // System audio is already at 16kHz mono, create format for worker
+                guard
+                    let systemAudioFormat = AVAudioFormat(
+                        commonFormat: .pcmFormatFloat32,
+                        sampleRate: 16000,
+                        channels: 1,
+                        interleaved: false
                     )
-
-                    isRecording = true
-
-                    // 7b. Start polling system audio samples into the buffer
-                    startSystemAudioPolling()
-                    startAudioLevelMonitoring()
-                    startWorkerProcessing()
-
-                } catch {
-                    await teardownAudioEngine()
-                    throw error
+                else {
+                    throw WhisperKitError.transcriptionFailed("Failed to create audio format for system audio")
                 }
+
+                // 6b. Start Worker with 16kHz format (no conversion needed)
+                transcriptionWorker = TranscriptionWorker(
+                    whisperKit: whisperKit,
+                    audioBuffer: audioBuffer,
+                    inputFormat: systemAudioFormat,
+                    languageHint: config.languageHint,
+                    sensitivity: config.sensitivity
+                )
+
+                isRecording = true
+
+                // 7b. Start polling system audio samples into the buffer
+                startSystemAudioPolling()
+                startAudioLevelMonitoring()
+                startWorkerProcessing()
+
+            } catch {
+                await teardownAudioEngine()
+                throw error
             }
         }
     }
@@ -1150,9 +1151,7 @@ public final class WhisperKitService: ObservableObject {
 
         // Stop system audio capture if we were using it
         if isUsingSystemAudio {
-            if #available(macOS 12.3, *) {
-                await SystemAudioCaptureManager.shared.stopCapture()
-            }
+            await SystemAudioCaptureManager.shared.stopCapture()
             isUsingSystemAudio = false
         }
 

@@ -585,6 +585,10 @@ final class SystemPermissionService: NSObject, ObservableObject, CLLocationManag
             let granted = await AVCaptureDevice.requestAccess(for: .audio)
             await MainActor.run {
                 self.setPermission(.microphone, isGranted: granted)
+                if granted {
+                    // Refresh audio devices now that we have permission
+                    AudioInputManager.shared.refreshDevices()
+                }
             }
         }
     }
