@@ -135,6 +135,11 @@ public enum VADConfigurationStore {
             encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
             let data = try encoder.encode(configuration)
             try data.write(to: url, options: [.atomic])
+
+            // Notify observers of configuration change
+            DispatchQueue.main.async {
+                NotificationCenter.default.post(name: .voiceConfigurationChanged, object: nil)
+            }
         } catch {
             print("[Osaurus] Failed to save VADConfiguration: \(error)")
         }
