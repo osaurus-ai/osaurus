@@ -962,17 +962,21 @@ struct ChatView: View {
     /// Convenience accessor for the window's theme
     private var theme: ThemeProtocol { windowState.theme }
 
-    /// Convenience accessor for the session
-    private var session: ChatSession { windowState.session }
-
     /// Convenience accessor for the window ID
     private var windowId: UUID { windowState.windowId }
+
+    /// Observed session - needed to properly propagate @Published changes from ChatSession
+    @ObservedObject private var observedSession: ChatSession
+
+    /// Convenience accessor for the session (uses observedSession for proper SwiftUI updates)
+    private var session: ChatSession { observedSession }
 
     // MARK: - Initializers
 
     /// Multi-window initializer with window state
     init(windowState: ChatWindowState) {
         _windowState = StateObject(wrappedValue: windowState)
+        _observedSession = ObservedObject(wrappedValue: windowState.session)
     }
 
     /// Convenience initializer with window ID and optional initial state
@@ -988,6 +992,7 @@ struct ChatView: View {
             sessionData: initialSessionData
         )
         _windowState = StateObject(wrappedValue: state)
+        _observedSession = ObservedObject(wrappedValue: state.session)
     }
 
     /// Legacy single-window initializer (for backward compatibility)
@@ -999,6 +1004,7 @@ struct ChatView: View {
             sessionData: nil
         )
         _windowState = StateObject(wrappedValue: state)
+        _observedSession = ObservedObject(wrappedValue: state.session)
     }
 
     var body: some View {
@@ -1089,32 +1095,20 @@ struct ChatView: View {
 
                             // Floating input card
                             FloatingInputCard(
-                                text: Binding(
-                                    get: { session.input },
-                                    set: { session.input = $0 }
-                                ),
-                                selectedModel: Binding(
-                                    get: { session.selectedModel },
-                                    set: { session.selectedModel = $0 }
-                                ),
-                                pendingImages: Binding(
-                                    get: { session.pendingImages },
-                                    set: { session.pendingImages = $0 }
-                                ),
-                                enabledToolOverrides: Binding(
-                                    get: { session.enabledToolOverrides },
-                                    set: { session.enabledToolOverrides = $0 }
-                                ),
-                                modelOptions: session.modelOptions,
+                                text: $observedSession.input,
+                                selectedModel: $observedSession.selectedModel,
+                                pendingImages: $observedSession.pendingImages,
+                                enabledToolOverrides: $observedSession.enabledToolOverrides,
+                                modelOptions: observedSession.modelOptions,
                                 availableTools: ToolRegistry.shared.listTools(
-                                    withOverrides: session.enabledToolOverrides
+                                    withOverrides: observedSession.enabledToolOverrides
                                 ),
                                 personaToolOverrides: windowState.effectiveToolOverrides,
-                                isStreaming: session.isStreaming,
-                                supportsImages: session.selectedModelSupportsImages,
-                                estimatedContextTokens: session.estimatedContextTokens,
-                                onSend: { session.sendCurrent() },
-                                onStop: { session.stop() },
+                                isStreaming: observedSession.isStreaming,
+                                supportsImages: observedSession.selectedModelSupportsImages,
+                                estimatedContextTokens: observedSession.estimatedContextTokens,
+                                onSend: { observedSession.sendCurrent() },
+                                onStop: { observedSession.stop() },
                                 focusTrigger: focusTrigger,
                                 personaId: windowState.personaId
                             )
@@ -1341,45 +1335,48 @@ struct ChatView: View {
     // MARK: - Header
 
     private var chatHeader: some View {
-        HStack(spacing: 12) {
-            // Sidebar toggle
-            HeaderActionButton(
-                icon: showSidebar ? "sidebar.left" : "sidebar.left",
-                help: showSidebar ? "Hide sidebar" : "Show sidebar",
-                action: {
-                    withAnimation(theme.animationQuick()) {
-                        showSidebar.toggle()
+        ZStack {
+            // Full-size drag area behind content
+            WindowDragArea()
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+
+            // Header content on top
+            HStack(spacing: 12) {
+                // Sidebar toggle
+                HeaderActionButton(
+                    icon: showSidebar ? "sidebar.left" : "sidebar.left",
+                    help: showSidebar ? "Hide sidebar" : "Show sidebar",
+                    action: {
+                        withAnimation(theme.animationQuick()) {
+                            showSidebar.toggle()
+                        }
                     }
-                }
-            )
-
-            // Model indicator
-            if let model = session.selectedModel, session.modelOptions.count <= 1 {
-                HStack(spacing: 6) {
-                    Circle()
-                        .fill(Color.green)
-                        .frame(width: 6, height: 6)
-                    Text(displayModelName(model))
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundColor(theme.secondaryText)
-                }
-                .padding(.horizontal, 10)
-                .padding(.vertical, 5)
-                .background(
-                    Capsule()
-                        .fill(theme.secondaryBackground.opacity(0.6))
                 )
-            }
 
-            Spacer()
+                // Model indicator
+                if let model = session.selectedModel, session.modelOptions.count <= 1 {
+                    HStack(spacing: 6) {
+                        Circle()
+                            .fill(Color.green)
+                            .frame(width: 6, height: 6)
+                        Text(displayModelName(model))
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundColor(theme.secondaryText)
+                    }
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 5)
+                    .background(
+                        Capsule()
+                            .fill(theme.secondaryBackground.opacity(0.6))
+                    )
+                }
+
+                Spacer()
+            }
+            .padding(.leading, 20)
+            .padding(.trailing, 56)  // Leave room for close button
         }
-        .padding(.leading, 20)
-        .padding(.trailing, 56)  // Leave room for close button
-        .padding(.top, 20)
-        .padding(.bottom, 12)
-        .frame(minHeight: 48)  // Larger drag area
-        .contentShape(Rectangle())
-        .background(WindowDragArea())
+        .frame(height: 72)  // Fixed height for consistent drag area
         .onHover { hovering in
             isHeaderHovered = hovering
         }
