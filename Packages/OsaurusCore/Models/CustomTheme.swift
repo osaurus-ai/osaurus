@@ -740,9 +740,88 @@ public struct CustomTheme: Codable, Equatable, Sendable {
         )
     }
 
+    /// Terminal theme - Classic CRT terminal aesthetic with phosphor green on black
+    public static var terminalPreset: CustomTheme {
+        CustomTheme(
+            metadata: ThemeMetadata(
+                id: UUID(uuidString: "00000000-0000-0000-0000-000000000006")!,
+                name: "Terminal",
+                author: "Osaurus"
+            ),
+            colors: ThemeColors(
+                primaryText: "#00ff41",  // Classic phosphor green
+                secondaryText: "#00cc33",  // Slightly dimmer green
+                tertiaryText: "#00aa2a",  // Even dimmer for tertiary
+                primaryBackground: "#0c0c0c",  // Rich black
+                secondaryBackground: "#0f0f0f",  // Slightly lighter black
+                tertiaryBackground: "#141414",  // Card/elevated surfaces
+                sidebarBackground: "#0a0a0a",  // Deepest black for sidebar
+                sidebarSelectedBackground: "#1a1a1a",  // Subtle highlight
+                accentColor: "#00ff41",  // Phosphor green accent
+                accentColorLight: "#33ff66",  // Brighter green for hover
+                primaryBorder: "#1a3a1a",  // Dark green border
+                secondaryBorder: "#0d1f0d",  // Subtle green border
+                focusBorder: "#00ff41",  // Bright green focus
+                successColor: "#00ff41",  // Green (matches theme)
+                warningColor: "#ffb000",  // Amber (classic terminal warning)
+                errorColor: "#ff3333",  // Red error
+                infoColor: "#00cc33",  // Green info
+                cardBackground: "#111111",  // Slightly elevated
+                cardBorder: "#1a3a1a",  // Green-tinted border
+                buttonBackground: "#0f0f0f",
+                buttonBorder: "#00ff41",  // Green border for buttons
+                inputBackground: "#0a0a0a",  // Deep black input
+                inputBorder: "#1a3a1a",  // Green-tinted border
+                glassTintOverlay: "#00ff4108",  // Subtle green tint
+                codeBlockBackground: "#0a0a0a",  // Deep black for code
+                shadowColor: "#00ff41",  // Green glow for shadows
+                selectionColor: "#00ff4140",  // Green selection
+                cursorColor: "#00ff41",  // Bright green cursor
+                placeholderText: "#00aa2a"  // Dim green placeholder
+            ),
+            background: .default,
+            glass: ThemeGlass(
+                enabled: false,  // Solid backgrounds for authentic terminal look
+                material: .hudWindow,
+                blurRadius: 0,
+                opacityPrimary: 0.0,
+                opacitySecondary: 0.0,
+                opacityTertiary: 0.0,
+                tintColor: "#00ff41",
+                tintOpacity: 0.02,
+                edgeLight: "#00ff4120"  // Subtle green edge glow
+            ),
+            typography: ThemeTypography(
+                primaryFont: "SF Mono",  // Monospace for all text
+                monoFont: "SF Mono",
+                titleSize: 24,
+                headingSize: 16,
+                bodySize: 14,
+                captionSize: 12,
+                codeSize: 14
+            ),
+            animationConfig: ThemeAnimation(
+                durationQuick: 0.1,  // Snappy, instant feel
+                durationMedium: 0.2,
+                durationSlow: 0.3,
+                springResponse: 0.3,
+                springDamping: 0.9  // Minimal bounce
+            ),
+            shadows: ThemeShadows(
+                shadowOpacity: 0.5,  // Stronger for glow effect
+                cardShadowRadius: 12,  // Soft green glow
+                cardShadowRadiusHover: 20,
+                cardShadowY: 0,  // No vertical offset (glow, not drop shadow)
+                cardShadowYHover: 0
+            ),
+            isBuiltIn: true,
+            isDark: true
+        )
+    }
+
     /// All built-in theme presets
     public static var allBuiltInPresets: [CustomTheme] {
-        [.darkDefault, .lightDefault, .neonPreset, .nordPreset, .paperPreset]
+        [.darkDefault, .lightDefault, .neonPreset, .nordPreset, .paperPreset, .terminalPreset]
     }
 }
 
