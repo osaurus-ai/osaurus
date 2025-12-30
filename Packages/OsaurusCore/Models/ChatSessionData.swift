@@ -8,19 +8,19 @@
 import Foundation
 
 /// Codable session data for persistence
-struct ChatSessionData: Codable, Identifiable, Sendable {
-    let id: UUID
-    var title: String
-    let createdAt: Date
-    var updatedAt: Date
-    var selectedModel: String?
-    var turns: [ChatTurnData]
+public struct ChatSessionData: Codable, Identifiable, Sendable {
+    public let id: UUID
+    public var title: String
+    public let createdAt: Date
+    public var updatedAt: Date
+    public var selectedModel: String?
+    public var turns: [ChatTurnData]
     /// Per-session tool overrides. nil = use global config, otherwise map of tool name -> enabled
-    var enabledToolOverrides: [String: Bool]?
+    public var enabledToolOverrides: [String: Bool]?
     /// The persona this session belongs to. nil = Default persona
-    var personaId: UUID?
+    public var personaId: UUID?
 
-    init(
+    public init(
         id: UUID = UUID(),
         title: String = "New Chat",
         createdAt: Date = Date(),
@@ -41,7 +41,7 @@ struct ChatSessionData: Codable, Identifiable, Sendable {
     }
 
     // Custom decoder for backward compatibility with sessions saved before enabledToolOverrides/personaId were added
-    init(from decoder: Decoder) throws {
+    public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         id = try container.decode(UUID.self, forKey: .id)
         title = try container.decode(String.self, forKey: .title)
@@ -58,7 +58,7 @@ struct ChatSessionData: Codable, Identifiable, Sendable {
     }
 
     /// Generate a title from the first user message
-    static func generateTitle(from turns: [ChatTurnData]) -> String {
+    public static func generateTitle(from turns: [ChatTurnData]) -> String {
         guard let firstUserTurn = turns.first(where: { $0.role == .user }) else {
             return "New Chat"
         }

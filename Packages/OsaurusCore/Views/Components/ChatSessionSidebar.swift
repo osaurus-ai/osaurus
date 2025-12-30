@@ -15,6 +15,8 @@ struct ChatSessionSidebar: View {
     let onNewChat: () -> Void
     let onDelete: (UUID) -> Void
     let onRename: (UUID, String) -> Void
+    /// Optional callback for opening a session in a new window
+    var onOpenInNewWindow: ((ChatSessionData) -> Void)? = nil
 
     @Environment(\.theme) private var theme
     @Environment(\.colorScheme) private var colorScheme
@@ -255,7 +257,11 @@ struct ChatSessionSidebar: View {
                                 dismissEditing()
                             }
                             onDelete(session.id)
-                        }
+                        },
+                        onOpenInNewWindow: onOpenInNewWindow != nil
+                            ? {
+                                onOpenInNewWindow?(session)
+                            } : nil
                     )
                 }
             }
@@ -279,6 +285,8 @@ private struct SessionRow: View {
     let onConfirmRename: () -> Void
     let onCancelRename: () -> Void
     let onDelete: () -> Void
+    /// Optional callback for opening in a new window
+    var onOpenInNewWindow: (() -> Void)? = nil
 
     @Environment(\.theme) private var theme
     @State private var isHovered = false
@@ -359,6 +367,14 @@ private struct SessionRow: View {
                 }
             }
             .contextMenu {
+                if let openInNewWindow = onOpenInNewWindow {
+                    Button {
+                        openInNewWindow()
+                    } label: {
+                        Label("Open in New Window", systemImage: "macwindow.badge.plus")
+                    }
+                    Divider()
+                }
                 Button("Rename", action: onStartRename)
                 Button("Delete", role: .destructive, action: onDelete)
             }
