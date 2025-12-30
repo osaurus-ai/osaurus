@@ -154,98 +154,21 @@ struct PersonasView: View {
     // MARK: - Header
 
     private var headerView: some View {
-        VStack(spacing: 16) {
-            HStack {
-                VStack(alignment: .leading, spacing: 4) {
-                    HStack(spacing: 10) {
-                        Text("Personas")
-                            .font(.system(size: 28, weight: .bold, design: .rounded))
-                            .foregroundColor(theme.primaryText)
-
-                        // Count badge
-                        if !customPersonas.isEmpty {
-                            Text("\(customPersonas.count)")
-                                .font(.system(size: 12, weight: .semibold))
-                                .foregroundColor(theme.secondaryText)
-                                .padding(.horizontal, 8)
-                                .padding(.vertical, 3)
-                                .background(
-                                    Capsule()
-                                        .fill(theme.tertiaryBackground)
-                                )
-                        }
-                    }
-
-                    Text("Create custom assistant personalities with unique behaviors")
-                        .font(.system(size: 14))
-                        .foregroundColor(theme.secondaryText)
-                }
-
-                Spacer()
-
-                HStack(spacing: 12) {
-                    // Refresh button
-                    Button(action: { personaManager.refresh() }) {
-                        Image(systemName: "arrow.clockwise")
-                            .font(.system(size: 12, weight: .medium))
-                            .foregroundColor(theme.secondaryText)
-                            .frame(width: 36, height: 36)
-                            .background(
-                                RoundedRectangle(cornerRadius: 8)
-                                    .fill(theme.tertiaryBackground)
-                                    .overlay(
-                                        RoundedRectangle(cornerRadius: 8)
-                                            .stroke(theme.inputBorder, lineWidth: 1)
-                                    )
-                            )
-                    }
-                    .buttonStyle(PlainButtonStyle())
-                    .help("Refresh personas")
-
-                    Button(action: { showImportPicker = true }) {
-                        HStack(spacing: 6) {
-                            Image(systemName: "square.and.arrow.down")
-                                .font(.system(size: 12, weight: .medium))
-                            Text("Import")
-                                .font(.system(size: 13, weight: .medium))
-                        }
-                        .foregroundColor(theme.primaryText)
-                        .padding(.horizontal, 14)
-                        .padding(.vertical, 10)
-                        .background(
-                            RoundedRectangle(cornerRadius: 8)
-                                .fill(theme.tertiaryBackground)
-                                .overlay(
-                                    RoundedRectangle(cornerRadius: 8)
-                                        .stroke(theme.inputBorder, lineWidth: 1)
-                                )
-                        )
-                    }
-                    .buttonStyle(PlainButtonStyle())
-
-                    Button(action: { isCreating = true }) {
-                        HStack(spacing: 6) {
-                            Image(systemName: "plus")
-                                .font(.system(size: 12, weight: .semibold))
-                            Text("Create Persona")
-                                .font(.system(size: 13, weight: .medium))
-                        }
-                        .foregroundColor(.white)
-                        .padding(.horizontal, 16)
-                        .padding(.vertical, 10)
-                        .background(
-                            RoundedRectangle(cornerRadius: 8)
-                                .fill(theme.accentColor)
-                        )
-                    }
-                    .buttonStyle(PlainButtonStyle())
-                }
+        ManagerHeaderWithActions(
+            title: "Personas",
+            subtitle: "Create custom assistant personalities with unique behaviors",
+            count: customPersonas.isEmpty ? nil : customPersonas.count
+        ) {
+            HeaderIconButton("arrow.clockwise", help: "Refresh personas") {
+                personaManager.refresh()
+            }
+            HeaderSecondaryButton("Import", icon: "square.and.arrow.down") {
+                showImportPicker = true
+            }
+            HeaderPrimaryButton("Create Persona", icon: "plus") {
+                isCreating = true
             }
         }
-        .padding(.horizontal, 24)
-        .padding(.top, 24)
-        .padding(.bottom, 16)
-        .background(theme.secondaryBackground)
     }
 
     // MARK: - Success Toast

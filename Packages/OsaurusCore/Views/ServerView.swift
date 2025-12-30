@@ -61,25 +61,10 @@ struct ServerView: View {
     // MARK: - Header View
 
     private var headerView: some View {
-        VStack(spacing: 16) {
-            HStack {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Server")
-                        .font(.system(size: 28, weight: .bold, design: .rounded))
-                        .foregroundColor(theme.primaryText)
-
-                    Text("Developer tools and API reference")
-                        .font(.system(size: 14))
-                        .foregroundColor(theme.secondaryText)
-                }
-
-                Spacer()
-            }
-        }
-        .padding(.horizontal, 24)
-        .padding(.top, 24)
-        .padding(.bottom, 16)
-        .background(theme.secondaryBackground)
+        ManagerHeader(
+            title: "Server",
+            subtitle: "Developer tools and API reference"
+        )
     }
 
     // MARK: - Server Status Card

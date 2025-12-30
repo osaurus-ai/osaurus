@@ -420,68 +420,18 @@ struct ConfigurationView: View {
     // MARK: - Header View
 
     private var headerView: some View {
-        VStack(spacing: 16) {
-            HStack {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Settings")
-                        .font(.system(size: 28, weight: .bold, design: .rounded))
-                        .foregroundColor(theme.primaryText)
-
-                    Text("Configure your server and chat settings")
-                        .font(.system(size: 14))
-                        .foregroundColor(theme.secondaryText)
-                }
-
-                Spacer()
-
-                HStack(spacing: 12) {
-                    // Reset button
-                    Button(action: resetToDefaults) {
-                        HStack(spacing: 6) {
-                            Image(systemName: "arrow.counterclockwise")
-                                .font(.system(size: 12, weight: .medium))
-                            Text("Reset")
-                                .font(.system(size: 13, weight: .medium))
-                        }
-                        .foregroundColor(theme.secondaryText)
-                        .padding(.horizontal, 14)
-                        .padding(.vertical, 10)
-                        .background(
-                            RoundedRectangle(cornerRadius: 8)
-                                .fill(theme.tertiaryBackground)
-                                .overlay(
-                                    RoundedRectangle(cornerRadius: 8)
-                                        .stroke(theme.inputBorder, lineWidth: 1)
-                                )
-                        )
-                    }
-                    .buttonStyle(PlainButtonStyle())
-                    .help("Reset all settings to recommended defaults")
-
-                    // Save button
-                    Button(action: saveConfiguration) {
-                        HStack(spacing: 6) {
-                            Image(systemName: "checkmark")
-                                .font(.system(size: 12, weight: .semibold))
-                            Text("Save Changes")
-                                .font(.system(size: 13, weight: .medium))
-                        }
-                        .foregroundColor(.white)
-                        .padding(.horizontal, 16)
-                        .padding(.vertical, 10)
-                        .background(
-                            RoundedRectangle(cornerRadius: 8)
-                                .fill(theme.accentColor)
-                        )
-                    }
-                    .buttonStyle(PlainButtonStyle())
-                }
+        ManagerHeaderWithActions(
+            title: "Settings",
+            subtitle: "Configure your server and chat settings"
+        ) {
+            HeaderSecondaryButton("Reset", icon: "arrow.counterclockwise") {
+                resetToDefaults()
+            }
+            .help("Reset all settings to recommended defaults")
+            HeaderPrimaryButton("Save Changes", icon: "checkmark") {
+                saveConfiguration()
             }
         }
-        .padding(.horizontal, 24)
-        .padding(.top, 24)
-        .padding(.bottom, 16)
-        .background(theme.secondaryBackground)
     }
 
     // MARK: - Settings Text Field

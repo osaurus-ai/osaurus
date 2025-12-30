@@ -69,44 +69,16 @@ struct InsightsView: View {
     // MARK: - Header View
 
     private var headerView: some View {
-        VStack(spacing: 16) {
-            HStack {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Insights")
-                        .font(.system(size: 28, weight: .bold, design: .rounded))
-                        .foregroundColor(theme.primaryText)
-
-                    Text("Monitor API requests and performance")
-                        .font(.system(size: 14))
-                        .foregroundColor(theme.secondaryText)
-                }
-
-                Spacer()
-
-                // Clear button
-                Button(action: { showClearConfirmation = true }) {
-                    HStack(spacing: 5) {
-                        Image(systemName: "trash")
-                            .font(.system(size: 11, weight: .medium))
-                        Text("Clear")
-                            .font(.system(size: 12, weight: .medium))
-                    }
-                    .foregroundColor(insightsService.logs.isEmpty ? theme.tertiaryText : theme.secondaryText)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 7)
-                    .background(
-                        RoundedRectangle(cornerRadius: 6)
-                            .fill(theme.tertiaryBackground.opacity(0.5))
-                    )
-                }
-                .buttonStyle(PlainButtonStyle())
-                .disabled(insightsService.logs.isEmpty)
+        ManagerHeaderWithActions(
+            title: "Insights",
+            subtitle: "Monitor API requests and performance"
+        ) {
+            HeaderSecondaryButton("Clear", icon: "trash") {
+                showClearConfirmation = true
             }
+            .opacity(insightsService.logs.isEmpty ? 0.5 : 1)
+            .disabled(insightsService.logs.isEmpty)
         }
-        .padding(.horizontal, 24)
-        .padding(.top, 24)
-        .padding(.bottom, 16)
-        .background(theme.secondaryBackground)
     }
 
     // MARK: - Filter Bar

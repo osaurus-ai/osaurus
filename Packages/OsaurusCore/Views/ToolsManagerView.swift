@@ -33,7 +33,24 @@ struct ToolsManagerView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            contentView
+            // Header with tabs and search
+            headerBar
+                .opacity(hasAppeared ? 1 : 0)
+                .offset(y: hasAppeared ? 0 : -10)
+                .animation(.spring(response: 0.4, dampingFraction: 0.8), value: hasAppeared)
+
+            // Content area
+            Group {
+                switch selectedTab {
+                case .available:
+                    availableToolsTabContent
+                case .plugins:
+                    pluginsTabContent
+                case .remote:
+                    ProvidersView()
+                }
+            }
+            .opacity(hasAppeared ? 1 : 0)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(theme.primaryBackground)
@@ -65,128 +82,52 @@ struct ToolsManagerView: View {
         }
     }
 
-    private var contentView: some View {
-        VStack(spacing: 0) {
-            // Header with tabs and search
-            headerBar
-                .opacity(hasAppeared ? 1 : 0)
-                .offset(y: hasAppeared ? 0 : -10)
-                .animation(.spring(response: 0.4, dampingFraction: 0.8), value: hasAppeared)
-
-            // Content area
-            Group {
-                switch selectedTab {
-                case .available:
-                    availableToolsTabContent
-                case .plugins:
-                    pluginsTabContent
-                case .remote:
-                    ProvidersView()
-                }
-            }
-            .opacity(hasAppeared ? 1 : 0)
-        }
-    }
-
     // MARK: - Header Bar
 
     private var headerBar: some View {
-        VStack(spacing: 16) {
-            // Title row
-            HStack {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Tools")
-                        .font(.system(size: 28, weight: .bold, design: .rounded))
-                        .foregroundColor(theme.primaryText)
-
-                    Text("Manage and discover tools")
-                        .font(.system(size: 14))
-                        .foregroundColor(theme.secondaryText)
+        ManagerHeaderWithTabs(
+            title: "Tools",
+            subtitle: "Manage and discover tools"
+        ) {
+            // Refresh button - behavior varies by tab
+            if selectedTab == .available {
+                HeaderIconButton(
+                    "arrow.clockwise",
+                    isLoading: repoService.isRefreshing,
+                    help: repoService.isRefreshing ? "Refreshing..." : "Refresh repository"
+                ) {
+                    Task { await repoService.refresh() }
                 }
-
-                Spacer()
-            }
-
-            // Tabs + Actions row - simplified
-            HStack(spacing: 12) {
-                AnimatedTabSelector(
-                    selection: $selectedTab,
-                    counts: [
-                        .available: filteredEntries.count,
-                        .plugins: filteredPlugins.count,
-                        .remote: providerManager.configuration.providers.count,
-                    ],
-                    badges: repoService.updatesAvailableCount > 0
-                        ? [.available: repoService.updatesAvailableCount]
-                        : nil
-                )
-
-                Spacer()
-
-                // Contextual action button
-                if selectedTab == .available {
-                    Button(action: {
-                        Task { await repoService.refresh() }
-                    }) {
-                        Group {
-                            if repoService.isRefreshing {
-                                ProgressView()
-                                    .scaleEffect(0.6)
-                                    .frame(width: 16, height: 16)
-                            } else {
-                                Image(systemName: "arrow.clockwise")
-                                    .font(.system(size: 13, weight: .medium))
-                            }
-                        }
-                        .foregroundColor(theme.secondaryText)
-                        .frame(width: 32, height: 32)
-                        .background(
-                            RoundedRectangle(cornerRadius: 8)
-                                .fill(theme.tertiaryBackground)
-                        )
+            } else {
+                HeaderIconButton(
+                    "arrow.clockwise",
+                    isLoading: isRefreshingInstalled,
+                    help: isRefreshingInstalled ? "Refreshing..." : "Reload tools"
+                ) {
+                    Task {
+                        isRefreshingInstalled = true
+                        await repoService.refresh()
+                        PluginManager.shared.loadAll()
+                        reload()
+                        isRefreshingInstalled = false
                     }
-                    .buttonStyle(PlainButtonStyle())
-                    .disabled(repoService.isRefreshing)
-                    .help(repoService.isRefreshing ? "Refreshing..." : "Refresh repository")
-                } else {
-                    Button(action: {
-                        Task {
-                            isRefreshingInstalled = true
-                            await repoService.refresh()
-                            PluginManager.shared.loadAll()
-                            reload()
-                            isRefreshingInstalled = false
-                        }
-                    }) {
-                        Group {
-                            if isRefreshingInstalled {
-                                ProgressView()
-                                    .scaleEffect(0.6)
-                                    .frame(width: 16, height: 16)
-                            } else {
-                                Image(systemName: "arrow.clockwise")
-                                    .font(.system(size: 13, weight: .medium))
-                            }
-                        }
-                        .foregroundColor(theme.secondaryText)
-                        .frame(width: 32, height: 32)
-                        .background(
-                            RoundedRectangle(cornerRadius: 8)
-                                .fill(theme.tertiaryBackground)
-                        )
-                    }
-                    .buttonStyle(PlainButtonStyle())
-                    .disabled(isRefreshingInstalled)
-                    .help(isRefreshingInstalled ? "Refreshing..." : "Reload tools")
                 }
-
-                SearchField(text: $searchText, placeholder: "Search tools")
             }
+        } tabsRow: {
+            HeaderTabsRow(
+                selection: $selectedTab,
+                counts: [
+                    .available: filteredEntries.count,
+                    .plugins: filteredPlugins.count,
+                    .remote: providerManager.configuration.providers.count,
+                ],
+                badges: repoService.updatesAvailableCount > 0
+                    ? [.available: repoService.updatesAvailableCount]
+                    : nil,
+                searchText: $searchText,
+                searchPlaceholder: "Search tools"
+            )
         }
-        .padding(.horizontal, 24)
-        .padding(.top, 24)
-        .padding(.bottom, 16)
-        .background(theme.secondaryBackground)
     }
 
     // MARK: - Available Tools Tab (shows all tools from plugins and providers)
@@ -692,6 +633,7 @@ private struct RemoteProviderToolsCard: View {
             }
         }
         .padding(16)
+        .frame(maxWidth: .infinity)
         .background(cardBackground)
         .animation(.easeOut(duration: 0.15), value: isHovering)
         .onHover { hovering in
@@ -1212,6 +1154,7 @@ private struct InstalledPluginCard: View {
             }
         }
         .padding(16)
+        .frame(maxWidth: .infinity)
         .background(cardBackground)
         .animation(.easeOut(duration: 0.15), value: isHovering)
         .onHover { hovering in
@@ -1668,6 +1611,7 @@ private struct PluginRow: View {
             }
         }
         .padding(16)
+        .frame(maxWidth: .infinity)
         .background(cardBackground)
         .animation(.easeOut(duration: 0.15), value: isHovering)
         .onHover { hovering in
@@ -2092,6 +2036,7 @@ private struct ToolSettingsRow: View {
             }
         }
         .padding(16)
+        .frame(maxWidth: .infinity)
         .background(cardBackground)
         .animation(.easeOut(duration: 0.15), value: isHovering)
         .onHover { hovering in
