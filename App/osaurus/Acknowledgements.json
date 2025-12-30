@@ -1,0 +1,134 @@
+{
+  "generated": true,
+  "description": "Open source libraries used by Osaurus",
+  "acknowledgements": [
+    {
+      "name": "EventSource",
+      "identity": "eventsource",
+      "version": "1.3.0",
+      "repository": "https://github.com/mattt/EventSource",
+      "license": "MIT",
+      "licenseUrl": "https://github.com/mattt/EventSource/blob/main/LICENSE"
+    },
+    {
+      "name": "IkigaJSON",
+      "identity": "ikigajson",
+      "version": "2.3.2",
+      "repository": "https://github.com/orlandos-nl/IkigaJSON",
+      "license": "MIT",
+      "licenseUrl": "https://github.com/orlandos-nl/IkigaJSON/blob/master/LICENSE"
+    },
+    {
+      "name": "MLX Swift",
+      "identity": "mlx-swift",
+      "version": "0.29.1",
+      "repository": "https://github.com/ml-explore/mlx-swift",
+      "license": "MIT",
+      "licenseUrl": "https://github.com/ml-explore/mlx-swift/blob/main/LICENSE"
+    },
+    {
+      "name": "MLX Swift LM",
+      "identity": "mlx-swift-lm",
+      "version": "74f85d95",
+      "repository": "https://github.com/ml-explore/mlx-swift-lm",
+      "license": "MIT",
+      "licenseUrl": "https://github.com/ml-explore/mlx-swift-lm/blob/main/LICENSE"
+    },
+    {
+      "name": "Sparkle",
+      "identity": "sparkle",
+      "version": "2.8.1",
+      "repository": "https://github.com/sparkle-project/Sparkle",
+      "license": "MIT",
+      "licenseUrl": "https://github.com/sparkle-project/Sparkle/blob/2.x/LICENSE"
+    },
+    {
+      "name": "Swift Argument Parser",
+      "identity": "swift-argument-parser",
+      "version": "1.7.0",
+      "repository": "https://github.com/apple/swift-argument-parser.git",
+      "license": "Apache 2.0",
+      "licenseUrl": "https://github.com/apple/swift-argument-parser/blob/main/LICENSE.txt"
+    },
+    {
+      "name": "Swift Atomics",
+      "identity": "swift-atomics",
+      "version": "1.3.0",
+      "repository": "https://github.com/apple/swift-atomics.git",
+      "license": "Apache 2.0",
+      "licenseUrl": "https://github.com/apple/swift-atomics/blob/main/LICENSE.txt"
+    },
+    {
+      "name": "Swift Collections",
+      "identity": "swift-collections",
+      "version": "1.3.0",
+      "repository": "https://github.com/apple/swift-collections.git",
+      "license": "Apache 2.0",
+      "licenseUrl": "https://github.com/apple/swift-collections/blob/main/LICENSE.txt"
+    },
+    {
+      "name": "Swift Jinja",
+      "identity": "swift-jinja",
+      "version": "2.2.0",
+      "repository": "https://github.com/huggingface/swift-jinja.git",
+      "license": "Apache 2.0",
+      "licenseUrl": "https://github.com/huggingface/swift-jinja/blob/main/LICENSE"
+    },
+    {
+      "name": "Swift Log",
+      "identity": "swift-log",
+      "version": "1.6.4",
+      "repository": "https://github.com/apple/swift-log.git",
+      "license": "Apache 2.0",
+      "licenseUrl": "https://github.com/apple/swift-log/blob/main/LICENSE.txt"
+    },
+    {
+      "name": "SwiftNIO",
+      "identity": "swift-nio",
+      "version": "2.90.1",
+      "repository": "https://github.com/apple/swift-nio.git",
+      "license": "Apache 2.0",
+      "licenseUrl": "https://github.com/apple/swift-nio/blob/main/LICENSE.txt"
+    },
+    {
+      "name": "Swift Numerics",
+      "identity": "swift-numerics",
+      "version": "1.1.1",
+      "repository": "https://github.com/apple/swift-numerics",
+      "license": "Apache 2.0",
+      "licenseUrl": "https://github.com/apple/swift-numerics/blob/main/LICENSE"
+    },
+    {
+      "name": "MCP Swift SDK",
+      "identity": "swift-sdk",
+      "version": "0.10.2",
+      "repository": "https://github.com/modelcontextprotocol/swift-sdk.git",
+      "license": "MIT",
+      "licenseUrl": "https://github.com/modelcontextprotocol/swift-sdk/blob/main/LICENSE"
+    },
+    {
+      "name": "Swift System",
+      "identity": "swift-system",
+      "version": "1.6.3",
+      "repository": "https://github.com/apple/swift-system.git",
+      "license": "Apache 2.0",
+      "licenseUrl": "https://github.com/apple/swift-system/blob/main/LICENSE.txt"
+    },
+    {
+      "name": "Swift Transformers",
+      "identity": "swift-transformers",
+      "version": "1.1.2",
+      "repository": "https://github.com/huggingface/swift-transformers",
+      "license": "Apache 2.0",
+      "licenseUrl": "https://github.com/huggingface/swift-transformers/blob/main/LICENSE"
+    },
+    {
+      "name": "WhisperKit",
+      "identity": "whisperkit",
+      "version": "0.15.0",
+      "repository": "https://github.com/argmaxinc/WhisperKit",
+      "license": "MIT",
+      "licenseUrl": "https://github.com/argmaxinc/WhisperKit/blob/main/LICENSE"
+    }
+  ]
+}
