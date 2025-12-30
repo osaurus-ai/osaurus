@@ -513,16 +513,27 @@ enum ToolChoiceOption: Codable, Sendable {
 }
 
 /// Assistant tool call in responses
-struct ToolCall: Codable, Sendable {
-    let id: String
-    let type: String  // "function"
-    let function: ToolCallFunction
+public struct ToolCall: Codable, Sendable {
+    public let id: String
+    public let type: String  // "function"
+    public let function: ToolCallFunction
+
+    public init(id: String, type: String, function: ToolCallFunction) {
+        self.id = id
+        self.type = type
+        self.function = function
+    }
 }
 
-struct ToolCallFunction: Codable, Sendable {
-    let name: String
+public struct ToolCallFunction: Codable, Sendable {
+    public let name: String
     /// Arguments serialized as JSON string per OpenAI spec
-    let arguments: String
+    public let arguments: String
+
+    public init(name: String, arguments: String) {
+        self.name = name
+        self.arguments = arguments
+    }
 }
 
 // Streaming deltas for tool calls

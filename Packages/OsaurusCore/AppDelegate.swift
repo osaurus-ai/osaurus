@@ -235,20 +235,11 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
         Task { @MainActor in
             print("[AppDelegate] VAD detected persona: \(detection.personaName)")
 
-            // Activate the detected persona
-            PersonaManager.shared.setActivePersona(detection.personaId)
-
-            // Show chat overlay with the activated persona
-            print("[AppDelegate] Calling showChatOverlay...")
-            showChatOverlay()
+            // Create a new chat window for the detected persona (multi-window)
+            print("[AppDelegate] Creating new chat window for persona...")
+            showChatOverlay(forPersonaId: detection.personaId)
             print(
-                "[AppDelegate] showChatOverlay completed, chatWindow visible: \(WindowManager.shared.isVisible(.chat))"
-            )
-
-            // Request a new session for this persona (VAD should always start fresh)
-            NotificationCenter.default.post(
-                name: .vadStartNewSession,
-                object: detection.personaId
+                "[AppDelegate] showChatOverlay completed, window count: \(ChatWindowManager.shared.windowCount)"
             )
 
             // Start voice input in chat after a delay (let VAD stop and UI settle)
@@ -283,8 +274,12 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
     }
 
     public func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
-        if !flag {
-            Task { @MainActor in
+        Task { @MainActor in
+            if ChatWindowManager.shared.windowCount > 0 {
+                // Focus existing windows
+                ChatWindowManager.shared.focusAllWindows()
+            } else {
+                // No windows exist, create a new one
                 self.showChatOverlay()
             }
         }
@@ -658,47 +653,38 @@ extension AppDelegate {
 // MARK: - Chat Overlay Window
 extension AppDelegate {
     @MainActor private func toggleChatOverlay() {
-        if WindowManager.shared.window(for: .chat) == nil {
-            showChatOverlay()
-        } else {
-            WindowManager.shared.toggle(.chat)
-            if WindowManager.shared.isVisible(.chat) {
-                NotificationCenter.default.post(name: .chatOverlayActivated, object: nil)
-            }
+        // Use ChatWindowManager for multi-window support
+        ChatWindowManager.shared.toggleLastFocused()
+
+        if ChatWindowManager.shared.hasVisibleWindows {
+            NotificationCenter.default.post(name: .chatOverlayActivated, object: nil)
         }
     }
 
+    /// Show a new chat window (creates new window via ChatWindowManager)
     @MainActor func showChatOverlay() {
-        let windowManager = WindowManager.shared
+        print("[AppDelegate] Creating new chat window via ChatWindowManager...")
+        ChatWindowManager.shared.createWindow()
 
-        // Create window if it doesn't exist
-        if windowManager.window(for: .chat) == nil {
-            print("[AppDelegate] Creating new chat window via WindowManager...")
-            let themeManager = ThemeManager.shared
-
-            let window = windowManager.createWindow(config: .chat) {
-                ChatView()
-                    .environmentObject(self.serverController)
-                    .environment(\.theme, themeManager.currentTheme)
-            }
-
-            // Apply glass-style translucency to the panel
-            window.isOpaque = false
-            window.backgroundColor = .clear
-            window.hasShadow = true
-        }
-
-        // Show the window (WindowManager handles activation and focus)
-        windowManager.show(.chat)
-
-        print("[AppDelegate] Chat window shown, visible: \(windowManager.isVisible(.chat))")
+        print("[AppDelegate] Chat window shown, count: \(ChatWindowManager.shared.windowCount)")
         NotificationCenter.default.post(name: .chatOverlayActivated, object: nil)
     }
 
+    /// Show a new chat window for a specific persona (used by VAD)
+    @MainActor func showChatOverlay(forPersonaId personaId: UUID) {
+        print("[AppDelegate] Creating new chat window for persona \(personaId) via ChatWindowManager...")
+        ChatWindowManager.shared.createWindow(personaId: personaId)
+
+        print("[AppDelegate] Chat window shown for persona, count: \(ChatWindowManager.shared.windowCount)")
+        NotificationCenter.default.post(name: .chatOverlayActivated, object: nil)
+    }
+
+    /// Close the last focused chat overlay (legacy API for backward compatibility)
     @MainActor func closeChatOverlay() {
-        WindowManager.shared.hide(.chat)
+        if let lastId = ChatWindowManager.shared.lastFocusedWindowId {
+            ChatWindowManager.shared.closeWindow(id: lastId)
+        }
         print("[AppDelegate] Chat overlay closed via closeChatOverlay")
-        NotificationCenter.default.post(name: .chatViewClosed, object: nil)
     }
 }
 

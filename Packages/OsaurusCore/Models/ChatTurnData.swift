@@ -8,17 +8,17 @@
 import Foundation
 
 /// Codable version of ChatTurn for session persistence
-struct ChatTurnData: Codable, Identifiable, Sendable {
-    let id: UUID
-    let role: MessageRole
-    var content: String
-    var attachedImages: [Data]
-    var toolCalls: [ToolCall]?
-    var toolCallId: String?
-    var toolResults: [String: String]
-    var thinking: String
+public struct ChatTurnData: Codable, Identifiable, Sendable {
+    public let id: UUID
+    public let role: MessageRole
+    public var content: String
+    public var attachedImages: [Data]
+    public var toolCalls: [ToolCall]?
+    public var toolCallId: String?
+    public var toolResults: [String: String]
+    public var thinking: String
 
-    init(
+    public init(
         id: UUID = UUID(),
         role: MessageRole,
         content: String,
@@ -39,7 +39,7 @@ struct ChatTurnData: Codable, Identifiable, Sendable {
     }
 
     // Custom decoder for backward compatibility with sessions saved before thinking was added
-    init(from decoder: Decoder) throws {
+    public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         id = try container.decode(UUID.self, forKey: .id)
         role = try container.decode(MessageRole.self, forKey: .role)

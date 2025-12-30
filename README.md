@@ -47,6 +47,7 @@ Osaurus is an all-in-one LLM server for macOS. It combines:
 - **Remote MCP Providers** — Connect to external MCP servers and aggregate their tools
 - **Plugin System** — Extend functionality with community and custom tools
 - **Personas** — Create custom AI assistants with unique prompts, tools, and visual themes
+- **Multi-Window Chat** — Multiple independent chat windows with per-window personas
 - **Developer Tools** — Built-in insights and server explorer for debugging
 - **Voice Input** — Speech-to-text using WhisperKit with real-time on-device transcription
 - **VAD Mode** — Always-on listening with wake-word activation for hands-free persona access
@@ -66,6 +67,7 @@ Osaurus is an all-in-one LLM server for macOS. It combines:
 | **Personas**             | Custom AI assistants with unique prompts, tools, and themes     |
 | **Custom Themes**        | Create, import, and export themes with full color customization |
 | **Developer Tools**      | Request insights, API explorer, and live endpoint testing       |
+| **Multi-Window Chat**    | Multiple independent chat windows with per-window personas      |
 | **Menu Bar Chat**        | Chat overlay with session history, context tracking (`⌘;`)      |
 | **Voice Input**          | Speech-to-text with WhisperKit, real-time transcription         |
 | **VAD Mode**             | Always-on listening with wake-word persona activation           |
@@ -215,6 +217,26 @@ Use cases:
 - **Creative Writer** — Higher temperature, no tool access for pure generation
 
 Access via Management window (`⌘ Shift M`) → **Personas**.
+
+### Multi-Window Chat
+
+Work with multiple independent chat windows, each with its own persona and session.
+
+**Features:**
+
+- **Independent Windows** — Each window maintains its own persona, theme, and session
+- **File → New Window** — Open additional chat windows (`⌘ N`)
+- **Persona per Window** — Different personas in different windows simultaneously
+- **Open in New Window** — Right-click any session in history to open in a new window
+- **Pin to Top** — Keep specific windows floating above others
+- **Cascading Windows** — New windows are offset so they're always visible
+
+**Use Cases:**
+
+- Run multiple AI personas side-by-side (e.g., "Code Assistant" and "Creative Writer")
+- Compare responses from different personas
+- Keep reference conversations open while starting new ones
+- Organize work by project with dedicated windows
 
 ### Developer Tools
 

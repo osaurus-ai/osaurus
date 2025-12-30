@@ -938,11 +938,14 @@ final class ChatSession: ObservableObject {
 // MARK: - ChatView
 
 struct ChatView: View {
+    // MARK: - Window State
+
+    /// Per-window state container (isolates this window from shared singletons)
+    @StateObject private var windowState: ChatWindowState
+
+    // MARK: - Environment & State
+
     @EnvironmentObject var server: ServerController
-    @StateObject private var themeManager = ThemeManager.shared
-    @StateObject private var session = ChatSession()
-    @StateObject private var sessionsManager = ChatSessionsManager.shared
-    @StateObject private var personaManager = PersonaManager.shared
     @ObservedObject private var toolRegistry = ToolRegistry.shared
     @Environment(\.colorScheme) private var colorScheme
 
@@ -956,11 +959,52 @@ struct ChatView: View {
 
     private static let scrollThrottleInterval: TimeInterval = 0.15
 
-    private var theme: ThemeProtocol { themeManager.chatTheme }
+    /// Convenience accessor for the window's theme
+    private var theme: ThemeProtocol { windowState.theme }
 
-    /// Sessions filtered by the active persona
-    private var filteredSessions: [ChatSessionData] {
-        sessionsManager.sessions(for: personaManager.activePersonaId)
+    /// Convenience accessor for the window ID
+    private var windowId: UUID { windowState.windowId }
+
+    /// Observed session - needed to properly propagate @Published changes from ChatSession
+    @ObservedObject private var observedSession: ChatSession
+
+    /// Convenience accessor for the session (uses observedSession for proper SwiftUI updates)
+    private var session: ChatSession { observedSession }
+
+    // MARK: - Initializers
+
+    /// Multi-window initializer with window state
+    init(windowState: ChatWindowState) {
+        _windowState = StateObject(wrappedValue: windowState)
+        _observedSession = ObservedObject(wrappedValue: windowState.session)
+    }
+
+    /// Convenience initializer with window ID and optional initial state
+    init(
+        windowId: UUID,
+        initialPersonaId: UUID? = nil,
+        initialSessionData: ChatSessionData? = nil
+    ) {
+        let personaId = initialSessionData?.personaId ?? initialPersonaId ?? Persona.defaultId
+        let state = ChatWindowState(
+            windowId: windowId,
+            personaId: personaId,
+            sessionData: initialSessionData
+        )
+        _windowState = StateObject(wrappedValue: state)
+        _observedSession = ObservedObject(wrappedValue: state.session)
+    }
+
+    /// Legacy single-window initializer (for backward compatibility)
+    init() {
+        let windowId = UUID()
+        let state = ChatWindowState(
+            windowId: windowId,
+            personaId: Persona.defaultId,
+            sessionData: nil
+        )
+        _windowState = StateObject(wrappedValue: state)
+        _observedSession = ObservedObject(wrappedValue: state.session)
     }
 
     var body: some View {
@@ -973,47 +1017,33 @@ struct ChatView: View {
                 if showSidebar {
                     VStack(alignment: .leading, spacing: 0) {
                         ChatSessionSidebar(
-                            sessions: filteredSessions,
+                            sessions: windowState.filteredSessions,
                             currentSessionId: session.sessionId,
                             onSelect: { data in
-                                // Don't reload if already on this session
-                                guard data.id != session.sessionId else { return }
-                                // Save current session before switching
-                                if !session.turns.isEmpty {
-                                    session.save()
-                                }
-                                // Load fresh data from store
-                                if let freshData = ChatSessionStore.load(id: data.id) {
-                                    session.load(from: freshData)
-                                } else {
-                                    session.load(from: data)
-                                }
-                                // Apply theme based on the session's persona
-                                let sessionPersonaId = data.personaId ?? Persona.defaultId
-                                applyPersonaTheme(for: sessionPersonaId, animated: true)
-                                // Update active persona to match session (for filter context)
-                                personaManager.setActivePersona(sessionPersonaId)
+                                windowState.loadSession(data)
                                 isPinnedToBottom = true
                             },
                             onNewChat: {
-                                // Save current and create new for the active persona filter
-                                if !session.turns.isEmpty {
-                                    session.save()
-                                }
-                                let newPersonaId = personaManager.activePersonaId
-                                session.reset(for: newPersonaId)
-                                // Apply theme for the new session's persona
-                                applyPersonaTheme(for: newPersonaId, animated: true)
+                                windowState.startNewChat()
                             },
                             onDelete: { id in
-                                sessionsManager.delete(id: id)
+                                ChatSessionsManager.shared.delete(id: id)
                                 // If we deleted the current session, reset
                                 if session.sessionId == id {
                                     session.reset()
                                 }
+                                windowState.refreshSessions()
                             },
                             onRename: { id, title in
-                                sessionsManager.rename(id: id, title: title)
+                                ChatSessionsManager.shared.rename(id: id, title: title)
+                                windowState.refreshSessions()
+                            },
+                            onOpenInNewWindow: { sessionData in
+                                // Open session in a new window via ChatWindowManager
+                                ChatWindowManager.shared.createWindow(
+                                    personaId: sessionData.personaId,
+                                    sessionData: sessionData
+                                )
                             }
                         )
                     }
@@ -1040,8 +1070,8 @@ struct ChatView: View {
                                 ChatEmptyState(
                                     hasModels: true,
                                     selectedModel: session.selectedModel,
-                                    personas: personaManager.personas,
-                                    activePersonaId: personaManager.activePersonaId,
+                                    personas: windowState.personas,
+                                    activePersonaId: windowState.personaId,
                                     onOpenModelManager: {
                                         AppDelegate.shared?.showManagementWindow(initialTab: .models)
                                     },
@@ -1053,7 +1083,7 @@ struct ChatView: View {
                                         session.input = prompt
                                     },
                                     onSelectPersona: { newPersonaId in
-                                        switchToPersonaWithNewSession(to: newPersonaId)
+                                        windowState.switchPersona(to: newPersonaId)
                                     }
                                 )
                                 .transition(.opacity.combined(with: .scale(scale: 0.98)))
@@ -1065,32 +1095,30 @@ struct ChatView: View {
 
                             // Floating input card
                             FloatingInputCard(
-                                text: $session.input,
-                                selectedModel: $session.selectedModel,
-                                pendingImages: $session.pendingImages,
-                                enabledToolOverrides: $session.enabledToolOverrides,
-                                modelOptions: session.modelOptions,
+                                text: $observedSession.input,
+                                selectedModel: $observedSession.selectedModel,
+                                pendingImages: $observedSession.pendingImages,
+                                enabledToolOverrides: $observedSession.enabledToolOverrides,
+                                modelOptions: observedSession.modelOptions,
                                 availableTools: ToolRegistry.shared.listTools(
-                                    withOverrides: session.enabledToolOverrides
+                                    withOverrides: observedSession.enabledToolOverrides
                                 ),
-                                personaToolOverrides: personaManager.effectiveToolOverrides(
-                                    for: session.personaId ?? Persona.defaultId
-                                ),
-                                isStreaming: session.isStreaming,
-                                supportsImages: session.selectedModelSupportsImages,
-                                estimatedContextTokens: session.estimatedContextTokens,
-                                onSend: { session.sendCurrent() },
-                                onStop: { session.stop() },
+                                personaToolOverrides: windowState.effectiveToolOverrides,
+                                isStreaming: observedSession.isStreaming,
+                                supportsImages: observedSession.selectedModelSupportsImages,
+                                estimatedContextTokens: observedSession.estimatedContextTokens,
+                                onSend: { observedSession.sendCurrent() },
+                                onStop: { observedSession.stop() },
                                 focusTrigger: focusTrigger,
-                                personaId: session.personaId
+                                personaId: windowState.personaId
                             )
                         } else {
                             // No models empty state
                             ChatEmptyState(
                                 hasModels: false,
                                 selectedModel: nil,
-                                personas: personaManager.personas,
-                                activePersonaId: personaManager.activePersonaId,
+                                personas: windowState.personas,
+                                activePersonaId: windowState.personaId,
                                 onOpenModelManager: {
                                     AppDelegate.shared?.showManagementWindow(initialTab: .models)
                                 },
@@ -1100,7 +1128,7 @@ struct ChatView: View {
                                     } : nil,
                                 onQuickAction: { _ in },
                                 onSelectPersona: { newPersonaId in
-                                    switchToPersonaWithNewSession(to: newPersonaId)
+                                    windowState.switchPersona(to: newPersonaId)
                                 }
                             )
                         }
@@ -1125,58 +1153,37 @@ struct ChatView: View {
         .animation(theme.animationMedium(), value: session.turns.isEmpty)
         .animation(theme.animationQuick(), value: showSidebar)
         .background(WindowAccessor(window: $hostWindow))
-        .onExitCommand { AppDelegate.shared?.closeChatOverlay() }
+        .onExitCommand { closeWindow() }
         .onReceive(NotificationCenter.default.publisher(for: .chatOverlayActivated)) { _ in
             focusTrigger &+= 1
             isPinnedToBottom = true
-            session.refreshModelOptions()
-            sessionsManager.refresh()
-        }
-        .onReceive(NotificationCenter.default.publisher(for: .activePersonaChanged)) { _ in
-            // Persona filter was changed - just refresh the sessions list
-            // Do NOT change the theme - theme is based on the current session's persona
-            sessionsManager.refresh()
+            windowState.refreshAll()
         }
         .onReceive(NotificationCenter.default.publisher(for: .vadStartNewSession)) { notification in
             // VAD requested a new session for a specific persona
+            // Only handle if this is the targeted window
             if let personaId = notification.object as? UUID {
-                // Save current session if it has content
-                if !session.turns.isEmpty {
-                    session.save()
+                // Only switch if this window's persona matches the VAD request
+                if personaId == windowState.personaId {
+                    windowState.startNewChat()
                 }
-                // Reset to new session for the detected persona
-                session.reset(for: personaId)
-                sessionsManager.refresh()
-                // Apply the persona's theme
-                applyPersonaTheme(for: personaId, animated: false)
             }
         }
         .onAppear {
             setupKeyMonitor()
-            session.refreshModelOptions()
-            sessionsManager.refresh()
-            personaManager.refresh()
-            // Set initial persona for the session based on active persona filter
-            if session.personaId == nil {
-                session.personaId = personaManager.activePersonaId
+
+            // Register close callback with ChatWindowManager
+            ChatWindowManager.shared.setCloseCallback(for: windowState.windowId) { [weak windowState] in
+                windowState?.session.save()
             }
-            // Set up callback for session changes
-            session.onSessionChanged = { [weak sessionsManager] in
-                sessionsManager?.refresh()
-            }
-            // Apply the session's persona theme immediately (no animation to avoid flash)
-            // Theme is based on the session's persona, not the active filter
-            applyPersonaTheme(for: session.personaId ?? Persona.defaultId, animated: false)
         }
         .onDisappear {
             cleanupKeyMonitor()
-            // Restore global theme when ChatView closes
-            restoreGlobalTheme()
         }
         .onChange(of: session.turns.isEmpty) { _, newValue in
             resizeWindowForContent(isEmpty: newValue)
         }
-        .environment(\.theme, themeManager.chatTheme)
+        .environment(\.theme, windowState.theme)
         .tint(theme.accentColor)
     }
 
@@ -1328,43 +1335,48 @@ struct ChatView: View {
     // MARK: - Header
 
     private var chatHeader: some View {
-        HStack(spacing: 12) {
-            // Sidebar toggle
-            HeaderActionButton(
-                icon: showSidebar ? "sidebar.left" : "sidebar.left",
-                help: showSidebar ? "Hide sidebar" : "Show sidebar",
-                action: {
-                    withAnimation(theme.animationQuick()) {
-                        showSidebar.toggle()
+        ZStack {
+            // Full-size drag area behind content
+            WindowDragArea()
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+
+            // Header content on top
+            HStack(spacing: 12) {
+                // Sidebar toggle
+                HeaderActionButton(
+                    icon: showSidebar ? "sidebar.left" : "sidebar.left",
+                    help: showSidebar ? "Hide sidebar" : "Show sidebar",
+                    action: {
+                        withAnimation(theme.animationQuick()) {
+                            showSidebar.toggle()
+                        }
                     }
-                }
-            )
-
-            // Model indicator
-            if let model = session.selectedModel, session.modelOptions.count <= 1 {
-                HStack(spacing: 6) {
-                    Circle()
-                        .fill(Color.green)
-                        .frame(width: 6, height: 6)
-                    Text(displayModelName(model))
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundColor(theme.secondaryText)
-                }
-                .padding(.horizontal, 10)
-                .padding(.vertical, 5)
-                .background(
-                    Capsule()
-                        .fill(theme.secondaryBackground.opacity(0.6))
                 )
-            }
 
-            Spacer()
+                // Model indicator
+                if let model = session.selectedModel, session.modelOptions.count <= 1 {
+                    HStack(spacing: 6) {
+                        Circle()
+                            .fill(Color.green)
+                            .frame(width: 6, height: 6)
+                        Text(displayModelName(model))
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundColor(theme.secondaryText)
+                    }
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 5)
+                    .background(
+                        Capsule()
+                            .fill(theme.secondaryBackground.opacity(0.6))
+                    )
+                }
+
+                Spacer()
+            }
+            .padding(.leading, 20)
+            .padding(.trailing, 56)  // Leave room for close button
         }
-        .padding(.leading, 20)
-        .padding(.trailing, 56)  // Leave room for close button
-        .padding(.top, 16)
-        .padding(.bottom, 8)
-        .contentShape(Rectangle())
+        .frame(height: 72)  // Fixed height for consistent drag area
         .onHover { hovering in
             isHeaderHovered = hovering
         }
@@ -1381,19 +1393,19 @@ struct ChatView: View {
                     icon: "plus",
                     help: "New chat",
                     action: {
-                        // Save current session before creating new
-                        session.save()
-                        let newPersonaId = personaManager.activePersonaId
-                        session.reset(for: newPersonaId)
-                        // Apply theme for the new session's persona
-                        applyPersonaTheme(for: newPersonaId, animated: true)
+                        windowState.startNewChat()
                     }
                 )
             }
-            PinButton()
-            CloseButton(action: { AppDelegate.shared?.closeChatOverlay() })
+            PinButton(windowId: windowState.windowId)
+            CloseButton(action: closeWindow)
         }
         .padding(16)
+    }
+
+    /// Close this window via ChatWindowManager
+    private func closeWindow() {
+        ChatWindowManager.shared.closeWindow(id: windowState.windowId)
     }
 
     // MARK: - Message Thread
@@ -1401,7 +1413,7 @@ struct ChatView: View {
     private func messageThread(_ width: CGFloat) -> some View {
         let groups = session.visibleGroups
         // Use "Assistant" for default persona, otherwise use persona name
-        let displayName = personaManager.activePersona.isBuiltIn ? "Assistant" : personaManager.activePersona.name
+        let displayName = windowState.activePersona.isBuiltIn ? "Assistant" : windowState.activePersona.name
 
         return ScrollViewReader { proxy in
             ScrollView {
@@ -1498,51 +1510,6 @@ struct ChatView: View {
         NSPasteboard.general.setString(text, forType: .string)
     }
 
-    /// Change the persona filter (sidebar filter) without affecting the current session
-    /// The current session keeps its own persona and theme until a different session is loaded
-    private func changePersonaFilter(to newPersonaId: UUID) {
-        // Only change the filter - don't reset session or change theme
-        personaManager.setActivePersona(newPersonaId)
-        sessionsManager.refresh()
-        // Theme remains based on current session's persona, not the filter
-    }
-
-    /// Switch to a new persona and create a new session for it
-    /// Used when explicitly creating a new chat for a specific persona
-    private func switchToPersonaWithNewSession(to newPersonaId: UUID) {
-        // Save current session before switching
-        if !session.turns.isEmpty {
-            session.save()
-        }
-        // Switch to new persona
-        personaManager.setActivePersona(newPersonaId)
-        // Reset session for new persona
-        session.reset(for: newPersonaId)
-        sessionsManager.refresh()
-        // Apply the new persona's theme (if any) with animation
-        applyPersonaTheme(for: newPersonaId, animated: true)
-    }
-
-    /// Apply the persona's theme for ChatView only (does not affect management views)
-    /// - Parameter animated: Whether to animate the transition (false for initial load to avoid flash)
-    private func applyPersonaTheme(for personaId: UUID, animated: Bool = true) {
-        if let themeId = personaManager.themeId(for: personaId),
-            let personaTheme = themeManager.installedThemes.first(where: { $0.metadata.id == themeId })
-        {
-            // Apply the persona's custom theme to chat only
-            themeManager.applyChatTheme(personaTheme, animated: animated)
-        } else {
-            // No persona theme - sync chat theme back to the global theme
-            themeManager.syncChatTheme(animated: animated)
-        }
-    }
-
-    /// Restore the chat theme to match the global theme when ChatView closes
-    private func restoreGlobalTheme() {
-        // Sync chat theme back to the global theme (no animation when disappearing)
-        themeManager.syncChatTheme(animated: false)
-    }
-
     private func resizeWindowForContent(isEmpty: Bool) {
         guard let window = hostWindow else { return }
 
@@ -1570,6 +1537,9 @@ struct ChatView: View {
     private func setupKeyMonitor() {
         if keyMonitor != nil { return }
 
+        // Capture windowId for use in closure
+        let capturedWindowId = windowState.windowId
+
         // Monitor for KeyDown events in the local event loop
         keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
             // Esc key code is 53
@@ -1587,7 +1557,9 @@ struct ChatView: View {
                 } else {
                     // Stage 2: Close chat window
                     print("[ChatView] Esc pressed: Closing chat window")
-                    AppDelegate.shared?.closeChatOverlay()
+                    Task { @MainActor in
+                        ChatWindowManager.shared.closeWindow(id: capturedWindowId)
+                    }
                     return nil  // Swallow event
                 }
             }
@@ -1695,18 +1667,18 @@ private struct CloseButton: View {
 // MARK: - Pin Button
 
 private struct PinButton: View {
-    @ObservedObject private var windowManager = WindowManager.shared
+    /// Window ID for this window
+    let windowId: UUID
 
     @State private var isHovered = false
+    @State private var isPinned = false
     @Environment(\.theme) private var theme
-
-    private var isPinned: Bool {
-        windowManager.isPinned(.chat)
-    }
 
     var body: some View {
         Button {
-            windowManager.togglePinned(.chat)
+            isPinned.toggle()
+            // Set window level via ChatWindowManager
+            ChatWindowManager.shared.setWindowPinned(id: windowId, pinned: isPinned)
         } label: {
             Image(systemName: isPinned ? "pin.fill" : "pin")
                 .font(.system(size: 12, weight: .semibold))
@@ -1748,5 +1720,27 @@ struct WindowAccessor: NSViewRepresentable {
                 self.window = nsView.window
             }
         }
+    }
+}
+
+// MARK: - Window Drag Area
+
+/// An NSViewRepresentable that makes its area draggable to move the window
+struct WindowDragArea: NSViewRepresentable {
+    func makeNSView(context: Context) -> NSView {
+        let view = WindowDragView()
+        return view
+    }
+
+    func updateNSView(_ nsView: NSView, context: Context) {}
+}
+
+/// Custom NSView that enables window dragging
+private class WindowDragView: NSView {
+    override var mouseDownCanMoveWindow: Bool { true }
+
+    override func mouseDown(with event: NSEvent) {
+        // Start window drag
+        window?.performDrag(with: event)
     }
 }

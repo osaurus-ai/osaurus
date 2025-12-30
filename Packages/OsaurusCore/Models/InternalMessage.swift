@@ -8,7 +8,7 @@
 import Foundation
 
 /// Message role for chat interactions
-enum MessageRole: String, Codable, Sendable {
+public enum MessageRole: String, Codable, Sendable {
     case system
     case user
     case assistant
