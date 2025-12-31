@@ -21,6 +21,7 @@ struct VoiceInputSettingsTab: View {
     @State private var voiceInputEnabled: Bool = true
     @State private var pauseDuration: Double = 1.5
     @State private var confirmationDelay: Double = 2.0
+    @State private var silenceTimeoutSeconds: Double = 30.0
     @State private var languageHint: String = ""
     @State private var sensitivity: VoiceSensitivity = .medium
     @State private var hasLoadedSettings = false
@@ -34,6 +35,7 @@ struct VoiceInputSettingsTab: View {
         voiceInputEnabled = config.voiceInputEnabled
         pauseDuration = config.pauseDuration
         confirmationDelay = config.confirmationDelay
+        silenceTimeoutSeconds = config.silenceTimeoutSeconds
         languageHint = config.languageHint ?? ""
         sensitivity = config.sensitivity
     }
@@ -43,6 +45,7 @@ struct VoiceInputSettingsTab: View {
         config.voiceInputEnabled = voiceInputEnabled
         config.pauseDuration = pauseDuration
         config.confirmationDelay = confirmationDelay
+        config.silenceTimeoutSeconds = silenceTimeoutSeconds
         config.languageHint = languageHint.isEmpty ? nil : languageHint
         config.sensitivity = sensitivity
         WhisperConfigurationStore.save(config)
@@ -60,6 +63,21 @@ struct VoiceInputSettingsTab: View {
             return lang.displayName
         }
         return languageHint.uppercased()
+    }
+
+    /// Formatted display for silence timeout
+    private var silenceTimeoutFormatted: String {
+        if silenceTimeoutSeconds >= 60 {
+            let minutes = Int(silenceTimeoutSeconds) / 60
+            let seconds = Int(silenceTimeoutSeconds) % 60
+            if seconds == 0 {
+                return "\(minutes)m"
+            } else {
+                return "\(minutes)m \(seconds)s"
+            }
+        } else {
+            return "\(Int(silenceTimeoutSeconds))s"
+        }
     }
 
     var body: some View {
@@ -237,6 +255,34 @@ struct VoiceInputSettingsTab: View {
                     }
 
                 Text("Time to cancel before message is automatically sent")
+                    .font(.system(size: 11))
+                    .foregroundColor(theme.tertiaryText)
+            }
+
+            Divider()
+                .background(theme.cardBorder)
+
+            // Silence Timeout Slider
+            VStack(alignment: .leading, spacing: 8) {
+                HStack {
+                    Text("Silence Timeout")
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundColor(theme.primaryText)
+
+                    Spacer()
+
+                    Text(silenceTimeoutFormatted)
+                        .font(.system(size: 13, weight: .medium, design: .monospaced))
+                        .foregroundColor(theme.accentColor)
+                }
+
+                Slider(value: $silenceTimeoutSeconds, in: 10 ... 120, step: 5)
+                    .tint(theme.accentColor)
+                    .onChange(of: silenceTimeoutSeconds) { _, _ in
+                        saveSettings()
+                    }
+
+                Text("Auto-send or close voice input after this duration of silence")
                     .font(.system(size: 11))
                     .foregroundColor(theme.tertiaryText)
             }

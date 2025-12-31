@@ -26,16 +26,12 @@ public struct VADConfiguration: Codable, Equatable, Sendable {
     /// Custom wake phrase (e.g., "Hey Osaurus"). Empty = use persona names only
     public var customWakePhrase: String
 
-    /// Seconds of silence before auto-closing chat in continuous voice mode (0 = disabled)
-    public var silenceTimeoutSeconds: Double
-
     private enum CodingKeys: String, CodingKey {
         case vadModeEnabled
         case enabledPersonaIds
         case wakeWordSensitivity
         case autoStartVoiceInput
         case customWakePhrase
-        case silenceTimeoutSeconds
     }
 
     public init(from decoder: Decoder) throws {
@@ -56,9 +52,6 @@ public struct VADConfiguration: Codable, Equatable, Sendable {
         self.customWakePhrase =
             try container.decodeIfPresent(String.self, forKey: .customWakePhrase)
             ?? defaults.customWakePhrase
-        self.silenceTimeoutSeconds =
-            try container.decodeIfPresent(Double.self, forKey: .silenceTimeoutSeconds)
-            ?? defaults.silenceTimeoutSeconds
     }
 
     public init(
@@ -66,15 +59,13 @@ public struct VADConfiguration: Codable, Equatable, Sendable {
         enabledPersonaIds: [UUID] = [],
         wakeWordSensitivity: VoiceSensitivity = .medium,
         autoStartVoiceInput: Bool = true,
-        customWakePhrase: String = "",
-        silenceTimeoutSeconds: Double = 30.0
+        customWakePhrase: String = ""
     ) {
         self.vadModeEnabled = vadModeEnabled
         self.enabledPersonaIds = enabledPersonaIds
         self.wakeWordSensitivity = wakeWordSensitivity
         self.autoStartVoiceInput = autoStartVoiceInput
         self.customWakePhrase = customWakePhrase
-        self.silenceTimeoutSeconds = silenceTimeoutSeconds
     }
 
     /// Default configuration
@@ -84,8 +75,7 @@ public struct VADConfiguration: Codable, Equatable, Sendable {
             enabledPersonaIds: [],
             wakeWordSensitivity: .medium,
             autoStartVoiceInput: true,
-            customWakePhrase: "",
-            silenceTimeoutSeconds: 30.0  // 30 seconds of silence to auto-close
+            customWakePhrase: ""
         )
     }
 
