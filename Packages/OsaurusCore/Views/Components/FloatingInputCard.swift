@@ -783,12 +783,6 @@ struct FloatingInputCard: View {
                 .padding(.top, pendingImages.isEmpty ? 10 : 6)
                 .padding(.bottom, 6)
 
-            // Subtle separator
-            Rectangle()
-                .fill(theme.primaryBorder.opacity(0.15))
-                .frame(height: 1)
-                .padding(.horizontal, 12)
-
             // Bottom button bar with all action buttons
             buttonBar
                 .padding(.horizontal, 12)

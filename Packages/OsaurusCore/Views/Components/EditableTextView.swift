@@ -27,8 +27,11 @@ struct EditableTextView: NSViewRepresentable {
         scrollView.hasVerticalScroller = true
         scrollView.hasHorizontalScroller = false
         scrollView.autohidesScrollers = true
+        scrollView.focusRingType = .none
+        scrollView.borderType = .noBorder
 
         let textView = CustomNSTextView()
+        textView.focusRingType = .none
         textView.delegate = context.coordinator
         textView.maxHeight = maxHeight
 
