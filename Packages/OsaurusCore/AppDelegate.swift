@@ -657,6 +657,11 @@ extension AppDelegate {
         ChatWindowManager.shared.toggleLastFocused()
 
         if ChatWindowManager.shared.hasVisibleWindows {
+            // Pause VAD when chat window is shown (like when VAD detects a persona)
+            // This allows voice input to work without competing for the microphone
+            Task {
+                await VADService.shared.pause()
+            }
             NotificationCenter.default.post(name: .chatOverlayActivated, object: nil)
         }
     }
@@ -665,6 +670,12 @@ extension AppDelegate {
     @MainActor func showChatOverlay() {
         print("[AppDelegate] Creating new chat window via ChatWindowManager...")
         ChatWindowManager.shared.createWindow()
+
+        // Pause VAD when chat window is shown (like when VAD detects a persona)
+        // This allows voice input to work without competing for the microphone
+        Task {
+            await VADService.shared.pause()
+        }
 
         print("[AppDelegate] Chat window shown, count: \(ChatWindowManager.shared.windowCount)")
         NotificationCenter.default.post(name: .chatOverlayActivated, object: nil)
