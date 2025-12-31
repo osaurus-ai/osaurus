@@ -751,7 +751,11 @@ public final class WhisperKitService: ObservableObject {
                 useBackgroundDownloadSession: false
             )
 
-            let newWhisperKit = try await WhisperKit(config)
+            // Initialize in background to avoid blocking main thread
+            let newWhisperKit = try await Task.detached(priority: .userInitiated) {
+                return try await WhisperKit(config)
+            }.value
+
             whisperKit = newWhisperKit
 
             print("[WhisperKitService] Model loaded successfully")
@@ -1157,18 +1161,21 @@ public final class WhisperKitService: ObservableObject {
 
         // Stop engine and remove tap
         if let engine = audioEngine {
-            print("[WhisperKitService] Tearing down audio engine...")
-            if engine.isRunning {
-                engine.stop()
-            }
-            // Remove tap if it exists (safe to call even if not)
-            engine.inputNode.removeTap(onBus: 0)
-
-            // Release engine
+            // Release engine reference on main actor immediately
             audioEngine = nil
 
-            // Allow Core Audio to cleanup to prevent "thread already exists" errors
-            try? await Task.sleep(nanoseconds: 200_000_000)  // 200ms
+            // Perform cleanup in background to avoid blocking main thread
+            await Task.detached(priority: .userInitiated) {
+                print("[WhisperKitService] Tearing down audio engine...")
+                if engine.isRunning {
+                    engine.stop()
+                }
+                // Remove tap if it exists (safe to call even if not)
+                engine.inputNode.removeTap(onBus: 0)
+
+                // Allow Core Audio to cleanup to prevent "thread already exists" errors
+                try? await Task.sleep(nanoseconds: 200_000_000)  // 200ms
+            }.value
         }
     }
 
