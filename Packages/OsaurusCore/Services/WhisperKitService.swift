@@ -1480,17 +1480,12 @@ private actor TranscriptionWorker {
                 break
             }
 
-            // Sleep with error handling - don't break on CancellationError if buffer is still active
+            // Sleep with error handling
             do {
                 try await Task.sleep(nanoseconds: 100_000_000)  // Check every 100ms
             } catch is CancellationError {
-                // Only exit if buffer is inactive, otherwise continue
-                if !audioBuffer.isActive {
-                    print("[TranscriptionWorker] Sleep cancelled and buffer inactive, stopping")
-                    break
-                }
-                // Otherwise, continue the loop - spurious cancellation
-                continue
+                print("[TranscriptionWorker] Sleep cancelled, stopping")
+                break
             } catch {
                 print("[TranscriptionWorker] Sleep error: \(error)")
                 continue
