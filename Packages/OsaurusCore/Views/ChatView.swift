@@ -1475,8 +1475,13 @@ struct ChatView: View {
             }
             .onChange(of: session.turns.count) { _, _ in
                 if isPinnedToBottom {
-                    withAnimation(theme.animationQuick()) {
-                        proxy.scrollTo("BOTTOM", anchor: .bottom)
+                    // Defer scroll to next run loop to allow layout to complete
+                    // This is especially important for voice input where the overlay
+                    // is closing at the same time as the message is added
+                    DispatchQueue.main.async {
+                        withAnimation(theme.animationQuick()) {
+                            proxy.scrollTo("BOTTOM", anchor: .bottom)
+                        }
                     }
                 }
             }
