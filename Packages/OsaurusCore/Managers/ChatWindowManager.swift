@@ -186,6 +186,11 @@ public final class ChatWindowManager: NSObject, ObservableObject {
         windows[id] != nil
     }
 
+    /// Get the NSWindow for a specific window ID (for event matching)
+    public func getNSWindow(id: UUID) -> NSWindow? {
+        nsWindows[id]
+    }
+
     /// Get window info by ID
     public func windowInfo(id: UUID) -> ChatWindowInfo? {
         windows[id]

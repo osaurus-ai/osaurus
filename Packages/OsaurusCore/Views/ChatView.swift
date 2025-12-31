@@ -1570,6 +1570,13 @@ struct ChatView: View {
         keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
             // Esc key code is 53
             if event.keyCode == 53 {
+                // Only handle Esc if this event is for our specific window
+                // This prevents closed windows' monitors from handling events for other windows
+                guard let ourWindow = ChatWindowManager.shared.getNSWindow(id: capturedWindowId),
+                      event.window === ourWindow else {
+                    return event
+                }
+                
                 // Check if voice input is active
                 if WhisperKitService.shared.isRecording {
                     // Stage 1: Cancel voice input
