@@ -972,9 +972,6 @@ struct ChatView: View {
     @State private var keyMonitor: Any?
     @State private var isHeaderHovered: Bool = false
     @State private var showSidebar: Bool = false
-    @State private var lastScrollTime: Date = .distantPast
-
-    private static let scrollThrottleInterval: TimeInterval = 0.15
 
     /// Convenience accessor for the window's theme
     private var theme: ThemeProtocol { windowState.theme }
@@ -1478,17 +1475,28 @@ struct ChatView: View {
             }
             .onChange(of: session.turns.count) { _, _ in
                 if isPinnedToBottom {
-                    withAnimation(theme.animationQuick()) {
-                        proxy.scrollTo("BOTTOM", anchor: .bottom)
+                    // Defer scroll to next run loop to allow layout to complete
+                    // This is especially important for voice input where the overlay
+                    // is closing at the same time as the message is added
+                    DispatchQueue.main.async {
+                        withAnimation(theme.animationQuick()) {
+                            proxy.scrollTo("BOTTOM", anchor: .bottom)
+                        }
                     }
                 }
             }
             .onChange(of: session.scrollTick) { _, _ in
-                guard isPinnedToBottom,
-                    Date().timeIntervalSince(lastScrollTime) >= Self.scrollThrottleInterval
-                else { return }
-                lastScrollTime = .now
-                proxy.scrollTo("BOTTOM", anchor: .bottom)
+                guard isPinnedToBottom else { return }
+
+                // Defer scroll to next run loop to allow layout to complete
+                DispatchQueue.main.async {
+                    // Disable animation during streaming for performance
+                    var transaction = Transaction()
+                    transaction.disablesAnimations = true
+                    withTransaction(transaction) {
+                        proxy.scrollTo("BOTTOM", anchor: .bottom)
+                    }
+                }
             }
             .onReceive(NotificationCenter.default.publisher(for: .chatOverlayActivated)) { _ in
                 proxy.scrollTo("BOTTOM", anchor: .bottom)
