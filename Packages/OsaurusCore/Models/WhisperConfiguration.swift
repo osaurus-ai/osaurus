@@ -38,6 +38,9 @@ public struct WhisperConfiguration: Codable, Equatable, Sendable {
     /// Seconds to show confirmation before auto-sending (1-5 seconds)
     public var confirmationDelay: Double
 
+    /// Seconds of silence before closing voice input (0 = disabled, 10-120 seconds)
+    public var silenceTimeoutSeconds: Double
+
     private enum CodingKeys: String, CodingKey {
         case defaultModel
         case languageHint
@@ -48,6 +51,7 @@ public struct WhisperConfiguration: Codable, Equatable, Sendable {
         case voiceInputEnabled
         case pauseDuration
         case confirmationDelay
+        case silenceTimeoutSeconds
     }
 
     public init(from decoder: Decoder) throws {
@@ -73,6 +77,9 @@ public struct WhisperConfiguration: Codable, Equatable, Sendable {
         self.confirmationDelay =
             try container.decodeIfPresent(Double.self, forKey: .confirmationDelay)
             ?? defaults.confirmationDelay
+        self.silenceTimeoutSeconds =
+            try container.decodeIfPresent(Double.self, forKey: .silenceTimeoutSeconds)
+            ?? defaults.silenceTimeoutSeconds
     }
 
     public init(
@@ -84,7 +91,8 @@ public struct WhisperConfiguration: Codable, Equatable, Sendable {
         sensitivity: VoiceSensitivity = .medium,
         voiceInputEnabled: Bool = true,
         pauseDuration: Double = 1.5,
-        confirmationDelay: Double = 2.0
+        confirmationDelay: Double = 2.0,
+        silenceTimeoutSeconds: Double = 30.0
     ) {
         self.defaultModel = defaultModel
         self.languageHint = languageHint
@@ -95,6 +103,7 @@ public struct WhisperConfiguration: Codable, Equatable, Sendable {
         self.voiceInputEnabled = voiceInputEnabled
         self.pauseDuration = pauseDuration
         self.confirmationDelay = confirmationDelay
+        self.silenceTimeoutSeconds = silenceTimeoutSeconds
     }
 
     /// Default configuration
@@ -108,7 +117,8 @@ public struct WhisperConfiguration: Codable, Equatable, Sendable {
             sensitivity: .medium,
             voiceInputEnabled: true,
             pauseDuration: 1.5,
-            confirmationDelay: 2.0
+            confirmationDelay: 2.0,
+            silenceTimeoutSeconds: 30.0  // 30 seconds of silence to close voice input
         )
     }
 }

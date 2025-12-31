@@ -59,9 +59,6 @@ struct FloatingInputCard: View {
     /// Tracks last voice activity time for silence timeout
     @State private var lastVoiceActivityTime: Date = Date()
 
-    /// VAD configuration for silence timeout
-    @State private var vadConfig: VADConfiguration = .default
-
     /// Threshold for considering audio as "speech" vs "silence"
     private let speechThreshold: Float = 0.05
 
@@ -159,7 +156,7 @@ struct FloatingInputCard: View {
                     pauseDuration: voiceConfig.pauseDuration,
                     confirmationDelay: voiceConfig.confirmationDelay,
                     silenceDuration: currentSilenceDuration,
-                    silenceTimeoutDuration: isContinuousVoiceMode ? vadConfig.silenceTimeoutSeconds : 0,
+                    silenceTimeoutDuration: voiceConfig.silenceTimeoutSeconds,
                     isContinuousMode: isContinuousVoiceMode,
                     onCancel: { cancelVoiceInput() },
                     onSend: { message in sendVoiceMessage(message) },
@@ -198,7 +195,6 @@ struct FloatingInputCard: View {
             // Start voice input when triggered by VAD - enable continuous mode
             if isVoiceAvailable && !showVoiceOverlay {
                 isContinuousVoiceMode = true
-                vadConfig = VADConfigurationStore.load()
                 lastVoiceActivityTime = Date()
                 startVoiceInput()
             }
@@ -302,6 +298,7 @@ struct FloatingInputCard: View {
         voiceInputState = .recording
         showVoiceOverlay = true
         lastSpeechTime = Date()
+        lastVoiceActivityTime = Date()  // Reset silence timeout
         isPauseDetectionActive = voiceConfig.pauseDuration > 0
 
         Task {
@@ -352,11 +349,11 @@ struct FloatingInputCard: View {
     }
 
     private func checkForSilenceTimeout() {
-        // Only check when in continuous voice mode and it's the user's turn (not streaming)
-        guard isContinuousVoiceMode,
-            showVoiceOverlay,
+        // Apply to all voice input when overlay is showing and not streaming
+        guard showVoiceOverlay,
             !isStreaming,  // Only count timeout when it's user's turn
-            vadConfig.silenceTimeoutSeconds > 0
+            voiceConfig.silenceTimeoutSeconds > 0,
+            case .recording = voiceInputState  // Only check during active recording
         else { return }
 
         // Update last voice activity time if there's audio
@@ -372,22 +369,31 @@ struct FloatingInputCard: View {
         // Check if silence duration exceeds timeout
         let silenceDuration = Date().timeIntervalSince(lastVoiceActivityTime)
 
-        if silenceDuration >= vadConfig.silenceTimeoutSeconds {
-            // Timeout - close chat and stop voice input
-            print("[FloatingInputCard] Silence timeout (\(vadConfig.silenceTimeoutSeconds)s) - closing chat")
-            exitContinuousVoiceMode()
+        if silenceDuration >= voiceConfig.silenceTimeoutSeconds {
+            let hasContent =
+                !whisperService.currentTranscription.isEmpty || !whisperService.confirmedTranscription.isEmpty
+
+            if hasContent {
+                // Has transcription content - trigger auto-send countdown (same as pause detection)
+                print(
+                    "[FloatingInputCard] Silence timeout (\(voiceConfig.silenceTimeoutSeconds)s) with content - triggering auto-send"
+                )
+                isPauseDetectionActive = false
+                voiceInputState = .paused(remaining: voiceConfig.confirmationDelay)
+            } else {
+                // No transcription - just close voice input overlay
+                print(
+                    "[FloatingInputCard] Silence timeout (\(voiceConfig.silenceTimeoutSeconds)s) without content - closing voice input"
+                )
+                stopVoiceInputFromTimeout()
+            }
         }
     }
 
-    private func exitContinuousVoiceMode() {
-        print("[FloatingInputCard] Exiting continuous voice mode due to silence timeout")
+    private func stopVoiceInputFromTimeout() {
+        // Stop voice input but don't close the chat window
+        isPauseDetectionActive = false
 
-        // Reset state first
-        voiceInputState = .idle
-        showVoiceOverlay = false
-        isContinuousVoiceMode = false
-
-        // Stop voice input and then close chat (in order)
         Task {
             // Disable VAD background mode so stop actually works
             whisperService.isVADBackgroundMode = false
@@ -396,17 +402,14 @@ struct FloatingInputCard: View {
             _ = await whisperService.stopStreamingTranscription(force: true)
             whisperService.clearTranscription()
 
-            // Reset VAD state to idle so it can resume
+            // Reset VAD state to idle so it can resume when needed
             VADService.shared.resetToIdle()
-
-            // Small delay to ensure audio system settles
-            try? await Task.sleep(nanoseconds: 300_000_000)  // 300ms
-
-            // Close the chat window (this will trigger VAD resume)
-            await MainActor.run {
-                NotificationCenter.default.post(name: .closeChatOverlay, object: nil)
-            }
         }
+
+        voiceInputState = .idle
+        showVoiceOverlay = false
+        // Note: We don't set isContinuousVoiceMode = false here so continuous mode
+        // can restart voice input after AI responds if in continuous conversation
     }
 
     private func sendVoiceMessage(_ message: String) {

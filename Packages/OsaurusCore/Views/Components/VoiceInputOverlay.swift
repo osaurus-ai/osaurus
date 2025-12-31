@@ -115,8 +115,8 @@ public struct VoiceInputOverlay: View {
                         Spacer()
                     }
 
-                    // Silence timeout hint (VAD mode)
-                    if isContinuousMode && silenceTimeoutDuration > 0 {
+                    // Silence timeout hint (all voice input modes)
+                    if silenceTimeoutDuration > 0 {
                         SilenceTimeoutIndicator(
                             silenceDuration: silenceDuration,
                             timeoutDuration: silenceTimeoutDuration

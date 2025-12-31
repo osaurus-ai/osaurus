@@ -1573,10 +1573,11 @@ struct ChatView: View {
                 // Only handle Esc if this event is for our specific window
                 // This prevents closed windows' monitors from handling events for other windows
                 guard let ourWindow = ChatWindowManager.shared.getNSWindow(id: capturedWindowId),
-                      event.window === ourWindow else {
+                    event.window === ourWindow
+                else {
                     return event
                 }
-                
+
                 // Check if voice input is active
                 if WhisperKitService.shared.isRecording {
                     // Stage 1: Cancel voice input
