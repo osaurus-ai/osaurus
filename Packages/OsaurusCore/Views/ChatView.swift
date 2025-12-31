@@ -20,6 +20,7 @@ final class ChatSession: ObservableObject {
     @Published var modelOptions: [ModelOption] = []
     @Published var scrollTick: Int = 0
     @Published var hasAnyModel: Bool = false
+    @Published var isDiscoveringModels: Bool = true
     /// Per-session tool overrides. Empty = use global config, otherwise map of tool name -> enabled
     @Published var enabledToolOverrides: [String: Bool] = [:]
     /// The persona this session belongs to
@@ -44,21 +45,9 @@ final class ChatSession: ObservableObject {
     private var isLoadingModel: Bool = false
 
     init() {
-        // Build initial options list
-        modelOptions = Self.buildModelOptions()
-        hasAnyModel = !modelOptions.isEmpty
-
-        // Use configured default model if available, otherwise use first available
-        isLoadingModel = true
-        let chatConfig = ChatConfigurationStore.load()
-        if let defaultModel = chatConfig.defaultModel,
-            modelOptions.contains(where: { $0.id == defaultModel })
-        {
-            selectedModel = defaultModel
-        } else {
-            selectedModel = modelOptions.first?.id
-        }
-        isLoadingModel = false
+        // Start with empty options to avoid blocking initialization
+        modelOptions = []
+        hasAnyModel = false
 
         // Listen for remote provider model changes
         remoteModelsObserver = NotificationCenter.default.addObserver(
@@ -67,7 +56,7 @@ final class ChatSession: ObservableObject {
             queue: .main
         ) { [weak self] _ in
             Task { @MainActor in
-                self?.refreshModelOptions()
+                await self?.refreshModelOptions()
             }
         }
 
@@ -81,10 +70,15 @@ final class ChatSession: ObservableObject {
                 let pid = self.personaId ?? Persona.defaultId
                 PersonaManager.shared.updateDefaultModel(for: pid, model: model)
             }
+
+        // Load models asynchronously
+        Task {
+            await refreshModelOptions()
+        }
     }
 
     /// Build rich model options from all sources
-    private static func buildModelOptions() -> [ModelOption] {
+    private static func buildModelOptions() async -> [ModelOption] {
         var options: [ModelOption] = []
 
         // Add foundation model first if available
@@ -93,13 +87,20 @@ final class ChatSession: ObservableObject {
         }
 
         // Add local MLX models with rich metadata
-        let localModels = ModelManager.discoverLocalModels()
+        // Run in detached task to avoid blocking main thread with file I/O
+        let localModels = await Task.detached(priority: .userInitiated) {
+            ModelManager.discoverLocalModels()
+        }.value
+
         for model in localModels {
             options.append(.fromMLXModel(model))
         }
 
-        // Add remote provider models
-        let remoteModels = RemoteProviderManager.shared.cachedAvailableModels()
+        // Add remote provider models - must access on MainActor
+        let remoteModels = await MainActor.run {
+            RemoteProviderManager.shared.cachedAvailableModels()
+        }
+
         for providerInfo in remoteModels {
             for modelId in providerInfo.models {
                 options.append(
@@ -115,17 +116,33 @@ final class ChatSession: ObservableObject {
         return options
     }
 
-    func refreshModelOptions() {
-        let newOptions = Self.buildModelOptions()
+    func refreshModelOptions() async {
+        let newOptions = await Self.buildModelOptions()
 
         let prev = selectedModel
         let newSelected: String?
+
+        // If we have a previous selection that's still valid, keep it
         if let prev = prev, newOptions.contains(where: { $0.id == prev }) {
             newSelected = prev
         } else {
-            newSelected = newOptions.first?.id
+            // Otherwise try to load from config/persona defaults
+            let chatConfig = ChatConfigurationStore.load()
+
+            // Logic adapted from original init:
+            if let defaultModel = chatConfig.defaultModel,
+                newOptions.contains(where: { $0.id == defaultModel })
+            {
+                newSelected = defaultModel
+            } else {
+                newSelected = newOptions.first?.id
+            }
         }
+
         let newHasAnyModel = !newOptions.isEmpty
+
+        // Always update discovery state
+        isDiscoveringModels = false
 
         // Check if anything changed
         let optionIds = modelOptions.map { $0.id }
@@ -1064,7 +1081,14 @@ struct ChatView: View {
                         chatHeader
 
                         // Content area
-                        if session.hasAnyModel {
+                        if session.isDiscoveringModels && !session.hasAnyModel {
+                            VStack {
+                                Spacer()
+                                ProgressView()
+                                    .controlSize(.small)
+                                Spacer()
+                            }
+                        } else if session.hasAnyModel {
                             if session.turns.isEmpty {
                                 // Empty state
                                 ChatEmptyState(
@@ -1157,7 +1181,9 @@ struct ChatView: View {
         .onReceive(NotificationCenter.default.publisher(for: .chatOverlayActivated)) { _ in
             focusTrigger &+= 1
             isPinnedToBottom = true
-            windowState.refreshAll()
+            Task {
+                await windowState.refreshAll()
+            }
         }
         .onReceive(NotificationCenter.default.publisher(for: .vadStartNewSession)) { notification in
             // VAD requested a new session for a specific persona

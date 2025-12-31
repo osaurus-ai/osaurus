@@ -180,11 +180,11 @@ final class ChatWindowState: ObservableObject {
     }
 
     /// Refresh all cached data
-    func refreshAll() {
+    func refreshAll() async {
         refreshPersonas()
         refreshSessions()
         refreshTheme()
-        session.refreshModelOptions()
+        await session.refreshModelOptions()
     }
 
     // MARK: - Theme Helpers
@@ -249,7 +249,7 @@ final class ChatWindowState: ObservableObject {
             queue: .main
         ) { [weak self] _ in
             Task { @MainActor in
-                self?.refreshAll()
+                await self?.refreshAll()
             }
         }
         notificationObservers.append(activationObserver)
