@@ -239,11 +239,24 @@ struct FloatingInputCard: View {
         }
         .onChange(of: whisperService.isRecording) { _, isRecording in
             // Sync voice state with service
-            if isRecording && voiceInputState == .idle {
-                voiceInputState = .recording
-                lastSpeechTime = Date()
-                isPauseDetectionActive = voiceConfig.pauseDuration > 0
-            } else if !isRecording {
+            if isRecording {
+                // Recording has started - now we can set recording state and reset timers
+                // This ensures silence timeout doesn't run during audio engine startup
+                if voiceInputState == .idle && showVoiceOverlay {
+                    // Started from startVoiceInput() - set recording state now that audio is ready
+                    voiceInputState = .recording
+                    lastSpeechTime = Date()
+                    lastVoiceActivityTime = Date()  // Reset silence timeout NOW when recording actually starts
+                    isPauseDetectionActive = voiceConfig.pauseDuration > 0
+                    print("[FloatingInputCard] Recording confirmed - voice input ready")
+                } else if voiceInputState == .idle {
+                    // Started from external trigger (e.g., VAD)
+                    voiceInputState = .recording
+                    lastSpeechTime = Date()
+                    lastVoiceActivityTime = Date()
+                    isPauseDetectionActive = voiceConfig.pauseDuration > 0
+                }
+            } else {
                 // If service stopped recording (e.g. via Esc key in ChatView), sync local state
                 if voiceInputState != .idle {
                     voiceInputState = .idle
@@ -295,20 +308,39 @@ struct FloatingInputCard: View {
     private func startVoiceInput() {
         guard isVoiceAvailable else { return }
 
-        voiceInputState = .recording
+        // Don't start if already recording or starting
+        guard !whisperService.isRecording, voiceInputState == .idle else { return }
+
+        // Show overlay immediately for visual feedback, but don't set recording state yet.
+        // Recording state will be set when whisperService.isRecording becomes true.
         showVoiceOverlay = true
-        lastSpeechTime = Date()
-        lastVoiceActivityTime = Date()  // Reset silence timeout
-        isPauseDetectionActive = voiceConfig.pauseDuration > 0
 
         Task {
             do {
                 try await whisperService.startStreamingTranscription()
+
+                // Wait for isRecording to become true (with timeout)
+                let startTime = Date()
+                let maxWait: TimeInterval = 3.0  // Max 3 seconds to start
+
+                while !whisperService.isRecording {
+                    if Date().timeIntervalSince(startTime) > maxWait {
+                        print("[FloatingInputCard] Timeout waiting for recording to start")
+                        throw WhisperKitError.transcriptionFailed("Recording failed to start")
+                    }
+                    try await Task.sleep(nanoseconds: 50_000_000)  // 50ms
+                }
+
+                // Recording confirmed - now set the recording state
+                // lastVoiceActivityTime is reset in onChange(of: isRecording)
+
             } catch {
                 print("[FloatingInputCard] Failed to start voice input: \(error)")
-                voiceInputState = .idle
-                showVoiceOverlay = false
-                isPauseDetectionActive = false
+                await MainActor.run {
+                    voiceInputState = .idle
+                    showVoiceOverlay = false
+                    isPauseDetectionActive = false
+                }
             }
         }
     }
@@ -350,10 +382,13 @@ struct FloatingInputCard: View {
 
     private func checkForSilenceTimeout() {
         // Apply to all voice input when overlay is showing and not streaming
+        // CRITICAL: Also require whisperService.isRecording to be true - this prevents
+        // timeout from firing during audio engine startup before any audio is captured
         guard showVoiceOverlay,
             !isStreaming,  // Only count timeout when it's user's turn
             voiceConfig.silenceTimeoutSeconds > 0,
-            case .recording = voiceInputState  // Only check during active recording
+            case .recording = voiceInputState,  // Only check during active recording
+            whisperService.isRecording  // Audio must actually be capturing
         else { return }
 
         // Update last voice activity time if there's audio
