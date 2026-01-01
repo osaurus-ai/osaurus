@@ -325,6 +325,7 @@ struct TranscriptionModeSettingsTab: View {
             TextField("Transcribed text will appear here...", text: .constant(""))
                 .textFieldStyle(.plain)
                 .font(.system(size: 14))
+                .foregroundColor(theme.primaryText)
                 .padding(12)
                 .background(
                     RoundedRectangle(cornerRadius: 10)

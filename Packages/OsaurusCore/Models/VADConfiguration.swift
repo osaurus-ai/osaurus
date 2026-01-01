@@ -10,15 +10,13 @@
 import Foundation
 
 /// Configuration settings for VAD (Voice Activity Detection) mode
+/// Note: Sensitivity is now shared via WhisperConfiguration in the Audio Settings tab.
 public struct VADConfiguration: Codable, Equatable, Sendable {
     /// Whether VAD mode is enabled globally
     public var vadModeEnabled: Bool
 
     /// IDs of personas that respond to wake-word activation
     public var enabledPersonaIds: [UUID]
-
-    /// Sensitivity level for wake-word detection
-    public var wakeWordSensitivity: VoiceSensitivity
 
     /// Whether to automatically start voice input after persona activation
     public var autoStartVoiceInput: Bool
@@ -29,7 +27,7 @@ public struct VADConfiguration: Codable, Equatable, Sendable {
     private enum CodingKeys: String, CodingKey {
         case vadModeEnabled
         case enabledPersonaIds
-        case wakeWordSensitivity
+        case wakeWordSensitivity  // Kept for backward compatibility (ignored on decode)
         case autoStartVoiceInput
         case customWakePhrase
     }
@@ -43,9 +41,7 @@ public struct VADConfiguration: Codable, Equatable, Sendable {
         self.enabledPersonaIds =
             try container.decodeIfPresent([UUID].self, forKey: .enabledPersonaIds)
             ?? defaults.enabledPersonaIds
-        self.wakeWordSensitivity =
-            try container.decodeIfPresent(VoiceSensitivity.self, forKey: .wakeWordSensitivity)
-            ?? defaults.wakeWordSensitivity
+        // wakeWordSensitivity is ignored - now uses shared sensitivity from WhisperConfiguration
         self.autoStartVoiceInput =
             try container.decodeIfPresent(Bool.self, forKey: .autoStartVoiceInput)
             ?? defaults.autoStartVoiceInput
@@ -57,13 +53,11 @@ public struct VADConfiguration: Codable, Equatable, Sendable {
     public init(
         vadModeEnabled: Bool = false,
         enabledPersonaIds: [UUID] = [],
-        wakeWordSensitivity: VoiceSensitivity = .medium,
         autoStartVoiceInput: Bool = true,
         customWakePhrase: String = ""
     ) {
         self.vadModeEnabled = vadModeEnabled
         self.enabledPersonaIds = enabledPersonaIds
-        self.wakeWordSensitivity = wakeWordSensitivity
         self.autoStartVoiceInput = autoStartVoiceInput
         self.customWakePhrase = customWakePhrase
     }
@@ -73,10 +67,18 @@ public struct VADConfiguration: Codable, Equatable, Sendable {
         VADConfiguration(
             vadModeEnabled: false,
             enabledPersonaIds: [],
-            wakeWordSensitivity: .medium,
             autoStartVoiceInput: true,
             customWakePhrase: ""
         )
+    }
+
+    // Custom encoding to exclude the deprecated wakeWordSensitivity
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(vadModeEnabled, forKey: .vadModeEnabled)
+        try container.encode(enabledPersonaIds, forKey: .enabledPersonaIds)
+        try container.encode(autoStartVoiceInput, forKey: .autoStartVoiceInput)
+        try container.encode(customWakePhrase, forKey: .customWakePhrase)
     }
 
     // MARK: - Helpers

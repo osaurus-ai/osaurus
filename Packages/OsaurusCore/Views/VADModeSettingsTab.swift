@@ -20,7 +20,6 @@ struct VADModeSettingsTab: View {
     // Configuration state
     @State private var vadEnabled: Bool = false
     @State private var enabledPersonaIds: [UUID] = []
-    @State private var wakeWordSensitivity: VoiceSensitivity = .medium
     @State private var autoStartVoiceInput: Bool = true
     @State private var customWakePhrase: String = ""
     @State private var hasLoadedSettings = false
@@ -35,7 +34,6 @@ struct VADModeSettingsTab: View {
         let config = VADConfigurationStore.load()
         vadEnabled = config.vadModeEnabled
         enabledPersonaIds = config.enabledPersonaIds
-        wakeWordSensitivity = config.wakeWordSensitivity
         autoStartVoiceInput = config.autoStartVoiceInput
         customWakePhrase = config.customWakePhrase
     }
@@ -44,7 +42,6 @@ struct VADModeSettingsTab: View {
         let config = VADConfiguration(
             vadModeEnabled: vadEnabled,
             enabledPersonaIds: enabledPersonaIds,
-            wakeWordSensitivity: wakeWordSensitivity,
             autoStartVoiceInput: autoStartVoiceInput,
             customWakePhrase: customWakePhrase
         )
@@ -396,6 +393,7 @@ struct VADModeSettingsTab: View {
                 TextField("e.g., Hey Osaurus", text: $customWakePhrase)
                     .textFieldStyle(.plain)
                     .font(.system(size: 14))
+                    .foregroundColor(theme.primaryText)
                     .padding(12)
                     .background(
                         RoundedRectangle(cornerRadius: 10)
@@ -414,27 +412,20 @@ struct VADModeSettingsTab: View {
                     .foregroundColor(theme.tertiaryText)
             }
 
-            // Sensitivity
-            VStack(alignment: .leading, spacing: 8) {
-                Text("Detection Sensitivity")
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundColor(theme.secondaryText)
-
-                Picker("", selection: $wakeWordSensitivity) {
-                    ForEach(VoiceSensitivity.allCases, id: \.self) { level in
-                        Text(level.displayName).tag(level)
-                    }
-                }
-                .pickerStyle(.segmented)
-                .labelsHidden()
-                .onChange(of: wakeWordSensitivity) { _, _ in
-                    saveSettings()
-                }
-
-                Text(wakeWordSensitivity.description)
+            // Info about sensitivity
+            HStack(spacing: 8) {
+                Image(systemName: "info.circle")
+                    .font(.system(size: 12))
+                    .foregroundColor(theme.accentColor)
+                Text("Detection sensitivity is configured in the Audio tab")
                     .font(.system(size: 11))
-                    .foregroundColor(theme.tertiaryText)
+                    .foregroundColor(theme.secondaryText)
             }
+            .padding(12)
+            .background(
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(theme.accentColor.opacity(0.1))
+            )
         }
         .padding(20)
         .background(
