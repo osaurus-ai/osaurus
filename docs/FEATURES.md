@@ -29,6 +29,7 @@ Canonical reference for all Osaurus features, their status, and documentation.
 | Ollama API Compatibility         | Stable    | "API Endpoints"    | (in README)                   | Networking/HTTPHandler.swift                                                  |
 | Voice Input (WhisperKit)         | Stable    | "Voice Input"      | VOICE_INPUT.md                | Services/WhisperKitService.swift, Managers/WhisperModelManager.swift          |
 | VAD Mode                         | Stable    | "Voice Input"      | VOICE_INPUT.md                | Services/VADService.swift, Views/ContentView.swift (VAD controls)             |
+| Transcription Mode               | Stable    | "Voice Input"      | VOICE_INPUT.md                | Services/TranscriptionModeService.swift, Views/TranscriptionOverlayView.swift |
 | CLI                              | Stable    | "CLI Reference"    | (in README)                   | Packages/OsaurusCLI/                                                          |
 
 ---
@@ -72,6 +73,7 @@ Canonical reference for all Osaurus features, their status, and documentation.
 │  │   ├── WhisperKitService (Speech-to-text transcription)                │
 │  │   ├── WhisperModelManager (Whisper model downloads)                   │
 │  │   ├── VADService (Voice activity detection, wake-word)                │
+│  │   ├── TranscriptionModeService (Global dictation into any app)        │
 │  │   └── AudioInputManager (Microphone/system audio selection)           │
 │  └── Utilities                                                           │
 │      ├── InsightsService (Request logging)                               │
@@ -401,6 +403,53 @@ Canonical reference for all Osaurus features, their status, and documentation.
 3. On match, chat opens with the detected persona
 4. Voice input starts automatically (if enabled)
 5. After chat closes, VAD resumes listening
+
+---
+
+### Transcription Mode
+
+**Purpose:** Enable global speech-to-text dictation directly into any focused text field using accessibility APIs.
+
+**Components:**
+
+- `Services/TranscriptionModeService.swift` — Main orchestration service
+- `Services/KeyboardSimulationService.swift` — Simulates keyboard input via CGEventPost
+- `Services/TranscriptionOverlayWindowService.swift` — Floating overlay panel management
+- `Managers/TranscriptionHotKeyManager.swift` — Global hotkey registration
+- `Models/TranscriptionConfiguration.swift` — Configuration and persistence
+- `Views/TranscriptionOverlayView.swift` — Minimal floating UI
+- `Views/TranscriptionModeSettingsTab.swift` — Settings UI in Voice tab
+
+**Features:**
+
+- **Global Hotkey** — Configurable hotkey to trigger transcription from anywhere
+- **Live Typing** — Transcribed text is typed directly into the focused text field
+- **Accessibility Integration** — Uses macOS accessibility APIs (requires permission)
+- **Minimal Overlay** — Sleek floating UI shows recording status with waveform
+- **Esc to Cancel** — Press Escape or click Done to stop transcription
+- **Real-time Feedback** — Audio level visualization during recording
+
+**Configuration:**
+
+| Setting                    | Description                             |
+| -------------------------- | --------------------------------------- |
+| `transcriptionModeEnabled` | Master toggle for transcription mode    |
+| `hotkey`                   | Global hotkey to activate transcription |
+
+**Requirements:**
+
+- Microphone permission (for audio capture)
+- Accessibility permission (for keyboard simulation)
+- Whisper model downloaded
+
+**Workflow:**
+
+1. User presses the configured hotkey
+2. Overlay appears showing recording status
+3. WhisperKit transcribes speech in real-time
+4. Text is typed into the currently focused text field via accessibility APIs
+5. User presses Esc or clicks Done to stop
+6. Overlay disappears and transcription ends
 
 ---
 

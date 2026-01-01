@@ -51,6 +51,7 @@ Osaurus is an all-in-one LLM server for macOS. It combines:
 - **Developer Tools** — Built-in insights and server explorer for debugging
 - **Voice Input** — Speech-to-text using WhisperKit with real-time on-device transcription
 - **VAD Mode** — Always-on listening with wake-word activation for hands-free persona access
+- **Transcription Mode** — Global hotkey to transcribe speech directly into any app
 - **Apple Foundation Models** — Use the system model on macOS 26+ (Tahoe)
 
 ### Highlights
@@ -71,6 +72,7 @@ Osaurus is an all-in-one LLM server for macOS. It combines:
 | **Menu Bar Chat**        | Chat overlay with session history, context tracking (`⌘;`)      |
 | **Voice Input**          | Speech-to-text with WhisperKit, real-time transcription         |
 | **VAD Mode**             | Always-on listening with wake-word persona activation           |
+| **Transcription Mode**   | Global hotkey to dictate into any focused text field            |
 | **Model Manager**        | Download and manage models from Hugging Face                    |
 
 ---
@@ -281,12 +283,25 @@ Activate personas hands-free by saying their name or a custom wake phrase.
 - **Status indicators:** Blue pulsing dot on menu bar icon when listening, toggle button in popover
 - Configurable silence timeout and auto-close
 
+**Transcription Mode:**
+
+Dictate text directly into any application using a global hotkey.
+
+- **Global Hotkey** — Trigger transcription from anywhere on your Mac
+- **Live Typing** — Text is typed into the currently focused text field in real-time
+- **Accessibility Integration** — Uses macOS accessibility APIs to simulate keyboard input
+- **Minimal Overlay** — Sleek floating UI shows recording status
+- **Press Esc or Done** — Stop transcription when finished
+
+Perfect for dictating emails, documents, code comments, or any text input without switching apps.
+
 **Setup:**
 
 1. Open Management window (`⌘ Shift M`) → **Voice**
 2. Grant microphone permission
 3. Download a Whisper model
-4. Test your voice input
+4. For **Transcription Mode**: Grant accessibility permission and configure the hotkey in the Transcription tab
+5. Test your voice input
 
 See [Voice Input Guide](docs/VOICE_INPUT.md) for details.
 

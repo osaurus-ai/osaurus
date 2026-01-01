@@ -10,6 +10,7 @@ Voice features in Osaurus include:
 
 - **Voice Input in Chat** — Speak instead of type in the chat overlay
 - **VAD Mode** — Always-on listening with wake-word persona activation
+- **Transcription Mode** — Global hotkey to dictate into any focused text field
 - **Multiple Whisper Models** — From tiny (75 MB) to large (3 GB)
 - **Microphone & System Audio** — Transcribe your voice or computer audio
 
@@ -19,16 +20,18 @@ All transcription happens locally on your Mac using Apple's Neural Engine — no
 
 ## Setup
 
-### Guided Setup Wizard
+### Quick Setup
 
-The easiest way to set up voice features:
+Voice setup is streamlined into a single screen:
 
 1. Open Management window (`⌘ Shift M`)
 2. Navigate to **Voice** tab
-3. Follow the setup wizard:
-   - **Step 1:** Grant microphone permission
-   - **Step 2:** Download a Whisper model
-   - **Step 3:** Test your voice input
+3. Complete the requirements shown at the top:
+   - **Microphone** — Click "Grant" to enable microphone access
+   - **Whisper Model** — Click "Download" to get the recommended model
+4. Once both requirements show checkmarks, tap the microphone button to test
+
+The large centered microphone button becomes active when setup is complete. Tap it to start recording, tap again to stop. Your transcription appears below in real-time.
 
 ### Manual Setup
 
@@ -41,7 +44,7 @@ If you prefer manual configuration:
 
 2. **Download a Model**
 
-   - Open Voice settings in Management window
+   - Open Voice settings → Models tab
    - Browse available models and click Download
    - Wait for the download to complete
 
@@ -248,6 +251,94 @@ VAD status is shown in two places:
 
 ---
 
+## Transcription Mode
+
+Transcription Mode allows you to dictate text directly into any application using a global hotkey. Text is typed in real-time into whatever text field is currently focused.
+
+### Enabling Transcription Mode
+
+1. Open Management window (`⌘ Shift M`) → **Voice**
+2. Navigate to the **Transcription** tab
+3. Grant **Accessibility permission** (required for keyboard simulation)
+4. Toggle "Enable Transcription Mode" on
+5. Configure your preferred hotkey
+
+### How It Works
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                  Transcription Mode Flow                     │
+├─────────────────────────────────────────────────────────────┤
+│                                                              │
+│  1. Press the configured hotkey from any application        │
+│           ↓                                                  │
+│  2. Minimal overlay appears showing recording status        │
+│           ↓                                                  │
+│  3. WhisperKit transcribes your speech in real-time         │
+│           ↓                                                  │
+│  4. Text is typed into the focused text field               │
+│           ↓                                                  │
+│  5. Press Esc or click Done to stop transcription           │
+│                                                              │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### Requirements
+
+**Accessibility Permission** — Required to simulate keyboard input:
+
+1. Go to System Settings → Privacy & Security → Accessibility
+2. Enable access for Osaurus
+3. You may need to restart Osaurus after granting permission
+
+**Microphone Permission** — Required for audio capture (same as other voice features)
+
+**Whisper Model** — A model must be downloaded and selected
+
+### Transcription Settings
+
+| Setting                   | Description                        | Default |
+| ------------------------- | ---------------------------------- | ------- |
+| **Transcription Enabled** | Master toggle for the feature      | Off     |
+| **Activation Hotkey**     | Global hotkey to trigger dictation | None    |
+
+### Using Transcription Mode
+
+1. **Focus a text field** — Click into any text input in any application
+2. **Press the hotkey** — The transcription overlay appears
+3. **Speak naturally** — Your words are typed in real-time
+4. **Stop transcription** — Press `Esc` or click the Done button
+
+### The Overlay UI
+
+When transcription is active, a minimal floating overlay appears at the top of your screen:
+
+- **Status indicator** — Shows "Listening" with a pulsing accent color
+- **Waveform** — Animated bars respond to your audio level
+- **Done button** — Click to stop transcription
+- **Close button** — Cancel and discard (same as pressing Esc)
+
+The overlay stays on top of all windows and follows the app's theme.
+
+### Use Cases
+
+- **Email composition** — Dictate emails in Mail, Gmail, or any email client
+- **Document writing** — Speak paragraphs into Word, Pages, or Google Docs
+- **Code comments** — Quickly add comments in your IDE
+- **Chat messages** — Dictate in Slack, Discord, or Messages
+- **Form filling** — Speed through web forms and data entry
+- **Notes** — Capture ideas quickly in any notes app
+
+### Tips for Best Results
+
+1. **Speak clearly** — Enunciate words for better accuracy
+2. **Use a good microphone** — External mics often work better than built-in
+3. **Reduce background noise** — Find a quiet environment
+4. **Use a larger model** — Large V3 Turbo offers the best accuracy
+5. **Set the language hint** — If speaking a specific language, set it in Voice settings
+
+---
+
 ## Configuration Reference
 
 ### WhisperConfiguration
@@ -281,6 +372,17 @@ struct VADConfiguration {
     var autoStartVoiceInput: Bool      // Auto-record after activation
     var customWakePhrase: String       // e.g., "Hey Osaurus"
     var silenceTimeoutSeconds: Double  // Auto-close timeout
+}
+```
+
+### TranscriptionConfiguration
+
+Transcription mode settings:
+
+```swift
+struct TranscriptionConfiguration {
+    var transcriptionModeEnabled: Bool // Master toggle
+    var hotkey: Hotkey?                // Global activation hotkey
 }
 ```
 
@@ -395,6 +497,32 @@ Leave empty for auto-detection.
 4. **Try a smaller model first**
    - Test with Tiny or Small model
 
+### Transcription Mode Not Typing
+
+1. **Check accessibility permission**
+
+   - System Settings → Privacy & Security → Accessibility → Enable Osaurus
+   - You may need to restart Osaurus after granting permission
+
+2. **Verify the hotkey is set**
+
+   - Open Voice settings → Transcription tab
+   - Ensure a hotkey is configured
+
+3. **Make sure a text field is focused**
+
+   - Click into a text input before pressing the hotkey
+   - Some applications may block simulated keyboard input
+
+4. **Check the overlay appears**
+
+   - If the overlay doesn't appear, the hotkey may conflict with another app
+   - Try a different hotkey combination
+
+5. **Verify microphone and model**
+   - Same requirements as other voice features
+   - Test voice input in chat first to confirm setup
+
 ---
 
 ## Privacy
@@ -417,6 +545,7 @@ Your voice data never leaves your computer.
 - **Apple Silicon** (M1 or newer) for optimal performance
 - **Microphone access** permission
 - **Screen Recording** permission (for system audio only)
+- **Accessibility** permission (for Transcription Mode only)
 
 ---
 
