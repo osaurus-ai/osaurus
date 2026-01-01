@@ -19,6 +19,7 @@ enum ManagementTab: String, CaseIterable {
     case themes
     case insights
     case server
+    case permissions
     case settings
 
     var icon: String {
@@ -31,6 +32,7 @@ enum ManagementTab: String, CaseIterable {
         case .themes: return "paintpalette.fill"
         case .insights: return "chart.bar.doc.horizontal"
         case .server: return "server.rack"
+        case .permissions: return "lock.shield.fill"
         case .settings: return "gearshape.fill"
         }
     }
@@ -45,6 +47,7 @@ enum ManagementTab: String, CaseIterable {
         case .themes: return "Themes"
         case .insights: return "Insights"
         case .server: return "Server"
+        case .permissions: return "Permissions"
         case .settings: return "Settings"
         }
     }
@@ -114,6 +117,12 @@ struct ManagementView: View {
                 label: ManagementTab.voice.label
             ),
             SidebarItemData(
+                id: ManagementTab.themes.rawValue,
+                icon: ManagementTab.themes.icon,
+                label: ManagementTab.themes.label,
+                badge: customThemeCount > 0 ? customThemeCount : nil
+            ),
+            SidebarItemData(
                 id: ManagementTab.insights.rawValue,
                 icon: ManagementTab.insights.icon,
                 label: ManagementTab.insights.label
@@ -124,10 +133,9 @@ struct ManagementView: View {
                 label: ManagementTab.server.label
             ),
             SidebarItemData(
-                id: ManagementTab.themes.rawValue,
-                icon: ManagementTab.themes.icon,
-                label: ManagementTab.themes.label,
-                badge: customThemeCount > 0 ? customThemeCount : nil
+                id: ManagementTab.permissions.rawValue,
+                icon: ManagementTab.permissions.icon,
+                label: ManagementTab.permissions.label
             ),
             SidebarItemData(
                 id: ManagementTab.settings.rawValue,
@@ -164,6 +172,8 @@ struct ManagementView: View {
                     InsightsView()
                 case ManagementTab.server.rawValue:
                     ServerView()
+                case ManagementTab.permissions.rawValue:
+                    PermissionsView()
                 case ManagementTab.settings.rawValue:
                     ConfigurationView(searchText: $searchText)
                 default:
