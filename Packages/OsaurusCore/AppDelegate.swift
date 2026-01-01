@@ -141,6 +141,9 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
 
         // Setup VAD detection notification listener
         setupVADNotifications()
+
+        // Initialize Transcription Mode service
+        initializeTranscriptionModeService()
     }
 
     // MARK: - VAD Service
@@ -170,6 +173,14 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
                 }
             }
         }
+    }
+
+    // MARK: - Transcription Mode Service
+
+    private func initializeTranscriptionModeService() {
+        // Initialize the transcription mode service and register hotkey if enabled
+        TranscriptionModeService.shared.initialize()
+        print("[AppDelegate] Transcription mode service initialized")
     }
 
     private func setupVADNotifications() {

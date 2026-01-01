@@ -13,6 +13,7 @@ import SwiftUI
 enum VoiceTab: String, CaseIterable, AnimatedTabItem {
     case setup = "Setup"
     case voiceInput = "Voice Input"
+    case transcription = "Transcription"
     case vadMode = "VAD Mode"
     case models = "Models"
 
@@ -128,6 +129,8 @@ struct VoiceView: View {
                     VoiceSetupTab(onComplete: { selectedTab = .voiceInput })
                 case .voiceInput:
                     VoiceInputSettingsTab()
+                case .transcription:
+                    TranscriptionModeSettingsTab()
                 case .vadMode:
                     VADModeSettingsTab()
                 case .models:
