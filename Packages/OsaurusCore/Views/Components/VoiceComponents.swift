@@ -69,17 +69,12 @@ public struct WaveformView: View {
     // MARK: - Bars Style
 
     private var barsView: some View {
-        HStack(spacing: 3) {
-            ForEach(0 ..< barCount, id: \.self) { index in
-                WaveformBar(
-                    index: index,
-                    totalBars: barCount,
-                    level: level,
-                    color: effectiveColor,
-                    isActive: isActive
-                )
-            }
-        }
+        ModernWaveformBars(
+            level: level,
+            barCount: barCount,
+            color: effectiveColor,
+            isActive: isActive
+        )
     }
 
     // MARK: - Wave Style
@@ -105,7 +100,60 @@ public struct WaveformView: View {
     }
 }
 
-// MARK: - Waveform Bar
+// MARK: - Modern Waveform Bars
+
+/// Clean waveform visualization with smooth 60fps animation
+private struct ModernWaveformBars: View {
+    let level: Float
+    let barCount: Int
+    let color: Color
+    let isActive: Bool
+
+    /// Random phase offsets for each bar (initialized once)
+    @State private var phaseOffsets: [Double] = []
+
+    private let maxBarHeight: CGFloat = 20
+    private let barWidth: CGFloat = 3
+    private let barSpacing: CGFloat = 2
+
+    var body: some View {
+        TimelineView(.animation(minimumInterval: 1.0 / 60.0)) { timeline in
+            let timestamp = timeline.date.timeIntervalSinceReferenceDate
+
+            HStack(alignment: .center, spacing: barSpacing) {
+                ForEach(0 ..< barCount, id: \.self) { index in
+                    singleBar(index: index, timestamp: timestamp)
+                }
+            }
+        }
+        .onAppear {
+            if phaseOffsets.isEmpty {
+                phaseOffsets = (0 ..< barCount).map { _ in Double.random(in: 0 ... .pi * 2) }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func singleBar(index: Int, timestamp: TimeInterval) -> some View {
+        let phaseOffset = phaseOffsets.indices.contains(index) ? phaseOffsets[index] : 0
+        let normalizedLevel = CGFloat(max(0.15, min(1.0, level)))
+
+        // Simple smooth wave animation
+        let wave = sin(timestamp * 5 + phaseOffset)
+        let heightMultiplier: CGFloat =
+            isActive
+            ? normalizedLevel * (0.5 + 0.5 * CGFloat(wave + 1) / 2)
+            : 0.2
+
+        let barHeight: CGFloat = max(4, maxBarHeight * heightMultiplier)
+
+        RoundedRectangle(cornerRadius: barWidth / 2)
+            .fill(color.opacity(0.85 + 0.15 * Double(heightMultiplier)))
+            .frame(width: barWidth, height: barHeight)
+    }
+}
+
+// MARK: - Legacy Waveform Bar (kept for compatibility)
 
 private struct WaveformBar: View {
     let index: Int

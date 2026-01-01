@@ -24,6 +24,18 @@ public struct TranscriptionOverlayView: View {
 
     @Environment(\.theme) private var theme
 
+    // MARK: - State
+
+    /// Entrance animation state
+    @State private var isAppeared = false
+
+    /// Hover state for close button
+    @State private var isCloseHovered = false
+
+    // MARK: - Constants
+
+    private let cornerRadius: CGFloat = 14
+
     public init(
         audioLevel: Float,
         isActive: Bool,
@@ -37,8 +49,8 @@ public struct TranscriptionOverlayView: View {
     }
 
     public var body: some View {
-        HStack(spacing: 16) {
-            // Voice status indicator (uses existing component)
+        HStack(spacing: 14) {
+            // Voice status indicator
             VoiceStatusIndicator(
                 state: .listening,
                 showLabel: true,
@@ -46,60 +58,56 @@ public struct TranscriptionOverlayView: View {
             )
             .fixedSize()
 
-            // Waveform visualization (uses existing component)
+            // Waveform visualization - compact and centered
             WaveformView(
                 level: audioLevel,
                 style: .bars,
-                barCount: 10,
+                barCount: 8,
                 isActive: isActive
             )
-            .frame(width: 80, height: 24)
+            .frame(width: 56, height: 20)
 
-            Spacer(minLength: 16)
-
-            // Done button
+            // Close button
             Button(action: { onDone?() }) {
-                HStack(spacing: 6) {
-                    Image(systemName: "checkmark")
-                        .font(.system(size: 11, weight: .semibold))
-                    Text("Done")
-                        .font(.system(size: 13, weight: .semibold))
-                }
-                .foregroundColor(.white)
-                .padding(.horizontal, 16)
-                .padding(.vertical, 8)
-                .background(
-                    RoundedRectangle(cornerRadius: 8)
-                        .fill(theme.accentColor)
-                )
-            }
-            .buttonStyle(.plain)
-            .fixedSize()
-
-            // Cancel button
-            Button(action: { onCancel?() }) {
                 Image(systemName: "xmark")
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(theme.tertiaryText)
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundColor(isCloseHovered ? theme.primaryText : theme.tertiaryText)
                     .frame(width: 28, height: 28)
                     .background(
                         Circle()
-                            .fill(theme.tertiaryBackground)
+                            .fill(isCloseHovered ? theme.secondaryBackground : theme.tertiaryBackground)
                     )
             }
             .buttonStyle(.plain)
-            .help("Cancel (Esc)")
+            .scaleEffect(isCloseHovered ? 1.05 : 1.0)
+            .animation(.easeOut(duration: 0.15), value: isCloseHovered)
+            .onHover { hovering in
+                isCloseHovered = hovering
+            }
+            .help("Done (Esc)")
         }
-        .padding(.horizontal, 18)
-        .padding(.vertical, 14)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
         .fixedSize()
         .background(overlayBackground)
-        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .stroke(theme.cardBorder, lineWidth: 1)
-        )
+        .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
+        .overlay(borderOverlay)
         .shadow(color: theme.shadowColor.opacity(0.15), radius: 12, x: 0, y: 4)
+        // Subtle entrance animation
+        .scaleEffect(isAppeared ? 1.0 : 0.95)
+        .opacity(isAppeared ? 1.0 : 0)
+        .onAppear {
+            withAnimation(.easeOut(duration: 0.2)) {
+                isAppeared = true
+            }
+        }
+    }
+
+    // MARK: - Border Overlay
+
+    private var borderOverlay: some View {
+        RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+            .stroke(theme.cardBorder, lineWidth: 1)
     }
 
     // MARK: - Background
@@ -108,15 +116,15 @@ public struct TranscriptionOverlayView: View {
         ZStack {
             // Frosted glass effect
             if #available(macOS 13.0, *) {
-                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
                     .fill(.ultraThinMaterial)
             } else {
-                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
                     .fill(theme.cardBackground.opacity(0.95))
             }
 
-            // Tint overlay
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
+            // Tint overlay for depth
+            RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
                 .fill(theme.cardBackground.opacity(0.85))
         }
     }
