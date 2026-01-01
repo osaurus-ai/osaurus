@@ -392,7 +392,7 @@ private struct VoiceMainTab: View {
                     Button(action: requestMicrophonePermission) {
                         Text("Grant Access")
                             .font(.system(size: 13, weight: .medium))
-                            .foregroundColor(.white)
+                            .foregroundColor(theme.isDark ? theme.primaryBackground : .white)
                             .padding(.horizontal, 16)
                             .padding(.vertical, 8)
                             .background(
@@ -451,7 +451,7 @@ private struct VoiceMainTab: View {
                     Button(action: { /* Navigate to models tab handled by parent */  }) {
                         Text("Download Model")
                             .font(.system(size: 13, weight: .medium))
-                            .foregroundColor(.white)
+                            .foregroundColor(theme.isDark ? theme.primaryBackground : .white)
                             .padding(.horizontal, 16)
                             .padding(.vertical, 8)
                             .background(
@@ -682,7 +682,7 @@ private struct VoiceMainTab: View {
                 }) {
                     Text("Grant Access")
                         .font(.system(size: 12, weight: .medium))
-                        .foregroundColor(.white)
+                        .foregroundColor(theme.isDark ? theme.primaryBackground : .white)
                         .padding(.horizontal, 14)
                         .padding(.vertical, 8)
                         .background(
@@ -976,7 +976,11 @@ private struct VoiceMainTab: View {
                         Text(recordButtonText)
                             .font(.system(size: 14, weight: .medium))
                     }
-                    .foregroundColor(.white)
+                    .foregroundColor(
+                        whisperService.isRecording
+                            ? Color.white
+                            : (theme.isDark ? theme.primaryBackground : Color.white)
+                    )
                     .padding(.horizontal, 20)
                     .padding(.vertical, 12)
                     .background(
@@ -1164,7 +1168,9 @@ private struct AudioInputSourcePicker: View {
                             .font(.system(size: 12, weight: .medium))
                     }
                     .foregroundColor(
-                        isDisabled ? theme.tertiaryText : (isSelected ? .white : theme.primaryText)
+                        isDisabled
+                            ? theme.tertiaryText
+                            : (isSelected ? (theme.isDark ? theme.primaryBackground : .white) : theme.primaryText)
                     )
                     .padding(.horizontal, 14)
                     .padding(.vertical, 8)
@@ -1506,7 +1512,7 @@ private struct WhisperModelRow: View {
             Button(action: { modelManager.downloadModel(model) }) {
                 Text("Download")
                     .font(.system(size: 13, weight: .medium))
-                    .foregroundColor(.white)
+                    .foregroundColor(theme.isDark ? theme.primaryBackground : .white)
                     .padding(.horizontal, 16)
                     .padding(.vertical, 8)
                     .background(

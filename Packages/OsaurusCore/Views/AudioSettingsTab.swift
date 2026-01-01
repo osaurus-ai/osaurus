@@ -255,7 +255,11 @@ struct AudioSettingsTab: View {
                         }) {
                             Text(level.displayName)
                                 .font(.system(size: 13, weight: sensitivity == level ? .semibold : .medium))
-                                .foregroundColor(sensitivity == level ? .white : theme.primaryText)
+                                .foregroundColor(
+                                    sensitivity == level
+                                        ? (theme.isDark ? theme.primaryBackground : .white)
+                                        : theme.primaryText
+                                )
                                 .frame(maxWidth: .infinity)
                                 .padding(.vertical, 8)
                                 .contentShape(Rectangle())
@@ -370,7 +374,10 @@ struct AudioSettingsTab: View {
                                     .font(.system(size: 12, weight: .medium))
                             }
                             .foregroundColor(
-                                isDisabled ? theme.tertiaryText : (isSelected ? .white : theme.primaryText)
+                                isDisabled
+                                    ? theme.tertiaryText
+                                    : (isSelected
+                                        ? (theme.isDark ? theme.primaryBackground : .white) : theme.primaryText)
                             )
                             .padding(.horizontal, 14)
                             .padding(.vertical, 8)
@@ -569,7 +576,11 @@ struct AudioSettingsTab: View {
                         Text(isTestingVoice ? "Stop" : "Start Test")
                             .font(.system(size: 14, weight: .medium))
                     }
-                    .foregroundColor(.white)
+                    .foregroundColor(
+                        isTestingVoice
+                            ? Color.white
+                            : (theme.isDark ? theme.primaryBackground : Color.white)
+                    )
                     .padding(.horizontal, 20)
                     .padding(.vertical, 10)
                     .background(
@@ -659,7 +670,7 @@ private struct AudioSettingsPulseModifier: ViewModifier {
         static var previews: some View {
             AudioSettingsTab()
                 .frame(width: 700, height: 900)
-                .background(Color(hex: "1a1a1a"))
+                .themedBackground()
         }
     }
 #endif

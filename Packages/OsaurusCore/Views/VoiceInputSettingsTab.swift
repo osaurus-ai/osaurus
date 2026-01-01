@@ -84,10 +84,13 @@ struct VoiceInputSettingsTab: View {
             HStack(spacing: 12) {
                 ZStack {
                     RoundedRectangle(cornerRadius: 12)
-                        .fill(theme.accentColor.opacity(0.15))
-                    Image(systemName: "mic.fill")
+                        .fill(
+                            voiceInputEnabled
+                                ? theme.successColor.opacity(0.15) : theme.accentColor.opacity(0.15)
+                        )
+                    Image(systemName: voiceInputEnabled ? "mic.fill" : "mic")
                         .font(.system(size: 20, weight: .medium))
-                        .foregroundColor(theme.accentColor)
+                        .foregroundColor(voiceInputEnabled ? theme.successColor : theme.accentColor)
                 }
                 .frame(width: 48, height: 48)
 
@@ -96,15 +99,19 @@ struct VoiceInputSettingsTab: View {
                         .font(.system(size: 15, weight: .semibold))
                         .foregroundColor(theme.primaryText)
 
-                    Text("Enable microphone button in the chat input area")
-                        .font(.system(size: 12))
-                        .foregroundColor(theme.secondaryText)
+                    Text(
+                        voiceInputEnabled
+                            ? "Microphone button enabled in chat input"
+                            : "Enable microphone button in the chat input area"
+                    )
+                    .font(.system(size: 12))
+                    .foregroundColor(theme.secondaryText)
                 }
 
                 Spacer()
 
                 Toggle("", isOn: $voiceInputEnabled)
-                    .toggleStyle(SwitchToggleStyle(tint: theme.accentColor))
+                    .toggleStyle(SwitchToggleStyle(tint: theme.successColor))
                     .labelsHidden()
                     .onChange(of: voiceInputEnabled) { _, _ in
                         saveSettings()
@@ -133,7 +140,10 @@ struct VoiceInputSettingsTab: View {
                 .fill(theme.cardBackground)
                 .overlay(
                     RoundedRectangle(cornerRadius: 16)
-                        .stroke(theme.cardBorder, lineWidth: 1)
+                        .stroke(
+                            voiceInputEnabled ? theme.successColor.opacity(0.3) : theme.cardBorder,
+                            lineWidth: 1
+                        )
                 )
         )
     }
@@ -273,7 +283,7 @@ struct VoiceInputSettingsTab: View {
         static var previews: some View {
             VoiceInputSettingsTab()
                 .frame(width: 700, height: 800)
-                .background(Color(hex: "1a1a1a"))
+                .themedBackground()
         }
     }
 #endif

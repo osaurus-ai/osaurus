@@ -589,7 +589,11 @@ struct VADModeSettingsTab: View {
                         Text(isTestingVAD ? "Stop Test" : "Start Test")
                             .font(.system(size: 14, weight: .medium))
                     }
-                    .foregroundColor(.white)
+                    .foregroundColor(
+                        isTestingVAD
+                            ? Color.white
+                            : (theme.isDark ? theme.primaryBackground : Color.white)
+                    )
                     .padding(.horizontal, 20)
                     .padding(.vertical, 10)
                     .background(
@@ -847,7 +851,7 @@ private struct ToggleSettingRow: View {
         static var previews: some View {
             VADModeSettingsTab()
                 .frame(width: 700, height: 800)
-                .background(Color(hex: "1a1a1a"))
+                .themedBackground()
         }
     }
 #endif
