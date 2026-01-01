@@ -69,7 +69,7 @@ public struct WaveformView: View {
     // MARK: - Bars Style
 
     private var barsView: some View {
-        ModernWaveformBars(
+        WaveformBars(
             level: level,
             barCount: barCount,
             color: effectiveColor,
@@ -100,16 +100,15 @@ public struct WaveformView: View {
     }
 }
 
-// MARK: - Modern Waveform Bars
+// MARK: - Waveform Bars
 
-/// Clean waveform visualization with smooth 60fps animation
-private struct ModernWaveformBars: View {
+/// Waveform visualization with smooth 60fps animation
+private struct WaveformBars: View {
     let level: Float
     let barCount: Int
     let color: Color
     let isActive: Bool
 
-    /// Random phase offsets for each bar (initialized once)
     @State private var phaseOffsets: [Double] = []
 
     private let maxBarHeight: CGFloat = 20
@@ -138,7 +137,6 @@ private struct ModernWaveformBars: View {
         let phaseOffset = phaseOffsets.indices.contains(index) ? phaseOffsets[index] : 0
         let normalizedLevel = CGFloat(max(0.15, min(1.0, level)))
 
-        // Simple smooth wave animation
         let wave = sin(timestamp * 5 + phaseOffset)
         let heightMultiplier: CGFloat =
             isActive
@@ -150,40 +148,6 @@ private struct ModernWaveformBars: View {
         RoundedRectangle(cornerRadius: barWidth / 2)
             .fill(color.opacity(0.85 + 0.15 * Double(heightMultiplier)))
             .frame(width: barWidth, height: barHeight)
-    }
-}
-
-// MARK: - Legacy Waveform Bar (kept for compatibility)
-
-private struct WaveformBar: View {
-    let index: Int
-    let totalBars: Int
-    let level: Float
-    let color: Color
-    let isActive: Bool
-
-    @State private var randomOffset: Double = 0
-
-    var body: some View {
-        let normalizedLevel = CGFloat(max(0.15, min(1.0, level)))
-        let phaseOffset = Double(index) / Double(totalBars) * .pi * 2
-        let animatedHeight =
-            isActive
-            ? normalizedLevel * (0.5 + 0.5 * sin(Date().timeIntervalSince1970 * 8 + phaseOffset + randomOffset)) : 0.15
-
-        RoundedRectangle(cornerRadius: 2)
-            .fill(
-                LinearGradient(
-                    colors: [color, color.opacity(0.6)],
-                    startPoint: .top,
-                    endPoint: .bottom
-                )
-            )
-            .frame(width: 4, height: 24 * animatedHeight)
-            .animation(.easeInOut(duration: 0.1), value: level)
-            .onAppear {
-                randomOffset = Double.random(in: 0 ... 2)
-            }
     }
 }
 
