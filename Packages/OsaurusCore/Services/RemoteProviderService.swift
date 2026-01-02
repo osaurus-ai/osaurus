@@ -927,15 +927,36 @@ private struct RemoteChatRequest: Encodable {
         var systemContent: AnthropicSystemContent? = nil
         var anthropicMessages: [AnthropicMessage] = []
 
+        // Collect consecutive tool_result blocks to batch them into a single user message
+        // Anthropic requires all tool_results for a tool_use to be in the immediately following user message
+        var pendingToolResults: [AnthropicContentBlock] = []
+
+        // Helper to flush pending tool results into a single user message
+        func flushToolResults() {
+            if !pendingToolResults.isEmpty {
+                anthropicMessages.append(
+                    AnthropicMessage(
+                        role: "user",
+                        content: .blocks(pendingToolResults)
+                    )
+                )
+                pendingToolResults = []
+            }
+        }
+
         for msg in messages {
             switch msg.role {
             case "system":
+                // Flush any pending tool results before system message
+                flushToolResults()
                 // Collect system messages
                 if let content = msg.content {
                     systemContent = .text(content)
                 }
 
             case "user":
+                // Flush any pending tool results before user message
+                flushToolResults()
                 // Convert user messages
                 if let content = msg.content {
                     anthropicMessages.append(
@@ -947,6 +968,8 @@ private struct RemoteChatRequest: Encodable {
                 }
 
             case "assistant":
+                // Flush any pending tool results before assistant message
+                flushToolResults()
                 // Convert assistant messages, including tool calls
                 var blocks: [AnthropicContentBlock] = []
 
@@ -982,29 +1005,30 @@ private struct RemoteChatRequest: Encodable {
                 }
 
             case "tool":
-                // Convert tool results - Anthropic expects these as user messages with tool_result blocks
+                // Collect tool results - they will be batched into a single user message
+                // when we encounter a non-tool message or reach the end
                 if let toolCallId = msg.tool_call_id, let content = msg.content {
-                    anthropicMessages.append(
-                        AnthropicMessage(
-                            role: "user",
-                            content: .blocks([
-                                .toolResult(
-                                    AnthropicToolResultBlock(
-                                        type: "tool_result",
-                                        tool_use_id: toolCallId,
-                                        content: .text(content),
-                                        is_error: nil
-                                    )
-                                )
-                            ])
+                    pendingToolResults.append(
+                        .toolResult(
+                            AnthropicToolResultBlock(
+                                type: "tool_result",
+                                tool_use_id: toolCallId,
+                                content: .text(content),
+                                is_error: nil
+                            )
                         )
                     )
                 }
 
             default:
+                // Flush any pending tool results before unknown message type
+                flushToolResults()
                 break
             }
         }
+
+        // Flush any remaining tool results at the end
+        flushToolResults()
 
         // Convert tools
         var anthropicTools: [AnthropicTool]? = nil
