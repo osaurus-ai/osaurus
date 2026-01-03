@@ -979,19 +979,23 @@ private struct RemoteChatRequest: Encodable {
 
                 if let toolCalls = msg.tool_calls {
                     for toolCall in toolCalls {
+                        var input: [String: AnyCodableValue] = [:]
+
                         if let argsData = toolCall.function.arguments.data(using: .utf8),
                             let argsDict = try? JSONSerialization.jsonObject(with: argsData) as? [String: Any]
                         {
-                            blocks.append(
-                                .toolUse(
-                                    AnthropicToolUseBlock(
-                                        id: toolCall.id,
-                                        name: toolCall.function.name,
-                                        input: argsDict.mapValues { AnyCodableValue($0) }
-                                    )
+                            input = argsDict.mapValues { AnyCodableValue($0) }
+                        }
+
+                        blocks.append(
+                            .toolUse(
+                                AnthropicToolUseBlock(
+                                    id: toolCall.id,
+                                    name: toolCall.function.name,
+                                    input: input
                                 )
                             )
-                        }
+                        )
                     }
                 }
 
