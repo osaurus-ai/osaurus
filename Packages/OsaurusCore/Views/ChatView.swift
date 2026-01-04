@@ -1459,12 +1459,15 @@ struct ChatView: View {
                         .padding(.bottom, 16)
                     }
 
-                    // Bottom anchor
+                    // Bottom anchor - minimal height
                     Color.clear
                         .frame(height: 1)
                         .id("BOTTOM")
                         .onAppear { isPinnedToBottom = true }
-                        .onDisappear { isPinnedToBottom = false }
+                        .onDisappear {
+                            // Only unpin if we're not actively scrolling to bottom programmatically
+                            isPinnedToBottom = false
+                        }
                 }
                 .padding(.vertical, 8)
             }
@@ -1491,6 +1494,18 @@ struct ChatView: View {
                 // Defer scroll to next run loop to allow layout to complete
                 DispatchQueue.main.async {
                     // Disable animation during streaming for performance
+                    var transaction = Transaction()
+                    transaction.disablesAnimations = true
+                    withTransaction(transaction) {
+                        proxy.scrollTo("BOTTOM", anchor: .bottom)
+                    }
+                }
+            }
+            .onChange(of: session.turns.last?.content.count) { _, _ in
+                // Also trigger scroll on content length changes if pinned
+                // This catches cases where scrollTick might be throttled but we want to stick to bottom
+                guard isPinnedToBottom else { return }
+                DispatchQueue.main.async {
                     var transaction = Transaction()
                     transaction.disablesAnimations = true
                     withTransaction(transaction) {
