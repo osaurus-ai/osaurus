@@ -7,6 +7,7 @@
 
 import CoreImage
 import Foundation
+import MLX
 import MLXLLM
 import MLXLMCommon
 import MLXVLM
@@ -65,17 +66,31 @@ actor ModelRuntime {
     }
 
     func unload(name: String) {
-        modelCache.removeValue(forKey: name)
+        // Remove from cache within autoreleasepool to encourage immediate ARC deallocation
+        autoreleasepool {
+            modelCache.removeValue(forKey: name)
+        }
         loadingTasks[name]?.cancel()
         loadingTasks.removeValue(forKey: name)
         if currentModelName == name { currentModelName = nil }
+
+        // Synchronize GPU stream to ensure all operations complete, then release Metal buffer pool
+        Stream.gpu.synchronize()
+        GPU.clearCache()
     }
 
     func clearAll() {
-        modelCache.removeAll()
+        // Remove all models within autoreleasepool to encourage immediate ARC deallocation
+        autoreleasepool {
+            modelCache.removeAll()
+        }
         for task in loadingTasks.values { task.cancel() }
         loadingTasks.removeAll()
         currentModelName = nil
+
+        // Synchronize GPU stream to ensure all operations complete, then release Metal buffer pool
+        Stream.gpu.synchronize()
+        GPU.clearCache()
     }
 
     func warmUp(modelId: String, modelName: String, prefillChars: Int = 0, maxTokens: Int = 1) async {
