@@ -42,7 +42,8 @@ struct MessageContent: View {
                 ThinkingBlockView(
                     thinking: turn.thinking,
                     baseWidth: contentWidth,
-                    isStreaming: isStreaming && isLatest
+                    isStreaming: isStreaming && isLatest,
+                    thinkingLength: turn.thinkingLength
                 )
                 .padding(.bottom, 4)
             }

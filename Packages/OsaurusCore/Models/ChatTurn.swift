@@ -19,6 +19,8 @@ final class ChatTurn: ObservableObject, Identifiable {
     private var contentChunks: [String] = []
     /// Cached joined content - invalidated on append
     private var _cachedContent: String?
+    /// Cached content length - updated on append/set without joining
+    private var _contentLength: Int = 0
 
     /// The message content. Uses lazy joining for efficient streaming.
     var content: String {
@@ -34,15 +36,23 @@ final class ChatTurn: ObservableObject, Identifiable {
             // Direct set: clear chunks and update cache
             contentChunks = newValue.isEmpty ? [] : [newValue]
             _cachedContent = newValue
+            _contentLength = newValue.count
             objectWillChange.send()
         }
     }
+
+    /// Cached content length - O(1) access without forcing lazy join
+    var contentLength: Int { _contentLength }
+
+    /// Whether content is empty - O(1) access without forcing lazy join
+    var contentIsEmpty: Bool { _contentLength == 0 }
 
     /// Efficiently append content without triggering immediate UI update.
     /// Call `notifyContentChanged()` after batch appends to update UI.
     func appendContent(_ s: String) {
         guard !s.isEmpty else { return }
         contentChunks.append(s)
+        _contentLength += s.count
         _cachedContent = nil  // Invalidate cache
     }
 
@@ -58,6 +68,8 @@ final class ChatTurn: ObservableObject, Identifiable {
     private var thinkingChunks: [String] = []
     /// Cached joined thinking - invalidated on append
     private var _cachedThinking: String?
+    /// Cached thinking length - updated on append/set without joining
+    private var _thinkingLength: Int = 0
 
     /// Thinking/reasoning content from models that support extended thinking (e.g., DeepSeek, QwQ)
     var thinking: String {
@@ -72,14 +84,22 @@ final class ChatTurn: ObservableObject, Identifiable {
         set {
             thinkingChunks = newValue.isEmpty ? [] : [newValue]
             _cachedThinking = newValue
+            _thinkingLength = newValue.count
             objectWillChange.send()
         }
     }
+
+    /// Cached thinking length - O(1) access without forcing lazy join
+    var thinkingLength: Int { _thinkingLength }
+
+    /// Whether thinking is empty - O(1) access without forcing lazy join
+    var thinkingIsEmpty: Bool { _thinkingLength == 0 }
 
     /// Efficiently append thinking without triggering immediate UI update.
     func appendThinking(_ s: String) {
         guard !s.isEmpty else { return }
         thinkingChunks.append(s)
+        _thinkingLength += s.count
         _cachedThinking = nil  // Invalidate cache
     }
 
@@ -114,6 +134,7 @@ final class ChatTurn: ObservableObject, Identifiable {
         if !content.isEmpty {
             self.contentChunks = [content]
             self._cachedContent = content
+            self._contentLength = content.count
         }
     }
 
@@ -122,6 +143,7 @@ final class ChatTurn: ObservableObject, Identifiable {
         if !content.isEmpty {
             self.contentChunks = [content]
             self._cachedContent = content
+            self._contentLength = content.count
         }
         self.attachedImages = images
     }
@@ -135,6 +157,6 @@ final class ChatTurn: ObservableObject, Identifiable {
 
     /// Whether this turn has any thinking/reasoning content
     var hasThinking: Bool {
-        !thinkingChunks.isEmpty || !(_cachedThinking?.isEmpty ?? true)
+        _thinkingLength > 0
     }
 }

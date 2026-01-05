@@ -232,10 +232,10 @@ final class ChatSession: ObservableObject {
             total += tool.estimatedTokens
         }
 
-        // All turns
+        // All turns - use cached lengths to avoid forcing lazy string joins
         for turn in turns {
-            if !turn.content.isEmpty {
-                total += max(1, turn.content.count / 4)
+            if !turn.contentIsEmpty {
+                total += max(1, turn.contentLength / 4)
             }
             // Tool calls (serialized as JSON)
             if let toolCalls = turn.toolCalls {
@@ -247,9 +247,9 @@ final class ChatSession: ObservableObject {
             for (_, result) in turn.toolResults {
                 total += max(1, result.count / 4)
             }
-            // Thinking content
-            if !turn.thinking.isEmpty {
-                total += max(1, turn.thinking.count / 4)
+            // Thinking content - use cached length
+            if turn.hasThinking {
+                total += max(1, turn.thinkingLength / 4)
             }
             // Images (base64 ~1.33x size, then /4 for tokens)
             for img in turn.attachedImages {
@@ -490,9 +490,9 @@ final class ChatSession: ObservableObject {
                 // Remove trailing empty assistant turn if present (can happen after tool calls)
                 if let lastTurn = turns.last,
                     lastTurn.role == .assistant,
-                    lastTurn.content.isEmpty,
+                    lastTurn.contentIsEmpty,
                     lastTurn.toolCalls == nil,
-                    lastTurn.thinking.isEmpty
+                    !lastTurn.hasThinking
                 {
                     turns.removeLast()
                 }
@@ -577,7 +577,7 @@ final class ChatSession: ObservableObject {
                         case .assistant:
                             // Skip the last assistant turn if it's empty (it's the streaming placeholder)
                             let isLastTurn = index == turns.count - 1
-                            if isLastTurn && t.content.isEmpty && t.toolCalls == nil {
+                            if isLastTurn && t.contentIsEmpty && t.toolCalls == nil {
                                 continue
                             }
 
@@ -590,13 +590,13 @@ final class ChatSession: ObservableObject {
                             // If we have tool_calls but no content, use nil for content (let encoder handle it).
                             // If we have neither, this is a malformed turn that should be skipped or fixed.
 
-                            if t.content.isEmpty && (t.toolCalls == nil || t.toolCalls!.isEmpty) {
+                            if t.contentIsEmpty && (t.toolCalls == nil || t.toolCalls!.isEmpty) {
                                 // Invalid assistant message (no content, no tools). Skip it to prevent 400s.
                                 print("[Osaurus] Warning: Skipping empty assistant message at index \(index)")
                                 continue
                             }
 
-                            let content: String? = t.content.isEmpty ? nil : t.content
+                            let content: String? = t.contentIsEmpty ? nil : t.content
 
                             msgs.append(
                                 ChatMessage(
@@ -866,14 +866,6 @@ final class ChatSession: ObservableObject {
                                 }
                             }
 
-                            // Periodically sync chunks to the turn to update UI
-                            // This batches multiple appends into a single UI update
-                            let timeSinceSync = Date().timeIntervalSince(lastSyncTime) * 1000
-                            if timeSinceSync >= syncIntervalMs {
-                                syncChunksToTurn()
-                                scrollTick &+= 1
-                            }
-
                             lastFlushTime = Date()
 
                             let flushMs = lastFlushTime.timeIntervalSince(flushStart) * 1000
@@ -918,15 +910,35 @@ final class ChatSession: ObservableObject {
                                 recomputeFlushTuning()
 
                                 // Check if we should skip this flush due to backpressure
+                                let shouldSkip = skipNextFlush
                                 if skipNextFlush {
                                     skipNextFlush = false
                                     // Still update lastFlushTime to reset the timer
                                     lastFlushTime = now
-                                    continue
                                 }
 
-                                if deltaBuffer.count >= maxBufferSize || timeSinceFlush >= flushIntervalMs {
+                                if !shouldSkip
+                                    && (deltaBuffer.count >= maxBufferSize || timeSinceFlush >= flushIntervalMs)
+                                {
                                     flushBuffer()
+
+                                    // After flushing, check if we should sync and scroll
+                                    // Use a shorter interval for scroll updates to ensure smooth scrolling
+                                    let timeSinceSync = now.timeIntervalSince(lastSyncTime) * 1000
+                                    if timeSinceSync >= syncIntervalMs && hasPendingContent {
+                                        syncChunksToTurn()
+                                        scrollTick &+= 1
+                                    } else if hasPendingContent {
+                                        // Even if sync interval hasn't passed, still notify content changed
+                                        // but throttle scrollTick to avoid excessive scroll calls
+                                        assistantTurn.notifyContentChanged()
+                                        hasPendingContent = false
+                                        // Update scroll every ~50ms for smooth experience
+                                        if timeSinceSync >= 50 {
+                                            scrollTick &+= 1
+                                            lastSyncTime = now
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -1524,8 +1536,12 @@ struct ChatView: View {
                         .id("BOTTOM")
                         .onAppear { isPinnedToBottom = true }
                         .onDisappear {
-                            // Only unpin if we're not actively scrolling to bottom programmatically
-                            isPinnedToBottom = false
+                            // Only unpin if we're not streaming
+                            // During streaming, the bottom marker may temporarily disappear
+                            // due to content growth and LazyVStack recycling
+                            if !session.isStreaming {
+                                isPinnedToBottom = false
+                            }
                         }
                 }
                 .padding(.vertical, 8)
@@ -1548,7 +1564,9 @@ struct ChatView: View {
                 }
             }
             .onChange(of: session.scrollTick) { _, _ in
-                guard isPinnedToBottom else { return }
+                // During streaming, always scroll to follow content
+                // Otherwise, only scroll if pinned to bottom
+                guard isPinnedToBottom || session.isStreaming else { return }
 
                 // Defer scroll to next run loop to allow layout to complete
                 DispatchQueue.main.async {
@@ -1560,18 +1578,9 @@ struct ChatView: View {
                     }
                 }
             }
-            .onChange(of: session.turns.last?.content.count) { _, _ in
-                // Also trigger scroll on content length changes if pinned
-                // This catches cases where scrollTick might be throttled but we want to stick to bottom
-                guard isPinnedToBottom else { return }
-                DispatchQueue.main.async {
-                    var transaction = Transaction()
-                    transaction.disablesAnimations = true
-                    withTransaction(transaction) {
-                        proxy.scrollTo("BOTTOM", anchor: .bottom)
-                    }
-                }
-            }
+            // Note: Removed onChange(of: session.turns.last?.content.count) handler
+            // as it was forcing lazy string joins on every content update.
+            // scrollTick already handles scroll updates during streaming.
             .onReceive(NotificationCenter.default.publisher(for: .chatOverlayActivated)) { _ in
                 proxy.scrollTo("BOTTOM", anchor: .bottom)
                 isPinnedToBottom = true
