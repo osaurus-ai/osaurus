@@ -1214,7 +1214,8 @@ struct ChatView: View {
                                 onSend: { observedSession.sendCurrent() },
                                 onStop: { observedSession.stop() },
                                 focusTrigger: focusTrigger,
-                                personaId: windowState.personaId
+                                personaId: windowState.personaId,
+                                windowId: windowState.windowId
                             )
                         } else {
                             // No models empty state

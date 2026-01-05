@@ -32,6 +32,8 @@ struct FloatingInputCard: View {
     var focusTrigger: Int = 0
     /// Current persona ID (used for persona-specific default model)
     var personaId: UUID? = nil
+    /// Window ID for targeted VAD notifications
+    var windowId: UUID? = nil
 
     // Local state for text input to prevent parent re-renders on every keystroke
     @State private var localText: String = ""
@@ -206,10 +208,19 @@ struct FloatingInputCard: View {
                 }
             }
         }
-        .onReceive(NotificationCenter.default.publisher(for: .startVoiceInputInChat)) { _ in
+        .onReceive(NotificationCenter.default.publisher(for: .startVoiceInputInChat)) { notification in
             // Start voice input when triggered by VAD - enable continuous mode
+            // Only respond if this notification targets our window
+            guard let targetWindowId = notification.object as? UUID,
+                targetWindowId == windowId
+            else {
+                return
+            }
+
             if isVoiceAvailable && !showVoiceOverlay {
-                print("[FloatingInputCard] Received .startVoiceInputInChat notification")
+                print(
+                    "[FloatingInputCard] Received .startVoiceInputInChat notification for window \(windowId?.uuidString ?? "nil")"
+                )
                 isContinuousVoiceMode = true
                 lastVoiceActivityTime = Date()
                 startVoiceInput()
