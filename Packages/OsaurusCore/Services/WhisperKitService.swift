@@ -653,6 +653,11 @@ public final class WhisperKitService: ObservableObject {
 
     private nonisolated(unsafe) var whisperKit: WhisperKit?
 
+    // Track current engine configuration for potential reuse
+    private var activeInputDeviceId: String?
+    private var activeInputSource: AudioInputSource?
+    private var activeTapFormat: AVAudioFormat?
+
     // MARK: - Initialization
 
     private init() {
@@ -960,13 +965,27 @@ public final class WhisperKitService: ObservableObject {
 
     /// Start streaming transcription
     public func startStreamingTranscription() async throws {
+        // If we are recording and engine is healthy, assume it's a redundant call
         guard !isRecording else { return }
-
-        // 1. Clean up previous state strictly
-        await teardownAudioEngine()
 
         // Get the selected input source
         let inputSource = AudioInputManager.shared.selectedInputSource
+        let selectedId = AudioInputManager.shared.selectedDeviceId
+
+        // Check for potential reuse of existing engine (for VAD handoff)
+        var reuseEngine = false
+        if let engine = audioEngine, engine.isRunning,
+            inputSource == activeInputSource,
+            selectedId == activeInputDeviceId,
+            let tapFormat = activeTapFormat
+        {
+
+            print("[WhisperKitService] Reusing active audio engine for handoff")
+            reuseEngine = true
+        } else {
+            // Clean up previous state strictly if not reusing
+            await teardownAudioEngine()
+        }
 
         // 2. Check Permissions & Model based on input source
         if inputSource == .microphone {
@@ -1009,10 +1028,8 @@ public final class WhisperKitService: ObservableObject {
         print("[WhisperKitService]   - Sensitivity: \(config.sensitivity)")
 
         if inputSource == .microphone {
-            // 4a. Microphone path: Resolve Device ID
-            let selectedId = AudioInputManager.shared.selectedDeviceId
+            // 4a. Microphone path
             var targetDeviceId: AudioDeviceID? = nil
-
             if let selectedId {
                 targetDeviceId = AudioInputManager.shared.getAudioDeviceId(for: selectedId)
                 if targetDeviceId == nil {
@@ -1020,13 +1037,22 @@ public final class WhisperKitService: ObservableObject {
                 }
             }
 
-            // 5a. Setup Audio Engine
+            // 5a. Setup Audio Engine (or reuse)
             do {
-                let (engine, tapFormat) = try await setupAudioEngine(
-                    targetDeviceId: targetDeviceId,
-                    buffer: audioBuffer
-                )
-                self.audioEngine = engine
+                let tapFormat: AVAudioFormat
+                if reuseEngine, let format = activeTapFormat {
+                    tapFormat = format
+                } else {
+                    let (engine, format) = try await setupAudioEngine(
+                        targetDeviceId: targetDeviceId,
+                        buffer: audioBuffer
+                    )
+                    self.audioEngine = engine
+                    self.activeTapFormat = format
+                    self.activeInputDeviceId = selectedId
+                    self.activeInputSource = inputSource
+                    tapFormat = format
+                }
 
                 // 6a. Start Worker with microphone format
                 transcriptionWorker = TranscriptionWorker(
@@ -1050,7 +1076,9 @@ public final class WhisperKitService: ObservableObject {
         } else {
             // 4b. System Audio path
             do {
-                try await SystemAudioCaptureManager.shared.startCapture()
+                if !reuseEngine {
+                    try await SystemAudioCaptureManager.shared.startCapture()
+                }
 
                 // System audio is already at 16kHz mono, create format for worker
                 guard
@@ -1063,6 +1091,11 @@ public final class WhisperKitService: ObservableObject {
                 else {
                     throw WhisperKitError.transcriptionFailed("Failed to create audio format for system audio")
                 }
+
+                // Track active state for potential reuse
+                self.activeTapFormat = systemAudioFormat
+                self.activeInputDeviceId = selectedId
+                self.activeInputSource = inputSource
 
                 // 6b. Start Worker with 16kHz format (no conversion needed)
                 transcriptionWorker = TranscriptionWorker(
@@ -1085,6 +1118,32 @@ public final class WhisperKitService: ObservableObject {
                 throw error
             }
         }
+    }
+
+    /// Pause streaming but keep the audio engine ready for immediate handoff
+    /// This stops the transcription worker and recording state, but keeps the
+    /// AVAudioEngine running to prevent "microphone warmup" latency/failures.
+    public func pauseStreamingForHandoff() async {
+        print("[WhisperKitService] Pausing streaming for handoff (keeping engine running)")
+
+        // 1. Stop processing components
+        audioBuffer.setActive(false)
+        await transcriptionWorker?.stop()
+        transcriptionWorker = nil
+
+        // 2. Stop system audio polling if active
+        systemAudioPollingTask?.cancel()
+        systemAudioPollingTask = nil
+
+        // Note: For system audio, we stop polling but keep capture running if possible?
+        // Actually for system audio, stopping/starting is less prone to hardware glitches than mic,
+        // but let's keep it consistent.
+        // However, SystemAudioCaptureManager buffer might grow.
+        // For now, let's assume short handoff.
+
+        // 3. Update state
+        isRecording = false
+        // DO NOT tear down audio engine
     }
 
     /// Stop streaming transcription and get final result
@@ -1145,6 +1204,11 @@ public final class WhisperKitService: ObservableObject {
 
     /// Teardown the audio engine and worker to ensure a clean state
     private func teardownAudioEngine() async {
+        // Clear active engine tracking
+        activeInputDeviceId = nil
+        activeInputSource = nil
+        activeTapFormat = nil
+
         // Stop worker first
         await transcriptionWorker?.stop()
         transcriptionWorker = nil

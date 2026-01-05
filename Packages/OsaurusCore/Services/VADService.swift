@@ -185,8 +185,8 @@ public final class VADService: ObservableObject {
         // Disable background mode first
         whisperService.isVADBackgroundMode = false
 
-        // Stop the transcription so chat can start fresh
-        _ = await whisperService.stopStreamingTranscription(force: true)
+        // Pause streaming but keep engine warm for immediate handoff to chat
+        await whisperService.pauseStreamingForHandoff()
         whisperService.clearTranscription()
 
         print("[VADService] Paused - transcription stopped, ready for chat voice input")
