@@ -80,22 +80,6 @@ public struct VADConfiguration: Codable, Equatable, Sendable {
         try container.encode(autoStartVoiceInput, forKey: .autoStartVoiceInput)
         try container.encode(customWakePhrase, forKey: .customWakePhrase)
     }
-
-    // MARK: - Helpers
-
-    /// Check if a specific persona is enabled for VAD
-    public func isPersonaEnabled(_ personaId: UUID) -> Bool {
-        enabledPersonaIds.contains(personaId)
-    }
-
-    /// Toggle a persona's VAD activation status
-    public mutating func togglePersona(_ personaId: UUID) {
-        if let index = enabledPersonaIds.firstIndex(of: personaId) {
-            enabledPersonaIds.remove(at: index)
-        } else {
-            enabledPersonaIds.append(personaId)
-        }
-    }
 }
 
 /// Handles persistence of `VADConfiguration` to Application Support

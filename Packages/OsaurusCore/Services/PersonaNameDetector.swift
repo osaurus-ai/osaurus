@@ -42,17 +42,6 @@ public final class PersonaNameDetector {
         }
     }
 
-    /// Initialize with pre-loaded persona names (for synchronous use)
-    public init(
-        enabledPersonaIds: [UUID],
-        customWakePhrase: String = "",
-        personaNames: [(id: UUID, name: String, normalizedName: String)]
-    ) {
-        self.enabledPersonaIds = enabledPersonaIds
-        self.customWakePhrase = customWakePhrase
-        self.personaNames = personaNames
-    }
-
     /// Static helper for normalization (used in init)
     private static func normalizeText(_ text: String) -> String {
         text
@@ -193,30 +182,5 @@ public final class PersonaNameDetector {
         }
 
         return matrix[m][n]
-    }
-}
-
-// MARK: - Common Persona Name Aliases
-
-extension PersonaNameDetector {
-    /// Common misheard variations of "Osaurus"
-    static let osaurusAliases = [
-        "osaurus",
-        "o saurus",
-        "oh saurus",
-        "osaurs",
-        "o sores",
-        "the saurus",
-        "thesaurus",
-    ]
-
-    /// Check if text contains an Osaurus alias
-    public static func containsOsaurusAlias(in text: String) -> Bool {
-        let normalized =
-            text
-            .lowercased()
-            .folding(options: .diacriticInsensitive, locale: .current)
-
-        return osaurusAliases.contains { normalized.contains($0) }
     }
 }

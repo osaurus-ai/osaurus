@@ -653,6 +653,11 @@ public final class WhisperKitService: ObservableObject {
 
     private nonisolated(unsafe) var whisperKit: WhisperKit?
 
+    // Track current engine configuration for potential reuse
+    private var activeInputDeviceId: String?
+    private var activeInputSource: AudioInputSource?
+    private var activeTapFormat: AVAudioFormat?
+
     // MARK: - Initialization
 
     private init() {
@@ -955,18 +960,42 @@ public final class WhisperKitService: ObservableObject {
     @Published public var confirmedTranscription: String = ""
     @Published public var audioLevel: Float = 0.0  // 0.0 to 1.0 for visualization
 
-    /// When true, prevents stopStreamingTranscription from actually stopping (for VAD background mode)
-    public var isVADBackgroundMode: Bool = false
+    /// When true, prevents the audio engine from being torn down when stopping transcription
+    /// This allows for seamless handoff between VAD and Voice Input
+    public var keepAudioEngineAlive: Bool = false
 
     /// Start streaming transcription
     public func startStreamingTranscription() async throws {
-        guard !isRecording else { return }
+        // If we are recording and engine is healthy, assume it's a redundant call
+        if isRecording {
+            print("[WhisperKitService] Already recording, skipping start")
+            return
+        }
 
-        // 1. Clean up previous state strictly
-        await teardownAudioEngine()
+        // Always stop previous worker before starting a new one to prevent leaks
+        if let worker = transcriptionWorker {
+            print("[WhisperKitService] Stopping previous worker before restart")
+            await worker.stop()
+            transcriptionWorker = nil
+        }
 
         // Get the selected input source
         let inputSource = AudioInputManager.shared.selectedInputSource
+        let selectedId = AudioInputManager.shared.selectedDeviceId
+
+        // Check for potential reuse of existing engine (for VAD handoff)
+        var reuseEngine = false
+        if let engine = audioEngine, engine.isRunning,
+            inputSource == activeInputSource,
+            selectedId == activeInputDeviceId,
+            let tapFormat = activeTapFormat
+        {
+            print("[WhisperKitService] Reusing active audio engine for handoff")
+            reuseEngine = true
+        } else {
+            // Clean up previous state strictly if not reusing
+            await teardownAudioEngine()
+        }
 
         // 2. Check Permissions & Model based on input source
         if inputSource == .microphone {
@@ -1009,10 +1038,8 @@ public final class WhisperKitService: ObservableObject {
         print("[WhisperKitService]   - Sensitivity: \(config.sensitivity)")
 
         if inputSource == .microphone {
-            // 4a. Microphone path: Resolve Device ID
-            let selectedId = AudioInputManager.shared.selectedDeviceId
+            // 4a. Microphone path
             var targetDeviceId: AudioDeviceID? = nil
-
             if let selectedId {
                 targetDeviceId = AudioInputManager.shared.getAudioDeviceId(for: selectedId)
                 if targetDeviceId == nil {
@@ -1020,13 +1047,22 @@ public final class WhisperKitService: ObservableObject {
                 }
             }
 
-            // 5a. Setup Audio Engine
+            // 5a. Setup Audio Engine (or reuse)
             do {
-                let (engine, tapFormat) = try await setupAudioEngine(
-                    targetDeviceId: targetDeviceId,
-                    buffer: audioBuffer
-                )
-                self.audioEngine = engine
+                let tapFormat: AVAudioFormat
+                if reuseEngine, let format = activeTapFormat {
+                    tapFormat = format
+                } else {
+                    let (engine, format) = try await setupAudioEngine(
+                        targetDeviceId: targetDeviceId,
+                        buffer: audioBuffer
+                    )
+                    self.audioEngine = engine
+                    self.activeTapFormat = format
+                    self.activeInputDeviceId = selectedId
+                    self.activeInputSource = inputSource
+                    tapFormat = format
+                }
 
                 // 6a. Start Worker with microphone format
                 transcriptionWorker = TranscriptionWorker(
@@ -1050,7 +1086,9 @@ public final class WhisperKitService: ObservableObject {
         } else {
             // 4b. System Audio path
             do {
-                try await SystemAudioCaptureManager.shared.startCapture()
+                if !reuseEngine {
+                    try await SystemAudioCaptureManager.shared.startCapture()
+                }
 
                 // System audio is already at 16kHz mono, create format for worker
                 guard
@@ -1063,6 +1101,11 @@ public final class WhisperKitService: ObservableObject {
                 else {
                     throw WhisperKitError.transcriptionFailed("Failed to create audio format for system audio")
                 }
+
+                // Track active state for potential reuse
+                self.activeTapFormat = systemAudioFormat
+                self.activeInputDeviceId = selectedId
+                self.activeInputSource = inputSource
 
                 // 6b. Start Worker with 16kHz format (no conversion needed)
                 transcriptionWorker = TranscriptionWorker(
@@ -1088,18 +1131,28 @@ public final class WhisperKitService: ObservableObject {
     }
 
     /// Stop streaming transcription and get final result
-    /// - Parameter force: If true, stops even if VAD background mode is active
+    /// - Parameter force: If true, forces audio engine teardown regardless of keepAudioEngineAlive
     public func stopStreamingTranscription(force: Bool = false) async -> String {
-        // Don't stop if VAD background mode is active (unless forced)
-        if isVADBackgroundMode && !force {
-            print("[WhisperKitService] Ignoring stop request - VAD background mode active")
-            return confirmedTranscription + " " + currentTranscription
-        }
+        print(
+            "[WhisperKitService] Stopping streaming transcription (force: \(force), keepAlive: \(keepAudioEngineAlive))"
+        )
 
-        // Stop the streaming first
+        // Stop processing components
         audioBuffer.setActive(false)
+        await transcriptionWorker?.stop()
+        transcriptionWorker = nil
 
-        await teardownAudioEngine()
+        // Stop system audio polling if active
+        systemAudioPollingTask?.cancel()
+        systemAudioPollingTask = nil
+
+        // Only tear down the audio engine if we are NOT keeping it alive, or if forced
+        if !keepAudioEngineAlive || force {
+            print("[WhisperKitService] Tearing down audio engine")
+            await teardownAudioEngine()
+        } else {
+            print("[WhisperKitService] Keeping audio engine alive for handoff")
+        }
 
         isRecording = false
 
@@ -1145,6 +1198,11 @@ public final class WhisperKitService: ObservableObject {
 
     /// Teardown the audio engine and worker to ensure a clean state
     private func teardownAudioEngine() async {
+        // Clear active engine tracking
+        activeInputDeviceId = nil
+        activeInputSource = nil
+        activeTapFormat = nil
+
         // Stop worker first
         await transcriptionWorker?.stop()
         transcriptionWorker = nil

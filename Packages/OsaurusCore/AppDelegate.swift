@@ -256,7 +256,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
             // Start voice input in chat after a delay (let VAD stop and UI settle)
             let vadConfig = VADConfigurationStore.load()
             if vadConfig.autoStartVoiceInput {
-                try? await Task.sleep(nanoseconds: 800_000_000)  // 800ms - give time for VAD to fully stop
+                try? await Task.sleep(nanoseconds: 200_000_000)  // 200ms - fast handoff
                 print("[AppDelegate] Triggering voice input in chat")
                 NotificationCenter.default.post(
                     name: .startVoiceInputInChat,

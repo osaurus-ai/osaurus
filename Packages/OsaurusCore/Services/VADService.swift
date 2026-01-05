@@ -47,13 +47,11 @@ public final class VADService: ObservableObject {
     // MARK: - Published Properties
 
     @Published public private(set) var state: VADServiceState = .idle
-    @Published public private(set) var isEnabled: Bool = false
-    @Published public private(set) var lastDetection: VADDetectionResult?
     @Published public private(set) var audioLevel: Float = 0.0
-    @Published public private(set) var lastTranscription: String = ""
 
     // MARK: - Private Properties
 
+    private var isEnabled: Bool = false
     private var configuration: VADConfiguration = .default
     private var personaDetector: PersonaNameDetector?
     private var cancellables = Set<AnyCancellable>()
@@ -127,18 +125,18 @@ public final class VADService: ObservableObject {
             }
         }
 
-        // Start streaming transcription in VAD background mode
+        // Start streaming transcription with keep-alive enabled
         do {
-            // Enable background mode to prevent accidental stops
-            whisperService.isVADBackgroundMode = true
+            // Enable keep-alive to prevent audio engine teardown during handoffs
+            whisperService.keepAudioEngineAlive = true
 
             try await whisperService.startStreamingTranscription()
             state = .listening
             isEnabled = true
             accumulatedTranscription = ""
-            print("[VADService] Started listening for wake words (background mode enabled)")
+            print("[VADService] Started listening for wake words (keep-alive enabled)")
         } catch {
-            whisperService.isVADBackgroundMode = false
+            whisperService.keepAudioEngineAlive = false
             state = .error(error.localizedDescription)
             throw error
         }
@@ -154,23 +152,13 @@ public final class VADService: ObservableObject {
         isEnabled = false
         audioLevel = 0
         accumulatedTranscription = ""
-        lastTranscription = ""
 
-        // Disable background mode and force stop
-        whisperService.isVADBackgroundMode = false
+        // Disable keep-alive and force stop to tear down audio engine
+        whisperService.keepAudioEngineAlive = false
         _ = await whisperService.stopStreamingTranscription(force: true)
         whisperService.clearTranscription()
 
-        print("[VADService] Stopped listening (background mode disabled)")
-    }
-
-    /// Toggle VAD on/off
-    public func toggle() async throws {
-        if state == .listening {
-            await stop()
-        } else {
-            try await start()
-        }
+        print("[VADService] Stopped listening (keep-alive disabled)")
     }
 
     /// Pause VAD temporarily (e.g., when chat voice input is active or testing)
@@ -182,28 +170,14 @@ public final class VADService: ObservableObject {
         state = .idle
         // Keep isEnabled = true so we know to resume later
 
-        // Disable background mode first
-        whisperService.isVADBackgroundMode = false
+        // NOTE: We do NOT set keepAudioEngineAlive = false here.
+        // We want the engine to stay alive for handoff.
 
-        // Stop the transcription so chat can start fresh
-        _ = await whisperService.stopStreamingTranscription(force: true)
+        // Stop streaming (will keep engine alive because keepAudioEngineAlive is true from start())
+        _ = await whisperService.stopStreamingTranscription()
         whisperService.clearTranscription()
 
         print("[VADService] Paused - transcription stopped, ready for chat voice input")
-    }
-
-    /// Resume VAD after pause
-    public func resume() async throws {
-        guard isEnabled && state == .idle else { return }
-        print("[VADService] Resuming after chat voice input")
-        try await start()
-    }
-
-    /// Reset state to idle (called when exiting continuous voice mode)
-    public func resetToIdle() {
-        print("[VADService] Resetting state to idle (was: \(state))")
-        state = .idle
-        // Keep isEnabled true so resumeAfterChat knows to restart
     }
 
     // MARK: - Private Methods
@@ -254,13 +228,23 @@ public final class VADService: ObservableObject {
                 }
 
                 // If VAD should be running but recording stopped, try to restart after a delay
-                if self.isEnabled && self.configuration.vadModeEnabled && !isRecording && self.state != .idle {
-                    print("[VADService] Recording stopped, attempting restart in 1 second...")
+                if self.isEnabled && self.configuration.vadModeEnabled && !isRecording {
+                    print("[VADService] Recording stopped unexpectedly. Attempting restart in 1 second...")
+
+                    // Force state to idle if we were listening, so restart logic works
+                    if self.state == .listening {
+                        self.state = .idle
+                    }
+
                     Task { @MainActor in
                         try? await Task.sleep(nanoseconds: 1_000_000_000)
                         // Only restart if still supposed to be enabled
-                        if self.isEnabled && self.configuration.vadModeEnabled && self.state != .listening {
+                        if self.isEnabled && self.configuration.vadModeEnabled {
                             print("[VADService] Restarting VAD...")
+                            // Ensure state allows start
+                            if self.state == .listening {
+                                self.state = .idle
+                            }
                             try? await self.start()
                         }
                     }
@@ -293,8 +277,6 @@ public final class VADService: ObservableObject {
             accumulatedTranscription = fullText
         }
 
-        lastTranscription = accumulatedTranscription
-
         // Check for persona detection
         checkForPersonaDetection(in: accumulatedTranscription)
     }
@@ -308,7 +290,6 @@ public final class VADService: ObservableObject {
 
         if let detection = detector.detect(in: text) {
             lastDetectionTime = now
-            lastDetection = detection
 
             print(
                 "[VADService] ✅ Detected persona: \(detection.personaName) with confidence \(detection.confidence) in '\(text)'"
@@ -321,7 +302,6 @@ public final class VADService: ObservableObject {
                 // Clear transcription to avoid re-detecting same phrase
                 whisperService.clearTranscription()
                 accumulatedTranscription = ""
-                lastTranscription = ""
 
                 // Post notification to open chat with voice mode
                 NotificationCenter.default.post(
@@ -359,7 +339,6 @@ public final class VADService: ObservableObject {
         // Clear any stale transcription before resuming
         whisperService.clearTranscription()
         accumulatedTranscription = ""
-        lastTranscription = ""
 
         do {
             try await start()

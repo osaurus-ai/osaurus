@@ -21,6 +21,12 @@ final class ChatSession: ObservableObject {
     @Published var scrollTick: Int = 0
     @Published var hasAnyModel: Bool = false
     @Published var isDiscoveringModels: Bool = true
+    /// When true, voice input auto-restarts after AI responds (continuous conversation mode)
+    @Published var isContinuousVoiceMode: Bool = false
+    /// Active state of the voice input overlay
+    @Published var voiceInputState: VoiceInputState = .idle
+    /// Whether the voice input overlay is currently visible
+    @Published var showVoiceOverlay: Bool = false
     /// Per-session tool overrides. Empty = use global config, otherwise map of tool name -> enabled
     @Published var enabledToolOverrides: [String: Bool] = [:]
     /// The persona this session belongs to
@@ -302,6 +308,8 @@ final class ChatSession: ObservableObject {
         input = ""
         pendingImages = []
         enabledToolOverrides = [:]
+        voiceInputState = .idle
+        showVoiceOverlay = false
         // Clear session identity for new chat
         sessionId = nil
         title = "New Chat"
@@ -411,6 +419,8 @@ final class ChatSession: ObservableObject {
 
         turns = data.turns.map { ChatTurn(from: $0) }
         enabledToolOverrides = data.enabledToolOverrides ?? [:]
+        voiceInputState = .idle
+        showVoiceOverlay = false
         input = ""
         pendingImages = []
         isDirty = false  // Fresh load, not dirty
@@ -1190,6 +1200,9 @@ struct ChatView: View {
                                 selectedModel: $observedSession.selectedModel,
                                 pendingImages: $observedSession.pendingImages,
                                 enabledToolOverrides: $observedSession.enabledToolOverrides,
+                                isContinuousVoiceMode: $observedSession.isContinuousVoiceMode,
+                                voiceInputState: $observedSession.voiceInputState,
+                                showVoiceOverlay: $observedSession.showVoiceOverlay,
                                 modelOptions: observedSession.modelOptions,
                                 availableTools: ToolRegistry.shared.listTools(
                                     withOverrides: observedSession.enabledToolOverrides
