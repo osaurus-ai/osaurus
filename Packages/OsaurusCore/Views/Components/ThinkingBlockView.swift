@@ -13,10 +13,17 @@ struct ThinkingBlockView: View {
     let thinking: String
     let baseWidth: CGFloat
     let isStreaming: Bool
+    /// Optional cached length to avoid calling thinking.count (which forces lazy join)
+    var thinkingLength: Int?
 
     @State private var isExpanded: Bool = false
     @State private var isHovered: Bool = false
     @Environment(\.theme) private var theme
+
+    /// Character count - uses cached length if provided, otherwise falls back to string count
+    private var characterCount: Int {
+        thinkingLength ?? thinking.count
+    }
 
     /// Accent color for the thinking block - a subtle purple/indigo tone
     private var thinkingColor: Color {
@@ -112,7 +119,7 @@ struct ThinkingBlockView: View {
 
                 // Character count hint when collapsed
                 if !isExpanded {
-                    Text(formatCharacterCount(thinking.count))
+                    Text(formatCharacterCount(characterCount))
                         .font(theme.font(size: CGFloat(theme.captionSize) - 2, weight: .medium))
                         .foregroundColor(theme.tertiaryText)
                         .padding(.horizontal, 6)

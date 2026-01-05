@@ -13,10 +13,12 @@ import SwiftUI
 struct MarkdownMessageView: View {
     let text: String
     let baseWidth: CGFloat
+    /// Optional turn ID for caching heights across view recycling
+    var turnId: UUID? = nil
 
     var body: some View {
         // Use inner view with memoized parsing to avoid re-parsing on every render
-        MemoizedMarkdownView(text: text, baseWidth: baseWidth)
+        MemoizedMarkdownView(text: text, baseWidth: baseWidth, turnId: turnId)
     }
 }
 
@@ -26,15 +28,38 @@ struct MarkdownMessageView: View {
 private struct MemoizedMarkdownView: View {
     let text: String
     let baseWidth: CGFloat
+    let turnId: UUID?
 
     @Environment(\.theme) private var theme
 
     // Memoized segments - only recomputed when text changes via .onChange
     @State private var cachedSegments: [ContentSegment] = []
     @State private var lastParsedText: String = ""
-    // Cache for incremental parsing
+    // Cache for parsing
     @State private var cachedBlocks: [MessageBlock] = []
-    @State private var lastStableIndex: Int = 0  // Index of last "stable" block (not affected by streaming)
+    @State private var lastStableIndex: Int = 0
+    // Track current parsing task to allow cancellation
+    @State private var currentParseTask: Task<Void, Never>?
+    // Track last parse request time for adaptive debouncing
+    @State private var lastParseRequestTime: Date = .distantPast
+
+    // Debounce interval in milliseconds - scales with content size
+    private var debounceIntervalMs: UInt64 {
+        // Use utf8.count which is O(1) for contiguous strings, vs O(n) for .count
+        let charCount = text.utf8.count
+        switch charCount {
+        case 0 ..< 1_000:
+            return 30  // Fast updates for small content
+        case 1_000 ..< 3_000:
+            return 50
+        case 3_000 ..< 8_000:
+            return 80
+        case 8_000 ..< 20_000:
+            return 120
+        default:
+            return 200  // Slower updates for large content
+        }
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -43,43 +68,70 @@ private struct MemoizedMarkdownView: View {
             }
         }
         .onAppear {
-            // Initial parse
+            // Initial parse - no debounce needed
             if lastParsedText != text {
-                updateSegments()
+                scheduleBackgroundParse(for: text, oldText: "", debounce: false)
             }
         }
-        .onChange(of: text) { _, newText in
+        .onChange(of: text) { oldText, newText in
             // Only reparse when text actually changes
             if lastParsedText != newText {
-                updateSegmentsIncremental(oldText: lastParsedText, newText: newText)
+                scheduleBackgroundParse(for: newText, oldText: oldText, debounce: true)
             }
         }
     }
 
-    private func updateSegments() {
-        let blocks = parseBlocks(text)
-        cachedBlocks = blocks
-        cachedSegments = groupBlocksIntoSegments(blocks)
-        lastParsedText = text
-        // All blocks except the last one are considered stable
-        lastStableIndex = max(0, blocks.count - 1)
-    }
+    /// Schedule parsing on a background thread to avoid blocking the main thread
+    /// - Parameters:
+    ///   - textToParse: The text to parse
+    ///   - oldText: The previous text (for detecting append-only changes)
+    ///   - debounce: Whether to apply debouncing delay
+    private func scheduleBackgroundParse(for textToParse: String, oldText: String, debounce: Bool) {
+        // Cancel any in-flight parsing task
+        currentParseTask?.cancel()
 
-    /// Incremental update: only reparse from the last stable block
-    private func updateSegmentsIncremental(oldText: String, newText: String) {
-        // Fast path: if text only got longer (streaming append), do incremental parse
-        if newText.hasPrefix(oldText) && !cachedBlocks.isEmpty {
-            // Reparse the full text (still benefits from optimized parser)
-            let newBlocks = parseBlocks(newText)
+        // Capture state for the background task
+        let textSnapshot = textToParse
+        let debounceMs = debounce ? debounceIntervalMs : 0
+        lastParseRequestTime = Date()
 
-            // Update cached state
-            cachedBlocks = newBlocks
-            cachedSegments = groupBlocksIntoSegments(newBlocks)
-            lastParsedText = newText
-            lastStableIndex = max(0, newBlocks.count - 1)
-        } else {
-            // Full reparse for non-append changes (edits, deletions)
-            updateSegments()
+        currentParseTask = Task {
+            // Apply debounce delay if requested
+            if debounceMs > 0 {
+                do {
+                    try await Task.sleep(nanoseconds: debounceMs * 1_000_000)
+                } catch {
+                    // Task was cancelled during sleep - exit early
+                    return
+                }
+            }
+
+            // Check if task was cancelled
+            if Task.isCancelled { return }
+
+            // Run parsing on a background thread
+            // Note: We always do a full parse to avoid the complexity and bugs of incremental parsing.
+            // The debouncing and background execution provide sufficient performance improvement.
+            let (newBlocks, newSegments) = await Task.detached(priority: .userInitiated) {
+                let blocks = parseBlocks(textSnapshot)
+                let segments = groupBlocksIntoSegments(blocks)
+                return (blocks, segments)
+            }.value
+
+            // Check if task was cancelled while parsing
+            if Task.isCancelled { return }
+
+            // Update UI state on main thread
+            await MainActor.run {
+                // Double-check we're still processing the same text
+                // (prevents race conditions if text changed while parsing)
+                guard textSnapshot == text else { return }
+
+                cachedBlocks = newBlocks
+                cachedSegments = newSegments
+                lastParsedText = textSnapshot
+                lastStableIndex = max(0, newBlocks.count - 1)
+            }
         }
     }
 
@@ -97,7 +149,8 @@ private struct MemoizedMarkdownView: View {
                 SelectableTextView(
                     blocks: textBlocks,
                     baseWidth: baseWidth,
-                    theme: theme
+                    theme: theme,
+                    cacheKey: turnId
                 )
                 // Let the NSTextView self-size via intrinsicContentSize instead of doing a separate
                 // height calculation pass (which duplicates layout work and can freeze the UI during streaming).
@@ -616,6 +669,7 @@ private func parseBlocks(_ input: String) -> [MessageBlock] {
     return blocks
 }
 
+// MARK: - Incremental Parsing Helpers
 // MARK: - Table Parsing Helpers
 
 /// Check if a line is a table separator line (e.g., | --- | --- |)

@@ -42,7 +42,8 @@ struct MessageContent: View {
                 ThinkingBlockView(
                     thinking: turn.thinking,
                     baseWidth: contentWidth,
-                    isStreaming: isStreaming && isLatest
+                    isStreaming: isStreaming && isLatest,
+                    thinkingLength: turn.thinkingLength
                 )
                 .padding(.bottom, 4)
             }
@@ -88,15 +89,15 @@ struct MessageContent: View {
     private var contentView: some View {
         if isEditing {
             editingView
-        } else if turn.content.isEmpty && turn.role == .assistant && isStreaming && isLatest {
+        } else if turn.contentIsEmpty && turn.role == .assistant && isStreaming && isLatest {
             // Only show typing indicator if there are no tool calls
             // If tool calls exist, the InlineToolCallView shows its own status
             if turn.toolCalls == nil || turn.toolCalls!.isEmpty {
                 TypingIndicator()
                     .padding(.vertical, 4)
             }
-        } else if !turn.content.isEmpty {
-            MarkdownMessageView(text: turn.content, baseWidth: contentWidth)
+        } else if !turn.contentIsEmpty {
+            MarkdownMessageView(text: turn.content, baseWidth: contentWidth, turnId: turn.id)
                 .font(Typography.body(contentWidth, theme: theme))
                 .foregroundColor(theme.primaryText)
                 .textSelection(.enabled)

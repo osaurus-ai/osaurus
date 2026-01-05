@@ -232,10 +232,10 @@ final class ChatSession: ObservableObject {
             total += tool.estimatedTokens
         }
 
-        // All turns
+        // All turns - use cached lengths to avoid forcing lazy string joins
         for turn in turns {
-            if !turn.content.isEmpty {
-                total += max(1, turn.content.count / 4)
+            if !turn.contentIsEmpty {
+                total += max(1, turn.contentLength / 4)
             }
             // Tool calls (serialized as JSON)
             if let toolCalls = turn.toolCalls {
@@ -247,9 +247,9 @@ final class ChatSession: ObservableObject {
             for (_, result) in turn.toolResults {
                 total += max(1, result.count / 4)
             }
-            // Thinking content
-            if !turn.thinking.isEmpty {
-                total += max(1, turn.thinking.count / 4)
+            // Thinking content - use cached length
+            if turn.hasThinking {
+                total += max(1, turn.thinkingLength / 4)
             }
             // Images (base64 ~1.33x size, then /4 for tokens)
             for img in turn.attachedImages {
@@ -490,9 +490,9 @@ final class ChatSession: ObservableObject {
                 // Remove trailing empty assistant turn if present (can happen after tool calls)
                 if let lastTurn = turns.last,
                     lastTurn.role == .assistant,
-                    lastTurn.content.isEmpty,
+                    lastTurn.contentIsEmpty,
                     lastTurn.toolCalls == nil,
-                    lastTurn.thinking.isEmpty
+                    !lastTurn.hasThinking
                 {
                     turns.removeLast()
                 }
@@ -577,7 +577,7 @@ final class ChatSession: ObservableObject {
                         case .assistant:
                             // Skip the last assistant turn if it's empty (it's the streaming placeholder)
                             let isLastTurn = index == turns.count - 1
-                            if isLastTurn && t.content.isEmpty && t.toolCalls == nil {
+                            if isLastTurn && t.contentIsEmpty && t.toolCalls == nil {
                                 continue
                             }
 
@@ -590,13 +590,13 @@ final class ChatSession: ObservableObject {
                             // If we have tool_calls but no content, use nil for content (let encoder handle it).
                             // If we have neither, this is a malformed turn that should be skipped or fixed.
 
-                            if t.content.isEmpty && (t.toolCalls == nil || t.toolCalls!.isEmpty) {
+                            if t.contentIsEmpty && (t.toolCalls == nil || t.toolCalls!.isEmpty) {
                                 // Invalid assistant message (no content, no tools). Skip it to prevent 400s.
                                 print("[Osaurus] Warning: Skipping empty assistant message at index \(index)")
                                 continue
                             }
 
-                            let content: String? = t.content.isEmpty ? nil : t.content
+                            let content: String? = t.contentIsEmpty ? nil : t.content
 
                             msgs.append(
                                 ChatMessage(
@@ -685,6 +685,10 @@ final class ChatSession: ObservableObject {
                         var flushIntervalMs: Double = 50  // baseline
                         var maxBufferSize: Int = 256  // baseline
                         var longestFlushMs: Double = 0
+                        // Track consecutive slow flushes to implement exponential backoff
+                        var consecutiveSlowFlushes: Int = 0
+                        // Hard limit: skip flush if previous one took too long (backpressure)
+                        var skipNextFlush: Bool = false
 
                         // Track approximate output sizes without repeatedly calling String.count on huge buffers.
                         var assistantContentLen: Int = 0
@@ -693,62 +697,98 @@ final class ChatSession: ObservableObject {
                         func recomputeFlushTuning() {
                             let totalChars = assistantContentLen + assistantThinkingLen
 
-                            // Base tuning by total output size
+                            // Base tuning by total output size - more aggressive thresholds
                             let base: (intervalMs: Double, maxBuf: Int) = {
                                 switch totalChars {
-                                case 0 ..< 4_000:
+                                case 0 ..< 1_000:
                                     return (50, 256)
-                                case 4_000 ..< 16_000:
+                                case 1_000 ..< 2_000:
                                     return (75, 384)
-                                case 16_000 ..< 48_000:
-                                    return (110, 512)
-                                case 48_000 ..< 96_000:
-                                    return (160, 768)
-                                case 96_000 ..< 160_000:
-                                    return (220, 1_024)
-                                case 160_000 ..< 260_000:
+                                case 2_000 ..< 4_000:
+                                    return (100, 512)
+                                case 4_000 ..< 8_000:
+                                    return (150, 768)
+                                case 8_000 ..< 16_000:
+                                    return (200, 1_024)
+                                case 16_000 ..< 32_000:
                                     return (300, 1_536)
-                                case 260_000 ..< 420_000:
-                                    return (380, 2_048)
+                                case 32_000 ..< 64_000:
+                                    return (400, 2_048)
                                 default:
                                     return (500, 3_072)
                                 }
                             }()
 
                             // Backpressure based on the worst observed flush cost (includes markdown parsing + SwiftUI invalidation).
+                            // More aggressive exponential backoff when flushes are slow.
                             let factor: Double = {
                                 switch longestFlushMs {
                                 case 0 ..< 16:
+                                    consecutiveSlowFlushes = 0
                                     return 1.0
                                 case 16 ..< 33:
-                                    return 1.25
-                                case 33 ..< 60:
+                                    consecutiveSlowFlushes = max(1, consecutiveSlowFlushes)
                                     return 1.5
-                                default:
+                                case 33 ..< 50:
+                                    consecutiveSlowFlushes += 1
                                     return 2.0
+                                case 50 ..< 100:
+                                    // Flush took >50ms - this is concerning, apply heavy backpressure
+                                    consecutiveSlowFlushes += 1
+                                    skipNextFlush = true
+                                    return 3.0
+                                default:
+                                    // Flush took >100ms - critical, skip multiple flushes
+                                    consecutiveSlowFlushes += 1
+                                    skipNextFlush = true
+                                    return 4.0
                                 }
                             }()
 
-                            flushIntervalMs = min(500, base.intervalMs * factor)
-                            maxBufferSize = min(4_096, Int(Double(base.maxBuf) * factor))
+                            // Apply exponential backoff for consecutive slow flushes
+                            let backoffMultiplier = min(4.0, pow(1.5, Double(consecutiveSlowFlushes)))
+
+                            flushIntervalMs = min(800, base.intervalMs * factor * backoffMultiplier)
+                            maxBufferSize = min(8_192, Int(Double(base.maxBuf) * factor * backoffMultiplier))
                         }
 
                         // Thinking tag parsing state
                         var isInsideThinking = false
                         var pendingTagBuffer = ""  // Buffer for partial tag detection
 
+                        // Track when we last synced to the turn (to batch UI updates)
+                        var lastSyncTime = Date()
+                        let syncIntervalMs: Double = 100  // Sync to turn every 100ms
+                        // Track if we have pending content to sync
+                        var hasPendingContent = false
+
                         @MainActor
                         func appendContent(_ s: String) {
                             guard !s.isEmpty else { return }
-                            assistantTurn.content += s
+                            // Use ChatTurn's efficient O(1) append method
+                            assistantTurn.appendContent(s)
                             assistantContentLen += s.count
+                            hasPendingContent = true
                         }
 
                         @MainActor
                         func appendThinking(_ s: String) {
                             guard !s.isEmpty else { return }
-                            assistantTurn.thinking += s
+                            // Use ChatTurn's efficient O(1) append method
+                            assistantTurn.appendThinking(s)
                             assistantThinkingLen += s.count
+                            hasPendingContent = true
+                        }
+
+                        /// Notify observers that content changed (triggers UI update)
+                        @MainActor
+                        func syncChunksToTurn() {
+                            guard hasPendingContent else { return }
+                            // ChatTurn already has the content via appendContent/appendThinking
+                            // Just notify observers to trigger UI update
+                            assistantTurn.notifyContentChanged()
+                            hasPendingContent = false
+                            lastSyncTime = Date()
                         }
 
                         @MainActor
@@ -826,7 +866,6 @@ final class ChatSession: ObservableObject {
                                 }
                             }
 
-                            scrollTick &+= 1
                             lastFlushTime = Date()
 
                             let flushMs = lastFlushTime.timeIntervalSince(flushStart) * 1000
@@ -847,14 +886,17 @@ final class ChatSession: ObservableObject {
                                 } else {
                                     appendContent(remaining)
                                 }
-                                scrollTick &+= 1
                             }
+                            // Always sync any remaining chunks to the turn
+                            syncChunksToTurn()
+                            scrollTick &+= 1
                         }
 
                         let stream = try await engine.streamChat(request: req)
                         for try await delta in stream {
                             if Task.isCancelled {
                                 flushBuffer()  // Flush remaining before breaking
+                                syncChunksToTurn()  // Sync any accumulated chunks
                                 break outer
                             }
                             if !delta.isEmpty {
@@ -866,8 +908,37 @@ final class ChatSession: ObservableObject {
                                 let now = Date()
                                 let timeSinceFlush = now.timeIntervalSince(lastFlushTime) * 1000  // ms
                                 recomputeFlushTuning()
-                                if deltaBuffer.count >= maxBufferSize || timeSinceFlush >= flushIntervalMs {
+
+                                // Check if we should skip this flush due to backpressure
+                                let shouldSkip = skipNextFlush
+                                if skipNextFlush {
+                                    skipNextFlush = false
+                                    // Still update lastFlushTime to reset the timer
+                                    lastFlushTime = now
+                                }
+
+                                if !shouldSkip
+                                    && (deltaBuffer.count >= maxBufferSize || timeSinceFlush >= flushIntervalMs)
+                                {
                                     flushBuffer()
+
+                                    // After flushing, check if we should sync and scroll
+                                    // Use a shorter interval for scroll updates to ensure smooth scrolling
+                                    let timeSinceSync = now.timeIntervalSince(lastSyncTime) * 1000
+                                    if timeSinceSync >= syncIntervalMs && hasPendingContent {
+                                        syncChunksToTurn()
+                                        scrollTick &+= 1
+                                    } else if hasPendingContent {
+                                        // Even if sync interval hasn't passed, still notify content changed
+                                        // but throttle scrollTick to avoid excessive scroll calls
+                                        assistantTurn.notifyContentChanged()
+                                        hasPendingContent = false
+                                        // Update scroll every ~50ms for smooth experience
+                                        if timeSinceSync >= 50 {
+                                            scrollTick &+= 1
+                                            lastSyncTime = now
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -877,7 +948,7 @@ final class ChatSession: ObservableObject {
 
                         let totalTime = Date().timeIntervalSince(streamStartTime)
                         print(
-                            "[Osaurus][UI] Stream consumption completed: \(uiDeltaCount) deltas in \(String(format: "%.2f", totalTime))s, final contentLen=\(assistantTurn.content.count)"
+                            "[Osaurus][UI] Stream consumption completed: \(uiDeltaCount) deltas in \(String(format: "%.2f", totalTime))s, final contentLen=\(assistantTurn.contentLength)"
                         )
 
                         break  // finished normally
@@ -1465,8 +1536,12 @@ struct ChatView: View {
                         .id("BOTTOM")
                         .onAppear { isPinnedToBottom = true }
                         .onDisappear {
-                            // Only unpin if we're not actively scrolling to bottom programmatically
-                            isPinnedToBottom = false
+                            // Only unpin if we're not streaming
+                            // During streaming, the bottom marker may temporarily disappear
+                            // due to content growth and LazyVStack recycling
+                            if !session.isStreaming {
+                                isPinnedToBottom = false
+                            }
                         }
                 }
                 .padding(.vertical, 8)
@@ -1489,7 +1564,9 @@ struct ChatView: View {
                 }
             }
             .onChange(of: session.scrollTick) { _, _ in
-                guard isPinnedToBottom else { return }
+                // During streaming, always scroll to follow content
+                // Otherwise, only scroll if pinned to bottom
+                guard isPinnedToBottom || session.isStreaming else { return }
 
                 // Defer scroll to next run loop to allow layout to complete
                 DispatchQueue.main.async {
@@ -1501,18 +1578,9 @@ struct ChatView: View {
                     }
                 }
             }
-            .onChange(of: session.turns.last?.content.count) { _, _ in
-                // Also trigger scroll on content length changes if pinned
-                // This catches cases where scrollTick might be throttled but we want to stick to bottom
-                guard isPinnedToBottom else { return }
-                DispatchQueue.main.async {
-                    var transaction = Transaction()
-                    transaction.disablesAnimations = true
-                    withTransaction(transaction) {
-                        proxy.scrollTo("BOTTOM", anchor: .bottom)
-                    }
-                }
-            }
+            // Note: Removed onChange(of: session.turns.last?.content.count) handler
+            // as it was forcing lazy string joins on every content update.
+            // scrollTick already handles scroll updates during streaming.
             .onReceive(NotificationCenter.default.publisher(for: .chatOverlayActivated)) { _ in
                 proxy.scrollTo("BOTTOM", anchor: .bottom)
                 isPinnedToBottom = true

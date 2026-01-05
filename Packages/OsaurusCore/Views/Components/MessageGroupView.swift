@@ -67,7 +67,8 @@ struct MessageGroupView: View {
         var result: [TurnContentGroup] = []
 
         for turn in group.turns {
-            let isToolOnly = turn.content.isEmpty && (turn.toolCalls?.isEmpty == false)
+            // Use cached contentIsEmpty to avoid forcing lazy string join
+            let isToolOnly = turn.contentIsEmpty && (turn.toolCalls?.isEmpty == false)
             let kind: TurnContentKind = isToolOnly ? .toolCalls : .content
 
             // If same kind as previous, append to existing group
@@ -152,8 +153,9 @@ struct MessageGroupView: View {
         let previousTurn = group.turns[index - 1]
 
         // If both are tool-only turns (empty content, has tool calls), reduce spacing
-        let currentIsToolOnly = currentTurn.content.isEmpty && (currentTurn.toolCalls?.isEmpty == false)
-        let previousIsToolOnly = previousTurn.content.isEmpty && (previousTurn.toolCalls?.isEmpty == false)
+        // Use cached contentIsEmpty to avoid forcing lazy string join
+        let currentIsToolOnly = currentTurn.contentIsEmpty && (currentTurn.toolCalls?.isEmpty == false)
+        let previousIsToolOnly = previousTurn.contentIsEmpty && (previousTurn.toolCalls?.isEmpty == false)
 
         if currentIsToolOnly && previousIsToolOnly {
             return 4  // Reduced spacing (visually closer)
