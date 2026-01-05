@@ -430,15 +430,14 @@ struct FloatingInputCard: View {
         isPauseDetectionActive = false
 
         Task {
-            // Disable VAD background mode so stop actually works
-            whisperService.isVADBackgroundMode = false
-
-            // Force stop transcription
-            _ = await whisperService.stopStreamingTranscription(force: true)
+            // Stop transcription gracefully (respects keepAudioEngineAlive)
+            // If VAD is on, engine stays alive. If VAD is off, engine tears down.
+            _ = await whisperService.stopStreamingTranscription(force: false)
             whisperService.clearTranscription()
 
-            // Reset VAD state to idle so it can resume when needed
-            VADService.shared.resetToIdle()
+            // We do NOT call resetToIdle() here.
+            // If VAD is enabled, VADService will detect isRecording=false and auto-restart.
+            // If VAD is disabled, state is already idle.
         }
 
         voiceInputState = .idle

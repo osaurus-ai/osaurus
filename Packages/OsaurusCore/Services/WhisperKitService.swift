@@ -960,13 +960,24 @@ public final class WhisperKitService: ObservableObject {
     @Published public var confirmedTranscription: String = ""
     @Published public var audioLevel: Float = 0.0  // 0.0 to 1.0 for visualization
 
-    /// When true, prevents stopStreamingTranscription from actually stopping (for VAD background mode)
-    public var isVADBackgroundMode: Bool = false
+    /// When true, prevents the audio engine from being torn down when stopping transcription
+    /// This allows for seamless handoff between VAD and Voice Input
+    public var keepAudioEngineAlive: Bool = false
 
     /// Start streaming transcription
     public func startStreamingTranscription() async throws {
         // If we are recording and engine is healthy, assume it's a redundant call
-        guard !isRecording else { return }
+        if isRecording {
+            print("[WhisperKitService] Already recording, skipping start")
+            return
+        }
+
+        // Always stop previous worker before starting a new one to prevent leaks
+        if let worker = transcriptionWorker {
+            print("[WhisperKitService] Stopping previous worker before restart")
+            await worker.stop()
+            transcriptionWorker = nil
+        }
 
         // Get the selected input source
         let inputSource = AudioInputManager.shared.selectedInputSource
@@ -979,7 +990,6 @@ public final class WhisperKitService: ObservableObject {
             selectedId == activeInputDeviceId,
             let tapFormat = activeTapFormat
         {
-
             print("[WhisperKitService] Reusing active audio engine for handoff")
             reuseEngine = true
         } else {
@@ -1120,45 +1130,29 @@ public final class WhisperKitService: ObservableObject {
         }
     }
 
-    /// Pause streaming but keep the audio engine ready for immediate handoff
-    /// This stops the transcription worker and recording state, but keeps the
-    /// AVAudioEngine running to prevent "microphone warmup" latency/failures.
-    public func pauseStreamingForHandoff() async {
-        print("[WhisperKitService] Pausing streaming for handoff (keeping engine running)")
+    /// Stop streaming transcription and get final result
+    /// - Parameter force: If true, forces audio engine teardown regardless of keepAudioEngineAlive
+    public func stopStreamingTranscription(force: Bool = false) async -> String {
+        print(
+            "[WhisperKitService] Stopping streaming transcription (force: \(force), keepAlive: \(keepAudioEngineAlive))"
+        )
 
-        // 1. Stop processing components
+        // Stop processing components
         audioBuffer.setActive(false)
         await transcriptionWorker?.stop()
         transcriptionWorker = nil
 
-        // 2. Stop system audio polling if active
+        // Stop system audio polling if active
         systemAudioPollingTask?.cancel()
         systemAudioPollingTask = nil
 
-        // Note: For system audio, we stop polling but keep capture running if possible?
-        // Actually for system audio, stopping/starting is less prone to hardware glitches than mic,
-        // but let's keep it consistent.
-        // However, SystemAudioCaptureManager buffer might grow.
-        // For now, let's assume short handoff.
-
-        // 3. Update state
-        isRecording = false
-        // DO NOT tear down audio engine
-    }
-
-    /// Stop streaming transcription and get final result
-    /// - Parameter force: If true, stops even if VAD background mode is active
-    public func stopStreamingTranscription(force: Bool = false) async -> String {
-        // Don't stop if VAD background mode is active (unless forced)
-        if isVADBackgroundMode && !force {
-            print("[WhisperKitService] Ignoring stop request - VAD background mode active")
-            return confirmedTranscription + " " + currentTranscription
+        // Only tear down the audio engine if we are NOT keeping it alive, or if forced
+        if !keepAudioEngineAlive || force {
+            print("[WhisperKitService] Tearing down audio engine")
+            await teardownAudioEngine()
+        } else {
+            print("[WhisperKitService] Keeping audio engine alive for handoff")
         }
-
-        // Stop the streaming first
-        audioBuffer.setActive(false)
-
-        await teardownAudioEngine()
 
         isRecording = false
 

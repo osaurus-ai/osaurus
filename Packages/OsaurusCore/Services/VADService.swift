@@ -127,18 +127,18 @@ public final class VADService: ObservableObject {
             }
         }
 
-        // Start streaming transcription in VAD background mode
+        // Start streaming transcription with keep-alive enabled
         do {
-            // Enable background mode to prevent accidental stops
-            whisperService.isVADBackgroundMode = true
+            // Enable keep-alive to prevent audio engine teardown during handoffs
+            whisperService.keepAudioEngineAlive = true
 
             try await whisperService.startStreamingTranscription()
             state = .listening
             isEnabled = true
             accumulatedTranscription = ""
-            print("[VADService] Started listening for wake words (background mode enabled)")
+            print("[VADService] Started listening for wake words (keep-alive enabled)")
         } catch {
-            whisperService.isVADBackgroundMode = false
+            whisperService.keepAudioEngineAlive = false
             state = .error(error.localizedDescription)
             throw error
         }
@@ -156,12 +156,12 @@ public final class VADService: ObservableObject {
         accumulatedTranscription = ""
         lastTranscription = ""
 
-        // Disable background mode and force stop
-        whisperService.isVADBackgroundMode = false
+        // Disable keep-alive and force stop to tear down audio engine
+        whisperService.keepAudioEngineAlive = false
         _ = await whisperService.stopStreamingTranscription(force: true)
         whisperService.clearTranscription()
 
-        print("[VADService] Stopped listening (background mode disabled)")
+        print("[VADService] Stopped listening (keep-alive disabled)")
     }
 
     /// Toggle VAD on/off
@@ -182,11 +182,11 @@ public final class VADService: ObservableObject {
         state = .idle
         // Keep isEnabled = true so we know to resume later
 
-        // Disable background mode first
-        whisperService.isVADBackgroundMode = false
+        // NOTE: We do NOT set keepAudioEngineAlive = false here.
+        // We want the engine to stay alive for handoff.
 
-        // Pause streaming but keep engine warm for immediate handoff to chat
-        await whisperService.pauseStreamingForHandoff()
+        // Stop streaming (will keep engine alive because keepAudioEngineAlive is true from start())
+        _ = await whisperService.stopStreamingTranscription()
         whisperService.clearTranscription()
 
         print("[VADService] Paused - transcription stopped, ready for chat voice input")
@@ -254,13 +254,23 @@ public final class VADService: ObservableObject {
                 }
 
                 // If VAD should be running but recording stopped, try to restart after a delay
-                if self.isEnabled && self.configuration.vadModeEnabled && !isRecording && self.state != .idle {
-                    print("[VADService] Recording stopped, attempting restart in 1 second...")
+                if self.isEnabled && self.configuration.vadModeEnabled && !isRecording {
+                    print("[VADService] Recording stopped unexpectedly. Attempting restart in 1 second...")
+
+                    // Force state to idle if we were listening, so restart logic works
+                    if self.state == .listening {
+                        self.state = .idle
+                    }
+
                     Task { @MainActor in
                         try? await Task.sleep(nanoseconds: 1_000_000_000)
                         // Only restart if still supposed to be enabled
-                        if self.isEnabled && self.configuration.vadModeEnabled && self.state != .listening {
+                        if self.isEnabled && self.configuration.vadModeEnabled {
                             print("[VADService] Restarting VAD...")
+                            // Ensure state allows start
+                            if self.state == .listening {
+                                self.state = .idle
+                            }
                             try? await self.start()
                         }
                     }
