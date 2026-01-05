@@ -246,23 +246,40 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
         Task { @MainActor in
             print("[AppDelegate] VAD detected persona: \(detection.personaName)")
 
-            // Create a new chat window for the detected persona (multi-window)
-            print("[AppDelegate] Creating new chat window for persona...")
-            showChatOverlay(forPersonaId: detection.personaId)
+            // Check if a window for this persona already exists
+            let existingWindows = ChatWindowManager.shared.findWindows(byPersonaId: detection.personaId)
+
+            let targetWindowId: UUID
+            if let existing = existingWindows.first {
+                // Focus existing window for this persona
+                print("[AppDelegate] Found existing window for persona, focusing...")
+                ChatWindowManager.shared.showWindow(id: existing.id)
+                targetWindowId = existing.id
+            } else {
+                // Create a new chat window for the detected persona
+                print("[AppDelegate] Creating new chat window for persona...")
+                targetWindowId = ChatWindowManager.shared.createWindow(personaId: detection.personaId)
+            }
+
             print(
-                "[AppDelegate] showChatOverlay completed, window count: \(ChatWindowManager.shared.windowCount)"
+                "[AppDelegate] VAD target window: \(targetWindowId), window count: \(ChatWindowManager.shared.windowCount)"
             )
+
+            // Pause VAD when handling voice input
+            await VADService.shared.pause()
 
             // Start voice input in chat after a delay (let VAD stop and UI settle)
             let vadConfig = VADConfigurationStore.load()
             if vadConfig.autoStartVoiceInput {
                 try? await Task.sleep(nanoseconds: 200_000_000)  // 200ms - fast handoff
-                print("[AppDelegate] Triggering voice input in chat")
+                print("[AppDelegate] Triggering voice input in chat for window \(targetWindowId)")
                 NotificationCenter.default.post(
                     name: .startVoiceInputInChat,
-                    object: nil
+                    object: targetWindowId  // Target specific window
                 )
             }
+
+            NotificationCenter.default.post(name: .chatOverlayActivated, object: nil)
         }
     }
 
