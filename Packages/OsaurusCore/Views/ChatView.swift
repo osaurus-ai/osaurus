@@ -685,6 +685,10 @@ final class ChatSession: ObservableObject {
                         var flushIntervalMs: Double = 50  // baseline
                         var maxBufferSize: Int = 256  // baseline
                         var longestFlushMs: Double = 0
+                        // Track consecutive slow flushes to implement exponential backoff
+                        var consecutiveSlowFlushes: Int = 0
+                        // Hard limit: skip flush if previous one took too long (backpressure)
+                        var skipNextFlush: Bool = false
 
                         // Track approximate output sizes without repeatedly calling String.count on huge buffers.
                         var assistantContentLen: Int = 0
@@ -693,62 +697,98 @@ final class ChatSession: ObservableObject {
                         func recomputeFlushTuning() {
                             let totalChars = assistantContentLen + assistantThinkingLen
 
-                            // Base tuning by total output size
+                            // Base tuning by total output size - more aggressive thresholds
                             let base: (intervalMs: Double, maxBuf: Int) = {
                                 switch totalChars {
-                                case 0 ..< 4_000:
+                                case 0 ..< 1_000:
                                     return (50, 256)
-                                case 4_000 ..< 16_000:
+                                case 1_000 ..< 2_000:
                                     return (75, 384)
-                                case 16_000 ..< 48_000:
-                                    return (110, 512)
-                                case 48_000 ..< 96_000:
-                                    return (160, 768)
-                                case 96_000 ..< 160_000:
-                                    return (220, 1_024)
-                                case 160_000 ..< 260_000:
+                                case 2_000 ..< 4_000:
+                                    return (100, 512)
+                                case 4_000 ..< 8_000:
+                                    return (150, 768)
+                                case 8_000 ..< 16_000:
+                                    return (200, 1_024)
+                                case 16_000 ..< 32_000:
                                     return (300, 1_536)
-                                case 260_000 ..< 420_000:
-                                    return (380, 2_048)
+                                case 32_000 ..< 64_000:
+                                    return (400, 2_048)
                                 default:
                                     return (500, 3_072)
                                 }
                             }()
 
                             // Backpressure based on the worst observed flush cost (includes markdown parsing + SwiftUI invalidation).
+                            // More aggressive exponential backoff when flushes are slow.
                             let factor: Double = {
                                 switch longestFlushMs {
                                 case 0 ..< 16:
+                                    consecutiveSlowFlushes = 0
                                     return 1.0
                                 case 16 ..< 33:
-                                    return 1.25
-                                case 33 ..< 60:
+                                    consecutiveSlowFlushes = max(1, consecutiveSlowFlushes)
                                     return 1.5
-                                default:
+                                case 33 ..< 50:
+                                    consecutiveSlowFlushes += 1
                                     return 2.0
+                                case 50 ..< 100:
+                                    // Flush took >50ms - this is concerning, apply heavy backpressure
+                                    consecutiveSlowFlushes += 1
+                                    skipNextFlush = true
+                                    return 3.0
+                                default:
+                                    // Flush took >100ms - critical, skip multiple flushes
+                                    consecutiveSlowFlushes += 1
+                                    skipNextFlush = true
+                                    return 4.0
                                 }
                             }()
 
-                            flushIntervalMs = min(500, base.intervalMs * factor)
-                            maxBufferSize = min(4_096, Int(Double(base.maxBuf) * factor))
+                            // Apply exponential backoff for consecutive slow flushes
+                            let backoffMultiplier = min(4.0, pow(1.5, Double(consecutiveSlowFlushes)))
+
+                            flushIntervalMs = min(800, base.intervalMs * factor * backoffMultiplier)
+                            maxBufferSize = min(8_192, Int(Double(base.maxBuf) * factor * backoffMultiplier))
                         }
 
                         // Thinking tag parsing state
                         var isInsideThinking = false
                         var pendingTagBuffer = ""  // Buffer for partial tag detection
 
+                        // Track when we last synced to the turn (to batch UI updates)
+                        var lastSyncTime = Date()
+                        let syncIntervalMs: Double = 100  // Sync to turn every 100ms
+                        // Track if we have pending content to sync
+                        var hasPendingContent = false
+
                         @MainActor
                         func appendContent(_ s: String) {
                             guard !s.isEmpty else { return }
-                            assistantTurn.content += s
+                            // Use ChatTurn's efficient O(1) append method
+                            assistantTurn.appendContent(s)
                             assistantContentLen += s.count
+                            hasPendingContent = true
                         }
 
                         @MainActor
                         func appendThinking(_ s: String) {
                             guard !s.isEmpty else { return }
-                            assistantTurn.thinking += s
+                            // Use ChatTurn's efficient O(1) append method
+                            assistantTurn.appendThinking(s)
                             assistantThinkingLen += s.count
+                            hasPendingContent = true
+                        }
+
+                        /// Notify observers that content changed (triggers UI update)
+                        @MainActor
+                        func syncChunksToTurn() {
+                            guard hasPendingContent else { return }
+                            // ChatTurn already has the content via appendContent/appendThinking
+                            // Just notify observers to trigger UI update
+                            assistantTurn.notifyContentChanged()
+                            hasPendingContent = false
+                            lastSyncTime = Date()
                         }
 
                         @MainActor
@@ -826,7 +866,14 @@ final class ChatSession: ObservableObject {
                                 }
                             }
 
-                            scrollTick &+= 1
+                            // Periodically sync chunks to the turn to update UI
+                            // This batches multiple appends into a single UI update
+                            let timeSinceSync = Date().timeIntervalSince(lastSyncTime) * 1000
+                            if timeSinceSync >= syncIntervalMs {
+                                syncChunksToTurn()
+                                scrollTick &+= 1
+                            }
+
                             lastFlushTime = Date()
 
                             let flushMs = lastFlushTime.timeIntervalSince(flushStart) * 1000
@@ -847,14 +894,17 @@ final class ChatSession: ObservableObject {
                                 } else {
                                     appendContent(remaining)
                                 }
-                                scrollTick &+= 1
                             }
+                            // Always sync any remaining chunks to the turn
+                            syncChunksToTurn()
+                            scrollTick &+= 1
                         }
 
                         let stream = try await engine.streamChat(request: req)
                         for try await delta in stream {
                             if Task.isCancelled {
                                 flushBuffer()  // Flush remaining before breaking
+                                syncChunksToTurn()  // Sync any accumulated chunks
                                 break outer
                             }
                             if !delta.isEmpty {
@@ -866,6 +916,15 @@ final class ChatSession: ObservableObject {
                                 let now = Date()
                                 let timeSinceFlush = now.timeIntervalSince(lastFlushTime) * 1000  // ms
                                 recomputeFlushTuning()
+
+                                // Check if we should skip this flush due to backpressure
+                                if skipNextFlush {
+                                    skipNextFlush = false
+                                    // Still update lastFlushTime to reset the timer
+                                    lastFlushTime = now
+                                    continue
+                                }
+
                                 if deltaBuffer.count >= maxBufferSize || timeSinceFlush >= flushIntervalMs {
                                     flushBuffer()
                                 }

@@ -35,6 +35,29 @@ private struct MemoizedMarkdownView: View {
     // Cache for incremental parsing
     @State private var cachedBlocks: [MessageBlock] = []
     @State private var lastStableIndex: Int = 0  // Index of last "stable" block (not affected by streaming)
+    // Track current parsing task to allow cancellation
+    @State private var currentParseTask: Task<Void, Never>?
+    // Track last parse request time for adaptive debouncing
+    @State private var lastParseRequestTime: Date = .distantPast
+    // Track the character position where stable blocks end (for incremental parsing)
+    @State private var stableTextLength: Int = 0
+
+    // Debounce interval in milliseconds - scales with content size
+    private var debounceIntervalMs: UInt64 {
+        let charCount = text.count
+        switch charCount {
+        case 0 ..< 1_000:
+            return 30  // Fast updates for small content
+        case 1_000 ..< 3_000:
+            return 50
+        case 3_000 ..< 8_000:
+            return 80
+        case 8_000 ..< 20_000:
+            return 120
+        default:
+            return 200  // Slower updates for large content
+        }
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -43,43 +66,116 @@ private struct MemoizedMarkdownView: View {
             }
         }
         .onAppear {
-            // Initial parse
+            // Initial parse - no debounce needed
             if lastParsedText != text {
-                updateSegments()
+                scheduleBackgroundParse(for: text, oldText: "", debounce: false)
             }
         }
-        .onChange(of: text) { _, newText in
+        .onChange(of: text) { oldText, newText in
             // Only reparse when text actually changes
             if lastParsedText != newText {
-                updateSegmentsIncremental(oldText: lastParsedText, newText: newText)
+                scheduleBackgroundParse(for: newText, oldText: oldText, debounce: true)
             }
         }
     }
 
-    private func updateSegments() {
-        let blocks = parseBlocks(text)
-        cachedBlocks = blocks
-        cachedSegments = groupBlocksIntoSegments(blocks)
-        lastParsedText = text
-        // All blocks except the last one are considered stable
-        lastStableIndex = max(0, blocks.count - 1)
-    }
+    /// Schedule parsing on a background thread to avoid blocking the main thread
+    /// - Parameters:
+    ///   - textToParse: The text to parse
+    ///   - oldText: The previous text (for detecting append-only changes)
+    ///   - debounce: Whether to apply debouncing delay
+    private func scheduleBackgroundParse(for textToParse: String, oldText: String, debounce: Bool) {
+        // Cancel any in-flight parsing task
+        currentParseTask?.cancel()
 
-    /// Incremental update: only reparse from the last stable block
-    private func updateSegmentsIncremental(oldText: String, newText: String) {
-        // Fast path: if text only got longer (streaming append), do incremental parse
-        if newText.hasPrefix(oldText) && !cachedBlocks.isEmpty {
-            // Reparse the full text (still benefits from optimized parser)
-            let newBlocks = parseBlocks(newText)
+        // Capture state for the background task
+        let textSnapshot = textToParse
+        let oldTextSnapshot = oldText
+        let debounceMs = debounce ? debounceIntervalMs : 0
+        lastParseRequestTime = Date()
 
-            // Update cached state
-            cachedBlocks = newBlocks
-            cachedSegments = groupBlocksIntoSegments(newBlocks)
-            lastParsedText = newText
-            lastStableIndex = max(0, newBlocks.count - 1)
-        } else {
-            // Full reparse for non-append changes (edits, deletions)
-            updateSegments()
+        // Detect if this is an append-only change (streaming)
+        let isAppendOnly = !oldTextSnapshot.isEmpty && textSnapshot.hasPrefix(oldTextSnapshot)
+
+        // Capture stable blocks for incremental parsing
+        let stableBlocksSnapshot =
+            isAppendOnly && lastStableIndex > 0
+            ? Array(cachedBlocks.prefix(max(0, lastStableIndex - 1)))
+            : []
+        let stableTextLengthSnapshot = isAppendOnly ? stableTextLength : 0
+
+        currentParseTask = Task {
+            // Apply debounce delay if requested
+            if debounceMs > 0 {
+                do {
+                    try await Task.sleep(nanoseconds: debounceMs * 1_000_000)
+                } catch {
+                    // Task was cancelled during sleep - exit early
+                    return
+                }
+            }
+
+            // Check if task was cancelled
+            if Task.isCancelled { return }
+
+            // Run parsing on a background thread
+            let (newBlocks, newSegments, newStableLength) = await Task.detached(priority: .userInitiated) {
+                let blocks: [MessageBlock]
+                var computedStableLength = 0
+
+                if isAppendOnly && !stableBlocksSnapshot.isEmpty && stableTextLengthSnapshot > 0 {
+                    // Incremental parsing: only parse from the stable position forward
+                    // Find a safe position to start parsing (after stable blocks)
+                    let startPosition = stableTextLengthSnapshot
+                    let textToParse =
+                        startPosition < textSnapshot.count
+                        ? String(textSnapshot.dropFirst(startPosition))
+                        : ""
+
+                    // Parse only the new portion
+                    let newPortionBlocks = parseBlocks(textToParse)
+
+                    // Re-index new blocks to continue from stable block count
+                    let reindexedBlocks = newPortionBlocks.enumerated().map { offset, block in
+                        MessageBlock(index: stableBlocksSnapshot.count + offset, kind: block.kind)
+                    }
+
+                    // Combine stable blocks with newly parsed blocks
+                    blocks = stableBlocksSnapshot + reindexedBlocks
+
+                    // Calculate new stable length - everything except the last block
+                    if blocks.count > 1 {
+                        computedStableLength = computeStableTextLength(blocks: blocks, fullText: textSnapshot)
+                    }
+                } else {
+                    // Full parse
+                    blocks = parseBlocks(textSnapshot)
+
+                    // Calculate stable length - everything except the last block
+                    if blocks.count > 1 {
+                        computedStableLength = computeStableTextLength(blocks: blocks, fullText: textSnapshot)
+                    }
+                }
+
+                let segments = groupBlocksIntoSegments(blocks)
+                return (blocks, segments, computedStableLength)
+            }.value
+
+            // Check if task was cancelled while parsing
+            if Task.isCancelled { return }
+
+            // Update UI state on main thread
+            await MainActor.run {
+                // Double-check we're still processing the same text
+                // (prevents race conditions if text changed while parsing)
+                guard textSnapshot == text else { return }
+
+                cachedBlocks = newBlocks
+                cachedSegments = newSegments
+                lastParsedText = textSnapshot
+                lastStableIndex = max(0, newBlocks.count - 1)
+                stableTextLength = newStableLength
+            }
         }
     }
 
@@ -614,6 +710,72 @@ private func parseBlocks(_ input: String) -> [MessageBlock] {
     flushList()
 
     return blocks
+}
+
+// MARK: - Incremental Parsing Helpers
+
+/// Compute the character length of text covered by stable blocks (all except the last one)
+/// This is used to determine where to start incremental parsing on the next update
+private func computeStableTextLength(blocks: [MessageBlock], fullText: String) -> Int {
+    // If we have fewer than 2 blocks, nothing is stable yet
+    guard blocks.count >= 2 else { return 0 }
+
+    // Find the position in the text where the second-to-last block ends
+    // We need to find a line boundary that represents where stable content ends
+
+    // Strategy: Find approximate position by counting content in stable blocks
+    // This is a heuristic - we look for the last blank line or block separator
+    // before the final block
+
+    let stableBlockCount = blocks.count - 1
+    var approximateLength = 0
+
+    for i in 0 ..< stableBlockCount {
+        let block = blocks[i]
+        switch block.kind {
+        case .paragraph(let text):
+            approximateLength += text.count + 2  // +2 for potential newlines
+        case .code(let code, _):
+            approximateLength += code.count + 10  // Account for ``` markers
+        case .heading(_, let text):
+            approximateLength += text.count + 4  // Account for # markers
+        case .blockquote(let content):
+            approximateLength += content.count + 4  // Account for > markers
+        case .list(let items, _):
+            for item in items {
+                approximateLength += item.count + 4  // Account for list markers
+            }
+        case .table(let headers, let rows):
+            for header in headers {
+                approximateLength += header.count + 3
+            }
+            for row in rows {
+                for cell in row {
+                    approximateLength += cell.count + 3
+                }
+            }
+        case .image(let url, let altText):
+            approximateLength += url.count + altText.count + 6
+        case .horizontalRule:
+            approximateLength += 5
+        }
+    }
+
+    // Find a safe boundary (previous blank line or paragraph break)
+    // Don't go beyond the actual text length
+    let safeLength = min(approximateLength, max(0, fullText.count - 100))
+
+    // Find the last newline before this position
+    if safeLength > 0 {
+        let endIndex =
+            fullText.index(fullText.startIndex, offsetBy: safeLength, limitedBy: fullText.endIndex) ?? fullText.endIndex
+        let searchRange = fullText.startIndex ..< endIndex
+        if let lastNewline = fullText.range(of: "\n\n", options: .backwards, range: searchRange) {
+            return fullText.distance(from: fullText.startIndex, to: lastNewline.upperBound)
+        }
+    }
+
+    return 0  // Fall back to full parse if we can't find a safe boundary
 }
 
 // MARK: - Table Parsing Helpers
