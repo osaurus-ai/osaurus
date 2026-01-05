@@ -14,6 +14,10 @@ struct FloatingInputCard: View {
     @Binding var selectedModel: String?
     @Binding var pendingImages: [Data]
     @Binding var enabledToolOverrides: [String: Bool]
+    /// When true, voice input auto-restarts after AI responds (continuous conversation mode)
+    @Binding var isContinuousVoiceMode: Bool
+    @Binding var voiceInputState: VoiceInputState
+    @Binding var showVoiceOverlay: Bool
     let modelOptions: [ModelOption]
     let availableTools: [ToolRegistry.ToolEntry]
     /// Persona's tool overrides (if any). Used as base for diffing session overrides.
@@ -45,16 +49,11 @@ struct FloatingInputCard: View {
 
     // MARK: - Voice Input State
     @StateObject private var whisperService = WhisperKitService.shared
-    @State private var voiceInputState: VoiceInputState = .idle
-    @State private var showVoiceOverlay = false
     @State private var voiceConfig = WhisperConfiguration.default
 
     // Pause detection state
     @State private var lastSpeechTime: Date = Date()
     @State private var isPauseDetectionActive: Bool = false
-
-    /// When true, voice input auto-restarts after AI responds (continuous conversation mode)
-    @State private var isContinuousVoiceMode: Bool = false
 
     /// Tracks last voice activity time for silence timeout
     @State private var lastVoiceActivityTime: Date = Date()
@@ -190,10 +189,27 @@ struct FloatingInputCard: View {
             localText = text
             setupKeyMonitor()
             loadVoiceConfig()
+
+            // Sync local state with singleton service state on appear
+            // This handles cases where view is recreated while recording is active
+            if whisperService.isRecording {
+                print("[FloatingInputCard] onAppear: Syncing with active recording")
+                if voiceInputState == .idle {
+                    voiceInputState = .recording
+                    // Reset timers on view recreation to prevent immediate timeout
+                    lastSpeechTime = Date()
+                    lastVoiceActivityTime = Date()
+                    isPauseDetectionActive = voiceConfig.pauseDuration > 0
+                }
+                if !showVoiceOverlay {
+                    showVoiceOverlay = true
+                }
+            }
         }
         .onReceive(NotificationCenter.default.publisher(for: .startVoiceInputInChat)) { _ in
             // Start voice input when triggered by VAD - enable continuous mode
             if isVoiceAvailable && !showVoiceOverlay {
+                print("[FloatingInputCard] Received .startVoiceInputInChat notification")
                 isContinuousVoiceMode = true
                 lastVoiceActivityTime = Date()
                 startVoiceInput()
@@ -206,6 +222,7 @@ struct FloatingInputCard: View {
         .onChange(of: isStreaming) { wasStreaming, nowStreaming in
             // When AI finishes responding and we're in continuous voice mode, restart voice input
             if wasStreaming && !nowStreaming && isContinuousVoiceMode {
+                print("[FloatingInputCard] AI response finished in continuous mode - restarting voice")
                 // Reset silence timeout for the new turn
                 lastVoiceActivityTime = Date()
 
@@ -220,9 +237,18 @@ struct FloatingInputCard: View {
         }
         .onDisappear {
             cleanupKeyMonitor()
-            // Stop any active voice recording
+            // Stop any active voice recording, but check if we should keep continuous mode
             if isVoiceActive {
-                cancelVoiceInput()
+                print("[FloatingInputCard] onDisappear: Stopping active voice recording")
+                // Don't use cancelVoiceInput() here as it forces continuous mode off.
+                // Instead, just stop recording but preserve the mode.
+                isPauseDetectionActive = false
+                Task {
+                    _ = await whisperService.stopStreamingTranscription()
+                    whisperService.clearTranscription()
+                }
+                voiceInputState = .idle
+                showVoiceOverlay = false
             }
         }
         .onChange(of: text) { _, newValue in
@@ -238,6 +264,9 @@ struct FloatingInputCard: View {
             }
         }
         .onChange(of: whisperService.isRecording) { _, isRecording in
+            print(
+                "[FloatingInputCard] isRecording changed to: \(isRecording). voiceInputState: \(voiceInputState), showVoiceOverlay: \(showVoiceOverlay)"
+            )
             // Sync voice state with service
             if isRecording {
                 // Recording has started - now we can set recording state and reset timers
@@ -251,6 +280,14 @@ struct FloatingInputCard: View {
                     print("[FloatingInputCard] Recording confirmed - voice input ready")
                 } else if voiceInputState == .idle {
                     // Started from external trigger (e.g., VAD)
+                    // Only transition to recording if we have an indication that this is intended for chat
+                    // However, if we don't adopt it, we might be in a zombie state.
+                    // Let's log it but not force state unless we're sure.
+                    // But VAD notification usually sets showVoiceOverlay=true.
+                    // If showVoiceOverlay is false, this might be a phantom recording restart.
+                    // Let's adopt it but keep overlay hidden? No, that breaks UI state.
+                    // For now, keep existing behavior but log warning if overlay is hidden.
+                    print("[FloatingInputCard] External recording detected. Overlay: \(showVoiceOverlay)")
                     voiceInputState = .recording
                     lastSpeechTime = Date()
                     lastVoiceActivityTime = Date()
@@ -284,6 +321,7 @@ struct FloatingInputCard: View {
             }
         }
         .onChange(of: voiceInputState) { _, newState in
+            print("[FloatingInputCard] voiceInputState changed to: \(newState)")
             // Handle state changes
             if case .recording = newState {
                 // Resumed recording, restart detection
@@ -292,6 +330,12 @@ struct FloatingInputCard: View {
             } else {
                 isPauseDetectionActive = false
             }
+        }
+        .onChange(of: showVoiceOverlay) { _, newValue in
+            print("[FloatingInputCard] showVoiceOverlay changed to: \(newValue)")
+        }
+        .onChange(of: isContinuousVoiceMode) { _, newValue in
+            print("[FloatingInputCard] isContinuousVoiceMode changed to: \(newValue)")
         }
         .onReceive(pauseDetectionPublisher) { _ in
             checkForPause()
@@ -308,8 +352,22 @@ struct FloatingInputCard: View {
     private func startVoiceInput() {
         guard isVoiceAvailable else { return }
 
-        // Don't start if already recording or starting
-        guard !whisperService.isRecording, voiceInputState == .idle else { return }
+        // If continuous mode is active, we should be aggressive about ensuring the UI is shown.
+        // If recording is already active (e.g. VAD or zombie state), just attach to it.
+        if whisperService.isRecording {
+            print("[FloatingInputCard] startVoiceInput: Recording already active, ensuring UI is visible")
+            showVoiceOverlay = true
+            if voiceInputState == .idle {
+                voiceInputState = .recording
+                lastSpeechTime = Date()
+                lastVoiceActivityTime = Date()
+                isPauseDetectionActive = voiceConfig.pauseDuration > 0
+            }
+            return
+        }
+
+        // Don't start if already recording (handled above) or starting
+        guard voiceInputState == .idle else { return }
 
         // Show overlay immediately for visual feedback, but don't set recording state yet.
         // Recording state will be set when whisperService.isRecording becomes true.
@@ -346,6 +404,7 @@ struct FloatingInputCard: View {
     }
 
     private func cancelVoiceInput() {
+        print("[FloatingInputCard] User cancelled voice input - disabling continuous mode")
         isPauseDetectionActive = false
         isContinuousVoiceMode = false  // Exit continuous mode on cancel
         Task {
@@ -434,10 +493,6 @@ struct FloatingInputCard: View {
             // If VAD is on, engine stays alive. If VAD is off, engine tears down.
             _ = await whisperService.stopStreamingTranscription(force: false)
             whisperService.clearTranscription()
-
-            // We do NOT call resetToIdle() here.
-            // If VAD is enabled, VADService will detect isRecording=false and auto-restart.
-            // If VAD is disabled, state is already idle.
         }
 
         voiceInputState = .idle
@@ -447,20 +502,22 @@ struct FloatingInputCard: View {
     }
 
     private func sendVoiceMessage(_ message: String) {
+        print("[FloatingInputCard] Sending voice message. Continuous mode: \(isContinuousVoiceMode)")
         Task {
             _ = await whisperService.stopStreamingTranscription()
             // Clear transcription so next voice input starts fresh
             whisperService.clearTranscription()
+            await MainActor.run {
+                voiceInputState = .idle
+                showVoiceOverlay = false
+                text = message
+                onSend()
+            }
         }
-        voiceInputState = .idle
-        showVoiceOverlay = false
-
-        // Send the voice message
-        text = message
-        onSend()
     }
 
     private func transferToTextInput() {
+        print("[FloatingInputCard] Transferring to text input - disabling continuous mode")
         // Transfer transcription to text input and close overlay
         let transcribedText = [
             whisperService.confirmedTranscription,
@@ -1230,6 +1287,9 @@ extension NSImage {
             @State private var model: String? = "foundation"
             @State private var images: [Data] = []
             @State private var toolOverrides: [String: Bool] = [:]
+            @State private var isContinuousVoiceMode: Bool = false
+            @State private var voiceInputState: VoiceInputState = .idle
+            @State private var showVoiceOverlay: Bool = false
 
             var body: some View {
                 VStack {
@@ -1239,6 +1299,9 @@ extension NSImage {
                         selectedModel: $model,
                         pendingImages: $images,
                         enabledToolOverrides: $toolOverrides,
+                        isContinuousVoiceMode: $isContinuousVoiceMode,
+                        voiceInputState: $voiceInputState,
+                        showVoiceOverlay: $showVoiceOverlay,
                         modelOptions: [
                             .foundation(),
                             ModelOption(
