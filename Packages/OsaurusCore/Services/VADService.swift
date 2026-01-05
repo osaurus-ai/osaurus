@@ -47,13 +47,11 @@ public final class VADService: ObservableObject {
     // MARK: - Published Properties
 
     @Published public private(set) var state: VADServiceState = .idle
-    @Published public private(set) var isEnabled: Bool = false
-    @Published public private(set) var lastDetection: VADDetectionResult?
     @Published public private(set) var audioLevel: Float = 0.0
-    @Published public private(set) var lastTranscription: String = ""
 
     // MARK: - Private Properties
 
+    private var isEnabled: Bool = false
     private var configuration: VADConfiguration = .default
     private var personaDetector: PersonaNameDetector?
     private var cancellables = Set<AnyCancellable>()
@@ -154,7 +152,6 @@ public final class VADService: ObservableObject {
         isEnabled = false
         audioLevel = 0
         accumulatedTranscription = ""
-        lastTranscription = ""
 
         // Disable keep-alive and force stop to tear down audio engine
         whisperService.keepAudioEngineAlive = false
@@ -162,15 +159,6 @@ public final class VADService: ObservableObject {
         whisperService.clearTranscription()
 
         print("[VADService] Stopped listening (keep-alive disabled)")
-    }
-
-    /// Toggle VAD on/off
-    public func toggle() async throws {
-        if state == .listening {
-            await stop()
-        } else {
-            try await start()
-        }
     }
 
     /// Pause VAD temporarily (e.g., when chat voice input is active or testing)
@@ -190,20 +178,6 @@ public final class VADService: ObservableObject {
         whisperService.clearTranscription()
 
         print("[VADService] Paused - transcription stopped, ready for chat voice input")
-    }
-
-    /// Resume VAD after pause
-    public func resume() async throws {
-        guard isEnabled && state == .idle else { return }
-        print("[VADService] Resuming after chat voice input")
-        try await start()
-    }
-
-    /// Reset state to idle (called when exiting continuous voice mode)
-    public func resetToIdle() {
-        print("[VADService] Resetting state to idle (was: \(state))")
-        state = .idle
-        // Keep isEnabled true so resumeAfterChat knows to restart
     }
 
     // MARK: - Private Methods
@@ -303,8 +277,6 @@ public final class VADService: ObservableObject {
             accumulatedTranscription = fullText
         }
 
-        lastTranscription = accumulatedTranscription
-
         // Check for persona detection
         checkForPersonaDetection(in: accumulatedTranscription)
     }
@@ -318,7 +290,6 @@ public final class VADService: ObservableObject {
 
         if let detection = detector.detect(in: text) {
             lastDetectionTime = now
-            lastDetection = detection
 
             print(
                 "[VADService] ✅ Detected persona: \(detection.personaName) with confidence \(detection.confidence) in '\(text)'"
@@ -331,7 +302,6 @@ public final class VADService: ObservableObject {
                 // Clear transcription to avoid re-detecting same phrase
                 whisperService.clearTranscription()
                 accumulatedTranscription = ""
-                lastTranscription = ""
 
                 // Post notification to open chat with voice mode
                 NotificationCenter.default.post(
@@ -369,7 +339,6 @@ public final class VADService: ObservableObject {
         // Clear any stale transcription before resuming
         whisperService.clearTranscription()
         accumulatedTranscription = ""
-        lastTranscription = ""
 
         do {
             try await start()
