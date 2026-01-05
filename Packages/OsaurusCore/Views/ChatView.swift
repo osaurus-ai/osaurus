@@ -948,7 +948,7 @@ final class ChatSession: ObservableObject {
 
                         let totalTime = Date().timeIntervalSince(streamStartTime)
                         print(
-                            "[Osaurus][UI] Stream consumption completed: \(uiDeltaCount) deltas in \(String(format: "%.2f", totalTime))s, final contentLen=\(assistantTurn.content.count)"
+                            "[Osaurus][UI] Stream consumption completed: \(uiDeltaCount) deltas in \(String(format: "%.2f", totalTime))s, final contentLen=\(assistantTurn.contentLength)"
                         )
 
                         break  // finished normally

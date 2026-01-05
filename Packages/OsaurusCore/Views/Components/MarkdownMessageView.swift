@@ -13,10 +13,12 @@ import SwiftUI
 struct MarkdownMessageView: View {
     let text: String
     let baseWidth: CGFloat
+    /// Optional turn ID for caching heights across view recycling
+    var turnId: UUID? = nil
 
     var body: some View {
         // Use inner view with memoized parsing to avoid re-parsing on every render
-        MemoizedMarkdownView(text: text, baseWidth: baseWidth)
+        MemoizedMarkdownView(text: text, baseWidth: baseWidth, turnId: turnId)
     }
 }
 
@@ -26,6 +28,7 @@ struct MarkdownMessageView: View {
 private struct MemoizedMarkdownView: View {
     let text: String
     let baseWidth: CGFloat
+    let turnId: UUID?
 
     @Environment(\.theme) private var theme
 
@@ -42,7 +45,8 @@ private struct MemoizedMarkdownView: View {
 
     // Debounce interval in milliseconds - scales with content size
     private var debounceIntervalMs: UInt64 {
-        let charCount = text.count
+        // Use utf8.count which is O(1) for contiguous strings, vs O(n) for .count
+        let charCount = text.utf8.count
         switch charCount {
         case 0 ..< 1_000:
             return 30  // Fast updates for small content
@@ -145,7 +149,8 @@ private struct MemoizedMarkdownView: View {
                 SelectableTextView(
                     blocks: textBlocks,
                     baseWidth: baseWidth,
-                    theme: theme
+                    theme: theme,
+                    cacheKey: turnId
                 )
                 // Let the NSTextView self-size via intrinsicContentSize instead of doing a separate
                 // height calculation pass (which duplicates layout work and can freeze the UI during streaming).

@@ -24,6 +24,8 @@ struct SelectableTextView: NSViewRepresentable {
     let blocks: [SelectableTextBlock]
     let baseWidth: CGFloat
     let theme: ThemeProtocol
+    /// Optional cache key (turn ID) for persisting measured height across view recycling
+    var cacheKey: UUID? = nil
 
     final class Coordinator {
         // Store previous state directly for O(1) comparison instead of O(n) hashing
@@ -31,14 +33,23 @@ struct SelectableTextView: NSViewRepresentable {
         var lastWidth: CGFloat = 0
         var lastThemeFingerprint: String = ""
         var lastMeasuredHeight: CGFloat = 0
+        var cacheKey: UUID? = nil
 
         // Track length of each block's rendered text (including trailing newline if present)
         // This enables O(1) incremental updates by only modifying changed blocks
         var blockLengths: [Int] = []
+
+        init(cacheKey: UUID? = nil) {
+            self.cacheKey = cacheKey
+            // Initialize from cache if available
+            if let key = cacheKey, let cachedHeight = MessageHeightCache.shared.height(for: key) {
+                self.lastMeasuredHeight = cachedHeight
+            }
+        }
     }
 
     func makeCoordinator() -> Coordinator {
-        Coordinator()
+        Coordinator(cacheKey: cacheKey)
     }
 
     func makeNSView(context: Context) -> SelectableNSTextView {
@@ -66,6 +77,11 @@ struct SelectableTextView: NSViewRepresentable {
 
         // Apply cursor color
         textView.insertionPointColor = NSColor(theme.cursorColor)
+
+        // Initialize preferred size from cache if available (prevents LazyVStack height estimation issues)
+        if context.coordinator.lastMeasuredHeight > 0 {
+            textView.updatePreferredSize(width: baseWidth, height: context.coordinator.lastMeasuredHeight)
+        }
 
         return textView
     }
@@ -110,6 +126,11 @@ struct SelectableTextView: NSViewRepresentable {
                 let measured = ceil(usedRect.height) + 4  // small buffer to prevent clipping
                 context.coordinator.lastMeasuredHeight = measured
                 textView.updatePreferredSize(width: baseWidth, height: measured)
+
+                // Cache the measured height for future view recycling
+                if let key = cacheKey {
+                    MessageHeightCache.shared.setHeight(measured, for: key)
+                }
             } else {
                 textView.updatePreferredSize(width: baseWidth, height: context.coordinator.lastMeasuredHeight)
             }
@@ -702,9 +723,24 @@ final class SelectableNSTextView: NSTextView {
 struct SelectableTextViewSizer: View {
     let blocks: [SelectableTextBlock]
     let baseWidth: CGFloat
+    /// Optional cache key (turn ID) for persisting measured height across view recycling
+    let cacheKey: UUID?
 
     @Environment(\.theme) private var theme
-    @State private var height: CGFloat = 0
+    @State private var height: CGFloat
+
+    init(blocks: [SelectableTextBlock], baseWidth: CGFloat, cacheKey: UUID? = nil) {
+        self.blocks = blocks
+        self.baseWidth = baseWidth
+        self.cacheKey = cacheKey
+
+        // Initialize height from cache if available, otherwise start at 0
+        if let key = cacheKey, let cachedHeight = MessageHeightCache.shared.height(for: key) {
+            _height = State(initialValue: cachedHeight)
+        } else {
+            _height = State(initialValue: 0)
+        }
+    }
 
     var body: some View {
         SelectableTextView(blocks: blocks, baseWidth: baseWidth, theme: theme)
@@ -715,8 +751,12 @@ struct SelectableTextViewSizer: View {
                 }
             )
             .onPreferenceChange(TextHeightPreferenceKey.self) { newHeight in
-                if newHeight > 0 {
+                if newHeight > 0 && newHeight != height {
                     height = newHeight
+                    // Cache the measured height for future view recycling
+                    if let key = cacheKey {
+                        MessageHeightCache.shared.setHeight(newHeight, for: key)
+                    }
                 }
             }
     }
