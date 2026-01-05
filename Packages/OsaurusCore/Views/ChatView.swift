@@ -126,11 +126,10 @@ final class ChatSession: ObservableObject {
         if let prev = prev, newOptions.contains(where: { $0.id == prev }) {
             newSelected = prev
         } else {
-            // Otherwise try to load from config/persona defaults
-            let chatConfig = ChatConfigurationStore.load()
+            // Otherwise try to load from persona's model, falling back to global config
+            let effectiveModel = PersonaManager.shared.effectiveModel(for: personaId ?? Persona.defaultId)
 
-            // Logic adapted from original init:
-            if let defaultModel = chatConfig.defaultModel,
+            if let defaultModel = effectiveModel,
                 newOptions.contains(where: { $0.id == defaultModel })
             {
                 newSelected = defaultModel
