@@ -159,6 +159,7 @@ struct FloatingInputCard: View {
                     silenceDuration: currentSilenceDuration,
                     silenceTimeoutDuration: voiceConfig.silenceTimeoutSeconds,
                     isContinuousMode: isContinuousVoiceMode,
+                    isStreaming: isStreaming,
                     onCancel: { cancelVoiceInput() },
                     onSend: { message in sendVoiceMessage(message) },
                     onEdit: { transferToTextInput() }
@@ -217,7 +218,7 @@ struct FloatingInputCard: View {
                 return
             }
 
-            if isVoiceAvailable && !showVoiceOverlay {
+            if isVoiceAvailable && !showVoiceOverlay && !isStreaming {
                 print(
                     "[FloatingInputCard] Received .startVoiceInputInChat notification for window \(windowId?.uuidString ?? "nil")"
                 )

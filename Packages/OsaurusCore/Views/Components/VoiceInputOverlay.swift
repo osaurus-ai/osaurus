@@ -43,6 +43,9 @@ public struct VoiceInputOverlay: View {
     /// Whether in continuous voice mode (VAD)
     var isContinuousMode: Bool = false
 
+    /// Whether AI is currently streaming a response
+    var isStreaming: Bool = false
+
     /// Callbacks
     var onCancel: (() -> Void)?
     var onSend: ((String) -> Void)?
@@ -63,6 +66,7 @@ public struct VoiceInputOverlay: View {
         silenceDuration: Double = 0,
         silenceTimeoutDuration: Double = 0,
         isContinuousMode: Bool = false,
+        isStreaming: Bool = false,
         onCancel: (() -> Void)? = nil,
         onSend: ((String) -> Void)? = nil,
         onEdit: (() -> Void)? = nil
@@ -76,6 +80,7 @@ public struct VoiceInputOverlay: View {
         self.silenceDuration = silenceDuration
         self.silenceTimeoutDuration = silenceTimeoutDuration
         self.isContinuousMode = isContinuousMode
+        self.isStreaming = isStreaming
         self.onCancel = onCancel
         self.onSend = onSend
         self.onEdit = onEdit
@@ -115,8 +120,8 @@ public struct VoiceInputOverlay: View {
                         Spacer()
                     }
 
-                    // Silence timeout hint (all voice input modes)
-                    if silenceTimeoutDuration > 0 {
+                    // Silence timeout hint (all voice input modes, but only when it's user's turn)
+                    if silenceTimeoutDuration > 0 && !isStreaming {
                         SilenceTimeoutIndicator(
                             silenceDuration: silenceDuration,
                             timeoutDuration: silenceTimeoutDuration
