@@ -139,6 +139,11 @@ enum ContentBlock: Identifiable {
 extension ContentBlock {
     private static let maxParagraphSize = 600
 
+    /// Check if a turn is "tool-only" (has tool calls but no text content)
+    private static func isToolOnlyTurn(_ turn: ChatTurn) -> Bool {
+        turn.contentIsEmpty && !turn.hasThinking && (turn.toolCalls?.isEmpty == false)
+    }
+
     static func generateBlocks(
         from turns: [ChatTurn],
         streamingTurnId: UUID?,
@@ -148,9 +153,28 @@ extension ContentBlock {
         var previousRole: MessageRole?
         var previousTurnId: UUID?
 
-        for turn in turns where turn.role != .tool {
+        // Accumulator for consecutive tool-only turns
+        var pendingToolCalls: [ToolCallItem] = []
+        var pendingToolTurnId: UUID?
+
+        /// Flush accumulated tool calls into a single group block
+        func flushPendingToolCalls(into turnBlocks: inout [ContentBlock]) {
+            guard !pendingToolCalls.isEmpty, let turnId = pendingToolTurnId else { return }
+            turnBlocks.append(.toolCallGroup(turnId: turnId, calls: pendingToolCalls, position: .middle))
+            pendingToolCalls = []
+            pendingToolTurnId = nil
+        }
+
+        let filteredTurns = turns.filter { $0.role != .tool }
+
+        for (index, turn) in filteredTurns.enumerated() {
             let isStreaming = turn.id == streamingTurnId
             let isFirstInGroup = turn.role != previousRole
+            let isToolOnly = isToolOnlyTurn(turn)
+
+            // Check if next turn is also a tool-only assistant turn (for grouping)
+            let nextTurn = index + 1 < filteredTurns.count ? filteredTurns[index + 1] : nil
+            let nextIsToolOnly = nextTurn.map { isToolOnlyTurn($0) && $0.role == .assistant } ?? false
 
             // Spacer between role groups
             if isFirstInGroup, let prevId = previousTurnId {
@@ -174,19 +198,19 @@ extension ContentBlock {
             }
 
             // Images
-            for (index, imageData) in turn.attachedImages.enumerated() {
-                turnBlocks.append(.image(turnId: turn.id, index: index, imageData: imageData, position: .middle))
+            for (idx, imageData) in turn.attachedImages.enumerated() {
+                turnBlocks.append(.image(turnId: turn.id, index: idx, imageData: imageData, position: .middle))
             }
 
             // Thinking blocks
             if turn.role == .assistant && turn.hasThinking {
                 let paragraphs = splitIntoParagraphs(turn.thinking)
-                for (index, text) in paragraphs.enumerated() {
-                    let isLast = index == paragraphs.count - 1
+                for (idx, text) in paragraphs.enumerated() {
+                    let isLast = idx == paragraphs.count - 1
                     turnBlocks.append(
                         .thinking(
                             turnId: turn.id,
-                            index: index,
+                            index: idx,
                             text: text,
                             isStreaming: isStreaming && isLast && turn.contentIsEmpty,
                             position: .middle
@@ -197,13 +221,16 @@ extension ContentBlock {
 
             // Content paragraphs or typing indicator
             if !turn.contentIsEmpty {
+                // Flush any pending tool calls before content
+                flushPendingToolCalls(into: &turnBlocks)
+
                 let paragraphs = splitIntoParagraphs(turn.content)
-                for (index, text) in paragraphs.enumerated() {
-                    let isLast = index == paragraphs.count - 1
+                for (idx, text) in paragraphs.enumerated() {
+                    let isLast = idx == paragraphs.count - 1
                     turnBlocks.append(
                         .paragraph(
                             turnId: turn.id,
-                            index: index,
+                            index: idx,
                             text: text,
                             isStreaming: isStreaming && isLast,
                             role: turn.role,
@@ -218,12 +245,21 @@ extension ContentBlock {
                 }
             }
 
-            // Tool calls - group them together
+            // Tool calls - accumulate consecutive tool-only turns
             if let toolCalls = turn.toolCalls, !toolCalls.isEmpty {
-                let groupedCalls = toolCalls.map { call in
+                let items = toolCalls.map { call in
                     ToolCallItem(call: call, result: turn.toolResults[call.id])
                 }
-                turnBlocks.append(.toolCallGroup(turnId: turn.id, calls: groupedCalls, position: .middle))
+
+                if pendingToolTurnId == nil {
+                    pendingToolTurnId = turn.id
+                }
+                pendingToolCalls.append(contentsOf: items)
+
+                // Flush if this is the last tool-only turn in sequence or turn has content after
+                if !nextIsToolOnly || !isToolOnly {
+                    flushPendingToolCalls(into: &turnBlocks)
+                }
             }
 
             // Update positions based on count

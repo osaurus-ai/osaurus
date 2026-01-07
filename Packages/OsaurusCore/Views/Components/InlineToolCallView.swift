@@ -303,11 +303,11 @@ private struct PulsingDot: View {
 struct InlineToolCallView: View {
     let call: ToolCall
     let result: String?
+    var showAccentStrip = false
 
     @State private var isExpanded = false
     @State private var isHovered = false
     @State private var formattedArgs: String?
-    @State private var shimmerOffset: CGFloat = -1.0
     @Environment(\.theme) private var theme
 
     private var isComplete: Bool {
@@ -365,7 +365,7 @@ struct InlineToolCallView: View {
                         .animation(.spring(response: 0.3, dampingFraction: 0.7), value: isExpanded)
                         .animation(.easeOut(duration: 0.15), value: isHovered)
                 }
-                .padding(.leading, 14)  // Extra padding for accent strip
+                .padding(.leading, showAccentStrip ? 14 : 12)
                 .padding(.trailing, 12)
                 .padding(.vertical, 10)
                 .contentShape(Rectangle())
@@ -375,15 +375,19 @@ struct InlineToolCallView: View {
             // Expanded content with animation
             if isExpanded {
                 expandedContent
-                    .padding(.leading, 14)
+                    .padding(.leading, showAccentStrip ? 14 : 12)
                     .padding(.trailing, 12)
                     .padding(.bottom, 12)
                     .transition(.opacity.combined(with: .move(edge: .top)))
             }
         }
-        // Accent strip as overlay on left edge with shimmer for in-progress
+        // Accent strip on left edge (when not in grouped container)
         .overlay(alignment: .leading) {
-            accentStripView
+            if showAccentStrip {
+                Rectangle()
+                    .fill(statusColor)
+                    .frame(width: 3)
+            }
         }
         // Subtle hover glow
         .background(
@@ -392,61 +396,17 @@ struct InlineToolCallView: View {
                 .animation(.easeOut(duration: 0.2), value: isHovered)
         )
         .contentShape(Rectangle())
-        .onHover { hovering in
-            isHovered = hovering
-        }
+        .onHover { isHovered = $0 }
         .onChange(of: isExpanded) { _, expanded in
             if expanded && formattedArgs == nil {
-                // Format JSON in background when first expanded
                 let rawArgs = call.function.arguments
                 Task.detached(priority: .userInitiated) {
                     let formatted = JSONFormatter.prettyJSON(rawArgs)
-                    await MainActor.run {
-                        formattedArgs = formatted
-                    }
+                    await MainActor.run { formattedArgs = formatted }
                 }
             }
         }
-        .onAppear {
-            // Start shimmer animation for in-progress calls
-            if !isComplete {
-                startShimmerAnimation()
-            }
-        }
-        .onChange(of: isComplete) { _, complete in
-            if complete {
-                // Stop shimmer when complete
-                shimmerOffset = -1.0
-            }
-        }
         .id(call.id)
-    }
-
-    private func startShimmerAnimation() {
-        withAnimation(.linear(duration: 1.5).repeatForever(autoreverses: false)) {
-            shimmerOffset = 2.0
-        }
-    }
-
-    @ViewBuilder
-    private var accentStripView: some View {
-        Rectangle()
-            .fill(isComplete ? AnyShapeStyle(statusColor) : AnyShapeStyle(shimmerGradient))
-            .frame(width: 3)
-    }
-
-    private var shimmerGradient: LinearGradient {
-        LinearGradient(
-            stops: [
-                .init(color: statusColor.opacity(0.6), location: 0),
-                .init(color: statusColor, location: 0.3),
-                .init(color: statusColor.opacity(0.9), location: 0.5),
-                .init(color: statusColor, location: 0.7),
-                .init(color: statusColor.opacity(0.6), location: 1.0),
-            ],
-            startPoint: UnitPoint(x: 0, y: shimmerOffset - 1),
-            endPoint: UnitPoint(x: 0, y: shimmerOffset)
-        )
     }
 
     private var statusColor: Color {
@@ -901,8 +861,8 @@ struct GroupedToolCallsContainerView: View {
         calls.contains { $0.result?.hasPrefix("[REJECTED]") == true }
     }
 
-    /// Border color based on state
-    private var completionBorderColor: Color {
+    /// Status color for accent strip
+    private var statusColor: Color {
         if hasInProgressCall {
             return theme.accentColor
         } else if hasRejectedCall {
@@ -913,41 +873,44 @@ struct GroupedToolCallsContainerView: View {
     }
 
     var body: some View {
-        VStack(spacing: 0) {
-            ForEach(Array(calls.enumerated()), id: \.element.call.id) { index, item in
-                InlineToolCallView(
-                    call: item.call,
-                    result: item.result
-                )
+        HStack(spacing: 0) {
+            // Accent strip on left edge
+            accentStrip
 
-                // Divider between tool calls (not after last)
-                if index < calls.count - 1 {
-                    Divider()
-                        .background(theme.primaryBorder.opacity(0.15))
+            // Tool calls content
+            VStack(spacing: 0) {
+                ForEach(Array(calls.enumerated()), id: \.element.call.id) { index, item in
+                    InlineToolCallView(
+                        call: item.call,
+                        result: item.result,
+                        showAccentStrip: false
+                    )
+
+                    // Divider between tool calls (not after last)
+                    if index < calls.count - 1 {
+                        Divider()
+                            .background(theme.primaryBorder.opacity(0.3))
+                    }
                 }
             }
         }
         .background(
             RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .fill(theme.secondaryBackground.opacity(0.6))
+                .fill(theme.secondaryBackground.opacity(0.5))
         )
-        // Border: animated gradient when in progress, colored when complete
+        // Border: colored based on status
         .overlay(
             RoundedRectangle(cornerRadius: 10, style: .continuous)
                 .strokeBorder(
-                    hasInProgressCall
-                        ? AnyShapeStyle(animatedGradientBorder)
-                        : AnyShapeStyle(completionBorderColor.opacity(showCompletionGlow ? 0.6 : 0.25)),
-                    lineWidth: hasInProgressCall ? 1.5 : (showCompletionGlow ? 1.5 : 1)
+                    statusColor.opacity(showCompletionGlow ? 0.5 : 0.25),
+                    lineWidth: showCompletionGlow ? 1.5 : 1
                 )
                 .animation(.easeOut(duration: 0.8), value: showCompletionGlow)
         )
         .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-        // Glow effect
+        // Glow effect on completion
         .shadow(
-            color: hasInProgressCall
-                ? theme.accentColor.opacity(0.15)
-                : (showCompletionGlow ? completionBorderColor.opacity(0.2) : .clear),
+            color: showCompletionGlow ? statusColor.opacity(0.2) : .clear,
             radius: 8,
             x: 0,
             y: 2
@@ -956,13 +919,13 @@ struct GroupedToolCallsContainerView: View {
         .onAppear {
             wasInProgress = hasInProgressCall
             if hasInProgressCall {
-                startGradientAnimation()
+                startShimmerAnimation()
             }
         }
         .onChange(of: hasInProgressCall) { oldValue, inProgress in
             if inProgress {
                 wasInProgress = true
-                startGradientAnimation()
+                startShimmerAnimation()
             } else if wasInProgress {
                 // Just completed - show completion glow then fade
                 showCompletionGlow = true
@@ -975,80 +938,100 @@ struct GroupedToolCallsContainerView: View {
         }
     }
 
-    private func startGradientAnimation() {
-        withAnimation(.linear(duration: 3.0).repeatForever(autoreverses: false)) {
+    // MARK: - Accent Strip
+
+    @ViewBuilder
+    private var accentStrip: some View {
+        UnevenRoundedRectangle(
+            cornerRadii: .init(topLeading: 10, bottomLeading: 10),
+            style: .continuous
+        )
+        .fill(hasInProgressCall ? AnyShapeStyle(shimmerGradient) : AnyShapeStyle(statusColor))
+        .frame(width: 4)
+    }
+
+    private var shimmerGradient: LinearGradient {
+        LinearGradient(
+            stops: [
+                .init(color: statusColor.opacity(0.5), location: 0),
+                .init(color: statusColor, location: 0.3),
+                .init(color: statusColor.opacity(0.8), location: 0.5),
+                .init(color: statusColor, location: 0.7),
+                .init(color: statusColor.opacity(0.5), location: 1.0),
+            ],
+            startPoint: UnitPoint(x: 0, y: gradientRotation / 360 - 0.5),
+            endPoint: UnitPoint(x: 0, y: gradientRotation / 360 + 0.5)
+        )
+    }
+
+    private func startShimmerAnimation() {
+        gradientRotation = 0
+        withAnimation(.linear(duration: 1.5).repeatForever(autoreverses: false)) {
             gradientRotation = 360
         }
     }
 
-    private var animatedGradientBorder: AngularGradient {
-        AngularGradient(
-            gradient: Gradient(colors: [
-                theme.accentColor.opacity(0.6),
-                theme.accentColor.opacity(0.2),
-                theme.accentColor.opacity(0.4),
-                theme.accentColor.opacity(0.2),
-                theme.accentColor.opacity(0.6),
-            ]),
-            center: .center,
-            angle: .degrees(gradientRotation)
-        )
-    }
 }
 
 // MARK: - Preview
 
 #if DEBUG
-    struct InlineToolCallView_Previews: PreviewProvider {
+    struct ToolCallView_Previews: PreviewProvider {
         static var previews: some View {
-            let calls = [
-                ToolCall(
-                    id: "call_1",
-                    type: "function",
-                    function: ToolCallFunction(
-                        name: "read_file",
-                        arguments: "{\"path\": \"/Users/example/project/src/main.swift\", \"encoding\": \"utf-8\"}"
-                    )
+            let toolCalls: [ToolCallItem] = [
+                ToolCallItem(
+                    call: ToolCall(
+                        id: "call_1",
+                        type: "function",
+                        function: ToolCallFunction(
+                            name: "read_file",
+                            arguments: "{\"path\": \"/Users/example/src/main.swift\"}"
+                        )
+                    ),
+                    result: "import Foundation\n\nfunc main() {\n    print(\"Hello!\")\n}"
                 ),
-                ToolCall(
-                    id: "call_2",
-                    type: "function",
-                    function: ToolCallFunction(
-                        name: "search_web",
-                        arguments: "{\"query\": \"Swift programming best practices\", \"limit\": 10}"
-                    )
+                ToolCallItem(
+                    call: ToolCall(
+                        id: "call_2",
+                        type: "function",
+                        function: ToolCallFunction(
+                            name: "search_web",
+                            arguments: "{\"query\": \"Swift best practices\", \"limit\": 10}"
+                        )
+                    ),
+                    result: "Found 10 results for 'Swift best practices'"
                 ),
-                ToolCall(
-                    id: "call_3",
-                    type: "function",
-                    function: ToolCallFunction(
-                        name: "run_command",
-                        arguments: "{\"command\": \"npm install\", \"cwd\": \"/Users/example/project\"}"
-                    )
+                ToolCallItem(
+                    call: ToolCall(
+                        id: "call_3",
+                        type: "function",
+                        function: ToolCallFunction(
+                            name: "run_command",
+                            arguments: "{\"command\": \"npm install\"}"
+                        )
+                    ),
+                    result: nil  // In progress
                 ),
-            ]
-
-            let results = [
-                "call_1":
-                    "import Foundation\n\nfunc main() {\n    print(\"Hello, World!\")\n}\n\nmain()",
-                "call_2":
-                    "Found 10 results for 'Swift programming best practices':\n1. Swift.org - Official Swift Language\n2. Swift Programming Guide\n3. Learn Swift in 30 days\n4. Advanced Swift Techniques\n5. SwiftUI Best Practices",
             ]
 
             ScrollView {
-                VStack(alignment: .leading, spacing: 12) {
-                    Text("Tool Calls")
+                VStack(alignment: .leading, spacing: 16) {
+                    Text("Grouped Tool Calls")
                         .font(.headline)
                         .foregroundColor(.white)
-                        .padding(.bottom, 8)
 
-                    ForEach(calls, id: \.id) { call in
-                        InlineToolCallView(call: call, result: results[call.id])
-                    }
+                    GroupedToolCallsContainerView(calls: toolCalls)
+
+                    Text("Single Tool Call")
+                        .font(.headline)
+                        .foregroundColor(.white)
+                        .padding(.top, 8)
+
+                    GroupedToolCallsContainerView(calls: [toolCalls[0]])
                 }
                 .padding()
             }
-            .frame(width: 600, height: 500)
+            .frame(width: 600, height: 600)
             .background(Color(hex: "0c0c0b"))
         }
     }
