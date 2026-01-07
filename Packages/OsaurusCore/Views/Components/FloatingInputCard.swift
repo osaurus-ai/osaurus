@@ -206,6 +206,11 @@ struct FloatingInputCard: View {
                     showVoiceOverlay = true
                 }
             }
+
+            // Focus input on initial appearance
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                isFocused = true
+            }
         }
         .onReceive(NotificationCenter.default.publisher(for: .startVoiceInputInChat)) { notification in
             // Start voice input when triggered by VAD - enable continuous mode
