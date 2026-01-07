@@ -41,6 +41,20 @@ final class ChatSession: ObservableObject {
     /// Tracks if session has unsaved content changes
     private var isDirty: Bool = false
 
+    // MARK: - Memoization Cache
+    /// Cached content blocks for flattened rendering
+    private var _cachedContentBlocks: [ContentBlock] = []
+    /// Last turns count used for cache invalidation
+    private var _lastTurnsCount: Int = 0
+    /// Last turn ID for additional cache validation
+    private var _lastTurnId: UUID?
+    /// Last content length of last turn (for streaming updates)
+    private var _lastContentLength: Int = 0
+    /// Cached estimated token count
+    private var _cachedEstimatedTokens: Int = 0
+    /// Flag to invalidate token cache
+    private var _tokenCacheValid: Bool = false
+
     /// Callback when session needs to be saved (called after streaming completes)
     var onSessionChanged: (() -> Void)?
 
@@ -192,31 +206,58 @@ final class ChatSession: ObservableObject {
         return modelOptions.first { $0.id == model }
     }
 
-    /// Filtered turns excluding tool messages (cached computation)
-    var visibleTurns: [ChatTurn] {
-        turns.filter { $0.role != .tool }
-    }
+    /// Flattened content blocks for efficient LazyVStack rendering
+    /// Each block is a paragraph, header, tool call, etc. that can be independently recycled
+    var visibleBlocks: [ContentBlock] {
+        let currentCount = turns.count
+        let currentLastId = turns.last?.id
+        let currentContentLength = turns.last?.contentLength ?? 0
 
-    /// Grouped turns for display
-    var visibleGroups: [MessageGroup] {
-        var groups: [MessageGroup] = []
+        // Cache is valid if:
+        // - Same number of turns
+        // - Same last turn ID
+        // - Same content length (for streaming updates)
+        let cacheValid =
+            currentCount == _lastTurnsCount
+            && currentLastId == _lastTurnId
+            && currentContentLength == _lastContentLength
+            && !_cachedContentBlocks.isEmpty
 
-        for turn in visibleTurns {
-            if let lastGroup = groups.last, lastGroup.role == turn.role {
-                // Append to existing group
-                var updatedGroup = lastGroup
-                updatedGroup.turns.append(turn)
-                groups[groups.count - 1] = updatedGroup
-            } else {
-                // Start new group with stable ID from first turn
-                groups.append(MessageGroup(id: turn.id, role: turn.role, turns: [turn]))
-            }
+        if cacheValid {
+            return _cachedContentBlocks
         }
-        return groups
+
+        // Get persona name for assistant messages
+        let persona = PersonaManager.shared.persona(for: personaId ?? Persona.defaultId)
+        let displayName = persona?.isBuiltIn == true ? "Assistant" : (persona?.name ?? "Assistant")
+
+        // Determine streaming turn ID
+        let streamingTurnId = isStreaming ? turns.last?.id : nil
+
+        // Generate blocks
+        let blocks = ContentBlock.generateBlocks(
+            from: turns,
+            streamingTurnId: streamingTurnId,
+            personaName: displayName
+        )
+
+        // Update cache
+        _cachedContentBlocks = blocks
+        _lastTurnsCount = currentCount
+        _lastTurnId = currentLastId
+        _lastContentLength = currentContentLength
+
+        return blocks
     }
 
     /// Estimated token count for current session context (rough heuristic: ~4 chars per token)
+    /// Memoized - only recomputes when turns count changes or streaming ends
     var estimatedContextTokens: Int {
+        // Use cache if valid and not streaming (during streaming, estimate changes frequently)
+        if _tokenCacheValid && !isStreaming && turns.count == _lastTurnsCount {
+            return _cachedEstimatedTokens
+        }
+
         var total = 0
 
         // System prompt (use persona's effective system prompt)
@@ -272,6 +313,10 @@ final class ChatSession: ObservableObject {
             total += max(1, (img.count * 4) / 3 / 4)
         }
 
+        // Update cache
+        _cachedEstimatedTokens = total
+        _tokenCacheValid = true
+
         return total
     }
 
@@ -317,6 +362,13 @@ final class ChatSession: ObservableObject {
         updatedAt = Date()
         isDirty = false
         // Keep current personaId - don't reset when creating new chat within same persona
+
+        // Clear caches
+        _cachedContentBlocks = []
+        _lastTurnsCount = 0
+        _lastTurnId = nil
+        _lastContentLength = 0
+        _tokenCacheValid = false
 
         // Apply model from persona or global config (don't auto-persist, it's already saved)
         isLoadingModel = true
@@ -577,85 +629,121 @@ final class ChatSession: ObservableObject {
                 let reserveResponseTokens = effectiveMaxTokensForPersona ?? 4096
                 let availableContextTokens = max(2048, modelContextLength - reserveResponseTokens)
 
+                // MARK: - Cached Message Building (Optimization for tool loops)
+                // Cache messages to avoid O(n) rebuilds on every tool loop iteration
+                var cachedMessages: [ChatMessage] = []
+                var cachedTurnsCount: Int = 0
+
+                /// Convert a single turn to a ChatMessage (returns nil if should be skipped)
                 @MainActor
-                func buildMessages() -> [ChatMessage] {
-                    var msgs: [ChatMessage] = []
-                    if !sys.isEmpty { msgs.append(ChatMessage(role: "system", content: sys)) }
-                    for (index, t) in turns.enumerated() {
-                        switch t.role {
-                        case .assistant:
-                            // Skip the last assistant turn if it's empty (it's the streaming placeholder)
-                            let isLastTurn = index == turns.count - 1
-                            if isLastTurn && t.contentIsEmpty && t.toolCalls == nil {
-                                continue
-                            }
-
-                            // For assistant messages with tool_calls but no content, use empty string?
-                            // OpenAI API usually rejects null content unless tool_calls are present.
-                            // Some providers (like Groq/Anthropic/xAI) are strict: content must be non-empty string OR null/absent if tool_calls present.
-                            // If neither content nor tool_calls, it's invalid.
-
-                            // If we have content, use it.
-                            // If we have tool_calls but no content, use nil for content (let encoder handle it).
-                            // If we have neither, this is a malformed turn that should be skipped or fixed.
-
-                            if t.contentIsEmpty && (t.toolCalls == nil || t.toolCalls!.isEmpty) {
-                                // Invalid assistant message (no content, no tools). Skip it to prevent 400s.
-                                print("[Osaurus] Warning: Skipping empty assistant message at index \(index)")
-                                continue
-                            }
-
-                            let content: String? = t.contentIsEmpty ? nil : t.content
-
-                            msgs.append(
-                                ChatMessage(
-                                    role: "assistant",
-                                    content: content,
-                                    tool_calls: t.toolCalls,
-                                    tool_call_id: nil
-                                )
-                            )
-                        case .tool:
-                            msgs.append(
-                                ChatMessage(
-                                    role: "tool",
-                                    content: t.content,
-                                    tool_calls: nil,
-                                    tool_call_id: t.toolCallId
-                                )
-                            )
-                        case .user:
-                            // Include images if present
-                            if t.hasImages {
-                                msgs.append(ChatMessage(role: "user", text: t.content, imageData: t.attachedImages))
-                            } else {
-                                msgs.append(ChatMessage(role: t.role.rawValue, content: t.content))
-                            }
-                        default:
-                            msgs.append(ChatMessage(role: t.role.rawValue, content: t.content))
+                func turnToMessage(_ t: ChatTurn, isLastTurn: Bool) -> ChatMessage? {
+                    switch t.role {
+                    case .assistant:
+                        // Skip the last assistant turn if it's empty (it's the streaming placeholder)
+                        if isLastTurn && t.contentIsEmpty && t.toolCalls == nil {
+                            return nil
                         }
-                    }
 
-                    // Prune older messages if context limit is exceeded
-                    // Keep system prompt (index 0 if present) and remove from oldest non-system messages
+                        if t.contentIsEmpty && (t.toolCalls == nil || t.toolCalls!.isEmpty) {
+                            return nil
+                        }
+
+                        let content: String? = t.contentIsEmpty ? nil : t.content
+
+                        return ChatMessage(
+                            role: "assistant",
+                            content: content,
+                            tool_calls: t.toolCalls,
+                            tool_call_id: nil
+                        )
+                    case .tool:
+                        return ChatMessage(
+                            role: "tool",
+                            content: t.content,
+                            tool_calls: nil,
+                            tool_call_id: t.toolCallId
+                        )
+                    case .user:
+                        if t.hasImages {
+                            return ChatMessage(role: "user", text: t.content, imageData: t.attachedImages)
+                        } else {
+                            return ChatMessage(role: t.role.rawValue, content: t.content)
+                        }
+                    default:
+                        return ChatMessage(role: t.role.rawValue, content: t.content)
+                    }
+                }
+
+                /// Prune messages to fit context window
+                @MainActor
+                func pruneMessages(_ msgs: inout [ChatMessage]) {
                     let hasSystemPrompt = !sys.isEmpty && !msgs.isEmpty && msgs[0].role == "system"
                     let startIndex = hasSystemPrompt ? 1 : 0
 
                     var totalTokens = msgs.reduce(0) { $0 + estimateTokens(for: $1) }
 
                     while totalTokens > availableContextTokens && msgs.count > startIndex + 1 {
-                        // Remove the oldest non-system message
                         let removed = msgs.remove(at: startIndex)
                         totalTokens -= estimateTokens(for: removed)
                     }
 
-                    // Ensure we don't leave orphaned tool messages at the start of the conversation history
-                    // (e.g. if we pruned the Assistant message that called the tool)
+                    // Ensure we don't leave orphaned tool messages
                     while msgs.count > startIndex && msgs[startIndex].role == "tool" {
                         let removed = msgs.remove(at: startIndex)
                         totalTokens -= estimateTokens(for: removed)
                     }
+                }
 
+                @MainActor
+                func buildMessages() -> [ChatMessage] {
+                    // Incremental update: only process new turns since last call
+                    let currentTurnsCount = turns.count
+
+                    if currentTurnsCount > cachedTurnsCount && cachedTurnsCount > 0 {
+                        // Append only new turns (incremental update)
+                        for i in cachedTurnsCount ..< currentTurnsCount {
+                            let t = turns[i]
+                            let isLastTurn = i == currentTurnsCount - 1
+                            if let msg = turnToMessage(t, isLastTurn: isLastTurn) {
+                                cachedMessages.append(msg)
+                            }
+                        }
+                        // Update the last message in cache if it was the streaming placeholder
+                        // (it may now have content or tool_calls)
+                        if cachedTurnsCount > 0 && currentTurnsCount > 0 {
+                            let lastCachedIndex = cachedTurnsCount - 1
+                            if lastCachedIndex < turns.count {
+                                let lastTurn = turns[lastCachedIndex]
+                                if lastTurn.role == .assistant {
+                                    // Find and update the corresponding message in cache
+                                    if let lastAssistantIdx = cachedMessages.lastIndex(where: { $0.role == "assistant" }
+                                    ) {
+                                        if let updatedMsg = turnToMessage(lastTurn, isLastTurn: false) {
+                                            cachedMessages[lastAssistantIdx] = updatedMsg
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        cachedTurnsCount = currentTurnsCount
+                        pruneMessages(&cachedMessages)
+                        return cachedMessages
+                    }
+
+                    // Full rebuild (first call or turns were removed)
+                    var msgs: [ChatMessage] = []
+                    if !sys.isEmpty { msgs.append(ChatMessage(role: "system", content: sys)) }
+
+                    for (index, t) in turns.enumerated() {
+                        let isLastTurn = index == turns.count - 1
+                        if let msg = turnToMessage(t, isLastTurn: isLastTurn) {
+                            msgs.append(msg)
+                        }
+                    }
+
+                    pruneMessages(&msgs)
+                    cachedMessages = msgs
+                    cachedTurnsCount = currentTurnsCount
                     return msgs
                 }
 
@@ -684,7 +772,6 @@ final class ChatSession: ObservableObject {
                     do {
                         let streamStartTime = Date()
                         var uiDeltaCount = 0
-                        print("[Osaurus][UI] Starting stream consumption on MainActor")
 
                         // Batching: accumulate deltas and flush periodically to reduce UI updates
                         var deltaBuffer = ""
@@ -694,10 +781,6 @@ final class ChatSession: ObservableObject {
                         var flushIntervalMs: Double = 50  // baseline
                         var maxBufferSize: Int = 256  // baseline
                         var longestFlushMs: Double = 0
-                        // Track consecutive slow flushes to implement exponential backoff
-                        var consecutiveSlowFlushes: Int = 0
-                        // Hard limit: skip flush if previous one took too long (backpressure)
-                        var skipNextFlush: Bool = false
 
                         // Track approximate output sizes without repeatedly calling String.count on huge buffers.
                         var assistantContentLen: Int = 0
@@ -706,59 +789,26 @@ final class ChatSession: ObservableObject {
                         func recomputeFlushTuning() {
                             let totalChars = assistantContentLen + assistantThinkingLen
 
-                            // Base tuning by total output size - more aggressive thresholds
-                            let base: (intervalMs: Double, maxBuf: Int) = {
-                                switch totalChars {
-                                case 0 ..< 1_000:
-                                    return (50, 256)
-                                case 1_000 ..< 2_000:
-                                    return (75, 384)
-                                case 2_000 ..< 4_000:
-                                    return (100, 512)
-                                case 4_000 ..< 8_000:
-                                    return (150, 768)
-                                case 8_000 ..< 16_000:
-                                    return (200, 1_024)
-                                case 16_000 ..< 32_000:
-                                    return (300, 1_536)
-                                case 32_000 ..< 64_000:
-                                    return (400, 2_048)
-                                default:
-                                    return (500, 3_072)
-                                }
-                            }()
+                            // Simple tuning based on content size - avoid overly complex backpressure
+                            switch totalChars {
+                            case 0 ..< 2_000:
+                                flushIntervalMs = 50
+                                maxBufferSize = 256
+                            case 2_000 ..< 8_000:
+                                flushIntervalMs = 75
+                                maxBufferSize = 512
+                            case 8_000 ..< 20_000:
+                                flushIntervalMs = 100
+                                maxBufferSize = 768
+                            default:
+                                flushIntervalMs = 150
+                                maxBufferSize = 1024
+                            }
 
-                            // Backpressure based on the worst observed flush cost (includes markdown parsing + SwiftUI invalidation).
-                            // More aggressive exponential backoff when flushes are slow.
-                            let factor: Double = {
-                                switch longestFlushMs {
-                                case 0 ..< 16:
-                                    consecutiveSlowFlushes = 0
-                                    return 1.0
-                                case 16 ..< 33:
-                                    consecutiveSlowFlushes = max(1, consecutiveSlowFlushes)
-                                    return 1.5
-                                case 33 ..< 50:
-                                    consecutiveSlowFlushes += 1
-                                    return 2.0
-                                case 50 ..< 100:
-                                    // Flush took >50ms - this is concerning, apply heavy backpressure
-                                    consecutiveSlowFlushes += 1
-                                    skipNextFlush = true
-                                    return 3.0
-                                default:
-                                    // Flush took >100ms - critical, skip multiple flushes
-                                    consecutiveSlowFlushes += 1
-                                    skipNextFlush = true
-                                    return 4.0
-                                }
-                            }()
-
-                            // Apply exponential backoff for consecutive slow flushes
-                            let backoffMultiplier = min(4.0, pow(1.5, Double(consecutiveSlowFlushes)))
-
-                            flushIntervalMs = min(800, base.intervalMs * factor * backoffMultiplier)
-                            maxBufferSize = min(8_192, Int(Double(base.maxBuf) * factor * backoffMultiplier))
+                            // Light backpressure - don't skip flushes, just slow down slightly
+                            if longestFlushMs > 50 {
+                                flushIntervalMs = min(200, flushIntervalMs * 1.5)
+                            }
                         }
 
                         // Thinking tag parsing state
@@ -767,9 +817,10 @@ final class ChatSession: ObservableObject {
 
                         // Track when we last synced to the turn (to batch UI updates)
                         var lastSyncTime = Date()
-                        let syncIntervalMs: Double = 100  // Sync to turn every 100ms
                         // Track if we have pending content to sync
                         var hasPendingContent = false
+                        // Debug: track sync count
+                        var syncCount = 0
 
                         @MainActor
                         func appendContent(_ s: String) {
@@ -793,11 +844,14 @@ final class ChatSession: ObservableObject {
                         @MainActor
                         func syncChunksToTurn() {
                             guard hasPendingContent else { return }
+                            syncCount += 1
                             // ChatTurn already has the content via appendContent/appendThinking
                             // Just notify observers to trigger UI update
                             assistantTurn.notifyContentChanged()
                             hasPendingContent = false
                             lastSyncTime = Date()
+
+                            // Debug: periodic log every 10 syncs
                         }
 
                         @MainActor
@@ -918,35 +972,36 @@ final class ChatSession: ObservableObject {
                                 let timeSinceFlush = now.timeIntervalSince(lastFlushTime) * 1000  // ms
                                 recomputeFlushTuning()
 
-                                // Check if we should skip this flush due to backpressure
-                                let shouldSkip = skipNextFlush
-                                if skipNextFlush {
-                                    skipNextFlush = false
-                                    // Still update lastFlushTime to reset the timer
-                                    lastFlushTime = now
-                                }
-
-                                if !shouldSkip
-                                    && (deltaBuffer.count >= maxBufferSize || timeSinceFlush >= flushIntervalMs)
-                                {
+                                if deltaBuffer.count >= maxBufferSize || timeSinceFlush >= flushIntervalMs {
                                     flushBuffer()
 
-                                    // After flushing, check if we should sync and scroll
-                                    // Use a shorter interval for scroll updates to ensure smooth scrolling
+                                    // Sync interval - paragraph-based rendering allows more frequent updates
+                                    // since only the last paragraph needs to update
+                                    let totalChars = assistantContentLen + assistantThinkingLen
+                                    let syncIntervalMs: Double = {
+                                        switch totalChars {
+                                        case 0 ..< 2_000:
+                                            return 100  // Small: ~10 updates/sec
+                                        case 2_000 ..< 5_000:
+                                            return 150  // Medium: ~7 updates/sec
+                                        case 5_000 ..< 10_000:
+                                            return 200  // Large: ~5 updates/sec
+                                        default:
+                                            return 250  // Very large: ~4 updates/sec
+                                        }
+                                    }()
+
                                     let timeSinceSync = now.timeIntervalSince(lastSyncTime) * 1000
-                                    if timeSinceSync >= syncIntervalMs && hasPendingContent {
+
+                                    // Always sync immediately for first content (syncCount == 0)
+                                    // to ensure content appears without delay
+                                    let shouldSync =
+                                        (syncCount == 0 && hasPendingContent)
+                                        || (timeSinceSync >= syncIntervalMs && hasPendingContent)
+
+                                    if shouldSync {
                                         syncChunksToTurn()
                                         scrollTick &+= 1
-                                    } else if hasPendingContent {
-                                        // Even if sync interval hasn't passed, still notify content changed
-                                        // but throttle scrollTick to avoid excessive scroll calls
-                                        assistantTurn.notifyContentChanged()
-                                        hasPendingContent = false
-                                        // Update scroll every ~50ms for smooth experience
-                                        if timeSinceSync >= 50 {
-                                            scrollTick &+= 1
-                                            lastSyncTime = now
-                                        }
                                     }
                                 }
                             }
@@ -999,9 +1054,6 @@ final class ChatSession: ObservableObject {
                                 "[Osaurus][Tool] Success: \(inv.toolName) returned \(resultText.count) chars: \(truncatedResult)\(resultText.count > 500 ? "..." : "")"
                             )
                         } catch {
-                            // Log tool error
-                            print("[Osaurus][Tool] Error: \(inv.toolName) failed: \(error.localizedDescription)")
-
                             // Store rejection/error as the result so UI shows "Rejected" instead of hanging
                             let rejectionMessage = "[REJECTED] \(error.localizedDescription)"
                             assistantTurn.toolResults[callId] = rejectionMessage
@@ -1518,32 +1570,30 @@ struct ChatView: View {
     // MARK: - Message Thread
 
     private func messageThread(_ width: CGFloat) -> some View {
-        let groups = session.visibleGroups
-        // Use "Assistant" for default persona, otherwise use persona name
+        // Use flattened content blocks for efficient LazyVStack recycling
+        let blocks = session.visibleBlocks
         let displayName = windowState.activePersona.isBuiltIn ? "Assistant" : windowState.activePersona.name
 
         return ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(spacing: 0) {
-                    ForEach(groups) { group in
-                        MessageGroupView(
-                            group: group,
+                    ForEach(blocks) { block in
+                        ContentBlockView(
+                            block: block,
                             width: width,
-                            isStreaming: session.isStreaming,
                             personaName: displayName,
                             onCopy: copyToPasteboard,
-                            onEdit: { turnId, newContent in
-                                session.editAndRegenerate(turnId: turnId, newContent: newContent)
-                            },
                             onRegenerate: { turnId in
                                 session.regenerate(turnId: turnId)
                             }
                         )
                         .padding(.horizontal, 16)
-                        .padding(.bottom, 16)
                     }
 
-                    // Bottom anchor - minimal height
+                    // Bottom padding for visual breathing room
+                    Color.clear.frame(height: 16)
+
+                    // Bottom anchor for scroll tracking
                     Color.clear
                         .frame(height: 1)
                         .id("BOTTOM")
@@ -1557,7 +1607,7 @@ struct ChatView: View {
                             }
                         }
                 }
-                .padding(.vertical, 8)
+                .padding(.top, 8)
             }
             .scrollContentBackground(.hidden)
             .scrollIndicators(.hidden)
