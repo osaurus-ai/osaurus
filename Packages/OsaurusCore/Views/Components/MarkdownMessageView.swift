@@ -15,10 +15,12 @@ struct MarkdownMessageView: View {
     let baseWidth: CGFloat
     /// Optional turn ID for caching heights across view recycling
     var turnId: UUID? = nil
+    /// Whether content is actively streaming - when true, uses lighter rendering for large content
+    var isStreaming: Bool = false
 
     var body: some View {
         // Use inner view with memoized parsing to avoid re-parsing on every render
-        MemoizedMarkdownView(text: text, baseWidth: baseWidth, turnId: turnId)
+        MemoizedMarkdownView(text: text, baseWidth: baseWidth, turnId: turnId, isStreaming: isStreaming)
     }
 }
 
@@ -29,6 +31,7 @@ private struct MemoizedMarkdownView: View {
     let text: String
     let baseWidth: CGFloat
     let turnId: UUID?
+    let isStreaming: Bool
 
     @Environment(\.theme) private var theme
 
@@ -44,39 +47,53 @@ private struct MemoizedMarkdownView: View {
     @State private var lastParseRequestTime: Date = .distantPast
 
     // Debounce interval in milliseconds - scales with content size
+    // With paragraph-based rendering, each paragraph is smaller so debounce can be shorter
     private var debounceIntervalMs: UInt64 {
-        // Use utf8.count which is O(1) for contiguous strings, vs O(n) for .count
         let charCount = text.utf8.count
         switch charCount {
-        case 0 ..< 1_000:
-            return 30  // Fast updates for small content
-        case 1_000 ..< 3_000:
+        case 0 ..< 500:
+            return 30  // Very small: fast updates
+        case 500 ..< 1_000:
             return 50
-        case 3_000 ..< 8_000:
+        case 1_000 ..< 2_000:
             return 80
-        case 8_000 ..< 20_000:
+        case 2_000 ..< 5_000:
             return 120
         default:
-            return 200  // Slower updates for large content
+            return 200  // Large content: moderate debounce
         }
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            ForEach(Array(cachedSegments.enumerated()), id: \.element.id) { index, segment in
-                segmentView(for: segment, isFirst: index == 0)
+        Group {
+            if cachedSegments.isEmpty && !text.isEmpty {
+                // Fallback: show raw text while waiting for first parse
+                Text(text)
+                    .font(Typography.body(baseWidth, theme: theme))
+                    .foregroundColor(theme.primaryText)
+                    .textSelection(.enabled)
+            } else {
+                VStack(alignment: .leading, spacing: 0) {
+                    ForEach(Array(cachedSegments.enumerated()), id: \.element.id) { index, segment in
+                        segmentView(for: segment, isFirst: index == 0)
+                    }
+                }
             }
         }
         .onAppear {
-            // Initial parse - no debounce needed
             if lastParsedText != text {
                 scheduleBackgroundParse(for: text, oldText: "", debounce: false)
             }
         }
         .onChange(of: text) { oldText, newText in
-            // Only reparse when text actually changes
             if lastParsedText != newText {
                 scheduleBackgroundParse(for: newText, oldText: oldText, debounce: true)
+            }
+        }
+        .onChange(of: isStreaming) { _, newValue in
+            // When streaming ends, do immediate final parse
+            if !newValue && lastParsedText != text {
+                scheduleBackgroundParse(for: text, oldText: "", debounce: false)
             }
         }
     }
@@ -112,11 +129,13 @@ private struct MemoizedMarkdownView: View {
             // Run parsing on a background thread
             // Note: We always do a full parse to avoid the complexity and bugs of incremental parsing.
             // The debouncing and background execution provide sufficient performance improvement.
+            let parseStart = Date()
             let (newBlocks, newSegments) = await Task.detached(priority: .userInitiated) {
                 let blocks = parseBlocks(textSnapshot)
                 let segments = groupBlocksIntoSegments(blocks)
                 return (blocks, segments)
             }.value
+            let parseDuration = Date().timeIntervalSince(parseStart) * 1000
 
             // Check if task was cancelled while parsing
             if Task.isCancelled { return }
