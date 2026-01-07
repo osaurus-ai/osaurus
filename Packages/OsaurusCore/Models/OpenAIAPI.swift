@@ -601,11 +601,11 @@ public enum JSONValue: Codable, Sendable {
     }
 }
 
-// MARK: - Conversions for Tool Specs (OpenAI -> Tokenizers.ToolSpec)
+// MARK: - JSONValue Conversions
 
 extension JSONValue {
-    /// Convert JSONValue to Foundation JSON-compatible Any (for Tokenizers.ToolSpec)
-    var anyValue: Any {
+    /// Convert JSONValue to Sendable-compatible value (for MLXLMCommon.ToolSpec)
+    var sendableValue: any Sendable {
         switch self {
         case .null:
             return NSNull()
@@ -616,34 +616,37 @@ extension JSONValue {
         case .string(let s):
             return s
         case .array(let arr):
-            return arr.map { $0.anyValue }
+            return arr.map { $0.sendableValue }
         case .object(let obj):
-            var dict: [String: Any] = [:]
-            for (k, v) in obj { dict[k] = v.anyValue }
+            var dict: [String: any Sendable] = [:]
+            for (k, v) in obj { dict[k] = v.sendableValue }
             return dict
         }
     }
+
+    /// Convert JSONValue to Foundation JSON-compatible Any (for JSONSerialization)
+    var anyValue: Any { sendableValue }
 }
 
 extension ToolFunction {
-    /// Convert to Tokenizers.ToolSpec-compatible function dictionary
-    fileprivate func toFunctionSpec() -> [String: Any] {
-        var fn: [String: Any] = [
+    /// Convert to MLXLMCommon.ToolSpec-compatible function dictionary
+    fileprivate func toFunctionSpec() -> [String: any Sendable] {
+        var fn: [String: any Sendable] = [
             "name": name
         ]
         if let description {
             fn["description"] = description
         }
         if let parameters {
-            fn["parameters"] = parameters.anyValue
+            fn["parameters"] = parameters.sendableValue
         }
         return fn
     }
 }
 
 extension Tool {
-    /// Convert to Tokenizers.ToolSpec (`[String: Any]`) for MLX chat templates
-    func toTokenizerToolSpec() -> [String: Any] {
+    /// Convert to Tokenizers.ToolSpec (`[String: any Sendable]`) for MLX chat templates
+    func toTokenizerToolSpec() -> [String: any Sendable] {
         return [
             "type": type,
             "function": function.toFunctionSpec(),

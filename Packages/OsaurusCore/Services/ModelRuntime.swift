@@ -403,7 +403,7 @@ actor ModelRuntime {
     nonisolated static func makeTokenizerTools(
         tools: [Tool]?,
         toolChoice: ToolChoiceOption?
-    ) -> [[String: Any]]? {
+    ) -> [[String: any Sendable]]? {
         guard let tools, !tools.isEmpty else { return nil }
         if let toolChoice {
             switch toolChoice {
