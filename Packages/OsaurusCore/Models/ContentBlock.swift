@@ -16,6 +16,16 @@ enum BlockPosition {
     case last  // Last block - round bottom corners
 }
 
+/// A single tool call with its result for grouped rendering
+struct ToolCallItem: Equatable {
+    let call: ToolCall
+    let result: String?
+
+    static func == (lhs: ToolCallItem, rhs: ToolCallItem) -> Bool {
+        lhs.call.id == rhs.call.id && lhs.result == rhs.result
+    }
+}
+
 /// A single content block in the flattened chat view.
 enum ContentBlock: Identifiable {
     case header(turnId: UUID, role: MessageRole, personaName: String, isFirstInGroup: Bool, position: BlockPosition)
@@ -28,6 +38,7 @@ enum ContentBlock: Identifiable {
         position: BlockPosition
     )
     case toolCall(turnId: UUID, call: ToolCall, result: String?, position: BlockPosition)
+    case toolCallGroup(turnId: UUID, calls: [ToolCallItem], position: BlockPosition)
     case thinking(turnId: UUID, index: Int, text: String, isStreaming: Bool, position: BlockPosition)
     case image(turnId: UUID, index: Int, imageData: Data, position: BlockPosition)
     case typingIndicator(turnId: UUID, position: BlockPosition)
@@ -38,6 +49,9 @@ enum ContentBlock: Identifiable {
         case let .header(turnId, _, _, _, _): return "header-\(turnId.uuidString)"
         case let .paragraph(turnId, index, _, _, _, _): return "para-\(turnId.uuidString)-\(index)"
         case let .toolCall(turnId, call, _, _): return "tool-\(turnId.uuidString)-\(call.id)"
+        case let .toolCallGroup(turnId, calls, _):
+            let callIds = calls.map(\.call.id).joined(separator: "-")
+            return "toolgroup-\(turnId.uuidString)-\(callIds)"
         case let .thinking(turnId, index, _, _, _): return "think-\(turnId.uuidString)-\(index)"
         case let .image(turnId, index, _, _): return "img-\(turnId.uuidString)-\(index)"
         case let .typingIndicator(turnId, _): return "typing-\(turnId.uuidString)"
@@ -50,6 +64,7 @@ enum ContentBlock: Identifiable {
         case let .header(turnId, _, _, _, _),
             let .paragraph(turnId, _, _, _, _, _),
             let .toolCall(turnId, _, _, _),
+            let .toolCallGroup(turnId, _, _),
             let .thinking(turnId, _, _, _, _),
             let .image(turnId, _, _, _),
             let .typingIndicator(turnId, _),
@@ -62,7 +77,7 @@ enum ContentBlock: Identifiable {
         switch self {
         case let .header(_, role, _, _, _): return role
         case let .paragraph(_, _, _, _, role, _): return role
-        case .toolCall, .thinking, .typingIndicator: return .assistant
+        case .toolCall, .toolCallGroup, .thinking, .typingIndicator: return .assistant
         case .image: return .user
         case .groupSpacer: return .assistant
         }
@@ -73,6 +88,7 @@ enum ContentBlock: Identifiable {
         case let .header(_, _, _, _, position),
             let .paragraph(_, _, _, _, _, position),
             let .toolCall(_, _, _, position),
+            let .toolCallGroup(_, _, position),
             let .thinking(_, _, _, _, position),
             let .image(_, _, _, position),
             let .typingIndicator(_, position):
@@ -104,6 +120,8 @@ enum ContentBlock: Identifiable {
             )
         case let .toolCall(turnId, call, result, _):
             return .toolCall(turnId: turnId, call: call, result: result, position: newPosition)
+        case let .toolCallGroup(turnId, calls, _):
+            return .toolCallGroup(turnId: turnId, calls: calls, position: newPosition)
         case let .thinking(turnId, index, text, isStreaming, _):
             return .thinking(turnId: turnId, index: index, text: text, isStreaming: isStreaming, position: newPosition)
         case let .image(turnId, index, imageData, _):
@@ -200,13 +218,12 @@ extension ContentBlock {
                 }
             }
 
-            // Tool calls
-            if let toolCalls = turn.toolCalls {
-                for call in toolCalls {
-                    turnBlocks.append(
-                        .toolCall(turnId: turn.id, call: call, result: turn.toolResults[call.id], position: .middle)
-                    )
+            // Tool calls - group them together
+            if let toolCalls = turn.toolCalls, !toolCalls.isEmpty {
+                let groupedCalls = toolCalls.map { call in
+                    ToolCallItem(call: call, result: turn.toolResults[call.id])
                 }
+                turnBlocks.append(.toolCallGroup(turnId: turn.id, calls: groupedCalls, position: .middle))
             }
 
             // Update positions based on count

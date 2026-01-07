@@ -278,14 +278,12 @@ private struct PulsingDot: View {
 
     var body: some View {
         ZStack {
-            // Outer pulse ring
             Circle()
                 .fill(color.opacity(0.3))
                 .frame(width: 16, height: 16)
                 .scaleEffect(isPulsing ? 1.4 : 1.0)
                 .opacity(isPulsing ? 0 : 0.6)
 
-            // Inner dot
             Circle()
                 .fill(color)
                 .frame(width: 8, height: 8)
@@ -306,10 +304,9 @@ struct InlineToolCallView: View {
     let call: ToolCall
     let result: String?
 
-    @State private var isExpanded: Bool = false
-    @State private var isHovered: Bool = false
+    @State private var isExpanded = false
+    @State private var isHovered = false
     @State private var formattedArgs: String?
-    @State private var hasAppeared: Bool = false
     @State private var shimmerOffset: CGFloat = -1.0
     @Environment(\.theme) private var theme
 
@@ -433,29 +430,23 @@ struct InlineToolCallView: View {
 
     @ViewBuilder
     private var accentStripView: some View {
-        if !isComplete {
-            // Animated shimmer accent for in-progress
-            Rectangle()
-                .fill(
-                    LinearGradient(
-                        stops: [
-                            .init(color: statusColor.opacity(0.6), location: 0),
-                            .init(color: statusColor, location: 0.3),
-                            .init(color: statusColor.opacity(0.9), location: 0.5),
-                            .init(color: statusColor, location: 0.7),
-                            .init(color: statusColor.opacity(0.6), location: 1.0),
-                        ],
-                        startPoint: UnitPoint(x: 0, y: shimmerOffset - 1),
-                        endPoint: UnitPoint(x: 0, y: shimmerOffset)
-                    )
-                )
-                .frame(width: 3)
-        } else {
-            // Solid accent for complete
-            Rectangle()
-                .fill(statusColor)
-                .frame(width: 3)
-        }
+        Rectangle()
+            .fill(isComplete ? AnyShapeStyle(statusColor) : AnyShapeStyle(shimmerGradient))
+            .frame(width: 3)
+    }
+
+    private var shimmerGradient: LinearGradient {
+        LinearGradient(
+            stops: [
+                .init(color: statusColor.opacity(0.6), location: 0),
+                .init(color: statusColor, location: 0.3),
+                .init(color: statusColor.opacity(0.9), location: 0.5),
+                .init(color: statusColor, location: 0.7),
+                .init(color: statusColor.opacity(0.6), location: 1.0),
+            ],
+            startPoint: UnitPoint(x: 0, y: shimmerOffset - 1),
+            endPoint: UnitPoint(x: 0, y: shimmerOffset)
+        )
     }
 
     private var statusColor: Color {
@@ -473,27 +464,20 @@ struct InlineToolCallView: View {
         if !isComplete {
             PulsingDot(color: theme.accentColor)
                 .frame(width: 16, height: 16)
-        } else if isRejected {
-            Image(systemName: "xmark.circle.fill")
-                .font(.system(size: 14, weight: .medium))
-                .foregroundStyle(
-                    LinearGradient(
-                        colors: [theme.errorColor, theme.errorColor.opacity(0.7)],
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
-                    )
-                )
         } else {
-            Image(systemName: "checkmark.circle.fill")
+            Image(systemName: isRejected ? "xmark.circle.fill" : "checkmark.circle.fill")
                 .font(.system(size: 14, weight: .medium))
-                .foregroundStyle(
-                    LinearGradient(
-                        colors: [theme.successColor, theme.successColor.opacity(0.7)],
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
-                    )
-                )
+                .foregroundStyle(statusIconGradient)
         }
+    }
+
+    private var statusIconGradient: LinearGradient {
+        let color = isRejected ? theme.errorColor : theme.successColor
+        return LinearGradient(
+            colors: [color, color.opacity(0.7)],
+            startPoint: .topLeading,
+            endPoint: .bottomTrailing
+        )
     }
 
     private var categoryIcon: some View {
@@ -558,11 +542,11 @@ struct CollapsibleCodeSection: View {
     // Max height for expanded content
     private static let maxContentHeight: CGFloat = 200
 
-    @State private var isCollapsed: Bool = true
-    @State private var isHovered: Bool = false
-    @State private var isCopied: Bool = false
+    @State private var isCollapsed = true
+    @State private var isHovered = false
+    @State private var isCopied = false
     @State private var preparedContent: PreparedContent?
-    @State private var isLoading: Bool = false
+    @State private var isLoading = false
     @Environment(\.theme) private var theme
 
     init(title: String, text: String, language: String?, previewText: String?, sectionId: String = UUID().uuidString) {
@@ -831,27 +815,6 @@ struct CollapsibleCodeSection: View {
     }
 }
 
-// MARK: - Legacy ToolCodeBlock (Compatibility)
-
-/// Legacy code block - now wraps CollapsibleCodeSection for backwards compatibility
-struct ToolCodeBlock: View {
-    let title: String
-    let text: String
-    let language: String?
-
-    var body: some View {
-        CollapsibleCodeSection(
-            title: title,
-            text: text,
-            language: language,
-            previewText: language == "json"
-                ? PreviewGenerator.jsonPreview(text, maxLength: 80)
-                : PreviewGenerator.resultPreview(text, maxLength: 80),
-            sectionId: "\(title)-\(text.hashValue)"
-        )
-    }
-}
-
 // MARK: - Prepared Content
 
 private struct PreparedContent: Equatable {
@@ -915,6 +878,122 @@ private func prepareDisplayContent(
         totalSize: totalSize,
         isTruncated: needsTruncation
     )
+}
+
+// MARK: - Grouped Tool Calls Container View
+
+/// Renders multiple tool calls in a single grouped container with animated borders
+struct GroupedToolCallsContainerView: View {
+    let calls: [ToolCallItem]
+
+    @Environment(\.theme) private var theme
+    @State private var gradientRotation: Double = 0
+    @State private var showCompletionGlow = false
+    @State private var wasInProgress = false
+
+    /// Check if any tool call is still in progress
+    private var hasInProgressCall: Bool {
+        calls.contains { $0.result == nil }
+    }
+
+    /// Check if any tool call was rejected
+    private var hasRejectedCall: Bool {
+        calls.contains { $0.result?.hasPrefix("[REJECTED]") == true }
+    }
+
+    /// Border color based on state
+    private var completionBorderColor: Color {
+        if hasInProgressCall {
+            return theme.accentColor
+        } else if hasRejectedCall {
+            return theme.errorColor
+        } else {
+            return theme.successColor
+        }
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            ForEach(Array(calls.enumerated()), id: \.element.call.id) { index, item in
+                InlineToolCallView(
+                    call: item.call,
+                    result: item.result
+                )
+
+                // Divider between tool calls (not after last)
+                if index < calls.count - 1 {
+                    Divider()
+                        .background(theme.primaryBorder.opacity(0.15))
+                }
+            }
+        }
+        .background(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(theme.secondaryBackground.opacity(0.6))
+        )
+        // Border: animated gradient when in progress, colored when complete
+        .overlay(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .strokeBorder(
+                    hasInProgressCall
+                        ? AnyShapeStyle(animatedGradientBorder)
+                        : AnyShapeStyle(completionBorderColor.opacity(showCompletionGlow ? 0.6 : 0.25)),
+                    lineWidth: hasInProgressCall ? 1.5 : (showCompletionGlow ? 1.5 : 1)
+                )
+                .animation(.easeOut(duration: 0.8), value: showCompletionGlow)
+        )
+        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+        // Glow effect
+        .shadow(
+            color: hasInProgressCall
+                ? theme.accentColor.opacity(0.15)
+                : (showCompletionGlow ? completionBorderColor.opacity(0.2) : .clear),
+            radius: 8,
+            x: 0,
+            y: 2
+        )
+        .animation(.easeOut(duration: 0.8), value: showCompletionGlow)
+        .onAppear {
+            wasInProgress = hasInProgressCall
+            if hasInProgressCall {
+                startGradientAnimation()
+            }
+        }
+        .onChange(of: hasInProgressCall) { oldValue, inProgress in
+            if inProgress {
+                wasInProgress = true
+                startGradientAnimation()
+            } else if wasInProgress {
+                // Just completed - show completion glow then fade
+                showCompletionGlow = true
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                    withAnimation(.easeOut(duration: 0.8)) {
+                        showCompletionGlow = false
+                    }
+                }
+            }
+        }
+    }
+
+    private func startGradientAnimation() {
+        withAnimation(.linear(duration: 3.0).repeatForever(autoreverses: false)) {
+            gradientRotation = 360
+        }
+    }
+
+    private var animatedGradientBorder: AngularGradient {
+        AngularGradient(
+            gradient: Gradient(colors: [
+                theme.accentColor.opacity(0.6),
+                theme.accentColor.opacity(0.2),
+                theme.accentColor.opacity(0.4),
+                theme.accentColor.opacity(0.2),
+                theme.accentColor.opacity(0.6),
+            ]),
+            center: .center,
+            angle: .degrees(gradientRotation)
+        )
+    }
 }
 
 // MARK: - Preview
