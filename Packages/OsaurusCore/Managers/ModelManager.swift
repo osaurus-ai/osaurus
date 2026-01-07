@@ -55,6 +55,7 @@ final class ModelManager: NSObject, ObservableObject {
         "generation_config.json",
         "chat_template.jinja",
         "preprocessor_config.json",  // Required for VLM models
+        "processor_config.json",  // Required for some models (e.g., Ministral)
         "*.safetensors",
     ]
     /// Current models directory (uses DirectoryPickerService for user selection)
@@ -785,6 +786,13 @@ extension ModelManager {
         // MARK: Vision Language Models (VLM)
 
         MLXModel(
+            id: "mlx-community/Ministral-3-8B-Instruct-2512-4bit",
+            name: friendlyName(from: "mlx-community/Ministral-3-8B-Instruct-2512-4bit"),
+            description: "Mistral's compact vision model. Multilingual support across 11 languages.",
+            downloadURL: "https://huggingface.co/mlx-community/Ministral-3-8B-Instruct-2512-4bit"
+        ),
+
+        MLXModel(
             id: "mlx-community/Kimi-VL-A3B-Thinking-4bit",
             name: friendlyName(from: "mlx-community/Kimi-VL-A3B-Thinking-4bit"),
             description: "Vision model with reasoning. Analyzes images with step-by-step thinking.",
@@ -792,6 +800,20 @@ extension ModelManager {
         ),
 
         // MARK: Compact Models
+
+        MLXModel(
+            id: "LiquidAI/LFM2.5-1.2B-Instruct-MLX-8bit",
+            name: friendlyName(from: "LiquidAI/LFM2.5-1.2B-Instruct-MLX-8bit"),
+            description: "Liquid AI's efficient 1.2B model. 128K context with 10 language support.",
+            downloadURL: "https://huggingface.co/LiquidAI/LFM2.5-1.2B-Instruct-MLX-8bit"
+        ),
+
+        MLXModel(
+            id: "mlx-community/LFM2-2.6B-4bit",
+            name: friendlyName(from: "mlx-community/LFM2-2.6B-4bit"),
+            description: "Liquid AI's 2.6B conversational model. Great for edge deployments.",
+            downloadURL: "https://huggingface.co/mlx-community/LFM2-2.6B-4bit"
+        ),
 
         MLXModel(
             id: "mlx-community/Granite-4.0-H-Tiny-4bit-DWQ",
