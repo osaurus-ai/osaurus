@@ -1,5 +1,5 @@
 {
-  "originHash" : "43318a9edf6571e2f8fbfecdfc45b019ec844915476507347d97c58ee2057c1d",
+  "originHash" : "a6e172617a7be88442c4d5a009edb3a6d77de80d0316e0e3786daf329fb4864e",
   "pins" : [
     {
       "identity" : "eventsource",
@@ -15,8 +15,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/orlandos-nl/IkigaJSON",
       "state" : {
-        "revision" : "17cc2f9d7fb03b6027ec1f6702c9b66be7cd9c6e",
-        "version" : "2.3.2"
+        "revision" : "4de5273483763d23e1dac58f9ac2b8419a7cf952",
+        "version" : "2.4.0"
       }
     },
     {
@@ -33,7 +33,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/ml-explore/mlx-swift-lm",
       "state" : {
-        "revision" : "74f85d9505032ec3403c94ba159472244fe78767"
+        "branch" : "main",
+        "revision" : "5064b8c5d8ed3b0bbb71385c4124f0fc102e74a2"
       }
     },
     {
@@ -77,8 +78,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/huggingface/swift-jinja.git",
       "state" : {
-        "revision" : "06a511d5adab5a812852ff972e65702a24b8ce30",
-        "version" : "2.2.0"
+        "revision" : "ba2364165002abe8f4f3992d74a7b547c635638e",
+        "version" : "2.2.1"
       }
     },
     {
@@ -95,8 +96,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/apple/swift-nio.git",
       "state" : {
-        "revision" : "a1605a3303a28e14d822dec8aaa53da8a9490461",
-        "version" : "2.92.0"
+        "revision" : "e3d5c560e0a6bfa391a00e857aa28ad52a41fe8d",
+        "version" : "2.92.1"
       }
     },
     {
@@ -131,8 +132,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/huggingface/swift-transformers",
       "state" : {
-        "revision" : "deea50c380b07535c81f838d10e1efcc8f9019bb",
-        "version" : "1.1.5"
+        "revision" : "573e5c9036c2f136b3a8a071da8e8907322403d0",
+        "version" : "1.1.6"
       }
     },
     {

@@ -13,7 +13,7 @@ struct MLXGenerationEngine {
     static func prepareAndGenerate(
         container: ModelContainer,
         buildChat: @Sendable () -> [MLXLMCommon.Chat.Message],
-        buildToolsSpec: @Sendable () -> [[String: Any]]?,
+        buildToolsSpec: @Sendable () -> [[String: any Sendable]]?,
         generation: GenerationParameters,
         runtime: RuntimeConfig
     ) async throws -> AsyncStream<MLXLMCommon.Generation> {
