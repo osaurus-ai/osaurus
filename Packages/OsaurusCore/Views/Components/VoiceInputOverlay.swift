@@ -40,6 +40,9 @@ public struct VoiceInputOverlay: View {
     /// Silence timeout for VAD continuous mode (0 = disabled)
     var silenceTimeoutDuration: Double = 0
 
+    /// Current silence timeout progress (for silence timeout indicator)
+    var silenceTimeoutProgress: Double = 0
+
     /// Whether in continuous voice mode (VAD)
     var isContinuousMode: Bool = false
 
@@ -65,6 +68,7 @@ public struct VoiceInputOverlay: View {
         confirmationDelay: Double = 2.0,
         silenceDuration: Double = 0,
         silenceTimeoutDuration: Double = 0,
+        silenceTimeoutProgress: Double = 0,
         isContinuousMode: Bool = false,
         isStreaming: Bool = false,
         onCancel: (() -> Void)? = nil,
@@ -79,6 +83,7 @@ public struct VoiceInputOverlay: View {
         self.confirmationDelay = confirmationDelay
         self.silenceDuration = silenceDuration
         self.silenceTimeoutDuration = silenceTimeoutDuration
+        self.silenceTimeoutProgress = silenceTimeoutProgress
         self.isContinuousMode = isContinuousMode
         self.isStreaming = isStreaming
         self.onCancel = onCancel
@@ -123,7 +128,7 @@ public struct VoiceInputOverlay: View {
                     // Silence timeout hint (all voice input modes, but only when it's user's turn)
                     if silenceTimeoutDuration > 0 && !isStreaming {
                         SilenceTimeoutIndicator(
-                            silenceDuration: silenceDuration,
+                            silenceDuration: silenceTimeoutProgress,
                             timeoutDuration: silenceTimeoutDuration
                         )
                     }
