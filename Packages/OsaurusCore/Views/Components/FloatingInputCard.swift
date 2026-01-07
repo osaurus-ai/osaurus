@@ -60,6 +60,9 @@ struct FloatingInputCard: View {
     /// Tracks last voice activity time for silence timeout
     @State private var lastVoiceActivityTime: Date = Date()
 
+    /// Displayed silence timeout duration (updated by timer for smooth UI updates)
+    @State private var displayedSilenceTimeoutDuration: Double = 0
+
     /// Threshold for considering audio as "speech" vs "silence"
     private let speechThreshold: Float = 0.05
 
@@ -131,12 +134,6 @@ struct FloatingInputCard: View {
         return Date().timeIntervalSince(lastSpeechTime)
     }
 
-    /// Current silence duration for VAD timeout visualization
-    private var vadSilenceDuration: Double {
-        guard isContinuousVoiceMode, showVoiceOverlay, !isStreaming else { return 0 }
-        return Date().timeIntervalSince(lastVoiceActivityTime)
-    }
-
     var body: some View {
         VStack(spacing: 12) {
             // Model and tool selector chips (always visible)
@@ -158,6 +155,7 @@ struct FloatingInputCard: View {
                     confirmationDelay: voiceConfig.confirmationDelay,
                     silenceDuration: currentSilenceDuration,
                     silenceTimeoutDuration: voiceConfig.silenceTimeoutSeconds,
+                    silenceTimeoutProgress: displayedSilenceTimeoutDuration,
                     isContinuousMode: isContinuousVoiceMode,
                     isStreaming: isStreaming,
                     onCancel: { cancelVoiceInput() },
@@ -452,65 +450,55 @@ struct FloatingInputCard: View {
     }
 
     private func checkForSilenceTimeout() {
-        // Apply to all voice input when overlay is showing and not streaming
-        // CRITICAL: Also require whisperService.isRecording to be true - this prevents
-        // timeout from firing during audio engine startup before any audio is captured
+        // Only check when overlay is showing and it's user's turn (not streaming)
         guard showVoiceOverlay,
-            !isStreaming,  // Only count timeout when it's user's turn
+            !isStreaming,
             voiceConfig.silenceTimeoutSeconds > 0,
-            case .recording = voiceInputState,  // Only check during active recording
-            whisperService.isRecording  // Audio must actually be capturing
-        else { return }
+            case .recording = voiceInputState,
+            whisperService.isRecording
+        else {
+            // Reset display when conditions aren't met
+            if displayedSilenceTimeoutDuration != 0 {
+                displayedSilenceTimeoutDuration = 0
+            }
+            return
+        }
 
-        // Update last voice activity time if there's audio
-        if whisperService.audioLevel > speechThreshold {
+        // Reset timer when there's voice activity
+        if whisperService.audioLevel > speechThreshold || !whisperService.currentTranscription.isEmpty
+            || !whisperService.confirmedTranscription.isEmpty
+        {
             lastVoiceActivityTime = Date()
         }
 
-        // Also reset if there's new transcription content
-        if !whisperService.currentTranscription.isEmpty || !whisperService.confirmedTranscription.isEmpty {
-            lastVoiceActivityTime = Date()
-        }
-
-        // Check if silence duration exceeds timeout
+        // Calculate and update displayed silence duration
         let silenceDuration = Date().timeIntervalSince(lastVoiceActivityTime)
+        displayedSilenceTimeoutDuration = silenceDuration
 
+        // Check if timeout exceeded
         if silenceDuration >= voiceConfig.silenceTimeoutSeconds {
             let hasContent =
                 !whisperService.currentTranscription.isEmpty || !whisperService.confirmedTranscription.isEmpty
 
             if hasContent {
-                // Has transcription content - trigger auto-send countdown (same as pause detection)
-                print(
-                    "[FloatingInputCard] Silence timeout (\(voiceConfig.silenceTimeoutSeconds)s) with content - triggering auto-send"
-                )
+                print("[FloatingInputCard] Silence timeout with content - triggering auto-send")
                 isPauseDetectionActive = false
                 voiceInputState = .paused(remaining: voiceConfig.confirmationDelay)
             } else {
-                // No transcription - just close voice input overlay
-                print(
-                    "[FloatingInputCard] Silence timeout (\(voiceConfig.silenceTimeoutSeconds)s) without content - closing voice input"
-                )
+                print("[FloatingInputCard] Silence timeout without content - closing voice input")
                 stopVoiceInputFromTimeout()
             }
         }
     }
 
     private func stopVoiceInputFromTimeout() {
-        // Stop voice input but don't close the chat window
         isPauseDetectionActive = false
-
         Task {
-            // Stop transcription gracefully (respects keepAudioEngineAlive)
-            // If VAD is on, engine stays alive. If VAD is off, engine tears down.
             _ = await whisperService.stopStreamingTranscription(force: false)
             whisperService.clearTranscription()
         }
-
         voiceInputState = .idle
         showVoiceOverlay = false
-        // Note: We don't set isContinuousVoiceMode = false here so continuous mode
-        // can restart voice input after AI responds if in continuous conversation
     }
 
     private func sendVoiceMessage(_ message: String) {
