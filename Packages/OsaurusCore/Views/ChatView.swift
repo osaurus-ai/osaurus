@@ -1582,7 +1582,9 @@ struct ChatView: View {
                             block: block,
                             width: width,
                             personaName: displayName,
-                            onCopy: copyToPasteboard,
+                            onCopy: { turnId in
+                                copyTurnContent(turnId: turnId)
+                            },
                             onRegenerate: { turnId in
                                 session.regenerate(turnId: turnId)
                             }
@@ -1685,9 +1687,27 @@ struct ChatView: View {
         return raw
     }
 
-    private func copyToPasteboard(_ text: String) {
+    private func copyTurnContent(turnId: UUID) {
+        guard let turn = session.turns.first(where: { $0.id == turnId }) else { return }
+
+        // Build copyable text: thinking + content
+        var textToCopy = ""
+
+        if turn.hasThinking {
+            textToCopy += turn.thinking
+        }
+
+        if !turn.contentIsEmpty {
+            if !textToCopy.isEmpty {
+                textToCopy += "\n\n"
+            }
+            textToCopy += turn.content
+        }
+
+        guard !textToCopy.isEmpty else { return }
+
         NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(text, forType: .string)
+        NSPasteboard.general.setString(textToCopy, forType: .string)
     }
 
     private func resizeWindowForContent(isEmpty: Bool) {

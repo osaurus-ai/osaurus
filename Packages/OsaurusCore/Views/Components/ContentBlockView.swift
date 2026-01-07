@@ -13,60 +13,46 @@ struct ContentBlockView: View {
     let block: ContentBlock
     let width: CGFloat
     let personaName: String
-    var onCopy: ((String) -> Void)?
+    var onCopy: ((UUID) -> Void)?
     var onRegenerate: ((UUID) -> Void)?
 
     @Environment(\.theme) private var theme
 
+    // MARK: - Computed Properties
+
     private var contentWidth: CGFloat {
-        // Total deductions: outer padding (32) + accent bar (15) + content padding (28)
-        max(100, width - 75)
+        max(100, width - 64)  // outer padding (32) + content padding (32)
     }
 
-    private var isSpacer: Bool {
-        if case .groupSpacer = block { return true }
-        return false
+    private var isUserMessage: Bool {
+        block.role == .user
     }
+
+    private var isLastInTurn: Bool {
+        block.position == .only || block.position == .last
+    }
+
+    // MARK: - Body
 
     var body: some View {
-        if isSpacer {
+        if case .groupSpacer = block {
             Color.clear.frame(height: 16)
         } else {
-            HStack(spacing: 0) {
-                accentBar
-                contentContainer
-            }
-            .background(blockBackground)
+            contentContainer
+                .background(isUserMessage ? theme.secondaryBackground.opacity(0.5) : Color.clear)
+                .clipShape(UnevenRoundedRectangle(cornerRadii: cornerRadii, style: .continuous))
+                .overlay(userMessageBorder)
         }
     }
 
-    // MARK: - Components
-
-    private var accentBar: some View {
-        let color = block.role == .user ? theme.accentColor : theme.tertiaryText.opacity(0.4)
-        return Rectangle()
-            .fill(color)
-            .frame(width: 3)
-            .frame(maxHeight: .infinity)
-            .padding(.leading, 12)
-    }
+    // MARK: - Content Container
 
     private var contentContainer: some View {
         VStack(alignment: .leading, spacing: 0) {
             blockContent
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.leading, 16)
-        .padding(.trailing, 12)
-    }
-
-    @ViewBuilder
-    private var blockBackground: some View {
-        if block.role == .user {
-            theme.secondaryBackground.opacity(0.5)
-        } else {
-            Color.clear
-        }
+        .padding(.horizontal, 16)
     }
 
     // MARK: - Block Content
@@ -74,7 +60,7 @@ struct ContentBlockView: View {
     @ViewBuilder
     private var blockContent: some View {
         switch block {
-        case let .header(turnId, role, name, _):
+        case let .header(turnId, role, name, _, _):
             HeaderBlockContent(
                 turnId: turnId,
                 role: role,
@@ -83,31 +69,34 @@ struct ContentBlockView: View {
                 onRegenerate: onRegenerate
             )
             .padding(.top, 12)
-            .padding(.bottom, 4)
+            .padding(.bottom, isLastInTurn ? 8 : 2)
 
-        case let .paragraph(_, _, text, isStreaming, _):
+        case let .paragraph(_, _, text, isStreaming, _, _):
             MarkdownMessageView(
                 text: text,
                 baseWidth: contentWidth,
                 turnId: nil,
                 isStreaming: isStreaming
             )
-            .padding(.vertical, 4)
+            .padding(.top, 4)
+            .padding(.bottom, isLastInTurn ? 16 : 4)
 
-        case let .toolCall(_, call, result):
+        case let .toolCall(_, call, result, _):
             InlineToolCallView(call: call, result: result)
-                .padding(.vertical, 6)
+                .padding(.top, 6)
+                .padding(.bottom, isLastInTurn ? 12 : 4)
 
-        case let .thinking(_, _, text, isStreaming):
+        case let .thinking(_, _, text, isStreaming, _):
             ThinkingBlockView(
                 thinking: text,
                 baseWidth: contentWidth,
                 isStreaming: isStreaming,
                 thinkingLength: text.count
             )
-            .padding(.vertical, 6)
+            .padding(.top, 6)
+            .padding(.bottom, isLastInTurn ? 16 : 6)
 
-        case let .image(_, _, imageData):
+        case let .image(_, _, imageData, _):
             if let nsImage = NSImage(data: imageData) {
                 Image(nsImage: nsImage)
                     .resizable()
@@ -119,17 +108,111 @@ struct ContentBlockView: View {
                             .strokeBorder(theme.primaryBorder.opacity(0.2), lineWidth: 1)
                     )
                     .shadow(color: .black.opacity(0.1), radius: 4, x: 0, y: 2)
-                    .padding(.vertical, 6)
+                    .padding(.top, 6)
+                    .padding(.bottom, isLastInTurn ? 16 : 6)
             }
 
         case .typingIndicator:
             TypingIndicator()
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.vertical, 8)
+                .padding(.top, 8)
+                .padding(.bottom, isLastInTurn ? 16 : 8)
 
         case .groupSpacer:
             EmptyView()
         }
+    }
+
+    // MARK: - User Message Styling
+
+    private var cornerRadii: RectangleCornerRadii {
+        guard isUserMessage else { return .init() }
+
+        let r: CGFloat = 8
+        switch block.position {
+        case .only: return .init(topLeading: r, bottomLeading: r, bottomTrailing: r, topTrailing: r)
+        case .first: return .init(topLeading: r, bottomLeading: 0, bottomTrailing: 0, topTrailing: r)
+        case .middle: return .init()
+        case .last: return .init(topLeading: 0, bottomLeading: r, bottomTrailing: r, topTrailing: 0)
+        }
+    }
+
+    @ViewBuilder
+    private var userMessageBorder: some View {
+        if isUserMessage {
+            UserMessageBorderPath(
+                position: block.position,
+                radius: 8
+            )
+            .stroke(theme.primaryBorder.opacity(0.3), lineWidth: 1)
+        }
+    }
+}
+
+// MARK: - User Message Border Path
+
+/// Custom path that draws position-aware borders for user message blocks
+private struct UserMessageBorderPath: Shape {
+    let position: BlockPosition
+    let radius: CGFloat
+
+    private var showTop: Bool { position == .first || position == .only }
+    private var showBottom: Bool { position == .last || position == .only }
+
+    func path(in rect: CGRect) -> Path {
+        var path = Path()
+        let w = rect.width
+        let h = rect.height
+        let r = radius
+
+        // Left edge
+        path.move(to: CGPoint(x: 0, y: showTop ? r : 0))
+        path.addLine(to: CGPoint(x: 0, y: showBottom ? h - r : h))
+
+        // Bottom
+        if showBottom {
+            path.addArc(
+                center: CGPoint(x: r, y: h - r),
+                radius: r,
+                startAngle: .degrees(180),
+                endAngle: .degrees(90),
+                clockwise: true
+            )
+            path.addLine(to: CGPoint(x: w - r, y: h))
+            path.addArc(
+                center: CGPoint(x: w - r, y: h - r),
+                radius: r,
+                startAngle: .degrees(90),
+                endAngle: .degrees(0),
+                clockwise: true
+            )
+        } else {
+            path.move(to: CGPoint(x: w, y: h))
+        }
+
+        // Right edge
+        path.addLine(to: CGPoint(x: w, y: showTop ? r : 0))
+
+        // Top
+        if showTop {
+            path.addArc(
+                center: CGPoint(x: w - r, y: r),
+                radius: r,
+                startAngle: .degrees(0),
+                endAngle: .degrees(-90),
+                clockwise: true
+            )
+            path.addLine(to: CGPoint(x: r, y: 0))
+            path.addArc(
+                center: CGPoint(x: r, y: r),
+                radius: r,
+                startAngle: .degrees(-90),
+                endAngle: .degrees(180),
+                clockwise: true
+            )
+        }
+
+        return path
     }
 }
 
@@ -139,7 +222,7 @@ private struct HeaderBlockContent: View {
     let turnId: UUID
     let role: MessageRole
     let name: String
-    var onCopy: ((String) -> Void)?
+    var onCopy: ((UUID) -> Void)?
     var onRegenerate: ((UUID) -> Void)?
 
     @Environment(\.theme) private var theme
@@ -154,10 +237,12 @@ private struct HeaderBlockContent: View {
             Spacer()
 
             actionButtons
+                .opacity(isHovered ? 1 : 0)
         }
         .frame(height: 28)
         .contentShape(Rectangle())
         .onHover { isHovered = $0 }
+        .animation(theme.animationQuick(), value: isHovered)
     }
 
     @ViewBuilder
@@ -170,31 +255,31 @@ private struct HeaderBlockContent: View {
             }
             if let onCopy {
                 ActionButton(icon: "doc.on.doc", help: "Copy") {
-                    onCopy("")
+                    onCopy(turnId)
                 }
             }
         }
-        .opacity(isHovered ? 1 : 0)
-        .animation(theme.animationQuick(), value: isHovered)
     }
+}
 
-    private struct ActionButton: View {
-        let icon: String
-        let help: String
-        let action: () -> Void
+// MARK: - Action Button
 
-        @Environment(\.theme) private var theme
+private struct ActionButton: View {
+    let icon: String
+    let help: String
+    let action: () -> Void
 
-        var body: some View {
-            Button(action: action) {
-                Image(systemName: icon)
-                    .font(theme.font(size: CGFloat(theme.captionSize) - 1, weight: .medium))
-                    .foregroundColor(theme.tertiaryText)
-                    .padding(6)
-                    .background(Circle().fill(theme.secondaryBackground.opacity(0.8)))
-            }
-            .buttonStyle(.plain)
-            .help(help)
+    @Environment(\.theme) private var theme
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: icon)
+                .font(theme.font(size: CGFloat(theme.captionSize) - 1, weight: .medium))
+                .foregroundColor(theme.tertiaryText)
+                .padding(6)
+                .background(Circle().fill(theme.secondaryBackground.opacity(0.8)))
         }
+        .buttonStyle(.plain)
+        .help(help)
     }
 }

@@ -8,36 +8,51 @@
 
 import Foundation
 
+/// Position of a block within its turn (for styling purposes)
+enum BlockPosition {
+    case only  // Single block in turn - round all corners
+    case first  // First block - round top corners
+    case middle  // Middle block - no rounding
+    case last  // Last block - round bottom corners
+}
+
 /// A single content block in the flattened chat view.
 enum ContentBlock: Identifiable {
-    case header(turnId: UUID, role: MessageRole, personaName: String, isFirstInGroup: Bool)
-    case paragraph(turnId: UUID, index: Int, text: String, isStreaming: Bool, role: MessageRole)
-    case toolCall(turnId: UUID, call: ToolCall, result: String?)
-    case thinking(turnId: UUID, index: Int, text: String, isStreaming: Bool)
-    case image(turnId: UUID, index: Int, imageData: Data)
-    case typingIndicator(turnId: UUID)
+    case header(turnId: UUID, role: MessageRole, personaName: String, isFirstInGroup: Bool, position: BlockPosition)
+    case paragraph(
+        turnId: UUID,
+        index: Int,
+        text: String,
+        isStreaming: Bool,
+        role: MessageRole,
+        position: BlockPosition
+    )
+    case toolCall(turnId: UUID, call: ToolCall, result: String?, position: BlockPosition)
+    case thinking(turnId: UUID, index: Int, text: String, isStreaming: Bool, position: BlockPosition)
+    case image(turnId: UUID, index: Int, imageData: Data, position: BlockPosition)
+    case typingIndicator(turnId: UUID, position: BlockPosition)
     case groupSpacer(afterTurnId: UUID)
 
     var id: String {
         switch self {
-        case let .header(turnId, _, _, _): return "header-\(turnId.uuidString)"
-        case let .paragraph(turnId, index, _, _, _): return "para-\(turnId.uuidString)-\(index)"
-        case let .toolCall(turnId, call, _): return "tool-\(turnId.uuidString)-\(call.id)"
-        case let .thinking(turnId, index, _, _): return "think-\(turnId.uuidString)-\(index)"
-        case let .image(turnId, index, _): return "img-\(turnId.uuidString)-\(index)"
-        case let .typingIndicator(turnId): return "typing-\(turnId.uuidString)"
+        case let .header(turnId, _, _, _, _): return "header-\(turnId.uuidString)"
+        case let .paragraph(turnId, index, _, _, _, _): return "para-\(turnId.uuidString)-\(index)"
+        case let .toolCall(turnId, call, _, _): return "tool-\(turnId.uuidString)-\(call.id)"
+        case let .thinking(turnId, index, _, _, _): return "think-\(turnId.uuidString)-\(index)"
+        case let .image(turnId, index, _, _): return "img-\(turnId.uuidString)-\(index)"
+        case let .typingIndicator(turnId, _): return "typing-\(turnId.uuidString)"
         case let .groupSpacer(afterTurnId): return "spacer-\(afterTurnId.uuidString)"
         }
     }
 
     var turnId: UUID {
         switch self {
-        case let .header(turnId, _, _, _),
-            let .paragraph(turnId, _, _, _, _),
-            let .toolCall(turnId, _, _),
-            let .thinking(turnId, _, _, _),
-            let .image(turnId, _, _),
-            let .typingIndicator(turnId),
+        case let .header(turnId, _, _, _, _),
+            let .paragraph(turnId, _, _, _, _, _),
+            let .toolCall(turnId, _, _, _),
+            let .thinking(turnId, _, _, _, _),
+            let .image(turnId, _, _, _),
+            let .typingIndicator(turnId, _),
             let .groupSpacer(turnId):
             return turnId
         }
@@ -45,11 +60,58 @@ enum ContentBlock: Identifiable {
 
     var role: MessageRole {
         switch self {
-        case let .header(_, role, _, _): return role
-        case let .paragraph(_, _, _, _, role): return role
+        case let .header(_, role, _, _, _): return role
+        case let .paragraph(_, _, _, _, role, _): return role
         case .toolCall, .thinking, .typingIndicator: return .assistant
         case .image: return .user
         case .groupSpacer: return .assistant
+        }
+    }
+
+    var position: BlockPosition {
+        switch self {
+        case let .header(_, _, _, _, position),
+            let .paragraph(_, _, _, _, _, position),
+            let .toolCall(_, _, _, position),
+            let .thinking(_, _, _, _, position),
+            let .image(_, _, _, position),
+            let .typingIndicator(_, position):
+            return position
+        case .groupSpacer:
+            return .only
+        }
+    }
+
+    /// Returns a copy of this block with the specified position
+    func withPosition(_ newPosition: BlockPosition) -> ContentBlock {
+        switch self {
+        case let .header(turnId, role, personaName, isFirstInGroup, _):
+            return .header(
+                turnId: turnId,
+                role: role,
+                personaName: personaName,
+                isFirstInGroup: isFirstInGroup,
+                position: newPosition
+            )
+        case let .paragraph(turnId, index, text, isStreaming, role, _):
+            return .paragraph(
+                turnId: turnId,
+                index: index,
+                text: text,
+                isStreaming: isStreaming,
+                role: role,
+                position: newPosition
+            )
+        case let .toolCall(turnId, call, result, _):
+            return .toolCall(turnId: turnId, call: call, result: result, position: newPosition)
+        case let .thinking(turnId, index, text, isStreaming, _):
+            return .thinking(turnId: turnId, index: index, text: text, isStreaming: isStreaming, position: newPosition)
+        case let .image(turnId, index, imageData, _):
+            return .image(turnId: turnId, index: index, imageData: imageData, position: newPosition)
+        case let .typingIndicator(turnId, _):
+            return .typingIndicator(turnId: turnId, position: newPosition)
+        case .groupSpacer:
+            return self
         }
     }
 }
@@ -77,21 +139,25 @@ extension ContentBlock {
                 blocks.append(.groupSpacer(afterTurnId: prevId))
             }
 
+            // Collect blocks for this turn first (to determine positions)
+            var turnBlocks: [ContentBlock] = []
+
             // Header for first message in group
             if isFirstInGroup {
-                blocks.append(
+                turnBlocks.append(
                     .header(
                         turnId: turn.id,
                         role: turn.role,
                         personaName: turn.role == .assistant ? personaName : "You",
-                        isFirstInGroup: true
+                        isFirstInGroup: true,
+                        position: .first  // Temporary, will be updated
                     )
                 )
             }
 
             // Images
             for (index, imageData) in turn.attachedImages.enumerated() {
-                blocks.append(.image(turnId: turn.id, index: index, imageData: imageData))
+                turnBlocks.append(.image(turnId: turn.id, index: index, imageData: imageData, position: .middle))
             }
 
             // Thinking blocks
@@ -99,12 +165,13 @@ extension ContentBlock {
                 let paragraphs = splitIntoParagraphs(turn.thinking)
                 for (index, text) in paragraphs.enumerated() {
                     let isLast = index == paragraphs.count - 1
-                    blocks.append(
+                    turnBlocks.append(
                         .thinking(
                             turnId: turn.id,
                             index: index,
                             text: text,
-                            isStreaming: isStreaming && isLast && turn.contentIsEmpty
+                            isStreaming: isStreaming && isLast && turn.contentIsEmpty,
+                            position: .middle
                         )
                     )
                 }
@@ -115,35 +182,62 @@ extension ContentBlock {
                 let paragraphs = splitIntoParagraphs(turn.content)
                 for (index, text) in paragraphs.enumerated() {
                     let isLast = index == paragraphs.count - 1
-                    blocks.append(
+                    turnBlocks.append(
                         .paragraph(
                             turnId: turn.id,
                             index: index,
                             text: text,
                             isStreaming: isStreaming && isLast,
-                            role: turn.role
+                            role: turn.role,
+                            position: .middle
                         )
                     )
                 }
             } else if isStreaming && turn.role == .assistant && !turn.hasThinking {
                 let hasToolCalls = !(turn.toolCalls ?? []).isEmpty
                 if !hasToolCalls {
-                    blocks.append(.typingIndicator(turnId: turn.id))
+                    turnBlocks.append(.typingIndicator(turnId: turn.id, position: .middle))
                 }
             }
 
             // Tool calls
             if let toolCalls = turn.toolCalls {
                 for call in toolCalls {
-                    blocks.append(.toolCall(turnId: turn.id, call: call, result: turn.toolResults[call.id]))
+                    turnBlocks.append(
+                        .toolCall(turnId: turn.id, call: call, result: turn.toolResults[call.id], position: .middle)
+                    )
                 }
             }
+
+            // Update positions based on count
+            let updatedBlocks = assignPositions(to: turnBlocks)
+            blocks.append(contentsOf: updatedBlocks)
 
             previousRole = turn.role
             previousTurnId = turn.id
         }
 
         return blocks
+    }
+
+    /// Assigns proper positions (first/middle/last/only) to blocks within a turn
+    private static func assignPositions(to blocks: [ContentBlock]) -> [ContentBlock] {
+        guard !blocks.isEmpty else { return blocks }
+
+        return blocks.enumerated().map { index, block in
+            let position: BlockPosition
+            if blocks.count == 1 {
+                position = .only
+            } else if index == 0 {
+                position = .first
+            } else if index == blocks.count - 1 {
+                position = .last
+            } else {
+                position = .middle
+            }
+
+            return block.withPosition(position)
+        }
     }
 
     /// Splits text into paragraphs while preserving code blocks
