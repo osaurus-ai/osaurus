@@ -208,6 +208,9 @@ public actor RemoteProviderService: ToolCapableService {
                 // Parse SSE stream with proper UTF-8 decoding
                 var buffer = ""
                 var utf8Buffer = Data()
+                // Maximum UTF-8 buffer size to prevent infinite accumulation on malformed data
+                // (e.g., error messages with encoding issues). 1KB is plenty for any valid multi-byte sequence.
+                let maxUtf8BufferSize = 1024
                 for try await byte in bytes {
                     // Check for task cancellation to allow early termination
                     if Task.isCancelled {
@@ -219,8 +222,17 @@ public actor RemoteProviderService: ToolCapableService {
                     if let decoded = String(data: utf8Buffer, encoding: .utf8) {
                         buffer.append(decoded)
                         utf8Buffer.removeAll()
+                    } else if utf8Buffer.count > maxUtf8BufferSize {
+                        // Buffer exceeded limit without successful decode - likely malformed data.
+                        // Use lossy conversion to prevent infinite accumulation.
+                        print(
+                            "[Osaurus] Warning: UTF-8 buffer exceeded \(maxUtf8BufferSize) bytes without successful decode, using lossy conversion"
+                        )
+                        let lossy = String(decoding: utf8Buffer, as: UTF8.self)
+                        buffer.append(lossy)
+                        utf8Buffer.removeAll()
                     }
-                    // If decoding fails, we have an incomplete multi-byte sequence - keep accumulating
+                    // If decoding fails and buffer is small, we have an incomplete multi-byte sequence - keep accumulating
 
                     // Process complete lines
                     while let newlineIndex = buffer.firstIndex(of: "\n") {
@@ -541,6 +553,9 @@ public actor RemoteProviderService: ToolCapableService {
                 // Parse SSE stream with proper UTF-8 decoding
                 var buffer = ""
                 var utf8Buffer = Data()
+                // Maximum UTF-8 buffer size to prevent infinite accumulation on malformed data
+                // (e.g., error messages with encoding issues). 1KB is plenty for any valid multi-byte sequence.
+                let maxUtf8BufferSize = 1024
                 for try await byte in bytes {
                     // Check for task cancellation to allow early termination
                     if Task.isCancelled {
@@ -552,8 +567,17 @@ public actor RemoteProviderService: ToolCapableService {
                     if let decoded = String(data: utf8Buffer, encoding: .utf8) {
                         buffer.append(decoded)
                         utf8Buffer.removeAll()
+                    } else if utf8Buffer.count > maxUtf8BufferSize {
+                        // Buffer exceeded limit without successful decode - likely malformed data.
+                        // Use lossy conversion to prevent infinite accumulation.
+                        print(
+                            "[Osaurus] Warning: UTF-8 buffer exceeded \(maxUtf8BufferSize) bytes without successful decode, using lossy conversion"
+                        )
+                        let lossy = String(decoding: utf8Buffer, as: UTF8.self)
+                        buffer.append(lossy)
+                        utf8Buffer.removeAll()
                     }
-                    // If decoding fails, we have an incomplete multi-byte sequence - keep accumulating
+                    // If decoding fails and buffer is small, we have an incomplete multi-byte sequence - keep accumulating
 
                     while let newlineIndex = buffer.firstIndex(of: "\n") {
                         let line = String(buffer[..<newlineIndex])
