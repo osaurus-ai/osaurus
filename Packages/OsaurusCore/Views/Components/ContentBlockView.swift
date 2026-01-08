@@ -71,11 +71,11 @@ struct ContentBlockView: View {
             .padding(.top, 12)
             .padding(.bottom, isLastInTurn ? 8 : 2)
 
-        case let .paragraph(_, _, text, isStreaming, _, _):
+        case let .paragraph(turnId, _, text, isStreaming, _, _):
             MarkdownMessageView(
                 text: text,
                 baseWidth: contentWidth,
-                turnId: nil,
+                turnId: turnId,
                 isStreaming: isStreaming
             )
             .padding(.top, 4)
