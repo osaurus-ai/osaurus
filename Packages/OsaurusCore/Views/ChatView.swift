@@ -42,22 +42,12 @@ final class ChatSession: ObservableObject {
     private var isDirty: Bool = false
 
     // MARK: - Memoization Cache
-    /// Cached content blocks for flattened rendering
     private var _cachedContentBlocks: [ContentBlock] = []
-    /// Last turns count used for cache invalidation
     private var _lastTurnsCount: Int = 0
-    /// Last turn ID for additional cache validation
     private var _lastTurnId: UUID?
-    /// Last content length of last turn (for streaming updates)
     private var _lastContentLength: Int = 0
-    /// Cached estimated token count
     private var _cachedEstimatedTokens: Int = 0
-    /// Flag to invalidate token cache
     private var _tokenCacheValid: Bool = false
-    /// Cached VLM support status to avoid file I/O during view updates
-    private var _cachedSupportsImages: Bool = false
-    /// Model ID used for VLM cache validation
-    private var _cachedSupportsImagesModel: String?
 
     /// Callback when session needs to be saved (called after streaming completes)
     var onSessionChanged: (() -> Void)?
@@ -105,8 +95,8 @@ final class ChatSession: ObservableObject {
     private static func buildModelOptions() async -> [ModelOption] {
         var options: [ModelOption] = []
 
-        // Add foundation model first if available
-        if FoundationModelService.isDefaultModelAvailable() {
+        // Add foundation model first if available (use cached value)
+        if AppConfiguration.shared.foundationModelAvailable {
             options.append(.foundation())
         }
 
@@ -183,31 +173,12 @@ final class ChatSession: ObservableObject {
     }
 
     /// Check if the currently selected model supports images (VLM)
-    /// Cached to avoid file I/O during view updates
     var selectedModelSupportsImages: Bool {
         guard let model = selectedModel else { return false }
-
-        // Return cached value if model hasn't changed
-        if model == _cachedSupportsImagesModel {
-            return _cachedSupportsImages
-        }
-
-        // Compute and cache
-        let result: Bool = {
-            if model.lowercased() == "foundation" { return false }
-
-            if let option = modelOptions.first(where: { $0.id == model }) {
-                // Remote models assumed to support images; local models use cached isVLM
-                if case .remote = option.source { return true }
-                if option.isVLM { return true }
-            }
-
-            return false
-        }()
-
-        _cachedSupportsImagesModel = model
-        _cachedSupportsImages = result
-        return result
+        if model.lowercased() == "foundation" { return false }
+        guard let option = modelOptions.first(where: { $0.id == model }) else { return false }
+        if case .remote = option.source { return true }
+        return option.isVLM
     }
 
     /// Get the currently selected ModelOption
@@ -379,8 +350,6 @@ final class ChatSession: ObservableObject {
         _lastTurnId = nil
         _lastContentLength = 0
         _tokenCacheValid = false
-        _cachedSupportsImagesModel = nil
-        _cachedSupportsImages = false
 
         // Apply model from persona or global config (don't auto-persist, it's already saved)
         isLoadingModel = true
@@ -1131,7 +1100,7 @@ struct ChatView: View {
                                     onOpenModelManager: {
                                         AppDelegate.shared?.showManagementWindow(initialTab: .models)
                                     },
-                                    onUseFoundation: FoundationModelService.isDefaultModelAvailable()
+                                    onUseFoundation: windowState.foundationModelAvailable
                                         ? {
                                             session.selectedModel = session.modelOptions.first?.id ?? "foundation"
                                         } : nil,
@@ -1159,10 +1128,8 @@ struct ChatView: View {
                                 voiceInputState: $observedSession.voiceInputState,
                                 showVoiceOverlay: $observedSession.showVoiceOverlay,
                                 modelOptions: observedSession.modelOptions,
-                                availableTools: ToolRegistry.shared.listTools(
-                                    withOverrides: observedSession.enabledToolOverrides
-                                ),
-                                personaToolOverrides: windowState.effectiveToolOverrides,
+                                availableTools: windowState.cachedToolList,
+                                personaToolOverrides: windowState.cachedToolOverrides,
                                 isStreaming: observedSession.isStreaming,
                                 supportsImages: observedSession.selectedModelSupportsImages,
                                 estimatedContextTokens: observedSession.estimatedContextTokens,
@@ -1182,7 +1149,7 @@ struct ChatView: View {
                                 onOpenModelManager: {
                                     AppDelegate.shared?.showManagementWindow(initialTab: .models)
                                 },
-                                onUseFoundation: FoundationModelService.isDefaultModelAvailable()
+                                onUseFoundation: windowState.foundationModelAvailable
                                     ? {
                                         session.selectedModel = session.modelOptions.first?.id ?? "foundation"
                                     } : nil,
@@ -1321,7 +1288,8 @@ struct ChatView: View {
                 )
 
             case .image:
-                if let image = customTheme.background.decodedImage() {
+                // Use pre-decoded background image from windowState (decoded once, not on every render)
+                if let image = windowState.cachedBackgroundImage {
                     ZStack {
                         backgroundImageView(
                             image: image,

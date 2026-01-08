@@ -20,15 +20,12 @@ final class DirectoryPickerService: ObservableObject {
     private var securityScopedResource: URL?
 
     // MARK: - Static Cache for Bookmark URL
-    // Caches the resolved bookmark URL to avoid expensive IPC calls on every access.
-    // The bookmark resolution (URL(resolvingBookmarkData:...)) involves sync IPC with
-    // scopedBookmarksAgent which can block the main thread for 1+ seconds.
-    // The mutable vars are nonisolated(unsafe) because we protect access with cacheLock.
+    // Caches the resolved bookmark URL to avoid expensive IPC calls.
+    // Bookmark resolution involves sync IPC with scopedBookmarksAgent (1+ second blocks).
     private static nonisolated let cacheLock = NSLock()
     private static nonisolated(unsafe) var cachedBookmarkURL: URL?
     private static nonisolated(unsafe) var cacheInitialized = false
 
-    /// Invalidate the cached bookmark URL (call when directory changes)
     nonisolated private static func invalidateCache() {
         cacheLock.lock()
         defer { cacheLock.unlock() }
@@ -197,8 +194,7 @@ final class DirectoryPickerService: ObservableObject {
         return Self.effectiveModelsDirectory()
     }
 
-    /// Nonisolated helper to compute the default models directory without accessing instance state.
-    /// Mirrors the fallback logic used by `effectiveModelsDirectory`.
+    /// Get the default models directory (without user bookmark)
     nonisolated static func defaultModelsDirectory() -> URL {
         let fileManager = FileManager.default
         if let override = ProcessInfo.processInfo.environment["OSU_MODELS_DIR"], !override.isEmpty {
@@ -207,10 +203,7 @@ final class DirectoryPickerService: ObservableObject {
         }
         let homeURL = fileManager.homeDirectoryForCurrentUser
         let newDefault = homeURL.appendingPathComponent("MLXModels")
-        let documentsPath = fileManager.urls(
-            for: .documentDirectory,
-            in: .userDomainMask
-        ).first!
+        let documentsPath = fileManager.urls(for: .documentDirectory, in: .userDomainMask).first!
         let oldDefault = documentsPath.appendingPathComponent("MLXModels")
         if fileManager.fileExists(atPath: newDefault.path) { return newDefault }
         if fileManager.fileExists(atPath: oldDefault.path) { return oldDefault }
