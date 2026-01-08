@@ -54,6 +54,10 @@ final class ChatSession: ObservableObject {
     private var _cachedEstimatedTokens: Int = 0
     /// Flag to invalidate token cache
     private var _tokenCacheValid: Bool = false
+    /// Cached VLM support status to avoid file I/O during view updates
+    private var _cachedSupportsImages: Bool = false
+    /// Model ID used for VLM cache validation
+    private var _cachedSupportsImagesModel: String?
 
     /// Callback when session needs to be saved (called after streaming completes)
     var onSessionChanged: (() -> Void)?
@@ -179,25 +183,31 @@ final class ChatSession: ObservableObject {
     }
 
     /// Check if the currently selected model supports images (VLM)
+    /// Cached to avoid file I/O during view updates
     var selectedModelSupportsImages: Bool {
         guard let model = selectedModel else { return false }
-        // Foundation models don't support images yet
-        if model.lowercased() == "foundation" { return false }
 
-        // Check ModelOption first
-        if let option = modelOptions.first(where: { $0.id == model }) {
-            // Remote models: assume they support images (many do, and we can't detect)
-            if case .remote = option.source {
-                return true
-            }
-            // Local models: check VLM status
-            if option.isVLM {
-                return true
-            }
+        // Return cached value if model hasn't changed
+        if model == _cachedSupportsImagesModel {
+            return _cachedSupportsImages
         }
 
-        // Fall back to ModelManager detection for downloaded models
-        return ModelManager.isVisionModel(named: model)
+        // Compute and cache
+        let result: Bool = {
+            if model.lowercased() == "foundation" { return false }
+
+            if let option = modelOptions.first(where: { $0.id == model }) {
+                // Remote models assumed to support images; local models use cached isVLM
+                if case .remote = option.source { return true }
+                if option.isVLM { return true }
+            }
+
+            return false
+        }()
+
+        _cachedSupportsImagesModel = model
+        _cachedSupportsImages = result
+        return result
     }
 
     /// Get the currently selected ModelOption
@@ -369,6 +379,8 @@ final class ChatSession: ObservableObject {
         _lastTurnId = nil
         _lastContentLength = 0
         _tokenCacheValid = false
+        _cachedSupportsImagesModel = nil
+        _cachedSupportsImages = false
 
         // Apply model from persona or global config (don't auto-persist, it's already saved)
         isLoadingModel = true
