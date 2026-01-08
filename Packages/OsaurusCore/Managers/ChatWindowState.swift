@@ -36,6 +36,8 @@ final class ChatWindowState: ObservableObject {
     @Published private(set) var cachedToolList: [ToolRegistry.ToolEntry] = []
     @Published private(set) var cachedSystemPrompt: String = ""
     @Published private(set) var cachedToolOverrides: [String: Bool]?
+    @Published private(set) var cachedActivePersona: Persona = .default
+    @Published private(set) var cachedPersonaDisplayName: String = "Assistant"
 
     // MARK: - Private
 
@@ -59,6 +61,8 @@ final class ChatWindowState: ObservableObject {
         self.cachedToolList = ToolRegistry.shared.listTools(withOverrides: cachedToolOverrides)
         self.cachedSystemPrompt = PersonaManager.shared.effectiveSystemPrompt(for: personaId)
         self.cachedBackgroundImage = theme.customThemeConfig?.background.decodedImage()
+        self.cachedActivePersona = personas.first { $0.id == personaId } ?? .default
+        self.cachedPersonaDisplayName = cachedActivePersona.isBuiltIn ? "Assistant" : cachedActivePersona.name
 
         // Configure session
         self.session.personaId = personaId
@@ -78,9 +82,7 @@ final class ChatWindowState: ObservableObject {
 
     // MARK: - API
 
-    var activePersona: Persona {
-        personas.first { $0.id == personaId } ?? Persona.default
-    }
+    var activePersona: Persona { cachedActivePersona }
 
     var themeId: UUID? {
         PersonaManager.shared.themeId(for: personaId)
@@ -123,6 +125,8 @@ final class ChatWindowState: ObservableObject {
 
     func refreshPersonas() {
         personas = PersonaManager.shared.personas
+        cachedActivePersona = personas.first { $0.id == personaId } ?? .default
+        cachedPersonaDisplayName = cachedActivePersona.isBuiltIn ? "Assistant" : cachedActivePersona.name
     }
 
     func refreshSessions() {
@@ -141,6 +145,8 @@ final class ChatWindowState: ObservableObject {
 
     func refreshPersonaConfig() {
         cachedSystemPrompt = PersonaManager.shared.effectiveSystemPrompt(for: personaId)
+        cachedActivePersona = personas.first { $0.id == personaId } ?? .default
+        cachedPersonaDisplayName = cachedActivePersona.isBuiltIn ? "Assistant" : cachedActivePersona.name
         refreshToolList()
     }
 

@@ -48,6 +48,7 @@ final class ChatSession: ObservableObject {
     private var _lastContentLength: Int = 0
     private var _cachedEstimatedTokens: Int = 0
     private var _tokenCacheValid: Bool = false
+    private var _lastToolOverridesHash: Int = 0
 
     /// Callback when session needs to be saved (called after streaming completes)
     var onSessionChanged: (() -> Void)?
@@ -245,10 +246,13 @@ final class ChatSession: ObservableObject {
     }
 
     /// Estimated token count for current session context (rough heuristic: ~4 chars per token)
-    /// Memoized - only recomputes when turns count changes or streaming ends
+    /// Memoized - only recomputes when turns/tools change or streaming ends
     var estimatedContextTokens: Int {
+        let toolOverridesHash = enabledToolOverrides.hashValue
         // Use cache if valid and not streaming (during streaming, estimate changes frequently)
-        if _tokenCacheValid && !isStreaming && turns.count == _lastTurnsCount {
+        if _tokenCacheValid && !isStreaming && turns.count == _lastTurnsCount
+            && toolOverridesHash == _lastToolOverridesHash
+        {
             return _cachedEstimatedTokens
         }
 
@@ -310,6 +314,7 @@ final class ChatSession: ObservableObject {
         // Update cache
         _cachedEstimatedTokens = total
         _tokenCacheValid = true
+        _lastToolOverridesHash = toolOverridesHash
 
         return total
     }
@@ -1456,7 +1461,7 @@ struct ChatView: View {
     private func messageThread(_ width: CGFloat) -> some View {
         // Use flattened content blocks for efficient LazyVStack recycling
         let blocks = session.visibleBlocks
-        let displayName = windowState.activePersona.isBuiltIn ? "Assistant" : windowState.activePersona.name
+        let displayName = windowState.cachedPersonaDisplayName
 
         return ScrollViewReader { proxy in
             ScrollView {
