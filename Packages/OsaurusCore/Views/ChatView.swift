@@ -578,61 +578,10 @@ final class ChatSession: ObservableObject {
                     withOverrides: effectiveOverrides
                 )
 
-                // Estimate tokens for a message (heuristic: ~4 chars per token)
-                func estimateTokens(for msg: ChatMessage) -> Int {
-                    let charCount = (msg.content ?? "").count
-                    return max(1, charCount / 4)
-                }
-
-                // Get model context length (with fallback)
-                // This logic is complex, so we break it down for the compiler
-                let modelContextLength: Int = {
-                    guard let model = selectedModel else { return 8192 }
-                    // Foundation model has ~4096 token context
-                    if model == "foundation" || model == "default" {
-                        return 4096
-                    }
-                    if let info = ModelInfo.load(modelId: model),
-                        let ctx = info.model.contextLength
-                    {
-                        return ctx
-                    }
-
-                    // For remote models (where we don't have local ModelInfo), assume a modern context window
-                    // Most modern providers (OpenRouter, OpenAI, Anthropic) support at least 128k
-                    // IMPORTANT: We use modelOptions directly, not session.modelOptions, because we're inside the task
-                    // and session is an ObservableObject on the main actor.
-                    // Instead of trying to access `session` which is not available in this scope,
-                    // we re-fetch the options or just check the registry.
-                    // For simplicity in this isolated task, we'll check RemoteProviderManager directly.
-                    let isRemote = RemoteProviderManager.shared.cachedAvailableModels().contains { provider in
-                        provider.models.contains(model)
-                    }
-
-                    if isRemote {
-                        // Use configured default or fall back to 128k
-                        return chatCfg.contextLength ?? 128_000
-                    }
-
-                    // Default fallback
-                    return chatCfg.contextLength ?? 8192
-                }()
-
-                // Get persona-specific generation settings early for context calculation
+                // Get persona-specific generation settings
                 let effectiveMaxTokensForPersona = PersonaManager.shared.effectiveMaxTokens(
                     for: personaId ?? Persona.defaultId
                 )
-
-                // Reserve space for model response
-                // If maxTokens is not explicitly set in persona/config, use a reasonable default for reservation
-                // rather than the maximum possible (which would starve input context)
-                let reserveResponseTokens = effectiveMaxTokensForPersona ?? 4096
-                let availableContextTokens = max(2048, modelContextLength - reserveResponseTokens)
-
-                // MARK: - Cached Message Building (Optimization for tool loops)
-                // Cache messages to avoid O(n) rebuilds on every tool loop iteration
-                var cachedMessages: [ChatMessage] = []
-                var cachedTurnsCount: Int = 0
 
                 /// Convert a single turn to a ChatMessage (returns nil if should be skipped)
                 @MainActor
@@ -674,63 +623,8 @@ final class ChatSession: ObservableObject {
                     }
                 }
 
-                /// Prune messages to fit context window
-                @MainActor
-                func pruneMessages(_ msgs: inout [ChatMessage]) {
-                    let hasSystemPrompt = !sys.isEmpty && !msgs.isEmpty && msgs[0].role == "system"
-                    let startIndex = hasSystemPrompt ? 1 : 0
-
-                    var totalTokens = msgs.reduce(0) { $0 + estimateTokens(for: $1) }
-
-                    while totalTokens > availableContextTokens && msgs.count > startIndex + 1 {
-                        let removed = msgs.remove(at: startIndex)
-                        totalTokens -= estimateTokens(for: removed)
-                    }
-
-                    // Ensure we don't leave orphaned tool messages
-                    while msgs.count > startIndex && msgs[startIndex].role == "tool" {
-                        let removed = msgs.remove(at: startIndex)
-                        totalTokens -= estimateTokens(for: removed)
-                    }
-                }
-
                 @MainActor
                 func buildMessages() -> [ChatMessage] {
-                    // Incremental update: only process new turns since last call
-                    let currentTurnsCount = turns.count
-
-                    if currentTurnsCount > cachedTurnsCount && cachedTurnsCount > 0 {
-                        // Append only new turns (incremental update)
-                        for i in cachedTurnsCount ..< currentTurnsCount {
-                            let t = turns[i]
-                            let isLastTurn = i == currentTurnsCount - 1
-                            if let msg = turnToMessage(t, isLastTurn: isLastTurn) {
-                                cachedMessages.append(msg)
-                            }
-                        }
-                        // Update the last message in cache if it was the streaming placeholder
-                        // (it may now have content or tool_calls)
-                        if cachedTurnsCount > 0 && currentTurnsCount > 0 {
-                            let lastCachedIndex = cachedTurnsCount - 1
-                            if lastCachedIndex < turns.count {
-                                let lastTurn = turns[lastCachedIndex]
-                                if lastTurn.role == .assistant {
-                                    // Find and update the corresponding message in cache
-                                    if let lastAssistantIdx = cachedMessages.lastIndex(where: { $0.role == "assistant" }
-                                    ) {
-                                        if let updatedMsg = turnToMessage(lastTurn, isLastTurn: false) {
-                                            cachedMessages[lastAssistantIdx] = updatedMsg
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                        cachedTurnsCount = currentTurnsCount
-                        pruneMessages(&cachedMessages)
-                        return cachedMessages
-                    }
-
-                    // Full rebuild (first call or turns were removed)
                     var msgs: [ChatMessage] = []
                     if !sys.isEmpty { msgs.append(ChatMessage(role: "system", content: sys)) }
 
@@ -741,9 +635,6 @@ final class ChatSession: ObservableObject {
                         }
                     }
 
-                    pruneMessages(&msgs)
-                    cachedMessages = msgs
-                    cachedTurnsCount = currentTurnsCount
                     return msgs
                 }
 
