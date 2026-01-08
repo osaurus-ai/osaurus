@@ -19,8 +19,67 @@ final class DirectoryPickerService: ObservableObject {
     private let bookmarkKey = "ModelDirectoryBookmark"
     private var securityScopedResource: URL?
 
-    // Thread-safe access to the effective directory no longer requires a queue;
-    // computation below uses thread-safe system APIs and returns a value.
+    // MARK: - Static Cache for Bookmark URL
+    // Caches the resolved bookmark URL to avoid expensive IPC calls on every access.
+    // The bookmark resolution (URL(resolvingBookmarkData:...)) involves sync IPC with
+    // scopedBookmarksAgent which can block the main thread for 1+ seconds.
+    // The mutable vars are nonisolated(unsafe) because we protect access with cacheLock.
+    private static nonisolated let cacheLock = NSLock()
+    private static nonisolated(unsafe) var cachedBookmarkURL: URL?
+    private static nonisolated(unsafe) var cacheInitialized = false
+
+    /// Invalidate the cached bookmark URL (call when directory changes)
+    nonisolated private static func invalidateCache() {
+        cacheLock.lock()
+        defer { cacheLock.unlock() }
+        cachedBookmarkURL = nil
+        cacheInitialized = false
+    }
+
+    /// Get or resolve the cached bookmark URL
+    nonisolated private static func getCachedBookmarkURL() -> URL? {
+        cacheLock.lock()
+        defer { cacheLock.unlock() }
+
+        // Return cached value if already initialized
+        if cacheInitialized {
+            return cachedBookmarkURL
+        }
+
+        // Resolve bookmark once and cache
+        cacheInitialized = true
+        guard let bookmarkData = UserDefaults.standard.data(forKey: "ModelDirectoryBookmark") else {
+            cachedBookmarkURL = nil
+            return nil
+        }
+
+        do {
+            var isStale = false
+            let url = try URL(
+                resolvingBookmarkData: bookmarkData,
+                options: .withSecurityScope,
+                relativeTo: nil,
+                bookmarkDataIsStale: &isStale
+            )
+            if !isStale {
+                cachedBookmarkURL = url
+                return url
+            }
+        } catch {
+            // Bookmark invalid
+        }
+
+        cachedBookmarkURL = nil
+        return nil
+    }
+
+    /// Update the cached bookmark URL directly (call after successful save)
+    nonisolated private static func updateCache(with url: URL) {
+        cacheLock.lock()
+        defer { cacheLock.unlock() }
+        cachedBookmarkURL = url
+        cacheInitialized = true
+    }
 
     private init() {
         loadSavedDirectory()
@@ -44,6 +103,7 @@ final class DirectoryPickerService: ObservableObject {
             if isStale {
                 // Bookmark is stale, need to recreate it
                 UserDefaults.standard.removeObject(forKey: bookmarkKey)
+                Self.invalidateCache()
                 return
             }
 
@@ -57,9 +117,13 @@ final class DirectoryPickerService: ObservableObject {
             securityScopedResource = url
             hasValidDirectory = true
 
+            // Populate the static cache with the resolved URL
+            Self.updateCache(with: url)
+
         } catch {
             print("Failed to resolve security-scoped bookmark: \(error)")
             UserDefaults.standard.removeObject(forKey: bookmarkKey)
+            Self.invalidateCache()
         }
     }
 
@@ -117,63 +181,20 @@ final class DirectoryPickerService: ObservableObject {
             securityScopedResource = url
             hasValidDirectory = true
 
+            // Update the static cache with the new URL
+            Self.updateCache(with: url)
+
         } catch {
             print("Failed to create security-scoped bookmark: \(error)")
         }
     }
 
     /// Get the effective models directory (user-selected or default)
-    /// This method is thread-safe for use from any context
+    /// This method is thread-safe for use from any context.
+    /// Uses cached bookmark URL to avoid expensive IPC calls on every access.
     nonisolated var effectiveModelsDirectory: URL {
-        // Check UserDefaults directly for the bookmark
-        if let bookmarkData = UserDefaults.standard.data(forKey: bookmarkKey) {
-            do {
-                var isStale = false
-                let url = try URL(
-                    resolvingBookmarkData: bookmarkData,
-                    options: .withSecurityScope,
-                    relativeTo: nil,
-                    bookmarkDataIsStale: &isStale
-                )
-
-                if !isStale {
-                    return url
-                }
-            } catch {
-                // Bookmark invalid, fall through to default
-            }
-        }
-
-        // Fall back to default location
-        // Precedence:
-        // 1) OSU_MODELS_DIR env var
-        // 2) Existing old default at ~/Documents/MLXModels (if present)
-        // 3) New default at ~/MLXModels
-        let fileManager = FileManager.default
-
-        if let override = ProcessInfo.processInfo.environment["OSU_MODELS_DIR"], !override.isEmpty {
-            let expanded = (override as NSString).expandingTildeInPath
-            return URL(fileURLWithPath: expanded, isDirectory: true)
-        }
-
-        let homeURL = fileManager.homeDirectoryForCurrentUser
-        let newDefault = homeURL.appendingPathComponent("MLXModels")
-
-        let documentsPath = fileManager.urls(
-            for: .documentDirectory,
-            in: .userDomainMask
-        ).first!
-        let oldDefault = documentsPath.appendingPathComponent("MLXModels")
-
-        if fileManager.fileExists(atPath: newDefault.path) {
-            return newDefault
-        }
-
-        if fileManager.fileExists(atPath: oldDefault.path) {
-            return oldDefault
-        }
-
-        return newDefault
+        // Use the static method which leverages the cache
+        return Self.effectiveModelsDirectory()
     }
 
     /// Nonisolated helper to compute the default models directory without accessing instance state.
@@ -198,39 +219,15 @@ final class DirectoryPickerService: ObservableObject {
 
     /// Nonisolated static resolver that respects the saved bookmark when present.
     /// Falls back to env var and defaults when no valid bookmark exists.
+    /// Uses cached bookmark URL to avoid expensive IPC calls on every access.
     nonisolated static func effectiveModelsDirectory() -> URL {
-        // Mirror instance-based bookmark resolution without requiring the singleton
-        if let bookmarkData = UserDefaults.standard.data(forKey: "ModelDirectoryBookmark") {
-            do {
-                var isStale = false
-                let url = try URL(
-                    resolvingBookmarkData: bookmarkData,
-                    options: .withSecurityScope,
-                    relativeTo: nil,
-                    bookmarkDataIsStale: &isStale
-                )
-                if !isStale { return url }
-            } catch {
-                // Fall through to defaults
-            }
+        // Use cached bookmark URL to avoid expensive IPC
+        if let cachedURL = getCachedBookmarkURL() {
+            return cachedURL
         }
 
         // Fallback precedence matches instance property
-        let fileManager = FileManager.default
-        if let override = ProcessInfo.processInfo.environment["OSU_MODELS_DIR"], !override.isEmpty {
-            let expanded = (override as NSString).expandingTildeInPath
-            return URL(fileURLWithPath: expanded, isDirectory: true)
-        }
-        let homeURL = fileManager.homeDirectoryForCurrentUser
-        let newDefault = homeURL.appendingPathComponent("MLXModels")
-        let documentsPath = fileManager.urls(
-            for: .documentDirectory,
-            in: .userDomainMask
-        ).first!
-        let oldDefault = documentsPath.appendingPathComponent("MLXModels")
-        if fileManager.fileExists(atPath: newDefault.path) { return newDefault }
-        if fileManager.fileExists(atPath: oldDefault.path) { return oldDefault }
-        return newDefault
+        return defaultModelsDirectory()
     }
 
     /// Reset directory selection
@@ -240,6 +237,9 @@ final class DirectoryPickerService: ObservableObject {
         selectedDirectory = nil
         hasValidDirectory = false
         UserDefaults.standard.removeObject(forKey: bookmarkKey)
+
+        // Invalidate the static cache
+        Self.invalidateCache()
     }
 
     deinit {
