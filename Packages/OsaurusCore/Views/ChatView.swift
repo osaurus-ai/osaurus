@@ -58,6 +58,8 @@ final class ChatSession: ObservableObject {
     /// Flag to prevent auto-persist during initial load or programmatic resets
     private var isLoadingModel: Bool = false
 
+    private var localModelsObserver: NSObjectProtocol?
+
     init() {
         // Start with empty options to avoid blocking initialization
         modelOptions = []
@@ -66,6 +68,17 @@ final class ChatSession: ObservableObject {
         // Listen for remote provider model changes
         remoteModelsObserver = NotificationCenter.default.addObserver(
             forName: .remoteProviderModelsChanged,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in
+                await self?.refreshModelOptions()
+            }
+        }
+
+        // Listen for local model changes (download completed, deleted)
+        localModelsObserver = NotificationCenter.default.addObserver(
+            forName: .localModelsChanged,
             object: nil,
             queue: .main
         ) { [weak self] _ in

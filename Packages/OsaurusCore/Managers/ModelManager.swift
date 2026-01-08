@@ -11,6 +11,11 @@ import Hub
 import MLXLLM
 import SwiftUI
 
+extension Notification.Name {
+    /// Posted when local model list changes (download completed, model deleted)
+    static let localModelsChanged = Notification.Name("localModelsChanged")
+}
+
 enum ModelListTab: String, CaseIterable, AnimatedTabItem {
     /// All available models from Hugging Face
     case all = "All"
@@ -489,6 +494,8 @@ final class ModelManager: NSObject, ObservableObject {
                         self.downloadSizeEstimates[model.id] = nil
                         if completed {
                             NotificationService.shared.postModelReady(modelId: model.id, modelName: model.name)
+                            Self.invalidateLocalModelsCache()
+                            NotificationCenter.default.post(name: .localModelsChanged, object: nil)
                         }
                     }
                 }
@@ -549,6 +556,8 @@ final class ModelManager: NSObject, ObservableObject {
         if fm.fileExists(atPath: path) {
             do {
                 try fm.removeItem(atPath: path)
+                Self.invalidateLocalModelsCache()
+                NotificationCenter.default.post(name: .localModelsChanged, object: nil)
             } catch {
                 // Log but keep state reset
                 print("Failed to delete model: \(error)")
@@ -1039,8 +1048,34 @@ extension ModelManager {
         return nil
     }
 
-    /// Discover locally downloaded models regardless of SDK allowlist.
+    // MARK: - Local Models Cache (in-memory, cleared on app restart)
+    private static nonisolated let localModelsCacheLock = NSLock()
+    private static nonisolated(unsafe) var cachedLocalModels: [MLXModel]?
+
+    nonisolated static func invalidateLocalModelsCache() {
+        localModelsCacheLock.lock()
+        cachedLocalModels = nil
+        localModelsCacheLock.unlock()
+    }
+
+    /// Discover locally downloaded models. Cached until invalidated by model download/delete.
     nonisolated static func discoverLocalModels() -> [MLXModel] {
+        localModelsCacheLock.lock()
+        if let cached = cachedLocalModels {
+            localModelsCacheLock.unlock()
+            return cached
+        }
+        localModelsCacheLock.unlock()
+
+        let models = scanLocalModels()
+
+        localModelsCacheLock.lock()
+        cachedLocalModels = models
+        localModelsCacheLock.unlock()
+        return models
+    }
+
+    private nonisolated static func scanLocalModels() -> [MLXModel] {
         let fm = FileManager.default
         let root = DirectoryPickerService.effectiveModelsDirectory()
         guard

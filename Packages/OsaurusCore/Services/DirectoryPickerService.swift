@@ -19,63 +19,55 @@ final class DirectoryPickerService: ObservableObject {
     private let bookmarkKey = "ModelDirectoryBookmark"
     private var securityScopedResource: URL?
 
-    // MARK: - Static Cache for Bookmark URL
-    // Caches the resolved bookmark URL to avoid expensive IPC calls.
-    // Bookmark resolution involves sync IPC with scopedBookmarksAgent (1+ second blocks).
+    // MARK: - Bookmark URL Cache (in-memory, avoids expensive IPC)
     private static nonisolated let cacheLock = NSLock()
     private static nonisolated(unsafe) var cachedBookmarkURL: URL?
     private static nonisolated(unsafe) var cacheInitialized = false
 
     nonisolated private static func invalidateCache() {
         cacheLock.lock()
-        defer { cacheLock.unlock() }
         cachedBookmarkURL = nil
         cacheInitialized = false
+        cacheLock.unlock()
     }
 
-    /// Get or resolve the cached bookmark URL
     nonisolated private static func getCachedBookmarkURL() -> URL? {
         cacheLock.lock()
-        defer { cacheLock.unlock() }
-
-        // Return cached value if already initialized
         if cacheInitialized {
-            return cachedBookmarkURL
+            let result = cachedBookmarkURL
+            cacheLock.unlock()
+            return result
         }
 
-        // Resolve bookmark once and cache
         cacheInitialized = true
         guard let bookmarkData = UserDefaults.standard.data(forKey: "ModelDirectoryBookmark") else {
             cachedBookmarkURL = nil
+            cacheLock.unlock()
             return nil
         }
 
-        do {
-            var isStale = false
-            let url = try URL(
-                resolvingBookmarkData: bookmarkData,
-                options: .withSecurityScope,
-                relativeTo: nil,
-                bookmarkDataIsStale: &isStale
-            )
-            if !isStale {
-                cachedBookmarkURL = url
-                return url
-            }
-        } catch {
-            // Bookmark invalid
+        var isStale = false
+        if let url = try? URL(
+            resolvingBookmarkData: bookmarkData,
+            options: .withSecurityScope,
+            relativeTo: nil,
+            bookmarkDataIsStale: &isStale
+        ), !isStale {
+            cachedBookmarkURL = url
+            cacheLock.unlock()
+            return url
         }
 
         cachedBookmarkURL = nil
+        cacheLock.unlock()
         return nil
     }
 
-    /// Update the cached bookmark URL directly (call after successful save)
     nonisolated private static func updateCache(with url: URL) {
         cacheLock.lock()
-        defer { cacheLock.unlock() }
         cachedBookmarkURL = url
         cacheInitialized = true
+        cacheLock.unlock()
     }
 
     private init() {
