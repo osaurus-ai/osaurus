@@ -19,66 +19,55 @@ final class DirectoryPickerService: ObservableObject {
     private let bookmarkKey = "ModelDirectoryBookmark"
     private var securityScopedResource: URL?
 
-    // MARK: - Static Cache for Bookmark URL
-    // Caches the resolved bookmark URL to avoid expensive IPC calls on every access.
-    // The bookmark resolution (URL(resolvingBookmarkData:...)) involves sync IPC with
-    // scopedBookmarksAgent which can block the main thread for 1+ seconds.
-    // The mutable vars are nonisolated(unsafe) because we protect access with cacheLock.
+    // MARK: - Bookmark URL Cache (in-memory, avoids expensive IPC)
     private static nonisolated let cacheLock = NSLock()
     private static nonisolated(unsafe) var cachedBookmarkURL: URL?
     private static nonisolated(unsafe) var cacheInitialized = false
 
-    /// Invalidate the cached bookmark URL (call when directory changes)
     nonisolated private static func invalidateCache() {
         cacheLock.lock()
-        defer { cacheLock.unlock() }
         cachedBookmarkURL = nil
         cacheInitialized = false
+        cacheLock.unlock()
     }
 
-    /// Get or resolve the cached bookmark URL
     nonisolated private static func getCachedBookmarkURL() -> URL? {
         cacheLock.lock()
-        defer { cacheLock.unlock() }
-
-        // Return cached value if already initialized
         if cacheInitialized {
-            return cachedBookmarkURL
+            let result = cachedBookmarkURL
+            cacheLock.unlock()
+            return result
         }
 
-        // Resolve bookmark once and cache
         cacheInitialized = true
         guard let bookmarkData = UserDefaults.standard.data(forKey: "ModelDirectoryBookmark") else {
             cachedBookmarkURL = nil
+            cacheLock.unlock()
             return nil
         }
 
-        do {
-            var isStale = false
-            let url = try URL(
-                resolvingBookmarkData: bookmarkData,
-                options: .withSecurityScope,
-                relativeTo: nil,
-                bookmarkDataIsStale: &isStale
-            )
-            if !isStale {
-                cachedBookmarkURL = url
-                return url
-            }
-        } catch {
-            // Bookmark invalid
+        var isStale = false
+        if let url = try? URL(
+            resolvingBookmarkData: bookmarkData,
+            options: .withSecurityScope,
+            relativeTo: nil,
+            bookmarkDataIsStale: &isStale
+        ), !isStale {
+            cachedBookmarkURL = url
+            cacheLock.unlock()
+            return url
         }
 
         cachedBookmarkURL = nil
+        cacheLock.unlock()
         return nil
     }
 
-    /// Update the cached bookmark URL directly (call after successful save)
     nonisolated private static func updateCache(with url: URL) {
         cacheLock.lock()
-        defer { cacheLock.unlock() }
         cachedBookmarkURL = url
         cacheInitialized = true
+        cacheLock.unlock()
     }
 
     private init() {
@@ -197,8 +186,7 @@ final class DirectoryPickerService: ObservableObject {
         return Self.effectiveModelsDirectory()
     }
 
-    /// Nonisolated helper to compute the default models directory without accessing instance state.
-    /// Mirrors the fallback logic used by `effectiveModelsDirectory`.
+    /// Get the default models directory (without user bookmark)
     nonisolated static func defaultModelsDirectory() -> URL {
         let fileManager = FileManager.default
         if let override = ProcessInfo.processInfo.environment["OSU_MODELS_DIR"], !override.isEmpty {
@@ -207,10 +195,7 @@ final class DirectoryPickerService: ObservableObject {
         }
         let homeURL = fileManager.homeDirectoryForCurrentUser
         let newDefault = homeURL.appendingPathComponent("MLXModels")
-        let documentsPath = fileManager.urls(
-            for: .documentDirectory,
-            in: .userDomainMask
-        ).first!
+        let documentsPath = fileManager.urls(for: .documentDirectory, in: .userDomainMask).first!
         let oldDefault = documentsPath.appendingPathComponent("MLXModels")
         if fileManager.fileExists(atPath: newDefault.path) { return newDefault }
         if fileManager.fileExists(atPath: oldDefault.path) { return oldDefault }

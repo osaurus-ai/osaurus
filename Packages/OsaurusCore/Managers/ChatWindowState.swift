@@ -3,7 +3,7 @@
 //  osaurus
 //
 //  Per-window state container that isolates each ChatView window from shared singletons.
-//  This eliminates cross-window re-renders caused by @Published changes in shared managers.
+//  Pre-computes values needed for view rendering so view body is read-only.
 //
 
 import AppKit
@@ -11,247 +11,186 @@ import Combine
 import Foundation
 import SwiftUI
 
-/// Per-window state container for ChatView
-/// Each window creates its own instance - NOT a singleton
+/// Per-window state container for ChatView - each window creates its own instance
 @MainActor
 final class ChatWindowState: ObservableObject {
-    // MARK: - Identity
+    // MARK: - Identity & Session
 
-    /// Unique identifier for this window
     let windowId: UUID
+    let session: ChatSession
+    let foundationModelAvailable: Bool
 
-    // MARK: - Persona State (Local to this window)
+    // MARK: - Persona State
 
-    /// This window's persona ID
     @Published var personaId: UUID
-
-    /// Cached list of all personas (refreshed on demand)
     @Published private(set) var personas: [Persona] = []
 
-    // MARK: - Theme State (Local to this window)
+    // MARK: - Theme State
 
-    /// This window's cached theme (not reactively bound to ThemeManager)
     @Published private(set) var theme: ThemeProtocol
+    @Published private(set) var cachedBackgroundImage: NSImage?
 
-    // MARK: - Session State
+    // MARK: - Pre-computed View Values
 
-    /// The chat session for this window
-    let session: ChatSession
-
-    /// Cached filtered sessions for sidebar (refreshed on demand)
     @Published private(set) var filteredSessions: [ChatSessionData] = []
+    @Published private(set) var cachedToolList: [ToolRegistry.ToolEntry] = []
+    @Published private(set) var cachedSystemPrompt: String = ""
+    @Published private(set) var cachedToolOverrides: [String: Bool]?
 
-    // MARK: - Private State
+    // MARK: - Private
 
     private nonisolated(unsafe) var notificationObservers: [NSObjectProtocol] = []
 
     // MARK: - Initialization
 
-    /// Create a new window state
-    /// - Parameters:
-    ///   - windowId: Unique identifier for this window
-    ///   - personaId: Initial persona ID for this window
-    ///   - sessionData: Optional existing session data to load
-    init(
-        windowId: UUID,
-        personaId: UUID,
-        sessionData: ChatSessionData? = nil
-    ) {
+    init(windowId: UUID, personaId: UUID, sessionData: ChatSessionData? = nil) {
         self.windowId = windowId
         self.personaId = personaId
-
-        // Create session
         self.session = ChatSession()
-
-        // Load theme for this persona (cached snapshot, not reactive)
+        self.foundationModelAvailable = AppConfiguration.shared.foundationModelAvailable
         self.theme = Self.loadTheme(for: personaId)
 
         // Load initial data
         self.personas = PersonaManager.shared.personas
-        self.filteredSessions = Self.loadFilteredSessions(for: personaId)
+        self.filteredSessions = ChatSessionsManager.shared.sessions(for: personaId)
 
-        // Configure session with persona
+        // Pre-compute view values
+        self.cachedToolOverrides = PersonaManager.shared.effectiveToolOverrides(for: personaId)
+        self.cachedToolList = ToolRegistry.shared.listTools(withOverrides: cachedToolOverrides)
+        self.cachedSystemPrompt = PersonaManager.shared.effectiveSystemPrompt(for: personaId)
+        self.cachedBackgroundImage = theme.customThemeConfig?.background.decodedImage()
+
+        // Configure session
         self.session.personaId = personaId
-
-        // Load session data if provided
         if let data = sessionData {
             self.session.load(from: data)
         }
-
-        // Set up session change callback
         self.session.onSessionChanged = { [weak self] in
             self?.refreshSessions()
         }
 
-        // Subscribe to notifications for on-demand refresh
         setupNotificationObservers()
     }
 
     deinit {
-        // Clean up notification observers
-        for observer in notificationObservers {
-            NotificationCenter.default.removeObserver(observer)
-        }
+        notificationObservers.forEach { NotificationCenter.default.removeObserver($0) }
     }
 
     // MARK: - API
 
-    /// The currently active persona object
     var activePersona: Persona {
         personas.first { $0.id == personaId } ?? Persona.default
     }
 
-    /// Switch this window to a different persona
-    /// - Parameter newPersonaId: The persona ID to switch to
+    var themeId: UUID? {
+        PersonaManager.shared.themeId(for: personaId)
+    }
+
     func switchPersona(to newPersonaId: UUID) {
-        // Save current session before switching
-        if !session.turns.isEmpty {
-            session.save()
-        }
-
-        // Update persona
+        if !session.turns.isEmpty { session.save() }
         personaId = newPersonaId
-
-        // Reset session for new persona
         session.reset(for: newPersonaId)
-
-        // Reload theme for new persona
         refreshTheme()
-
-        // Reload filtered sessions for new persona
         refreshSessions()
+        refreshPersonaConfig()
     }
 
-    /// Start a new chat within this window (keeps same persona)
     func startNewChat() {
-        // Save current session
-        if !session.turns.isEmpty {
-            session.save()
-        }
-
-        // Reset session with same persona
+        if !session.turns.isEmpty { session.save() }
         session.reset(for: personaId)
-
-        // Refresh sessions list
         refreshSessions()
     }
 
-    /// Load a session from the sidebar
-    /// - Parameter sessionData: The session to load
     func loadSession(_ sessionData: ChatSessionData) {
-        // Don't reload if already on this session
         guard sessionData.id != session.sessionId else { return }
+        if !session.turns.isEmpty { session.save() }
 
-        // Save current session before switching
-        if !session.turns.isEmpty {
-            session.save()
-        }
-
-        // Load fresh data from store
         if let freshData = ChatSessionStore.load(id: sessionData.id) {
             session.load(from: freshData)
         } else {
             session.load(from: sessionData)
         }
 
-        // Apply theme based on the session's persona (if different)
+        // Update theme if session has different persona
         let sessionPersonaId = sessionData.personaId ?? Persona.defaultId
         if sessionPersonaId != personaId {
-            // Session has a different persona - update our local theme
             theme = Self.loadTheme(for: sessionPersonaId)
+            cachedBackgroundImage = theme.customThemeConfig?.background.decodedImage()
         }
     }
 
     // MARK: - Refresh Methods
 
-    /// Refresh the cached personas list
     func refreshPersonas() {
         personas = PersonaManager.shared.personas
     }
 
-    /// Refresh the cached filtered sessions list
     func refreshSessions() {
-        filteredSessions = Self.loadFilteredSessions(for: personaId)
+        filteredSessions = ChatSessionsManager.shared.sessions(for: personaId)
     }
 
-    /// Refresh the cached theme for current persona
     func refreshTheme() {
         theme = Self.loadTheme(for: personaId)
+        cachedBackgroundImage = theme.customThemeConfig?.background.decodedImage()
     }
 
-    /// Refresh all cached data
+    func refreshToolList() {
+        cachedToolOverrides = PersonaManager.shared.effectiveToolOverrides(for: personaId)
+        cachedToolList = ToolRegistry.shared.listTools(withOverrides: cachedToolOverrides)
+    }
+
+    func refreshPersonaConfig() {
+        cachedSystemPrompt = PersonaManager.shared.effectiveSystemPrompt(for: personaId)
+        refreshToolList()
+    }
+
     func refreshAll() async {
         refreshPersonas()
         refreshSessions()
         refreshTheme()
+        refreshPersonaConfig()
         await session.refreshModelOptions()
     }
 
-    // MARK: - Theme Helpers
+    // MARK: - Private
 
-    /// Get the effective system prompt for this window's persona
-    var effectiveSystemPrompt: String {
-        PersonaManager.shared.effectiveSystemPrompt(for: personaId)
-    }
-
-    /// Get the effective tool overrides for this window's persona
-    var effectiveToolOverrides: [String: Bool]? {
-        PersonaManager.shared.effectiveToolOverrides(for: personaId)
-    }
-
-    /// Get the theme ID for this window's persona
-    var themeId: UUID? {
-        PersonaManager.shared.themeId(for: personaId)
-    }
-
-    // MARK: - Private Helpers
-
-    /// Load the theme for a persona (returns a snapshot, not a reactive binding)
     private static func loadTheme(for personaId: UUID) -> ThemeProtocol {
-        let themeManager = ThemeManager.shared
-        let personaManager = PersonaManager.shared
-
-        // Check if persona has a custom theme
-        if let themeId = personaManager.themeId(for: personaId),
-            let customTheme = themeManager.installedThemes.first(where: { $0.metadata.id == themeId })
+        if let themeId = PersonaManager.shared.themeId(for: personaId),
+            let custom = ThemeManager.shared.installedThemes.first(where: { $0.metadata.id == themeId })
         {
-            return CustomizableTheme(config: customTheme)
+            return CustomizableTheme(config: custom)
         }
-
-        // Fall back to current global theme
-        return themeManager.currentTheme
+        return ThemeManager.shared.currentTheme
     }
 
-    /// Load filtered sessions for a persona
-    private static func loadFilteredSessions(for personaId: UUID) -> [ChatSessionData] {
-        ChatSessionsManager.shared.sessions(for: personaId)
-    }
-
-    /// Set up notification observers for optional refresh
     private func setupNotificationObservers() {
-        // Observe persona changes (for sidebar refresh when personas are edited)
-        let personaObserver = NotificationCenter.default.addObserver(
-            forName: .activePersonaChanged,
-            object: nil,
-            queue: .main
-        ) { [weak self] _ in
-            Task { @MainActor in
-                // Only refresh personas list, don't change our persona
-                self?.refreshPersonas()
-            }
-        }
-        notificationObservers.append(personaObserver)
-
-        // Observe chat overlay activation (for focus)
-        let activationObserver = NotificationCenter.default.addObserver(
-            forName: .chatOverlayActivated,
-            object: nil,
-            queue: .main
-        ) { [weak self] _ in
-            Task { @MainActor in
-                await self?.refreshAll()
-            }
-        }
-        notificationObservers.append(activationObserver)
+        notificationObservers.append(
+            NotificationCenter.default.addObserver(
+                forName: .activePersonaChanged,
+                object: nil,
+                queue: .main
+            ) { [weak self] _ in Task { @MainActor in self?.refreshPersonas() } }
+        )
+        notificationObservers.append(
+            NotificationCenter.default.addObserver(
+                forName: .chatOverlayActivated,
+                object: nil,
+                queue: .main
+            ) { [weak self] _ in Task { @MainActor in await self?.refreshAll() } }
+        )
+        notificationObservers.append(
+            NotificationCenter.default.addObserver(
+                forName: .appConfigurationChanged,
+                object: nil,
+                queue: .main
+            ) { [weak self] _ in Task { @MainActor in self?.refreshPersonaConfig() } }
+        )
+        notificationObservers.append(
+            NotificationCenter.default.addObserver(
+                forName: .toolsListChanged,
+                object: nil,
+                queue: .main
+            ) { [weak self] _ in Task { @MainActor in self?.refreshToolList() } }
+        )
     }
 }

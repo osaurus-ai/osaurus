@@ -42,17 +42,11 @@ final class ChatSession: ObservableObject {
     private var isDirty: Bool = false
 
     // MARK: - Memoization Cache
-    /// Cached content blocks for flattened rendering
     private var _cachedContentBlocks: [ContentBlock] = []
-    /// Last turns count used for cache invalidation
     private var _lastTurnsCount: Int = 0
-    /// Last turn ID for additional cache validation
     private var _lastTurnId: UUID?
-    /// Last content length of last turn (for streaming updates)
     private var _lastContentLength: Int = 0
-    /// Cached estimated token count
     private var _cachedEstimatedTokens: Int = 0
-    /// Flag to invalidate token cache
     private var _tokenCacheValid: Bool = false
 
     /// Callback when session needs to be saved (called after streaming completes)
@@ -64,6 +58,8 @@ final class ChatSession: ObservableObject {
     /// Flag to prevent auto-persist during initial load or programmatic resets
     private var isLoadingModel: Bool = false
 
+    private var localModelsObserver: NSObjectProtocol?
+
     init() {
         // Start with empty options to avoid blocking initialization
         modelOptions = []
@@ -72,6 +68,17 @@ final class ChatSession: ObservableObject {
         // Listen for remote provider model changes
         remoteModelsObserver = NotificationCenter.default.addObserver(
             forName: .remoteProviderModelsChanged,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in
+                await self?.refreshModelOptions()
+            }
+        }
+
+        // Listen for local model changes (download completed, deleted)
+        localModelsObserver = NotificationCenter.default.addObserver(
+            forName: .localModelsChanged,
             object: nil,
             queue: .main
         ) { [weak self] _ in
@@ -101,8 +108,8 @@ final class ChatSession: ObservableObject {
     private static func buildModelOptions() async -> [ModelOption] {
         var options: [ModelOption] = []
 
-        // Add foundation model first if available
-        if FoundationModelService.isDefaultModelAvailable() {
+        // Add foundation model first if available (use cached value)
+        if AppConfiguration.shared.foundationModelAvailable {
             options.append(.foundation())
         }
 
@@ -181,23 +188,10 @@ final class ChatSession: ObservableObject {
     /// Check if the currently selected model supports images (VLM)
     var selectedModelSupportsImages: Bool {
         guard let model = selectedModel else { return false }
-        // Foundation models don't support images yet
         if model.lowercased() == "foundation" { return false }
-
-        // Check ModelOption first
-        if let option = modelOptions.first(where: { $0.id == model }) {
-            // Remote models: assume they support images (many do, and we can't detect)
-            if case .remote = option.source {
-                return true
-            }
-            // Local models: check VLM status
-            if option.isVLM {
-                return true
-            }
-        }
-
-        // Fall back to ModelManager detection for downloaded models
-        return ModelManager.isVisionModel(named: model)
+        guard let option = modelOptions.first(where: { $0.id == model }) else { return false }
+        if case .remote = option.source { return true }
+        return option.isVLM
     }
 
     /// Get the currently selected ModelOption
@@ -1119,7 +1113,7 @@ struct ChatView: View {
                                     onOpenModelManager: {
                                         AppDelegate.shared?.showManagementWindow(initialTab: .models)
                                     },
-                                    onUseFoundation: FoundationModelService.isDefaultModelAvailable()
+                                    onUseFoundation: windowState.foundationModelAvailable
                                         ? {
                                             session.selectedModel = session.modelOptions.first?.id ?? "foundation"
                                         } : nil,
@@ -1147,10 +1141,8 @@ struct ChatView: View {
                                 voiceInputState: $observedSession.voiceInputState,
                                 showVoiceOverlay: $observedSession.showVoiceOverlay,
                                 modelOptions: observedSession.modelOptions,
-                                availableTools: ToolRegistry.shared.listTools(
-                                    withOverrides: observedSession.enabledToolOverrides
-                                ),
-                                personaToolOverrides: windowState.effectiveToolOverrides,
+                                availableTools: windowState.cachedToolList,
+                                personaToolOverrides: windowState.cachedToolOverrides,
                                 isStreaming: observedSession.isStreaming,
                                 supportsImages: observedSession.selectedModelSupportsImages,
                                 estimatedContextTokens: observedSession.estimatedContextTokens,
@@ -1170,7 +1162,7 @@ struct ChatView: View {
                                 onOpenModelManager: {
                                     AppDelegate.shared?.showManagementWindow(initialTab: .models)
                                 },
-                                onUseFoundation: FoundationModelService.isDefaultModelAvailable()
+                                onUseFoundation: windowState.foundationModelAvailable
                                     ? {
                                         session.selectedModel = session.modelOptions.first?.id ?? "foundation"
                                     } : nil,
@@ -1309,7 +1301,8 @@ struct ChatView: View {
                 )
 
             case .image:
-                if let image = customTheme.background.decodedImage() {
+                // Use pre-decoded background image from windowState (decoded once, not on every render)
+                if let image = windowState.cachedBackgroundImage {
                     ZStack {
                         backgroundImageView(
                             image: image,
