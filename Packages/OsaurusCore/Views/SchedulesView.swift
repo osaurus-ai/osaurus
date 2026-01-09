@@ -133,7 +133,7 @@ struct SchedulesView: View {
     private var headerView: some View {
         ManagerHeaderWithActions(
             title: "Schedules",
-            subtitle: "Automate AI tasks to run at specific times",
+            subtitle: "Automate recurring AI tasks with custom schedules",
             count: scheduleManager.schedules.isEmpty ? nil : scheduleManager.schedules.count
         ) {
             HeaderIconButton("arrow.clockwise", help: "Refresh schedules") {
@@ -239,11 +239,11 @@ private struct ScheduleEmptyState: View {
 
             // Text content
             VStack(spacing: 8) {
-                Text("Schedule Your First Task")
+                Text("Create Your First Schedule")
                     .font(.system(size: 22, weight: .bold, design: .rounded))
                     .foregroundColor(theme.primaryText)
 
-                Text("Automate AI tasks to run daily, weekly, or at specific times.")
+                Text("Set up automated AI tasks that run on your schedule.")
                     .font(.system(size: 14))
                     .foregroundColor(theme.secondaryText)
                     .multilineTextAlignment(.center)
@@ -258,17 +258,17 @@ private struct ScheduleEmptyState: View {
                 ScheduleUseCaseRow(
                     icon: "sun.max",
                     title: "Morning Briefing",
-                    description: "Daily news summary"
+                    description: "Get a daily summary at 8 AM"
                 )
                 ScheduleUseCaseRow(
                     icon: "chart.bar",
                     title: "Weekly Report",
-                    description: "Analyze your data"
+                    description: "Generate insights every Monday"
                 )
                 ScheduleUseCaseRow(
                     icon: "bell",
-                    title: "Reminders",
-                    description: "Custom notifications"
+                    title: "Custom Reminders",
+                    description: "Scheduled notifications"
                 )
             }
             .frame(maxWidth: 320)
@@ -630,7 +630,7 @@ private struct ScheduleQuickActionButton: View {
 // MARK: - Frequency Tab Selector
 
 private struct FrequencyTabSelector: View {
-    @StateObject private var themeManager = ThemeManager.shared
+    @Environment(\.theme) private var theme
     @Binding var selection: ScheduleFrequencyType
 
     @Namespace private var tabNamespace
@@ -652,13 +652,13 @@ private struct FrequencyTabSelector: View {
         .padding(4)
         .background(
             RoundedRectangle(cornerRadius: 10)
-                .fill(themeManager.currentTheme.tertiaryBackground.opacity(0.6))
+                .fill(theme.tertiaryBackground.opacity(0.6))
         )
     }
 }
 
 private struct FrequencyTabButton: View {
-    @StateObject private var themeManager = ThemeManager.shared
+    @Environment(\.theme) private var theme
 
     let type: ScheduleFrequencyType
     let isSelected: Bool
@@ -677,7 +677,7 @@ private struct FrequencyTabButton: View {
                     .font(.system(size: 12, weight: isSelected ? .semibold : .medium))
             }
             .foregroundColor(
-                isSelected ? themeManager.currentTheme.primaryText : themeManager.currentTheme.secondaryText
+                isSelected ? theme.primaryText : theme.secondaryText
             )
             .padding(.horizontal, 12)
             .padding(.vertical, 8)
@@ -685,9 +685,9 @@ private struct FrequencyTabButton: View {
                 ZStack {
                     if isSelected {
                         RoundedRectangle(cornerRadius: 7)
-                            .fill(themeManager.currentTheme.cardBackground)
+                            .fill(theme.cardBackground)
                             .shadow(
-                                color: themeManager.currentTheme.shadowColor.opacity(0.1),
+                                color: theme.shadowColor.opacity(0.1),
                                 radius: 3,
                                 x: 0,
                                 y: 1
@@ -695,7 +695,7 @@ private struct FrequencyTabButton: View {
                             .matchedGeometryEffect(id: "frequency_indicator", in: namespace)
                     } else if isHovering {
                         RoundedRectangle(cornerRadius: 7)
-                            .fill(themeManager.currentTheme.secondaryBackground.opacity(0.5))
+                            .fill(theme.secondaryBackground.opacity(0.5))
                     }
                 }
             )
@@ -713,7 +713,7 @@ private struct FrequencyTabButton: View {
 // MARK: - Schedule Time Picker
 
 private struct ScheduleTimePicker: View {
-    @StateObject private var themeManager = ThemeManager.shared
+    @Environment(\.theme) private var theme
 
     @Binding var hour: Int
     @Binding var minute: Int
@@ -738,14 +738,14 @@ private struct ScheduleTimePicker: View {
             // Clock icon
             Image(systemName: "clock")
                 .font(.system(size: 12, weight: .medium))
-                .foregroundColor(themeManager.currentTheme.accentColor)
+                .foregroundColor(theme.accentColor)
                 .padding(.leading, 10)
 
             // Hour input
             TextField("", text: $hourText)
                 .textFieldStyle(.plain)
                 .font(.system(size: 13, weight: .medium))
-                .foregroundColor(themeManager.currentTheme.primaryText)
+                .foregroundColor(theme.primaryText)
                 .frame(width: 24)
                 .multilineTextAlignment(.center)
                 .focused($hourFocused)
@@ -765,13 +765,13 @@ private struct ScheduleTimePicker: View {
 
             Text(":")
                 .font(.system(size: 13, weight: .medium))
-                .foregroundColor(themeManager.currentTheme.secondaryText)
+                .foregroundColor(theme.secondaryText)
 
             // Minute input
             TextField("", text: $minuteText)
                 .textFieldStyle(.plain)
                 .font(.system(size: 13, weight: .medium))
-                .foregroundColor(themeManager.currentTheme.primaryText)
+                .foregroundColor(theme.primaryText)
                 .frame(width: 24)
                 .multilineTextAlignment(.center)
                 .focused($minuteFocused)
@@ -793,12 +793,12 @@ private struct ScheduleTimePicker: View {
             Button(action: togglePeriod) {
                 Text(period)
                     .font(.system(size: 11, weight: .semibold))
-                    .foregroundColor(themeManager.currentTheme.accentColor)
+                    .foregroundColor(theme.accentColor)
                     .padding(.horizontal, 6)
                     .padding(.vertical, 3)
                     .background(
                         RoundedRectangle(cornerRadius: 4)
-                            .fill(themeManager.currentTheme.accentColor.opacity(0.15))
+                            .fill(theme.accentColor.opacity(0.15))
                     )
             }
             .buttonStyle(.plain)
@@ -807,13 +807,13 @@ private struct ScheduleTimePicker: View {
         .frame(height: 38)
         .background(
             RoundedRectangle(cornerRadius: 8)
-                .fill(themeManager.currentTheme.inputBackground)
+                .fill(theme.inputBackground)
                 .overlay(
                     RoundedRectangle(cornerRadius: 8)
                         .stroke(
                             isFocused
-                                ? themeManager.currentTheme.accentColor.opacity(0.5)
-                                : themeManager.currentTheme.inputBorder,
+                                ? theme.accentColor.opacity(0.5)
+                                : theme.inputBorder,
                             lineWidth: isFocused ? 1.5 : 1
                         )
                 )
@@ -851,7 +851,7 @@ private struct ScheduleTimePicker: View {
 // MARK: - Weekday Button
 
 private struct WeekdayButton: View {
-    @StateObject private var themeManager = ThemeManager.shared
+    @Environment(\.theme) private var theme
 
     let day: Int
     let isSelected: Bool
@@ -870,26 +870,26 @@ private struct WeekdayButton: View {
                 .foregroundColor(
                     isSelected
                         ? .white
-                        : (isHovering ? themeManager.currentTheme.primaryText : themeManager.currentTheme.secondaryText)
+                        : (isHovering ? theme.primaryText : theme.secondaryText)
                 )
                 .frame(width: 34, height: 34)
                 .background(
                     Circle()
                         .fill(
                             isSelected
-                                ? themeManager.currentTheme.accentColor
+                                ? theme.accentColor
                                 : (isHovering
-                                    ? themeManager.currentTheme.tertiaryBackground
-                                    : themeManager.currentTheme.inputBackground)
+                                    ? theme.tertiaryBackground
+                                    : theme.inputBackground)
                         )
                         .overlay(
                             Circle()
                                 .stroke(
                                     isSelected
-                                        ? themeManager.currentTheme.accentColor
+                                        ? theme.accentColor
                                         : (isHovering
-                                            ? themeManager.currentTheme.accentColor.opacity(0.3)
-                                            : themeManager.currentTheme.inputBorder),
+                                            ? theme.accentColor.opacity(0.3)
+                                            : theme.inputBorder),
                                     lineWidth: 1
                                 )
                         )
@@ -908,7 +908,7 @@ private struct WeekdayButton: View {
 // MARK: - Once Date Picker
 
 private struct OnceDatePicker: View {
-    @StateObject private var themeManager = ThemeManager.shared
+    @Environment(\.theme) private var theme
     @Binding var selectedDate: Date
 
     @State private var isHovering = false
@@ -925,27 +925,27 @@ private struct OnceDatePicker: View {
             HStack(spacing: 8) {
                 Image(systemName: "calendar")
                     .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(themeManager.currentTheme.accentColor)
+                    .foregroundColor(theme.accentColor)
 
                 Text(formattedDate)
                     .font(.system(size: 13, weight: .medium))
-                    .foregroundColor(themeManager.currentTheme.primaryText)
+                    .foregroundColor(theme.primaryText)
 
                 Image(systemName: "chevron.up.chevron.down")
                     .font(.system(size: 9, weight: .medium))
-                    .foregroundColor(themeManager.currentTheme.tertiaryText)
+                    .foregroundColor(theme.tertiaryText)
             }
             .padding(.horizontal, 12)
             .frame(height: 38)
             .background(
                 RoundedRectangle(cornerRadius: 8)
-                    .fill(themeManager.currentTheme.inputBackground)
+                    .fill(theme.inputBackground)
                     .overlay(
                         RoundedRectangle(cornerRadius: 8)
                             .stroke(
                                 isHovering || showingPopover
-                                    ? themeManager.currentTheme.accentColor.opacity(0.5)
-                                    : themeManager.currentTheme.inputBorder,
+                                    ? theme.accentColor.opacity(0.5)
+                                    : theme.inputBorder,
                                 lineWidth: isHovering || showingPopover ? 1.5 : 1
                             )
                     )
@@ -969,7 +969,7 @@ private struct OnceDatePicker: View {
                 .labelsHidden()
                 .padding(8)
             }
-            .background(themeManager.currentTheme.cardBackground)
+            .background(theme.cardBackground)
         }
     }
 }
@@ -977,7 +977,7 @@ private struct OnceDatePicker: View {
 // MARK: - Once Time Picker
 
 private struct OnceTimePicker: View {
-    @StateObject private var themeManager = ThemeManager.shared
+    @Environment(\.theme) private var theme
     @Binding var selectedDate: Date
 
     @State private var hourText: String = ""
@@ -1024,14 +1024,14 @@ private struct OnceTimePicker: View {
             // Clock icon
             Image(systemName: "clock")
                 .font(.system(size: 12, weight: .medium))
-                .foregroundColor(themeManager.currentTheme.accentColor)
+                .foregroundColor(theme.accentColor)
                 .padding(.leading, 10)
 
             // Hour input
             TextField("", text: $hourText)
                 .textFieldStyle(.plain)
                 .font(.system(size: 13, weight: .medium))
-                .foregroundColor(themeManager.currentTheme.primaryText)
+                .foregroundColor(theme.primaryText)
                 .frame(width: 24)
                 .multilineTextAlignment(.center)
                 .focused($hourFocused)
@@ -1051,13 +1051,13 @@ private struct OnceTimePicker: View {
 
             Text(":")
                 .font(.system(size: 13, weight: .medium))
-                .foregroundColor(themeManager.currentTheme.secondaryText)
+                .foregroundColor(theme.secondaryText)
 
             // Minute input
             TextField("", text: $minuteText)
                 .textFieldStyle(.plain)
                 .font(.system(size: 13, weight: .medium))
-                .foregroundColor(themeManager.currentTheme.primaryText)
+                .foregroundColor(theme.primaryText)
                 .frame(width: 24)
                 .multilineTextAlignment(.center)
                 .focused($minuteFocused)
@@ -1079,12 +1079,12 @@ private struct OnceTimePicker: View {
             Button(action: togglePeriod) {
                 Text(period)
                     .font(.system(size: 11, weight: .semibold))
-                    .foregroundColor(themeManager.currentTheme.accentColor)
+                    .foregroundColor(theme.accentColor)
                     .padding(.horizontal, 6)
                     .padding(.vertical, 3)
                     .background(
                         RoundedRectangle(cornerRadius: 4)
-                            .fill(themeManager.currentTheme.accentColor.opacity(0.15))
+                            .fill(theme.accentColor.opacity(0.15))
                     )
             }
             .buttonStyle(.plain)
@@ -1093,13 +1093,13 @@ private struct OnceTimePicker: View {
         .frame(height: 38)
         .background(
             RoundedRectangle(cornerRadius: 8)
-                .fill(themeManager.currentTheme.inputBackground)
+                .fill(theme.inputBackground)
                 .overlay(
                     RoundedRectangle(cornerRadius: 8)
                         .stroke(
                             isFocused
-                                ? themeManager.currentTheme.accentColor.opacity(0.5)
-                                : themeManager.currentTheme.inputBorder,
+                                ? theme.accentColor.opacity(0.5)
+                                : theme.inputBorder,
                             lineWidth: isFocused ? 1.5 : 1
                         )
                 )
@@ -1137,7 +1137,7 @@ private struct OnceTimePicker: View {
 // MARK: - Month Picker
 
 private struct MonthPicker: View {
-    @StateObject private var themeManager = ThemeManager.shared
+    @Environment(\.theme) private var theme
     @Binding var selectedMonth: Int
 
     @State private var isHovering = false
@@ -1152,23 +1152,23 @@ private struct MonthPicker: View {
             HStack(spacing: 4) {
                 Text(monthName)
                     .font(.system(size: 13, weight: .medium))
-                    .foregroundColor(themeManager.currentTheme.primaryText)
+                    .foregroundColor(theme.primaryText)
 
                 Image(systemName: "chevron.up.chevron.down")
                     .font(.system(size: 8, weight: .bold))
-                    .foregroundColor(themeManager.currentTheme.secondaryText)
+                    .foregroundColor(theme.secondaryText)
             }
             .padding(.horizontal, 10)
             .frame(height: 38)
             .background(
                 RoundedRectangle(cornerRadius: 8)
-                    .fill(themeManager.currentTheme.inputBackground)
+                    .fill(theme.inputBackground)
                     .overlay(
                         RoundedRectangle(cornerRadius: 8)
                             .stroke(
                                 isHovering || showingPopover
-                                    ? themeManager.currentTheme.accentColor.opacity(0.5)
-                                    : themeManager.currentTheme.inputBorder,
+                                    ? theme.accentColor.opacity(0.5)
+                                    : theme.inputBorder,
                                 lineWidth: isHovering || showingPopover ? 1.5 : 1
                             )
                     )
@@ -1195,7 +1195,7 @@ private struct MonthPicker: View {
             }
             .padding(6)
             .frame(width: 160)
-            .background(themeManager.currentTheme.cardBackground)
+            .background(theme.cardBackground)
         }
     }
 }
@@ -1203,7 +1203,7 @@ private struct MonthPicker: View {
 // MARK: - Month Option Row
 
 private struct MonthOptionRow: View {
-    @StateObject private var themeManager = ThemeManager.shared
+    @Environment(\.theme) private var theme
 
     let month: Int
     let isSelected: Bool
@@ -1220,14 +1220,14 @@ private struct MonthOptionRow: View {
             HStack {
                 Text(monthName)
                     .font(.system(size: 13, weight: .medium))
-                    .foregroundColor(themeManager.currentTheme.primaryText)
+                    .foregroundColor(theme.primaryText)
 
                 Spacer()
 
                 if isSelected {
                     Image(systemName: "checkmark")
                         .font(.system(size: 11, weight: .semibold))
-                        .foregroundColor(themeManager.currentTheme.accentColor)
+                        .foregroundColor(theme.accentColor)
                 }
             }
             .padding(.horizontal, 10)
@@ -1237,8 +1237,8 @@ private struct MonthOptionRow: View {
                 RoundedRectangle(cornerRadius: 4)
                     .fill(
                         isHovering
-                            ? themeManager.currentTheme.tertiaryBackground
-                            : (isSelected ? themeManager.currentTheme.accentColor.opacity(0.1) : Color.clear)
+                            ? theme.tertiaryBackground
+                            : (isSelected ? theme.accentColor.opacity(0.1) : Color.clear)
                     )
             )
             .contentShape(Rectangle())
@@ -1255,7 +1255,7 @@ private struct MonthOptionRow: View {
 // MARK: - Day of Month Input
 
 private struct DayOfMonthPicker: View {
-    @StateObject private var themeManager = ThemeManager.shared
+    @Environment(\.theme) private var theme
     @Binding var selectedDay: Int
 
     @State private var dayText: String = ""
@@ -1267,7 +1267,7 @@ private struct DayOfMonthPicker: View {
             TextField("", text: $dayText)
                 .textFieldStyle(.plain)
                 .font(.system(size: 13, weight: .medium))
-                .foregroundColor(themeManager.currentTheme.primaryText)
+                .foregroundColor(theme.primaryText)
                 .frame(width: 32)
                 .multilineTextAlignment(.center)
                 .focused($textFieldFocused)
@@ -1299,7 +1299,7 @@ private struct DayOfMonthPicker: View {
                 Button(action: { incrementDay() }) {
                     Image(systemName: "chevron.up")
                         .font(.system(size: 8, weight: .bold))
-                        .foregroundColor(themeManager.currentTheme.secondaryText)
+                        .foregroundColor(theme.secondaryText)
                         .frame(width: 20, height: 12)
                 }
                 .buttonStyle(.plain)
@@ -1307,7 +1307,7 @@ private struct DayOfMonthPicker: View {
                 Button(action: { decrementDay() }) {
                     Image(systemName: "chevron.down")
                         .font(.system(size: 8, weight: .bold))
-                        .foregroundColor(themeManager.currentTheme.secondaryText)
+                        .foregroundColor(theme.secondaryText)
                         .frame(width: 20, height: 12)
                 }
                 .buttonStyle(.plain)
@@ -1317,13 +1317,13 @@ private struct DayOfMonthPicker: View {
         .frame(height: 38)
         .background(
             RoundedRectangle(cornerRadius: 8)
-                .fill(themeManager.currentTheme.inputBackground)
+                .fill(theme.inputBackground)
                 .overlay(
                     RoundedRectangle(cornerRadius: 8)
                         .stroke(
                             isFocused
-                                ? themeManager.currentTheme.accentColor.opacity(0.5)
-                                : themeManager.currentTheme.inputBorder,
+                                ? theme.accentColor.opacity(0.5)
+                                : theme.inputBorder,
                             lineWidth: isFocused ? 1.5 : 1
                         )
                 )
@@ -1351,7 +1351,7 @@ private struct DayOfMonthPicker: View {
 // MARK: - Persona Picker
 
 private struct PersonaPicker: View {
-    @StateObject private var themeManager = ThemeManager.shared
+    @Environment(\.theme) private var theme
     @Binding var selectedPersonaId: UUID?
     let personas: [Persona]
 
@@ -1404,37 +1404,37 @@ private struct PersonaPicker: View {
                     VStack(alignment: .leading, spacing: 2) {
                         Text(selectedPersonaName)
                             .font(.system(size: 13, weight: .medium))
-                            .foregroundColor(themeManager.currentTheme.primaryText)
+                            .foregroundColor(theme.primaryText)
 
                         Text(selectedPersonaDescription!)
                             .font(.system(size: 11))
-                            .foregroundColor(themeManager.currentTheme.tertiaryText)
+                            .foregroundColor(theme.tertiaryText)
                             .lineLimit(1)
                     }
                 } else {
                     Text(selectedPersonaName)
                         .font(.system(size: 13, weight: .medium))
-                        .foregroundColor(themeManager.currentTheme.primaryText)
+                        .foregroundColor(theme.primaryText)
                 }
 
                 Spacer(minLength: 0)
 
                 Image(systemName: "chevron.up.chevron.down")
                     .font(.system(size: 10, weight: .medium))
-                    .foregroundColor(themeManager.currentTheme.tertiaryText)
+                    .foregroundColor(theme.tertiaryText)
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 10)
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(
                 RoundedRectangle(cornerRadius: 8)
-                    .fill(themeManager.currentTheme.inputBackground)
+                    .fill(theme.inputBackground)
                     .overlay(
                         RoundedRectangle(cornerRadius: 8)
                             .stroke(
                                 isHovering || showingPopover
-                                    ? themeManager.currentTheme.accentColor.opacity(0.5)
-                                    : themeManager.currentTheme.inputBorder,
+                                    ? theme.accentColor.opacity(0.5)
+                                    : theme.inputBorder,
                                 lineWidth: isHovering || showingPopover ? 1.5 : 1
                             )
                     )
@@ -1479,7 +1479,7 @@ private struct PersonaPicker: View {
             }
             .padding(8)
             .frame(minWidth: 280)
-            .background(themeManager.currentTheme.cardBackground)
+            .background(theme.cardBackground)
         }
     }
 }
@@ -1487,7 +1487,7 @@ private struct PersonaPicker: View {
 // MARK: - Persona Option Row
 
 private struct PersonaOptionRow: View {
-    @StateObject private var themeManager = ThemeManager.shared
+    @Environment(\.theme) private var theme
 
     let name: String
     let description: String
@@ -1502,12 +1502,12 @@ private struct PersonaOptionRow: View {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(name)
                         .font(.system(size: 13, weight: .medium))
-                        .foregroundColor(themeManager.currentTheme.primaryText)
+                        .foregroundColor(theme.primaryText)
 
                     if !description.isEmpty {
                         Text(description)
                             .font(.system(size: 11))
-                            .foregroundColor(themeManager.currentTheme.tertiaryText)
+                            .foregroundColor(theme.tertiaryText)
                             .lineLimit(2)
                     }
                 }
@@ -1517,14 +1517,14 @@ private struct PersonaOptionRow: View {
                 if isSelected {
                     Image(systemName: "checkmark")
                         .font(.system(size: 12, weight: .semibold))
-                        .foregroundColor(themeManager.currentTheme.accentColor)
+                        .foregroundColor(theme.accentColor)
                 }
             }
             .padding(.horizontal, 10)
             .padding(.vertical, 8)
             .background(
                 RoundedRectangle(cornerRadius: 6)
-                    .fill(isHovering ? themeManager.currentTheme.tertiaryBackground : Color.clear)
+                    .fill(isHovering ? theme.tertiaryBackground : Color.clear)
             )
             .contentShape(Rectangle())
         }
@@ -1546,7 +1546,6 @@ private struct ScheduleEditorSheet: View {
     }
 
     @Environment(\.theme) private var theme
-    @StateObject private var themeManager = ThemeManager.shared
     @StateObject private var personaManager = PersonaManager.shared
 
     let mode: Mode
@@ -1626,11 +1625,11 @@ private struct ScheduleEditorSheet: View {
             footerView
         }
         .frame(width: 580, height: 680)
-        .background(themeManager.currentTheme.primaryBackground)
+        .background(theme.primaryBackground)
         .clipShape(RoundedRectangle(cornerRadius: 16))
         .overlay(
             RoundedRectangle(cornerRadius: 16)
-                .stroke(themeManager.currentTheme.primaryBorder.opacity(0.5), lineWidth: 1)
+                .stroke(theme.primaryBorder.opacity(0.5), lineWidth: 1)
         )
         .opacity(hasAppeared ? 1 : 0)
         .scaleEffect(hasAppeared ? 1 : 0.95)
@@ -1654,8 +1653,8 @@ private struct ScheduleEditorSheet: View {
                     .fill(
                         LinearGradient(
                             colors: [
-                                themeManager.currentTheme.accentColor.opacity(0.2),
-                                themeManager.currentTheme.accentColor.opacity(0.05),
+                                theme.accentColor.opacity(0.2),
+                                theme.accentColor.opacity(0.05),
                             ],
                             startPoint: .topLeading,
                             endPoint: .bottomTrailing
@@ -1666,8 +1665,8 @@ private struct ScheduleEditorSheet: View {
                     .foregroundStyle(
                         LinearGradient(
                             colors: [
-                                themeManager.currentTheme.accentColor,
-                                themeManager.currentTheme.accentColor.opacity(0.7),
+                                theme.accentColor,
+                                theme.accentColor.opacity(0.7),
                             ],
                             startPoint: .topLeading,
                             endPoint: .bottomTrailing
@@ -1679,11 +1678,11 @@ private struct ScheduleEditorSheet: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text(isEditing ? "Edit Schedule" : "Create Schedule")
                     .font(.system(size: 16, weight: .semibold))
-                    .foregroundColor(themeManager.currentTheme.primaryText)
+                    .foregroundColor(theme.primaryText)
 
                 Text(isEditing ? "Modify your scheduled task" : "Set up an automated AI task")
                     .font(.system(size: 12))
-                    .foregroundColor(themeManager.currentTheme.secondaryText)
+                    .foregroundColor(theme.secondaryText)
             }
 
             Spacer()
@@ -1691,11 +1690,11 @@ private struct ScheduleEditorSheet: View {
             Button(action: onCancel) {
                 Image(systemName: "xmark")
                     .font(.system(size: 12, weight: .semibold))
-                    .foregroundColor(themeManager.currentTheme.secondaryText)
+                    .foregroundColor(theme.secondaryText)
                     .frame(width: 28, height: 28)
                     .background(
                         Circle()
-                            .fill(themeManager.currentTheme.tertiaryBackground)
+                            .fill(theme.tertiaryBackground)
                     )
             }
             .buttonStyle(PlainButtonStyle())
@@ -1704,11 +1703,11 @@ private struct ScheduleEditorSheet: View {
         .padding(.horizontal, 24)
         .padding(.vertical, 20)
         .background(
-            themeManager.currentTheme.secondaryBackground
+            theme.secondaryBackground
                 .overlay(
                     LinearGradient(
                         colors: [
-                            themeManager.currentTheme.accentColor.opacity(0.03),
+                            theme.accentColor.opacity(0.03),
                             Color.clear,
                         ],
                         startPoint: .topLeading,
@@ -1721,16 +1720,16 @@ private struct ScheduleEditorSheet: View {
     // MARK: - Schedule Info Section
 
     private var scheduleInfoSection: some View {
-        ScheduleEditorSection(title: "Task Info", icon: "info.circle.fill") {
+        ScheduleEditorSection(title: "Schedule Info", icon: "info.circle.fill") {
             VStack(alignment: .leading, spacing: 16) {
                 // Name field with label
                 VStack(alignment: .leading, spacing: 6) {
                     Text("Name")
                         .font(.system(size: 11, weight: .medium))
-                        .foregroundColor(themeManager.currentTheme.secondaryText)
+                        .foregroundColor(theme.secondaryText)
 
                     ScheduleTextField(
-                        placeholder: "e.g., Morning Briefing",
+                        placeholder: "e.g., Daily Summary",
                         text: $name,
                         icon: "textformat"
                     )
@@ -1743,16 +1742,16 @@ private struct ScheduleEditorSheet: View {
                             .font(.system(size: 14, weight: .medium))
                             .foregroundColor(
                                 isEnabled
-                                    ? themeManager.currentTheme.successColor : themeManager.currentTheme.tertiaryText
+                                    ? theme.successColor : theme.tertiaryText
                             )
 
                         VStack(alignment: .leading, spacing: 2) {
                             Text("Enabled")
                                 .font(.system(size: 13, weight: .medium))
-                                .foregroundColor(themeManager.currentTheme.primaryText)
+                                .foregroundColor(theme.primaryText)
                             Text(isEnabled ? "Schedule is active" : "Schedule is paused")
                                 .font(.system(size: 11))
-                                .foregroundColor(themeManager.currentTheme.tertiaryText)
+                                .foregroundColor(theme.tertiaryText)
                         }
                     }
 
@@ -1766,13 +1765,13 @@ private struct ScheduleEditorSheet: View {
                 .padding(12)
                 .background(
                     RoundedRectangle(cornerRadius: 8)
-                        .fill(themeManager.currentTheme.inputBackground)
+                        .fill(theme.inputBackground)
                         .overlay(
                             RoundedRectangle(cornerRadius: 8)
                                 .stroke(
                                     isEnabled
-                                        ? themeManager.currentTheme.successColor.opacity(0.3)
-                                        : themeManager.currentTheme.inputBorder,
+                                        ? theme.successColor.opacity(0.3)
+                                        : theme.inputBorder,
                                     lineWidth: 1
                                 )
                         )
@@ -1788,9 +1787,9 @@ private struct ScheduleEditorSheet: View {
             VStack(alignment: .leading, spacing: 8) {
                 ZStack(alignment: .topLeading) {
                     if instructions.isEmpty {
-                        Text("Enter the instructions for the AI task...")
+                        Text("What should the AI do when this runs?")
                             .font(.system(size: 13))
-                            .foregroundColor(themeManager.currentTheme.placeholderText)
+                            .foregroundColor(theme.placeholderText)
                             .padding(.top, 12)
                             .padding(.leading, 16)
                             .allowsHitTesting(false)
@@ -1798,23 +1797,23 @@ private struct ScheduleEditorSheet: View {
 
                     TextEditor(text: $instructions)
                         .font(.system(size: 13))
-                        .foregroundColor(themeManager.currentTheme.primaryText)
+                        .foregroundColor(theme.primaryText)
                         .scrollContentBackground(.hidden)
                         .frame(minHeight: 100, maxHeight: 150)
                         .padding(12)
                 }
                 .background(
                     RoundedRectangle(cornerRadius: 10)
-                        .fill(themeManager.currentTheme.inputBackground)
+                        .fill(theme.inputBackground)
                         .overlay(
                             RoundedRectangle(cornerRadius: 10)
-                                .stroke(themeManager.currentTheme.inputBorder, lineWidth: 1)
+                                .stroke(theme.inputBorder, lineWidth: 1)
                         )
                 )
 
                 Text("These instructions will be sent to the AI when the schedule runs.")
                     .font(.system(size: 11))
-                    .foregroundColor(themeManager.currentTheme.tertiaryText)
+                    .foregroundColor(theme.tertiaryText)
             }
         }
     }
@@ -1858,7 +1857,7 @@ private struct ScheduleEditorSheet: View {
                 VStack(alignment: .leading, spacing: 6) {
                     Text("Date")
                         .font(.system(size: 11, weight: .medium))
-                        .foregroundColor(themeManager.currentTheme.secondaryText)
+                        .foregroundColor(theme.secondaryText)
 
                     OnceDatePicker(selectedDate: $selectedDate)
                 }
@@ -1867,7 +1866,7 @@ private struct ScheduleEditorSheet: View {
                 VStack(alignment: .leading, spacing: 6) {
                     Text("Time")
                         .font(.system(size: 11, weight: .medium))
-                        .foregroundColor(themeManager.currentTheme.secondaryText)
+                        .foregroundColor(theme.secondaryText)
 
                     OnceTimePicker(selectedDate: $selectedDate)
                 }
@@ -1884,15 +1883,15 @@ private struct ScheduleEditorSheet: View {
         HStack(spacing: 10) {
             Image(systemName: "calendar.badge.clock")
                 .font(.system(size: 14, weight: .medium))
-                .foregroundColor(themeManager.currentTheme.accentColor)
+                .foregroundColor(theme.accentColor)
 
             VStack(alignment: .leading, spacing: 2) {
                 Text("Scheduled for")
                     .font(.system(size: 10, weight: .medium))
-                    .foregroundColor(themeManager.currentTheme.tertiaryText)
+                    .foregroundColor(theme.tertiaryText)
                 Text(formattedOnceDate)
                     .font(.system(size: 13, weight: .semibold))
-                    .foregroundColor(themeManager.currentTheme.primaryText)
+                    .foregroundColor(theme.primaryText)
             }
 
             Spacer()
@@ -1900,10 +1899,10 @@ private struct ScheduleEditorSheet: View {
         .padding(12)
         .background(
             RoundedRectangle(cornerRadius: 10)
-                .fill(themeManager.currentTheme.accentColor.opacity(0.08))
+                .fill(theme.accentColor.opacity(0.08))
                 .overlay(
                     RoundedRectangle(cornerRadius: 10)
-                        .stroke(themeManager.currentTheme.accentColor.opacity(0.2), lineWidth: 1)
+                        .stroke(theme.accentColor.opacity(0.2), lineWidth: 1)
                 )
         )
     }
@@ -1929,7 +1928,7 @@ private struct ScheduleEditorSheet: View {
             VStack(alignment: .leading, spacing: 6) {
                 Text("Time")
                     .font(.system(size: 11, weight: .medium))
-                    .foregroundColor(themeManager.currentTheme.secondaryText)
+                    .foregroundColor(theme.secondaryText)
 
                 timePicker
             }
@@ -1959,7 +1958,7 @@ private struct ScheduleEditorSheet: View {
             VStack(alignment: .leading, spacing: 8) {
                 Text("Day of Week")
                     .font(.system(size: 11, weight: .medium))
-                    .foregroundColor(themeManager.currentTheme.secondaryText)
+                    .foregroundColor(theme.secondaryText)
 
                 HStack(spacing: 6) {
                     ForEach(1 ... 7, id: \.self) { day in
@@ -1980,7 +1979,7 @@ private struct ScheduleEditorSheet: View {
             VStack(alignment: .leading, spacing: 6) {
                 Text("Time")
                     .font(.system(size: 11, weight: .medium))
-                    .foregroundColor(themeManager.currentTheme.secondaryText)
+                    .foregroundColor(theme.secondaryText)
 
                 timePicker
             }
@@ -2013,7 +2012,7 @@ private struct ScheduleEditorSheet: View {
                 VStack(alignment: .leading, spacing: 6) {
                     Text("Day of Month")
                         .font(.system(size: 11, weight: .medium))
-                        .foregroundColor(themeManager.currentTheme.secondaryText)
+                        .foregroundColor(theme.secondaryText)
 
                     DayOfMonthPicker(selectedDay: $selectedDayOfMonth)
                 }
@@ -2022,7 +2021,7 @@ private struct ScheduleEditorSheet: View {
                 VStack(alignment: .leading, spacing: 6) {
                     Text("Time")
                         .font(.system(size: 11, weight: .medium))
-                        .foregroundColor(themeManager.currentTheme.secondaryText)
+                        .foregroundColor(theme.secondaryText)
 
                     timePicker
                 }
@@ -2032,7 +2031,7 @@ private struct ScheduleEditorSheet: View {
 
             Text("If the day doesn't exist in a month, it will run on the last day.")
                 .font(.system(size: 10))
-                .foregroundColor(themeManager.currentTheme.tertiaryText)
+                .foregroundColor(theme.tertiaryText)
                 .padding(.horizontal, 4)
 
             // Preview
@@ -2072,7 +2071,7 @@ private struct ScheduleEditorSheet: View {
                 VStack(alignment: .leading, spacing: 6) {
                     Text("Month")
                         .font(.system(size: 11, weight: .medium))
-                        .foregroundColor(themeManager.currentTheme.secondaryText)
+                        .foregroundColor(theme.secondaryText)
 
                     MonthPicker(selectedMonth: $selectedMonth)
                 }
@@ -2081,7 +2080,7 @@ private struct ScheduleEditorSheet: View {
                 VStack(alignment: .leading, spacing: 6) {
                     Text("Day")
                         .font(.system(size: 11, weight: .medium))
-                        .foregroundColor(themeManager.currentTheme.secondaryText)
+                        .foregroundColor(theme.secondaryText)
 
                     DayOfMonthPicker(selectedDay: $selectedDay)
                 }
@@ -2090,7 +2089,7 @@ private struct ScheduleEditorSheet: View {
                 VStack(alignment: .leading, spacing: 6) {
                     Text("Time")
                         .font(.system(size: 11, weight: .medium))
-                        .foregroundColor(themeManager.currentTheme.secondaryText)
+                        .foregroundColor(theme.secondaryText)
 
                     timePicker
                 }
@@ -2128,15 +2127,15 @@ private struct ScheduleEditorSheet: View {
         HStack(spacing: 10) {
             Image(systemName: "repeat")
                 .font(.system(size: 14, weight: .medium))
-                .foregroundColor(themeManager.currentTheme.accentColor)
+                .foregroundColor(theme.accentColor)
 
             VStack(alignment: .leading, spacing: 2) {
                 Text("Schedule")
                     .font(.system(size: 10, weight: .medium))
-                    .foregroundColor(themeManager.currentTheme.tertiaryText)
+                    .foregroundColor(theme.tertiaryText)
                 Text(text)
                     .font(.system(size: 12, weight: .semibold))
-                    .foregroundColor(themeManager.currentTheme.primaryText)
+                    .foregroundColor(theme.primaryText)
             }
 
             Spacer()
@@ -2144,10 +2143,10 @@ private struct ScheduleEditorSheet: View {
         .padding(12)
         .background(
             RoundedRectangle(cornerRadius: 10)
-                .fill(themeManager.currentTheme.accentColor.opacity(0.08))
+                .fill(theme.accentColor.opacity(0.08))
                 .overlay(
                     RoundedRectangle(cornerRadius: 10)
-                        .stroke(themeManager.currentTheme.accentColor.opacity(0.2), lineWidth: 1)
+                        .stroke(theme.accentColor.opacity(0.2), lineWidth: 1)
                 )
         )
     }
@@ -2165,7 +2164,7 @@ private struct ScheduleEditorSheet: View {
 
                 Text("The persona determines the AI's behavior and available tools.")
                     .font(.system(size: 11))
-                    .foregroundColor(themeManager.currentTheme.tertiaryText)
+                    .foregroundColor(theme.tertiaryText)
             }
             .frame(maxWidth: .infinity)
         }
@@ -2193,10 +2192,10 @@ private struct ScheduleEditorSheet: View {
         .padding(.horizontal, 24)
         .padding(.vertical, 16)
         .background(
-            themeManager.currentTheme.secondaryBackground
+            theme.secondaryBackground
                 .overlay(
                     Rectangle()
-                        .fill(themeManager.currentTheme.primaryBorder)
+                        .fill(theme.primaryBorder)
                         .frame(height: 1),
                     alignment: .top
                 )
@@ -2274,7 +2273,7 @@ private struct ScheduleEditorSheet: View {
 // MARK: - Editor Section
 
 private struct ScheduleEditorSection<Content: View>: View {
-    @StateObject private var themeManager = ThemeManager.shared
+    @Environment(\.theme) private var theme
 
     let title: String
     let icon: String
@@ -2285,11 +2284,11 @@ private struct ScheduleEditorSection<Content: View>: View {
             HStack(spacing: 8) {
                 Image(systemName: icon)
                     .font(.system(size: 12, weight: .semibold))
-                    .foregroundColor(themeManager.currentTheme.accentColor)
+                    .foregroundColor(theme.accentColor)
 
                 Text(title.uppercased())
                     .font(.system(size: 11, weight: .bold))
-                    .foregroundColor(themeManager.currentTheme.secondaryText)
+                    .foregroundColor(theme.secondaryText)
                     .tracking(0.5)
             }
 
@@ -2298,10 +2297,10 @@ private struct ScheduleEditorSection<Content: View>: View {
         .padding(16)
         .background(
             RoundedRectangle(cornerRadius: 12)
-                .fill(themeManager.currentTheme.cardBackground)
+                .fill(theme.cardBackground)
                 .overlay(
                     RoundedRectangle(cornerRadius: 12)
-                        .stroke(themeManager.currentTheme.cardBorder, lineWidth: 1)
+                        .stroke(theme.cardBorder, lineWidth: 1)
                 )
         )
     }
@@ -2310,7 +2309,7 @@ private struct ScheduleEditorSection<Content: View>: View {
 // MARK: - Text Field
 
 private struct ScheduleTextField: View {
-    @StateObject private var themeManager = ThemeManager.shared
+    @Environment(\.theme) private var theme
 
     let placeholder: String
     @Binding var text: String
@@ -2324,7 +2323,7 @@ private struct ScheduleTextField: View {
                 Image(systemName: icon)
                     .font(.system(size: 12, weight: .medium))
                     .foregroundColor(
-                        isFocused ? themeManager.currentTheme.accentColor : themeManager.currentTheme.tertiaryText
+                        isFocused ? theme.accentColor : theme.tertiaryText
                     )
                     .frame(width: 16)
             }
@@ -2333,7 +2332,7 @@ private struct ScheduleTextField: View {
                 if text.isEmpty {
                     Text(placeholder)
                         .font(.system(size: 13))
-                        .foregroundColor(themeManager.currentTheme.placeholderText)
+                        .foregroundColor(theme.placeholderText)
                         .allowsHitTesting(false)
                 }
 
@@ -2348,20 +2347,20 @@ private struct ScheduleTextField: View {
                 )
                 .textFieldStyle(.plain)
                 .font(.system(size: 13))
-                .foregroundColor(themeManager.currentTheme.primaryText)
+                .foregroundColor(theme.primaryText)
             }
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 10)
         .background(
             RoundedRectangle(cornerRadius: 10)
-                .fill(themeManager.currentTheme.inputBackground)
+                .fill(theme.inputBackground)
                 .overlay(
                     RoundedRectangle(cornerRadius: 10)
                         .stroke(
                             isFocused
-                                ? themeManager.currentTheme.accentColor.opacity(0.5)
-                                : themeManager.currentTheme.inputBorder,
+                                ? theme.accentColor.opacity(0.5)
+                                : theme.inputBorder,
                             lineWidth: isFocused ? 1.5 : 1
                         )
                 )
@@ -2372,7 +2371,7 @@ private struct ScheduleTextField: View {
 // MARK: - Button Styles
 
 private struct SchedulePrimaryButtonStyle: ButtonStyle {
-    @StateObject private var themeManager = ThemeManager.shared
+    @Environment(\.theme) private var theme
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
@@ -2382,27 +2381,27 @@ private struct SchedulePrimaryButtonStyle: ButtonStyle {
             .padding(.vertical, 10)
             .background(
                 RoundedRectangle(cornerRadius: 8)
-                    .fill(themeManager.currentTheme.accentColor)
+                    .fill(theme.accentColor)
             )
             .opacity(configuration.isPressed ? 0.8 : 1.0)
     }
 }
 
 private struct ScheduleSecondaryButtonStyle: ButtonStyle {
-    @StateObject private var themeManager = ThemeManager.shared
+    @Environment(\.theme) private var theme
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .font(.system(size: 13, weight: .medium))
-            .foregroundColor(themeManager.currentTheme.primaryText)
+            .foregroundColor(theme.primaryText)
             .padding(.horizontal, 16)
             .padding(.vertical, 10)
             .background(
                 RoundedRectangle(cornerRadius: 8)
-                    .fill(themeManager.currentTheme.tertiaryBackground)
+                    .fill(theme.tertiaryBackground)
                     .overlay(
                         RoundedRectangle(cornerRadius: 8)
-                            .stroke(themeManager.currentTheme.inputBorder, lineWidth: 1)
+                            .stroke(theme.inputBorder, lineWidth: 1)
                     )
             )
             .opacity(configuration.isPressed ? 0.8 : 1.0)
