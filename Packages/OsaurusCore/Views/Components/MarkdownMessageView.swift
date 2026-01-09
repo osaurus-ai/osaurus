@@ -10,17 +10,85 @@
 import AppKit
 import SwiftUI
 
+// MARK: - Markdown Cache
+
+final class MarkdownParseCache: @unchecked Sendable {
+    static let shared = MarkdownParseCache()
+
+    struct CachedResult {
+        let blocks: [MessageBlock]
+        let segments: [ContentSegment]
+    }
+
+    private let cache = NSCache<NSString, Wrapper>()
+
+    private class Wrapper {
+        let result: CachedResult
+        init(_ result: CachedResult) { self.result = result }
+    }
+
+    func get(for text: String) -> CachedResult? {
+        cache.object(forKey: text as NSString)?.result
+    }
+
+    func set(segments: [ContentSegment], blocks: [MessageBlock], for text: String) {
+        cache.setObject(Wrapper(CachedResult(blocks: blocks, segments: segments)), forKey: text as NSString)
+    }
+}
+
 struct MarkdownMessageView: View {
     let text: String
     let baseWidth: CGFloat
-    /// Optional turn ID for caching heights across view recycling
-    var turnId: UUID? = nil
+    /// Optional cache key for persisting heights across view recycling
+    var cacheKey: String? = nil
     /// Whether content is actively streaming - when true, uses lighter rendering for large content
     var isStreaming: Bool = false
 
     var body: some View {
         // Use inner view with memoized parsing to avoid re-parsing on every render
-        MemoizedMarkdownView(text: text, baseWidth: baseWidth, turnId: turnId, isStreaming: isStreaming)
+        MemoizedMarkdownView(text: text, baseWidth: baseWidth, cacheKey: cacheKey, isStreaming: isStreaming)
+    }
+}
+
+// MARK: - Cached Height Wrapper
+
+struct CachedHeightView<Content: View>: View {
+    let id: String
+    let content: Content
+
+    @State private var height: CGFloat?
+
+    init(id: String, @ViewBuilder content: () -> Content) {
+        self.id = id
+        self.content = content()
+        // Synchronous read
+        if let h = MessageHeightCache.shared.height(for: id) {
+            _height = State(initialValue: h)
+        }
+    }
+
+    var body: some View {
+        content
+            .background(
+                GeometryReader { geo in
+                    Color.clear.preference(key: HeightKey.self, value: geo.size.height)
+                }
+            )
+            .onPreferenceChange(HeightKey.self) { newHeight in
+                // Only update if changed significantly
+                if let h = height, abs(h - newHeight) < 1 { return }
+                height = newHeight
+                MessageHeightCache.shared.setHeight(newHeight, for: id)
+            }
+            // Use minHeight to allow growth but prevent collapse (stable recycling)
+            .frame(minHeight: height, alignment: .top)
+    }
+}
+
+private struct HeightKey: PreferenceKey {
+    static let defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = nextValue()
     }
 }
 
@@ -30,7 +98,7 @@ struct MarkdownMessageView: View {
 private struct MemoizedMarkdownView: View {
     let text: String
     let baseWidth: CGFloat
-    let turnId: UUID?
+    let cacheKey: String?
     let isStreaming: Bool
 
     @Environment(\.theme) private var theme
@@ -45,6 +113,20 @@ private struct MemoizedMarkdownView: View {
     @State private var currentParseTask: Task<Void, Never>?
     // Track last parse request time for adaptive debouncing
     @State private var lastParseRequestTime: Date = .distantPast
+
+    init(text: String, baseWidth: CGFloat, cacheKey: String?, isStreaming: Bool) {
+        self.text = text
+        self.baseWidth = baseWidth
+        self.cacheKey = cacheKey
+        self.isStreaming = isStreaming
+
+        // Initialize from cache if available synchronously
+        if let cached = MarkdownParseCache.shared.get(for: text) {
+            _cachedSegments = State(initialValue: cached.segments)
+            _cachedBlocks = State(initialValue: cached.blocks)
+            _lastParsedText = State(initialValue: text)
+        }
+    }
 
     // Debounce interval in milliseconds - scales with content size
     // With paragraph-based rendering, each paragraph is smaller so debounce can be shorter
@@ -72,6 +154,11 @@ private struct MemoizedMarkdownView: View {
                     .font(Typography.body(baseWidth, theme: theme))
                     .foregroundColor(theme.primaryText)
                     .textSelection(.enabled)
+                    // Apply cached height if available to prevent jump, but only if not streaming (content growing)
+                    .frame(
+                        height: isStreaming ? nil : cacheKey.flatMap { MessageHeightCache.shared.height(for: $0) },
+                        alignment: .top
+                    )
             } else {
                 VStack(alignment: .leading, spacing: 0) {
                     ForEach(Array(cachedSegments.enumerated()), id: \.element.id) { index, segment in
@@ -150,6 +237,9 @@ private struct MemoizedMarkdownView: View {
                 cachedSegments = newSegments
                 lastParsedText = textSnapshot
                 lastStableIndex = max(0, newBlocks.count - 1)
+
+                // Update cache
+                MarkdownParseCache.shared.set(segments: newSegments, blocks: newBlocks, for: textSnapshot)
             }
         }
     }
@@ -169,7 +259,7 @@ private struct MemoizedMarkdownView: View {
                     blocks: textBlocks,
                     baseWidth: baseWidth,
                     theme: theme,
-                    cacheKey: turnId
+                    cacheKey: cacheKey.map { "\($0)-\(segment.id)" }
                 )
                 // Let the NSTextView self-size via intrinsicContentSize instead of doing a separate
                 // height calculation pass (which duplicates layout work and can freeze the UI during streaming).
@@ -177,17 +267,42 @@ private struct MemoizedMarkdownView: View {
                 .fixedSize(horizontal: false, vertical: true)
 
             case .codeBlock(let code, let lang):
-                CodeBlockView(code: code, language: lang, baseWidth: baseWidth)
+                if let key = cacheKey {
+                    CachedHeightView(id: "\(key)-\(segment.id)") {
+                        CodeBlockView(code: code, language: lang, baseWidth: baseWidth)
+                    }
+                } else {
+                    CodeBlockView(code: code, language: lang, baseWidth: baseWidth)
+                }
 
             case .image(let url, let altText):
-                MarkdownImageView(urlString: url, altText: altText, baseWidth: baseWidth)
+                if let key = cacheKey {
+                    CachedHeightView(id: "\(key)-\(segment.id)") {
+                        MarkdownImageView(urlString: url, altText: altText, baseWidth: baseWidth)
+                    }
+                } else {
+                    MarkdownImageView(urlString: url, altText: altText, baseWidth: baseWidth)
+                }
 
             case .horizontalRule:
-                HorizontalRuleView()
+                if let key = cacheKey {
+                    CachedHeightView(id: "\(key)-\(segment.id)") {
+                        HorizontalRuleView()
+                    }
+                } else {
+                    HorizontalRuleView()
+                }
 
             case .table(let headers, let rows):
-                TableView(headers: headers, rows: rows, baseWidth: baseWidth)
-                    .fixedSize(horizontal: false, vertical: true)
+                if let key = cacheKey {
+                    CachedHeightView(id: "\(key)-\(segment.id)") {
+                        TableView(headers: headers, rows: rows, baseWidth: baseWidth)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                } else {
+                    TableView(headers: headers, rows: rows, baseWidth: baseWidth)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             }
         }
     }
@@ -196,7 +311,7 @@ private struct MemoizedMarkdownView: View {
 // MARK: - Content Segment
 
 /// Represents a segment of content - either a group of selectable text blocks or a special element
-private struct ContentSegment: Identifiable {
+struct ContentSegment: Identifiable {
     enum Kind {
         case textGroup([SelectableTextBlock])
         case codeBlock(code: String, language: String?)
@@ -364,7 +479,7 @@ private func spacingBeforeTextGroup(previousNonTextKind: MessageBlock.Kind?) -> 
 
 // MARK: - Message Block
 
-private struct MessageBlock: Identifiable {
+struct MessageBlock: Identifiable {
     enum Kind: Equatable {
         case paragraph(String)
         case code(String, String?)

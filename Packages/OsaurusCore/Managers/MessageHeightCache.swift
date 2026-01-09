@@ -8,29 +8,29 @@
 
 import Foundation
 
-/// Caches measured heights for message views keyed by turn ID.
+/// Caches measured heights for message views keyed by block ID.
 /// This prevents LazyVStack from using incorrect height estimates
 /// when views are recycled, which causes scroll position issues.
 final class MessageHeightCache: @unchecked Sendable {
     static let shared = MessageHeightCache()
 
-    private var cache: [UUID: CGFloat] = [:]
+    private var cache: [String: CGFloat] = [:]
     private let lock = NSLock()
 
     /// Maximum number of cached heights before eviction
-    private let maxEntries = 1000
+    private let maxEntries = 2000  // Increased for block-level caching
 
     private init() {}
 
-    /// Get cached height for a turn ID
-    func height(for turnId: UUID) -> CGFloat? {
+    /// Get cached height for a block ID
+    func height(for id: String) -> CGFloat? {
         lock.lock()
         defer { lock.unlock() }
-        return cache[turnId]
+        return cache[id]
     }
 
-    /// Set cached height for a turn ID
-    func setHeight(_ height: CGFloat, for turnId: UUID) {
+    /// Set cached height for a block ID
+    func setHeight(_ height: CGFloat, for id: String) {
         lock.lock()
         defer { lock.unlock() }
 
@@ -45,14 +45,25 @@ final class MessageHeightCache: @unchecked Sendable {
             }
         }
 
-        cache[turnId] = height
+        cache[id] = height
     }
 
-    /// Invalidate cached height for a turn ID (e.g., when content changes)
-    func invalidate(turnId: UUID) {
+    /// Invalidate cached height for a block ID
+    func invalidate(id: String) {
         lock.lock()
         defer { lock.unlock() }
-        cache.removeValue(forKey: turnId)
+        cache.removeValue(forKey: id)
+    }
+
+    /// Invalidate all blocks for a given turn ID (prefix match)
+    func invalidateTurn(_ turnId: UUID) {
+        lock.lock()
+        defer { lock.unlock() }
+        let prefix = turnId.uuidString
+        let keysToRemove = cache.keys.filter { $0.contains(prefix) }
+        for key in keysToRemove {
+            cache.removeValue(forKey: key)
+        }
     }
 
     /// Clear all cached heights
