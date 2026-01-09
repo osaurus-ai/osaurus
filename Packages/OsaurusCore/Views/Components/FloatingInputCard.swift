@@ -41,7 +41,6 @@ struct FloatingInputCard: View {
     @Environment(\.theme) private var theme
     @Environment(\.colorScheme) private var colorScheme
     @State private var isDragOver = false
-    @State private var keyMonitor: Any?
     @State private var showModelPicker = false
     @State private var showToolPicker = false
     // Cache model options to prevent popover refresh during streaming
@@ -188,7 +187,6 @@ struct FloatingInputCard: View {
         .onAppear {
             // Sync initial value from binding
             localText = text
-            setupKeyMonitor()
             loadVoiceConfig()
 
             // Sync local state with singleton service state on appear
@@ -251,7 +249,6 @@ struct FloatingInputCard: View {
             }
         }
         .onDisappear {
-            cleanupKeyMonitor()
             // Stop any active voice recording, but check if we should keep continuous mode
             if isVoiceActive {
                 print("[FloatingInputCard] onDisappear: Stopping active voice recording")
@@ -552,30 +549,6 @@ struct FloatingInputCard: View {
         onSend()
         // Clear local text after send
         localText = ""
-    }
-
-    private func setupKeyMonitor() {
-        guard keyMonitor == nil else { return }
-        keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [self] event in
-            let kVK_Return: UInt16 = 0x24
-            let kVK_ANSI_KeypadEnter: UInt16 = 0x4C
-            let isReturn = (event.keyCode == kVK_Return || event.keyCode == kVK_ANSI_KeypadEnter)
-            if isReturn && isFocused {
-                let hasShift = event.modifierFlags.contains(.shift)
-                if !hasShift && canSend {
-                    syncAndSend()
-                    return nil  // consume the event
-                }
-            }
-            return event
-        }
-    }
-
-    private func cleanupKeyMonitor() {
-        if let monitor = keyMonitor {
-            NSEvent.removeMonitor(monitor)
-            keyMonitor = nil
-        }
     }
 
     // MARK: - Pending Images Preview (Inline)
@@ -942,7 +915,10 @@ struct FloatingInputCard: View {
             textColor: theme.primaryText,
             cursorColor: theme.cursorColor,
             isFocused: $isFocused,
-            maxHeight: maxHeight
+            maxHeight: maxHeight,
+            onCommit: {
+                syncAndSend()
+            }
         )
         .frame(maxHeight: maxHeight)
         .overlay(alignment: .topLeading) {

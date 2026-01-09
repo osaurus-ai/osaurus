@@ -16,6 +16,7 @@ struct EditableTextView: NSViewRepresentable {
     let cursorColor: Color
     @Binding var isFocused: Bool
     var maxHeight: CGFloat = .infinity
+    var onCommit: (() -> Void)? = nil
 
     func makeCoordinator() -> Coordinator {
         Coordinator(self)
@@ -62,6 +63,7 @@ struct EditableTextView: NSViewRepresentable {
     }
 
     func updateNSView(_ scrollView: NSScrollView, context: Context) {
+        context.coordinator.parent = self
         guard let textView = scrollView.documentView as? CustomNSTextView else { return }
 
         textView.maxHeight = maxHeight
@@ -116,6 +118,18 @@ struct EditableTextView: NSViewRepresentable {
 
         func textDidEndEditing(_ notification: Notification) {
             parent.isFocused = false
+        }
+
+        func textView(_ textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
+            if commandSelector == #selector(NSResponder.insertNewline(_:)) {
+                if let event = NSApp.currentEvent, event.modifierFlags.contains(.shift) {
+                    return false  // Let text view handle Shift+Enter (newline)
+                } else {
+                    parent.onCommit?()
+                    return true  // Handled (don't insert newline)
+                }
+            }
+            return false
         }
     }
 }
