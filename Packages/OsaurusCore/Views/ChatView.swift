@@ -261,11 +261,13 @@ final class ChatSession: ObservableObject {
             let prefixBlocks = Array(_cachedContentBlocks.prefix(prefixEndIndex))
 
             // Regenerate only the last turn's blocks
+            // Find previous non-tool turn for correct header detection
+            // (tool turns are filtered in generateBlocks, so we must match that behavior)
             let lastTurnBlocks = ContentBlock.generateBlocks(
                 from: [turns.last!],
                 streamingTurnId: streamingTurnId,
                 personaName: displayName,
-                previousTurn: turns.count > 1 ? turns[turns.count - 2] : nil
+                previousTurn: turns.dropLast().last { $0.role != .tool }
             )
 
             blocks = prefixBlocks + lastTurnBlocks
