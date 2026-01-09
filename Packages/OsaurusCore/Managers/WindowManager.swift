@@ -181,11 +181,6 @@ public final class WindowManager: NSObject, ObservableObject {
 
             window.level = originalLevel
             window.collectionBehavior = isPinned ? [.canJoinAllSpaces, .fullScreenAuxiliary] : originalBehavior
-
-            // Re-center after window is fully displayed
-            if center {
-                self.centerOnActiveScreen(window)
-            }
         }
 
         print(
@@ -253,10 +248,8 @@ public final class WindowManager: NSObject, ObservableObject {
         let hostingController = NSHostingController(rootView: content())
 
         // Calculate centered position on active screen
-        let mouse = NSEvent.mouseLocation
-        let screen = NSScreen.screens.first { NSMouseInRect(mouse, $0.frame, false) } ?? NSScreen.main
         let initialRect: NSRect
-        if let s = screen {
+        if let s = activeScreen {
             initialRect = centeredRect(size: config.defaultSize, on: s)
         } else {
             initialRect = NSRect(origin: .zero, size: config.defaultSize)
@@ -316,6 +309,11 @@ public final class WindowManager: NSObject, ObservableObject {
 
     // MARK: - Private Helpers
 
+    private var activeScreen: NSScreen? {
+        let mouse = NSEvent.mouseLocation
+        return NSScreen.screens.first { NSMouseInRect(mouse, $0.frame, false) } ?? NSScreen.main
+    }
+
     private func applyPinnedStyle(to window: NSWindow, pinned: Bool) {
         if pinned {
             window.level = .floating
@@ -327,26 +325,19 @@ public final class WindowManager: NSObject, ObservableObject {
     }
 
     private func centerOnActiveScreen(_ window: NSWindow) {
-        let mouse = NSEvent.mouseLocation
-        let screen = NSScreen.screens.first { NSMouseInRect(mouse, $0.frame, false) } ?? NSScreen.main
-
-        guard let s = screen else {
+        guard let s = activeScreen else {
             print("[WindowManager] No screen found, using window.center()")
             window.center()
             return
         }
 
-        let vf = s.visibleFrame
-        let size = window.frame.size
-        let x = vf.midX - size.width / 2
-        let y = vf.midY - size.height / 2
-        let newOrigin = NSPoint(x: x, y: y)
+        let rect = centeredRect(size: window.frame.size, on: s)
 
         print(
-            "[WindowManager] Centering window: screen=\(s.localizedName), visibleFrame=\(vf), windowSize=\(size), newOrigin=\(newOrigin)"
+            "[WindowManager] Centering window: screen=\(s.localizedName), visibleFrame=\(s.visibleFrame), windowSize=\(window.frame.size), newOrigin=\(rect.origin)"
         )
 
-        window.setFrameOrigin(newOrigin)
+        window.setFrameOrigin(rect.origin)
     }
 
     private func centeredRect(size: NSSize, on screen: NSScreen) -> NSRect {
