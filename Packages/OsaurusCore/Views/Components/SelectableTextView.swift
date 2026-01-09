@@ -25,7 +25,7 @@ struct SelectableTextView: NSViewRepresentable {
     let baseWidth: CGFloat
     let theme: ThemeProtocol
     /// Optional cache key (turn ID) for persisting measured height across view recycling
-    var cacheKey: UUID? = nil
+    var cacheKey: String? = nil
 
     final class Coordinator {
         // Store previous state directly for O(1) comparison instead of O(n) hashing
@@ -33,13 +33,13 @@ struct SelectableTextView: NSViewRepresentable {
         var lastWidth: CGFloat = 0
         var lastThemeFingerprint: String = ""
         var lastMeasuredHeight: CGFloat = 0
-        var cacheKey: UUID? = nil
+        var cacheKey: String? = nil
 
         // Track length of each block's rendered text (including trailing newline if present)
         // This enables O(1) incremental updates by only modifying changed blocks
         var blockLengths: [Int] = []
 
-        init(cacheKey: UUID? = nil) {
+        init(cacheKey: String? = nil) {
             self.cacheKey = cacheKey
             // Initialize from cache if available
             if let key = cacheKey, let cachedHeight = MessageHeightCache.shared.height(for: key) {
@@ -724,12 +724,12 @@ struct SelectableTextViewSizer: View {
     let blocks: [SelectableTextBlock]
     let baseWidth: CGFloat
     /// Optional cache key (turn ID) for persisting measured height across view recycling
-    let cacheKey: UUID?
+    let cacheKey: String?
 
     @Environment(\.theme) private var theme
     @State private var height: CGFloat
 
-    init(blocks: [SelectableTextBlock], baseWidth: CGFloat, cacheKey: UUID? = nil) {
+    init(blocks: [SelectableTextBlock], baseWidth: CGFloat, cacheKey: String? = nil) {
         self.blocks = blocks
         self.baseWidth = baseWidth
         self.cacheKey = cacheKey

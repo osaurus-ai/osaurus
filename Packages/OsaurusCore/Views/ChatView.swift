@@ -264,7 +264,8 @@ final class ChatSession: ObservableObject {
             let lastTurnBlocks = ContentBlock.generateBlocks(
                 from: [turns.last!],
                 streamingTurnId: streamingTurnId,
-                personaName: displayName
+                personaName: displayName,
+                previousTurn: turns.count > 1 ? turns[turns.count - 2] : nil
             )
 
             blocks = prefixBlocks + lastTurnBlocks

@@ -75,7 +75,7 @@ struct ContentBlockView: View {
             MarkdownMessageView(
                 text: text,
                 baseWidth: contentWidth,
-                turnId: block.turnId,
+                cacheKey: block.id,
                 isStreaming: isStreaming
             )
             .padding(.top, 4)

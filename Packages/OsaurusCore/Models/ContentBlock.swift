@@ -138,8 +138,9 @@ struct ContentBlock: Identifiable, Equatable {
         ContentBlock(id: "typing-\(turnId.uuidString)", turnId: turnId, kind: .typingIndicator, position: position)
     }
 
-    static func groupSpacer(afterTurnId: UUID) -> ContentBlock {
-        ContentBlock(id: "spacer-\(afterTurnId.uuidString)", turnId: afterTurnId, kind: .groupSpacer, position: .only)
+    static func groupSpacer(afterTurnId: UUID, associatedWithTurnId: UUID? = nil) -> ContentBlock {
+        let turnId = associatedWithTurnId ?? afterTurnId
+        return ContentBlock(id: "spacer-\(afterTurnId.uuidString)", turnId: turnId, kind: .groupSpacer, position: .only)
     }
 }
 
@@ -152,12 +153,21 @@ extension ContentBlock {
         turn.contentIsEmpty && !turn.hasThinking && (turn.toolCalls?.isEmpty == false)
     }
 
-    static func generateBlocks(from turns: [ChatTurn], streamingTurnId: UUID?, personaName: String) -> [ContentBlock] {
+    static func generateBlocks(
+        from turns: [ChatTurn],
+        streamingTurnId: UUID?,
+        personaName: String,
+        previousTurn: ChatTurn? = nil
+    ) -> [ContentBlock] {
         var blocks: [ContentBlock] = []
-        var previousRole: MessageRole?
-        var previousTurnId: UUID?
+        var previousRole: MessageRole? = previousTurn?.role
+        var previousTurnId: UUID? = previousTurn?.id
         var pendingToolCalls: [ToolCallItem] = []
         var pendingToolTurnId: UUID?
+
+        // If we have a previous turn, we assume any pending tool calls were already flushed or irrelevant for this batch.
+        // However, if we were splitting processing in the middle of tool accumulation, this would be complex.
+        // Given we split at turn boundaries, previous turn's tools should be handled.
 
         func flushPendingToolCalls(into turnBlocks: inout [ContentBlock]) {
             guard !pendingToolCalls.isEmpty, let turnId = pendingToolTurnId else { return }
@@ -176,7 +186,9 @@ extension ContentBlock {
             let nextIsToolOnly = nextTurn.map { isToolOnlyTurn($0) && $0.role == .assistant } ?? false
 
             if isFirstInGroup, let prevId = previousTurnId {
-                blocks.append(.groupSpacer(afterTurnId: prevId))
+                // Use the previous turn ID for the stable block ID (referencing the gap)
+                // BUT associate it with the current turn ID so it gets regenerated/included with the current turn during incremental updates
+                blocks.append(.groupSpacer(afterTurnId: prevId, associatedWithTurnId: turn.id))
             }
 
             var turnBlocks: [ContentBlock] = []
