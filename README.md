@@ -40,7 +40,7 @@ After installing, launch from Spotlight (`⌘ Space` → "osaurus") or run `osau
 
 ## What is Osaurus?
 
-Osaurus is an all-in-one LLM server for macOS. It combines:
+Osaurus is the AI edge runtime for macOS. It brings together:
 
 - **MLX Runtime** — Optimized local inference for Apple Silicon using [MLX](https://github.com/ml-explore/mlx)
 - **Remote Providers** — Connect to Anthropic, OpenAI, OpenRouter, Ollama, LM Studio, or any compatible API
