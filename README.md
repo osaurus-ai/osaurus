@@ -16,7 +16,9 @@
 <img width="372" height="222" alt="Screenshot 2025-12-29 at 11 14 51 AM" src="https://github.com/user-attachments/assets/ec83eba0-8819-4d2a-82b5-cbb8063ff90a" />
 </p>
 
-**Native macOS LLM server with MCP support.** Run local and remote language models on Apple Silicon with OpenAI & Anthropic compatible APIs, tool calling, and a built-in plugin ecosystem.
+**Osaurus is the AI edge runtime for macOS.**
+
+It runs local and cloud models, exposes shared tools via MCP, and provides a native, always-on foundation for AI apps and workflows on Apple Silicon.
 
 Created by Dinoki Labs ([dinoki.ai](https://dinoki.ai))
 
