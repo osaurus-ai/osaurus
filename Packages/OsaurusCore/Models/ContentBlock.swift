@@ -26,7 +26,7 @@ struct ToolCallItem: Equatable {
 }
 
 /// The kind/type of a content block
-enum ContentBlockKind {
+enum ContentBlockKind: Equatable {
     case header(role: MessageRole, personaName: String, isFirstInGroup: Bool)
     case paragraph(index: Int, text: String, isStreaming: Bool, role: MessageRole)
     case toolCall(call: ToolCall, result: String?)
@@ -35,6 +35,46 @@ enum ContentBlockKind {
     case image(index: Int, imageData: Data)
     case typingIndicator
     case groupSpacer
+
+    /// Custom Equatable optimized for performance during streaming.
+    /// Uses text length comparison as a cheap proxy for content change detection.
+    static func == (lhs: ContentBlockKind, rhs: ContentBlockKind) -> Bool {
+        switch (lhs, rhs) {
+        case let (.header(lRole, lName, lFirst), .header(rRole, rName, rFirst)):
+            return lRole == rRole && lName == rName && lFirst == rFirst
+
+        case let (.paragraph(lIdx, lText, lStream, lRole), .paragraph(rIdx, rText, rStream, rRole)):
+            // Compare text length first (O(1)) - if lengths differ, content changed
+            // Only do full comparison if lengths are equal (rare during streaming)
+            guard lIdx == rIdx && lStream == rStream && lRole == rRole else { return false }
+            guard lText.count == rText.count else { return false }
+            return lText == rText
+
+        case let (.toolCall(lCall, lResult), .toolCall(rCall, rResult)):
+            return lCall.id == rCall.id && lResult == rResult
+
+        case let (.toolCallGroup(lCalls), .toolCallGroup(rCalls)):
+            return lCalls == rCalls
+
+        case let (.thinking(lIdx, lText, lStream), .thinking(rIdx, rText, rStream)):
+            // Same optimization as paragraph
+            guard lIdx == rIdx && lStream == rStream else { return false }
+            guard lText.count == rText.count else { return false }
+            return lText == rText
+
+        case let (.image(lIdx, lData), .image(rIdx, rData)):
+            return lIdx == rIdx && lData == rData
+
+        case (.typingIndicator, .typingIndicator):
+            return true
+
+        case (.groupSpacer, .groupSpacer):
+            return true
+
+        default:
+            return false
+        }
+    }
 }
 
 // MARK: - ContentBlock
@@ -56,7 +96,8 @@ struct ContentBlock: Identifiable, Equatable {
     }
 
     static func == (lhs: ContentBlock, rhs: ContentBlock) -> Bool {
-        lhs.id == rhs.id && lhs.position == rhs.position
+        // Check id first (cheapest), then position, then kind (most expensive)
+        lhs.id == rhs.id && lhs.position == rhs.position && lhs.kind == rhs.kind
     }
 
     func withPosition(_ newPosition: BlockPosition) -> ContentBlock {

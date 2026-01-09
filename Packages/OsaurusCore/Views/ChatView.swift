@@ -1504,124 +1504,45 @@ struct ChatView: View {
 
     // MARK: - Message Thread
 
+    /// Isolated message thread view to prevent cascading re-renders
     private func messageThread(_ width: CGFloat) -> some View {
         // Use flattened content blocks for efficient LazyVStack recycling
         let blocks = session.visibleBlocks
         let displayName = windowState.cachedPersonaDisplayName
 
-        return ScrollViewReader { proxy in
-            ScrollView {
-                LazyVStack(spacing: 0) {
-                    ForEach(blocks) { block in
-                        ContentBlockView(
-                            block: block,
-                            width: width,
-                            personaName: displayName,
-                            onCopy: { turnId in
-                                copyTurnContent(turnId: turnId)
-                            },
-                            onRegenerate: { turnId in
-                                session.regenerate(turnId: turnId)
-                            }
-                        )
-                        .padding(.horizontal, 16)
-                    }
-
-                    // Bottom padding for visual breathing room
-                    Color.clear.frame(height: 16)
-
-                    // Bottom anchor for scroll tracking
-                    Color.clear
-                        .frame(height: 1)
-                        .id("BOTTOM")
-                        .onAppear { isPinnedToBottom = true }
-                        .onDisappear {
-                            // Only unpin if we're not streaming
-                            // During streaming, the bottom marker may temporarily disappear
-                            // due to content growth and LazyVStack recycling
-                            if !session.isStreaming {
-                                isPinnedToBottom = false
-                            }
-                        }
-                }
-                .padding(.top, 8)
-            }
-            .scrollContentBackground(.hidden)
-            .scrollIndicators(.hidden)
-            .overlay(alignment: .bottomTrailing) {
-                scrollToBottomButton(proxy: proxy)
-            }
-            .onChange(of: session.turns.count) { _, _ in
-                if isPinnedToBottom {
-                    // Defer scroll to next run loop to allow layout to complete
-                    // This is especially important for voice input where the overlay
-                    // is closing at the same time as the message is added
-                    DispatchQueue.main.async {
-                        withAnimation(theme.animationQuick()) {
-                            proxy.scrollTo("BOTTOM", anchor: .bottom)
-                        }
-                    }
-                }
-            }
-            .onChange(of: session.scrollTick) { _, _ in
-                // During streaming, always scroll to follow content
-                // Otherwise, only scroll if pinned to bottom
-                guard isPinnedToBottom || session.isStreaming else { return }
-
-                // Defer scroll to next run loop to allow layout to complete
-                DispatchQueue.main.async {
-                    // Disable animation during streaming for performance
-                    var transaction = Transaction()
-                    transaction.disablesAnimations = true
-                    withTransaction(transaction) {
-                        proxy.scrollTo("BOTTOM", anchor: .bottom)
-                    }
-                }
-            }
-            // Note: Removed onChange(of: session.turns.last?.content.count) handler
-            // as it was forcing lazy string joins on every content update.
-            // scrollTick already handles scroll updates during streaming.
+        return ZStack {
+            MessageThreadView(
+                blocks: blocks,
+                width: width,
+                personaName: displayName,
+                isStreaming: session.isStreaming,
+                turnsCount: session.turns.count,
+                scrollTick: session.scrollTick,
+                onCopy: copyTurnContent,
+                onRegenerate: regenerateTurn,
+                onScrolledToBottom: { isPinnedToBottom = true },
+                onScrolledAwayFromBottom: { isPinnedToBottom = false }
+            )
             .onReceive(NotificationCenter.default.publisher(for: .chatOverlayActivated)) { _ in
-                proxy.scrollTo("BOTTOM", anchor: .bottom)
                 isPinnedToBottom = true
             }
-        }
-    }
 
-    @ViewBuilder
-    private func scrollToBottomButton(proxy: ScrollViewProxy) -> some View {
-        if !isPinnedToBottom && !session.turns.isEmpty {
-            Button(action: {
-                withAnimation(theme.springAnimation()) {
-                    proxy.scrollTo("BOTTOM", anchor: .bottom)
-                }
-                isPinnedToBottom = true
-            }) {
-                Image(systemName: "chevron.down")
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundColor(theme.secondaryText)
-                    .frame(width: 32, height: 32)
-                    .background(
-                        Circle()
-                            .fill(theme.secondaryBackground)
-                            .shadow(color: Color.black.opacity(0.2), radius: 8, x: 0, y: 2)
+            // Scroll button overlay - isolated from content
+            VStack {
+                Spacer()
+                HStack {
+                    Spacer()
+                    ScrollToBottomButton(
+                        isPinnedToBottom: isPinnedToBottom,
+                        hasTurns: !session.turns.isEmpty,
+                        onTap: { isPinnedToBottom = true }
                     )
+                }
             }
-            .buttonStyle(.plain)
-            .padding(20)
-            .transition(.scale.combined(with: .opacity))
         }
     }
 
-    // MARK: - Helpers
-
-    private func displayModelName(_ raw: String?) -> String {
-        guard let raw else { return "Model" }
-        if raw.lowercased() == "foundation" { return "Foundation" }
-        if let last = raw.split(separator: "/").last { return String(last) }
-        return raw
-    }
-
+    /// Stable callback for copy action - prevents closure recreation
     private func copyTurnContent(turnId: UUID) {
         guard let turn = session.turns.first(where: { $0.id == turnId }) else { return }
 
@@ -1643,6 +1564,20 @@ struct ChatView: View {
 
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(textToCopy, forType: .string)
+    }
+
+    /// Stable callback for regenerate action - prevents closure recreation
+    private func regenerateTurn(turnId: UUID) {
+        session.regenerate(turnId: turnId)
+    }
+
+    // MARK: - Helpers
+
+    private func displayModelName(_ raw: String?) -> String {
+        guard let raw else { return "Model" }
+        if raw.lowercased() == "foundation" { return "Foundation" }
+        if let last = raw.split(separator: "/").last { return String(last) }
+        return raw
     }
 
     private func resizeWindowForContent(isEmpty: Bool) {
