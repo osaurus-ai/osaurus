@@ -258,17 +258,17 @@ private struct ScheduleEmptyState: View {
                 ScheduleUseCaseRow(
                     icon: "sun.max",
                     title: "Morning Briefing",
-                    description: "Get a daily summary at 8 AM"
+                    description: "Get a daily summary every morning"
                 )
                 ScheduleUseCaseRow(
                     icon: "chart.bar",
                     title: "Weekly Report",
-                    description: "Generate insights every Monday"
+                    description: "Generate insights on a schedule"
                 )
                 ScheduleUseCaseRow(
                     icon: "bell",
-                    title: "Custom Reminders",
-                    description: "Scheduled notifications"
+                    title: "Reminders",
+                    description: "Automated notifications at set times"
                 )
             }
             .frame(maxWidth: 320)
@@ -328,20 +328,20 @@ private struct ScheduleUseCaseRow: View {
                         .fill(theme.accentColor.opacity(0.1))
                 )
 
-            Text(title)
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundColor(theme.primaryText)
-                .lineLimit(1)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundColor(theme.primaryText)
 
-            Text(description)
-                .font(.system(size: 11))
-                .foregroundColor(theme.tertiaryText)
-                .lineLimit(1)
+                Text(description)
+                    .font(.system(size: 11))
+                    .foregroundColor(theme.tertiaryText)
+            }
 
             Spacer(minLength: 0)
         }
         .padding(.horizontal, 12)
-        .padding(.vertical, 8)
+        .padding(.vertical, 10)
         .background(
             RoundedRectangle(cornerRadius: 8)
                 .fill(theme.secondaryBackground.opacity(0.5))
