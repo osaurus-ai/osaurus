@@ -11,8 +11,7 @@ public enum ToolsPaths {
     public static func appSupportRoot() -> URL {
         let fm = FileManager.default
         let supportDir = fm.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
-        let bundleId = Bundle.main.bundleIdentifier ?? "osaurus"
-        return supportDir.appendingPathComponent(bundleId, isDirectory: true)
+        return supportDir.appendingPathComponent("com.dinoki.osaurus", isDirectory: true)
     }
 
     public static func toolsRootDirectory() -> URL {
