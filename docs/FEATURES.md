@@ -8,29 +8,30 @@ Canonical reference for all Osaurus features, their status, and documentation.
 
 ## Feature Matrix
 
-| Feature                          | Status    | README Section     | Documentation                 | Code Location                                                                 |
-| -------------------------------- | --------- | ------------------ | ----------------------------- | ----------------------------------------------------------------------------- |
-| Local LLM Server (MLX)           | Stable    | "Key Features"     | OpenAI_API_GUIDE.md           | Services/MLXService.swift, Services/ModelRuntime/                             |
-| Remote Providers                 | Stable    | "Key Features"     | REMOTE_PROVIDERS.md           | Services/RemoteProviderManager.swift, Services/RemoteProviderService.swift    |
-| Remote MCP Providers             | Stable    | "Key Features"     | REMOTE_MCP_PROVIDERS.md       | Services/MCPProviderManager.swift, Tools/MCPProviderTool.swift                |
-| MCP Server                       | Stable    | "MCP Server"       | (in README)                   | Networking/OsaurusServer.swift, Services/MCPServerManager.swift               |
-| Tools & Plugins                  | Stable    | "Tools & Plugins"  | PLUGIN_AUTHORING.md           | Tools/, Managers/PluginManager.swift                                          |
-| Personas                         | Stable    | "Personas"         | (in README)                   | Managers/PersonaManager.swift, Models/Persona.swift, Views/PersonasView.swift |
-| Developer Tools: Insights        | Stable    | "Developer Tools"  | DEVELOPER_TOOLS.md            | Views/InsightsView.swift, Services/InsightsService.swift                      |
-| Developer Tools: Server Explorer | Stable    | "Developer Tools"  | DEVELOPER_TOOLS.md            | Views/ServerView.swift                                                        |
-| Apple Foundation Models          | macOS 26+ | "What is Osaurus?" | (in README)                   | Services/FoundationModelService.swift                                         |
-| Menu Bar Chat                    | Stable    | "Highlights"       | (in README)                   | Views/ChatView.swift, Views/ChatOverlayView.swift                             |
-| Chat Session Management          | Stable    | "Highlights"       | (in README)                   | Managers/ChatSessionsManager.swift, Models/ChatSessionData.swift              |
-| Custom Themes                    | Stable    | "Highlights"       | (in README)                   | Views/ThemesView.swift, Views/Components/ThemeEditorView.swift                |
-| Model Manager                    | Stable    | "Highlights"       | (in README)                   | Views/ModelDownloadView.swift, Services/HuggingFaceService.swift              |
-| Shared Configuration             | Stable    | -                  | SHARED_CONFIGURATION_GUIDE.md | Services/SharedConfigurationService.swift                                     |
-| OpenAI API Compatibility         | Stable    | "API Endpoints"    | OpenAI_API_GUIDE.md           | Networking/HTTPHandler.swift, Models/OpenAIAPI.swift                          |
-| Anthropic API Compatibility      | Stable    | "API Endpoints"    | (in README)                   | Networking/HTTPHandler.swift, Models/AnthropicAPI.swift                       |
-| Ollama API Compatibility         | Stable    | "API Endpoints"    | (in README)                   | Networking/HTTPHandler.swift                                                  |
-| Voice Input (WhisperKit)         | Stable    | "Voice Input"      | VOICE_INPUT.md                | Services/WhisperKitService.swift, Managers/WhisperModelManager.swift          |
-| VAD Mode                         | Stable    | "Voice Input"      | VOICE_INPUT.md                | Services/VADService.swift, Views/ContentView.swift (VAD controls)             |
-| Transcription Mode               | Stable    | "Voice Input"      | VOICE_INPUT.md                | Services/TranscriptionModeService.swift, Views/TranscriptionOverlayView.swift |
-| CLI                              | Stable    | "CLI Reference"    | (in README)                   | Packages/OsaurusCLI/                                                          |
+| Feature                          | Status    | README Section     | Documentation                 | Code Location                                                                    |
+| -------------------------------- | --------- | ------------------ | ----------------------------- | -------------------------------------------------------------------------------- |
+| Local LLM Server (MLX)           | Stable    | "Key Features"     | OpenAI_API_GUIDE.md           | Services/MLXService.swift, Services/ModelRuntime/                                |
+| Remote Providers                 | Stable    | "Key Features"     | REMOTE_PROVIDERS.md           | Services/RemoteProviderManager.swift, Services/RemoteProviderService.swift       |
+| Remote MCP Providers             | Stable    | "Key Features"     | REMOTE_MCP_PROVIDERS.md       | Services/MCPProviderManager.swift, Tools/MCPProviderTool.swift                   |
+| MCP Server                       | Stable    | "MCP Server"       | (in README)                   | Networking/OsaurusServer.swift, Services/MCPServerManager.swift                  |
+| Tools & Plugins                  | Stable    | "Tools & Plugins"  | PLUGIN_AUTHORING.md           | Tools/, Managers/PluginManager.swift                                             |
+| Personas                         | Stable    | "Personas"         | (in README)                   | Managers/PersonaManager.swift, Models/Persona.swift, Views/PersonasView.swift    |
+| Schedules                        | Stable    | "Schedules"        | (in README)                   | Managers/ScheduleManager.swift, Models/Schedule.swift, Views/SchedulesView.swift |
+| Developer Tools: Insights        | Stable    | "Developer Tools"  | DEVELOPER_TOOLS.md            | Views/InsightsView.swift, Services/InsightsService.swift                         |
+| Developer Tools: Server Explorer | Stable    | "Developer Tools"  | DEVELOPER_TOOLS.md            | Views/ServerView.swift                                                           |
+| Apple Foundation Models          | macOS 26+ | "What is Osaurus?" | (in README)                   | Services/FoundationModelService.swift                                            |
+| Menu Bar Chat                    | Stable    | "Highlights"       | (in README)                   | Views/ChatView.swift, Views/ChatOverlayView.swift                                |
+| Chat Session Management          | Stable    | "Highlights"       | (in README)                   | Managers/ChatSessionsManager.swift, Models/ChatSessionData.swift                 |
+| Custom Themes                    | Stable    | "Highlights"       | (in README)                   | Views/ThemesView.swift, Views/Components/ThemeEditorView.swift                   |
+| Model Manager                    | Stable    | "Highlights"       | (in README)                   | Views/ModelDownloadView.swift, Services/HuggingFaceService.swift                 |
+| Shared Configuration             | Stable    | -                  | SHARED_CONFIGURATION_GUIDE.md | Services/SharedConfigurationService.swift                                        |
+| OpenAI API Compatibility         | Stable    | "API Endpoints"    | OpenAI_API_GUIDE.md           | Networking/HTTPHandler.swift, Models/OpenAIAPI.swift                             |
+| Anthropic API Compatibility      | Stable    | "API Endpoints"    | (in README)                   | Networking/HTTPHandler.swift, Models/AnthropicAPI.swift                          |
+| Ollama API Compatibility         | Stable    | "API Endpoints"    | (in README)                   | Networking/HTTPHandler.swift                                                     |
+| Voice Input (WhisperKit)         | Stable    | "Voice Input"      | VOICE_INPUT.md                | Services/WhisperKitService.swift, Managers/WhisperModelManager.swift             |
+| VAD Mode                         | Stable    | "Voice Input"      | VOICE_INPUT.md                | Services/VADService.swift, Views/ContentView.swift (VAD controls)                |
+| Transcription Mode               | Stable    | "Voice Input"      | VOICE_INPUT.md                | Services/TranscriptionModeService.swift, Views/TranscriptionOverlayView.swift    |
+| CLI                              | Stable    | "CLI Reference"    | (in README)                   | Packages/OsaurusCLI/                                                             |
 
 ---
 
@@ -48,6 +49,7 @@ Canonical reference for all Osaurus features, their status, and documentation.
 │  │   ├── RemoteProvidersView (Providers)                                 │
 │  │   ├── ToolsManagerView (Tools)                                        │
 │  │   ├── PersonasView (Personas)                                         │
+│  │   ├── SchedulesView (Schedules)                                       │
 │  │   ├── ThemesView (Themes)                                             │
 │  │   ├── InsightsView (Developer: Insights)                              │
 │  │   ├── ServerView (Developer: Server Explorer)                         │
@@ -69,6 +71,8 @@ Canonical reference for all Osaurus features, their status, and documentation.
 │  │   └── MCPProviderTool (Wrapped remote MCP tools)                      │
 │  ├── Personas                                                            │
 │  │   └── PersonaManager (Persona lifecycle and active persona)           │
+│  ├── Scheduling                                                          │
+│  │   └── ScheduleManager (Schedule lifecycle and execution)              │
 │  ├── Voice/Audio                                                         │
 │  │   ├── WhisperKitService (Speech-to-text transcription)                │
 │  │   ├── WhisperModelManager (Whisper model downloads)                   │
@@ -279,6 +283,52 @@ Canonical reference for all Osaurus features, their status, and documentation.
 | `defaultModel` | Optional model ID for this persona |
 | `temperature` | Optional temperature override |
 | `maxTokens` | Optional max tokens override |
+
+---
+
+### Schedules
+
+**Purpose:** Automate recurring AI tasks that run at specified intervals.
+
+**Components:**
+
+- `Models/Schedule.swift` — Schedule data model with frequency types
+- `Models/ScheduleStore.swift` — Schedule persistence (JSON files)
+- `Managers/ScheduleManager.swift` — Schedule lifecycle, timer management, and execution
+- `Views/SchedulesView.swift` — Schedule management UI
+
+**Features:**
+
+- **Frequency Options** — Once (specific date/time), Daily, Weekly, Monthly, Yearly
+- **Persona Integration** — Optionally assign a persona to handle the scheduled task
+- **Custom Instructions** — Define the prompt sent to the AI when the schedule runs
+- **Enable/Disable** — Toggle schedules on or off without deleting
+- **Manual Trigger** — "Run Now" option to execute a schedule immediately
+- **Results Tracking** — Links to the chat session from the last run
+- **Next Run Display** — Shows when the schedule will next execute
+- **Timezone Aware** — Automatically adjusts for system timezone changes
+
+**Schedule Properties:**
+
+| Property            | Description                                  |
+| ------------------- | -------------------------------------------- |
+| `name`              | Display name (required)                      |
+| `instructions`      | Prompt sent to the AI when the schedule runs |
+| `personaId`         | Optional persona to use for the chat         |
+| `frequency`         | When and how often to run                    |
+| `isEnabled`         | Whether the schedule is active               |
+| `lastRunAt`         | When the schedule last ran                   |
+| `lastChatSessionId` | Chat session ID from the last run            |
+
+**Frequency Types:**
+
+| Type    | Description                          | Example                          |
+| ------- | ------------------------------------ | -------------------------------- |
+| Once    | Run once at a specific date and time | "Jan 15, 2025 at 9:00 AM"        |
+| Daily   | Run every day at a specific time     | "Daily at 8:00 AM"               |
+| Weekly  | Run on a specific day each week      | "Every Monday at 9:00 AM"        |
+| Monthly | Run on a specific day each month     | "Monthly on the 1st at 10:00 AM" |
+| Yearly  | Run on a specific date each year     | "Yearly on Jan 1st at 12:00 PM"  |
 
 ---
 

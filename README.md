@@ -47,6 +47,7 @@ Osaurus is an all-in-one LLM server for macOS. It combines:
 - **Remote MCP Providers** — Connect to external MCP servers and aggregate their tools
 - **Plugin System** — Extend functionality with community and custom tools
 - **Personas** — Create custom AI assistants with unique prompts, tools, and visual themes
+- **Schedules** — Automate recurring AI tasks with timed execution
 - **Multi-Window Chat** — Multiple independent chat windows with per-window personas
 - **Developer Tools** — Built-in insights and server explorer for debugging
 - **Voice Input** — Speech-to-text using WhisperKit with real-time on-device transcription
@@ -66,6 +67,7 @@ Osaurus is an all-in-one LLM server for macOS. It combines:
 | **Remote MCP Providers** | Aggregate tools from external MCP servers                       |
 | **Tools & Plugins**      | Browser automation, file system, git, web search, and more      |
 | **Personas**             | Custom AI assistants with unique prompts, tools, and themes     |
+| **Schedules**            | Automate AI tasks with daily, weekly, monthly, or yearly runs   |
 | **Custom Themes**        | Create, import, and export themes with full color customization |
 | **Developer Tools**      | Request insights, API explorer, and live endpoint testing       |
 | **Multi-Window Chat**    | Multiple independent chat windows with per-window personas      |
@@ -219,6 +221,26 @@ Use cases:
 - **Creative Writer** — Higher temperature, no tool access for pure generation
 
 Access via Management window (`⌘ Shift M`) → **Personas**.
+
+### Schedules
+
+Automate recurring AI tasks that run at specified intervals.
+
+**Features:**
+
+- **Flexible Frequency** — Once, daily, weekly, monthly, or yearly execution
+- **Persona Integration** — Assign a persona to handle scheduled tasks
+- **Custom Instructions** — Define prompts sent to the AI when the schedule runs
+- **Manual Trigger** — Run any schedule immediately with "Run Now"
+- **Results Tracking** — View the chat session from the last run
+
+**Use Cases:**
+
+- **Daily Journaling** — Receive prompts for reflection each morning
+- **Weekly Reports** — Generate summaries on a schedule
+- **Recurring Analysis** — Automate data insights at regular intervals
+
+Access via Management window (`⌘ Shift M`) → **Schedules**.
 
 ### Multi-Window Chat
 
