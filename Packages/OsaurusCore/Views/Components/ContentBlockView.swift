@@ -35,7 +35,7 @@ struct ContentBlockView: View {
     // MARK: - Body
 
     var body: some View {
-        if case .groupSpacer = block {
+        if case .groupSpacer = block.kind {
             Color.clear.frame(height: 16)
         } else {
             contentContainer
@@ -59,10 +59,10 @@ struct ContentBlockView: View {
 
     @ViewBuilder
     private var blockContent: some View {
-        switch block {
-        case let .header(turnId, role, name, _, _):
+        switch block.kind {
+        case let .header(role, name, _):
             HeaderBlockContent(
-                turnId: turnId,
+                turnId: block.turnId,
                 role: role,
                 name: name,
                 onCopy: onCopy,
@@ -71,27 +71,27 @@ struct ContentBlockView: View {
             .padding(.top, 12)
             .padding(.bottom, isLastInTurn ? 8 : 2)
 
-        case let .paragraph(turnId, _, text, isStreaming, _, _):
+        case let .paragraph(_, text, isStreaming, _):
             MarkdownMessageView(
                 text: text,
                 baseWidth: contentWidth,
-                turnId: turnId,
+                turnId: block.turnId,
                 isStreaming: isStreaming
             )
             .padding(.top, 4)
             .padding(.bottom, isLastInTurn ? 16 : 4)
 
-        case let .toolCall(_, call, result, _):
+        case let .toolCall(call, result):
             InlineToolCallView(call: call, result: result)
                 .padding(.top, 6)
                 .padding(.bottom, isLastInTurn ? 12 : 4)
 
-        case let .toolCallGroup(_, calls, _):
+        case let .toolCallGroup(calls):
             GroupedToolCallsContainerView(calls: calls)
                 .padding(.top, 6)
                 .padding(.bottom, isLastInTurn ? 12 : 4)
 
-        case let .thinking(_, _, text, isStreaming, _):
+        case let .thinking(_, text, isStreaming):
             ThinkingBlockView(
                 thinking: text,
                 baseWidth: contentWidth,
@@ -101,7 +101,7 @@ struct ContentBlockView: View {
             .padding(.top, 6)
             .padding(.bottom, isLastInTurn ? 16 : 6)
 
-        case let .image(_, _, imageData, _):
+        case let .image(_, imageData):
             if let nsImage = NSImage(data: imageData) {
                 Image(nsImage: nsImage)
                     .resizable()

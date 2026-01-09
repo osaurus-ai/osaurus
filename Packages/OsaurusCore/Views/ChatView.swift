@@ -46,6 +46,7 @@ final class ChatSession: ObservableObject {
     private var _lastTurnsCount: Int = 0
     private var _lastTurnId: UUID?
     private var _lastContentLength: Int = 0
+    private var _lastThinkingLength: Int = 0
     private var _cachedEstimatedTokens: Int = 0
     private var _tokenCacheValid: Bool = false
     private var _lastToolOverridesHash: Int = 0
@@ -203,19 +204,21 @@ final class ChatSession: ObservableObject {
 
     /// Flattened content blocks for efficient LazyVStack rendering
     /// Each block is a paragraph, header, tool call, etc. that can be independently recycled
+    ///
+    /// PERFORMANCE: During streaming, only regenerates blocks for the last turn instead of all blocks.
+    /// This reduces CPU usage from O(n) to O(1) per streaming update.
     var visibleBlocks: [ContentBlock] {
         let currentCount = turns.count
         let currentLastId = turns.last?.id
         let currentContentLength = turns.last?.contentLength ?? 0
+        let currentThinkingLength = turns.last?.thinkingLength ?? 0
 
-        // Cache is valid if:
-        // - Same number of turns
-        // - Same last turn ID
-        // - Same content length (for streaming updates)
+        // Fast path: cache is completely valid
         let cacheValid =
             currentCount == _lastTurnsCount
             && currentLastId == _lastTurnId
             && currentContentLength == _lastContentLength
+            && currentThinkingLength == _lastThinkingLength
             && !_cachedContentBlocks.isEmpty
 
         if cacheValid {
@@ -229,18 +232,57 @@ final class ChatSession: ObservableObject {
         // Determine streaming turn ID
         let streamingTurnId = isStreaming ? turns.last?.id : nil
 
-        // Generate blocks
-        let blocks = ContentBlock.generateBlocks(
-            from: turns,
-            streamingTurnId: streamingTurnId,
-            personaName: displayName
-        )
+        // Incremental update path: only content/thinking changed for the same last turn
+        // This is the hot path during streaming - avoid regenerating all blocks
+        let canIncrementalUpdate =
+            isStreaming
+            && currentCount == _lastTurnsCount
+            && currentLastId == _lastTurnId
+            && currentLastId != nil
+            && !_cachedContentBlocks.isEmpty
+            && (currentContentLength != _lastContentLength || currentThinkingLength != _lastThinkingLength)
+
+        let blocks: [ContentBlock]
+        if canIncrementalUpdate {
+            // INCREMENTAL UPDATE: Only regenerate blocks for the last turn
+            // Find where the last turn's blocks start (look for first block with last turn's ID)
+            let lastTurnId = currentLastId!
+            var prefixEndIndex = _cachedContentBlocks.count
+
+            // Find the first block belonging to the last turn
+            for (index, block) in _cachedContentBlocks.enumerated() {
+                if block.turnId == lastTurnId {
+                    prefixEndIndex = index
+                    break
+                }
+            }
+
+            // Keep blocks before the last turn
+            let prefixBlocks = Array(_cachedContentBlocks.prefix(prefixEndIndex))
+
+            // Regenerate only the last turn's blocks
+            let lastTurnBlocks = ContentBlock.generateBlocks(
+                from: [turns.last!],
+                streamingTurnId: streamingTurnId,
+                personaName: displayName
+            )
+
+            blocks = prefixBlocks + lastTurnBlocks
+        } else {
+            // FULL REGENERATION: Turns changed or initial generation
+            blocks = ContentBlock.generateBlocks(
+                from: turns,
+                streamingTurnId: streamingTurnId,
+                personaName: displayName
+            )
+        }
 
         // Update cache
         _cachedContentBlocks = blocks
         _lastTurnsCount = currentCount
         _lastTurnId = currentLastId
         _lastContentLength = currentContentLength
+        _lastThinkingLength = currentThinkingLength
 
         return blocks
     }
@@ -367,6 +409,7 @@ final class ChatSession: ObservableObject {
         _lastTurnsCount = 0
         _lastTurnId = nil
         _lastContentLength = 0
+        _lastThinkingLength = 0
         _tokenCacheValid = false
 
         // Apply model from persona or global config (don't auto-persist, it's already saved)
