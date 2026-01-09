@@ -130,6 +130,9 @@ final class ChatWindowState: ObservableObject {
     }
 
     func refreshSessions() {
+        // Refresh the global sessions manager from disk first
+        ChatSessionsManager.shared.refresh()
+        // Then get the filtered sessions for this persona
         filteredSessions = ChatSessionsManager.shared.sessions(for: personaId)
     }
 

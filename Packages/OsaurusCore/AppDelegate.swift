@@ -147,6 +147,9 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
 
         // Setup global toast notification system
         ToastWindowController.shared.setup()
+
+        // Initialize ScheduleManager to start scheduled tasks
+        _ = ScheduleManager.shared
     }
 
     // MARK: - VAD Service

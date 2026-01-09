@@ -362,13 +362,25 @@ public final class ToastManager: ObservableObject {
 
         case .openChatSession(let sessionId, let personaId):
             // Open chat window with specific session
-            // Note: This would require ChatWindowManager to support loading sessions
-            if let personaId = personaId {
-                ChatWindowManager.shared.createWindow(personaId: personaId)
+            if let sessionData = ChatSessionStore.load(id: sessionId) {
+                let effectivePersonaId = personaId ?? sessionData.personaId
+                ChatWindowManager.shared.createWindow(
+                    personaId: effectivePersonaId,
+                    sessionData: sessionData
+                )
             } else {
-                ChatWindowManager.shared.createWindow()
+                // Session not found, just open a new chat
+                if let personaId = personaId {
+                    ChatWindowManager.shared.createWindow(personaId: personaId)
+                } else {
+                    ChatWindowManager.shared.createWindow()
+                }
+                print("[ToastManager] Session \(sessionId) not found, opening new chat")
             }
-            print("[ToastManager] Open chat session \(sessionId) - session loading not yet implemented")
+
+        case .showChatWindow(let windowId):
+            // Show an existing chat window
+            ChatWindowManager.shared.showWindow(id: windowId)
 
         case .openSettings(let tab):
             // Open settings window to specific tab

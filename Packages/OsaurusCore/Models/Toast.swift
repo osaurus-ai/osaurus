@@ -295,6 +295,9 @@ public enum ToastAction: Equatable, Sendable {
     /// Open a chat window and load a specific session
     case openChatSession(sessionId: UUID, personaId: UUID?)
 
+    /// Show an existing chat window by its window ID
+    case showChatWindow(windowId: UUID)
+
     /// Open settings/management window to a specific tab
     case openSettings(tab: String?)
 
@@ -314,6 +317,8 @@ public enum ToastAction: Equatable, Sendable {
             return "Open Chat"
         case .openChatSession:
             return "View Session"
+        case .showChatWindow:
+            return "View"
         case .openSettings:
             return "Open Settings"
         case .openURL:
@@ -338,6 +343,8 @@ public enum ToastAction: Equatable, Sendable {
                 return "openChatSession:\(sessionId.uuidString):\(pid.uuidString)"
             }
             return "openChatSession:\(sessionId.uuidString)"
+        case .showChatWindow(let windowId):
+            return "showChatWindow:\(windowId.uuidString)"
         case .openSettings(let tab):
             if let t = tab {
                 return "openSettings:\(t)"
