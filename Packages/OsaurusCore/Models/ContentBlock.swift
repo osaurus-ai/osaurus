@@ -3,20 +3,19 @@
 //  osaurus
 //
 //  Unified content block model for flattened chat rendering.
-//  Each block is a top-level item in LazyVStack for efficient recycling.
+//  Uses stored `id` for efficient SwiftUI diffing in LazyVStack.
 //
 
 import Foundation
 
-/// Position of a block within its turn (for styling purposes)
-enum BlockPosition {
-    case only  // Single block in turn - round all corners
-    case first  // First block - round top corners
-    case middle  // Middle block - no rounding
-    case last  // Last block - round bottom corners
+// MARK: - Supporting Types
+
+/// Position of a block within its turn (for styling)
+enum BlockPosition: Equatable {
+    case only, first, middle, last
 }
 
-/// A single tool call with its result for grouped rendering
+/// A tool call with its result for grouped rendering
 struct ToolCallItem: Equatable {
     let call: ToolCall
     let result: String?
@@ -26,111 +25,121 @@ struct ToolCallItem: Equatable {
     }
 }
 
+/// The kind/type of a content block
+enum ContentBlockKind {
+    case header(role: MessageRole, personaName: String, isFirstInGroup: Bool)
+    case paragraph(index: Int, text: String, isStreaming: Bool, role: MessageRole)
+    case toolCall(call: ToolCall, result: String?)
+    case toolCallGroup(calls: [ToolCallItem])
+    case thinking(index: Int, text: String, isStreaming: Bool)
+    case image(index: Int, imageData: Data)
+    case typingIndicator
+    case groupSpacer
+}
+
+// MARK: - ContentBlock
+
 /// A single content block in the flattened chat view.
-enum ContentBlock: Identifiable {
-    case header(turnId: UUID, role: MessageRole, personaName: String, isFirstInGroup: Bool, position: BlockPosition)
-    case paragraph(
+struct ContentBlock: Identifiable, Equatable {
+    let id: String
+    let turnId: UUID
+    let kind: ContentBlockKind
+    var position: BlockPosition
+
+    var role: MessageRole {
+        switch kind {
+        case let .header(role, _, _): return role
+        case let .paragraph(_, _, _, role): return role
+        case .toolCall, .toolCallGroup, .thinking, .typingIndicator, .groupSpacer: return .assistant
+        case .image: return .user
+        }
+    }
+
+    static func == (lhs: ContentBlock, rhs: ContentBlock) -> Bool {
+        lhs.id == rhs.id && lhs.position == rhs.position
+    }
+
+    func withPosition(_ newPosition: BlockPosition) -> ContentBlock {
+        ContentBlock(id: id, turnId: turnId, kind: kind, position: newPosition)
+    }
+
+    // MARK: - Factory Methods
+
+    static func header(
+        turnId: UUID,
+        role: MessageRole,
+        personaName: String,
+        isFirstInGroup: Bool,
+        position: BlockPosition
+    ) -> ContentBlock {
+        ContentBlock(
+            id: "header-\(turnId.uuidString)",
+            turnId: turnId,
+            kind: .header(role: role, personaName: personaName, isFirstInGroup: isFirstInGroup),
+            position: position
+        )
+    }
+
+    static func paragraph(
         turnId: UUID,
         index: Int,
         text: String,
         isStreaming: Bool,
         role: MessageRole,
         position: BlockPosition
-    )
-    case toolCall(turnId: UUID, call: ToolCall, result: String?, position: BlockPosition)
-    case toolCallGroup(turnId: UUID, calls: [ToolCallItem], position: BlockPosition)
-    case thinking(turnId: UUID, index: Int, text: String, isStreaming: Bool, position: BlockPosition)
-    case image(turnId: UUID, index: Int, imageData: Data, position: BlockPosition)
-    case typingIndicator(turnId: UUID, position: BlockPosition)
-    case groupSpacer(afterTurnId: UUID)
-
-    var id: String {
-        switch self {
-        case let .header(turnId, _, _, _, _): return "header-\(turnId.uuidString)"
-        case let .paragraph(turnId, index, _, _, _, _): return "para-\(turnId.uuidString)-\(index)"
-        case let .toolCall(turnId, call, _, _): return "tool-\(turnId.uuidString)-\(call.id)"
-        case let .toolCallGroup(turnId, calls, _):
-            let callIds = calls.map(\.call.id).joined(separator: "-")
-            return "toolgroup-\(turnId.uuidString)-\(callIds)"
-        case let .thinking(turnId, index, _, _, _): return "think-\(turnId.uuidString)-\(index)"
-        case let .image(turnId, index, _, _): return "img-\(turnId.uuidString)-\(index)"
-        case let .typingIndicator(turnId, _): return "typing-\(turnId.uuidString)"
-        case let .groupSpacer(afterTurnId): return "spacer-\(afterTurnId.uuidString)"
-        }
+    ) -> ContentBlock {
+        ContentBlock(
+            id: "para-\(turnId.uuidString)-\(index)",
+            turnId: turnId,
+            kind: .paragraph(index: index, text: text, isStreaming: isStreaming, role: role),
+            position: position
+        )
     }
 
-    var turnId: UUID {
-        switch self {
-        case let .header(turnId, _, _, _, _),
-            let .paragraph(turnId, _, _, _, _, _),
-            let .toolCall(turnId, _, _, _),
-            let .toolCallGroup(turnId, _, _),
-            let .thinking(turnId, _, _, _, _),
-            let .image(turnId, _, _, _),
-            let .typingIndicator(turnId, _),
-            let .groupSpacer(turnId):
-            return turnId
-        }
+    static func toolCall(turnId: UUID, call: ToolCall, result: String?, position: BlockPosition) -> ContentBlock {
+        ContentBlock(
+            id: "tool-\(turnId.uuidString)-\(call.id)",
+            turnId: turnId,
+            kind: .toolCall(call: call, result: result),
+            position: position
+        )
     }
 
-    var role: MessageRole {
-        switch self {
-        case let .header(_, role, _, _, _): return role
-        case let .paragraph(_, _, _, _, role, _): return role
-        case .toolCall, .toolCallGroup, .thinking, .typingIndicator: return .assistant
-        case .image: return .user
-        case .groupSpacer: return .assistant
-        }
+    static func toolCallGroup(turnId: UUID, calls: [ToolCallItem], position: BlockPosition) -> ContentBlock {
+        ContentBlock(
+            id: "toolgroup-\(turnId.uuidString)-\(calls.map(\.call.id).joined(separator: "-"))",
+            turnId: turnId,
+            kind: .toolCallGroup(calls: calls),
+            position: position
+        )
     }
 
-    var position: BlockPosition {
-        switch self {
-        case let .header(_, _, _, _, position),
-            let .paragraph(_, _, _, _, _, position),
-            let .toolCall(_, _, _, position),
-            let .toolCallGroup(_, _, position),
-            let .thinking(_, _, _, _, position),
-            let .image(_, _, _, position),
-            let .typingIndicator(_, position):
-            return position
-        case .groupSpacer:
-            return .only
-        }
+    static func thinking(turnId: UUID, index: Int, text: String, isStreaming: Bool, position: BlockPosition)
+        -> ContentBlock
+    {
+        ContentBlock(
+            id: "think-\(turnId.uuidString)-\(index)",
+            turnId: turnId,
+            kind: .thinking(index: index, text: text, isStreaming: isStreaming),
+            position: position
+        )
     }
 
-    /// Returns a copy of this block with the specified position
-    func withPosition(_ newPosition: BlockPosition) -> ContentBlock {
-        switch self {
-        case let .header(turnId, role, personaName, isFirstInGroup, _):
-            return .header(
-                turnId: turnId,
-                role: role,
-                personaName: personaName,
-                isFirstInGroup: isFirstInGroup,
-                position: newPosition
-            )
-        case let .paragraph(turnId, index, text, isStreaming, role, _):
-            return .paragraph(
-                turnId: turnId,
-                index: index,
-                text: text,
-                isStreaming: isStreaming,
-                role: role,
-                position: newPosition
-            )
-        case let .toolCall(turnId, call, result, _):
-            return .toolCall(turnId: turnId, call: call, result: result, position: newPosition)
-        case let .toolCallGroup(turnId, calls, _):
-            return .toolCallGroup(turnId: turnId, calls: calls, position: newPosition)
-        case let .thinking(turnId, index, text, isStreaming, _):
-            return .thinking(turnId: turnId, index: index, text: text, isStreaming: isStreaming, position: newPosition)
-        case let .image(turnId, index, imageData, _):
-            return .image(turnId: turnId, index: index, imageData: imageData, position: newPosition)
-        case let .typingIndicator(turnId, _):
-            return .typingIndicator(turnId: turnId, position: newPosition)
-        case .groupSpacer:
-            return self
-        }
+    static func image(turnId: UUID, index: Int, imageData: Data, position: BlockPosition) -> ContentBlock {
+        ContentBlock(
+            id: "img-\(turnId.uuidString)-\(index)",
+            turnId: turnId,
+            kind: .image(index: index, imageData: imageData),
+            position: position
+        )
+    }
+
+    static func typingIndicator(turnId: UUID, position: BlockPosition) -> ContentBlock {
+        ContentBlock(id: "typing-\(turnId.uuidString)", turnId: turnId, kind: .typingIndicator, position: position)
+    }
+
+    static func groupSpacer(afterTurnId: UUID) -> ContentBlock {
+        ContentBlock(id: "spacer-\(afterTurnId.uuidString)", turnId: afterTurnId, kind: .groupSpacer, position: .only)
     }
 }
 
@@ -139,25 +148,17 @@ enum ContentBlock: Identifiable {
 extension ContentBlock {
     private static let maxParagraphSize = 600
 
-    /// Check if a turn is "tool-only" (has tool calls but no text content)
     private static func isToolOnlyTurn(_ turn: ChatTurn) -> Bool {
         turn.contentIsEmpty && !turn.hasThinking && (turn.toolCalls?.isEmpty == false)
     }
 
-    static func generateBlocks(
-        from turns: [ChatTurn],
-        streamingTurnId: UUID?,
-        personaName: String
-    ) -> [ContentBlock] {
+    static func generateBlocks(from turns: [ChatTurn], streamingTurnId: UUID?, personaName: String) -> [ContentBlock] {
         var blocks: [ContentBlock] = []
         var previousRole: MessageRole?
         var previousTurnId: UUID?
-
-        // Accumulator for consecutive tool-only turns
         var pendingToolCalls: [ToolCallItem] = []
         var pendingToolTurnId: UUID?
 
-        /// Flush accumulated tool calls into a single group block
         func flushPendingToolCalls(into turnBlocks: inout [ContentBlock]) {
             guard !pendingToolCalls.isEmpty, let turnId = pendingToolTurnId else { return }
             turnBlocks.append(.toolCallGroup(turnId: turnId, calls: pendingToolCalls, position: .middle))
@@ -171,20 +172,15 @@ extension ContentBlock {
             let isStreaming = turn.id == streamingTurnId
             let isFirstInGroup = turn.role != previousRole
             let isToolOnly = isToolOnlyTurn(turn)
-
-            // Check if next turn is also a tool-only assistant turn (for grouping)
             let nextTurn = index + 1 < filteredTurns.count ? filteredTurns[index + 1] : nil
             let nextIsToolOnly = nextTurn.map { isToolOnlyTurn($0) && $0.role == .assistant } ?? false
 
-            // Spacer between role groups
             if isFirstInGroup, let prevId = previousTurnId {
                 blocks.append(.groupSpacer(afterTurnId: prevId))
             }
 
-            // Collect blocks for this turn first (to determine positions)
             var turnBlocks: [ContentBlock] = []
 
-            // Header for first message in group
             if isFirstInGroup {
                 turnBlocks.append(
                     .header(
@@ -192,17 +188,15 @@ extension ContentBlock {
                         role: turn.role,
                         personaName: turn.role == .assistant ? personaName : "You",
                         isFirstInGroup: true,
-                        position: .first  // Temporary, will be updated
+                        position: .first
                     )
                 )
             }
 
-            // Images
             for (idx, imageData) in turn.attachedImages.enumerated() {
                 turnBlocks.append(.image(turnId: turn.id, index: idx, imageData: imageData, position: .middle))
             }
 
-            // Thinking blocks
             if turn.role == .assistant && turn.hasThinking {
                 let paragraphs = splitIntoParagraphs(turn.thinking)
                 for (idx, text) in paragraphs.enumerated() {
@@ -219,11 +213,8 @@ extension ContentBlock {
                 }
             }
 
-            // Content paragraphs or typing indicator
             if !turn.contentIsEmpty {
-                // Flush any pending tool calls before content
                 flushPendingToolCalls(into: &turnBlocks)
-
                 let paragraphs = splitIntoParagraphs(turn.content)
                 for (idx, text) in paragraphs.enumerated() {
                     let isLast = idx == paragraphs.count - 1
@@ -238,34 +229,20 @@ extension ContentBlock {
                         )
                     )
                 }
-            } else if isStreaming && turn.role == .assistant && !turn.hasThinking {
-                let hasToolCalls = !(turn.toolCalls ?? []).isEmpty
-                if !hasToolCalls {
-                    turnBlocks.append(.typingIndicator(turnId: turn.id, position: .middle))
-                }
+            } else if isStreaming && turn.role == .assistant && !turn.hasThinking && (turn.toolCalls ?? []).isEmpty {
+                turnBlocks.append(.typingIndicator(turnId: turn.id, position: .middle))
             }
 
-            // Tool calls - accumulate consecutive tool-only turns
             if let toolCalls = turn.toolCalls, !toolCalls.isEmpty {
-                let items = toolCalls.map { call in
-                    ToolCallItem(call: call, result: turn.toolResults[call.id])
-                }
-
-                if pendingToolTurnId == nil {
-                    pendingToolTurnId = turn.id
-                }
+                let items = toolCalls.map { ToolCallItem(call: $0, result: turn.toolResults[$0.id]) }
+                if pendingToolTurnId == nil { pendingToolTurnId = turn.id }
                 pendingToolCalls.append(contentsOf: items)
-
-                // Flush if this is the last tool-only turn in sequence or turn has content after
                 if !nextIsToolOnly || !isToolOnly {
                     flushPendingToolCalls(into: &turnBlocks)
                 }
             }
 
-            // Update positions based on count
-            let updatedBlocks = assignPositions(to: turnBlocks)
-            blocks.append(contentsOf: updatedBlocks)
-
+            blocks.append(contentsOf: assignPositions(to: turnBlocks))
             previousRole = turn.role
             previousTurnId = turn.id
         }
@@ -273,50 +250,32 @@ extension ContentBlock {
         return blocks
     }
 
-    /// Assigns proper positions (first/middle/last/only) to blocks within a turn
     private static func assignPositions(to blocks: [ContentBlock]) -> [ContentBlock] {
         guard !blocks.isEmpty else { return blocks }
-
         return blocks.enumerated().map { index, block in
-            let position: BlockPosition
-            if blocks.count == 1 {
-                position = .only
-            } else if index == 0 {
-                position = .first
-            } else if index == blocks.count - 1 {
-                position = .last
-            } else {
-                position = .middle
-            }
-
+            let position: BlockPosition =
+                blocks.count == 1 ? .only : (index == 0 ? .first : (index == blocks.count - 1 ? .last : .middle))
             return block.withPosition(position)
         }
     }
 
-    /// Splits text into paragraphs while preserving code blocks
     private static func splitIntoParagraphs(_ text: String) -> [String] {
         guard text.count > maxParagraphSize else { return [text] }
 
         var result: [String] = []
         var chunk = ""
         var inCodeBlock = false
-
         let lines = text.components(separatedBy: "\n")
 
         for (index, line) in lines.enumerated() {
             let trimmed = line.trimmingCharacters(in: .whitespaces)
-
-            if trimmed.hasPrefix("```") {
-                inCodeBlock.toggle()
-            }
-
+            if trimmed.hasPrefix("```") { inCodeBlock.toggle() }
             if !chunk.isEmpty { chunk += "\n" }
             chunk += line
 
             let isLastLine = index == lines.count - 1
             let isBlankLine = trimmed.isEmpty
             let nextIsBlank = index + 1 < lines.count && lines[index + 1].trimmingCharacters(in: .whitespaces).isEmpty
-
             let shouldSplit =
                 !inCodeBlock && !isLastLine
                 && ((chunk.count >= maxParagraphSize && (isBlankLine || nextIsBlank))
@@ -329,10 +288,7 @@ extension ContentBlock {
         }
 
         let remaining = chunk.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !remaining.isEmpty {
-            result.append(remaining)
-        }
-
+        if !remaining.isEmpty { result.append(remaining) }
         return result.isEmpty ? [text] : result
     }
 }
