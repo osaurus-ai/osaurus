@@ -377,6 +377,10 @@ public enum ToastAction: Equatable, Sendable {
             let personaId = parts.count > 2 ? UUID(uuidString: parts[2]) : nil
             return .openChatSession(sessionId: sessionId, personaId: personaId)
 
+        case "showChatWindow":
+            guard parts.count > 1, let windowId = UUID(uuidString: parts[1]) else { return nil }
+            return .showChatWindow(windowId: windowId)
+
         case "openSettings":
             let tab = parts.count > 1 ? parts[1] : nil
             return .openSettings(tab: tab)
