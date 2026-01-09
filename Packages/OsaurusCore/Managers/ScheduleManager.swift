@@ -30,11 +30,8 @@ public final class ScheduleManager: ObservableObject {
 
     // MARK: - Private State
 
-    /// The timer for the next scheduled execution
-    private nonisolated(unsafe) var nextTimer: DispatchSourceTimer?
-
-    /// The queue for timer operations
-    private let timerQueue = DispatchQueue(label: "com.osaurus.scheduleTimer", qos: .utility)
+    /// The task that waits for the next scheduled execution
+    private var timerTask: Task<Void, Never>?
 
     /// Active execution tasks
     private var executionTasks: [UUID: Task<Void, Never>] = [:]
@@ -72,9 +69,7 @@ public final class ScheduleManager: ObservableObject {
         if let observer = timezoneObserver {
             NotificationCenter.default.removeObserver(observer)
         }
-        // Cancel timer directly since we can't call @MainActor methods from deinit
-        nextTimer?.cancel()
-        nextTimer = nil
+        timerTask?.cancel()
     }
 
     // MARK: - Public API
@@ -191,10 +186,10 @@ public final class ScheduleManager: ObservableObject {
 
     // MARK: - Timer Management
 
-    /// Cancel the current timer
+    /// Cancel the current timer task
     private func cancelTimer() {
-        nextTimer?.cancel()
-        nextTimer = nil
+        timerTask?.cancel()
+        timerTask = nil
     }
 
     /// Schedule the next timer based on all enabled schedules
@@ -235,17 +230,16 @@ public final class ScheduleManager: ObservableObject {
             "[Osaurus] Next schedule timer in \(String(format: "%.1f", delay)) seconds (\(schedulesToRun.count) schedule(s))"
         )
 
-        // Create precise timer
-        let timer = DispatchSource.makeTimerSource(queue: timerQueue)
-        timer.schedule(deadline: .now() + delay, leeway: .milliseconds(100))
-        timer.setEventHandler { [weak self] in
-            // Dispatch to main queue for @MainActor safety
-            DispatchQueue.main.async {
+        // Use Task with sleep - clean async/await approach that works with @MainActor
+        timerTask = Task { @MainActor [weak self] in
+            do {
+                try await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+                guard !Task.isCancelled else { return }
                 self?.timerFired()
+            } catch {
+                // Task was cancelled
             }
         }
-        timer.resume()
-        nextTimer = timer
     }
 
     /// Called when the timer fires
@@ -256,8 +250,20 @@ public final class ScheduleManager: ObservableObject {
         let schedulesToRun = schedules.filter { schedule in
             guard schedule.isEnabled else { return false }
             guard !runningTasks.keys.contains(schedule.id) else { return false }  // Already running
-            guard let nextRun = schedule.frequency.nextRunDate() else { return false }
-            // Run if the next run time is now or in the past (within 60s tolerance)
+
+            // Determine reference time for checking next run:
+            // - If schedule has run before, use lastRunAt (finds the next run after that)
+            // - Otherwise, look back up to 1 hour (handles new schedules + system sleep)
+            let checkFrom: Date
+            if let lastRun = schedule.lastRunAt {
+                checkFrom = lastRun
+            } else {
+                checkFrom = now.addingTimeInterval(-3600)  // 1 hour ago
+            }
+
+            guard let nextRun = schedule.frequency.nextRunDate(after: checkFrom) else { return false }
+
+            // Run if the scheduled time is now or in the recent past (with small future tolerance)
             return nextRun <= now.addingTimeInterval(60)
         }
 
