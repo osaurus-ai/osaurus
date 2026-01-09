@@ -355,12 +355,23 @@ public final class ToastManager: ObservableObject {
         case .openChat(let personaId):
             // Open chat window with optional persona
             if let personaId = personaId {
-                ChatWindowManager.shared.createWindow(personaId: personaId)
+                // Check if there's already a window for this persona
+                if let existingWindow = ChatWindowManager.shared.findWindows(byPersonaId: personaId).first {
+                    ChatWindowManager.shared.showWindow(id: existingWindow.id)
+                } else {
+                    ChatWindowManager.shared.createWindow(personaId: personaId)
+                }
             } else {
                 ChatWindowManager.shared.createWindow()
             }
 
         case .openChatSession(let sessionId, let personaId):
+            // Check if there's already a window with this session open
+            if let existingWindow = ChatWindowManager.shared.findWindow(bySessionId: sessionId) {
+                ChatWindowManager.shared.showWindow(id: existingWindow.id)
+                return
+            }
+
             // Open chat window with specific session
             if let sessionData = ChatSessionStore.load(id: sessionId) {
                 let effectivePersonaId = personaId ?? sessionData.personaId
