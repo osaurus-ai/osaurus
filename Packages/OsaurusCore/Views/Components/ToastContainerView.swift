@@ -7,6 +7,7 @@
 //
 
 import AppKit
+import Combine
 import SwiftUI
 
 // MARK: - Pass-Through View
@@ -167,6 +168,7 @@ public final class ToastWindowController: NSObject {
 
     private var toastPanel: NSPanel?
     private var hostingView: NSHostingView<ToastOverlayWindowContent>?
+    private var cancellables = Set<AnyCancellable>()
 
     private override init() {
         super.init()
@@ -223,20 +225,49 @@ public final class ToastWindowController: NSObject {
             object: nil
         )
 
+        // Observe window focus changes to move toast panel to active window's screen
+        ChatWindowManager.shared.$lastFocusedWindowId
+            .sink { [weak self] windowId in
+                self?.updatePanelScreen(forWindowId: windowId)
+            }
+            .store(in: &cancellables)
+
         print("[Osaurus] Toast window controller setup complete on screen: \(screen.localizedName)")
     }
 
     /// Teardown the toast window
     public func teardown() {
         NotificationCenter.default.removeObserver(self)
+        cancellables.removeAll()
         toastPanel?.close()
         toastPanel = nil
         hostingView = nil
     }
 
     @objc private func screenDidChange() {
-        guard let screen = NSScreen.main, let panel = toastPanel else { return }
-        panel.setFrame(screen.visibleFrame, display: true)
+        updatePanelScreen(forWindowId: ChatWindowManager.shared.lastFocusedWindowId)
+    }
+
+    /// Update the toast panel to display on the screen containing the active chat window
+    private func updatePanelScreen(forWindowId windowId: UUID?) {
+        guard let panel = toastPanel else { return }
+
+        // Get screen from active chat window, fallback to main screen
+        let targetScreen: NSScreen
+        if let windowId = windowId,
+            let chatWindow = ChatWindowManager.shared.getNSWindow(id: windowId),
+            let windowScreen = chatWindow.screen
+        {
+            targetScreen = windowScreen
+        } else {
+            targetScreen = NSScreen.main ?? NSScreen.screens.first!
+        }
+
+        // Only update if the screen actually changed
+        if panel.frame != targetScreen.visibleFrame {
+            panel.setFrame(targetScreen.visibleFrame, display: true)
+            print("[Osaurus] Toast panel moved to screen: \(targetScreen.localizedName)")
+        }
     }
 }
 

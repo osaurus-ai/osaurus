@@ -180,6 +180,11 @@ public final class ChatWindowManager: NSObject, ObservableObject {
         windows.values.filter { $0.personaId == personaId }
     }
 
+    /// Find a window by session ID
+    public func findWindow(bySessionId sessionId: UUID) -> ChatWindowInfo? {
+        windows.values.first { $0.sessionId == sessionId }
+    }
+
     /// Check if any windows are visible
     public var hasVisibleWindows: Bool {
         nsWindows.values.contains { $0.isVisible }
