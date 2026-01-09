@@ -426,7 +426,7 @@ public final class ScheduleManager: ObservableObject {
             message: "Scheduled task finished successfully",
             action: .showChatWindow(windowId: windowId),
             buttonTitle: "View Chat",
-            timeout: 10.0
+            timeout: 0  // Only dismissable by user
         )
 
         NotificationCenter.default.post(

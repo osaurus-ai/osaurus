@@ -31,20 +31,30 @@ struct ToastView: View {
             accentBar
 
             // Content
-            HStack(spacing: 12) {
+            HStack(alignment: .top, spacing: 12) {
                 // Avatar or icon
                 leadingContent
 
-                // Text content
-                textContent
+                // Text content and action button stacked vertically
+                VStack(alignment: .leading, spacing: 8) {
+                    // Title and dismiss button row
+                    HStack(alignment: .top, spacing: 8) {
+                        textContent
 
-                Spacer(minLength: 8)
+                        Spacer(minLength: 4)
 
-                // Action button or dismiss
-                trailingContent
+                        // Dismiss button
+                        dismissButton
+                    }
+
+                    // Action button below text content
+                    if let actionTitle = toast.effectiveActionTitle, hasAction {
+                        actionButton(title: actionTitle)
+                    }
+                }
             }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 12)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 14)
         }
         .background(toastBackground)
         .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
@@ -63,7 +73,7 @@ struct ToastView: View {
                 isHovering = hovering
             }
         }
-        .frame(maxWidth: 380, alignment: .leading)
+        .frame(maxWidth: 400, alignment: .leading)
         .fixedSize(horizontal: false, vertical: true)
     }
 
@@ -142,47 +152,46 @@ struct ToastView: View {
         }
     }
 
-    // MARK: - Trailing Content (Action/Dismiss)
+    // MARK: - Action Button
 
     @ViewBuilder
-    private var trailingContent: some View {
-        HStack(spacing: 8) {
-            // Action button (supports both legacy actionTitle and new ToastAction)
-            if let actionTitle = toast.effectiveActionTitle, hasAction {
-                Button(action: { onAction?() }) {
-                    Text(actionTitle)
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundColor(accentColor)
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 5)
-                        .background(
-                            RoundedRectangle(cornerRadius: 6)
-                                .fill(accentColor.opacity(0.15))
-                        )
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 6)
-                                .stroke(accentColor.opacity(0.3), lineWidth: 1)
-                        )
-                }
-                .buttonStyle(PlainButtonStyle())
-            }
+    private func actionButton(title: String) -> some View {
+        Button(action: { onAction?() }) {
+            Text(title)
+                .font(.system(size: 12, weight: .medium))
+                .foregroundColor(accentColor)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 6)
+                .background(
+                    RoundedRectangle(cornerRadius: 6)
+                        .fill(accentColor.opacity(0.15))
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 6)
+                        .stroke(accentColor.opacity(0.3), lineWidth: 1)
+                )
+        }
+        .buttonStyle(PlainButtonStyle())
+    }
 
-            // Dismiss button (shown on hover or for non-loading toasts)
-            if isHovering || toast.type != .loading {
-                Button(action: onDismiss) {
-                    Image(systemName: "xmark")
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundColor(theme.tertiaryText)
-                        .frame(width: 20, height: 20)
-                        .background(
-                            Circle()
-                                .fill(theme.tertiaryBackground)
-                        )
-                }
-                .buttonStyle(PlainButtonStyle())
-                .opacity(isHovering ? 1 : 0.6)
-                .transition(.opacity)
+    // MARK: - Dismiss Button
+
+    @ViewBuilder
+    private var dismissButton: some View {
+        if isHovering || toast.type != .loading {
+            Button(action: onDismiss) {
+                Image(systemName: "xmark")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundColor(theme.tertiaryText)
+                    .frame(width: 18, height: 18)
+                    .background(
+                        Circle()
+                            .fill(theme.tertiaryBackground)
+                    )
             }
+            .buttonStyle(PlainButtonStyle())
+            .opacity(isHovering ? 1 : 0.6)
+            .transition(.opacity)
         }
     }
 
