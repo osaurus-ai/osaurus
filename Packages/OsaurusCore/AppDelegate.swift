@@ -144,6 +144,12 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
 
         // Initialize Transcription Mode service
         initializeTranscriptionModeService()
+
+        // Setup global toast notification system
+        ToastWindowController.shared.setup()
+
+        // Initialize ScheduleManager to start scheduled tasks
+        _ = ScheduleManager.shared
     }
 
     // MARK: - VAD Service
@@ -332,6 +338,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
     public func applicationWillTerminate(_ notification: Notification) {
         NSLog("Osaurus server app terminating")
         PluginRepositoryService.shared.stopBackgroundRefresh()
+        ToastWindowController.shared.teardown()
         Task { @MainActor in
             await MCPServerManager.shared.stopAll()
         }

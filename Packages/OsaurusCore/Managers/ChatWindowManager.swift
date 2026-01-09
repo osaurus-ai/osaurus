@@ -52,30 +52,35 @@ public final class ChatWindowManager: NSObject, ObservableObject {
     // MARK: - Public API
 
     /// Create a new chat window with default persona
-    /// - Parameter personaId: The persona for this window (defaults to active persona)
+    /// - Parameters:
+    ///   - personaId: The persona for this window (defaults to active persona)
+    ///   - showImmediately: Whether to show the window immediately (default: true)
     /// - Returns: The window identifier
     @discardableResult
-    public func createWindow(personaId: UUID? = nil) -> UUID {
-        return createWindowInternal(personaId: personaId, sessionData: nil)
+    public func createWindow(personaId: UUID? = nil, showImmediately: Bool = true) -> UUID {
+        return createWindowInternal(personaId: personaId, sessionData: nil, showImmediately: showImmediately)
     }
 
     /// Create a new chat window with existing session data
     /// - Parameters:
     ///   - personaId: The persona for this window (defaults to active persona)
     ///   - sessionData: Optional existing session to load
+    ///   - showImmediately: Whether to show the window immediately (default: true)
     /// - Returns: The window identifier
     @discardableResult
     func createWindow(
         personaId: UUID? = nil,
-        sessionData: ChatSessionData?
+        sessionData: ChatSessionData?,
+        showImmediately: Bool = true
     ) -> UUID {
-        return createWindowInternal(personaId: personaId, sessionData: sessionData)
+        return createWindowInternal(personaId: personaId, sessionData: sessionData, showImmediately: showImmediately)
     }
 
     /// Internal implementation for creating windows
     private func createWindowInternal(
         personaId: UUID?,
-        sessionData: ChatSessionData?
+        sessionData: ChatSessionData?,
+        showImmediately: Bool
     ) -> UUID {
         let windowId = UUID()
         let effectivePersonaId = personaId ?? PersonaManager.shared.activePersonaId
@@ -98,10 +103,14 @@ public final class ChatWindowManager: NSObject, ObservableObject {
 
         nsWindows[windowId] = window
 
-        // Show the window
-        showWindow(id: windowId)
+        // Show the window if requested
+        if showImmediately {
+            showWindow(id: windowId)
+        }
 
-        print("[ChatWindowManager] Created window \(windowId) for persona \(effectivePersonaId)")
+        print(
+            "[ChatWindowManager] Created window \(windowId) for persona \(effectivePersonaId) (shown: \(showImmediately))"
+        )
 
         return windowId
     }

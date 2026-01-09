@@ -39,6 +39,12 @@ struct ConfigurationView: View {
     @State private var tempPrefillStep: String = ""
     @State private var tempEvictionPolicy: ModelEvictionPolicy = .strictSingleModel
 
+    // Toast settings state
+    @State private var tempToastPosition: ToastPosition = .topRight
+    @State private var tempToastTimeout: String = ""
+    @State private var tempToastEnabled: Bool = true
+    @State private var tempToastMaxVisible: String = ""
+
     // Search (passed from sidebar)
     @Binding var searchText: String
 
@@ -347,6 +353,70 @@ struct ConfigurationView: View {
                         if matchesSearch("Voice", "Whisper", "Transcription", "Model", "Language", "Speech") {
                             VoiceSettingsSection()
                         }
+
+                        // MARK: - Notifications Section
+                        if matchesSearch("Notifications", "Toast", "Position", "Timeout", "Alerts") {
+                            SettingsSection(title: "Notifications", icon: "bell") {
+                                VStack(alignment: .leading, spacing: 20) {
+                                    // Enable Toasts Toggle
+                                    SettingsToggle(
+                                        title: "Show Toast Notifications",
+                                        description: "Display notifications for background tasks and events",
+                                        isOn: $tempToastEnabled
+                                    )
+                                    .onChange(of: tempToastEnabled) { _, _ in
+                                        saveToastConfig()
+                                    }
+
+                                    // Position Picker
+                                    SettingsField(
+                                        label: "Toast Position",
+                                        hint: "Where toasts appear on screen"
+                                    ) {
+                                        ToastPositionPicker(selection: $tempToastPosition)
+                                            .onChange(of: tempToastPosition) { _, _ in
+                                                saveToastConfig()
+                                            }
+                                    }
+
+                                    // Timeout
+                                    StyledSettingsTextField(
+                                        label: "Default Timeout",
+                                        text: $tempToastTimeout,
+                                        placeholder: "5.0",
+                                        help: "Seconds before auto-dismiss. Empty uses default 5s"
+                                    )
+                                    .onChange(of: tempToastTimeout) { _, _ in
+                                        saveToastConfig()
+                                    }
+
+                                    // Max Visible
+                                    StyledSettingsTextField(
+                                        label: "Max Visible Toasts",
+                                        text: $tempToastMaxVisible,
+                                        placeholder: "5",
+                                        help: "Maximum toasts shown at once. Empty uses default 5"
+                                    )
+                                    .onChange(of: tempToastMaxVisible) { _, _ in
+                                        saveToastConfig()
+                                    }
+
+                                    // Test Toast Button
+                                    HStack {
+                                        Spacer()
+                                        Button(action: showTestToast) {
+                                            HStack(spacing: 6) {
+                                                Image(systemName: "bell.badge")
+                                                    .font(.system(size: 12))
+                                                Text("Test Toast")
+                                                    .font(.system(size: 12, weight: .medium))
+                                            }
+                                        }
+                                        .buttonStyle(SettingsButtonStyle())
+                                    }
+                                }
+                            }
+                        }
                     }
                     .padding(.horizontal, 24)
                     .padding(.vertical, 24)
@@ -475,6 +545,18 @@ struct ConfigurationView: View {
             ? "" : String(configuration.genPrefillStepSize)
         tempAllowedOrigins = configuration.allowedOrigins.joined(separator: ", ")
         tempEvictionPolicy = configuration.modelEvictionPolicy
+
+        // Load toast configuration
+        let toastConfig = ToastConfigurationStore.load()
+        tempToastPosition = toastConfig.position
+        tempToastEnabled = toastConfig.enabled
+        let toastDefaults = ToastConfiguration.default
+        tempToastTimeout =
+            toastConfig.defaultTimeout == toastDefaults.defaultTimeout
+            ? "" : String(toastConfig.defaultTimeout)
+        tempToastMaxVisible =
+            toastConfig.maxVisibleToasts == toastDefaults.maxVisibleToasts
+            ? "" : String(toastConfig.maxVisibleToasts)
     }
 
     // MARK: - Reset to Defaults
@@ -819,6 +901,116 @@ extension ConfigurationView {
     private func isDirInPATH(_ dir: String) -> Bool {
         let path = ProcessInfo.processInfo.environment["PATH"] ?? ""
         return path.split(separator: ":").map(String.init).contains { $0 == dir }
+    }
+}
+
+// MARK: - Toast Configuration Helpers
+extension ConfigurationView {
+    private func saveToastConfig() {
+        let defaults = ToastConfiguration.default
+
+        let trimmedTimeout = tempToastTimeout.trimmingCharacters(in: .whitespacesAndNewlines)
+        let parsedTimeout: TimeInterval = {
+            guard !trimmedTimeout.isEmpty, let v = Double(trimmedTimeout) else {
+                return defaults.defaultTimeout
+            }
+            return max(1.0, min(30.0, v))
+        }()
+
+        let trimmedMaxVisible = tempToastMaxVisible.trimmingCharacters(in: .whitespacesAndNewlines)
+        let parsedMaxVisible: Int = {
+            guard !trimmedMaxVisible.isEmpty, let v = Int(trimmedMaxVisible) else {
+                return defaults.maxVisibleToasts
+            }
+            return max(1, min(10, v))
+        }()
+
+        let config = ToastConfiguration(
+            position: tempToastPosition,
+            defaultTimeout: parsedTimeout,
+            maxVisibleToasts: parsedMaxVisible,
+            groupByPersona: true,
+            enabled: tempToastEnabled
+        )
+
+        ToastManager.shared.updateConfiguration(config)
+    }
+
+    private func showTestToast() {
+        ToastManager.shared.success(
+            "Test Notification",
+            message: "Toast notifications are working!"
+        )
+    }
+}
+
+// MARK: - Toast Position Picker
+
+private struct ToastPositionPicker: View {
+    @StateObject private var themeManager = ThemeManager.shared
+    @Binding var selection: ToastPosition
+
+    @State private var isHovered = false
+
+    var body: some View {
+        Menu {
+            ForEach(ToastPosition.allCases, id: \.self) { position in
+                Button(action: { selection = position }) {
+                    HStack {
+                        Text(position.displayName)
+                        if selection == position {
+                            Image(systemName: "checkmark")
+                        }
+                    }
+                }
+            }
+        } label: {
+            HStack(spacing: 10) {
+                Image(systemName: positionIcon)
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundColor(themeManager.currentTheme.accentColor)
+
+                Text(selection.displayName)
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundColor(themeManager.currentTheme.primaryText)
+
+                Spacer()
+
+                Image(systemName: "chevron.up.chevron.down")
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundColor(themeManager.currentTheme.tertiaryText)
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 10)
+            .background(
+                RoundedRectangle(cornerRadius: 10)
+                    .fill(themeManager.currentTheme.inputBackground)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 10)
+                            .stroke(
+                                isHovered
+                                    ? themeManager.currentTheme.accentColor.opacity(0.5)
+                                    : themeManager.currentTheme.inputBorder,
+                                lineWidth: isHovered ? 1.5 : 1
+                            )
+                    )
+            )
+        }
+        .menuStyle(.borderlessButton)
+        .onHover { hovering in
+            withAnimation(.easeOut(duration: 0.15)) {
+                isHovered = hovering
+            }
+        }
+    }
+
+    private var positionIcon: String {
+        switch selection {
+        case .topRight, .topLeft, .topCenter:
+            return "arrow.up.square"
+        case .bottomRight, .bottomLeft, .bottomCenter:
+            return "arrow.down.square"
+        }
     }
 }
 
