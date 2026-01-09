@@ -627,6 +627,916 @@ private struct ScheduleQuickActionButton: View {
     }
 }
 
+// MARK: - Frequency Tab Selector
+
+private struct FrequencyTabSelector: View {
+    @StateObject private var themeManager = ThemeManager.shared
+    @Binding var selection: ScheduleFrequencyType
+
+    @Namespace private var tabNamespace
+
+    var body: some View {
+        HStack(spacing: 4) {
+            ForEach(ScheduleFrequencyType.allCases, id: \.self) { type in
+                FrequencyTabButton(
+                    type: type,
+                    isSelected: selection == type,
+                    namespace: tabNamespace
+                ) {
+                    withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
+                        selection = type
+                    }
+                }
+            }
+        }
+        .padding(4)
+        .background(
+            RoundedRectangle(cornerRadius: 10)
+                .fill(themeManager.currentTheme.tertiaryBackground.opacity(0.6))
+        )
+    }
+}
+
+private struct FrequencyTabButton: View {
+    @StateObject private var themeManager = ThemeManager.shared
+
+    let type: ScheduleFrequencyType
+    let isSelected: Bool
+    let namespace: Namespace.ID
+    let action: () -> Void
+
+    @State private var isHovering = false
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 5) {
+                Image(systemName: type.icon)
+                    .font(.system(size: 10, weight: .medium))
+
+                Text(type.rawValue)
+                    .font(.system(size: 12, weight: isSelected ? .semibold : .medium))
+            }
+            .foregroundColor(
+                isSelected ? themeManager.currentTheme.primaryText : themeManager.currentTheme.secondaryText
+            )
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            .background(
+                ZStack {
+                    if isSelected {
+                        RoundedRectangle(cornerRadius: 7)
+                            .fill(themeManager.currentTheme.cardBackground)
+                            .shadow(
+                                color: themeManager.currentTheme.shadowColor.opacity(0.1),
+                                radius: 3,
+                                x: 0,
+                                y: 1
+                            )
+                            .matchedGeometryEffect(id: "frequency_indicator", in: namespace)
+                    } else if isHovering {
+                        RoundedRectangle(cornerRadius: 7)
+                            .fill(themeManager.currentTheme.secondaryBackground.opacity(0.5))
+                    }
+                }
+            )
+            .contentShape(RoundedRectangle(cornerRadius: 7))
+        }
+        .buttonStyle(PlainButtonStyle())
+        .onHover { hovering in
+            withAnimation(.easeOut(duration: 0.12)) {
+                isHovering = hovering
+            }
+        }
+    }
+}
+
+// MARK: - Schedule Time Picker
+
+private struct ScheduleTimePicker: View {
+    @StateObject private var themeManager = ThemeManager.shared
+
+    @Binding var hour: Int
+    @Binding var minute: Int
+
+    @State private var hourText: String = ""
+    @State private var minuteText: String = ""
+    @State private var isFocused = false
+    @FocusState private var hourFocused: Bool
+    @FocusState private var minuteFocused: Bool
+
+    private var period: String {
+        hour >= 12 ? "PM" : "AM"
+    }
+
+    private var displayHour: Int {
+        let h = hour % 12
+        return h == 0 ? 12 : h
+    }
+
+    var body: some View {
+        HStack(spacing: 4) {
+            // Clock icon
+            Image(systemName: "clock")
+                .font(.system(size: 12, weight: .medium))
+                .foregroundColor(themeManager.currentTheme.accentColor)
+                .padding(.leading, 10)
+
+            // Hour input
+            TextField("", text: $hourText)
+                .textFieldStyle(.plain)
+                .font(.system(size: 13, weight: .medium))
+                .foregroundColor(themeManager.currentTheme.primaryText)
+                .frame(width: 24)
+                .multilineTextAlignment(.center)
+                .focused($hourFocused)
+                .onAppear {
+                    hourText = "\(displayHour)"
+                }
+                .onChange(of: hour) { _, _ in
+                    if !hourFocused {
+                        hourText = "\(displayHour)"
+                    }
+                }
+                .onSubmit { validateHour() }
+                .onChange(of: hourFocused) { _, focused in
+                    isFocused = focused || minuteFocused
+                    if !focused { validateHour() }
+                }
+
+            Text(":")
+                .font(.system(size: 13, weight: .medium))
+                .foregroundColor(themeManager.currentTheme.secondaryText)
+
+            // Minute input
+            TextField("", text: $minuteText)
+                .textFieldStyle(.plain)
+                .font(.system(size: 13, weight: .medium))
+                .foregroundColor(themeManager.currentTheme.primaryText)
+                .frame(width: 24)
+                .multilineTextAlignment(.center)
+                .focused($minuteFocused)
+                .onAppear {
+                    minuteText = String(format: "%02d", minute)
+                }
+                .onChange(of: minute) { _, newValue in
+                    if !minuteFocused {
+                        minuteText = String(format: "%02d", newValue)
+                    }
+                }
+                .onSubmit { validateMinute() }
+                .onChange(of: minuteFocused) { _, focused in
+                    isFocused = hourFocused || focused
+                    if !focused { validateMinute() }
+                }
+
+            // AM/PM toggle
+            Button(action: togglePeriod) {
+                Text(period)
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundColor(themeManager.currentTheme.accentColor)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 3)
+                    .background(
+                        RoundedRectangle(cornerRadius: 4)
+                            .fill(themeManager.currentTheme.accentColor.opacity(0.15))
+                    )
+            }
+            .buttonStyle(.plain)
+            .padding(.trailing, 8)
+        }
+        .frame(height: 38)
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(themeManager.currentTheme.inputBackground)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8)
+                        .stroke(
+                            isFocused
+                                ? themeManager.currentTheme.accentColor.opacity(0.5)
+                                : themeManager.currentTheme.inputBorder,
+                            lineWidth: isFocused ? 1.5 : 1
+                        )
+                )
+        )
+    }
+
+    private func validateHour() {
+        if let value = Int(hourText), value >= 1, value <= 12 {
+            let isPM = hour >= 12
+            if value == 12 {
+                hour = isPM ? 12 : 0
+            } else {
+                hour = isPM ? value + 12 : value
+            }
+        }
+        hourText = "\(displayHour)"
+    }
+
+    private func validateMinute() {
+        if let value = Int(minuteText), value >= 0, value <= 59 {
+            minute = value
+        }
+        minuteText = String(format: "%02d", minute)
+    }
+
+    private func togglePeriod() {
+        if hour >= 12 {
+            hour -= 12
+        } else {
+            hour += 12
+        }
+    }
+}
+
+// MARK: - Weekday Button
+
+private struct WeekdayButton: View {
+    @StateObject private var themeManager = ThemeManager.shared
+
+    let day: Int
+    let isSelected: Bool
+    let action: () -> Void
+
+    @State private var isHovering = false
+
+    private var dayLetter: String {
+        String(Calendar.current.shortWeekdaySymbols[day - 1].prefix(1))
+    }
+
+    var body: some View {
+        Button(action: action) {
+            Text(dayLetter)
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundColor(
+                    isSelected
+                        ? .white
+                        : (isHovering ? themeManager.currentTheme.primaryText : themeManager.currentTheme.secondaryText)
+                )
+                .frame(width: 34, height: 34)
+                .background(
+                    Circle()
+                        .fill(
+                            isSelected
+                                ? themeManager.currentTheme.accentColor
+                                : (isHovering
+                                    ? themeManager.currentTheme.tertiaryBackground
+                                    : themeManager.currentTheme.inputBackground)
+                        )
+                        .overlay(
+                            Circle()
+                                .stroke(
+                                    isSelected
+                                        ? themeManager.currentTheme.accentColor
+                                        : (isHovering
+                                            ? themeManager.currentTheme.accentColor.opacity(0.3)
+                                            : themeManager.currentTheme.inputBorder),
+                                    lineWidth: 1
+                                )
+                        )
+                )
+                .scaleEffect(isHovering && !isSelected ? 1.05 : 1.0)
+        }
+        .buttonStyle(PlainButtonStyle())
+        .onHover { hovering in
+            withAnimation(.easeOut(duration: 0.15)) {
+                isHovering = hovering
+            }
+        }
+    }
+}
+
+// MARK: - Once Date Picker
+
+private struct OnceDatePicker: View {
+    @StateObject private var themeManager = ThemeManager.shared
+    @Binding var selectedDate: Date
+
+    @State private var isHovering = false
+    @State private var showingPopover = false
+
+    private var formattedDate: String {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "MMM d, yyyy"
+        return formatter.string(from: selectedDate)
+    }
+
+    var body: some View {
+        Button(action: { showingPopover.toggle() }) {
+            HStack(spacing: 8) {
+                Image(systemName: "calendar")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundColor(themeManager.currentTheme.accentColor)
+
+                Text(formattedDate)
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundColor(themeManager.currentTheme.primaryText)
+
+                Image(systemName: "chevron.up.chevron.down")
+                    .font(.system(size: 9, weight: .medium))
+                    .foregroundColor(themeManager.currentTheme.tertiaryText)
+            }
+            .padding(.horizontal, 12)
+            .frame(height: 38)
+            .background(
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(themeManager.currentTheme.inputBackground)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 8)
+                            .stroke(
+                                isHovering || showingPopover
+                                    ? themeManager.currentTheme.accentColor.opacity(0.5)
+                                    : themeManager.currentTheme.inputBorder,
+                                lineWidth: isHovering || showingPopover ? 1.5 : 1
+                            )
+                    )
+            )
+        }
+        .buttonStyle(PlainButtonStyle())
+        .onHover { hovering in
+            withAnimation(.easeOut(duration: 0.15)) {
+                isHovering = hovering
+            }
+        }
+        .popover(isPresented: $showingPopover, arrowEdge: .bottom) {
+            VStack(spacing: 0) {
+                DatePicker(
+                    "",
+                    selection: $selectedDate,
+                    in: Date()...,
+                    displayedComponents: [.date]
+                )
+                .datePickerStyle(.graphical)
+                .labelsHidden()
+                .padding(8)
+            }
+            .background(themeManager.currentTheme.cardBackground)
+        }
+    }
+}
+
+// MARK: - Once Time Picker
+
+private struct OnceTimePicker: View {
+    @StateObject private var themeManager = ThemeManager.shared
+    @Binding var selectedDate: Date
+
+    @State private var hourText: String = ""
+    @State private var minuteText: String = ""
+    @State private var isFocused = false
+    @FocusState private var hourFocused: Bool
+    @FocusState private var minuteFocused: Bool
+
+    private var hour: Int {
+        Calendar.current.component(.hour, from: selectedDate)
+    }
+
+    private var minute: Int {
+        Calendar.current.component(.minute, from: selectedDate)
+    }
+
+    private var period: String {
+        hour >= 12 ? "PM" : "AM"
+    }
+
+    private var displayHour: Int {
+        let h = hour % 12
+        return h == 0 ? 12 : h
+    }
+
+    private func updateHour(_ newHour: Int) {
+        var components = Calendar.current.dateComponents([.year, .month, .day, .hour, .minute], from: selectedDate)
+        components.hour = newHour
+        if let newDate = Calendar.current.date(from: components) {
+            selectedDate = newDate
+        }
+    }
+
+    private func updateMinute(_ newMinute: Int) {
+        var components = Calendar.current.dateComponents([.year, .month, .day, .hour, .minute], from: selectedDate)
+        components.minute = newMinute
+        if let newDate = Calendar.current.date(from: components) {
+            selectedDate = newDate
+        }
+    }
+
+    var body: some View {
+        HStack(spacing: 4) {
+            // Clock icon
+            Image(systemName: "clock")
+                .font(.system(size: 12, weight: .medium))
+                .foregroundColor(themeManager.currentTheme.accentColor)
+                .padding(.leading, 10)
+
+            // Hour input
+            TextField("", text: $hourText)
+                .textFieldStyle(.plain)
+                .font(.system(size: 13, weight: .medium))
+                .foregroundColor(themeManager.currentTheme.primaryText)
+                .frame(width: 24)
+                .multilineTextAlignment(.center)
+                .focused($hourFocused)
+                .onAppear {
+                    hourText = "\(displayHour)"
+                }
+                .onChange(of: hour) { _, _ in
+                    if !hourFocused {
+                        hourText = "\(displayHour)"
+                    }
+                }
+                .onSubmit { validateHour() }
+                .onChange(of: hourFocused) { _, focused in
+                    isFocused = focused || minuteFocused
+                    if !focused { validateHour() }
+                }
+
+            Text(":")
+                .font(.system(size: 13, weight: .medium))
+                .foregroundColor(themeManager.currentTheme.secondaryText)
+
+            // Minute input
+            TextField("", text: $minuteText)
+                .textFieldStyle(.plain)
+                .font(.system(size: 13, weight: .medium))
+                .foregroundColor(themeManager.currentTheme.primaryText)
+                .frame(width: 24)
+                .multilineTextAlignment(.center)
+                .focused($minuteFocused)
+                .onAppear {
+                    minuteText = String(format: "%02d", minute)
+                }
+                .onChange(of: minute) { _, newValue in
+                    if !minuteFocused {
+                        minuteText = String(format: "%02d", newValue)
+                    }
+                }
+                .onSubmit { validateMinute() }
+                .onChange(of: minuteFocused) { _, focused in
+                    isFocused = hourFocused || focused
+                    if !focused { validateMinute() }
+                }
+
+            // AM/PM toggle
+            Button(action: togglePeriod) {
+                Text(period)
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundColor(themeManager.currentTheme.accentColor)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 3)
+                    .background(
+                        RoundedRectangle(cornerRadius: 4)
+                            .fill(themeManager.currentTheme.accentColor.opacity(0.15))
+                    )
+            }
+            .buttonStyle(.plain)
+            .padding(.trailing, 8)
+        }
+        .frame(height: 38)
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(themeManager.currentTheme.inputBackground)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8)
+                        .stroke(
+                            isFocused
+                                ? themeManager.currentTheme.accentColor.opacity(0.5)
+                                : themeManager.currentTheme.inputBorder,
+                            lineWidth: isFocused ? 1.5 : 1
+                        )
+                )
+        )
+    }
+
+    private func validateHour() {
+        if let value = Int(hourText), value >= 1, value <= 12 {
+            let isPM = hour >= 12
+            if value == 12 {
+                updateHour(isPM ? 12 : 0)
+            } else {
+                updateHour(isPM ? value + 12 : value)
+            }
+        }
+        hourText = "\(displayHour)"
+    }
+
+    private func validateMinute() {
+        if let value = Int(minuteText), value >= 0, value <= 59 {
+            updateMinute(value)
+        }
+        minuteText = String(format: "%02d", minute)
+    }
+
+    private func togglePeriod() {
+        if hour >= 12 {
+            updateHour(hour - 12)
+        } else {
+            updateHour(hour + 12)
+        }
+    }
+}
+
+// MARK: - Month Picker
+
+private struct MonthPicker: View {
+    @StateObject private var themeManager = ThemeManager.shared
+    @Binding var selectedMonth: Int
+
+    @State private var isHovering = false
+    @State private var showingPopover = false
+
+    private var monthName: String {
+        Calendar.current.monthSymbols[selectedMonth - 1]
+    }
+
+    var body: some View {
+        Button(action: { showingPopover.toggle() }) {
+            HStack(spacing: 4) {
+                Text(monthName)
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundColor(themeManager.currentTheme.primaryText)
+
+                Image(systemName: "chevron.up.chevron.down")
+                    .font(.system(size: 8, weight: .bold))
+                    .foregroundColor(themeManager.currentTheme.secondaryText)
+            }
+            .padding(.horizontal, 10)
+            .frame(height: 38)
+            .background(
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(themeManager.currentTheme.inputBackground)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 8)
+                            .stroke(
+                                isHovering || showingPopover
+                                    ? themeManager.currentTheme.accentColor.opacity(0.5)
+                                    : themeManager.currentTheme.inputBorder,
+                                lineWidth: isHovering || showingPopover ? 1.5 : 1
+                            )
+                    )
+            )
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering in
+            withAnimation(.easeOut(duration: 0.15)) {
+                isHovering = hovering
+            }
+        }
+        .popover(isPresented: $showingPopover, arrowEdge: .bottom) {
+            VStack(alignment: .leading, spacing: 2) {
+                ForEach(1 ... 12, id: \.self) { month in
+                    MonthOptionRow(
+                        month: month,
+                        isSelected: selectedMonth == month,
+                        action: {
+                            selectedMonth = month
+                            showingPopover = false
+                        }
+                    )
+                }
+            }
+            .padding(6)
+            .frame(width: 160)
+            .background(themeManager.currentTheme.cardBackground)
+        }
+    }
+}
+
+// MARK: - Month Option Row
+
+private struct MonthOptionRow: View {
+    @StateObject private var themeManager = ThemeManager.shared
+
+    let month: Int
+    let isSelected: Bool
+    let action: () -> Void
+
+    @State private var isHovering = false
+
+    private var monthName: String {
+        Calendar.current.monthSymbols[month - 1]
+    }
+
+    var body: some View {
+        Button(action: action) {
+            HStack {
+                Text(monthName)
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundColor(themeManager.currentTheme.primaryText)
+
+                Spacer()
+
+                if isSelected {
+                    Image(systemName: "checkmark")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundColor(themeManager.currentTheme.accentColor)
+                }
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
+            .frame(maxWidth: .infinity)
+            .background(
+                RoundedRectangle(cornerRadius: 4)
+                    .fill(
+                        isHovering
+                            ? themeManager.currentTheme.tertiaryBackground
+                            : (isSelected ? themeManager.currentTheme.accentColor.opacity(0.1) : Color.clear)
+                    )
+            )
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering in
+            withAnimation(.easeOut(duration: 0.1)) {
+                isHovering = hovering
+            }
+        }
+    }
+}
+
+// MARK: - Day of Month Input
+
+private struct DayOfMonthPicker: View {
+    @StateObject private var themeManager = ThemeManager.shared
+    @Binding var selectedDay: Int
+
+    @State private var dayText: String = ""
+    @State private var isFocused = false
+    @FocusState private var textFieldFocused: Bool
+
+    var body: some View {
+        HStack(spacing: 0) {
+            TextField("", text: $dayText)
+                .textFieldStyle(.plain)
+                .font(.system(size: 13, weight: .medium))
+                .foregroundColor(themeManager.currentTheme.primaryText)
+                .frame(width: 32)
+                .multilineTextAlignment(.center)
+                .focused($textFieldFocused)
+                .onAppear {
+                    dayText = "\(selectedDay)"
+                }
+                .onChange(of: selectedDay) { _, newValue in
+                    if !textFieldFocused {
+                        dayText = "\(newValue)"
+                    }
+                }
+                .onChange(of: dayText) { _, newValue in
+                    if let value = Int(newValue), value >= 1, value <= 31 {
+                        selectedDay = value
+                    }
+                }
+                .onSubmit {
+                    validateAndUpdateDay()
+                }
+                .onChange(of: textFieldFocused) { _, focused in
+                    isFocused = focused
+                    if !focused {
+                        validateAndUpdateDay()
+                    }
+                }
+
+            // Stepper buttons
+            VStack(spacing: 0) {
+                Button(action: { incrementDay() }) {
+                    Image(systemName: "chevron.up")
+                        .font(.system(size: 8, weight: .bold))
+                        .foregroundColor(themeManager.currentTheme.secondaryText)
+                        .frame(width: 20, height: 12)
+                }
+                .buttonStyle(.plain)
+
+                Button(action: { decrementDay() }) {
+                    Image(systemName: "chevron.down")
+                        .font(.system(size: 8, weight: .bold))
+                        .foregroundColor(themeManager.currentTheme.secondaryText)
+                        .frame(width: 20, height: 12)
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(.horizontal, 10)
+        .frame(height: 38)
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(themeManager.currentTheme.inputBackground)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8)
+                        .stroke(
+                            isFocused
+                                ? themeManager.currentTheme.accentColor.opacity(0.5)
+                                : themeManager.currentTheme.inputBorder,
+                            lineWidth: isFocused ? 1.5 : 1
+                        )
+                )
+        )
+    }
+
+    private func validateAndUpdateDay() {
+        if let value = Int(dayText) {
+            selectedDay = min(max(value, 1), 31)
+        }
+        dayText = "\(selectedDay)"
+    }
+
+    private func incrementDay() {
+        selectedDay = selectedDay < 31 ? selectedDay + 1 : 1
+        dayText = "\(selectedDay)"
+    }
+
+    private func decrementDay() {
+        selectedDay = selectedDay > 1 ? selectedDay - 1 : 31
+        dayText = "\(selectedDay)"
+    }
+}
+
+// MARK: - Persona Picker
+
+private struct PersonaPicker: View {
+    @StateObject private var themeManager = ThemeManager.shared
+    @Binding var selectedPersonaId: UUID?
+    let personas: [Persona]
+
+    @State private var isHovering = false
+    @State private var showingPopover = false
+
+    private var selectedPersona: Persona? {
+        if let id = selectedPersonaId {
+            return personas.first(where: { $0.id == id })
+        }
+        return nil
+    }
+
+    private var selectedPersonaName: String {
+        selectedPersona?.name ?? "Default"
+    }
+
+    private var selectedPersonaDescription: String? {
+        if selectedPersonaId == nil {
+            return "Uses the default system behavior"
+        }
+        let desc = selectedPersona?.description ?? ""
+        return desc.isEmpty ? nil : desc
+    }
+
+    private var hasDescription: Bool {
+        selectedPersonaDescription != nil
+    }
+
+    private func personaColor(for name: String) -> Color {
+        let hash = abs(name.hashValue)
+        let hue = Double(hash % 360) / 360.0
+        return Color(hue: hue, saturation: 0.6, brightness: 0.8)
+    }
+
+    var body: some View {
+        Button(action: { showingPopover.toggle() }) {
+            HStack(spacing: 12) {
+                // Persona avatar
+                Circle()
+                    .fill(personaColor(for: selectedPersonaName).opacity(0.2))
+                    .frame(width: 32, height: 32)
+                    .overlay(
+                        Image(systemName: "person.fill")
+                            .font(.system(size: 14, weight: .medium))
+                            .foregroundColor(personaColor(for: selectedPersonaName))
+                    )
+
+                if hasDescription {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(selectedPersonaName)
+                            .font(.system(size: 13, weight: .medium))
+                            .foregroundColor(themeManager.currentTheme.primaryText)
+
+                        Text(selectedPersonaDescription!)
+                            .font(.system(size: 11))
+                            .foregroundColor(themeManager.currentTheme.tertiaryText)
+                            .lineLimit(1)
+                    }
+                } else {
+                    Text(selectedPersonaName)
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundColor(themeManager.currentTheme.primaryText)
+                }
+
+                Spacer(minLength: 0)
+
+                Image(systemName: "chevron.up.chevron.down")
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundColor(themeManager.currentTheme.tertiaryText)
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 10)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(themeManager.currentTheme.inputBackground)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 8)
+                            .stroke(
+                                isHovering || showingPopover
+                                    ? themeManager.currentTheme.accentColor.opacity(0.5)
+                                    : themeManager.currentTheme.inputBorder,
+                                lineWidth: isHovering || showingPopover ? 1.5 : 1
+                            )
+                    )
+            )
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering in
+            withAnimation(.easeOut(duration: 0.15)) {
+                isHovering = hovering
+            }
+        }
+        .popover(isPresented: $showingPopover, arrowEdge: .bottom) {
+            VStack(alignment: .leading, spacing: 0) {
+                // Default option
+                PersonaOptionRow(
+                    name: "Default",
+                    description: "Uses the default system behavior",
+                    isSelected: selectedPersonaId == nil,
+                    action: {
+                        selectedPersonaId = nil
+                        showingPopover = false
+                    }
+                )
+
+                if !personas.isEmpty {
+                    Divider()
+                        .padding(.vertical, 4)
+
+                    ForEach(personas, id: \.id) { persona in
+                        PersonaOptionRow(
+                            name: persona.name,
+                            description: persona.description,
+                            isSelected: selectedPersonaId == persona.id,
+                            action: {
+                                selectedPersonaId = persona.id
+                                showingPopover = false
+                            }
+                        )
+                    }
+                }
+            }
+            .padding(8)
+            .frame(minWidth: 280)
+            .background(themeManager.currentTheme.cardBackground)
+        }
+    }
+}
+
+// MARK: - Persona Option Row
+
+private struct PersonaOptionRow: View {
+    @StateObject private var themeManager = ThemeManager.shared
+
+    let name: String
+    let description: String
+    let isSelected: Bool
+    let action: () -> Void
+
+    @State private var isHovering = false
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 10) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(name)
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundColor(themeManager.currentTheme.primaryText)
+
+                    if !description.isEmpty {
+                        Text(description)
+                            .font(.system(size: 11))
+                            .foregroundColor(themeManager.currentTheme.tertiaryText)
+                            .lineLimit(2)
+                    }
+                }
+
+                Spacer()
+
+                if isSelected {
+                    Image(systemName: "checkmark")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundColor(themeManager.currentTheme.accentColor)
+                }
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 8)
+            .background(
+                RoundedRectangle(cornerRadius: 6)
+                    .fill(isHovering ? themeManager.currentTheme.tertiaryBackground : Color.clear)
+            )
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering in
+            withAnimation(.easeOut(duration: 0.1)) {
+                isHovering = hovering
+            }
+        }
+    }
+}
+
 // MARK: - Schedule Editor Sheet
 
 private struct ScheduleEditorSheet: View {
@@ -715,7 +1625,7 @@ private struct ScheduleEditorSheet: View {
             // Footer
             footerView
         }
-        .frame(width: 560, height: 680)
+        .frame(width: 580, height: 680)
         .background(themeManager.currentTheme.primaryBackground)
         .clipShape(RoundedRectangle(cornerRadius: 16))
         .overlay(
@@ -812,25 +1722,61 @@ private struct ScheduleEditorSheet: View {
 
     private var scheduleInfoSection: some View {
         ScheduleEditorSection(title: "Task Info", icon: "info.circle.fill") {
-            VStack(spacing: 12) {
-                ScheduleTextField(
-                    placeholder: "e.g., Morning Briefing",
-                    text: $name,
-                    icon: "textformat"
-                )
+            VStack(alignment: .leading, spacing: 16) {
+                // Name field with label
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Name")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundColor(themeManager.currentTheme.secondaryText)
 
-                Toggle(isOn: $isEnabled) {
-                    HStack(spacing: 8) {
-                        Image(systemName: "power")
-                            .font(.system(size: 12))
-                            .foregroundColor(themeManager.currentTheme.secondaryText)
-                        Text("Enabled")
-                            .font(.system(size: 13))
-                            .foregroundColor(themeManager.currentTheme.primaryText)
-                    }
+                    ScheduleTextField(
+                        placeholder: "e.g., Morning Briefing",
+                        text: $name,
+                        icon: "textformat"
+                    )
                 }
-                .toggleStyle(.switch)
-                .controlSize(.small)
+
+                // Enabled toggle
+                HStack {
+                    HStack(spacing: 8) {
+                        Image(systemName: isEnabled ? "checkmark.circle.fill" : "circle")
+                            .font(.system(size: 14, weight: .medium))
+                            .foregroundColor(
+                                isEnabled
+                                    ? themeManager.currentTheme.successColor : themeManager.currentTheme.tertiaryText
+                            )
+
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Enabled")
+                                .font(.system(size: 13, weight: .medium))
+                                .foregroundColor(themeManager.currentTheme.primaryText)
+                            Text(isEnabled ? "Schedule is active" : "Schedule is paused")
+                                .font(.system(size: 11))
+                                .foregroundColor(themeManager.currentTheme.tertiaryText)
+                        }
+                    }
+
+                    Spacer()
+
+                    Toggle("", isOn: $isEnabled)
+                        .toggleStyle(.switch)
+                        .controlSize(.small)
+                        .labelsHidden()
+                }
+                .padding(12)
+                .background(
+                    RoundedRectangle(cornerRadius: 8)
+                        .fill(themeManager.currentTheme.inputBackground)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 8)
+                                .stroke(
+                                    isEnabled
+                                        ? themeManager.currentTheme.successColor.opacity(0.3)
+                                        : themeManager.currentTheme.inputBorder,
+                                    lineWidth: 1
+                                )
+                        )
+                )
             }
         }
     }
@@ -878,17 +1824,12 @@ private struct ScheduleEditorSheet: View {
     private var frequencySection: some View {
         ScheduleEditorSection(title: "Frequency", icon: "clock.fill") {
             VStack(spacing: 16) {
-                // Frequency type picker
-                Picker("Frequency", selection: $frequencyType) {
-                    ForEach(ScheduleFrequencyType.allCases, id: \.self) { type in
-                        Text(type.rawValue).tag(type)
-                    }
-                }
-                .pickerStyle(.segmented)
-                .labelsHidden()
+                // Frequency type selector with animated pills
+                FrequencyTabSelector(selection: $frequencyType)
 
                 // Frequency-specific options
                 frequencyOptionsView
+                    .animation(.easeInOut(duration: 0.2), value: frequencyType)
             }
         }
     }
@@ -910,172 +1851,305 @@ private struct ScheduleEditorSheet: View {
     }
 
     private var onceOptions: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("Run once at:")
-                .font(.system(size: 12, weight: .medium))
-                .foregroundColor(themeManager.currentTheme.secondaryText)
+        VStack(alignment: .leading, spacing: 16) {
+            // Combined Date & Time in a nice row
+            HStack(spacing: 16) {
+                // Date selection
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Date")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundColor(themeManager.currentTheme.secondaryText)
 
-            DatePicker(
-                "Date and Time",
-                selection: $selectedDate,
-                in: Date()...,
-                displayedComponents: [.date, .hourAndMinute]
-            )
-            .datePickerStyle(.graphical)
-            .labelsHidden()
-        }
-    }
-
-    private var dailyOptions: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("Run every day at:")
-                .font(.system(size: 12, weight: .medium))
-                .foregroundColor(themeManager.currentTheme.secondaryText)
-
-            timePicker
-        }
-    }
-
-    private var weeklyOptions: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("Run every week on:")
-                .font(.system(size: 12, weight: .medium))
-                .foregroundColor(themeManager.currentTheme.secondaryText)
-
-            // Day of week picker
-            HStack(spacing: 6) {
-                ForEach(1 ... 7, id: \.self) { day in
-                    let dayName = Calendar.current.shortWeekdaySymbols[day - 1]
-                    Button(action: { selectedDayOfWeek = day }) {
-                        Text(dayName.prefix(1))
-                            .font(.system(size: 11, weight: .semibold))
-                            .foregroundColor(
-                                selectedDayOfWeek == day ? .white : themeManager.currentTheme.primaryText
-                            )
-                            .frame(width: 32, height: 32)
-                            .background(
-                                Circle()
-                                    .fill(
-                                        selectedDayOfWeek == day
-                                            ? themeManager.currentTheme.accentColor
-                                            : themeManager.currentTheme.tertiaryBackground
-                                    )
-                            )
-                    }
-                    .buttonStyle(PlainButtonStyle())
-                }
-            }
-
-            Text("at:")
-                .font(.system(size: 12, weight: .medium))
-                .foregroundColor(themeManager.currentTheme.secondaryText)
-
-            timePicker
-        }
-    }
-
-    private var monthlyOptions: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("Run every month on day:")
-                .font(.system(size: 12, weight: .medium))
-                .foregroundColor(themeManager.currentTheme.secondaryText)
-
-            HStack(spacing: 12) {
-                Stepper(
-                    value: $selectedDayOfMonth,
-                    in: 1 ... 31
-                ) {
-                    Text("\(selectedDayOfMonth)")
-                        .font(.system(size: 14, weight: .medium))
-                        .foregroundColor(themeManager.currentTheme.primaryText)
-                        .frame(width: 40)
-                        .padding(.vertical, 6)
-                        .background(
-                            RoundedRectangle(cornerRadius: 6)
-                                .fill(themeManager.currentTheme.inputBackground)
-                        )
+                    OnceDatePicker(selectedDate: $selectedDate)
                 }
 
-                Text("at:")
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(themeManager.currentTheme.secondaryText)
+                // Time selection
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Time")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundColor(themeManager.currentTheme.secondaryText)
+
+                    OnceTimePicker(selectedDate: $selectedDate)
+                }
 
                 Spacer()
             }
 
-            timePicker
+            // Preview of when it will run
+            oncePreview
+        }
+    }
+
+    private var oncePreview: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "calendar.badge.clock")
+                .font(.system(size: 14, weight: .medium))
+                .foregroundColor(themeManager.currentTheme.accentColor)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Scheduled for")
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundColor(themeManager.currentTheme.tertiaryText)
+                Text(formattedOnceDate)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundColor(themeManager.currentTheme.primaryText)
+            }
+
+            Spacer()
+        }
+        .padding(12)
+        .background(
+            RoundedRectangle(cornerRadius: 10)
+                .fill(themeManager.currentTheme.accentColor.opacity(0.08))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 10)
+                        .stroke(themeManager.currentTheme.accentColor.opacity(0.2), lineWidth: 1)
+                )
+        )
+    }
+
+    private var formattedOnceDate: String {
+        let formatter = DateFormatter()
+        let calendar = Calendar.current
+
+        if calendar.isDateInToday(selectedDate) {
+            formatter.dateFormat = "'Today at' h:mm a"
+        } else if calendar.isDateInTomorrow(selectedDate) {
+            formatter.dateFormat = "'Tomorrow at' h:mm a"
+        } else {
+            formatter.dateFormat = "EEEE, MMM d, yyyy 'at' h:mm a"
+        }
+
+        return formatter.string(from: selectedDate)
+    }
+
+    private var dailyOptions: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            // Time selection
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Time")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundColor(themeManager.currentTheme.secondaryText)
+
+                timePicker
+            }
+
+            // Preview
+            schedulePreview(text: dailyPreviewText)
+        }
+    }
+
+    private var dailyPreviewText: String {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "h:mm a"
+
+        var components = DateComponents()
+        components.hour = selectedHour
+        components.minute = selectedMinute
+
+        if let date = Calendar.current.date(from: components) {
+            return "Every day at \(formatter.string(from: date))"
+        }
+        return "Every day at \(selectedHour):\(String(format: "%02d", selectedMinute))"
+    }
+
+    private var weeklyOptions: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            // Day of week selection
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Day of Week")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundColor(themeManager.currentTheme.secondaryText)
+
+                HStack(spacing: 6) {
+                    ForEach(1 ... 7, id: \.self) { day in
+                        WeekdayButton(
+                            day: day,
+                            isSelected: selectedDayOfWeek == day,
+                            action: {
+                                withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
+                                    selectedDayOfWeek = day
+                                }
+                            }
+                        )
+                    }
+                }
+            }
+
+            // Time selection
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Time")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundColor(themeManager.currentTheme.secondaryText)
+
+                timePicker
+            }
+
+            // Preview
+            schedulePreview(text: weeklyPreviewText)
+        }
+    }
+
+    private var weeklyPreviewText: String {
+        let dayName = Calendar.current.weekdaySymbols[selectedDayOfWeek - 1]
+        let formatter = DateFormatter()
+        formatter.dateFormat = "h:mm a"
+
+        var components = DateComponents()
+        components.hour = selectedHour
+        components.minute = selectedMinute
+
+        if let date = Calendar.current.date(from: components) {
+            return "Every \(dayName) at \(formatter.string(from: date))"
+        }
+        return "Every \(dayName)"
+    }
+
+    private var monthlyOptions: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            // Day and Time selection in a row
+            HStack(spacing: 16) {
+                // Day picker
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Day of Month")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundColor(themeManager.currentTheme.secondaryText)
+
+                    DayOfMonthPicker(selectedDay: $selectedDayOfMonth)
+                }
+
+                // Time picker
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Time")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundColor(themeManager.currentTheme.secondaryText)
+
+                    timePicker
+                }
+
+                Spacer()
+            }
 
             Text("If the day doesn't exist in a month, it will run on the last day.")
                 .font(.system(size: 10))
                 .foregroundColor(themeManager.currentTheme.tertiaryText)
+                .padding(.horizontal, 4)
+
+            // Preview
+            schedulePreview(text: monthlyPreviewText)
+        }
+    }
+
+    private var monthlyPreviewText: String {
+        let suffix = daySuffix(selectedDayOfMonth)
+        let formatter = DateFormatter()
+        formatter.dateFormat = "h:mm a"
+
+        var components = DateComponents()
+        components.hour = selectedHour
+        components.minute = selectedMinute
+
+        if let date = Calendar.current.date(from: components) {
+            return "Monthly on the \(selectedDayOfMonth)\(suffix) at \(formatter.string(from: date))"
+        }
+        return "Monthly on the \(selectedDayOfMonth)\(suffix)"
+    }
+
+    private func daySuffix(_ day: Int) -> String {
+        switch day {
+        case 1, 21, 31: return "st"
+        case 2, 22: return "nd"
+        case 3, 23: return "rd"
+        default: return "th"
         }
     }
 
     private var yearlyOptions: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("Run every year on:")
-                .font(.system(size: 12, weight: .medium))
-                .foregroundColor(themeManager.currentTheme.secondaryText)
-
+        VStack(alignment: .leading, spacing: 16) {
+            // Month, Day, and Time selection
             HStack(spacing: 12) {
-                Picker("Month", selection: $selectedMonth) {
-                    ForEach(1 ... 12, id: \.self) { month in
-                        Text(Calendar.current.monthSymbols[month - 1]).tag(month)
-                    }
-                }
-                .labelsHidden()
-                .frame(width: 120)
+                // Month picker
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Month")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundColor(themeManager.currentTheme.secondaryText)
 
-                Stepper(
-                    value: $selectedDay,
-                    in: 1 ... 31
-                ) {
-                    Text("\(selectedDay)")
-                        .font(.system(size: 14, weight: .medium))
-                        .foregroundColor(themeManager.currentTheme.primaryText)
-                        .frame(width: 40)
-                        .padding(.vertical, 6)
-                        .background(
-                            RoundedRectangle(cornerRadius: 6)
-                                .fill(themeManager.currentTheme.inputBackground)
-                        )
+                    MonthPicker(selectedMonth: $selectedMonth)
                 }
+
+                // Day picker
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Day")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundColor(themeManager.currentTheme.secondaryText)
+
+                    DayOfMonthPicker(selectedDay: $selectedDay)
+                }
+
+                // Time picker
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Time")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundColor(themeManager.currentTheme.secondaryText)
+
+                    timePicker
+                }
+
+                Spacer()
             }
 
-            Text("at:")
-                .font(.system(size: 12, weight: .medium))
-                .foregroundColor(themeManager.currentTheme.secondaryText)
-
-            timePicker
+            // Preview
+            schedulePreview(text: yearlyPreviewText)
         }
     }
 
+    private var yearlyPreviewText: String {
+        let monthName = Calendar.current.monthSymbols[selectedMonth - 1]
+        let suffix = daySuffix(selectedDay)
+        let formatter = DateFormatter()
+        formatter.dateFormat = "h:mm a"
+
+        var components = DateComponents()
+        components.hour = selectedHour
+        components.minute = selectedMinute
+
+        if let date = Calendar.current.date(from: components) {
+            return "Yearly on \(monthName) \(selectedDay)\(suffix) at \(formatter.string(from: date))"
+        }
+        return "Yearly on \(monthName) \(selectedDay)\(suffix)"
+    }
+
     private var timePicker: some View {
-        HStack(spacing: 8) {
-            // Hour picker
-            Picker("Hour", selection: $selectedHour) {
-                ForEach(0 ..< 24, id: \.self) { hour in
-                    Text(String(format: "%02d", hour)).tag(hour)
-                }
-            }
-            .labelsHidden()
-            .frame(width: 60)
+        ScheduleTimePicker(hour: $selectedHour, minute: $selectedMinute)
+    }
 
-            Text(":")
-                .font(.system(size: 16, weight: .medium))
-                .foregroundColor(themeManager.currentTheme.secondaryText)
+    // Helper view for schedule preview
+    private func schedulePreview(text: String) -> some View {
+        HStack(spacing: 10) {
+            Image(systemName: "repeat")
+                .font(.system(size: 14, weight: .medium))
+                .foregroundColor(themeManager.currentTheme.accentColor)
 
-            // Minute picker
-            Picker("Minute", selection: $selectedMinute) {
-                ForEach([0, 15, 30, 45], id: \.self) { minute in
-                    Text(String(format: "%02d", minute)).tag(minute)
-                }
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Schedule")
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundColor(themeManager.currentTheme.tertiaryText)
+                Text(text)
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundColor(themeManager.currentTheme.primaryText)
             }
-            .labelsHidden()
-            .frame(width: 60)
 
             Spacer()
         }
+        .padding(12)
+        .background(
+            RoundedRectangle(cornerRadius: 10)
+                .fill(themeManager.currentTheme.accentColor.opacity(0.08))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 10)
+                        .stroke(themeManager.currentTheme.accentColor.opacity(0.2), lineWidth: 1)
+                )
+        )
     }
 
     // MARK: - Persona Section
@@ -1083,18 +2157,17 @@ private struct ScheduleEditorSheet: View {
     private var personaSection: some View {
         ScheduleEditorSection(title: "Persona", icon: "person.circle.fill") {
             VStack(alignment: .leading, spacing: 8) {
-                Picker("Persona", selection: $selectedPersonaId) {
-                    Text("Default").tag(nil as UUID?)
-                    ForEach(personaManager.personas.filter { !$0.isBuiltIn }, id: \.id) { persona in
-                        Text(persona.name).tag(persona.id as UUID?)
-                    }
-                }
-                .labelsHidden()
+                PersonaPicker(
+                    selectedPersonaId: $selectedPersonaId,
+                    personas: personaManager.personas.filter { !$0.isBuiltIn }
+                )
+                .frame(maxWidth: .infinity)
 
                 Text("The persona determines the AI's behavior and available tools.")
                     .font(.system(size: 11))
                     .foregroundColor(themeManager.currentTheme.tertiaryText)
             }
+            .frame(maxWidth: .infinity)
         }
     }
 
