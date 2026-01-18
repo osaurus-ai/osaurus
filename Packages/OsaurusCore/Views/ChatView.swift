@@ -1145,15 +1145,8 @@ struct ChatView: View {
                         // Header
                         chatHeader
 
-                        // Content area
-                        if session.isDiscoveringModels && !session.hasAnyModel {
-                            VStack {
-                                Spacer()
-                                ProgressView()
-                                    .controlSize(.small)
-                                Spacer()
-                            }
-                        } else if session.hasAnyModel {
+                        // Content area (show immediately, model discovery is async)
+                        if session.hasAnyModel || session.isDiscoveringModels {
                             if session.turns.isEmpty {
                                 // Empty state
                                 ChatEmptyState(
@@ -1244,7 +1237,6 @@ struct ChatView: View {
         .animation(theme.animationMedium(), value: session.turns.isEmpty)
         .animation(theme.animationQuick(), value: showSidebar)
         .background(WindowAccessor(window: $hostWindow))
-        .onExitCommand { closeWindow() }
         .onReceive(NotificationCenter.default.publisher(for: .chatOverlayActivated)) { _ in
             focusTrigger &+= 1
             isPinnedToBottom = true

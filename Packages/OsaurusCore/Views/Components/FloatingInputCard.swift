@@ -205,10 +205,7 @@ struct FloatingInputCard: View {
                 }
             }
 
-            // Focus input on initial appearance
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                isFocused = true
-            }
+            isFocused = true
         }
         .onReceive(NotificationCenter.default.publisher(for: .startVoiceInputInChat)) { notification in
             // Start voice input when triggered by VAD - enable continuous mode
@@ -270,10 +267,7 @@ struct FloatingInputCard: View {
             }
         }
         .onChange(of: focusTrigger) { _, _ in
-            // Small delay to ensure window is fully ready for focus
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                isFocused = true
-            }
+            isFocused = true
         }
         .onChange(of: whisperService.isRecording) { _, isRecording in
             print(
