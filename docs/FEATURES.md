@@ -27,6 +27,7 @@ Canonical reference for all Osaurus features, their status, and documentation.
 | Shared Configuration             | Stable    | -                  | SHARED_CONFIGURATION_GUIDE.md | Services/SharedConfigurationService.swift                                        |
 | OpenAI API Compatibility         | Stable    | "API Endpoints"    | OpenAI_API_GUIDE.md           | Networking/HTTPHandler.swift, Models/OpenAIAPI.swift                             |
 | Anthropic API Compatibility      | Stable    | "API Endpoints"    | (in README)                   | Networking/HTTPHandler.swift, Models/AnthropicAPI.swift                          |
+| Open Responses API               | Stable    | "API Endpoints"    | OpenAI_API_GUIDE.md           | Networking/HTTPHandler.swift, Models/OpenResponsesAPI.swift                      |
 | Ollama API Compatibility         | Stable    | "API Endpoints"    | (in README)                   | Networking/HTTPHandler.swift                                                     |
 | Voice Input (WhisperKit)         | Stable    | "Voice Input"      | VOICE_INPUT.md                | Services/WhisperKitService.swift, Managers/WhisperModelManager.swift             |
 | VAD Mode                         | Stable    | "Voice Input"      | VOICE_INPUT.md                | Services/VADService.swift, Views/ContentView.swift (VAD controls)                |
@@ -227,6 +228,42 @@ Canonical reference for all Osaurus features, their status, and documentation.
 - Streaming and non-streaming responses
 - Tool use (function calling) support
 - Converts internally to OpenAI format for unified processing
+
+---
+
+### Open Responses API
+
+**Purpose:** Provide [Open Responses](https://www.openresponses.org) API compatibility for multi-provider interoperability.
+
+**Components:**
+
+- `Models/OpenResponsesAPI.swift` — Open Responses request/response models and streaming events
+- `Models/ResponseWriters.swift` — SSE streaming for Open Responses format
+- `Networking/HTTPHandler.swift` — `/responses` endpoint handler
+- `Services/RemoteProviderService.swift` — Remote Open Responses provider support
+
+**Features:**
+
+- Full Responses API support (`/responses` endpoint)
+- Streaming with semantic events (`response.output_text.delta`, `response.completed`, etc.)
+- Non-streaming responses
+- Tool/function calling support
+- Input as simple string or structured items
+- Instructions (system prompt) support
+- Connect to remote Open Responses-compatible providers
+
+**Streaming Events:**
+
+| Event | Description |
+|-------|-------------|
+| `response.created` | Response object created |
+| `response.in_progress` | Generation started |
+| `response.output_item.added` | New output item (message or function call) |
+| `response.output_text.delta` | Text content delta |
+| `response.output_text.done` | Text content completed |
+| `response.function_call_arguments.delta` | Function arguments delta |
+| `response.output_item.done` | Output item completed |
+| `response.completed` | Response finished |
 
 ---
 

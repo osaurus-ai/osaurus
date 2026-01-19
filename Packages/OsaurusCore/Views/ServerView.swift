@@ -595,6 +595,20 @@ struct APIEndpoint {
                     }
                     """
             ),
+            APIEndpoint(
+                method: "POST",
+                path: "/responses",
+                description: "Responses endpoint with streaming support",
+                compatibility: "Open Responses",
+                category: .chat,
+                examplePayload: """
+                    {
+                      "model": "\(model)",
+                      "input": "Hello!",
+                      "stream": false
+                    }
+                    """
+            ),
             // Audio endpoints
             APIEndpoint(
                 method: "POST",

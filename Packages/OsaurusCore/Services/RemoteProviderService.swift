@@ -336,6 +336,76 @@ public actor RemoteProviderService: ToolCapableService {
                                                 break
                                             }
                                         }
+                                    } else if providerType == .openResponses {
+                                        // Parse Open Responses SSE event
+                                        if let eventType = try? JSONDecoder().decode(
+                                            OpenResponsesSSEEvent.self,
+                                            from: jsonData
+                                        ) {
+                                            switch eventType.type {
+                                            case "response.output_text.delta":
+                                                if let deltaEvent = try? JSONDecoder().decode(
+                                                    OutputTextDeltaEvent.self,
+                                                    from: jsonData
+                                                ) {
+                                                    var output = deltaEvent.delta
+                                                    for seq in stopSequences {
+                                                        if let range = output.range(of: seq) {
+                                                            output = String(output[..<range.lowerBound])
+                                                            continuation.yield(output)
+                                                            continuation.finish()
+                                                            return
+                                                        }
+                                                    }
+                                                    continuation.yield(output)
+                                                }
+                                            case "response.output_item.added":
+                                                if let addedEvent = try? JSONDecoder().decode(
+                                                    OutputItemAddedEvent.self,
+                                                    from: jsonData
+                                                ) {
+                                                    if case .functionCall(let funcCall) = addedEvent.item {
+                                                        let idx = addedEvent.output_index
+                                                        accumulatedToolCalls[idx] = (
+                                                            id: funcCall.call_id, name: funcCall.name, args: ""
+                                                        )
+                                                    }
+                                                }
+                                            case "response.function_call_arguments.delta":
+                                                if let deltaEvent = try? JSONDecoder().decode(
+                                                    FunctionCallArgumentsDeltaEvent.self,
+                                                    from: jsonData
+                                                ) {
+                                                    let idx = deltaEvent.output_index
+                                                    var current =
+                                                        accumulatedToolCalls[idx] ?? (
+                                                            id: deltaEvent.call_id, name: nil, args: ""
+                                                        )
+                                                    current.args += deltaEvent.delta
+                                                    accumulatedToolCalls[idx] = current
+                                                }
+                                            case "response.completed":
+                                                // Check for accumulated tool calls before finishing
+                                                if let firstToolCall = accumulatedToolCalls.sorted(by: {
+                                                    $0.key < $1.key
+                                                }).first,
+                                                    let toolName = firstToolCall.value.name
+                                                {
+                                                    continuation.finish(
+                                                        throwing: ServiceToolInvocation(
+                                                            toolName: toolName,
+                                                            jsonArguments: firstToolCall.value.args,
+                                                            toolCallId: firstToolCall.value.id
+                                                        )
+                                                    )
+                                                    return
+                                                }
+                                                continuation.finish()
+                                                return
+                                            default:
+                                                break
+                                            }
+                                        }
                                     } else {
                                         // OpenAI format
                                         let chunk = try JSONDecoder().decode(ChatCompletionChunk.self, from: jsonData)
@@ -695,6 +765,83 @@ public actor RemoteProviderService: ToolCapableService {
                                                 break
                                             }
                                         }
+                                    } else if providerType == .openResponses {
+                                        // Parse Open Responses SSE event
+                                        if let eventType = try? JSONDecoder().decode(
+                                            OpenResponsesSSEEvent.self,
+                                            from: jsonData
+                                        ) {
+                                            switch eventType.type {
+                                            case "response.output_text.delta":
+                                                if let deltaEvent = try? JSONDecoder().decode(
+                                                    OutputTextDeltaEvent.self,
+                                                    from: jsonData
+                                                ) {
+                                                    var output = deltaEvent.delta
+                                                    for seq in stopSequences {
+                                                        if let range = output.range(of: seq) {
+                                                            output = String(output[..<range.lowerBound])
+                                                            continuation.yield(output)
+                                                            continuation.finish()
+                                                            return
+                                                        }
+                                                    }
+                                                    continuation.yield(output)
+                                                }
+                                            case "response.output_item.added":
+                                                if let addedEvent = try? JSONDecoder().decode(
+                                                    OutputItemAddedEvent.self,
+                                                    from: jsonData
+                                                ) {
+                                                    if case .functionCall(let funcCall) = addedEvent.item {
+                                                        let idx = addedEvent.output_index
+                                                        accumulatedToolCalls[idx] = (
+                                                            id: funcCall.call_id, name: funcCall.name, args: ""
+                                                        )
+                                                        print(
+                                                            "[Osaurus] Open Responses tool call detected: index=\(idx), name=\(funcCall.name)"
+                                                        )
+                                                    }
+                                                }
+                                            case "response.function_call_arguments.delta":
+                                                if let deltaEvent = try? JSONDecoder().decode(
+                                                    FunctionCallArgumentsDeltaEvent.self,
+                                                    from: jsonData
+                                                ) {
+                                                    let idx = deltaEvent.output_index
+                                                    var current =
+                                                        accumulatedToolCalls[idx] ?? (
+                                                            id: deltaEvent.call_id, name: nil, args: ""
+                                                        )
+                                                    current.args += deltaEvent.delta
+                                                    accumulatedToolCalls[idx] = current
+                                                }
+                                            case "response.completed":
+                                                lastFinishReason = "completed"
+                                                // Check for accumulated tool calls before finishing
+                                                if let firstToolCall = accumulatedToolCalls.sorted(by: {
+                                                    $0.key < $1.key
+                                                }).first,
+                                                    let toolName = firstToolCall.value.name
+                                                {
+                                                    print(
+                                                        "[Osaurus] Open Responses stream ended: Emitting tool call '\(toolName)'"
+                                                    )
+                                                    continuation.finish(
+                                                        throwing: ServiceToolInvocation(
+                                                            toolName: toolName,
+                                                            jsonArguments: firstToolCall.value.args,
+                                                            toolCallId: firstToolCall.value.id
+                                                        )
+                                                    )
+                                                    return
+                                                }
+                                                continuation.finish()
+                                                return
+                                            default:
+                                                break
+                                            }
+                                        }
                                     } else {
                                         // OpenAI format
                                         let chunk = try JSONDecoder().decode(ChatCompletionChunk.self, from: jsonData)
@@ -876,6 +1023,9 @@ public actor RemoteProviderService: ToolCapableService {
             bodyData = try encoder.encode(anthropicRequest)
         case .openai:
             bodyData = try encoder.encode(request)
+        case .openResponses:
+            let openResponsesRequest = request.toOpenResponsesRequest()
+            bodyData = try encoder.encode(openResponsesRequest)
         }
         urlRequest.httpBody = bodyData
 
@@ -919,6 +1069,32 @@ public actor RemoteProviderService: ToolCapableService {
             let content = response.choices.first?.message.content
             let toolCalls = response.choices.first?.message.tool_calls
             return (content, toolCalls)
+
+        case .openResponses:
+            let response = try JSONDecoder().decode(OpenResponsesResponse.self, from: data)
+            var textContent = ""
+            var toolCalls: [ToolCall] = []
+
+            for item in response.output {
+                switch item {
+                case .message(let message):
+                    for content in message.content {
+                        if case .outputText(let text) = content {
+                            textContent += text.text
+                        }
+                    }
+                case .functionCall(let funcCall):
+                    toolCalls.append(
+                        ToolCall(
+                            id: funcCall.call_id,
+                            type: "function",
+                            function: ToolCallFunction(name: funcCall.name, arguments: funcCall.arguments)
+                        )
+                    )
+                }
+            }
+
+            return (textContent.isEmpty ? nil : textContent, toolCalls.isEmpty ? nil : toolCalls)
         }
     }
 }
@@ -927,6 +1103,13 @@ public actor RemoteProviderService: ToolCapableService {
 
 /// Simple struct to decode Anthropic SSE event type
 private struct AnthropicSSEEvent: Decodable {
+    let type: String
+}
+
+// MARK: - Helper for Open Responses SSE Event Type Detection
+
+/// Simple struct to decode Open Responses SSE event type
+private struct OpenResponsesSSEEvent: Decodable {
     let type: String
 }
 
@@ -1095,6 +1278,116 @@ private struct RemoteChatRequest: Encodable {
             stop_sequences: stop,
             tools: anthropicTools,
             tool_choice: anthropicToolChoice,
+            metadata: nil
+        )
+    }
+
+    /// Convert to Open Responses API request format
+    func toOpenResponsesRequest() -> OpenResponsesRequest {
+        var inputItems: [OpenResponsesInputItem] = []
+        var instructions: String? = nil
+
+        for msg in messages {
+            switch msg.role {
+            case "system":
+                // System messages become instructions
+                if let content = msg.content {
+                    if let existing = instructions {
+                        instructions = existing + "\n" + content
+                    } else {
+                        instructions = content
+                    }
+                }
+
+            case "user":
+                // User messages become message input items
+                if let content = msg.content {
+                    let msgContent = OpenResponsesMessageContent.text(content)
+                    inputItems.append(.message(OpenResponsesMessageItem(role: "user", content: msgContent)))
+                }
+
+            case "assistant":
+                // Assistant messages with tool calls need special handling
+                if let toolCalls = msg.tool_calls, !toolCalls.isEmpty {
+                    // First add any text content
+                    if let content = msg.content, !content.isEmpty {
+                        let msgContent = OpenResponsesMessageContent.text(content)
+                        inputItems.append(.message(OpenResponsesMessageItem(role: "assistant", content: msgContent)))
+                    }
+                    // Note: function_call items from assistant are not input items in Open Responses
+                    // They would be represented as prior output from the assistant
+                } else if let content = msg.content {
+                    let msgContent = OpenResponsesMessageContent.text(content)
+                    inputItems.append(.message(OpenResponsesMessageItem(role: "assistant", content: msgContent)))
+                }
+
+            case "tool":
+                // Tool results become function_call_output items
+                if let toolCallId = msg.tool_call_id, let content = msg.content {
+                    inputItems.append(
+                        .functionCallOutput(
+                            OpenResponsesFunctionCallOutputItem(
+                                callId: toolCallId,
+                                output: content
+                            )
+                        )
+                    )
+                }
+
+            default:
+                // Unknown role - treat as user message
+                if let content = msg.content {
+                    let msgContent = OpenResponsesMessageContent.text(content)
+                    inputItems.append(.message(OpenResponsesMessageItem(role: "user", content: msgContent)))
+                }
+            }
+        }
+
+        // Convert tools
+        var openResponsesTools: [OpenResponsesTool]? = nil
+        if let tools = tools {
+            openResponsesTools = tools.map { tool in
+                OpenResponsesTool(
+                    name: tool.function.name,
+                    description: tool.function.description,
+                    parameters: tool.function.parameters
+                )
+            }
+        }
+
+        // Convert tool choice
+        var openResponsesToolChoice: OpenResponsesToolChoice? = nil
+        if let choice = tool_choice {
+            switch choice {
+            case .auto:
+                openResponsesToolChoice = .auto
+            case .none:
+                openResponsesToolChoice = OpenResponsesToolChoice.none
+            case .function(let fn):
+                openResponsesToolChoice = .function(name: fn.function.name)
+            }
+        }
+
+        // Determine input format
+        let input: OpenResponsesInput
+        if inputItems.count == 1, case .message(let msg) = inputItems[0], msg.role == "user" {
+            // Single user message - use text shorthand
+            input = .text(msg.content.plainText)
+        } else {
+            input = .items(inputItems)
+        }
+
+        return OpenResponsesRequest(
+            model: model,
+            input: input,
+            stream: stream,
+            tools: openResponsesTools,
+            tool_choice: openResponsesToolChoice,
+            temperature: temperature,
+            max_output_tokens: max_completion_tokens,
+            top_p: top_p,
+            instructions: instructions,
+            previous_response_id: nil,
             metadata: nil
         )
     }

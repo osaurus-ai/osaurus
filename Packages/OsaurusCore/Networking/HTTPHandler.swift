@@ -200,6 +200,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 handleAnthropicMessages(head: head, context: context, startTime: startTime, userAgent: userAgent)
             } else if head.method == .POST, path == "/audio/transcriptions" {
                 handleAudioTranscriptions(head: head, context: context, startTime: startTime, userAgent: userAgent)
+            } else if head.method == .POST, path == "/responses" {
+                handleOpenResponses(head: head, context: context, startTime: startTime, userAgent: userAgent)
             } else {
                 var headers = [("Content-Type", "text/plain; charset=utf-8")]
                 headers.append(contentsOf: stateRef.value.corsHeaders)
@@ -2042,6 +2044,421 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     responseBody: errorBody,
                     responseStatus: 500,
                     startTime: logStartTime,
+                    errorMessage: error.localizedDescription
+                )
+            }
+        }
+    }
+
+    // MARK: - Open Responses API
+
+    private func handleOpenResponses(
+        head: HTTPRequestHead,
+        context: ChannelHandlerContext,
+        startTime: Date,
+        userAgent: String?
+    ) {
+        let data: Data
+        let requestBodyString: String?
+        if let body = stateRef.value.requestBodyBuffer {
+            var bodyCopy = body
+            let bytes = bodyCopy.readBytes(length: bodyCopy.readableBytes) ?? []
+            data = Data(bytes)
+            requestBodyString = String(decoding: data, as: UTF8.self)
+        } else {
+            data = Data()
+            requestBodyString = nil
+        }
+
+        // Parse Open Responses request
+        guard let openResponsesReq = try? JSONDecoder().decode(OpenResponsesRequest.self, from: data) else {
+            let error = OpenResponsesErrorResponse(code: "invalid_request_error", message: "Invalid request format")
+            let errorJson =
+                (try? JSONEncoder().encode(error)).map { String(decoding: $0, as: UTF8.self) }
+                ?? #"{"error":{"type":"error","code":"invalid_request_error","message":"Invalid request format"}}"#
+            var headers = [("Content-Type", "application/json; charset=utf-8")]
+            headers.append(contentsOf: stateRef.value.corsHeaders)
+            sendResponse(
+                context: context,
+                version: head.version,
+                status: .badRequest,
+                headers: headers,
+                body: errorJson
+            )
+            logRequest(
+                method: "POST",
+                path: "/responses",
+                userAgent: userAgent,
+                requestBody: requestBodyString,
+                responseStatus: 400,
+                startTime: startTime,
+                errorMessage: "Invalid request format"
+            )
+            return
+        }
+
+        // Convert to internal format
+        let internalReq = openResponsesReq.toChatCompletionRequest()
+
+        // Generate response ID
+        let responseId = "resp_\(UUID().uuidString.replacingOccurrences(of: "-", with: "").prefix(24))"
+        let model = openResponsesReq.model
+
+        // Determine if streaming
+        let wantsStream = openResponsesReq.stream ?? false
+
+        if wantsStream {
+            handleOpenResponsesStreaming(
+                request: openResponsesReq,
+                internalReq: internalReq,
+                responseId: responseId,
+                model: model,
+                context: context,
+                startTime: startTime,
+                userAgent: userAgent,
+                requestBodyString: requestBodyString
+            )
+        } else {
+            handleOpenResponsesNonStreaming(
+                internalReq: internalReq,
+                responseId: responseId,
+                model: model,
+                head: head,
+                context: context,
+                startTime: startTime,
+                userAgent: userAgent,
+                requestBodyString: requestBodyString
+            )
+        }
+    }
+
+    private func handleOpenResponsesStreaming(
+        request: OpenResponsesRequest,
+        internalReq: ChatCompletionRequest,
+        responseId: String,
+        model: String,
+        context: ChannelHandlerContext,
+        startTime: Date,
+        userAgent: String?,
+        requestBodyString: String?
+    ) {
+        let writer = OpenResponsesSSEWriter()
+        let cors = stateRef.value.corsHeaders
+        let loop = context.eventLoop
+        let writerBound = NIOLoopBound(writer, eventLoop: loop)
+        let ctx = NIOLoopBound(context, eventLoop: loop)
+        let chatEngine = self.chatEngine
+        let hop: (@escaping @Sendable () -> Void) -> Void = { block in
+            if loop.inEventLoop { block() } else { loop.execute { block() } }
+        }
+
+        // Estimate input tokens (rough: 1 token per 4 chars)
+        let inputTokens: Int =
+            {
+                switch request.input {
+                case .text(let text):
+                    return max(1, text.count / 4)
+                case .items(let items):
+                    return items.reduce(0) { acc, item in
+                        switch item {
+                        case .message(let msg):
+                            return acc + max(1, msg.content.plainText.count / 4)
+                        case .functionCallOutput(let output):
+                            return acc + max(1, output.output.count / 4)
+                        }
+                    }
+                }
+            }() + (request.instructions?.count ?? 0) / 4
+
+        let itemId = "item_\(UUID().uuidString.replacingOccurrences(of: "-", with: "").prefix(24))"
+
+        // Send headers and initial events
+        hop {
+            writerBound.value.writeHeaders(ctx.value, extraHeaders: cors)
+            writerBound.value.writeResponseCreated(
+                responseId: responseId,
+                model: model,
+                inputTokens: inputTokens,
+                context: ctx.value
+            )
+            writerBound.value.writeResponseInProgress(context: ctx.value)
+            writerBound.value.writeMessageItemAdded(itemId: itemId, context: ctx.value)
+            writerBound.value.writeContentPartAdded(context: ctx.value)
+        }
+
+        // Capture for logging
+        let logStartTime = startTime
+        let logUserAgent = userAgent
+        let logRequestBody = requestBodyString
+        let logModel = model
+        let logSelf = self
+
+        Task(priority: .userInitiated) {
+            do {
+                let stream = try await chatEngine.streamChat(request: internalReq)
+                for try await delta in stream {
+                    hop {
+                        writerBound.value.writeTextDelta(delta, context: ctx.value)
+                    }
+                }
+                hop {
+                    writerBound.value.writeTextDone(context: ctx.value)
+                    writerBound.value.writeMessageItemDone(context: ctx.value)
+                    writerBound.value.writeResponseCompleted(context: ctx.value)
+                    writerBound.value.writeEnd(ctx.value)
+                }
+                logSelf.logRequest(
+                    method: "POST",
+                    path: "/responses",
+                    userAgent: logUserAgent,
+                    requestBody: logRequestBody,
+                    responseStatus: 200,
+                    startTime: logStartTime,
+                    model: logModel,
+                    finishReason: .stop
+                )
+            } catch let inv as ServiceToolInvocation {
+                // Handle tool invocation - emit function_call item
+                let callId =
+                    inv.toolCallId ?? "call_\(UUID().uuidString.replacingOccurrences(of: "-", with: "").prefix(24))"
+                let funcItemId = "item_\(UUID().uuidString.replacingOccurrences(of: "-", with: "").prefix(24))"
+                let args = inv.jsonArguments
+
+                hop {
+                    // Close the text content if any was written
+                    writerBound.value.writeTextDone(context: ctx.value)
+                    writerBound.value.writeMessageItemDone(context: ctx.value)
+
+                    // Start function call item
+                    writerBound.value.writeFunctionCallItemAdded(
+                        itemId: funcItemId,
+                        callId: callId,
+                        name: inv.toolName,
+                        context: ctx.value
+                    )
+
+                    // Stream the arguments in chunks
+                    let chunkSize = 512
+                    var i = args.startIndex
+                    while i < args.endIndex {
+                        let next = args.index(i, offsetBy: chunkSize, limitedBy: args.endIndex) ?? args.endIndex
+                        let chunk = String(args[i ..< next])
+                        writerBound.value.writeFunctionCallArgumentsDelta(
+                            callId: callId,
+                            delta: chunk,
+                            context: ctx.value
+                        )
+                        i = next
+                    }
+
+                    // Complete the function call
+                    writerBound.value.writeFunctionCallArgumentsDone(callId: callId, context: ctx.value)
+                    writerBound.value.writeFunctionCallItemDone(
+                        callId: callId,
+                        name: inv.toolName,
+                        context: ctx.value
+                    )
+                    writerBound.value.writeResponseCompleted(context: ctx.value)
+                    writerBound.value.writeEnd(ctx.value)
+                }
+
+                let toolLog = ToolCallLog(name: inv.toolName, arguments: inv.jsonArguments)
+                logSelf.logRequest(
+                    method: "POST",
+                    path: "/responses",
+                    userAgent: logUserAgent,
+                    requestBody: logRequestBody,
+                    responseStatus: 200,
+                    startTime: logStartTime,
+                    model: logModel,
+                    toolCalls: [toolLog],
+                    finishReason: .toolCalls
+                )
+            } catch {
+                hop {
+                    writerBound.value.writeError(error.localizedDescription, context: ctx.value)
+                    writerBound.value.writeEnd(ctx.value)
+                }
+                logSelf.logRequest(
+                    method: "POST",
+                    path: "/responses",
+                    userAgent: logUserAgent,
+                    requestBody: logRequestBody,
+                    responseStatus: 500,
+                    startTime: logStartTime,
+                    model: logModel,
+                    finishReason: .error,
+                    errorMessage: error.localizedDescription
+                )
+            }
+        }
+    }
+
+    private func handleOpenResponsesNonStreaming(
+        internalReq: ChatCompletionRequest,
+        responseId: String,
+        model: String,
+        head: HTTPRequestHead,
+        context: ChannelHandlerContext,
+        startTime: Date,
+        userAgent: String?,
+        requestBodyString: String?
+    ) {
+        let cors = stateRef.value.corsHeaders
+        let loop = context.eventLoop
+        let ctx = NIOLoopBound(context, eventLoop: loop)
+        let chatEngine = self.chatEngine
+        let hop: (@escaping @Sendable () -> Void) -> Void = { block in
+            if loop.inEventLoop { block() } else { loop.execute { block() } }
+        }
+
+        // Capture for logging
+        let logStartTime = startTime
+        let logUserAgent = userAgent
+        let logRequestBody = requestBodyString
+        let logModel = model
+        let logSelf = self
+
+        Task(priority: .userInitiated) {
+            do {
+                let resp = try await chatEngine.completeChat(request: internalReq)
+
+                // Convert to Open Responses format
+                let openResponsesResp = resp.toOpenResponsesResponse(responseId: responseId)
+
+                let json = try JSONEncoder().encode(openResponsesResp)
+                var headers: [(String, String)] = [("Content-Type", "application/json")]
+                headers.append(contentsOf: cors)
+                let headersCopy = headers
+                let body = String(decoding: json, as: UTF8.self)
+
+                hop {
+                    var responseHead = HTTPResponseHead(version: head.version, status: .ok)
+                    var buffer = ctx.value.channel.allocator.buffer(capacity: body.utf8.count)
+                    buffer.writeString(body)
+                    var nioHeaders = HTTPHeaders()
+                    for (name, value) in headersCopy { nioHeaders.add(name: name, value: value) }
+                    nioHeaders.add(name: "Content-Length", value: String(buffer.readableBytes))
+                    nioHeaders.add(name: "Connection", value: "close")
+                    responseHead.headers = nioHeaders
+                    let c = ctx.value
+                    c.write(NIOAny(HTTPServerResponsePart.head(responseHead)), promise: nil)
+                    c.write(NIOAny(HTTPServerResponsePart.body(.byteBuffer(buffer))), promise: nil)
+                    c.writeAndFlush(NIOAny(HTTPServerResponsePart.end(nil as HTTPHeaders?))).whenComplete { _ in
+                        ctx.value.close(promise: nil)
+                    }
+                }
+
+                logSelf.logRequest(
+                    method: "POST",
+                    path: "/responses",
+                    userAgent: logUserAgent,
+                    requestBody: logRequestBody,
+                    responseBody: body,
+                    responseStatus: 200,
+                    startTime: logStartTime,
+                    model: logModel,
+                    tokensInput: resp.usage.prompt_tokens,
+                    tokensOutput: resp.usage.completion_tokens,
+                    finishReason: .stop
+                )
+            } catch let inv as ServiceToolInvocation {
+                // Handle tool invocation for non-streaming
+                let callId =
+                    inv.toolCallId ?? "call_\(UUID().uuidString.replacingOccurrences(of: "-", with: "").prefix(24))"
+                let itemId = "item_\(UUID().uuidString.replacingOccurrences(of: "-", with: "").prefix(24))"
+
+                let functionCall = OpenResponsesFunctionCall(
+                    id: itemId,
+                    status: .completed,
+                    callId: callId,
+                    name: inv.toolName,
+                    arguments: inv.jsonArguments
+                )
+
+                let openResponsesResp = OpenResponsesResponse(
+                    id: responseId,
+                    createdAt: Int(Date().timeIntervalSince1970),
+                    status: .completed,
+                    model: model,
+                    output: [.functionCall(functionCall)],
+                    usage: OpenResponsesUsage(inputTokens: 0, outputTokens: 0)
+                )
+
+                let json =
+                    (try? JSONEncoder().encode(openResponsesResp))
+                    .map { String(decoding: $0, as: UTF8.self) } ?? "{}"
+                var headers: [(String, String)] = [("Content-Type", "application/json")]
+                headers.append(contentsOf: cors)
+                let headersCopy = headers
+                let body = json
+
+                hop {
+                    var responseHead = HTTPResponseHead(version: head.version, status: .ok)
+                    var buffer = ctx.value.channel.allocator.buffer(capacity: body.utf8.count)
+                    buffer.writeString(body)
+                    var nioHeaders = HTTPHeaders()
+                    for (name, value) in headersCopy { nioHeaders.add(name: name, value: value) }
+                    nioHeaders.add(name: "Content-Length", value: String(buffer.readableBytes))
+                    nioHeaders.add(name: "Connection", value: "close")
+                    responseHead.headers = nioHeaders
+                    let c = ctx.value
+                    c.write(NIOAny(HTTPServerResponsePart.head(responseHead)), promise: nil)
+                    c.write(NIOAny(HTTPServerResponsePart.body(.byteBuffer(buffer))), promise: nil)
+                    c.writeAndFlush(NIOAny(HTTPServerResponsePart.end(nil as HTTPHeaders?))).whenComplete { _ in
+                        ctx.value.close(promise: nil)
+                    }
+                }
+
+                let toolLog = ToolCallLog(name: inv.toolName, arguments: inv.jsonArguments)
+                logSelf.logRequest(
+                    method: "POST",
+                    path: "/responses",
+                    userAgent: logUserAgent,
+                    requestBody: logRequestBody,
+                    responseBody: body,
+                    responseStatus: 200,
+                    startTime: logStartTime,
+                    model: logModel,
+                    toolCalls: [toolLog],
+                    finishReason: .toolCalls
+                )
+            } catch {
+                let errorResp = OpenResponsesErrorResponse(code: "api_error", message: error.localizedDescription)
+                let errorJson =
+                    (try? JSONEncoder().encode(errorResp))
+                    .map { String(decoding: $0, as: UTF8.self) }
+                    ?? #"{"error":{"type":"error","code":"api_error","message":"Internal error"}}"#
+                var headers: [(String, String)] = [("Content-Type", "application/json")]
+                headers.append(contentsOf: cors)
+                let headersCopy = headers
+                let body = errorJson
+
+                hop {
+                    var responseHead = HTTPResponseHead(version: head.version, status: .internalServerError)
+                    var buffer = ctx.value.channel.allocator.buffer(capacity: body.utf8.count)
+                    buffer.writeString(body)
+                    var nioHeaders = HTTPHeaders()
+                    for (name, value) in headersCopy { nioHeaders.add(name: name, value: value) }
+                    nioHeaders.add(name: "Content-Length", value: String(buffer.readableBytes))
+                    nioHeaders.add(name: "Connection", value: "close")
+                    responseHead.headers = nioHeaders
+                    let c = ctx.value
+                    c.write(NIOAny(HTTPServerResponsePart.head(responseHead)), promise: nil)
+                    c.write(NIOAny(HTTPServerResponsePart.body(.byteBuffer(buffer))), promise: nil)
+                    c.writeAndFlush(NIOAny(HTTPServerResponsePart.end(nil as HTTPHeaders?))).whenComplete { _ in
+                        ctx.value.close(promise: nil)
+                    }
+                }
+
+                logSelf.logRequest(
+                    method: "POST",
+                    path: "/responses",
+                    userAgent: logUserAgent,
+                    requestBody: logRequestBody,
+                    responseStatus: 500,
+                    startTime: logStartTime,
+                    model: logModel,
                     errorMessage: error.localizedDescription
                 )
             }

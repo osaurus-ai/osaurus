@@ -1,6 +1,6 @@
-# OpenAI API Compatible Endpoints
+# API Endpoints Guide
 
-This guide explains how to use the OpenAI-compatible API endpoints in Osaurus.
+This guide explains how to use the API endpoints in Osaurus, including OpenAI-compatible, Anthropic-compatible, and Open Responses formats.
 
 ## Available Endpoints
 
@@ -328,6 +328,189 @@ for chunk in stream:
     if chunk.choices[0].delta.content is not None:
         print(chunk.choices[0].delta.content, end="")
 ```
+
+## Open Responses API
+
+Osaurus supports the [Open Responses](https://www.openresponses.org) specification, providing a semantic, item-based API format for multi-provider interoperability.
+
+### 3. Responses - `POST /responses` (also available at `POST /v1/responses`)
+
+Generate responses using the Open Responses format.
+
+#### Non-streaming Request
+
+```bash
+curl http://127.0.0.1:1337/v1/responses \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "llama-3.2-3b-instruct",
+    "input": "Hello, how are you?",
+    "instructions": "You are a helpful assistant."
+  }'
+```
+
+Example response:
+
+```json
+{
+  "id": "resp_abc123",
+  "object": "response",
+  "created_at": 1738193123,
+  "status": "completed",
+  "model": "llama-3.2-3b-instruct",
+  "output": [
+    {
+      "type": "message",
+      "id": "item_xyz789",
+      "status": "completed",
+      "role": "assistant",
+      "content": [
+        {
+          "type": "output_text",
+          "text": "I'm doing well, thank you for asking! How can I help you today?"
+        }
+      ]
+    }
+  ],
+  "usage": {
+    "input_tokens": 20,
+    "output_tokens": 15,
+    "total_tokens": 35
+  }
+}
+```
+
+#### Streaming Request
+
+```bash
+curl http://127.0.0.1:1337/v1/responses \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "llama-3.2-3b-instruct",
+    "input": "Tell me a short story",
+    "stream": true
+  }'
+```
+
+Streaming responses use Server-Sent Events with semantic event types:
+
+```
+event: response.created
+data: {"type":"response.created","sequence_number":1,"response":{...}}
+
+event: response.in_progress
+data: {"type":"response.in_progress","sequence_number":2,"response":{...}}
+
+event: response.output_item.added
+data: {"type":"response.output_item.added","sequence_number":3,"output_index":0,"item":{...}}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","sequence_number":4,"item_id":"item_xyz","delta":"Once"}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","sequence_number":5,"item_id":"item_xyz","delta":" upon"}
+
+event: response.output_text.done
+data: {"type":"response.output_text.done","sequence_number":10,"item_id":"item_xyz","text":"Once upon a time..."}
+
+event: response.output_item.done
+data: {"type":"response.output_item.done","sequence_number":11,"output_index":0,"item":{...}}
+
+event: response.completed
+data: {"type":"response.completed","sequence_number":12,"response":{...}}
+
+data: [DONE]
+```
+
+#### Structured Input
+
+For multi-turn conversations, use structured input items:
+
+```bash
+curl http://127.0.0.1:1337/v1/responses \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "llama-3.2-3b-instruct",
+    "input": [
+      {"type": "message", "role": "user", "content": "What is 2+2?"},
+      {"type": "message", "role": "assistant", "content": "2+2 equals 4."},
+      {"type": "message", "role": "user", "content": "And 3+3?"}
+    ]
+  }'
+```
+
+#### Tool Calling with Open Responses
+
+```bash
+curl http://127.0.0.1:1337/v1/responses \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "llama-3.2-3b-instruct",
+    "input": "What is the weather in San Francisco?",
+    "tools": [
+      {
+        "type": "function",
+        "name": "get_weather",
+        "description": "Get weather by city name",
+        "parameters": {
+          "type": "object",
+          "properties": {"city": {"type": "string"}},
+          "required": ["city"]
+        }
+      }
+    ]
+  }'
+```
+
+Tool call response:
+
+```json
+{
+  "id": "resp_abc123",
+  "object": "response",
+  "status": "completed",
+  "output": [
+    {
+      "type": "function_call",
+      "id": "item_xyz",
+      "status": "completed",
+      "call_id": "call_123",
+      "name": "get_weather",
+      "arguments": "{\"city\":\"San Francisco\"}"
+    }
+  ]
+}
+```
+
+To continue after a tool call, include the function output:
+
+```bash
+curl http://127.0.0.1:1337/v1/responses \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "llama-3.2-3b-instruct",
+    "input": [
+      {"type": "message", "role": "user", "content": "What is the weather in SF?"},
+      {"type": "function_call_output", "call_id": "call_123", "output": "{\"temp\": 65, \"conditions\": \"Foggy\"}"}
+    ]
+  }'
+```
+
+### Open Responses Request Parameters
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `model` | string | Model identifier (required) |
+| `input` | string or array | Input text or array of input items (required) |
+| `stream` | boolean | Enable streaming (default: false) |
+| `instructions` | string | System prompt |
+| `tools` | array | Available tools/functions |
+| `tool_choice` | string/object | Tool selection mode ("auto", "none", "required") |
+| `temperature` | float | Sampling temperature |
+| `max_output_tokens` | integer | Maximum tokens to generate |
+| `top_p` | float | Top-p sampling parameter |
+
+---
 
 ## Notes
 

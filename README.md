@@ -65,6 +65,7 @@ Osaurus is the AI edge runtime for macOS. It brings together:
 | **Remote Providers**     | Anthropic, OpenAI, OpenRouter, Ollama, LM Studio, or custom     |
 | **OpenAI Compatible**    | `/v1/chat/completions` with streaming and tool calling          |
 | **Anthropic Compatible** | `/messages` endpoint for Claude Code and Anthropic SDK clients  |
+| **Open Responses**       | `/responses` endpoint for multi-provider interoperability       |
 | **MCP Server**           | Connect to Cursor, Claude Desktop, and other MCP clients        |
 | **Remote MCP Providers** | Aggregate tools from external MCP servers                       |
 | **Tools & Plugins**      | Browser automation, file system, git, web search, and more      |
@@ -355,12 +356,13 @@ Base URL: `http://127.0.0.1:1337` (or your configured port)
 
 | Endpoint                    | Description                         |
 | --------------------------- | ----------------------------------- |
-| `GET /health`               | Server health                       |
-| `GET /v1/models`            | List models (OpenAI format)         |
-| `GET /v1/tags`              | List models (Ollama format)         |
-| `POST /v1/chat/completions` | Chat completions (OpenAI format)    |
-| `POST /messages`            | Chat completions (Anthropic format) |
-| `POST /chat`                | Chat (Ollama format, NDJSON)        |
+| `GET /health`               | Server health                          |
+| `GET /v1/models`            | List models (OpenAI format)            |
+| `GET /v1/tags`              | List models (Ollama format)            |
+| `POST /v1/chat/completions` | Chat completions (OpenAI format)       |
+| `POST /messages`            | Chat completions (Anthropic format)    |
+| `POST /v1/responses`        | Responses (Open Responses format)      |
+| `POST /chat`                | Chat (Ollama format, NDJSON)           |
 
 All endpoints support `/v1`, `/api`, and `/v1/api` prefixes.
 

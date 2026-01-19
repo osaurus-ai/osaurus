@@ -1,6 +1,6 @@
 # Remote Providers
 
-Remote Providers allow you to connect Osaurus to external APIs (Anthropic, OpenAI, and compatible endpoints), giving you access to cloud models alongside your local MLX models.
+Remote Providers allow you to connect Osaurus to external APIs (OpenAI, Anthropic, Open Responses, and compatible endpoints), giving you access to cloud models alongside your local MLX models.
 
 ---
 
@@ -30,14 +30,23 @@ With Remote Providers, you can:
 
 Osaurus includes presets for common providers:
 
-| Preset         | Host              | Port          | Base Path | Auth             |
-| -------------- | ----------------- | ------------- | --------- | ---------------- |
-| **Anthropic**  | api.anthropic.com | 443           | /v1       | API Key required |
-| **OpenAI**     | api.openai.com    | 443           | /v1       | API Key required |
-| **OpenRouter** | openrouter.ai     | 443           | /api/v1   | API Key required |
-| **Ollama**     | localhost         | 11434         | /v1       | None             |
-| **LM Studio**  | localhost         | 1234          | /v1       | None             |
-| **Custom**     | (you specify)     | (you specify) | /v1       | Optional         |
+| Preset             | Host              | Port          | Base Path | API Format      | Auth             |
+| ------------------ | ----------------- | ------------- | --------- | --------------- | ---------------- |
+| **OpenAI**         | api.openai.com    | 443           | /v1       | OpenAI          | API Key required |
+| **Anthropic**      | api.anthropic.com | 443           | /v1       | Anthropic       | API Key required |
+| **OpenRouter**     | openrouter.ai     | 443           | /api/v1   | OpenAI          | API Key required |
+| **Ollama**         | localhost         | 11434         | /v1       | OpenAI          | None             |
+| **LM Studio**      | localhost         | 1234          | /v1       | OpenAI          | None             |
+| **Open Responses** | (you specify)     | (you specify) | /v1       | Open Responses  | Optional         |
+| **Custom**         | (you specify)     | (you specify) | /v1       | OpenAI          | Optional         |
+
+### API Format Types
+
+| Format | Endpoint | Description |
+|--------|----------|-------------|
+| **OpenAI** | `/chat/completions` | OpenAI Chat Completions API format |
+| **Anthropic** | `/messages` | Anthropic Messages API format |
+| **Open Responses** | `/responses` | [Open Responses](https://www.openresponses.org) API format |
 
 ---
 
