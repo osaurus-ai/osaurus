@@ -2,7 +2,7 @@
 //  ThemeConfigurationStore.swift
 //  osaurus
 //
-//  Handles persistence of custom themes to Application Support
+//  Handles persistence of custom themes
 //
 
 import Foundation
@@ -10,10 +10,6 @@ import Foundation
 /// Handles persistence of custom themes
 @MainActor
 public enum ThemeConfigurationStore {
-    /// Optional directory override for tests
-    static var overrideDirectory: URL?
-
-    /// Filename for the active theme reference
     private static let activeThemeFilename = "ActiveTheme.json"
 
     /// Track if built-in themes have been installed this session
@@ -39,7 +35,7 @@ public enum ThemeConfigurationStore {
     static func saveActiveThemeId(_ themeId: UUID?) {
         let url = activeThemeFileURL()
         do {
-            try ensureDirectoryExists(url.deletingLastPathComponent())
+            try OsaurusPaths.ensureExists(url.deletingLastPathComponent())
             if let themeId = themeId {
                 let ref = ActiveThemeReference(themeId: themeId)
                 let encoder = JSONEncoder()
@@ -124,7 +120,7 @@ public enum ThemeConfigurationStore {
     static func saveTheme(_ theme: CustomTheme) {
         let url = themeFileURL(for: theme.metadata.id)
         do {
-            try ensureDirectoryExists(themesDirectoryURL())
+            try OsaurusPaths.ensureExists(themesDirectoryURL())
             let encoder = JSONEncoder()
             encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
             encoder.dateEncodingStrategy = .iso8601
@@ -212,7 +208,7 @@ public enum ThemeConfigurationStore {
     /// Install built-in themes if they don't exist
     static func installBuiltInThemesIfNeeded() {
         do {
-            try ensureDirectoryExists(themesDirectoryURL())
+            try OsaurusPaths.ensureExists(themesDirectoryURL())
             print("[Osaurus] Themes directory: \(themesDirectoryURL().path)")
         } catch {
             print("[Osaurus] Failed to create themes directory: \(error)")
@@ -234,7 +230,7 @@ public enum ThemeConfigurationStore {
     static func forceReinstallBuiltInThemes() {
         print("[Osaurus] Force reinstalling all built-in themes...")
         do {
-            try ensureDirectoryExists(themesDirectoryURL())
+            try OsaurusPaths.ensureExists(themesDirectoryURL())
         } catch {
             print("[Osaurus] Failed to create themes directory: \(error)")
             return
@@ -278,19 +274,8 @@ public enum ThemeConfigurationStore {
 
     // MARK: - Private Helpers
 
-    private static func baseDirectoryURL() -> URL {
-        if let overrideDirectory {
-            return overrideDirectory
-        }
-        let fm = FileManager.default
-        let supportDir = fm.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
-        // Use a consistent bundle ID for the app
-        let bundleId = Bundle.main.bundleIdentifier ?? "com.osaurus.app"
-        return supportDir.appendingPathComponent(bundleId, isDirectory: true)
-    }
-
     private static func themesDirectoryURL() -> URL {
-        baseDirectoryURL().appendingPathComponent("Themes", isDirectory: true)
+        OsaurusPaths.resolveDirectory(new: OsaurusPaths.themes(), legacy: "Themes")
     }
 
     private static func themeFileURL(for id: UUID) -> URL {
@@ -298,15 +283,7 @@ public enum ThemeConfigurationStore {
     }
 
     private static func activeThemeFileURL() -> URL {
-        baseDirectoryURL().appendingPathComponent(activeThemeFilename)
-    }
-
-    private static func ensureDirectoryExists(_ url: URL) throws {
-        var isDir: ObjCBool = false
-        if !FileManager.default.fileExists(atPath: url.path, isDirectory: &isDir) {
-            try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
-            print("[Osaurus] Created directory: \(url.path)")
-        }
+        OsaurusPaths.resolveFile(new: OsaurusPaths.activeThemeFile(), legacy: activeThemeFilename)
     }
 }
 

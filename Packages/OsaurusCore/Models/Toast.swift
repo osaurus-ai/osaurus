@@ -142,45 +142,26 @@ public struct ToastConfiguration: Codable, Equatable, Sendable {
 
 /// Persistence layer for toast configuration
 public enum ToastConfigurationStore {
-    private static let fileName = "ToastConfiguration.json"
-
     private static var fileURL: URL {
-        let fm = FileManager.default
-        let supportDir = fm.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
-        let bundleId = Bundle.main.bundleIdentifier ?? "osaurus"
-        let dir = supportDir.appendingPathComponent(bundleId, isDirectory: true)
-
-        // Ensure directory exists
-        if !fm.fileExists(atPath: dir.path) {
-            try? fm.createDirectory(at: dir, withIntermediateDirectories: true)
-        }
-
-        return dir.appendingPathComponent(fileName)
+        OsaurusPaths.ensureExistsSilent(OsaurusPaths.config())
+        return OsaurusPaths.resolveFile(new: OsaurusPaths.toastConfigFile(), legacy: "ToastConfiguration.json")
     }
 
-    /// Load configuration from disk, or return defaults if not found
     public static func load() -> ToastConfiguration {
-        guard FileManager.default.fileExists(atPath: fileURL.path) else {
-            return .default
-        }
-
+        guard FileManager.default.fileExists(atPath: fileURL.path) else { return .default }
         do {
-            let data = try Data(contentsOf: fileURL)
-            let decoder = JSONDecoder()
-            return try decoder.decode(ToastConfiguration.self, from: data)
+            return try JSONDecoder().decode(ToastConfiguration.self, from: Data(contentsOf: fileURL))
         } catch {
             print("[Osaurus] Failed to load toast configuration: \(error)")
             return .default
         }
     }
 
-    /// Save configuration to disk
     public static func save(_ configuration: ToastConfiguration) {
         do {
             let encoder = JSONEncoder()
             encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-            let data = try encoder.encode(configuration)
-            try data.write(to: fileURL, options: [.atomic])
+            try encoder.encode(configuration).write(to: fileURL, options: [.atomic])
         } catch {
             print("[Osaurus] Failed to save toast configuration: \(error)")
         }

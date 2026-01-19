@@ -189,38 +189,26 @@ public enum VoiceSensitivity: String, Codable, CaseIterable, Sendable {
     }
 }
 
-/// Handles persistence of `WhisperConfiguration` to Application Support
-/// Uses caching to avoid disk I/O on every access
+/// Handles persistence of `WhisperConfiguration` with caching
 @MainActor
 public enum WhisperConfigurationStore {
-    /// Optional directory override for tests
-    static var overrideDirectory: URL?
-
-    /// Cached configuration - loaded once, updated on save
     private static var cachedConfig: WhisperConfiguration?
 
-    /// Load configuration from cache (disk I/O only on first access)
     public static func load() -> WhisperConfiguration {
-        if let cached = cachedConfig {
-            return cached
-        }
+        if let cached = cachedConfig { return cached }
         let config = loadFromDisk()
         cachedConfig = config
         return config
     }
 
-    /// Save configuration to disk and update cache
     public static func save(_ configuration: WhisperConfiguration) {
         cachedConfig = configuration
         saveToDisk(configuration)
     }
 
-    /// Invalidate cache (forces reload from disk on next access)
     public static func invalidateCache() {
         cachedConfig = nil
     }
-
-    // MARK: - Private
 
     private static func loadFromDisk() -> WhisperConfiguration {
         let url = configurationFileURL()
@@ -228,9 +216,7 @@ public enum WhisperConfigurationStore {
             return WhisperConfiguration.default
         }
         do {
-            let data = try Data(contentsOf: url)
-            let decoder = JSONDecoder()
-            return try decoder.decode(WhisperConfiguration.self, from: data)
+            return try JSONDecoder().decode(WhisperConfiguration.self, from: Data(contentsOf: url))
         } catch {
             print("[Osaurus] Failed to load WhisperConfiguration: \(error)")
             return WhisperConfiguration.default
@@ -239,32 +225,17 @@ public enum WhisperConfigurationStore {
 
     private static func saveToDisk(_ configuration: WhisperConfiguration) {
         let url = configurationFileURL()
+        OsaurusPaths.ensureExistsSilent(url.deletingLastPathComponent())
         do {
-            try ensureDirectoryExists(url.deletingLastPathComponent())
             let encoder = JSONEncoder()
             encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-            let data = try encoder.encode(configuration)
-            try data.write(to: url, options: [.atomic])
+            try encoder.encode(configuration).write(to: url, options: [.atomic])
         } catch {
             print("[Osaurus] Failed to save WhisperConfiguration: \(error)")
         }
     }
 
     private static func configurationFileURL() -> URL {
-        if let overrideDirectory {
-            return overrideDirectory.appendingPathComponent("WhisperConfiguration.json")
-        }
-        let fm = FileManager.default
-        let supportDir = fm.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
-        let bundleId = Bundle.main.bundleIdentifier ?? "osaurus"
-        return supportDir.appendingPathComponent(bundleId, isDirectory: true)
-            .appendingPathComponent("WhisperConfiguration.json")
-    }
-
-    private static func ensureDirectoryExists(_ url: URL) throws {
-        var isDir: ObjCBool = false
-        if !FileManager.default.fileExists(atPath: url.path, isDirectory: &isDir) {
-            try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
-        }
+        OsaurusPaths.resolveFile(new: OsaurusPaths.whisperConfigFile(), legacy: "WhisperConfiguration.json")
     }
 }

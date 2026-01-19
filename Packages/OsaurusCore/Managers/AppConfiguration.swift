@@ -76,14 +76,6 @@ public final class AppConfiguration: ObservableObject {
     }
 
     private static func configFileURL() -> URL {
-        if let override = ChatConfigurationStore.overrideDirectory {
-            return override.appendingPathComponent("ChatConfiguration.json")
-        }
-        let supportDir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
-        let bundleId = Bundle.main.bundleIdentifier ?? "osaurus"
-        return
-            supportDir
-            .appendingPathComponent(bundleId, isDirectory: true)
-            .appendingPathComponent("ChatConfiguration.json")
+        OsaurusPaths.resolveFile(new: OsaurusPaths.chatConfigFile(), legacy: "ChatConfiguration.json")
     }
 }

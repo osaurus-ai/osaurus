@@ -49,21 +49,16 @@ public struct TranscriptionConfiguration: Codable, Equatable, Sendable {
     }
 }
 
-/// Handles persistence of `TranscriptionConfiguration` to Application Support
+/// Handles persistence of `TranscriptionConfiguration`
 @MainActor
 public enum TranscriptionConfigurationStore {
-    /// Optional directory override for tests
-    static var overrideDirectory: URL?
-
     public static func load() -> TranscriptionConfiguration {
         let url = configurationFileURL()
         guard FileManager.default.fileExists(atPath: url.path) else {
             return TranscriptionConfiguration.default
         }
         do {
-            let data = try Data(contentsOf: url)
-            let decoder = JSONDecoder()
-            return try decoder.decode(TranscriptionConfiguration.self, from: data)
+            return try JSONDecoder().decode(TranscriptionConfiguration.self, from: Data(contentsOf: url))
         } catch {
             print("[Osaurus] Failed to load TranscriptionConfiguration: \(error)")
             return TranscriptionConfiguration.default
@@ -72,14 +67,11 @@ public enum TranscriptionConfigurationStore {
 
     public static func save(_ configuration: TranscriptionConfiguration) {
         let url = configurationFileURL()
+        OsaurusPaths.ensureExistsSilent(url.deletingLastPathComponent())
         do {
-            try ensureDirectoryExists(url.deletingLastPathComponent())
             let encoder = JSONEncoder()
             encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-            let data = try encoder.encode(configuration)
-            try data.write(to: url, options: [.atomic])
-
-            // Notify observers of configuration change
+            try encoder.encode(configuration).write(to: url, options: [.atomic])
             DispatchQueue.main.async {
                 NotificationCenter.default.post(name: .transcriptionConfigurationChanged, object: nil)
             }
@@ -88,24 +80,8 @@ public enum TranscriptionConfigurationStore {
         }
     }
 
-    // MARK: - Private
-
     private static func configurationFileURL() -> URL {
-        if let overrideDirectory {
-            return overrideDirectory.appendingPathComponent("TranscriptionConfiguration.json")
-        }
-        let fm = FileManager.default
-        let supportDir = fm.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
-        let bundleId = Bundle.main.bundleIdentifier ?? "osaurus"
-        return supportDir.appendingPathComponent(bundleId, isDirectory: true)
-            .appendingPathComponent("TranscriptionConfiguration.json")
-    }
-
-    private static func ensureDirectoryExists(_ url: URL) throws {
-        var isDir: ObjCBool = false
-        if !FileManager.default.fileExists(atPath: url.path, isDirectory: &isDir) {
-            try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
-        }
+        OsaurusPaths.resolveFile(new: OsaurusPaths.transcriptionConfigFile(), legacy: "TranscriptionConfiguration.json")
     }
 }
 

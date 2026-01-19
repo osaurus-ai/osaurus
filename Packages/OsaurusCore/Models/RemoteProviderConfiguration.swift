@@ -329,20 +329,15 @@ public struct RemoteProviderConfiguration: Codable, Sendable {
 /// Persistence for RemoteProviderConfiguration
 @MainActor
 public enum RemoteProviderConfigurationStore {
-    static var overrideDirectory: URL?
-
     public static func load() -> RemoteProviderConfiguration {
         let url = configurationFileURL()
         if FileManager.default.fileExists(atPath: url.path) {
             do {
-                let data = try Data(contentsOf: url)
-                let decoder = JSONDecoder()
-                return try decoder.decode(RemoteProviderConfiguration.self, from: data)
+                return try JSONDecoder().decode(RemoteProviderConfiguration.self, from: Data(contentsOf: url))
             } catch {
                 print("[Osaurus] Failed to load RemoteProviderConfiguration: \(error)")
             }
         }
-        // Return empty configuration if no file exists
         let defaults = RemoteProviderConfiguration()
         save(defaults)
         return defaults
@@ -350,34 +345,20 @@ public enum RemoteProviderConfigurationStore {
 
     public static func save(_ configuration: RemoteProviderConfiguration) {
         let url = configurationFileURL()
+        OsaurusPaths.ensureExistsSilent(url.deletingLastPathComponent())
         do {
-            try ensureDirectoryExists(url.deletingLastPathComponent())
             let encoder = JSONEncoder()
             encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-            let data = try encoder.encode(configuration)
-            try data.write(to: url, options: [.atomic])
+            try encoder.encode(configuration).write(to: url, options: [.atomic])
         } catch {
             print("[Osaurus] Failed to save RemoteProviderConfiguration: \(error)")
         }
     }
 
-    // MARK: - Private
-
     private static func configurationFileURL() -> URL {
-        if let overrideDirectory {
-            return overrideDirectory.appendingPathComponent("RemoteProviderConfiguration.json")
-        }
-        let fm = FileManager.default
-        let supportDir = fm.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
-        let bundleId = Bundle.main.bundleIdentifier ?? "osaurus"
-        return supportDir.appendingPathComponent(bundleId, isDirectory: true)
-            .appendingPathComponent("RemoteProviderConfiguration.json")
-    }
-
-    private static func ensureDirectoryExists(_ url: URL) throws {
-        let fm = FileManager.default
-        if !fm.fileExists(atPath: url.path) {
-            try fm.createDirectory(at: url, withIntermediateDirectories: true)
-        }
+        OsaurusPaths.resolveFile(
+            new: OsaurusPaths.remoteProviderConfigFile(),
+            legacy: "RemoteProviderConfiguration.json"
+        )
     }
 }

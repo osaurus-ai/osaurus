@@ -6,8 +6,17 @@
 //
 
 import Foundation
+import OsaurusRepository
 
 public struct Configuration {
+    /// The canonical bundle identifier for Osaurus
+    public static let bundleId = "com.dinoki.osaurus"
+
+    /// Application Support root directory for Osaurus
+    public static func appSupportRoot() -> URL {
+        ToolsPaths.appSupportRoot()
+    }
+
     public static func resolveConfiguredPort() -> Int? {
         // Allow override for testing
         if let env = ProcessInfo.processInfo.environment["OSU_PORT"], let p = Int(env) {
@@ -15,18 +24,23 @@ public struct Configuration {
         }
 
         // Read the same configuration the app persists
-        // ~/Library/Application Support/com.dinoki.osaurus/ServerConfiguration.json
+        // Check new location first: ~/Library/Application Support/com.dinoki.osaurus/config/server.json
+        // Then legacy: ~/Library/Application Support/com.dinoki.osaurus/ServerConfiguration.json
         let fm = FileManager.default
-        guard let supportDir = fm.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
-        else {
+        let root = appSupportRoot()
+        let newConfigURL = root.appendingPathComponent("config", isDirectory: true)
+            .appendingPathComponent("server.json")
+        let legacyConfigURL = root.appendingPathComponent("ServerConfiguration.json")
+
+        // Try new location first, then legacy
+        let configURL: URL
+        if fm.fileExists(atPath: newConfigURL.path) {
+            configURL = newConfigURL
+        } else if fm.fileExists(atPath: legacyConfigURL.path) {
+            configURL = legacyConfigURL
+        } else {
             return nil
         }
-        let configURL =
-            supportDir
-            .appendingPathComponent("com.dinoki.osaurus", isDirectory: true)
-            .appendingPathComponent("ServerConfiguration.json")
-
-        guard fm.fileExists(atPath: configURL.path) else { return nil }
 
         struct PartialConfig: Decodable { let port: Int? }
         do {
@@ -39,11 +53,6 @@ public struct Configuration {
     }
 
     public static func toolsRootDirectory() -> URL {
-        let fm = FileManager.default
-        let supportDir = fm.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
-        return
-            supportDir
-            .appendingPathComponent("com.dinoki.osaurus", isDirectory: true)
-            .appendingPathComponent("Tools", isDirectory: true)
+        ToolsPaths.toolsRootDirectory()
     }
 }

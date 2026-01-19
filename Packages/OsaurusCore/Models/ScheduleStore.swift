@@ -9,24 +9,11 @@ import Foundation
 
 /// Handles persistence of schedules to disk
 public enum ScheduleStore {
-    private static let directoryName = "Schedules"
-
     // MARK: - Directory Management
 
     private static var schedulesDirectory: URL {
-        let fm = FileManager.default
-        let supportDir = fm.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
-        let bundleId = Bundle.main.bundleIdentifier ?? "osaurus"
-        let dir =
-            supportDir
-            .appendingPathComponent(bundleId, isDirectory: true)
-            .appendingPathComponent(directoryName, isDirectory: true)
-
-        // Ensure directory exists
-        if !fm.fileExists(atPath: dir.path) {
-            try? fm.createDirectory(at: dir, withIntermediateDirectories: true)
-        }
-
+        let dir = OsaurusPaths.resolveDirectory(new: OsaurusPaths.schedules(), legacy: "Schedules")
+        OsaurusPaths.ensureExistsSilent(dir)
         return dir
     }
 

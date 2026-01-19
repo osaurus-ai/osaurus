@@ -2,53 +2,31 @@
 //  SharedConfigurationService.swift
 //  osaurus
 //
-//  Created by Terence on 9/8/25.
+//  Publishes runtime server configuration for discovery by other processes
 //
 
 import Foundation
 
-/// Publishes runtime server configuration for discovery by other processes
 @MainActor
 final class SharedConfigurationService {
     static let shared = SharedConfigurationService()
+    private let instanceId = UUID().uuidString
 
-    /// Unique identifier for this app run
-    private let instanceId: String
+    private init() {}
 
-    private init() {
-        self.instanceId = UUID().uuidString
+    private func baseDirectoryURL() -> URL {
+        OsaurusPaths.resolveDirectory(new: OsaurusPaths.runtime(), legacy: "SharedConfiguration")
     }
 
-    /// Base directory for shared configurations
-    private func baseDirectoryURL() -> URL? {
-        guard
-            let appSupportURL = FileManager.default.urls(
-                for: .applicationSupportDirectory,
-                in: .userDomainMask
-            ).first
-        else {
-            return nil
-        }
-        let bundleId = Bundle.main.bundleIdentifier ?? "osaurus"
-        // Parent directory remains stable so external tools can enumerate instances
-        return
-            appSupportURL
-            .appendingPathComponent(bundleId, isDirectory: true)
-            .appendingPathComponent("SharedConfiguration", isDirectory: true)
+    private func instanceDirectoryURL() -> URL {
+        baseDirectoryURL().appendingPathComponent(instanceId, isDirectory: true)
     }
 
-    /// Directory for this running instance
-    private func instanceDirectoryURL() -> URL? {
-        guard let base = baseDirectoryURL() else { return nil }
-        return base.appendingPathComponent(instanceId, isDirectory: true)
-    }
-
-    /// Ensure directories exist
     private func ensureDirectories() -> URL? {
-        guard let base = baseDirectoryURL(), let instance = instanceDirectoryURL() else { return nil }
+        let instance = instanceDirectoryURL()
         do {
-            try FileManager.default.createDirectory(at: base, withIntermediateDirectories: true)
-            try FileManager.default.createDirectory(at: instance, withIntermediateDirectories: true)
+            try OsaurusPaths.ensureExists(baseDirectoryURL())
+            try OsaurusPaths.ensureExists(instance)
             return instance
         } catch {
             print("[Osaurus] SharedConfigurationService: failed to create directories: \(error)")
@@ -131,7 +109,7 @@ final class SharedConfigurationService {
 
     /// Remove this instance's shared files
     func remove() {
-        guard let instance = instanceDirectoryURL() else { return }
+        let instance = instanceDirectoryURL()
         do {
             if FileManager.default.fileExists(atPath: instance.path) {
                 try FileManager.default.removeItem(at: instance)
