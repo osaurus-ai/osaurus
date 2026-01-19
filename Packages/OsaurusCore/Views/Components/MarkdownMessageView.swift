@@ -146,6 +146,38 @@ private struct MemoizedMarkdownView: View {
         }
     }
 
+    /// Estimate height for a text group based on block content
+    /// Used when no cached height is available to provide SwiftUI with a size hint
+    static func estimateTextGroupHeight(blocks: [SelectableTextBlock]) -> CGFloat {
+        var totalHeight: CGFloat = 0
+
+        for block in blocks {
+            switch block {
+            case .paragraph(let text):
+                // Estimate ~80 chars per line, ~20px per line
+                let lines = max(1, CGFloat(text.count) / 80)
+                totalHeight += lines * 22 + 8
+
+            case .heading(let level, let text):
+                // Headings are taller
+                let baseHeight: CGFloat = level <= 2 ? 32 : 26
+                let lines = max(1, CGFloat(text.count) / 60)
+                totalHeight += lines * baseHeight + 12
+
+            case .blockquote(let text):
+                let lines = max(1, CGFloat(text.count) / 70)
+                totalHeight += lines * 20 + 16
+
+            case .listItem(let text, _, _):
+                let lines = max(1, CGFloat(text.count) / 70)
+                totalHeight += lines * 20 + 8
+            }
+        }
+
+        // Minimum height and cap
+        return min(max(24, totalHeight), 800)
+    }
+
     var body: some View {
         Group {
             if cachedSegments.isEmpty && !text.isEmpty {
@@ -216,13 +248,11 @@ private struct MemoizedMarkdownView: View {
             // Run parsing on a background thread
             // Note: We always do a full parse to avoid the complexity and bugs of incremental parsing.
             // The debouncing and background execution provide sufficient performance improvement.
-            let parseStart = Date()
             let (newBlocks, newSegments) = await Task.detached(priority: .userInitiated) {
                 let blocks = parseBlocks(textSnapshot)
                 let segments = groupBlocksIntoSegments(blocks)
                 return (blocks, segments)
             }.value
-            let parseDuration = Date().timeIntervalSince(parseStart) * 1000
 
             // Check if task was cancelled while parsing
             if Task.isCancelled { return }
@@ -255,16 +285,21 @@ private struct MemoizedMarkdownView: View {
 
             switch segment.kind {
             case .textGroup(let textBlocks):
+                // Use cached height wrapper to provide SwiftUI with height hints
+                // This prevents expensive fixedSize layout calculations
+                let segmentCacheKey = cacheKey.map { "\($0)-\(segment.id)" }
+                let cachedHeight = segmentCacheKey.flatMap { MessageHeightCache.shared.height(for: $0) }
+                let estimatedHeight = cachedHeight ?? Self.estimateTextGroupHeight(blocks: textBlocks)
+
                 SelectableTextView(
                     blocks: textBlocks,
                     baseWidth: baseWidth,
                     theme: theme,
-                    cacheKey: cacheKey.map { "\($0)-\(segment.id)" }
+                    cacheKey: segmentCacheKey
                 )
-                // Let the NSTextView self-size via intrinsicContentSize instead of doing a separate
-                // height calculation pass (which duplicates layout work and can freeze the UI during streaming).
-                .frame(width: baseWidth, alignment: .leading)
-                .fixedSize(horizontal: false, vertical: true)
+                // Use minHeight with cached/estimated value instead of fixedSize to prevent
+                // expensive layout calculations that can freeze the UI during streaming.
+                .frame(minWidth: baseWidth, maxWidth: baseWidth, minHeight: estimatedHeight, alignment: .leading)
 
             case .codeBlock(let code, let lang):
                 if let key = cacheKey {

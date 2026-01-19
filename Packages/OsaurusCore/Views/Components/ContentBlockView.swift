@@ -32,6 +32,53 @@ struct ContentBlockView: View {
         block.position == .only || block.position == .last
     }
 
+    // MARK: - Height Estimation
+
+    /// Provides SwiftUI with an estimated height hint to prevent expensive layout calculations.
+    /// Uses cached height if available, otherwise estimates based on block kind.
+    private var estimatedMinHeight: CGFloat {
+        // Try cached height first (from previous renders)
+        if let cachedHeight = MessageHeightCache.shared.height(for: block.id) {
+            return cachedHeight
+        }
+
+        // Estimate based on block kind
+        return Self.estimateHeight(for: block.kind, width: contentWidth)
+    }
+
+    /// Estimate height for a block kind (used when no cached height is available)
+    private static func estimateHeight(for kind: ContentBlockKind, width: CGFloat) -> CGFloat {
+        switch kind {
+        case .header:
+            return 48  // header height + padding
+
+        case let .paragraph(_, text, _, _):
+            // Estimate: ~80 chars per line, ~20px per line, plus padding
+            let estimatedLines = max(1, CGFloat(text.count) / 80)
+            return min(max(40, estimatedLines * 22 + 24), 500)  // Cap at 500px
+
+        case .toolCall:
+            return 60  // collapsed tool call height
+
+        case .toolCallGroup:
+            return 100  // grouped tool calls
+
+        case let .thinking(_, text, _):
+            // Similar to paragraph but typically shorter
+            let estimatedLines = max(1, CGFloat(text.count) / 80)
+            return min(max(50, estimatedLines * 20 + 30), 300)
+
+        case .image:
+            return 170  // max image height + padding
+
+        case .typingIndicator:
+            return 48
+
+        case .groupSpacer:
+            return 16
+        }
+    }
+
     // MARK: - Body
 
     var body: some View {
@@ -51,7 +98,7 @@ struct ContentBlockView: View {
         VStack(alignment: .leading, spacing: 0) {
             blockContent
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
+        .frame(maxWidth: .infinity, minHeight: estimatedMinHeight, alignment: .leading)
         .padding(.horizontal, 16)
     }
 

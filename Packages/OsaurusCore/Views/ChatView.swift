@@ -355,6 +355,14 @@ final class ChatSession: ObservableObject {
         _lastContentLength = currentContentLength
         _lastThinkingLength = currentThinkingLength
 
+        // Limit visible blocks during streaming to prevent layout explosion
+        // When streaming with many blocks, only show the most recent ones to maintain responsiveness
+        let maxBlocksDuringStreaming = 150
+        if isStreaming && blocks.count > maxBlocksDuringStreaming {
+            // Keep the last N blocks to ensure the streaming content is visible
+            return Array(blocks.suffix(maxBlocksDuringStreaming))
+        }
+
         return blocks
     }
 
