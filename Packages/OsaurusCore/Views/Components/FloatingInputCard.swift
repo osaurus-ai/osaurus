@@ -185,17 +185,20 @@ struct FloatingInputCard: View {
         }
         .animation(.spring(response: 0.3, dampingFraction: 0.85), value: showVoiceOverlay)
         .onAppear {
-            // Sync initial value from binding
             localText = text
+
+            // Focus first with minimal delay for window readiness (1 frame at 60fps)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.016) {
+                isFocused = true
+            }
+
+            // Load voice config (cached after first load)
             loadVoiceConfig()
 
             // Sync local state with singleton service state on appear
-            // This handles cases where view is recreated while recording is active
             if whisperService.isRecording {
-                print("[FloatingInputCard] onAppear: Syncing with active recording")
                 if voiceInputState == .idle {
                     voiceInputState = .recording
-                    // Reset timers on view recreation to prevent immediate timeout
                     lastSpeechTime = Date()
                     lastVoiceActivityTime = Date()
                     isPauseDetectionActive = voiceConfig.pauseDuration > 0
@@ -204,8 +207,6 @@ struct FloatingInputCard: View {
                     showVoiceOverlay = true
                 }
             }
-
-            isFocused = true
         }
         .onReceive(NotificationCenter.default.publisher(for: .startVoiceInputInChat)) { notification in
             // Start voice input when triggered by VAD - enable continuous mode
