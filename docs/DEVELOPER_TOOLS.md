@@ -120,17 +120,18 @@ Copy the server URL with one click for use in your applications.
 
 Browse all available endpoints, organized by category:
 
-| Category | Endpoints                                |
-| -------- | ---------------------------------------- |
-| **Core** | `/`, `/health`, `/models`, `/tags`       |
-| **Chat** | `/chat/completions`, `/chat`             |
-| **MCP**  | `/mcp/health`, `/mcp/tools`, `/mcp/call` |
+| Category  | Endpoints                                              |
+| --------- | ------------------------------------------------------ |
+| **Core**  | `/`, `/health`, `/models`, `/tags`                     |
+| **Chat**  | `/chat/completions`, `/chat`, `/messages`, `/responses` |
+| **Audio** | `/audio/transcriptions`                                |
+| **MCP**   | `/mcp/health`, `/mcp/tools`, `/mcp/call`               |
 
 Each endpoint shows:
 
 - HTTP method (GET/POST)
 - Path
-- Compatibility badge (OpenAI, Ollama, MCP)
+- Compatibility badge (OpenAI, Ollama, Anthropic, Open Responses, MCP)
 - Description
 
 #### Interactive Testing

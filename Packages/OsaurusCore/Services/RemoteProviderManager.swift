@@ -367,7 +367,7 @@ public final class RemoteProviderManager: ObservableObject {
                 if testHeaders["anthropic-version"] == nil {
                     testHeaders["anthropic-version"] = "2023-06-01"
                 }
-            case .openai:
+            case .openai, .openResponses:
                 testHeaders["Authorization"] = "Bearer \(apiKey)"
             }
         }

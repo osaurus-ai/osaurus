@@ -36,11 +36,13 @@ public enum RemoteProviderAuthType: String, Codable, Sendable, CaseIterable {
 public enum RemoteProviderType: String, Codable, Sendable, CaseIterable {
     case openai = "openai"  // OpenAI-compatible API (default)
     case anthropic = "anthropic"  // Anthropic Messages API
+    case openResponses = "openResponses"  // Open Responses API
 
     public var displayName: String {
         switch self {
         case .openai: return "OpenAI Compatible"
         case .anthropic: return "Anthropic"
+        case .openResponses: return "Open Responses"
         }
     }
 
@@ -48,6 +50,7 @@ public enum RemoteProviderType: String, Codable, Sendable, CaseIterable {
         switch self {
         case .openai: return "/chat/completions"
         case .anthropic: return "/messages"
+        case .openResponses: return "/responses"
         }
     }
 
@@ -228,7 +231,7 @@ public struct RemoteProvider: Codable, Identifiable, Sendable, Equatable {
                 if headers["anthropic-version"] == nil {
                     headers["anthropic-version"] = "2023-06-01"
                 }
-            case .openai:
+            case .openai, .openResponses:
                 headers["Authorization"] = "Bearer \(apiKey)"
             }
         }
