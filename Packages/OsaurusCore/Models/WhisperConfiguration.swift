@@ -190,12 +190,39 @@ public enum VoiceSensitivity: String, Codable, CaseIterable, Sendable {
 }
 
 /// Handles persistence of `WhisperConfiguration` to Application Support
+/// Uses caching to avoid disk I/O on every access
 @MainActor
 public enum WhisperConfigurationStore {
     /// Optional directory override for tests
     static var overrideDirectory: URL?
 
+    /// Cached configuration - loaded once, updated on save
+    private static var cachedConfig: WhisperConfiguration?
+
+    /// Load configuration from cache (disk I/O only on first access)
     public static func load() -> WhisperConfiguration {
+        if let cached = cachedConfig {
+            return cached
+        }
+        let config = loadFromDisk()
+        cachedConfig = config
+        return config
+    }
+
+    /// Save configuration to disk and update cache
+    public static func save(_ configuration: WhisperConfiguration) {
+        cachedConfig = configuration
+        saveToDisk(configuration)
+    }
+
+    /// Invalidate cache (forces reload from disk on next access)
+    public static func invalidateCache() {
+        cachedConfig = nil
+    }
+
+    // MARK: - Private
+
+    private static func loadFromDisk() -> WhisperConfiguration {
         let url = configurationFileURL()
         guard FileManager.default.fileExists(atPath: url.path) else {
             return WhisperConfiguration.default
@@ -210,7 +237,7 @@ public enum WhisperConfigurationStore {
         }
     }
 
-    public static func save(_ configuration: WhisperConfiguration) {
+    private static func saveToDisk(_ configuration: WhisperConfiguration) {
         let url = configurationFileURL()
         do {
             try ensureDirectoryExists(url.deletingLastPathComponent())
@@ -222,8 +249,6 @@ public enum WhisperConfigurationStore {
             print("[Osaurus] Failed to save WhisperConfiguration: \(error)")
         }
     }
-
-    // MARK: - Private
 
     private static func configurationFileURL() -> URL {
         if let overrideDirectory {

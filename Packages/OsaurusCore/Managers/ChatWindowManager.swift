@@ -147,8 +147,6 @@ public final class ChatWindowManager: NSObject, ObservableObject {
 
         // Update last focused
         lastFocusedWindowId = id
-
-        print("[ChatWindowManager] Showed window \(id)")
     }
 
     /// Hide a window by ID
@@ -269,7 +267,6 @@ public final class ChatWindowManager: NSObject, ObservableObject {
 
         // Create ChatView with window state
         let chatView = ChatView(windowState: windowState)
-            .environmentObject(AppDelegate.shared!.serverController)
             .environment(\.theme, windowState.theme)
 
         let hostingController = NSHostingController(rootView: chatView)
@@ -335,8 +332,7 @@ public final class ChatWindowManager: NSObject, ObservableObject {
 
         panel.contentViewController = hostingController
 
-        // Pre-layout
-        hostingController.view.layoutSubtreeIfNeeded()
+        // Set size directly - let SwiftUI layout asynchronously for faster window appearance
         panel.setContentSize(defaultSize)
 
         // Set up delegate for lifecycle events

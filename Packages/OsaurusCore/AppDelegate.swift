@@ -114,10 +114,16 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
         // Load external tool plugins at launch (after core is initialized)
         PluginManager.shared.loadAll()
 
-        // Auto-connect to enabled providers on launch
+        // Pre-warm caches immediately for instant first window (no async deps)
+        _ = WhisperConfigurationStore.load()
+        ChatSession.prewarmLocalModelsOnly()
+
+        // Auto-connect to enabled providers, then update model cache with remote models
         Task { @MainActor in
             await MCPProviderManager.shared.connectEnabledProviders()
             await RemoteProviderManager.shared.connectEnabledProviders()
+            // Update cache with remote models (local models already cached above)
+            await ChatSession.prewarmModelCache()
         }
 
         // Start plugin repository background refresh for update checking

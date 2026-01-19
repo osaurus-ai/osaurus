@@ -67,10 +67,14 @@ struct ChatEmptyState: View {
         }
         .onAppear {
             isVisible = true
-            withAnimation(theme.animationSlow().delay(0.1)) {
-                hasAppeared = true
+
+            // Defer expensive orb animations to avoid blocking window appearance
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                withAnimation(theme.animationSlow()) {
+                    hasAppeared = true
+                }
+                startGradientAnimation()
             }
-            startGradientAnimation()
         }
         .onDisappear {
             // Stop animations when view is hidden

@@ -60,12 +60,13 @@ final class ChatWindowState: ObservableObject {
         self.cachedToolOverrides = PersonaManager.shared.effectiveToolOverrides(for: personaId)
         self.cachedToolList = ToolRegistry.shared.listTools(withOverrides: cachedToolOverrides)
         self.cachedSystemPrompt = PersonaManager.shared.effectiveSystemPrompt(for: personaId)
-        self.cachedBackgroundImage = theme.customThemeConfig?.background.decodedImage()
         self.cachedActivePersona = personas.first { $0.id == personaId } ?? .default
         self.cachedPersonaDisplayName = cachedActivePersona.isBuiltIn ? "Assistant" : cachedActivePersona.name
+        decodeBackgroundImageAsync(themeConfig: theme.customThemeConfig)
 
         // Configure session
         self.session.personaId = personaId
+        self.session.applyInitialModelSelection()
         if let data = sessionData {
             self.session.load(from: data)
         }
@@ -117,7 +118,7 @@ final class ChatWindowState: ObservableObject {
         let sessionPersonaId = sessionData.personaId ?? Persona.defaultId
         if sessionPersonaId != personaId {
             theme = Self.loadTheme(for: sessionPersonaId)
-            cachedBackgroundImage = theme.customThemeConfig?.background.decodedImage()
+            decodeBackgroundImageAsync(themeConfig: theme.customThemeConfig)
         }
     }
 
@@ -138,7 +139,7 @@ final class ChatWindowState: ObservableObject {
 
     func refreshTheme() {
         theme = Self.loadTheme(for: personaId)
-        cachedBackgroundImage = theme.customThemeConfig?.background.decodedImage()
+        decodeBackgroundImageAsync(themeConfig: theme.customThemeConfig)
     }
 
     func refreshToolList() {
@@ -172,6 +173,15 @@ final class ChatWindowState: ObservableObject {
         return ThemeManager.shared.currentTheme
     }
 
+    private func decodeBackgroundImageAsync(themeConfig: CustomTheme?) {
+        Task {
+            let image = await Task.detached(priority: .utility) {
+                themeConfig?.background.decodedImage()
+            }.value
+            self.cachedBackgroundImage = image
+        }
+    }
+
     private func setupNotificationObservers() {
         notificationObservers.append(
             NotificationCenter.default.addObserver(
@@ -180,13 +190,8 @@ final class ChatWindowState: ObservableObject {
                 queue: .main
             ) { [weak self] _ in Task { @MainActor in self?.refreshPersonas() } }
         )
-        notificationObservers.append(
-            NotificationCenter.default.addObserver(
-                forName: .chatOverlayActivated,
-                object: nil,
-                queue: .main
-            ) { [weak self] _ in Task { @MainActor in await self?.refreshAll() } }
-        )
+        // Note: .chatOverlayActivated intentionally not observed here
+        // State is loaded in init(), refreshAll() would cause excessive re-renders
         notificationObservers.append(
             NotificationCenter.default.addObserver(
                 forName: .appConfigurationChanged,

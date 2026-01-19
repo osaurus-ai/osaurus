@@ -55,17 +55,27 @@ final class ChatSession: ObservableObject {
     var onSessionChanged: (() -> Void)?
 
     private var currentTask: Task<Void, Never>?
-    private var remoteModelsObserver: NSObjectProtocol?
-    private var modelSelectionCancellable: AnyCancellable?
+    // nonisolated(unsafe) allows deinit to access these for cleanup
+    nonisolated(unsafe) private var remoteModelsObserver: NSObjectProtocol?
+    nonisolated(unsafe) private var modelSelectionCancellable: AnyCancellable?
     /// Flag to prevent auto-persist during initial load or programmatic resets
     private var isLoadingModel: Bool = false
 
-    private var localModelsObserver: NSObjectProtocol?
+    nonisolated(unsafe) private var localModelsObserver: NSObjectProtocol?
+
+    // MARK: - App-level Model Options Cache
+    private static var cachedModelOptions: [ModelOption]?
+    private static var cacheValid = false
 
     init() {
-        // Start with empty options to avoid blocking initialization
-        modelOptions = []
-        hasAnyModel = false
+        if let cached = Self.cachedModelOptions, Self.cacheValid {
+            modelOptions = cached
+            hasAnyModel = !cached.isEmpty
+            isDiscoveringModels = false
+        } else {
+            modelOptions = []
+            hasAnyModel = false
+        }
 
         // Listen for remote provider model changes
         remoteModelsObserver = NotificationCenter.default.addObserver(
@@ -74,6 +84,7 @@ final class ChatSession: ObservableObject {
             queue: .main
         ) { [weak self] _ in
             Task { @MainActor in
+                Self.cacheValid = false
                 await self?.refreshModelOptions()
             }
         }
@@ -85,6 +96,7 @@ final class ChatSession: ObservableObject {
             queue: .main
         ) { [weak self] _ in
             Task { @MainActor in
+                Self.cacheValid = false
                 await self?.refreshModelOptions()
             }
         }
@@ -100,10 +112,36 @@ final class ChatSession: ObservableObject {
                 PersonaManager.shared.updateDefaultModel(for: pid, model: model)
             }
 
-        // Load models asynchronously
-        Task {
-            await refreshModelOptions()
+        // Only load models if cache wasn't valid (first window or after invalidation)
+        if !Self.cacheValid {
+            Task {
+                await refreshModelOptions()
+            }
         }
+    }
+
+    deinit {
+        // Clean up notification observers to prevent leaks
+        if let observer = remoteModelsObserver {
+            NotificationCenter.default.removeObserver(observer)
+        }
+        if let observer = localModelsObserver {
+            NotificationCenter.default.removeObserver(observer)
+        }
+        modelSelectionCancellable = nil
+    }
+
+    /// Apply initial model selection after personaId is set (for cached model options)
+    func applyInitialModelSelection() {
+        guard selectedModel == nil, !modelOptions.isEmpty else { return }
+        isLoadingModel = true
+        let effectiveModel = PersonaManager.shared.effectiveModel(for: personaId ?? Persona.defaultId)
+        if let model = effectiveModel, modelOptions.contains(where: { $0.id == model }) {
+            selectedModel = model
+        } else {
+            selectedModel = modelOptions.first?.id
+        }
+        isLoadingModel = false
     }
 
     /// Build rich model options from all sources
@@ -142,7 +180,37 @@ final class ChatSession: ObservableObject {
             }
         }
 
+        // Cache the result for subsequent windows
+        cachedModelOptions = options
+        cacheValid = true
+
         return options
+    }
+
+    /// Pre-warm the full model cache (local + remote) at app launch
+    public static func prewarmModelCache() async {
+        _ = await buildModelOptions()
+    }
+
+    /// Quick prewarm with just local models (no network wait)
+    /// Call this early at launch so first window has something to show immediately
+    public static func prewarmLocalModelsOnly() {
+        var options: [ModelOption] = []
+
+        // Foundation model (instant check)
+        if AppConfiguration.shared.foundationModelAvailable {
+            options.append(.foundation())
+        }
+
+        // Local models (uses ModelManager's cache, fast after first scan)
+        let localModels = ModelManager.discoverLocalModels()
+        for model in localModels {
+            options.append(.fromMLXModel(model))
+        }
+
+        // Cache what we have - remote models will be added by prewarmModelCache later
+        cachedModelOptions = options
+        cacheValid = true
     }
 
     func refreshModelOptions() async {
@@ -1030,8 +1098,6 @@ struct ChatView: View {
 
     // MARK: - Environment & State
 
-    @EnvironmentObject var server: ServerController
-    @ObservedObject private var toolRegistry = ToolRegistry.shared
     @Environment(\.colorScheme) private var colorScheme
 
     @State private var focusTrigger: Int = 0
@@ -1145,15 +1211,8 @@ struct ChatView: View {
                         // Header
                         chatHeader
 
-                        // Content area
-                        if session.isDiscoveringModels && !session.hasAnyModel {
-                            VStack {
-                                Spacer()
-                                ProgressView()
-                                    .controlSize(.small)
-                                Spacer()
-                            }
-                        } else if session.hasAnyModel {
+                        // Content area (show immediately, model discovery is async)
+                        if session.hasAnyModel || session.isDiscoveringModels {
                             if session.turns.isEmpty {
                                 // Empty state
                                 ChatEmptyState(
@@ -1244,13 +1303,10 @@ struct ChatView: View {
         .animation(theme.animationMedium(), value: session.turns.isEmpty)
         .animation(theme.animationQuick(), value: showSidebar)
         .background(WindowAccessor(window: $hostWindow))
-        .onExitCommand { closeWindow() }
         .onReceive(NotificationCenter.default.publisher(for: .chatOverlayActivated)) { _ in
+            // Lightweight state updates only - refreshAll() removed to prevent excessive re-renders
             focusTrigger &+= 1
             isPinnedToBottom = true
-            Task {
-                await windowState.refreshAll()
-            }
         }
         .onReceive(NotificationCenter.default.publisher(for: .vadStartNewSession)) { notification in
             // VAD requested a new session for a specific persona

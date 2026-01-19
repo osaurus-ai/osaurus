@@ -185,17 +185,20 @@ struct FloatingInputCard: View {
         }
         .animation(.spring(response: 0.3, dampingFraction: 0.85), value: showVoiceOverlay)
         .onAppear {
-            // Sync initial value from binding
             localText = text
+
+            // Focus first with minimal delay for window readiness (1 frame at 60fps)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.016) {
+                isFocused = true
+            }
+
+            // Load voice config (cached after first load)
             loadVoiceConfig()
 
             // Sync local state with singleton service state on appear
-            // This handles cases where view is recreated while recording is active
             if whisperService.isRecording {
-                print("[FloatingInputCard] onAppear: Syncing with active recording")
                 if voiceInputState == .idle {
                     voiceInputState = .recording
-                    // Reset timers on view recreation to prevent immediate timeout
                     lastSpeechTime = Date()
                     lastVoiceActivityTime = Date()
                     isPauseDetectionActive = voiceConfig.pauseDuration > 0
@@ -203,11 +206,6 @@ struct FloatingInputCard: View {
                 if !showVoiceOverlay {
                     showVoiceOverlay = true
                 }
-            }
-
-            // Focus input on initial appearance
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                isFocused = true
             }
         }
         .onReceive(NotificationCenter.default.publisher(for: .startVoiceInputInChat)) { notification in
@@ -270,10 +268,7 @@ struct FloatingInputCard: View {
             }
         }
         .onChange(of: focusTrigger) { _, _ in
-            // Small delay to ensure window is fully ready for focus
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                isFocused = true
-            }
+            isFocused = true
         }
         .onChange(of: whisperService.isRecording) { _, isRecording in
             print(
