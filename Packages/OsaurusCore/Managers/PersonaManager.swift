@@ -167,17 +167,8 @@ public final class PersonaManager: ObservableObject {
     }
 
     private func activePersonaIdFileURL() -> URL {
-        let fm = FileManager.default
-        let supportDir = fm.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
-        let bundleId = Bundle.main.bundleIdentifier ?? "osaurus"
-        let dir = supportDir.appendingPathComponent(bundleId, isDirectory: true)
-
-        // Ensure directory exists
-        if !fm.fileExists(atPath: dir.path) {
-            try? fm.createDirectory(at: dir, withIntermediateDirectories: true)
-        }
-
-        return dir.appendingPathComponent("ActivePersonaId.txt")
+        OsaurusPaths.ensureExistsSilent(OsaurusPaths.personas())
+        return OsaurusPaths.resolveFile(new: OsaurusPaths.activePersonaFile(), legacy: "ActivePersonaId.txt")
     }
 }
 

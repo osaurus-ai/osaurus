@@ -82,21 +82,16 @@ public struct VADConfiguration: Codable, Equatable, Sendable {
     }
 }
 
-/// Handles persistence of `VADConfiguration` to Application Support
+/// Handles persistence of `VADConfiguration`
 @MainActor
 public enum VADConfigurationStore {
-    /// Optional directory override for tests
-    static var overrideDirectory: URL?
-
     public static func load() -> VADConfiguration {
         let url = configurationFileURL()
         guard FileManager.default.fileExists(atPath: url.path) else {
             return VADConfiguration.default
         }
         do {
-            let data = try Data(contentsOf: url)
-            let decoder = JSONDecoder()
-            return try decoder.decode(VADConfiguration.self, from: data)
+            return try JSONDecoder().decode(VADConfiguration.self, from: Data(contentsOf: url))
         } catch {
             print("[Osaurus] Failed to load VADConfiguration: \(error)")
             return VADConfiguration.default
@@ -105,14 +100,11 @@ public enum VADConfigurationStore {
 
     public static func save(_ configuration: VADConfiguration) {
         let url = configurationFileURL()
+        OsaurusPaths.ensureExistsSilent(url.deletingLastPathComponent())
         do {
-            try ensureDirectoryExists(url.deletingLastPathComponent())
             let encoder = JSONEncoder()
             encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-            let data = try encoder.encode(configuration)
-            try data.write(to: url, options: [.atomic])
-
-            // Notify observers of configuration change
+            try encoder.encode(configuration).write(to: url, options: [.atomic])
             DispatchQueue.main.async {
                 NotificationCenter.default.post(name: .voiceConfigurationChanged, object: nil)
             }
@@ -121,23 +113,7 @@ public enum VADConfigurationStore {
         }
     }
 
-    // MARK: - Private
-
     private static func configurationFileURL() -> URL {
-        if let overrideDirectory {
-            return overrideDirectory.appendingPathComponent("VADConfiguration.json")
-        }
-        let fm = FileManager.default
-        let supportDir = fm.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
-        let bundleId = Bundle.main.bundleIdentifier ?? "osaurus"
-        return supportDir.appendingPathComponent(bundleId, isDirectory: true)
-            .appendingPathComponent("VADConfiguration.json")
-    }
-
-    private static func ensureDirectoryExists(_ url: URL) throws {
-        var isDir: ObjCBool = false
-        if !FileManager.default.fileExists(atPath: url.path, isDirectory: &isDir) {
-            try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
-        }
+        OsaurusPaths.resolveFile(new: OsaurusPaths.vadConfigFile(), legacy: "VADConfiguration.json")
     }
 }
