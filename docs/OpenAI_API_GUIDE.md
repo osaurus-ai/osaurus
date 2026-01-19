@@ -333,14 +333,14 @@ for chunk in stream:
 
 Osaurus supports the [Open Responses](https://www.openresponses.org) specification, providing a semantic, item-based API format for multi-provider interoperability.
 
-### 3. Responses - `POST /responses`
+### 3. Responses - `POST /responses` (also available at `POST /v1/responses`)
 
 Generate responses using the Open Responses format.
 
 #### Non-streaming Request
 
 ```bash
-curl http://127.0.0.1:1337/responses \
+curl http://127.0.0.1:1337/v1/responses \
   -H "Content-Type: application/json" \
   -d '{
     "model": "llama-3.2-3b-instruct",
@@ -383,7 +383,7 @@ Example response:
 #### Streaming Request
 
 ```bash
-curl http://127.0.0.1:1337/responses \
+curl http://127.0.0.1:1337/v1/responses \
   -H "Content-Type: application/json" \
   -d '{
     "model": "llama-3.2-3b-instruct",
@@ -427,7 +427,7 @@ data: [DONE]
 For multi-turn conversations, use structured input items:
 
 ```bash
-curl http://127.0.0.1:1337/responses \
+curl http://127.0.0.1:1337/v1/responses \
   -H "Content-Type: application/json" \
   -d '{
     "model": "llama-3.2-3b-instruct",
@@ -442,7 +442,7 @@ curl http://127.0.0.1:1337/responses \
 #### Tool Calling with Open Responses
 
 ```bash
-curl http://127.0.0.1:1337/responses \
+curl http://127.0.0.1:1337/v1/responses \
   -H "Content-Type: application/json" \
   -d '{
     "model": "llama-3.2-3b-instruct",
@@ -485,7 +485,7 @@ Tool call response:
 To continue after a tool call, include the function output:
 
 ```bash
-curl http://127.0.0.1:1337/responses \
+curl http://127.0.0.1:1337/v1/responses \
   -H "Content-Type: application/json" \
   -d '{
     "model": "llama-3.2-3b-instruct",

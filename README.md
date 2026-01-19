@@ -361,7 +361,7 @@ Base URL: `http://127.0.0.1:1337` (or your configured port)
 | `GET /v1/tags`              | List models (Ollama format)            |
 | `POST /v1/chat/completions` | Chat completions (OpenAI format)       |
 | `POST /messages`            | Chat completions (Anthropic format)    |
-| `POST /responses`           | Responses (Open Responses format)      |
+| `POST /v1/responses`        | Responses (Open Responses format)      |
 | `POST /chat`                | Chat (Ollama format, NDJSON)           |
 
 All endpoints support `/v1`, `/api`, and `/v1/api` prefixes.
