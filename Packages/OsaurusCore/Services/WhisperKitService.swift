@@ -988,7 +988,7 @@ public final class WhisperKitService: ObservableObject {
         if let engine = audioEngine, engine.isRunning,
             inputSource == activeInputSource,
             selectedId == activeInputDeviceId,
-            let tapFormat = activeTapFormat
+            activeTapFormat != nil
         {
             print("[WhisperKitService] Reusing active audio engine for handoff")
             reuseEngine = true
@@ -1278,20 +1278,22 @@ public final class WhisperKitService: ObservableObject {
                 print("[WhisperKitService] Using system default input device")
             }
 
-            // 2. Determine Format
-            // CRITICAL: Get format *after* setting device to ensure it matches the actual hardware
+            // 2. Determine and validate format (must be done after setting device)
             let hwFormat = inputNode.inputFormat(forBus: 0)
             print(
                 "[WhisperKitService] Hardware input format: \(hwFormat.sampleRate)Hz, \(hwFormat.channelCount) channels"
             )
 
-            // Create a compatible tap format (Float32, 1 channel)
-            // If hardware is 0Hz/0ch (error state), fallback to 48kHz
-            let sampleRate = hwFormat.sampleRate > 0 ? hwFormat.sampleRate : 48000
+            guard hwFormat.sampleRate > 0, hwFormat.channelCount > 0 else {
+                throw WhisperKitError.transcriptionFailed(
+                    "Audio input device is not available. Please check your microphone settings."
+                )
+            }
+
             guard
                 let tapFormat = AVAudioFormat(
                     commonFormat: .pcmFormatFloat32,
-                    sampleRate: sampleRate,
+                    sampleRate: hwFormat.sampleRate,
                     channels: 1,
                     interleaved: false
                 )
@@ -1299,9 +1301,8 @@ public final class WhisperKitService: ObservableObject {
                 throw WhisperKitError.transcriptionFailed("Failed to create audio format")
             }
 
-            print("[WhisperKitService] Using tap format: \(tapFormat.sampleRate)Hz")
-
-            // 3. Install Tap
+            // 3. Install tap (remove any existing tap first to prevent crash)
+            inputNode.removeTap(onBus: 0)
             inputNode.installTap(onBus: 0, bufferSize: 4096, format: tapFormat) { tapBuffer, _ in
                 guard buffer.isActive else { return }
 
