@@ -40,12 +40,11 @@ final class InsightsService: ObservableObject {
     /// Filtered logs based on current filter settings
     var filteredLogs: [RequestLog] {
         logs.filter { log in
-            // Search filter (path or model)
+            // Search filter (path or model) using fuzzy matching
             if !searchFilter.isEmpty {
-                let searchLower = searchFilter.lowercased()
-                let matchesPath = log.path.lowercased().contains(searchLower)
-                let matchesModel = log.model?.lowercased().contains(searchLower) ?? false
-                let matchesShortModel = log.shortModelName.lowercased().contains(searchLower)
+                let matchesPath = SearchService.matches(query: searchFilter, in: log.path)
+                let matchesModel = log.model.map { SearchService.matches(query: searchFilter, in: $0) } ?? false
+                let matchesShortModel = SearchService.matches(query: searchFilter, in: log.shortModelName)
                 if !matchesPath && !matchesModel && !matchesShortModel {
                     return false
                 }

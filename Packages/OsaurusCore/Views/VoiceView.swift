@@ -1315,9 +1315,9 @@ private struct VoiceModelsTab: View {
         if searchText.isEmpty {
             return modelManager.availableModels
         }
-        let query = searchText.lowercased()
         return modelManager.availableModels.filter {
-            $0.name.lowercased().contains(query) || $0.description.lowercased().contains(query)
+            SearchService.matches(query: searchText, in: $0.name)
+                || SearchService.matches(query: searchText, in: $0.description)
         }
     }
 
