@@ -25,9 +25,9 @@ struct ToolSelectorView: View {
         if searchText.isEmpty {
             return tools
         }
-        let query = searchText.lowercased()
         return tools.filter {
-            $0.name.lowercased().contains(query) || $0.description.lowercased().contains(query)
+            SearchService.matches(query: searchText, in: $0.name)
+                || SearchService.matches(query: searchText, in: $0.description)
         }
     }
 

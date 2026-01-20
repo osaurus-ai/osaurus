@@ -58,8 +58,7 @@ struct ConfigurationView: View {
 
     private func matchesSearch(_ texts: String...) -> Bool {
         guard isSearching else { return true }
-        let query = searchText.lowercased()
-        return texts.contains { $0.lowercased().contains(query) }
+        return texts.contains { SearchService.matches(query: searchText, in: $0) }
     }
 
     var body: some View {

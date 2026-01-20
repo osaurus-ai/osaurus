@@ -77,17 +77,10 @@ struct ModelOption: Identifiable, Hashable {
         self.description = description
     }
 
-    /// Check if model matches search query
+    /// Check if model matches search query using fuzzy matching.
     func matches(searchQuery: String) -> Bool {
-        let query = searchQuery.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !query.isEmpty else { return true }
-
-        // Match against display name, id, or provider name
-        if displayName.lowercased().contains(query) { return true }
-        if id.lowercased().contains(query) { return true }
-        if source.displayName.lowercased().contains(query) { return true }
-
-        return false
+        guard !searchQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return true }
+        return [displayName, id, source.displayName].contains { SearchService.matches(query: searchQuery, in: $0) }
     }
 }
 

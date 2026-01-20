@@ -32,9 +32,8 @@ struct ChatSessionSidebar: View {
         guard !searchQuery.trimmingCharacters(in: .whitespaces).isEmpty else {
             return sessions
         }
-        let query = searchQuery.lowercased()
         return sessions.filter { session in
-            session.title.lowercased().contains(query)
+            SearchService.matches(query: searchQuery, in: session.title)
         }
     }
 

@@ -383,16 +383,16 @@ struct ToolsManagerView: View {
                         // Filter tools that belong to this provider
                         var matchedTools = currentToolEntries.filter { $0.name.hasPrefix(prefix) }
 
-                        // Apply search filter
+                        // Apply search filter using fuzzy matching
                         if !query.isEmpty {
                             let providerMatches =
-                                provider.name.lowercased().contains(queryLower)
-                                || provider.url.lowercased().contains(queryLower)
+                                SearchService.matches(query: query, in: provider.name)
+                                || SearchService.matches(query: query, in: provider.url)
 
                             if !providerMatches {
                                 matchedTools = matchedTools.filter { tool in
-                                    tool.name.lowercased().contains(queryLower)
-                                        || tool.description.lowercased().contains(queryLower)
+                                    SearchService.matches(query: query, in: tool.name)
+                                        || SearchService.matches(query: query, in: tool.description)
                                 }
                             }
 
