@@ -93,7 +93,6 @@ struct SkillsView: View {
                         version: skill.version,
                         author: skill.author,
                         category: skill.category,
-                        icon: skill.icon,
                         instructions: skill.instructions
                     )
                     isCreating = false
@@ -612,7 +611,7 @@ private struct SkillRow: View {
                 ZStack {
                     RoundedRectangle(cornerRadius: 8)
                         .fill(skillColor.opacity(0.1))
-                    Image(systemName: skill.icon ?? "sparkles")
+                    Image(systemName: "sparkles")
                         .font(.system(size: 14, weight: .medium))
                         .foregroundColor(skillColor)
                 }

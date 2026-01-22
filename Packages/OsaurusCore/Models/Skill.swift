@@ -32,7 +32,6 @@ public struct Skill: Codable, Identifiable, Sendable, Equatable {
     public var version: String
     public var author: String?
     public var category: String?
-    public var icon: String?
     public var enabled: Bool
     public var instructions: String
     public let isBuiltIn: Bool
@@ -55,7 +54,6 @@ public struct Skill: Codable, Identifiable, Sendable, Equatable {
         version: String = "1.0.0",
         author: String? = nil,
         category: String? = nil,
-        icon: String? = nil,
         enabled: Bool = true,
         instructions: String = "",
         isBuiltIn: Bool = false,
@@ -71,7 +69,6 @@ public struct Skill: Codable, Identifiable, Sendable, Equatable {
         self.version = version
         self.author = author
         self.category = category
-        self.icon = icon
         self.enabled = enabled
         self.instructions = instructions
         self.isBuiltIn = isBuiltIn
@@ -105,7 +102,6 @@ public struct Skill: Codable, Identifiable, Sendable, Equatable {
                 version: "1.0.0",
                 author: "Osaurus",
                 category: "research",
-                icon: "magnifyingglass",
                 enabled: false,
                 instructions: """
                     When conducting research and analysis:
@@ -150,7 +146,6 @@ public struct Skill: Codable, Identifiable, Sendable, Equatable {
                 version: "1.0.0",
                 author: "Osaurus",
                 category: "creative",
-                icon: "lightbulb.fill",
                 enabled: false,
                 instructions: """
                     When helping with creative thinking and ideation:
@@ -196,7 +191,6 @@ public struct Skill: Codable, Identifiable, Sendable, Equatable {
                 version: "1.0.0",
                 author: "Osaurus",
                 category: "learning",
-                icon: "book.fill",
                 enabled: false,
                 instructions: """
                     When helping someone learn:
@@ -242,7 +236,6 @@ public struct Skill: Codable, Identifiable, Sendable, Equatable {
                 version: "1.0.0",
                 author: "Osaurus",
                 category: "productivity",
-                icon: "checklist",
                 enabled: false,
                 instructions: """
                     When helping with productivity and task management:
@@ -288,7 +281,6 @@ public struct Skill: Codable, Identifiable, Sendable, Equatable {
                 version: "1.0.0",
                 author: "Osaurus",
                 category: "productivity",
-                icon: "doc.text.magnifyingglass",
                 enabled: false,
                 instructions: """
                     When summarizing content:
@@ -333,7 +325,6 @@ public struct Skill: Codable, Identifiable, Sendable, Equatable {
                 version: "1.0.0",
                 author: "Osaurus",
                 category: "development",
-                icon: "ant",
                 enabled: false,
                 instructions: """
                     When helping debug issues:
@@ -425,7 +416,6 @@ extension Skill {
             version: frontmatter["version"] as? String ?? "1.0.0",
             author: frontmatter["author"] as? String,
             category: frontmatter["category"] as? String,
-            icon: frontmatter["icon"] as? String,
             enabled: frontmatter["enabled"] as? Bool ?? true,
             instructions: body.trimmingCharacters(in: .whitespacesAndNewlines),
             isBuiltIn: false,
@@ -449,9 +439,6 @@ extension Skill {
         }
         if let category = category {
             yaml += "category: \"\(escapeYamlString(category))\"\n"
-        }
-        if let icon = icon {
-            yaml += "icon: \"\(icon)\"\n"
         }
         yaml += "enabled: \(enabled)\n"
         yaml += "createdAt: \"\(dateFormatter.string(from: createdAt))\"\n"
@@ -613,7 +600,6 @@ extension Skill {
                 version: skill.version,
                 author: skill.author,
                 category: skill.category,
-                icon: skill.icon,
                 enabled: skill.enabled,
                 instructions: skill.instructions,
                 isBuiltIn: false,
@@ -688,9 +674,6 @@ extension Skill {
         if let category = category {
             yaml += "  category: \(escapeAgentSkillsYaml(category))\n"
         }
-        if let icon = icon {
-            yaml += "  icon: \(icon)\n"
-        }
 
         yaml += "---\n\n"
         yaml += instructions
@@ -715,7 +698,6 @@ extension Skill {
         var author: String?
         var version = "1.0.0"
         var category: String?
-        var icon: String?
         var osaurusId: UUID?
         var enabled = true
 
@@ -723,7 +705,6 @@ extension Skill {
             author = metadata["author"] as? String
             version = metadata["version"] as? String ?? "1.0.0"
             category = metadata["category"] as? String
-            icon = metadata["icon"] as? String
 
             // Osaurus-specific metadata
             if let idString = metadata["osaurus-id"] as? String {
@@ -748,7 +729,6 @@ extension Skill {
             version: version,
             author: author,
             category: category,
-            icon: icon,
             enabled: enabled,
             instructions: body.trimmingCharacters(in: .whitespacesAndNewlines),
             isBuiltIn: false,

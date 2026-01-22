@@ -26,12 +26,10 @@ struct SkillEditorSheet: View {
     @State private var version: String = "1.0.0"
     @State private var author: String = ""
     @State private var category: String = ""
-    @State private var icon: String = "sparkles"
     @State private var instructions: String = ""
     @State private var enabled: Bool = true
 
     @State private var hasAppeared = false
-    @State private var showIconPicker = false
 
     private var isEditing: Bool {
         if case .edit = mode { return true }
@@ -56,13 +54,6 @@ struct SkillEditorSheet: View {
     private var canSave: Bool {
         !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             && !instructions.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-    }
-
-    /// Generate a consistent color based on skill name
-    private var skillColor: Color {
-        let hash = abs(name.hashValue)
-        let hue = Double(hash % 360) / 360.0
-        return Color(hue: hue, saturation: 0.6, brightness: 0.8)
     }
 
     var body: some View {
@@ -190,82 +181,18 @@ struct SkillEditorSheet: View {
                 // Identity Section
                 SkillEditorSection(title: "Identity", icon: "sparkles") {
                     VStack(alignment: .leading, spacing: 16) {
-                        // Name with icon preview
-                        HStack(spacing: 12) {
-                            // Live icon preview
-                            ZStack {
-                                RoundedRectangle(cornerRadius: 10)
-                                    .fill(
-                                        LinearGradient(
-                                            colors: [skillColor.opacity(0.2), skillColor.opacity(0.05)],
-                                            startPoint: .topLeading,
-                                            endPoint: .bottomTrailing
-                                        )
-                                    )
-                                RoundedRectangle(cornerRadius: 10)
-                                    .strokeBorder(skillColor.opacity(0.5), lineWidth: 2)
-                                Image(systemName: icon)
-                                    .font(.system(size: 18, weight: .medium))
-                                    .foregroundColor(skillColor)
-                            }
-                            .frame(width: 44, height: 44)
-                            .animation(.spring(response: 0.3), value: name)
-                            .animation(.spring(response: 0.3), value: icon)
-
-                            VStack(alignment: .leading, spacing: 4) {
-                                Text("Name")
-                                    .font(.system(size: 11, weight: .medium))
-                                    .foregroundColor(themeManager.currentTheme.secondaryText)
-
-                                SkillStyledTextField(
-                                    placeholder: "e.g., Research Analyst",
-                                    text: $name,
-                                    icon: nil
-                                )
-                                .disabled(isBuiltIn)
-                            }
-                        }
-
-                        // Icon picker
+                        // Name
                         VStack(alignment: .leading, spacing: 6) {
-                            Text("Icon")
+                            Text("Name")
                                 .font(.system(size: 11, weight: .medium))
                                 .foregroundColor(themeManager.currentTheme.secondaryText)
 
-                            Button(action: { if !isBuiltIn { showIconPicker.toggle() } }) {
-                                HStack(spacing: 8) {
-                                    Image(systemName: icon)
-                                        .font(.system(size: 14))
-                                        .foregroundColor(skillColor)
-
-                                    Text(icon)
-                                        .font(.system(size: 13))
-                                        .foregroundColor(themeManager.currentTheme.primaryText)
-
-                                    Spacer()
-
-                                    if !isBuiltIn {
-                                        Image(systemName: "chevron.down")
-                                            .font(.system(size: 10))
-                                            .foregroundColor(themeManager.currentTheme.tertiaryText)
-                                    }
-                                }
-                                .padding(.horizontal, 12)
-                                .padding(.vertical, 8)
-                                .background(
-                                    RoundedRectangle(cornerRadius: 8)
-                                        .fill(themeManager.currentTheme.inputBackground)
-                                        .overlay(
-                                            RoundedRectangle(cornerRadius: 8)
-                                                .stroke(themeManager.currentTheme.inputBorder, lineWidth: 1)
-                                        )
-                                )
-                            }
-                            .buttonStyle(PlainButtonStyle())
+                            SkillStyledTextField(
+                                placeholder: "e.g., Research Analyst",
+                                text: $name,
+                                icon: nil
+                            )
                             .disabled(isBuiltIn)
-                            .popover(isPresented: $showIconPicker) {
-                                SkillIconPickerView(selectedIcon: $icon)
-                            }
                         }
 
                         // Description
@@ -518,7 +445,6 @@ struct SkillEditorSheet: View {
         version = skill.version
         author = skill.author ?? ""
         category = skill.category ?? ""
-        icon = skill.icon ?? "sparkles"
         instructions = skill.instructions
         enabled = skill.enabled
     }
@@ -535,7 +461,6 @@ struct SkillEditorSheet: View {
             version: version.trimmingCharacters(in: .whitespacesAndNewlines),
             author: author.isEmpty ? nil : author.trimmingCharacters(in: .whitespacesAndNewlines),
             category: category.isEmpty ? nil : category.trimmingCharacters(in: .whitespacesAndNewlines),
-            icon: icon,
             enabled: enabled,
             instructions: trimmedInstructions,
             isBuiltIn: false,
@@ -644,71 +569,6 @@ private struct SkillStyledTextField: View {
                         )
                 )
         )
-    }
-}
-
-// MARK: - Icon Picker
-
-private struct SkillIconPickerView: View {
-    @StateObject private var themeManager = ThemeManager.shared
-    @Binding var selectedIcon: String
-
-    private let icons = [
-        // General
-        "sparkles", "star.fill", "bolt.fill", "lightbulb.fill",
-        "brain", "cpu", "wand.and.stars", "atom",
-        // Documents
-        "doc.text", "book.fill", "pencil", "highlighter",
-        "doc.text.magnifyingglass", "text.book.closed.fill", "bookmark.fill", "note.text",
-        // Productivity
-        "checklist", "calendar", "clock.fill", "target",
-        "chart.bar.fill", "chart.pie.fill", "list.bullet.clipboard", "tray.full.fill",
-        // Communication
-        "person.fill", "person.2.fill", "bubble.left.fill", "text.bubble.fill",
-        "envelope.fill", "phone.fill", "video.fill", "mic.fill",
-        // Creative
-        "paintbrush.fill", "photo.fill", "wand.and.rays", "theatermasks.fill",
-        "music.note", "guitars.fill", "camera.fill", "film.fill",
-        // Technical
-        "terminal", "chevron.left.forwardslash.chevron.right", "gear", "wrench.fill",
-        "network", "globe", "cloud.fill", "server.rack",
-        // Security & Analysis
-        "checkmark.shield", "lock.fill", "magnifyingglass", "scope",
-        "ant", "function", "sum", "percent",
-    ]
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("Select Icon")
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundColor(themeManager.currentTheme.primaryText)
-
-            LazyVGrid(columns: Array(repeating: GridItem(.fixed(36)), count: 8), spacing: 8) {
-                ForEach(icons, id: \.self) { iconName in
-                    Button(action: { selectedIcon = iconName }) {
-                        Image(systemName: iconName)
-                            .font(.system(size: 14))
-                            .foregroundColor(
-                                selectedIcon == iconName
-                                    ? .white
-                                    : themeManager.currentTheme.primaryText
-                            )
-                            .frame(width: 32, height: 32)
-                            .background(
-                                RoundedRectangle(cornerRadius: 6)
-                                    .fill(
-                                        selectedIcon == iconName
-                                            ? themeManager.currentTheme.accentColor
-                                            : themeManager.currentTheme.tertiaryBackground
-                                    )
-                            )
-                    }
-                    .buttonStyle(PlainButtonStyle())
-                }
-            }
-        }
-        .padding(16)
-        .background(themeManager.currentTheme.cardBackground)
     }
 }
 

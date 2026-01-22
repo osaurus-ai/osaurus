@@ -1788,7 +1788,7 @@ private struct SkillToggleRow: View {
             ZStack {
                 RoundedRectangle(cornerRadius: 6)
                     .fill(skillColor.opacity(0.1))
-                Image(systemName: skill.icon ?? "sparkles")
+                Image(systemName: "sparkles")
                     .font(.system(size: 10, weight: .medium))
                     .foregroundColor(skillColor)
             }

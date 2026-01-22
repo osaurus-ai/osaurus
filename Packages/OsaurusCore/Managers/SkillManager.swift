@@ -52,7 +52,6 @@ public final class SkillManager: ObservableObject {
         version: String = "1.0.0",
         author: String? = nil,
         category: String? = nil,
-        icon: String? = nil,
         instructions: String = ""
     ) -> Skill {
         let skill = Skill(
@@ -61,7 +60,6 @@ public final class SkillManager: ObservableObject {
             version: version,
             author: author,
             category: category,
-            icon: icon,
             instructions: instructions
         )
         SkillStore.save(skill)
@@ -103,7 +101,6 @@ public final class SkillManager: ObservableObject {
                 version: skill.version,
                 author: skill.author,
                 category: skill.category,
-                icon: skill.icon,
                 enabled: enabled,
                 instructions: skill.instructions,
                 isBuiltIn: true,
@@ -140,7 +137,6 @@ public final class SkillManager: ObservableObject {
             version: skill.version,
             author: skill.author,
             category: skill.category,
-            icon: skill.icon,
             instructions: skill.instructions
         )
         SkillStore.save(skill)
@@ -158,7 +154,6 @@ public final class SkillManager: ObservableObject {
             version: skill.version,
             author: skill.author,
             category: skill.category,
-            icon: skill.icon,
             instructions: skill.instructions
         )
         SkillStore.save(skill)
@@ -178,7 +173,6 @@ public final class SkillManager: ObservableObject {
                 version: parsedSkill.version,
                 author: parsedSkill.author,
                 category: parsedSkill.category,
-                icon: parsedSkill.icon,
                 instructions: parsedSkill.instructions
             )
             SkillStore.save(skill)
@@ -275,7 +269,6 @@ public final class SkillManager: ObservableObject {
             version: skill.version,
             author: skill.author,
             category: skill.category,
-            icon: skill.icon,
             enabled: true,
             instructions: skill.instructions,
             directoryName: skill.agentSkillsName
@@ -342,8 +335,7 @@ public final class SkillManager: ObservableObject {
                 type: .skill,
                 name: skill.name,
                 description: skill.description,
-                category: skill.category,
-                icon: skill.icon
+                category: skill.category
             )
         }
     }

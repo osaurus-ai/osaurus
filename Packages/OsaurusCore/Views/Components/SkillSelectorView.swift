@@ -276,14 +276,6 @@ private struct SkillRowItem: View {
             .scaleEffect(0.7)
             .frame(width: 36)
 
-            // Skill icon
-            if let icon = skill.icon {
-                Image(systemName: icon)
-                    .font(.system(size: 14))
-                    .foregroundColor(isEnabled ? theme.accentColor : theme.tertiaryText)
-                    .frame(width: 20)
-            }
-
             // Skill info
             VStack(alignment: .leading, spacing: 3) {
                 HStack(spacing: 6) {

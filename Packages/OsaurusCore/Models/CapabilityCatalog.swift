@@ -22,20 +22,17 @@ public struct CapabilityEntry: Codable, Sendable, Identifiable {
     public let name: String
     public let description: String
     public let category: String?
-    public let icon: String?
 
     public init(
         type: CapabilityType,
         name: String,
         description: String,
-        category: String? = nil,
-        icon: String? = nil
+        category: String? = nil
     ) {
         self.type = type
         self.name = name
         self.description = description
         self.category = category
-        self.icon = icon
     }
 }
 
@@ -252,8 +249,7 @@ extension SkillManager {
                     type: .skill,
                     name: skill.name,
                     description: skill.description,
-                    category: skill.category,
-                    icon: skill.icon
+                    category: skill.category
                 )
             }
     }
