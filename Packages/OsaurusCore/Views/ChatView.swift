@@ -531,6 +531,13 @@ final class ChatSession: ObservableObject {
         reset()
     }
 
+    /// Invalidate the token cache (called when tools/skills change)
+    func invalidateTokenCache() {
+        _tokenCacheValid = false
+        // Notify SwiftUI to re-render views that depend on estimatedContextTokens
+        objectWillChange.send()
+    }
+
     // MARK: - Persistence Methods
 
     /// Convert current state to persistable data
@@ -1470,8 +1477,6 @@ struct ChatView: View {
                                 voiceInputState: $observedSession.voiceInputState,
                                 showVoiceOverlay: $observedSession.showVoiceOverlay,
                                 modelOptions: observedSession.modelOptions,
-                                availableTools: windowState.cachedToolList,
-                                personaToolOverrides: windowState.cachedToolOverrides,
                                 isStreaming: observedSession.isStreaming,
                                 supportsImages: observedSession.selectedModelSupportsImages,
                                 estimatedContextTokens: observedSession.estimatedContextTokens,

@@ -33,9 +33,7 @@ final class ChatWindowState: ObservableObject {
     // MARK: - Pre-computed View Values
 
     @Published private(set) var filteredSessions: [ChatSessionData] = []
-    @Published private(set) var cachedToolList: [ToolRegistry.ToolEntry] = []
     @Published private(set) var cachedSystemPrompt: String = ""
-    @Published private(set) var cachedToolOverrides: [String: Bool]?
     @Published private(set) var cachedActivePersona: Persona = .default
     @Published private(set) var cachedPersonaDisplayName: String = "Assistant"
 
@@ -57,8 +55,6 @@ final class ChatWindowState: ObservableObject {
         self.filteredSessions = ChatSessionsManager.shared.sessions(for: personaId)
 
         // Pre-compute view values
-        self.cachedToolOverrides = PersonaManager.shared.effectiveToolOverrides(for: personaId)
-        self.cachedToolList = ToolRegistry.shared.listTools(withOverrides: cachedToolOverrides)
         self.cachedSystemPrompt = PersonaManager.shared.effectiveSystemPrompt(for: personaId)
         self.cachedActivePersona = personas.first { $0.id == personaId } ?? .default
         self.cachedPersonaDisplayName = cachedActivePersona.isBuiltIn ? "Assistant" : cachedActivePersona.name
@@ -142,16 +138,11 @@ final class ChatWindowState: ObservableObject {
         decodeBackgroundImageAsync(themeConfig: theme.customThemeConfig)
     }
 
-    func refreshToolList() {
-        cachedToolOverrides = PersonaManager.shared.effectiveToolOverrides(for: personaId)
-        cachedToolList = ToolRegistry.shared.listTools(withOverrides: cachedToolOverrides)
-    }
-
     func refreshPersonaConfig() {
         cachedSystemPrompt = PersonaManager.shared.effectiveSystemPrompt(for: personaId)
         cachedActivePersona = personas.first { $0.id == personaId } ?? .default
         cachedPersonaDisplayName = cachedActivePersona.isBuiltIn ? "Assistant" : cachedActivePersona.name
-        refreshToolList()
+        session.invalidateTokenCache()
     }
 
     func refreshAll() async {
@@ -199,12 +190,20 @@ final class ChatWindowState: ObservableObject {
                 queue: .main
             ) { [weak self] _ in Task { @MainActor in self?.refreshPersonaConfig() } }
         )
+        // Invalidate token cache when tools or skills change (including persona overrides)
         notificationObservers.append(
             NotificationCenter.default.addObserver(
                 forName: .toolsListChanged,
                 object: nil,
                 queue: .main
-            ) { [weak self] _ in Task { @MainActor in self?.refreshToolList() } }
+            ) { [weak self] _ in Task { @MainActor in self?.session.invalidateTokenCache() } }
+        )
+        notificationObservers.append(
+            NotificationCenter.default.addObserver(
+                forName: .skillsListChanged,
+                object: nil,
+                queue: .main
+            ) { [weak self] _ in Task { @MainActor in self?.session.invalidateTokenCache() } }
         )
     }
 }

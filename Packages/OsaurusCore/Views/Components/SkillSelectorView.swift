@@ -1,61 +1,77 @@
 //
-//  ToolSelectorView.swift
+//  SkillSelectorView.swift
 //  osaurus
 //
-//  Tool selector showing available tools and their current state.
+//  Skill selector showing available skills and their current state.
 //  Toggles update persona overrides (or global config for Default persona).
 //
 
 import SwiftUI
 
-struct ToolSelectorView: View {
-    /// The persona ID to update when toggling tools
+struct SkillSelectorView: View {
+    /// The persona ID to update when toggling skills
     let personaId: UUID
 
-    /// Observe ToolRegistry for live updates when tools change
-    @ObservedObject private var toolRegistry = ToolRegistry.shared
+    /// Observe SkillManager for live updates when skills change
+    @ObservedObject private var skillManager = SkillManager.shared
     /// Observe PersonaManager for live updates when persona overrides change
     @ObservedObject private var personaManager = PersonaManager.shared
 
     @State private var searchText: String = ""
     @Environment(\.theme) private var theme
 
-    private var tools: [ToolRegistry.ToolEntry] {
-        toolRegistry.listTools(withOverrides: personaOverrides)
-    }
+    private var skills: [Skill] { skillManager.skills }
 
     private var personaOverrides: [String: Bool]? {
-        personaManager.effectiveToolOverrides(for: personaId)
+        personaManager.effectiveSkillOverrides(for: personaId)
     }
 
-    private var filteredTools: [ToolRegistry.ToolEntry] {
+    private var filteredSkills: [Skill] {
         if searchText.isEmpty {
-            return tools
+            return skills
         }
-        return tools.filter {
+        return skills.filter {
             SearchService.matches(query: searchText, in: $0.name)
                 || SearchService.matches(query: searchText, in: $0.description)
         }
     }
 
-    /// Count of enabled tools
+    /// Check if a skill is enabled (persona override > global config)
+    private func isSkillEnabled(_ name: String) -> Bool {
+        if let overrides = personaOverrides, let value = overrides[name] {
+            return value
+        }
+        return skillManager.skill(named: name)?.enabled ?? false
+    }
+
+    /// Count of enabled skills
     private var enabledCount: Int {
-        tools.filter { $0.enabled }.count
+        skills.filter { isSkillEnabled($0.name) }.count
     }
 
-    /// Toggle a tool's enabled state for this persona
-    private func toggleTool(_ name: String, currentlyEnabled: Bool) {
-        personaManager.setToolEnabled(!currentlyEnabled, tool: name, for: personaId)
+    /// Estimate total tokens for enabled skills (catalog entry only for two-phase loading)
+    private var enabledTokenEstimate: Int {
+        skills.filter { isSkillEnabled($0.name) }.reduce(0) { sum, skill in
+            // Catalog format: "- **name**: description\n" ≈ 6 chars overhead
+            let chars = skill.name.count + skill.description.count + 6
+            return sum + max(5, chars / 4)
+        }
     }
 
-    /// Enable all tools for this persona
+    /// Toggle a skill's enabled state for this persona
+    private func toggleSkill(_ name: String) {
+        let currentlyEnabled = isSkillEnabled(name)
+        personaManager.setSkillEnabled(!currentlyEnabled, skill: name, for: personaId)
+    }
+
+    /// Enable all skills for this persona
     private func enableAll() {
-        personaManager.enableAllTools(for: personaId, tools: tools.map { $0.name })
+        personaManager.enableAllSkills(for: personaId, skills: skills.map { $0.name })
     }
 
-    /// Disable all tools for this persona
+    /// Disable all skills for this persona
     private func disableAll() {
-        personaManager.disableAllTools(for: personaId, tools: tools.map { $0.name })
+        personaManager.disableAllSkills(for: personaId, skills: skills.map { $0.name })
     }
 
     var body: some View {
@@ -72,14 +88,14 @@ struct ToolSelectorView: View {
             Divider()
                 .background(theme.primaryBorder.opacity(0.3))
 
-            // Tool list
-            if filteredTools.isEmpty {
+            // Skill list
+            if filteredSkills.isEmpty {
                 emptyState
             } else {
-                toolList
+                skillList
             }
         }
-        .frame(width: 360, height: min(CGFloat(tools.count * 56 + 140), 480))
+        .frame(width: 360, height: min(CGFloat(skills.count * 56 + 160), 480))
         .background(
             RoundedRectangle(cornerRadius: 12, style: .continuous)
                 .fill(theme.primaryBackground)
@@ -98,13 +114,31 @@ struct ToolSelectorView: View {
         VStack(spacing: 10) {
             // Title row
             HStack {
-                Text("Available Tools")
+                Text("Available Skills")
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundColor(theme.primaryText)
 
                 Spacer()
 
-                Text("\(enabledCount)/\(tools.count)")
+                // Token estimate for enabled skills
+                if enabledCount > 0 {
+                    HStack(spacing: 2) {
+                        Text("~\(enabledTokenEstimate)")
+                            .font(.system(size: 10, weight: .medium, design: .monospaced))
+                            .foregroundColor(theme.tertiaryText)
+                        Text("tokens")
+                            .font(.system(size: 9))
+                            .foregroundColor(theme.tertiaryText.opacity(0.7))
+                    }
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(
+                        Capsule()
+                            .fill(theme.secondaryBackground.opacity(0.5))
+                    )
+                }
+
+                Text("\(enabledCount)/\(skills.count)")
                     .font(.system(size: 11, weight: .medium))
                     .foregroundColor(theme.secondaryText)
                     .padding(.horizontal, 8)
@@ -158,7 +192,7 @@ struct ToolSelectorView: View {
                 .font(.system(size: 13))
                 .foregroundColor(theme.tertiaryText)
 
-            TextField("Search tools...", text: $searchText)
+            TextField("Search skills...", text: $searchText)
                 .textFieldStyle(.plain)
                 .font(.system(size: 13))
                 .foregroundColor(theme.primaryText)
@@ -184,7 +218,7 @@ struct ToolSelectorView: View {
             Image(systemName: "magnifyingglass")
                 .font(.system(size: 24))
                 .foregroundColor(theme.tertiaryText)
-            Text("No tools found")
+            Text("No skills found")
                 .font(.system(size: 13))
                 .foregroundColor(theme.secondaryText)
         }
@@ -192,15 +226,16 @@ struct ToolSelectorView: View {
         .padding()
     }
 
-    // MARK: - Tool List
+    // MARK: - Skill List
 
-    private var toolList: some View {
+    private var skillList: some View {
         ScrollView {
             LazyVStack(spacing: 2) {
-                ForEach(filteredTools) { tool in
-                    ToolRowItem(
-                        tool: tool,
-                        onToggle: { toggleTool(tool.name, currentlyEnabled: tool.enabled) }
+                ForEach(filteredSkills) { skill in
+                    SkillRowItem(
+                        skill: skill,
+                        isEnabled: isSkillEnabled(skill.name),
+                        onToggle: { toggleSkill(skill.name) }
                     )
                 }
             }
@@ -210,14 +245,22 @@ struct ToolSelectorView: View {
     }
 }
 
-// MARK: - Tool Row Item
+// MARK: - Skill Row Item
 
-private struct ToolRowItem: View {
-    let tool: ToolRegistry.ToolEntry
+private struct SkillRowItem: View {
+    let skill: Skill
+    let isEnabled: Bool
     let onToggle: () -> Void
 
     @State private var isHovered: Bool = false
     @Environment(\.theme) private var theme
+
+    /// Estimate tokens for catalog entry (two-phase loading shows name + description only)
+    private var estimatedTokens: Int {
+        // Catalog format: "- **name**: description\n" ≈ 6 chars overhead
+        let chars = skill.name.count + skill.description.count + 6
+        return max(5, chars / 4)
+    }
 
     var body: some View {
         HStack(spacing: 12) {
@@ -225,7 +268,7 @@ private struct ToolRowItem: View {
             Toggle(
                 "",
                 isOn: Binding(
-                    get: { tool.enabled },
+                    get: { isEnabled },
                     set: { _ in onToggle() }
                 )
             )
@@ -233,14 +276,37 @@ private struct ToolRowItem: View {
             .scaleEffect(0.7)
             .frame(width: 36)
 
-            // Tool info
-            VStack(alignment: .leading, spacing: 3) {
-                Text(tool.name)
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(tool.enabled ? theme.primaryText : theme.secondaryText)
-                    .lineLimit(1)
+            // Skill icon
+            if let icon = skill.icon {
+                Image(systemName: icon)
+                    .font(.system(size: 14))
+                    .foregroundColor(isEnabled ? theme.accentColor : theme.tertiaryText)
+                    .frame(width: 20)
+            }
 
-                Text(tool.description)
+            // Skill info
+            VStack(alignment: .leading, spacing: 3) {
+                HStack(spacing: 6) {
+                    Text(skill.name)
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundColor(isEnabled ? theme.primaryText : theme.secondaryText)
+                        .lineLimit(1)
+
+                    // Built-in badge
+                    if skill.isBuiltIn {
+                        Text("Built-in")
+                            .font(.system(size: 8, weight: .medium))
+                            .foregroundColor(theme.secondaryText)
+                            .padding(.horizontal, 4)
+                            .padding(.vertical, 1)
+                            .background(
+                                Capsule()
+                                    .fill(theme.secondaryBackground)
+                            )
+                    }
+                }
+
+                Text(skill.description)
                     .font(.system(size: 10))
                     .foregroundColor(theme.tertiaryText)
                     .lineLimit(2)
@@ -248,9 +314,9 @@ private struct ToolRowItem: View {
 
             Spacer()
 
-            // Token estimate (catalog entry size for two-phase loading)
+            // Token estimate
             HStack(spacing: 2) {
-                Text("~\(tool.catalogEntryTokens)")
+                Text("~\(estimatedTokens)")
                     .font(.system(size: 10, weight: .medium, design: .monospaced))
                     .foregroundColor(theme.tertiaryText)
 
@@ -258,9 +324,7 @@ private struct ToolRowItem: View {
                     .font(.system(size: 9, weight: .regular))
                     .foregroundColor(theme.tertiaryText.opacity(0.6))
             }
-            .help(
-                "Catalog entry: ~\(tool.catalogEntryTokens) tokens. Full schema if selected: ~\(tool.estimatedTokens) tokens"
-            )
+            .help("Catalog entry tokens (name + description)")
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
@@ -280,10 +344,10 @@ private struct ToolRowItem: View {
 // MARK: - Preview
 
 #if DEBUG
-    struct ToolSelectorView_Previews: PreviewProvider {
+    struct SkillSelectorView_Previews: PreviewProvider {
         struct PreviewWrapper: View {
             var body: some View {
-                ToolSelectorView(personaId: Persona.defaultId)
+                SkillSelectorView(personaId: Persona.defaultId)
                     .padding()
                     .frame(width: 450, height: 550)
                     .background(Color.gray.opacity(0.2))
