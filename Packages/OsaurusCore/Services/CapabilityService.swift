@@ -138,12 +138,23 @@ public final class CapabilityService {
 
     // MARK: - Token Estimation
 
-    /// Estimate the token count for enabled skills.
+    /// Estimate the token count for enabled skills (full instructions).
     /// Uses rough heuristic of ~4 characters per token.
     public func estimateSkillTokens() -> Int {
         let enabledSkills = SkillManager.shared.skills.filter { $0.enabled }
         let totalChars = enabledSkills.reduce(0) { sum, skill in
             sum + skill.name.count + skill.description.count + skill.instructions.count + 50  // overhead
+        }
+        return max(0, totalChars / 4)
+    }
+
+    /// Estimate tokens for skill catalog entries (name + description only).
+    /// Used in two-phase loading for the selection phase.
+    public func estimateCatalogSkillTokens(for personaId: UUID?) -> Int {
+        let skills = enabledSkills(for: personaId)
+        // Format: "- **name**: description\n" ≈ 6 chars overhead per skill
+        let totalChars = skills.reduce(0) { sum, skill in
+            sum + skill.name.count + skill.description.count + 6
         }
         return max(0, totalChars / 4)
     }

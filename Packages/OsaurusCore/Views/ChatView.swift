@@ -382,27 +382,40 @@ final class ChatSession: ObservableObject {
         }
 
         var total = 0
+        let effectiveId = personaId ?? Persona.defaultId
 
-        // System prompt (use persona's effective system prompt)
-        let systemPrompt = PersonaManager.shared.effectiveSystemPrompt(for: personaId ?? Persona.defaultId)
+        // System prompt
+        let systemPrompt = PersonaManager.shared.effectiveSystemPrompt(for: effectiveId)
         if !systemPrompt.isEmpty {
             total += max(1, systemPrompt.count / 4)
         }
 
-        // Enabled skill instructions
-        total += CapabilityService.shared.estimateSkillTokens()
+        // Tool and skill tokens depend on two-phase loading state
+        let toolOverrides = PersonaManager.shared.effectiveToolOverrides(for: effectiveId)
+        let allTools = ToolRegistry.shared.listTools(withOverrides: toolOverrides)
+        let hasSkills = CapabilityService.shared.hasEnabledSkills(for: effectiveId)
 
-        // Enabled tool definitions (using persona-level overrides)
-        let toolOverrides = PersonaManager.shared.effectiveToolOverrides(for: personaId ?? Persona.defaultId)
-        let enabledTools = ToolRegistry.shared.listTools(withOverrides: toolOverrides)
-            .filter { tool in
-                if let overrides = toolOverrides, let override = overrides[tool.name] {
-                    return override
-                }
-                return tool.enabled
+        // Helper to check if tool is enabled
+        func isEnabled(_ tool: ToolRegistry.ToolEntry) -> Bool {
+            if let override = toolOverrides?[tool.name] { return override }
+            return tool.enabled
+        }
+
+        if hasSkills && !capabilitiesSelected {
+            // Phase 1: Catalog entries + select_capabilities
+            total += allTools.filter(isEnabled).reduce(0) { $0 + $1.catalogEntryTokens }
+            total += ToolRegistry.shared.estimatedTokens(for: "select_capabilities")
+            total += CapabilityService.shared.estimateCatalogSkillTokens(for: effectiveId)
+        } else if capabilitiesSelected {
+            // Phase 2: Selected tools + select_capabilities + skill instructions
+            total += selectedToolNames.reduce(0) { $0 + ToolRegistry.shared.estimatedTokens(for: $1) }
+            total += ToolRegistry.shared.estimatedTokens(for: "select_capabilities")
+            if !selectedSkillInstructions.isEmpty {
+                total += max(1, selectedSkillInstructions.count / 4)
             }
-        for tool in enabledTools {
-            total += tool.estimatedTokens
+        } else {
+            // No two-phase: All enabled tool schemas
+            total += allTools.filter(isEnabled).reduce(0) { $0 + $1.estimatedTokens }
         }
 
         // All turns - use cached lengths to avoid forcing lazy string joins

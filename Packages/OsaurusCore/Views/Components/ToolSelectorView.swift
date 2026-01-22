@@ -279,9 +279,9 @@ private struct ToolRowItem: View {
 
             Spacer()
 
-            // Token estimate (subtle)
+            // Token estimate (catalog entry size for two-phase loading)
             HStack(spacing: 2) {
-                Text("~\(tool.estimatedTokens)")
+                Text("~\(tool.catalogEntryTokens)")
                     .font(.system(size: 10, weight: .medium, design: .monospaced))
                     .foregroundColor(theme.tertiaryText)
 
@@ -289,7 +289,9 @@ private struct ToolRowItem: View {
                     .font(.system(size: 9, weight: .regular))
                     .foregroundColor(theme.tertiaryText.opacity(0.6))
             }
-            .help("Adds ~\(tool.estimatedTokens) tokens to context when enabled")
+            .help(
+                "Catalog entry: ~\(tool.catalogEntryTokens) tokens. Full schema if selected: ~\(tool.estimatedTokens) tokens"
+            )
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
