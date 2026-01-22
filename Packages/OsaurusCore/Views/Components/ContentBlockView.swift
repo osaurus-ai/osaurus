@@ -60,8 +60,9 @@ struct ContentBlockView: View {
         case .toolCall:
             return 60  // collapsed tool call height
 
-        case .toolCallGroup:
-            return 100  // grouped tool calls
+        case .toolCallGroup(let calls):
+            // Each collapsed tool call row is ~40px (10 padding top + 20 content + 10 padding bottom)
+            return CGFloat(calls.count * 40)
 
         case let .thinking(_, text, _):
             // Similar to paragraph but typically shorter
