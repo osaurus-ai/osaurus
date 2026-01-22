@@ -936,11 +936,18 @@ private struct PersonaEditorSheet: View {
     @State private var selectedThemeId: UUID?
     @State private var enabledTools: [String: Bool] = [:]
     @State private var showToolsSection = false
+    @State private var enabledSkills: [String: Bool] = [:]
+    @State private var showSkillsSection = false
     @State private var hasAppeared = false
 
     /// All available tools from the registry
     private var availableTools: [ToolRegistry.ToolEntry] {
         ToolRegistry.shared.listTools()
+    }
+
+    /// All available skills from the manager
+    private var availableSkills: [Skill] {
+        SkillManager.shared.skills
     }
 
     private var isEditing: Bool {
@@ -1200,6 +1207,107 @@ private struct PersonaEditorSheet: View {
                                 .foregroundColor(themeManager.currentTheme.tertiaryText)
                         }
                     }
+
+                    // Skills Configuration
+                    EditorSection(title: "Skills", icon: "sparkles") {
+                        VStack(alignment: .leading, spacing: 12) {
+                            // Custom accordion header - fully clickable
+                            Button {
+                                withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+                                    showSkillsSection.toggle()
+                                }
+                            } label: {
+                                HStack(spacing: 8) {
+                                    Image(systemName: "chevron.right")
+                                        .font(.system(size: 10, weight: .semibold))
+                                        .foregroundColor(themeManager.currentTheme.tertiaryText)
+                                        .rotationEffect(.degrees(showSkillsSection ? 90 : 0))
+
+                                    Text(showSkillsSection ? "Hide skill overrides" : "Configure skill overrides")
+                                        .font(.system(size: 12, weight: .medium))
+                                        .foregroundColor(themeManager.currentTheme.secondaryText)
+
+                                    if !enabledSkills.isEmpty {
+                                        Text("(\(enabledSkills.count) modified)")
+                                            .font(.system(size: 11))
+                                            .foregroundColor(themeManager.currentTheme.accentColor)
+                                            .padding(.horizontal, 6)
+                                            .padding(.vertical, 2)
+                                            .background(
+                                                Capsule()
+                                                    .fill(themeManager.currentTheme.accentColor.opacity(0.1))
+                                            )
+                                    }
+
+                                    Spacer()
+                                }
+                                .padding(.vertical, 8)
+                                .padding(.horizontal, 10)
+                                .background(
+                                    RoundedRectangle(cornerRadius: 8)
+                                        .fill(themeManager.currentTheme.tertiaryBackground.opacity(0.5))
+                                )
+                                .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain)
+
+                            // Expandable content with height animation
+                            VStack(alignment: .leading, spacing: 8) {
+                                if availableSkills.isEmpty {
+                                    Text("No skills available")
+                                        .font(.system(size: 12))
+                                        .foregroundColor(themeManager.currentTheme.secondaryText)
+                                        .padding(.vertical, 8)
+                                } else {
+                                    LazyVStack(spacing: 0) {
+                                        ForEach(availableSkills) { skill in
+                                            SkillToggleRow(
+                                                skill: skill,
+                                                isEnabled: enabledSkills[skill.name] ?? skill.enabled,
+                                                hasOverride: enabledSkills[skill.name] != nil,
+                                                onToggle: { enabled in
+                                                    enabledSkills[skill.name] = enabled
+                                                },
+                                                onReset: {
+                                                    enabledSkills.removeValue(forKey: skill.name)
+                                                }
+                                            )
+                                        }
+                                    }
+                                    .background(
+                                        RoundedRectangle(cornerRadius: 10)
+                                            .fill(themeManager.currentTheme.inputBackground)
+                                            .overlay(
+                                                RoundedRectangle(cornerRadius: 10)
+                                                    .stroke(themeManager.currentTheme.inputBorder, lineWidth: 1)
+                                            )
+                                    )
+                                    .clipShape(RoundedRectangle(cornerRadius: 10))
+                                }
+
+                                if !enabledSkills.isEmpty {
+                                    Button(action: { enabledSkills.removeAll() }) {
+                                        HStack(spacing: 4) {
+                                            Image(systemName: "arrow.uturn.backward")
+                                                .font(.system(size: 10))
+                                            Text("Reset All to Default")
+                                        }
+                                        .font(.system(size: 11, weight: .medium))
+                                        .foregroundColor(themeManager.currentTheme.accentColor)
+                                    }
+                                    .buttonStyle(.plain)
+                                    .padding(.top, 4)
+                                }
+                            }
+                            .frame(maxHeight: showSkillsSection ? .infinity : 0)
+                            .opacity(showSkillsSection ? 1 : 0)
+                            .clipped()
+
+                            Text("Override which skills are available when using this persona.")
+                                .font(.system(size: 11))
+                                .foregroundColor(themeManager.currentTheme.tertiaryText)
+                        }
+                    }
                 }
                 .padding(24)
             }
@@ -1227,6 +1335,8 @@ private struct PersonaEditorSheet: View {
                 selectedThemeId = persona.themeId
                 enabledTools = persona.enabledTools ?? [:]
                 showToolsSection = !(persona.enabledTools?.isEmpty ?? true)
+                enabledSkills = persona.enabledSkills ?? [:]
+                showSkillsSection = !(persona.enabledSkills?.isEmpty ?? true)
             }
             withAnimation {
                 hasAppeared = true
@@ -1403,6 +1513,7 @@ private struct PersonaEditorSheet: View {
             description: description.trimmingCharacters(in: .whitespacesAndNewlines),
             systemPrompt: systemPrompt.trimmingCharacters(in: .whitespacesAndNewlines),
             enabledTools: enabledTools.isEmpty ? nil : enabledTools,
+            enabledSkills: enabledSkills.isEmpty ? nil : enabledSkills,
             themeId: selectedThemeId,
             defaultModel: existingDefaultModel,
             temperature: Float(temperature),
@@ -1610,6 +1721,112 @@ private struct ToolToggleRow: View {
                 }
 
                 Text(tool.description)
+                    .font(.system(size: 10))
+                    .foregroundColor(themeManager.currentTheme.tertiaryText)
+                    .lineLimit(1)
+            }
+
+            Spacer()
+
+            // Reset button (only when overridden)
+            if hasOverride && isHovered {
+                Button(action: onReset) {
+                    Image(systemName: "arrow.uturn.backward")
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundColor(themeManager.currentTheme.secondaryText)
+                }
+                .buttonStyle(.plain)
+                .help("Reset to default")
+            }
+
+            // Toggle
+            Toggle(
+                "",
+                isOn: Binding(
+                    get: { isEnabled },
+                    set: { onToggle($0) }
+                )
+            )
+            .toggleStyle(.switch)
+            .controlSize(.small)
+            .labelsHidden()
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(isHovered ? themeManager.currentTheme.tertiaryBackground.opacity(0.5) : Color.clear)
+        .onHover { hovering in
+            withAnimation(.easeOut(duration: 0.1)) {
+                isHovered = hovering
+            }
+        }
+    }
+}
+
+// MARK: - Skill Toggle Row
+
+private struct SkillToggleRow: View {
+    @StateObject private var themeManager = ThemeManager.shared
+
+    let skill: Skill
+    let isEnabled: Bool
+    let hasOverride: Bool
+    let onToggle: (Bool) -> Void
+    let onReset: () -> Void
+
+    @State private var isHovered = false
+
+    /// Generate a consistent color based on skill name
+    private var skillColor: Color {
+        let hash = abs(skill.name.hashValue)
+        let hue = Double(hash % 360) / 360.0
+        return Color(hue: hue, saturation: 0.6, brightness: 0.8)
+    }
+
+    var body: some View {
+        HStack(spacing: 12) {
+            // Skill icon
+            ZStack {
+                RoundedRectangle(cornerRadius: 6)
+                    .fill(skillColor.opacity(0.1))
+                Image(systemName: "sparkles")
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundColor(skillColor)
+            }
+            .frame(width: 24, height: 24)
+
+            // Skill info
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(spacing: 6) {
+                    Text(skill.name)
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundColor(themeManager.currentTheme.primaryText)
+
+                    if skill.isBuiltIn {
+                        Text("Built-in")
+                            .font(.system(size: 9, weight: .semibold))
+                            .foregroundColor(themeManager.currentTheme.secondaryText)
+                            .padding(.horizontal, 5)
+                            .padding(.vertical, 1)
+                            .background(
+                                Capsule()
+                                    .fill(themeManager.currentTheme.tertiaryBackground)
+                            )
+                    }
+
+                    if hasOverride {
+                        Text("Modified")
+                            .font(.system(size: 9, weight: .semibold))
+                            .foregroundColor(themeManager.currentTheme.accentColor)
+                            .padding(.horizontal, 5)
+                            .padding(.vertical, 1)
+                            .background(
+                                Capsule()
+                                    .fill(themeManager.currentTheme.accentColor.opacity(0.1))
+                            )
+                    }
+                }
+
+                Text(skill.description)
                     .font(.system(size: 10))
                     .foregroundColor(themeManager.currentTheme.tertiaryText)
                     .lineLimit(1)

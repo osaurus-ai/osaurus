@@ -15,6 +15,7 @@ Canonical reference for all Osaurus features, their status, and documentation.
 | Remote MCP Providers             | Stable    | "Key Features"     | REMOTE_MCP_PROVIDERS.md       | Services/MCPProviderManager.swift, Tools/MCPProviderTool.swift                   |
 | MCP Server                       | Stable    | "MCP Server"       | (in README)                   | Networking/OsaurusServer.swift, Services/MCPServerManager.swift                  |
 | Tools & Plugins                  | Stable    | "Tools & Plugins"  | PLUGIN_AUTHORING.md           | Tools/, Managers/PluginManager.swift                                             |
+| Skills                           | Stable    | "Skills"           | SKILLS.md                     | Managers/SkillManager.swift, Views/SkillsView.swift, Services/CapabilityService.swift |
 | Personas                         | Stable    | "Personas"         | (in README)                   | Managers/PersonaManager.swift, Models/Persona.swift, Views/PersonasView.swift    |
 | Schedules                        | Stable    | "Schedules"        | (in README)                   | Managers/ScheduleManager.swift, Models/Schedule.swift, Views/SchedulesView.swift |
 | Developer Tools: Insights        | Stable    | "Developer Tools"  | DEVELOPER_TOOLS.md            | Views/InsightsView.swift, Services/InsightsService.swift                         |
@@ -50,6 +51,7 @@ Canonical reference for all Osaurus features, their status, and documentation.
 │  │   ├── RemoteProvidersView (Providers)                                 │
 │  │   ├── ToolsManagerView (Tools)                                        │
 │  │   ├── PersonasView (Personas)                                         │
+│  │   ├── SkillsView (Skills)                                             │
 │  │   ├── SchedulesView (Schedules)                                       │
 │  │   ├── ThemesView (Themes)                                             │
 │  │   ├── InsightsView (Developer: Insights)                              │
@@ -72,6 +74,10 @@ Canonical reference for all Osaurus features, their status, and documentation.
 │  │   └── MCPProviderTool (Wrapped remote MCP tools)                      │
 │  ├── Personas                                                            │
 │  │   └── PersonaManager (Persona lifecycle and active persona)           │
+│  ├── Skills                                                              │
+│  │   ├── SkillManager (Skill CRUD and loading)                           │
+│  │   ├── CapabilityService (Two-phase capability selection)              │
+│  │   └── GitHubSkillService (GitHub import)                              │
 │  ├── Scheduling                                                          │
 │  │   └── ScheduleManager (Schedule lifecycle and execution)              │
 │  ├── Voice/Audio                                                         │
@@ -411,6 +417,64 @@ Canonical reference for all Osaurus features, their status, and documentation.
 
 ---
 
+### Skills
+
+**Purpose:** Import and manage reusable AI capabilities following the Agent Skills specification.
+
+**Components:**
+
+- `Managers/SkillManager.swift` — Skill CRUD, persistence, and loading
+- `Services/CapabilityService.swift` — Two-phase capability selection
+- `Services/GitHubSkillService.swift` — GitHub repository import
+- `Models/Skill.swift` — Skill data model
+- `Models/CapabilityCatalog.swift` — Capability catalog structure
+- `Tools/SelectCapabilitiesTool.swift` — AI tool for selecting capabilities
+- `Views/SkillsView.swift` — Skill management UI
+- `Views/SkillEditorSheet.swift` — Skill editor
+
+**Features:**
+
+- **GitHub Import** — Import from repositories with `.claude-plugin/marketplace.json`
+- **File Import** — Load `.md` (Agent Skills), `.json`, or `.zip` packages
+- **Built-in Skills** — 6 pre-installed skills for common use cases
+- **Reference Files** — Attach text files loaded into skill context
+- **Asset Files** — Support files for skills
+- **Categories** — Organize skills by type
+- **Persona Integration** — Per-persona skill enable/disable
+
+**Two-Phase Capability Selection:**
+
+A context optimization system that reduces token usage by ~80%:
+
+| Phase               | What's Loaded                         | Token Usage             |
+| ------------------- | ------------------------------------- | ----------------------- |
+| Phase 1 (Selection) | Catalog only (name + description)     | ~10-20 tokens per skill |
+| Phase 2 (Execution) | Full instructions for selected skills | Full content            |
+
+**Workflow:**
+
+1. System prompt includes lightweight capability catalog
+2. AI calls `select_capabilities` with desired tools/skills
+3. Full schemas/instructions loaded for selected items only
+4. Subsequent messages use selected capabilities
+
+**Skill Properties:**
+
+| Property       | Description                      |
+| -------------- | -------------------------------- |
+| `name`         | Display name (required)          |
+| `description`  | Brief description                |
+| `instructions` | Full AI instructions (markdown)  |
+| `category`     | Optional category for organization |
+| `version`      | Skill version                    |
+| `author`       | Skill author                     |
+| `references/`  | Text files loaded into context   |
+| `assets/`      | Supporting files                 |
+
+**Storage:** `~/.osaurus/skills/{skill-name}/SKILL.md`
+
+---
+
 ### Voice Input (WhisperKit)
 
 **Purpose:** Provide speech-to-text transcription using on-device WhisperKit models.
@@ -550,6 +614,7 @@ Canonical reference for all Osaurus features, their status, and documentation.
 | [REMOTE_MCP_PROVIDERS.md](REMOTE_MCP_PROVIDERS.md)             | Remote MCP provider setup                         |
 | [DEVELOPER_TOOLS.md](DEVELOPER_TOOLS.md)                       | Insights and Server Explorer guide                |
 | [VOICE_INPUT.md](VOICE_INPUT.md)                               | Voice input, WhisperKit, and VAD mode guide       |
+| [SKILLS.md](SKILLS.md)                                         | Skills and capability selection guide             |
 | [PLUGIN_AUTHORING.md](PLUGIN_AUTHORING.md)                     | Creating custom plugins                           |
 | [OpenAI_API_GUIDE.md](OpenAI_API_GUIDE.md)                     | API usage, tool calling, streaming                |
 | [SHARED_CONFIGURATION_GUIDE.md](SHARED_CONFIGURATION_GUIDE.md) | Shared configuration for teams                    |

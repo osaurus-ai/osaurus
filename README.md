@@ -49,6 +49,7 @@ Osaurus is the AI edge runtime for macOS. It brings together:
 - **Remote MCP Providers** — Connect to external MCP servers and aggregate their tools
 - **Plugin System** — Extend functionality with community and custom tools
 - **Personas** — Create custom AI assistants with unique prompts, tools, and visual themes
+- **Skills** — Import reusable AI capabilities from GitHub or files ([Agent Skills](https://agentskills.io/) compatible)
 - **Schedules** — Automate recurring AI tasks with timed execution
 - **Multi-Window Chat** — Multiple independent chat windows with per-window personas
 - **Developer Tools** — Built-in insights and server explorer for debugging
@@ -69,6 +70,7 @@ Osaurus is the AI edge runtime for macOS. It brings together:
 | **MCP Server**           | Connect to Cursor, Claude Desktop, and other MCP clients        |
 | **Remote MCP Providers** | Aggregate tools from external MCP servers                       |
 | **Tools & Plugins**      | Browser automation, file system, git, web search, and more      |
+| **Skills**               | Import AI capabilities from GitHub or files, with smart context saving |
 | **Personas**             | Custom AI assistants with unique prompts, tools, and themes     |
 | **Schedules**            | Automate AI tasks with daily, weekly, monthly, or yearly runs   |
 | **Custom Themes**        | Create, import, and export themes with full color customization |
@@ -224,6 +226,30 @@ Use cases:
 - **Creative Writer** — Higher temperature, no tool access for pure generation
 
 Access via Management window (`⌘ Shift M`) → **Personas**.
+
+### Skills
+
+Extend your AI with reusable capabilities imported from GitHub or local files.
+
+**Features:**
+
+- **Import from GitHub** — Browse skills from any repository with `marketplace.json`
+- **Import from Files** — Load `.md`, `.json`, or `.zip` skill packages
+- **Built-in Skills** — 6 pre-installed skills (Research Analyst, Study Tutor, etc.)
+- **Custom Skills** — Create and edit skills with the built-in editor
+- **Agent Skills Compatible** — Follows the open [Agent Skills](https://agentskills.io/) specification
+- **Smart Loading** — Only loads selected skills to save context space
+
+**Use cases:**
+
+- **Research Analyst** — Structured research with source evaluation
+- **Creative Brainstormer** — Ideation and creative problem solving
+- **Study Tutor** — Educational guidance with Socratic method
+- **Debug Assistant** — Systematic debugging methodology
+
+Access via Management window (`⌘ Shift M`) → **Skills**.
+
+See [Skills Guide](docs/SKILLS.md) for details.
 
 ### Schedules
 

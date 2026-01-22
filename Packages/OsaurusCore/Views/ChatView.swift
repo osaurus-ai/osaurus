@@ -27,10 +27,18 @@ final class ChatSession: ObservableObject {
     @Published var voiceInputState: VoiceInputState = .idle
     /// Whether the voice input overlay is currently visible
     @Published var showVoiceOverlay: Bool = false
-    /// Per-session tool overrides. Empty = use global config, otherwise map of tool name -> enabled
-    @Published var enabledToolOverrides: [String: Bool] = [:]
     /// The persona this session belongs to
     @Published var personaId: UUID?
+
+    // MARK: - Two-Phase Capability Selection
+    /// Whether capabilities have been selected for this conversation
+    @Published var capabilitiesSelected: Bool = false
+    /// Names of selected tools after select_capabilities is called
+    @Published var selectedToolNames: [String] = []
+    /// Names of selected skills after select_capabilities is called
+    @Published var selectedSkillNames: [String] = []
+    /// Combined instructions from selected skills (injected after selection)
+    @Published var selectedSkillInstructions: String = ""
 
     // MARK: - Persistence Properties
     @Published var sessionId: UUID?
@@ -49,7 +57,6 @@ final class ChatSession: ObservableObject {
     private var _lastThinkingLength: Int = 0
     private var _cachedEstimatedTokens: Int = 0
     private var _tokenCacheValid: Bool = false
-    private var _lastToolOverridesHash: Int = 0
 
     /// Callback when session needs to be saved (called after streaming completes)
     var onSessionChanged: (() -> Void)?
@@ -369,32 +376,46 @@ final class ChatSession: ObservableObject {
     /// Estimated token count for current session context (rough heuristic: ~4 chars per token)
     /// Memoized - only recomputes when turns/tools change or streaming ends
     var estimatedContextTokens: Int {
-        let toolOverridesHash = enabledToolOverrides.hashValue
         // Use cache if valid and not streaming (during streaming, estimate changes frequently)
-        if _tokenCacheValid && !isStreaming && turns.count == _lastTurnsCount
-            && toolOverridesHash == _lastToolOverridesHash
-        {
+        if _tokenCacheValid && !isStreaming && turns.count == _lastTurnsCount {
             return _cachedEstimatedTokens
         }
 
         var total = 0
+        let effectiveId = personaId ?? Persona.defaultId
 
-        // System prompt (use persona's effective system prompt)
-        let systemPrompt = PersonaManager.shared.effectiveSystemPrompt(for: personaId ?? Persona.defaultId)
+        // System prompt
+        let systemPrompt = PersonaManager.shared.effectiveSystemPrompt(for: effectiveId)
         if !systemPrompt.isEmpty {
             total += max(1, systemPrompt.count / 4)
         }
 
-        // Enabled tool definitions
-        let enabledTools = ToolRegistry.shared.listTools(withOverrides: enabledToolOverrides)
-            .filter { tool in
-                if let override = enabledToolOverrides[tool.name] {
-                    return override
-                }
-                return tool.enabled
+        // Tool and skill tokens depend on two-phase loading state
+        let toolOverrides = PersonaManager.shared.effectiveToolOverrides(for: effectiveId)
+        let allTools = ToolRegistry.shared.listTools(withOverrides: toolOverrides)
+        let hasSkills = CapabilityService.shared.hasEnabledSkills(for: effectiveId)
+
+        // Helper to check if tool is enabled
+        func isEnabled(_ tool: ToolRegistry.ToolEntry) -> Bool {
+            if let override = toolOverrides?[tool.name] { return override }
+            return tool.enabled
+        }
+
+        if hasSkills && !capabilitiesSelected {
+            // Phase 1: Catalog entries + select_capabilities
+            total += allTools.filter(isEnabled).reduce(0) { $0 + $1.catalogEntryTokens }
+            total += ToolRegistry.shared.estimatedTokens(for: "select_capabilities")
+            total += CapabilityService.shared.estimateCatalogSkillTokens(for: effectiveId)
+        } else if capabilitiesSelected {
+            // Phase 2: Selected tools + select_capabilities + skill instructions
+            total += selectedToolNames.reduce(0) { $0 + ToolRegistry.shared.estimatedTokens(for: $1) }
+            total += ToolRegistry.shared.estimatedTokens(for: "select_capabilities")
+            if !selectedSkillInstructions.isEmpty {
+                total += max(1, selectedSkillInstructions.count / 4)
             }
-        for tool in enabledTools {
-            total += tool.estimatedTokens
+        } else {
+            // No two-phase: All enabled tool schemas
+            total += allTools.filter(isEnabled).reduce(0) { $0 + $1.estimatedTokens }
         }
 
         // All turns - use cached lengths to avoid forcing lazy string joins
@@ -435,7 +456,6 @@ final class ChatSession: ObservableObject {
         // Update cache
         _cachedEstimatedTokens = total
         _tokenCacheValid = true
-        _lastToolOverridesHash = toolOverridesHash
 
         return total
     }
@@ -472,7 +492,6 @@ final class ChatSession: ObservableObject {
         turns.removeAll()
         input = ""
         pendingImages = []
-        enabledToolOverrides = [:]
         voiceInputState = .idle
         showVoiceOverlay = false
         // Clear session identity for new chat
@@ -481,6 +500,8 @@ final class ChatSession: ObservableObject {
         createdAt = Date()
         updatedAt = Date()
         isDirty = false
+        // Reset capability selection for new conversation
+        resetCapabilitySelection()
         // Keep current personaId - don't reset when creating new chat within same persona
 
         // Clear caches
@@ -502,17 +523,19 @@ final class ChatSession: ObservableObject {
             selectedModel = modelOptions.first?.id
         }
         isLoadingModel = false
-
-        // Apply tool overrides from persona
-        if let toolOverrides = PersonaManager.shared.effectiveToolOverrides(for: personaId ?? Persona.defaultId) {
-            enabledToolOverrides = toolOverrides
-        }
     }
 
     /// Reset for a specific persona
     func reset(for newPersonaId: UUID?) {
         personaId = newPersonaId
         reset()
+    }
+
+    /// Invalidate the token cache (called when tools/skills change)
+    func invalidateTokenCache() {
+        _tokenCacheValid = false
+        // Notify SwiftUI to re-render views that depend on estimatedContextTokens
+        objectWillChange.send()
     }
 
     // MARK: - Persistence Methods
@@ -527,7 +550,6 @@ final class ChatSession: ObservableObject {
             updatedAt: updatedAt,
             selectedModel: selectedModel,
             turns: turnData,
-            enabledToolOverrides: enabledToolOverrides.isEmpty ? nil : enabledToolOverrides,
             personaId: personaId
         )
     }
@@ -591,12 +613,14 @@ final class ChatSession: ObservableObject {
         isLoadingModel = false
 
         turns = data.turns.map { ChatTurn(from: $0) }
-        enabledToolOverrides = data.enabledToolOverrides ?? [:]
         voiceInputState = .idle
         showVoiceOverlay = false
         input = ""
         pendingImages = []
         isDirty = false  // Fresh load, not dirty
+        // Reset capability selection for loaded conversation
+        // (capabilities will be re-selected on next message if skills are enabled)
+        resetCapabilitySelection()
     }
 
     /// Edit a user message and regenerate from that point
@@ -635,6 +659,173 @@ final class ChatSession: ObservableObject {
 
         // Regenerate
         send("")
+    }
+
+    // MARK: - Two-Phase Capability Selection
+
+    /// Handle the select_capabilities tool call and update session state
+    private func handleSelectCapabilities(argumentsJSON: String) async throws -> String {
+        // Parse the arguments
+        guard let data = argumentsJSON.data(using: .utf8),
+            let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        else {
+            throw NSError(
+                domain: "ChatSession",
+                code: 1,
+                userInfo: [
+                    NSLocalizedDescriptionKey: "Invalid arguments for select_capabilities"
+                ]
+            )
+        }
+
+        let requestedTools = (json["tools"] as? [String]) ?? []
+        let requestedSkills = (json["skills"] as? [String]) ?? []
+
+        // Load selected capabilities
+        var loadedTools: [String] = []
+        var loadedSkillInstructions: [String] = []
+        var errors: [String] = []
+
+        // Get persona-level overrides for validation
+        let effectivePersonaId = personaId ?? Persona.defaultId
+        let toolOverrides = PersonaManager.shared.effectiveToolOverrides(for: effectivePersonaId)
+
+        // Validate and collect tools (respecting persona overrides)
+        let enabledToolNames = Set(
+            ToolRegistry.shared.listTools(withOverrides: toolOverrides)
+                .filter { tool in
+                    if let override = toolOverrides?[tool.name] { return override }
+                    return tool.enabled
+                }
+                .map { $0.name }
+        )
+
+        for toolName in requestedTools {
+            if enabledToolNames.contains(toolName) {
+                loadedTools.append(toolName)
+            } else {
+                errors.append("Tool '\(toolName)' not found or not enabled")
+            }
+        }
+
+        // Validate and collect skills (respecting persona overrides)
+        // Filter requested skills to only those enabled for this persona
+        let enabledRequestedSkills = requestedSkills.filter { skillName in
+            CapabilityService.shared.isSkillEnabled(skillName, for: effectivePersonaId)
+        }
+
+        // Load instructions for enabled skills (includes reference file contents)
+        let skillInstructionsMap = SkillManager.shared.loadInstructions(for: enabledRequestedSkills)
+        for skillName in requestedSkills {
+            if enabledRequestedSkills.contains(skillName), let instructions = skillInstructionsMap[skillName] {
+                loadedSkillInstructions.append("## \(skillName)\n\n\(instructions)")
+            } else {
+                errors.append("Skill '\(skillName)' not found or not enabled")
+            }
+        }
+
+        // Update session state - replace previous selection for context efficiency
+        capabilitiesSelected = true
+        selectedToolNames = loadedTools
+        selectedSkillNames = enabledRequestedSkills
+        selectedSkillInstructions =
+            loadedSkillInstructions.isEmpty
+            ? ""
+            : loadedSkillInstructions.joined(separator: "\n\n---\n\n")
+
+        // Build response (keep it minimal)
+        var response: [String] = []
+        response.append("# Capabilities Loaded")
+
+        if !loadedTools.isEmpty {
+            response.append("Tools: \(loadedTools.joined(separator: ", "))")
+        }
+
+        if !enabledRequestedSkills.isEmpty {
+            response.append("Skills: \(enabledRequestedSkills.joined(separator: ", "))")
+        }
+
+        if !errors.isEmpty {
+            response.append("")
+            for error in errors {
+                response.append("Warning: \(error)")
+            }
+        }
+
+        if loadedTools.isEmpty && enabledRequestedSkills.isEmpty {
+            response.append("No capabilities loaded.")
+        }
+
+        return response.joined(separator: "\n")
+    }
+
+    /// Reset capability selection state (for new conversations)
+    func resetCapabilitySelection() {
+        capabilitiesSelected = false
+        selectedToolNames = []
+        selectedSkillNames = []
+        selectedSkillInstructions = ""
+    }
+
+    /// Build system prompt based on capability selection state
+    private func buildSystemPrompt(base: String, personaId: UUID, needsSelection: Bool) -> String {
+        if needsSelection {
+            // Phase 1: Include full capability catalog for selection
+            return CapabilityService.shared.buildSystemPromptWithCatalog(
+                basePrompt: base,
+                personaId: personaId
+            )
+        } else if capabilitiesSelected {
+            // Phase 2: Include selected skill instructions + available capabilities reminder
+            var prompt = base
+
+            // Add active skill instructions
+            if !selectedSkillInstructions.isEmpty {
+                if !prompt.isEmpty { prompt += "\n\n" }
+                prompt += "# Active Skills\n\n"
+                prompt += selectedSkillInstructions
+            }
+
+            // Add compact reminder of other available capabilities
+            let catalog = CapabilityCatalogBuilder.build(for: personaId)
+            let unselectedTools = catalog.tools.map { $0.name }.filter { !selectedToolNames.contains($0) }
+            let unselectedSkills = catalog.skills.map { $0.name }.filter { !selectedSkillNames.contains($0) }
+
+            if !unselectedTools.isEmpty || !unselectedSkills.isEmpty {
+                if !prompt.isEmpty { prompt += "\n\n" }
+                prompt += "# Additional Capabilities Available\n"
+                prompt += "Call `select_capabilities` to add more:\n"
+                if !unselectedTools.isEmpty {
+                    prompt += "- tools: \(unselectedTools.joined(separator: ", "))\n"
+                }
+                if !unselectedSkills.isEmpty {
+                    prompt += "- skills: \(unselectedSkills.joined(separator: ", "))"
+                }
+            }
+
+            return prompt
+        } else {
+            // No capability selection needed, use base prompt
+            return base
+        }
+    }
+
+    /// Build tool specifications based on capability selection state
+    private func buildToolSpecs(needsSelection: Bool, overrides: [String: Bool]?) -> [Tool] {
+        if needsSelection {
+            // Phase 1: Only select_capabilities available
+            return ToolRegistry.shared.selectCapabilitiesSpec()
+        } else if capabilitiesSelected && !selectedToolNames.isEmpty {
+            // Phase 2: Selected tools + select_capabilities for adding more
+            var toolNames = selectedToolNames
+            if !toolNames.contains("select_capabilities") {
+                toolNames.append("select_capabilities")
+            }
+            return ToolRegistry.shared.specs(forTools: toolNames)
+        } else {
+            // Default: All enabled tools with persona overrides
+            return ToolRegistry.shared.specs(withOverrides: overrides)
+        }
     }
 
     func send(_ text: String, images: [Data] = []) {
@@ -687,22 +878,28 @@ final class ChatSession: ObservableObject {
             do {
                 let engine = ChatEngine(source: .chatUI)
                 let chatCfg = ChatConfigurationStore.load()
-                // Use persona's system prompt if available, otherwise fall back to global
-                let sys = PersonaManager.shared.effectiveSystemPrompt(for: personaId ?? Persona.defaultId)
+
+                // MARK: - Two-Phase Capability Selection
+                let effectivePersonaId = personaId ?? Persona.defaultId
+                let effectiveToolOverrides = PersonaManager.shared.effectiveToolOverrides(for: effectivePersonaId)
+                let hasEnabledSkills = CapabilityService.shared.hasEnabledSkills(for: effectivePersonaId)
+                let needsCapabilitySelection = hasEnabledSkills && !capabilitiesSelected
+
+                let baseSystemPrompt = PersonaManager.shared.effectiveSystemPrompt(for: effectivePersonaId)
                     .trimmingCharacters(in: .whitespacesAndNewlines)
-                // Use per-session tool overrides if any, otherwise check persona, then global config
-                let effectiveOverrides: [String: Bool]? =
-                    enabledToolOverrides.isEmpty
-                    ? PersonaManager.shared.effectiveToolOverrides(for: personaId ?? Persona.defaultId)
-                    : enabledToolOverrides
-                let toolSpecs = ToolRegistry.shared.specs(
-                    withOverrides: effectiveOverrides
+
+                // Build system prompt and tool specs based on capability selection state
+                var sys = buildSystemPrompt(
+                    base: baseSystemPrompt,
+                    personaId: effectivePersonaId,
+                    needsSelection: needsCapabilitySelection
+                )
+                var toolSpecs = buildToolSpecs(
+                    needsSelection: needsCapabilitySelection,
+                    overrides: effectiveToolOverrides
                 )
 
-                // Get persona-specific generation settings
-                let effectiveMaxTokensForPersona = PersonaManager.shared.effectiveMaxTokens(
-                    for: personaId ?? Persona.defaultId
-                )
+                let effectiveMaxTokensForPersona = PersonaManager.shared.effectiveMaxTokens(for: effectivePersonaId)
 
                 /// Convert a single turn to a ChatMessage (returns nil if should be skipped)
                 @MainActor
@@ -761,8 +958,7 @@ final class ChatSession: ObservableObject {
 
                 let maxAttempts = max(chatCfg.maxToolAttempts ?? 15, 1)
                 var attempts = 0
-                // Get persona-specific generation settings
-                let effectiveTemp = PersonaManager.shared.effectiveTemperature(for: personaId ?? Persona.defaultId)
+                let effectiveTemp = PersonaManager.shared.effectiveTemperature(for: effectivePersonaId)
 
                 outer: while attempts < maxAttempts {
                     attempts += 1
@@ -1054,11 +1250,34 @@ final class ChatSession: ObservableObject {
                                 "[Osaurus][Tool] Executing: \(inv.toolName) with args: \(truncatedArgs)\(inv.jsonArguments.count > 200 ? "..." : "")"
                             )
 
-                            resultText = try await ToolRegistry.shared.execute(
-                                name: inv.toolName,
-                                argumentsJSON: inv.jsonArguments,
-                                overrides: effectiveOverrides
-                            )
+                            // Handle select_capabilities specially for two-phase loading
+                            if inv.toolName == "select_capabilities" {
+                                resultText = try await handleSelectCapabilities(argumentsJSON: inv.jsonArguments)
+
+                                // Rebuild system prompt and tool specs using helper methods
+                                sys = buildSystemPrompt(
+                                    base: baseSystemPrompt,
+                                    personaId: effectivePersonaId,
+                                    needsSelection: false
+                                )
+                                toolSpecs = buildToolSpecs(
+                                    needsSelection: false,
+                                    overrides: effectiveToolOverrides
+                                )
+                            } else {
+                                // Build effective overrides: if capabilities were selected, allow those tools
+                                var executionOverrides = effectiveToolOverrides ?? [:]
+                                if capabilitiesSelected && selectedToolNames.contains(inv.toolName) {
+                                    // Tool was explicitly selected via select_capabilities, allow it
+                                    executionOverrides[inv.toolName] = true
+                                }
+
+                                resultText = try await ToolRegistry.shared.execute(
+                                    name: inv.toolName,
+                                    argumentsJSON: inv.jsonArguments,
+                                    overrides: executionOverrides.isEmpty ? nil : executionOverrides
+                                )
+                            }
 
                             // Log tool success (truncated result)
                             let truncatedResult = resultText.prefix(500)
@@ -1254,13 +1473,10 @@ struct ChatView: View {
                                 text: $observedSession.input,
                                 selectedModel: $observedSession.selectedModel,
                                 pendingImages: $observedSession.pendingImages,
-                                enabledToolOverrides: $observedSession.enabledToolOverrides,
                                 isContinuousVoiceMode: $observedSession.isContinuousVoiceMode,
                                 voiceInputState: $observedSession.voiceInputState,
                                 showVoiceOverlay: $observedSession.showVoiceOverlay,
                                 modelOptions: observedSession.modelOptions,
-                                availableTools: windowState.cachedToolList,
-                                personaToolOverrides: windowState.cachedToolOverrides,
                                 isStreaming: observedSession.isStreaming,
                                 supportsImages: observedSession.selectedModelSupportsImages,
                                 estimatedContextTokens: observedSession.estimatedContextTokens,

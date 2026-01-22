@@ -68,6 +68,7 @@ public final class PersonaManager: ObservableObject {
         description: String = "",
         systemPrompt: String = "",
         enabledTools: [String: Bool]? = nil,
+        enabledSkills: [String: Bool]? = nil,
         themeId: UUID? = nil,
         defaultModel: String? = nil,
         temperature: Float? = nil,
@@ -79,6 +80,7 @@ public final class PersonaManager: ObservableObject {
             description: description,
             systemPrompt: systemPrompt,
             enabledTools: enabledTools,
+            enabledSkills: enabledSkills,
             themeId: themeId,
             defaultModel: defaultModel,
             temperature: temperature,
@@ -204,6 +206,20 @@ extension PersonaManager {
         return persona.enabledTools
     }
 
+    /// Get the effective skill overrides for a persona
+    public func effectiveSkillOverrides(for personaId: UUID) -> [String: Bool]? {
+        guard let persona = persona(for: personaId) else {
+            return nil
+        }
+
+        // Default persona uses global settings
+        if persona.id == Persona.defaultId {
+            return nil
+        }
+
+        return persona.enabledSkills
+    }
+
     /// Get the effective model for a persona
     /// For custom personas without a model set, falls back to Default persona's model
     public func effectiveModel(for personaId: UUID) -> String? {
@@ -286,5 +302,119 @@ extension PersonaManager {
         persona.updatedAt = Date()
         PersonaStore.save(persona)
         refresh()
+    }
+
+    // MARK: - Tool/Skill Override Updates
+
+    /// Update a single tool override for a persona
+    /// For Default persona, updates global config. For custom personas, updates persona's enabledTools.
+    public func setToolEnabled(_ enabled: Bool, tool: String, for personaId: UUID) {
+        // Default persona -> update global config (this posts .toolsListChanged)
+        if personaId == Persona.defaultId {
+            ToolRegistry.shared.setEnabled(enabled, for: tool)
+            return
+        }
+
+        // Custom persona -> update persona's enabledTools
+        guard var persona = persona(for: personaId) else { return }
+        var overrides = persona.enabledTools ?? [:]
+        overrides[tool] = enabled
+        persona.enabledTools = overrides
+        persona.updatedAt = Date()
+        PersonaStore.save(persona)
+        refresh()
+        // Post notification to trigger token cache invalidation
+        NotificationCenter.default.post(name: .toolsListChanged, object: nil)
+    }
+
+    /// Update a single skill override for a persona
+    /// For Default persona, updates global config. For custom personas, updates persona's enabledSkills.
+    public func setSkillEnabled(_ enabled: Bool, skill: String, for personaId: UUID) {
+        // Default persona -> update global skill config (this posts .skillsListChanged)
+        if personaId == Persona.defaultId {
+            if let s = SkillManager.shared.skill(named: skill) {
+                SkillManager.shared.setEnabled(enabled, for: s.id)
+            }
+            return
+        }
+
+        // Custom persona -> update persona's enabledSkills
+        guard var persona = persona(for: personaId) else { return }
+        var overrides = persona.enabledSkills ?? [:]
+        overrides[skill] = enabled
+        persona.enabledSkills = overrides
+        persona.updatedAt = Date()
+        PersonaStore.save(persona)
+        refresh()
+        // Post notification to trigger token cache invalidation
+        NotificationCenter.default.post(name: .skillsListChanged, object: nil)
+    }
+
+    /// Enable all tools for a persona (batched for efficiency)
+    public func enableAllTools(for personaId: UUID, tools: [String]) {
+        setAllTools(enabled: true, for: personaId, tools: tools)
+    }
+
+    /// Disable all tools for a persona (batched for efficiency)
+    public func disableAllTools(for personaId: UUID, tools: [String]) {
+        setAllTools(enabled: false, for: personaId, tools: tools)
+    }
+
+    /// Enable all skills for a persona (batched for efficiency)
+    public func enableAllSkills(for personaId: UUID, skills: [String]) {
+        setAllSkills(enabled: true, for: personaId, skills: skills)
+    }
+
+    /// Disable all skills for a persona (batched for efficiency)
+    public func disableAllSkills(for personaId: UUID, skills: [String]) {
+        setAllSkills(enabled: false, for: personaId, skills: skills)
+    }
+
+    // MARK: - Private Batch Helpers
+
+    private func setAllTools(enabled: Bool, for personaId: UUID, tools: [String]) {
+        // Default persona -> update global config
+        if personaId == Persona.defaultId {
+            for tool in tools {
+                ToolRegistry.shared.setEnabled(enabled, for: tool)
+            }
+            return
+        }
+
+        // Custom persona -> batch update persona's enabledTools
+        guard var persona = persona(for: personaId) else { return }
+        var overrides = persona.enabledTools ?? [:]
+        for tool in tools {
+            overrides[tool] = enabled
+        }
+        persona.enabledTools = overrides
+        persona.updatedAt = Date()
+        PersonaStore.save(persona)
+        refresh()
+        NotificationCenter.default.post(name: .toolsListChanged, object: nil)
+    }
+
+    private func setAllSkills(enabled: Bool, for personaId: UUID, skills: [String]) {
+        // Default persona -> update global skill config
+        if personaId == Persona.defaultId {
+            for skillName in skills {
+                if let s = SkillManager.shared.skill(named: skillName) {
+                    SkillManager.shared.setEnabled(enabled, for: s.id)
+                }
+            }
+            return
+        }
+
+        // Custom persona -> batch update persona's enabledSkills
+        guard var persona = persona(for: personaId) else { return }
+        var overrides = persona.enabledSkills ?? [:]
+        for skill in skills {
+            overrides[skill] = enabled
+        }
+        persona.enabledSkills = overrides
+        persona.updatedAt = Date()
+        PersonaStore.save(persona)
+        refresh()
+        NotificationCenter.default.post(name: .skillsListChanged, object: nil)
     }
 }

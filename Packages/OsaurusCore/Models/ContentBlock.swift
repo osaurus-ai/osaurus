@@ -337,8 +337,8 @@ extension ContentBlock {
             return 60
 
         case .toolCallGroup(let calls):
-            // Estimate based on number of calls
-            return CGFloat(40 + calls.count * 50)
+            // Each collapsed tool call row is ~40px
+            return CGFloat(calls.count * 40)
 
         case let .thinking(_, text, _):
             let estimatedLines = max(1, CGFloat(text.count) / 80)

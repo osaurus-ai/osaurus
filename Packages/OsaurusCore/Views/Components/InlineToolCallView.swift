@@ -146,9 +146,10 @@ private enum PreviewGenerator {
             }
         }
 
-        // If no priority keys found, use first few keys
+        // If no priority keys found, use first few keys (sorted for stable ordering)
         if parts.isEmpty {
-            for (key, value) in json.prefix(3) {
+            for key in json.keys.sorted().prefix(3) {
+                guard let value = json[key] else { continue }
                 let valueStr = formatValue(value)
                 let part = "\(key): \(valueStr)"
                 if totalLength + part.count > maxLength && !parts.isEmpty {
@@ -632,7 +633,7 @@ struct CollapsibleCodeSection: View {
     @ViewBuilder
     private var codeContent: some View {
         if let content = preparedContent {
-            ScrollView([.horizontal, .vertical], showsIndicators: true) {
+            ScrollView(.vertical, showsIndicators: true) {
                 HStack(alignment: .top, spacing: 0) {
                     // Line numbers
                     if content.displayText.contains("\n") {
@@ -645,9 +646,10 @@ struct CollapsibleCodeSection: View {
                         .textSelection(.enabled)
                         .padding(.horizontal, 10)
                         .padding(.vertical, 10)
+                        .frame(maxWidth: .infinity, alignment: .leading)
                 }
             }
-            .frame(maxHeight: Self.maxContentHeight, alignment: .topLeading)
+            .frame(maxHeight: Self.maxContentHeight)
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(theme.codeBlockBackground)
         } else if isLoading {

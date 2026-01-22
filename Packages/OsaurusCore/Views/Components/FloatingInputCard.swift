@@ -13,15 +13,11 @@ struct FloatingInputCard: View {
     @Binding var text: String
     @Binding var selectedModel: String?
     @Binding var pendingImages: [Data]
-    @Binding var enabledToolOverrides: [String: Bool]
     /// When true, voice input auto-restarts after AI responds (continuous conversation mode)
     @Binding var isContinuousVoiceMode: Bool
     @Binding var voiceInputState: VoiceInputState
     @Binding var showVoiceOverlay: Bool
     let modelOptions: [ModelOption]
-    let availableTools: [ToolRegistry.ToolEntry]
-    /// Persona's tool overrides (if any). Used as base for diffing session overrides.
-    let personaToolOverrides: [String: Bool]?
     let isStreaming: Bool
     let supportsImages: Bool
     /// Current estimated context token count for the session
@@ -30,10 +26,15 @@ struct FloatingInputCard: View {
     let onStop: () -> Void
     /// Trigger to focus the input field (increment to focus)
     var focusTrigger: Int = 0
-    /// Current persona ID (used for persona-specific default model)
+    /// Current persona ID (used for persona-specific settings)
     var personaId: UUID? = nil
     /// Window ID for targeted VAD notifications
     var windowId: UUID? = nil
+
+    // Observe managers for reactive updates
+    @ObservedObject private var toolRegistry = ToolRegistry.shared
+    @ObservedObject private var skillManager = SkillManager.shared
+    @ObservedObject private var personaManager = PersonaManager.shared
 
     // Local state for text input to prevent parent re-renders on every keystroke
     @State private var localText: String = ""
@@ -43,10 +44,9 @@ struct FloatingInputCard: View {
     @State private var isDragOver = false
     @State private var showModelPicker = false
     @State private var showToolPicker = false
+    @State private var showSkillPicker = false
     // Cache model options to prevent popover refresh during streaming
     @State private var cachedModelOptions: [ModelOption] = []
-    // Cache tool list to prevent popover refresh during streaming
-    @State private var cachedTools: [ToolRegistry.ToolEntry] = []
 
     // MARK: - Voice Input State
     @StateObject private var whisperService = WhisperKitService.shared
@@ -136,7 +136,9 @@ struct FloatingInputCard: View {
     var body: some View {
         VStack(spacing: 12) {
             // Model and tool selector chips (always visible)
-            if (modelOptions.count > 1 || !availableTools.isEmpty || displayContextTokens > 0) && !showVoiceOverlay {
+            if (modelOptions.count > 1 || !toolRegistry.listTools().isEmpty || !skillManager.skills.isEmpty
+                || displayContextTokens > 0) && !showVoiceOverlay
+            {
                 selectorRow
                     .padding(.top, 8)
                     .padding(.horizontal, 20)
@@ -577,8 +579,13 @@ struct FloatingInputCard: View {
             }
 
             // Tool selector (when tools available)
-            if !availableTools.isEmpty {
+            if !toolRegistry.listTools().isEmpty {
                 toolSelectorChip
+            }
+
+            // Skill selector (when skills available)
+            if !skillManager.skills.isEmpty {
+                skillSelectorChip
             }
 
             // Context size indicator (when there's context)
@@ -713,19 +720,21 @@ struct FloatingInputCard: View {
 
     // MARK: - Tool Selector
 
-    /// Count of enabled tools (with overrides applied)
-    private var enabledToolCount: Int {
-        availableTools.filter { tool in
-            if let override = enabledToolOverrides[tool.name] {
-                return override
-            }
-            return tool.enabled
-        }.count
+    private var effectivePersonaId: UUID {
+        personaId ?? Persona.defaultId
     }
 
-    /// Whether any tools have been modified from global settings
-    private var hasToolOverrides: Bool {
-        !enabledToolOverrides.isEmpty
+    private var toolOverrides: [String: Bool]? {
+        personaManager.effectiveToolOverrides(for: effectivePersonaId)
+    }
+
+    private var skillOverrides: [String: Bool]? {
+        personaManager.effectiveSkillOverrides(for: effectivePersonaId)
+    }
+
+    /// Count of enabled tools (with persona overrides applied)
+    private var enabledToolCount: Int {
+        toolRegistry.listTools(withOverrides: toolOverrides).filter { $0.enabled }.count
     }
 
     private var toolSelectorChip: some View {
@@ -733,18 +742,11 @@ struct FloatingInputCard: View {
             HStack(spacing: 6) {
                 Image(systemName: "wrench.and.screwdriver")
                     .font(theme.font(size: CGFloat(theme.captionSize) - 2))
-                    .foregroundColor(hasToolOverrides ? theme.accentColor : theme.tertiaryText)
+                    .foregroundColor(theme.tertiaryText)
 
-                Text("\(enabledToolCount) tools")
+                Text("\(enabledToolCount) \(enabledToolCount == 1 ? "tool" : "tools")")
                     .font(theme.font(size: CGFloat(theme.captionSize), weight: .medium))
                     .foregroundColor(theme.secondaryText)
-
-                // Show modified indicator if overrides exist
-                if hasToolOverrides {
-                    Circle()
-                        .fill(Color.orange)
-                        .frame(width: 5, height: 5)
-                }
 
                 Image(systemName: "chevron.up.chevron.down")
                     .font(theme.font(size: CGFloat(theme.captionSize) - 3, weight: .semibold))
@@ -758,26 +760,56 @@ struct FloatingInputCard: View {
             )
             .overlay(
                 RoundedRectangle(cornerRadius: 18, style: .continuous)
-                    .strokeBorder(
-                        hasToolOverrides ? theme.accentColor.opacity(0.5) : theme.primaryBorder.opacity(0.5),
-                        lineWidth: 1
-                    )
+                    .strokeBorder(theme.primaryBorder.opacity(0.5), lineWidth: 1)
             )
         }
         .buttonStyle(.plain)
         .popover(isPresented: $showToolPicker, arrowEdge: .top) {
-            ToolSelectorView(
-                tools: cachedTools,
-                enabledOverrides: $enabledToolOverrides,
-                personaToolOverrides: personaToolOverrides,
-                onDismiss: { showToolPicker = false }
+            ToolSelectorView(personaId: effectivePersonaId)
+        }
+    }
+
+    // MARK: - Skill Selector
+
+    /// Count of enabled skills (with persona overrides applied)
+    private var enabledSkillCount: Int {
+        skillManager.skills.filter { skill in
+            if let overrides = skillOverrides, let value = overrides[skill.name] {
+                return value
+            }
+            return skill.enabled
+        }.count
+    }
+
+    private var skillSelectorChip: some View {
+        Button(action: { showSkillPicker.toggle() }) {
+            HStack(spacing: 6) {
+                Image(systemName: "lightbulb")
+                    .font(theme.font(size: CGFloat(theme.captionSize) - 2))
+                    .foregroundColor(theme.tertiaryText)
+
+                Text("\(enabledSkillCount) \(enabledSkillCount == 1 ? "skill" : "skills")")
+                    .font(theme.font(size: CGFloat(theme.captionSize), weight: .medium))
+                    .foregroundColor(theme.secondaryText)
+
+                Image(systemName: "chevron.up.chevron.down")
+                    .font(theme.font(size: CGFloat(theme.captionSize) - 3, weight: .semibold))
+                    .foregroundColor(theme.tertiaryText)
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 6)
+            .background(
+                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                    .fill(theme.secondaryBackground.opacity(0.8))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                    .strokeBorder(theme.primaryBorder.opacity(0.5), lineWidth: 1)
             )
         }
-        .onChange(of: showToolPicker) { _, isShowing in
-            if isShowing {
-                // Snapshot tools when popover opens to prevent refresh during streaming
-                cachedTools = availableTools
-            }
+        .buttonStyle(.plain)
+        .popover(isPresented: $showSkillPicker, arrowEdge: .top) {
+            SkillSelectorView(personaId: effectivePersonaId)
         }
     }
 
@@ -1262,7 +1294,6 @@ extension NSImage {
             @State private var text = ""
             @State private var model: String? = "foundation"
             @State private var images: [Data] = []
-            @State private var toolOverrides: [String: Bool] = [:]
             @State private var isContinuousVoiceMode: Bool = false
             @State private var voiceInputState: VoiceInputState = .idle
             @State private var showVoiceOverlay: Bool = false
@@ -1274,7 +1305,6 @@ extension NSImage {
                         text: $text,
                         selectedModel: $model,
                         pendingImages: $images,
-                        enabledToolOverrides: $toolOverrides,
                         isContinuousVoiceMode: $isContinuousVoiceMode,
                         voiceInputState: $voiceInputState,
                         showVoiceOverlay: $showVoiceOverlay,
@@ -1289,21 +1319,6 @@ extension NSImage {
                                 isVLM: false
                             ),
                         ],
-                        availableTools: [
-                            ToolRegistry.ToolEntry(
-                                name: "browser_screenshot",
-                                description: "Take a screenshot",
-                                enabled: true,
-                                parameters: nil
-                            ),
-                            ToolRegistry.ToolEntry(
-                                name: "browser_click",
-                                description: "Click an element",
-                                enabled: true,
-                                parameters: nil
-                            ),
-                        ],
-                        personaToolOverrides: nil,
                         isStreaming: false,
                         supportsImages: true,
                         estimatedContextTokens: 2450,

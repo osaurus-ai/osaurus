@@ -35,14 +35,24 @@ final class ToolRegistry: ObservableObject {
         var enabled: Bool
         let parameters: JSONValue?
 
-        /// Estimated tokens this tool definition adds to context (rough heuristic: ~4 chars per token)
+        /// Estimated tokens for full tool schema (rough heuristic: ~4 chars per token)
+        /// Used when tool is actually loaded after selection
         var estimatedTokens: Int {
             var total = name.count + description.count
             if let params = parameters {
                 total += Self.estimateJSONSize(params)
             }
-            // Add overhead for JSON structure (type, function wrapper, etc.)
-            total += 50
+            // Overhead for JSON structure: {"type":"function","function":{"name":"...","description":"...","parameters":...}}
+            // = 38 (prefix) + 17 (desc key) + 15 (params key) + 2 (closing) = 72 chars
+            total += 72
+            return max(1, total / 4)
+        }
+
+        /// Estimated tokens for catalog entry (name + description only)
+        /// Used in two-phase loading where catalog is shown first
+        var catalogEntryTokens: Int {
+            // Format: "- **name**: description\n" ≈ 6 chars overhead
+            let total = name.count + description.count + 6
             return max(1, total / 4)
         }
 
@@ -61,13 +71,22 @@ final class ToolRegistry: ObservableObject {
                 return arr.reduce(2) { $0 + estimateJSONSize($1) + 1 }  // brackets + commas
             case .object(let dict):
                 return dict.reduce(2) { acc, pair in
-                    acc + pair.key.count + 3 + estimateJSONSize(pair.value) + 1  // key + quotes + colon + value + comma
+                    // "key": value, = key.count + 4 (quotes + colon + space) + value + 1 (comma)
+                    acc + pair.key.count + 5 + estimateJSONSize(pair.value)
                 }
             }
         }
     }
 
-    private init() {}
+    private init() {
+        registerBuiltInTools()
+    }
+
+    /// Register built-in tools that are always available
+    private func registerBuiltInTools() {
+        // Register select_capabilities for two-phase capability loading
+        register(SelectCapabilitiesTool())
+    }
 
     func register(_ tool: OsaurusTool) {
         toolsByName[tool.name] = tool
@@ -91,6 +110,18 @@ final class ToolRegistry: ObservableObject {
                 return configuration.isEnabled(name: tool.name)
             }
             .map { $0.asOpenAITool() }
+    }
+
+    /// Get specs for specific tools by name (ignores enabled state)
+    func specs(forTools toolNames: [String]) -> [Tool] {
+        return toolNames.compactMap { name in
+            toolsByName[name]?.asOpenAITool()
+        }
+    }
+
+    /// Get spec for select_capabilities tool only
+    func selectCapabilitiesSpec() -> [Tool] {
+        return specs(forTools: ["select_capabilities"])
     }
 
     /// Execute a tool by name with raw JSON arguments
@@ -246,6 +277,11 @@ final class ToolRegistry: ObservableObject {
     /// Retrieve parameter schema for a tool by name.
     func parametersForTool(name: String) -> JSONValue? {
         return toolsByName[name]?.parameters
+    }
+
+    /// Get estimated tokens for a tool by name (returns 0 if not found).
+    func estimatedTokens(for name: String) -> Int {
+        return listTools().first(where: { $0.name == name })?.estimatedTokens ?? 0
     }
 
     // MARK: - Policy / Grants
