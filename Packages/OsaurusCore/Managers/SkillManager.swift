@@ -167,6 +167,30 @@ public final class SkillManager: ObservableObject {
         return skill
     }
 
+    /// Import multiple skills at once (batch import from GitHub)
+    @discardableResult
+    public func importSkillsFromMarkdown(_ skills: [Skill]) -> [Skill] {
+        var imported: [Skill] = []
+        for parsedSkill in skills {
+            let skill = Skill(
+                name: parsedSkill.name,
+                description: parsedSkill.description,
+                version: parsedSkill.version,
+                author: parsedSkill.author,
+                category: parsedSkill.category,
+                icon: parsedSkill.icon,
+                instructions: parsedSkill.instructions
+            )
+            SkillStore.save(skill)
+            imported.append(skill)
+        }
+        if !imported.isEmpty {
+            refresh()
+            NotificationCenter.default.post(name: .skillsListChanged, object: nil)
+        }
+        return imported
+    }
+
     public func exportSkill(_ skill: Skill) throws -> Data {
         try skill.exportToJSON()
     }

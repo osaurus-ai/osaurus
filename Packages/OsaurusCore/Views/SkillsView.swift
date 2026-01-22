@@ -22,6 +22,7 @@ struct SkillsView: View {
     @State private var hasAppeared = false
     @State private var toastMessage: (text: String, isError: Bool)?
     @State private var showImportPicker = false
+    @State private var showGitHubImport = false
     @State private var exportingSkill: Skill?
 
     var body: some View {
@@ -72,7 +73,7 @@ struct SkillsView: View {
                 if let toast = toastMessage {
                     VStack {
                         Spacer()
-                        ToastView(message: toast.text, isError: toast.isError, theme: theme)
+                        SkillsToastView(message: toast.text, isError: toast.isError)
                             .transition(.move(edge: .bottom).combined(with: .opacity))
                             .padding(.bottom, 20)
                     }
@@ -113,6 +114,22 @@ struct SkillsView: View {
                 },
                 onCancel: {
                     editingSkill = nil
+                }
+            )
+        }
+        .sheet(isPresented: $showGitHubImport) {
+            GitHubImportSheet(
+                onImport: { skills in
+                    let imported = skillManager.importSkillsFromMarkdown(skills)
+                    showGitHubImport = false
+                    if imported.count == 1 {
+                        showToast("Imported \"\(imported[0].name)\"")
+                    } else {
+                        showToast("Imported \(imported.count) skills")
+                    }
+                },
+                onCancel: {
+                    showGitHubImport = false
                 }
             )
         }
@@ -249,9 +266,10 @@ struct SkillsView: View {
             HeaderIconButton("arrow.clockwise", help: "Refresh skills") {
                 skillManager.refresh()
             }
-            HeaderSecondaryButton("Import", icon: "square.and.arrow.down") {
-                showImportPicker = true
-            }
+            ImportDropdownButton(
+                onGitHub: { showGitHubImport = true },
+                onLocal: { showImportPicker = true }
+            )
             HeaderPrimaryButton("Create Skill", icon: "plus") {
                 isCreating = true
             }
@@ -274,10 +292,11 @@ struct SkillsView: View {
 
 // MARK: - Toast View
 
-private struct ToastView: View {
+private struct SkillsToastView: View {
+    @Environment(\.theme) private var theme
+
     let message: String
     let isError: Bool
-    let theme: ThemeProtocol
 
     var body: some View {
         HStack(spacing: 10) {
@@ -300,6 +319,98 @@ private struct ToastView: View {
             Capsule()
                 .stroke((isError ? theme.errorColor : theme.successColor).opacity(0.3), lineWidth: 1)
         )
+    }
+}
+
+// MARK: - Import Dropdown Button
+
+private struct ImportDropdownButton: View {
+    @Environment(\.theme) private var theme
+
+    let onGitHub: () -> Void
+    let onLocal: () -> Void
+
+    @State private var isHovering = false
+    @State private var showMenu = false
+
+    var body: some View {
+        Button(action: { showMenu.toggle() }) {
+            HStack(spacing: 6) {
+                Image(systemName: "square.and.arrow.down")
+                    .font(.system(size: 12, weight: .medium))
+                Text("Import")
+                    .font(.system(size: 13, weight: .medium))
+            }
+            .foregroundColor(theme.primaryText)
+            .padding(.horizontal, 14)
+            .padding(.vertical, 8)
+            .background(
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(theme.tertiaryBackground)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 8)
+                            .stroke(theme.inputBorder, lineWidth: 1)
+                    )
+                    .opacity(isHovering ? 0.8 : 1)
+            )
+        }
+        .buttonStyle(PlainButtonStyle())
+        .onHover { hovering in
+            withAnimation(.easeOut(duration: 0.15)) {
+                isHovering = hovering
+            }
+        }
+        .popover(isPresented: $showMenu, arrowEdge: .bottom) {
+            VStack(alignment: .leading, spacing: 0) {
+                ImportMenuRow(icon: "link", title: "From GitHub") {
+                    showMenu = false
+                    onGitHub()
+                }
+                Divider().padding(.horizontal, 8)
+                ImportMenuRow(icon: "doc", title: "From File") {
+                    showMenu = false
+                    onLocal()
+                }
+            }
+            .padding(.vertical, 6)
+            .frame(width: 160)
+        }
+    }
+}
+
+private struct ImportMenuRow: View {
+    @Environment(\.theme) private var theme
+
+    let icon: String
+    let title: String
+    let action: () -> Void
+
+    @State private var isHovering = false
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 10) {
+                Image(systemName: icon)
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundColor(theme.secondaryText)
+                    .frame(width: 16)
+                Text(title)
+                    .font(.system(size: 13))
+                    .foregroundColor(theme.primaryText)
+                Spacer()
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            .background(
+                RoundedRectangle(cornerRadius: 6)
+                    .fill(isHovering ? theme.secondaryBackground : Color.clear)
+            )
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(PlainButtonStyle())
+        .onHover { hovering in
+            isHovering = hovering
+        }
     }
 }
 
