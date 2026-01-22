@@ -14,6 +14,7 @@ enum ManagementTab: String, CaseIterable {
     case models
     case providers
     case tools
+    case skills
     case personas
     case schedules
     case voice
@@ -28,6 +29,7 @@ enum ManagementTab: String, CaseIterable {
         case .models: return "cube.box.fill"
         case .providers: return "cloud.fill"
         case .tools: return "wrench.and.screwdriver.fill"
+        case .skills: return "sparkles"
         case .personas: return "person.2.fill"
         case .schedules: return "calendar.badge.clock"
         case .voice: return "waveform"
@@ -44,6 +46,7 @@ enum ManagementTab: String, CaseIterable {
         case .models: return "Models"
         case .providers: return "Providers"
         case .tools: return "Tools"
+        case .skills: return "Skills"
         case .personas: return "Personas"
         case .schedules: return "Schedules"
         case .voice: return "Voice"
@@ -85,10 +88,13 @@ struct ManagementView: View {
 
     @StateObject private var personaManager = PersonaManager.shared
 
+    @StateObject private var skillManager = SkillManager.shared
+
     private var sidebarItems: [SidebarItemData] {
         let connectedProviders = remoteProviderManager.providerStates.values.filter { $0.isConnected }.count
         let customThemeCount = themeManager.installedThemes.filter { !$0.isBuiltIn }.count
         let customPersonaCount = personaManager.personas.filter { !$0.isBuiltIn }.count
+        let enabledSkillCount = skillManager.enabledCount
 
         return [
             SidebarItemData(
@@ -107,6 +113,12 @@ struct ManagementView: View {
                 icon: ManagementTab.tools.icon,
                 label: ManagementTab.tools.label,
                 badge: repoService.updatesAvailableCount > 0 ? repoService.updatesAvailableCount : nil
+            ),
+            SidebarItemData(
+                id: ManagementTab.skills.rawValue,
+                icon: ManagementTab.skills.icon,
+                label: ManagementTab.skills.label,
+                badge: enabledSkillCount > 0 ? enabledSkillCount : nil
             ),
             SidebarItemData(
                 id: ManagementTab.personas.rawValue,
@@ -171,6 +183,8 @@ struct ManagementView: View {
                     RemoteProvidersView()
                 case ManagementTab.tools.rawValue:
                     ToolsManagerView()
+                case ManagementTab.skills.rawValue:
+                    SkillsView()
                 case ManagementTab.personas.rawValue:
                     PersonasView()
                 case ManagementTab.schedules.rawValue:

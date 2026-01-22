@@ -67,7 +67,15 @@ final class ToolRegistry: ObservableObject {
         }
     }
 
-    private init() {}
+    private init() {
+        registerBuiltInTools()
+    }
+
+    /// Register built-in tools that are always available
+    private func registerBuiltInTools() {
+        // Register select_capabilities for two-phase capability loading
+        register(SelectCapabilitiesTool())
+    }
 
     func register(_ tool: OsaurusTool) {
         toolsByName[tool.name] = tool
@@ -91,6 +99,18 @@ final class ToolRegistry: ObservableObject {
                 return configuration.isEnabled(name: tool.name)
             }
             .map { $0.asOpenAITool() }
+    }
+
+    /// Get specs for specific tools by name (ignores enabled state)
+    func specs(forTools toolNames: [String]) -> [Tool] {
+        return toolNames.compactMap { name in
+            toolsByName[name]?.asOpenAITool()
+        }
+    }
+
+    /// Get spec for select_capabilities tool only
+    func selectCapabilitiesSpec() -> [Tool] {
+        return specs(forTools: ["select_capabilities"])
     }
 
     /// Execute a tool by name with raw JSON arguments

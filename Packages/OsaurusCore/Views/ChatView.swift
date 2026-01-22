@@ -32,6 +32,16 @@ final class ChatSession: ObservableObject {
     /// The persona this session belongs to
     @Published var personaId: UUID?
 
+    // MARK: - Two-Phase Capability Selection
+    /// Whether capabilities have been selected for this conversation
+    @Published var capabilitiesSelected: Bool = false
+    /// Names of selected tools after select_capabilities is called
+    @Published var selectedToolNames: [String] = []
+    /// Names of selected skills after select_capabilities is called
+    @Published var selectedSkillNames: [String] = []
+    /// Combined instructions from selected skills (injected after selection)
+    @Published var selectedSkillInstructions: String = ""
+
     // MARK: - Persistence Properties
     @Published var sessionId: UUID?
     @Published var title: String = "New Chat"
@@ -385,6 +395,9 @@ final class ChatSession: ObservableObject {
             total += max(1, systemPrompt.count / 4)
         }
 
+        // Enabled skill instructions
+        total += CapabilityService.shared.estimateSkillTokens()
+
         // Enabled tool definitions
         let enabledTools = ToolRegistry.shared.listTools(withOverrides: enabledToolOverrides)
             .filter { tool in
@@ -481,6 +494,8 @@ final class ChatSession: ObservableObject {
         createdAt = Date()
         updatedAt = Date()
         isDirty = false
+        // Reset capability selection for new conversation
+        resetCapabilitySelection()
         // Keep current personaId - don't reset when creating new chat within same persona
 
         // Clear caches
@@ -597,6 +612,9 @@ final class ChatSession: ObservableObject {
         input = ""
         pendingImages = []
         isDirty = false  // Fresh load, not dirty
+        // Reset capability selection for loaded conversation
+        // (capabilities will be re-selected on next message if skills are enabled)
+        resetCapabilitySelection()
     }
 
     /// Edit a user message and regenerate from that point
@@ -635,6 +653,110 @@ final class ChatSession: ObservableObject {
 
         // Regenerate
         send("")
+    }
+
+    // MARK: - Two-Phase Capability Selection
+
+    /// Handle the select_capabilities tool call and update session state
+    private func handleSelectCapabilities(argumentsJSON: String) async throws -> String {
+        // Parse the arguments
+        guard let data = argumentsJSON.data(using: .utf8),
+            let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        else {
+            throw NSError(
+                domain: "ChatSession",
+                code: 1,
+                userInfo: [
+                    NSLocalizedDescriptionKey: "Invalid arguments for select_capabilities"
+                ]
+            )
+        }
+
+        let requestedTools = (json["tools"] as? [String]) ?? []
+        let requestedSkills = (json["skills"] as? [String]) ?? []
+
+        // Load selected capabilities
+        var loadedTools: [String] = []
+        var loadedSkillInstructions: [String] = []
+        var errors: [String] = []
+
+        // Validate and collect tools
+        let allTools = ToolRegistry.shared.listTools()
+        for toolName in requestedTools {
+            if allTools.contains(where: { $0.name == toolName && $0.enabled }) {
+                loadedTools.append(toolName)
+            } else {
+                errors.append("Tool '\(toolName)' not found or not enabled")
+            }
+        }
+
+        // Validate and collect skills (includes reference file contents)
+        let skillInstructionsMap = SkillManager.shared.loadInstructions(for: requestedSkills)
+        for skillName in requestedSkills {
+            if let instructions = skillInstructionsMap[skillName] {
+                loadedSkillInstructions.append("## \(skillName)\n\n\(instructions)")
+            } else {
+                errors.append("Skill '\(skillName)' not found or not enabled")
+            }
+        }
+
+        // Update session state
+        capabilitiesSelected = true
+        selectedToolNames = loadedTools
+        selectedSkillNames = requestedSkills.filter { name in
+            SkillManager.shared.skill(named: name)?.enabled == true
+        }
+        selectedSkillInstructions =
+            loadedSkillInstructions.isEmpty
+            ? ""
+            : loadedSkillInstructions.joined(separator: "\n\n---\n\n")
+
+        // Build response
+        var response: [String] = []
+        response.append("# Capabilities Loaded")
+        response.append("")
+
+        if !loadedTools.isEmpty {
+            response.append("## Selected Tools")
+            response.append("The following tools are now available:")
+            for tool in loadedTools {
+                response.append("- \(tool)")
+            }
+            response.append("")
+        }
+
+        if !selectedSkillNames.isEmpty {
+            response.append("## Activated Skills")
+            response.append("The following skills are now active and their instructions have been loaded:")
+            for skill in selectedSkillNames {
+                response.append("- \(skill)")
+            }
+            response.append("")
+        }
+
+        if !errors.isEmpty {
+            response.append("## Warnings")
+            for error in errors {
+                response.append("- \(error)")
+            }
+            response.append("")
+        }
+
+        if loadedTools.isEmpty && selectedSkillNames.isEmpty {
+            response.append("No capabilities were loaded. Proceeding without tools or skills.")
+        } else {
+            response.append("You can now proceed with your response using the loaded capabilities.")
+        }
+
+        return response.joined(separator: "\n")
+    }
+
+    /// Reset capability selection state (for new conversations)
+    func resetCapabilitySelection() {
+        capabilitiesSelected = false
+        selectedToolNames = []
+        selectedSkillNames = []
+        selectedSkillInstructions = ""
     }
 
     func send(_ text: String, images: [Data] = []) {
@@ -687,17 +809,52 @@ final class ChatSession: ObservableObject {
             do {
                 let engine = ChatEngine(source: .chatUI)
                 let chatCfg = ChatConfigurationStore.load()
-                // Use persona's system prompt if available, otherwise fall back to global
-                let sys = PersonaManager.shared.effectiveSystemPrompt(for: personaId ?? Persona.defaultId)
+
+                // MARK: - Two-Phase Capability Selection
+                // Check if we need to do capability selection (skills enabled but not yet selected)
+                let hasEnabledSkills = CapabilityService.shared.hasEnabledSkills
+                let needsCapabilitySelection = hasEnabledSkills && !capabilitiesSelected
+
+                // Build system prompt based on capability selection state
+                let baseSystemPrompt = PersonaManager.shared.effectiveSystemPrompt(for: personaId ?? Persona.defaultId)
                     .trimmingCharacters(in: .whitespacesAndNewlines)
+
+                var sys: String
+                if needsCapabilitySelection {
+                    // Phase 1: Include capability catalog for selection
+                    sys = CapabilityService.shared.buildSystemPromptWithCatalog(
+                        basePrompt: baseSystemPrompt,
+                        personaId: personaId ?? Persona.defaultId
+                    )
+                } else if capabilitiesSelected && !selectedSkillInstructions.isEmpty {
+                    // Phase 2: Include selected skill instructions
+                    sys = baseSystemPrompt
+                    if !sys.isEmpty { sys += "\n\n" }
+                    sys += "# Active Skills\n\n"
+                    sys += selectedSkillInstructions
+                } else {
+                    // No skills enabled, use base prompt
+                    sys = baseSystemPrompt
+                }
+
                 // Use per-session tool overrides if any, otherwise check persona, then global config
                 let effectiveOverrides: [String: Bool]? =
                     enabledToolOverrides.isEmpty
                     ? PersonaManager.shared.effectiveToolOverrides(for: personaId ?? Persona.defaultId)
                     : enabledToolOverrides
-                let toolSpecs = ToolRegistry.shared.specs(
-                    withOverrides: effectiveOverrides
-                )
+
+                // Determine which tools to use based on capability selection state
+                var toolSpecs: [Tool]
+                if needsCapabilitySelection {
+                    // Phase 1: Only select_capabilities tool available
+                    toolSpecs = ToolRegistry.shared.selectCapabilitiesSpec()
+                } else if capabilitiesSelected && !selectedToolNames.isEmpty {
+                    // Phase 2: Use selected tools
+                    toolSpecs = ToolRegistry.shared.specs(forTools: selectedToolNames)
+                } else {
+                    // Default: All enabled tools
+                    toolSpecs = ToolRegistry.shared.specs(withOverrides: effectiveOverrides)
+                }
 
                 // Get persona-specific generation settings
                 let effectiveMaxTokensForPersona = PersonaManager.shared.effectiveMaxTokens(
@@ -1054,11 +1211,32 @@ final class ChatSession: ObservableObject {
                                 "[Osaurus][Tool] Executing: \(inv.toolName) with args: \(truncatedArgs)\(inv.jsonArguments.count > 200 ? "..." : "")"
                             )
 
-                            resultText = try await ToolRegistry.shared.execute(
-                                name: inv.toolName,
-                                argumentsJSON: inv.jsonArguments,
-                                overrides: effectiveOverrides
-                            )
+                            // Handle select_capabilities specially for two-phase loading
+                            if inv.toolName == "select_capabilities" {
+                                resultText = try await handleSelectCapabilities(argumentsJSON: inv.jsonArguments)
+
+                                // Update tool specs for subsequent iterations
+                                if !selectedToolNames.isEmpty {
+                                    toolSpecs = ToolRegistry.shared.specs(forTools: selectedToolNames)
+                                } else {
+                                    // No tools selected, use all enabled tools
+                                    toolSpecs = ToolRegistry.shared.specs(withOverrides: effectiveOverrides)
+                                }
+
+                                // Rebuild system prompt with selected skill instructions
+                                if !selectedSkillInstructions.isEmpty {
+                                    sys = baseSystemPrompt
+                                    if !sys.isEmpty { sys += "\n\n" }
+                                    sys += "# Active Skills\n\n"
+                                    sys += selectedSkillInstructions
+                                }
+                            } else {
+                                resultText = try await ToolRegistry.shared.execute(
+                                    name: inv.toolName,
+                                    argumentsJSON: inv.jsonArguments,
+                                    overrides: effectiveOverrides
+                                )
+                            }
 
                             // Log tool success (truncated result)
                             let truncatedResult = resultText.prefix(500)
