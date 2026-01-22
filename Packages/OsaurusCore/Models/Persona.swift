@@ -20,6 +20,8 @@ public struct Persona: Codable, Identifiable, Sendable, Equatable {
     public var systemPrompt: String
     /// Per-persona tool overrides. nil = use global config, otherwise map of tool name -> enabled
     public var enabledTools: [String: Bool]?
+    /// Per-persona skill overrides. nil = use global config, otherwise map of skill name -> enabled
+    public var enabledSkills: [String: Bool]?
     /// Optional custom theme ID to apply when this persona is active
     public var themeId: UUID?
     /// Optional default model for this persona
@@ -41,6 +43,7 @@ public struct Persona: Codable, Identifiable, Sendable, Equatable {
         description: String = "",
         systemPrompt: String = "",
         enabledTools: [String: Bool]? = nil,
+        enabledSkills: [String: Bool]? = nil,
         themeId: UUID? = nil,
         defaultModel: String? = nil,
         temperature: Float? = nil,
@@ -54,6 +57,7 @@ public struct Persona: Codable, Identifiable, Sendable, Equatable {
         self.description = description
         self.systemPrompt = systemPrompt
         self.enabledTools = enabledTools
+        self.enabledSkills = enabledSkills
         self.themeId = themeId
         self.defaultModel = defaultModel
         self.temperature = temperature
@@ -76,6 +80,7 @@ public struct Persona: Codable, Identifiable, Sendable, Equatable {
             description: "Uses your global chat settings",
             systemPrompt: "",  // Uses global system prompt from settings
             enabledTools: nil,
+            enabledSkills: nil,
             themeId: nil,
             defaultModel: nil,
             temperature: nil,
@@ -111,6 +116,7 @@ extension Persona {
                 description: exportedPersona.description,
                 systemPrompt: exportedPersona.systemPrompt,
                 enabledTools: exportedPersona.enabledTools,
+                enabledSkills: exportedPersona.enabledSkills,
                 themeId: nil,  // Don't export theme (may not exist on target system)
                 defaultModel: exportedPersona.defaultModel,
                 temperature: exportedPersona.temperature,
@@ -132,7 +138,7 @@ extension Persona {
     }
 
     /// Import a persona from JSON data
-    /// Tools that don't exist in the current system will be filtered out
+    /// Tools and skills that don't exist in the current system will be filtered out
     @MainActor
     public static func importFromJSON(_ data: Data) throws -> Persona {
         let decoder = JSONDecoder()
@@ -145,6 +151,13 @@ extension Persona {
             let availableToolNames = Set(ToolRegistry.shared.listTools().map { $0.name })
             let filteredTools = tools.filter { availableToolNames.contains($0.key) }
             imported.enabledTools = filteredTools.isEmpty ? nil : filteredTools
+        }
+
+        // Filter out skills that don't exist in the current manager
+        if let skills = imported.enabledSkills {
+            let availableSkillNames = Set(SkillManager.shared.skills.map { $0.name })
+            let filteredSkills = skills.filter { availableSkillNames.contains($0.key) }
+            imported.enabledSkills = filteredSkills.isEmpty ? nil : filteredSkills
         }
 
         return imported

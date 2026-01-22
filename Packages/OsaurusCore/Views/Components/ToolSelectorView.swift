@@ -2,8 +2,8 @@
 //  ToolSelectorView.swift
 //  osaurus
 //
-//  Per-session tool selector with search and toggles.
-//  Allows users to override global tool settings for the current chat session.
+//  Tool selector showing available tools and their current state.
+//  Displays persona overrides where applicable, toggles modify global config.
 //
 
 import SwiftUI
@@ -11,15 +11,12 @@ import SwiftUI
 struct ToolSelectorView: View {
     /// All available tools from the registry
     let tools: [ToolRegistry.ToolEntry]
-    /// Per-session overrides binding. Empty = use base config for all tools.
-    @Binding var enabledOverrides: [String: Bool]
-    /// Persona's tool overrides (if any). When set, this becomes the "base" instead of global config.
+    /// Persona's tool overrides (if any). Used to show persona-level settings.
     let personaToolOverrides: [String: Bool]?
     let onDismiss: () -> Void
 
     @State private var searchText: String = ""
     @Environment(\.theme) private var theme
-    @Environment(\.colorScheme) private var colorScheme
 
     private var filteredTools: [ToolRegistry.ToolEntry] {
         if searchText.isEmpty {
@@ -31,134 +28,44 @@ struct ToolSelectorView: View {
         }
     }
 
-    /// Count of enabled tools (with overrides applied)
+    /// Count of enabled tools (with persona overrides applied)
     private var enabledCount: Int {
         tools.filter { isToolEnabled($0.name) }.count
     }
 
-    /// Get the base enabled state for a tool (persona override > global config)
-    private func baseEnabledState(_ name: String) -> Bool {
-        // If persona has an override for this tool, use it
+    /// Check if a tool is enabled (persona override > global config)
+    private func isToolEnabled(_ name: String) -> Bool {
         if let personaOverrides = personaToolOverrides,
             let personaValue = personaOverrides[name]
         {
             return personaValue
         }
-        // Otherwise, use global config
         return ToolRegistry.shared.isGlobalEnabled(name)
     }
 
-    /// Check if a tool is enabled (session override > persona override > global config)
-    private func isToolEnabled(_ name: String) -> Bool {
-        if let override = enabledOverrides[name] {
-            return override
-        }
-        return baseEnabledState(name)
-    }
-
-    /// Toggle a tool's enabled state in the overrides
-    private func toggleTool(_ name: String) {
-        let currentlyEnabled = isToolEnabled(name)
-        let newValue = !currentlyEnabled
-
-        // If persona has an override for this tool, restore to persona value when matching
-        if let personaOverrides = personaToolOverrides,
-            let personaValue = personaOverrides[name]
-        {
-            if newValue == personaValue {
-                // Matches persona setting - use persona's value
-                enabledOverrides[name] = personaValue
-            } else {
-                enabledOverrides[name] = newValue
-            }
-        } else {
-            // No persona override - check global state
-            let globalEnabled = ToolRegistry.shared.isGlobalEnabled(name)
-            if newValue == globalEnabled {
-                enabledOverrides.removeValue(forKey: name)
-            } else {
-                enabledOverrides[name] = newValue
-            }
-        }
-    }
-
-    /// Check if a tool has a per-session override (differs from persona/global base)
-    private func hasSessionOverride(_ name: String) -> Bool {
-        guard let sessionValue = enabledOverrides[name] else {
-            return false
-        }
-        // Check if session value differs from persona value (if exists)
-        if let personaOverrides = personaToolOverrides,
-            let personaValue = personaOverrides[name]
-        {
-            return sessionValue != personaValue
-        }
-        // No persona override, check if session value differs from global
-        return sessionValue != ToolRegistry.shared.isGlobalEnabled(name)
-    }
-
-    /// Check if a tool has a persona-level override (differs from global)
+    /// Check if a tool has a persona-level override
     private func hasPersonaOverride(_ name: String) -> Bool {
         guard let personaOverrides = personaToolOverrides else { return false }
         return personaOverrides[name] != nil
     }
 
-    /// Check if there are any session-level overrides (different from persona/global base)
-    private var hasAnySessionOverrides: Bool {
-        tools.contains { hasSessionOverride($0.name) }
+    /// Toggle a tool's global enabled state
+    private func toggleTool(_ name: String) {
+        let currentlyEnabled = isToolEnabled(name)
+        ToolRegistry.shared.setEnabled(!currentlyEnabled, for: name)
     }
 
-    /// Reset all session overrides to use base config (persona or global)
-    private func resetAllToBase() {
-        // If persona has tool overrides, restore them; otherwise clear all
-        if let personaOverrides = personaToolOverrides, !personaOverrides.isEmpty {
-            enabledOverrides = personaOverrides
-        } else {
-            enabledOverrides.removeAll()
-        }
-    }
-
-    /// Enable all tools for this session
+    /// Enable all tools globally
     private func enableAll() {
         for tool in tools {
-            // If persona has this tool enabled, use persona value; otherwise set to true
-            if let personaOverrides = personaToolOverrides,
-                let personaValue = personaOverrides[tool.name], personaValue == true
-            {
-                enabledOverrides[tool.name] = true
-            } else if ToolRegistry.shared.isGlobalEnabled(tool.name) {
-                // Global is already enabled, no need to override
-                if personaToolOverrides?[tool.name] != nil {
-                    // But we have a persona override, keep it
-                    enabledOverrides[tool.name] = true
-                } else {
-                    enabledOverrides.removeValue(forKey: tool.name)
-                }
-            } else {
-                enabledOverrides[tool.name] = true
-            }
+            ToolRegistry.shared.setEnabled(true, for: tool.name)
         }
     }
 
-    /// Disable all tools for this session
+    /// Disable all tools globally
     private func disableAll() {
         for tool in tools {
-            // If persona has this tool disabled, use persona value; otherwise set to false
-            if let personaOverrides = personaToolOverrides,
-                let personaValue = personaOverrides[tool.name], personaValue == false
-            {
-                enabledOverrides[tool.name] = false
-            } else if !ToolRegistry.shared.isGlobalEnabled(tool.name) {
-                // Global is already disabled, no need to override
-                if personaToolOverrides?[tool.name] != nil {
-                    // But we have a persona override, keep it
-                    enabledOverrides[tool.name] = false
-                } else {
-                    enabledOverrides.removeValue(forKey: tool.name)
-                }
-            } else {
-                enabledOverrides[tool.name] = false
-            }
+            ToolRegistry.shared.setEnabled(false, for: tool.name)
         }
     }
 
@@ -183,7 +90,7 @@ struct ToolSelectorView: View {
                 toolList
             }
         }
-        .frame(width: 360, height: min(CGFloat(tools.count * 56 + 180), 480))
+        .frame(width: 360, height: min(CGFloat(tools.count * 56 + 160), 480))
         .background(
             RoundedRectangle(cornerRadius: 12, style: .continuous)
                 .fill(theme.primaryBackground)
@@ -249,23 +156,10 @@ struct ToolSelectorView: View {
 
                 Spacer()
 
-                if hasAnySessionOverrides {
-                    Button(action: resetAllToBase) {
-                        Text("Reset")
-                            .font(.system(size: 11, weight: .medium))
-                            .foregroundColor(theme.accentColor)
-                            .padding(.horizontal, 10)
-                            .padding(.vertical, 5)
-                            .background(
-                                RoundedRectangle(cornerRadius: 6, style: .continuous)
-                                    .strokeBorder(theme.accentColor.opacity(0.5), lineWidth: 1)
-                            )
-                    }
-                    .buttonStyle(.plain)
-                    .help(
-                        personaToolOverrides != nil
-                            ? "Reset all tools to persona defaults" : "Reset all tools to global settings"
-                    )
+                if personaToolOverrides != nil {
+                    Text("Persona overrides active")
+                        .font(.system(size: 10))
+                        .foregroundColor(theme.accentColor)
                 }
             }
         }
@@ -324,7 +218,6 @@ struct ToolSelectorView: View {
                     ToolRowItem(
                         tool: tool,
                         isEnabled: isToolEnabled(tool.name),
-                        hasSessionOverride: hasSessionOverride(tool.name),
                         hasPersonaOverride: hasPersonaOverride(tool.name),
                         onToggle: { toggleTool(tool.name) }
                     )
@@ -341,7 +234,6 @@ struct ToolSelectorView: View {
 private struct ToolRowItem: View {
     let tool: ToolRegistry.ToolEntry
     let isEnabled: Bool
-    let hasSessionOverride: Bool
     let hasPersonaOverride: Bool
     let onToggle: () -> Void
 
@@ -370,15 +262,8 @@ private struct ToolRowItem: View {
                         .foregroundColor(isEnabled ? theme.primaryText : theme.secondaryText)
                         .lineLimit(1)
 
-                    // Session override indicator (orange dot)
-                    if hasSessionOverride {
-                        Circle()
-                            .fill(Color.orange)
-                            .frame(width: 5, height: 5)
-                            .help("Modified for this session")
-                    }
-                    // Persona override indicator (blue dot) - only show if no session override
-                    else if hasPersonaOverride {
+                    // Persona override indicator (blue dot)
+                    if hasPersonaOverride {
                         Circle()
                             .fill(theme.accentColor)
                             .frame(width: 5, height: 5)
@@ -426,8 +311,6 @@ private struct ToolRowItem: View {
 #if DEBUG
     struct ToolSelectorView_Previews: PreviewProvider {
         struct PreviewWrapper: View {
-            @State private var overrides: [String: Bool] = [:]
-
             var body: some View {
                 ToolSelectorView(
                     tools: [
@@ -449,21 +332,8 @@ private struct ToolRowItem: View {
                             enabled: false,
                             parameters: nil
                         ),
-                        ToolRegistry.ToolEntry(
-                            name: "file_read",
-                            description: "Read contents of a file",
-                            enabled: true,
-                            parameters: nil
-                        ),
-                        ToolRegistry.ToolEntry(
-                            name: "file_write",
-                            description: "Write contents to a file",
-                            enabled: false,
-                            parameters: nil
-                        ),
                     ],
-                    enabledOverrides: $overrides,
-                    personaToolOverrides: ["browser_type": true],  // Example persona override
+                    personaToolOverrides: ["browser_type": true],
                     onDismiss: {}
                 )
                 .padding()

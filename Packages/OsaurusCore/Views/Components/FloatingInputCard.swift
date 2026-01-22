@@ -13,14 +13,13 @@ struct FloatingInputCard: View {
     @Binding var text: String
     @Binding var selectedModel: String?
     @Binding var pendingImages: [Data]
-    @Binding var enabledToolOverrides: [String: Bool]
     /// When true, voice input auto-restarts after AI responds (continuous conversation mode)
     @Binding var isContinuousVoiceMode: Bool
     @Binding var voiceInputState: VoiceInputState
     @Binding var showVoiceOverlay: Bool
     let modelOptions: [ModelOption]
     let availableTools: [ToolRegistry.ToolEntry]
-    /// Persona's tool overrides (if any). Used as base for diffing session overrides.
+    /// Persona's tool overrides (if any). Used to show persona-level settings.
     let personaToolOverrides: [String: Bool]?
     let isStreaming: Bool
     let supportsImages: Bool
@@ -713,19 +712,21 @@ struct FloatingInputCard: View {
 
     // MARK: - Tool Selector
 
-    /// Count of enabled tools (with overrides applied)
+    /// Count of enabled tools (with persona overrides applied)
     private var enabledToolCount: Int {
         availableTools.filter { tool in
-            if let override = enabledToolOverrides[tool.name] {
+            if let personaOverrides = personaToolOverrides,
+                let override = personaOverrides[tool.name]
+            {
                 return override
             }
             return tool.enabled
         }.count
     }
 
-    /// Whether any tools have been modified from global settings
-    private var hasToolOverrides: Bool {
-        !enabledToolOverrides.isEmpty
+    /// Whether persona has tool overrides
+    private var hasPersonaToolOverrides: Bool {
+        personaToolOverrides != nil && !(personaToolOverrides?.isEmpty ?? true)
     }
 
     private var toolSelectorChip: some View {
@@ -733,17 +734,18 @@ struct FloatingInputCard: View {
             HStack(spacing: 6) {
                 Image(systemName: "wrench.and.screwdriver")
                     .font(theme.font(size: CGFloat(theme.captionSize) - 2))
-                    .foregroundColor(hasToolOverrides ? theme.accentColor : theme.tertiaryText)
+                    .foregroundColor(hasPersonaToolOverrides ? theme.accentColor : theme.tertiaryText)
 
                 Text("\(enabledToolCount) tools")
                     .font(theme.font(size: CGFloat(theme.captionSize), weight: .medium))
                     .foregroundColor(theme.secondaryText)
 
-                // Show modified indicator if overrides exist
-                if hasToolOverrides {
+                // Show persona override indicator
+                if hasPersonaToolOverrides {
                     Circle()
-                        .fill(Color.orange)
+                        .fill(theme.accentColor)
                         .frame(width: 5, height: 5)
+                        .help("Persona has tool overrides")
                 }
 
                 Image(systemName: "chevron.up.chevron.down")
@@ -759,7 +761,7 @@ struct FloatingInputCard: View {
             .overlay(
                 RoundedRectangle(cornerRadius: 18, style: .continuous)
                     .strokeBorder(
-                        hasToolOverrides ? theme.accentColor.opacity(0.5) : theme.primaryBorder.opacity(0.5),
+                        hasPersonaToolOverrides ? theme.accentColor.opacity(0.5) : theme.primaryBorder.opacity(0.5),
                         lineWidth: 1
                     )
             )
@@ -768,7 +770,6 @@ struct FloatingInputCard: View {
         .popover(isPresented: $showToolPicker, arrowEdge: .top) {
             ToolSelectorView(
                 tools: cachedTools,
-                enabledOverrides: $enabledToolOverrides,
                 personaToolOverrides: personaToolOverrides,
                 onDismiss: { showToolPicker = false }
             )
@@ -1262,7 +1263,6 @@ extension NSImage {
             @State private var text = ""
             @State private var model: String? = "foundation"
             @State private var images: [Data] = []
-            @State private var toolOverrides: [String: Bool] = [:]
             @State private var isContinuousVoiceMode: Bool = false
             @State private var voiceInputState: VoiceInputState = .idle
             @State private var showVoiceOverlay: Bool = false
@@ -1274,7 +1274,6 @@ extension NSImage {
                         text: $text,
                         selectedModel: $model,
                         pendingImages: $images,
-                        enabledToolOverrides: $toolOverrides,
                         isContinuousVoiceMode: $isContinuousVoiceMode,
                         voiceInputState: $voiceInputState,
                         showVoiceOverlay: $showVoiceOverlay,

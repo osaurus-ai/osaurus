@@ -316,7 +316,6 @@ public final class SkillManager: ObservableObject {
         skills.filter { $0.enabled }.map { skill in
             CapabilityEntry(
                 type: .skill,
-                id: skill.id.uuidString,
                 name: skill.name,
                 description: skill.description,
                 category: skill.category,

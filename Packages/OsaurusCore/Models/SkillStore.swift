@@ -20,6 +20,8 @@ public enum SkillStore {
         migrateOldFormat()
 
         var savedSkills: [UUID: Skill] = [:]
+
+        // Load custom skills (non-hidden directories)
         if let contents = try? FileManager.default.contentsOfDirectory(
             at: directory,
             includingPropertiesForKeys: [.isDirectoryKey],
@@ -37,9 +39,29 @@ public enum SkillStore {
             }
         }
 
+        // Load built-in skill states (hidden directories starting with .)
+        var builtInStates: [UUID: Skill] = [:]
+        if let contents = try? FileManager.default.contentsOfDirectory(
+            at: directory,
+            includingPropertiesForKeys: [.isDirectoryKey],
+            options: []  // Include hidden files
+        ) {
+            for item in contents {
+                let name = item.lastPathComponent
+                // Only process hidden directories that look like UUIDs
+                guard name.hasPrefix("."),
+                    name.count > 1,
+                    let skill = loadFromDirectory(item)
+                else {
+                    continue
+                }
+                builtInStates[skill.id] = skill
+            }
+        }
+
         // Merge built-in skills with saved state
         var skills: [Skill] = Skill.builtInSkills.map { builtIn in
-            if let saved = savedSkills[builtIn.id] {
+            if let saved = builtInStates[builtIn.id] {
                 return Skill(
                     id: builtIn.id,
                     name: builtIn.name,
@@ -55,7 +77,7 @@ public enum SkillStore {
                     updatedAt: saved.updatedAt,
                     references: builtIn.references,
                     assets: builtIn.assets,
-                    directoryName: saved.directoryName
+                    directoryName: builtIn.directoryName
                 )
             }
             return builtIn

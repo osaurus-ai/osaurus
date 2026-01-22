@@ -15,6 +15,7 @@ public enum CapabilityType: String, Codable, Sendable {
 
 /// Metadata entry for a capability (tool or skill)
 public struct CapabilityEntry: Codable, Sendable, Identifiable {
+    /// Unique identifier combining type and name
     public var id: String { "\(type.rawValue):\(name)" }
 
     public let type: CapabilityType
@@ -25,7 +26,6 @@ public struct CapabilityEntry: Codable, Sendable, Identifiable {
 
     public init(
         type: CapabilityType,
-        id: String,
         name: String,
         description: String,
         category: String? = nil,
@@ -160,6 +160,20 @@ public struct CapabilityCatalogBuilder {
         return CapabilityCatalog(tools: toolEntries, skills: skillEntries)
     }
 
+    /// Build catalog for a specific persona, respecting persona-level overrides
+    public static func build(for personaId: UUID) -> CapabilityCatalog {
+        let toolOverrides = PersonaManager.shared.effectiveToolOverrides(for: personaId)
+        let skillOverrides = PersonaManager.shared.effectiveSkillOverrides(for: personaId)
+
+        // Get tools with persona overrides applied
+        let toolEntries = ToolRegistry.shared.enabledCatalogEntries(withOverrides: toolOverrides)
+
+        // Get skills with persona overrides applied
+        let skillEntries = SkillManager.shared.enabledCatalogEntries(withOverrides: skillOverrides)
+
+        return CapabilityCatalog(tools: toolEntries, skills: skillEntries)
+    }
+
     /// Build catalog with specific tool and skill filters
     static func build(
         toolFilter: ((ToolRegistry.ToolEntry) -> Bool)? = nil,
@@ -194,11 +208,52 @@ extension ToolRegistry {
             .map { tool in
                 CapabilityEntry(
                     type: .tool,
-                    id: tool.name,
                     name: tool.name,
-                    description: tool.description,
-                    category: nil,  // Tools don't have categories currently
-                    icon: nil
+                    description: tool.description
+                )
+            }
+    }
+
+    /// Get catalog entries with persona-level overrides applied
+    public func enabledCatalogEntries(withOverrides overrides: [String: Bool]?) -> [CapabilityEntry] {
+        listTools()
+            .filter { tool in
+                // Check override first, then fall back to global state
+                if let overrides = overrides, let override = overrides[tool.name] {
+                    return override
+                }
+                return tool.enabled
+            }
+            .map { tool in
+                CapabilityEntry(
+                    type: .tool,
+                    name: tool.name,
+                    description: tool.description
+                )
+            }
+    }
+}
+
+// MARK: - SkillManager Extension
+
+extension SkillManager {
+    /// Get catalog entries with persona-level overrides applied
+    public func enabledCatalogEntries(withOverrides overrides: [String: Bool]?) -> [CapabilityEntry] {
+        skills
+            .filter { skill in
+                // Check override first, then fall back to global state
+                if let overrides = overrides, let override = overrides[skill.name] {
+                    return override
+                }
+                return skill.enabled
+            }
+            .map { skill in
+                CapabilityEntry(
+                    type: .skill,
+                    name: skill.name,
+                    description: skill.description,
+                    category: skill.category,
+                    icon: skill.icon
                 )
             }
     }

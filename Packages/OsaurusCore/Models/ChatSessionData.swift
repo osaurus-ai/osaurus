@@ -15,8 +15,6 @@ public struct ChatSessionData: Codable, Identifiable, Sendable {
     public var updatedAt: Date
     public var selectedModel: String?
     public var turns: [ChatTurnData]
-    /// Per-session tool overrides. nil = use global config, otherwise map of tool name -> enabled
-    public var enabledToolOverrides: [String: Bool]?
     /// The persona this session belongs to. nil = Default persona
     public var personaId: UUID?
 
@@ -27,7 +25,6 @@ public struct ChatSessionData: Codable, Identifiable, Sendable {
         updatedAt: Date = Date(),
         selectedModel: String? = nil,
         turns: [ChatTurnData] = [],
-        enabledToolOverrides: [String: Bool]? = nil,
         personaId: UUID? = nil
     ) {
         self.id = id
@@ -36,11 +33,10 @@ public struct ChatSessionData: Codable, Identifiable, Sendable {
         self.updatedAt = updatedAt
         self.selectedModel = selectedModel
         self.turns = turns
-        self.enabledToolOverrides = enabledToolOverrides
         self.personaId = personaId
     }
 
-    // Custom decoder for backward compatibility with sessions saved before enabledToolOverrides/personaId were added
+    // Custom decoder for backward compatibility with old sessions
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         id = try container.decode(UUID.self, forKey: .id)
@@ -49,8 +45,21 @@ public struct ChatSessionData: Codable, Identifiable, Sendable {
         updatedAt = try container.decode(Date.self, forKey: .updatedAt)
         selectedModel = try container.decodeIfPresent(String.self, forKey: .selectedModel)
         turns = try container.decode([ChatTurnData].self, forKey: .turns)
-        enabledToolOverrides = try container.decodeIfPresent([String: Bool].self, forKey: .enabledToolOverrides)
         personaId = try container.decodeIfPresent(UUID.self, forKey: .personaId)
+        // Note: enabledToolOverrides was removed - old values are ignored for backward compatibility
+        _ = try? container.decodeIfPresent([String: Bool].self, forKey: .enabledToolOverrides)
+    }
+
+    // Custom encoder (enabledToolOverrides removed but kept in CodingKeys for decode compatibility)
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(id, forKey: .id)
+        try container.encode(title, forKey: .title)
+        try container.encode(createdAt, forKey: .createdAt)
+        try container.encode(updatedAt, forKey: .updatedAt)
+        try container.encodeIfPresent(selectedModel, forKey: .selectedModel)
+        try container.encode(turns, forKey: .turns)
+        try container.encodeIfPresent(personaId, forKey: .personaId)
     }
 
     private enum CodingKeys: String, CodingKey {

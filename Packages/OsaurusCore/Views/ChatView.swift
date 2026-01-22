@@ -27,8 +27,6 @@ final class ChatSession: ObservableObject {
     @Published var voiceInputState: VoiceInputState = .idle
     /// Whether the voice input overlay is currently visible
     @Published var showVoiceOverlay: Bool = false
-    /// Per-session tool overrides. Empty = use global config, otherwise map of tool name -> enabled
-    @Published var enabledToolOverrides: [String: Bool] = [:]
     /// The persona this session belongs to
     @Published var personaId: UUID?
 
@@ -59,7 +57,6 @@ final class ChatSession: ObservableObject {
     private var _lastThinkingLength: Int = 0
     private var _cachedEstimatedTokens: Int = 0
     private var _tokenCacheValid: Bool = false
-    private var _lastToolOverridesHash: Int = 0
 
     /// Callback when session needs to be saved (called after streaming completes)
     var onSessionChanged: (() -> Void)?
@@ -379,11 +376,8 @@ final class ChatSession: ObservableObject {
     /// Estimated token count for current session context (rough heuristic: ~4 chars per token)
     /// Memoized - only recomputes when turns/tools change or streaming ends
     var estimatedContextTokens: Int {
-        let toolOverridesHash = enabledToolOverrides.hashValue
         // Use cache if valid and not streaming (during streaming, estimate changes frequently)
-        if _tokenCacheValid && !isStreaming && turns.count == _lastTurnsCount
-            && toolOverridesHash == _lastToolOverridesHash
-        {
+        if _tokenCacheValid && !isStreaming && turns.count == _lastTurnsCount {
             return _cachedEstimatedTokens
         }
 
@@ -398,10 +392,11 @@ final class ChatSession: ObservableObject {
         // Enabled skill instructions
         total += CapabilityService.shared.estimateSkillTokens()
 
-        // Enabled tool definitions
-        let enabledTools = ToolRegistry.shared.listTools(withOverrides: enabledToolOverrides)
+        // Enabled tool definitions (using persona-level overrides)
+        let toolOverrides = PersonaManager.shared.effectiveToolOverrides(for: personaId ?? Persona.defaultId)
+        let enabledTools = ToolRegistry.shared.listTools(withOverrides: toolOverrides)
             .filter { tool in
-                if let override = enabledToolOverrides[tool.name] {
+                if let overrides = toolOverrides, let override = overrides[tool.name] {
                     return override
                 }
                 return tool.enabled
@@ -448,7 +443,6 @@ final class ChatSession: ObservableObject {
         // Update cache
         _cachedEstimatedTokens = total
         _tokenCacheValid = true
-        _lastToolOverridesHash = toolOverridesHash
 
         return total
     }
@@ -485,7 +479,6 @@ final class ChatSession: ObservableObject {
         turns.removeAll()
         input = ""
         pendingImages = []
-        enabledToolOverrides = [:]
         voiceInputState = .idle
         showVoiceOverlay = false
         // Clear session identity for new chat
@@ -517,11 +510,6 @@ final class ChatSession: ObservableObject {
             selectedModel = modelOptions.first?.id
         }
         isLoadingModel = false
-
-        // Apply tool overrides from persona
-        if let toolOverrides = PersonaManager.shared.effectiveToolOverrides(for: personaId ?? Persona.defaultId) {
-            enabledToolOverrides = toolOverrides
-        }
     }
 
     /// Reset for a specific persona
@@ -542,7 +530,6 @@ final class ChatSession: ObservableObject {
             updatedAt: updatedAt,
             selectedModel: selectedModel,
             turns: turnData,
-            enabledToolOverrides: enabledToolOverrides.isEmpty ? nil : enabledToolOverrides,
             personaId: personaId
         )
     }
@@ -606,7 +593,6 @@ final class ChatSession: ObservableObject {
         isLoadingModel = false
 
         turns = data.turns.map { ChatTurn(from: $0) }
-        enabledToolOverrides = data.enabledToolOverrides ?? [:]
         voiceInputState = .idle
         showVoiceOverlay = false
         input = ""
@@ -680,72 +666,74 @@ final class ChatSession: ObservableObject {
         var loadedSkillInstructions: [String] = []
         var errors: [String] = []
 
-        // Validate and collect tools
-        let allTools = ToolRegistry.shared.listTools()
+        // Get persona-level overrides for validation
+        let effectivePersonaId = personaId ?? Persona.defaultId
+        let toolOverrides = PersonaManager.shared.effectiveToolOverrides(for: effectivePersonaId)
+
+        // Validate and collect tools (respecting persona overrides)
+        let enabledToolNames = Set(
+            ToolRegistry.shared.listTools(withOverrides: toolOverrides)
+                .filter { tool in
+                    if let override = toolOverrides?[tool.name] { return override }
+                    return tool.enabled
+                }
+                .map { $0.name }
+        )
+
         for toolName in requestedTools {
-            if allTools.contains(where: { $0.name == toolName && $0.enabled }) {
+            if enabledToolNames.contains(toolName) {
                 loadedTools.append(toolName)
             } else {
                 errors.append("Tool '\(toolName)' not found or not enabled")
             }
         }
 
-        // Validate and collect skills (includes reference file contents)
-        let skillInstructionsMap = SkillManager.shared.loadInstructions(for: requestedSkills)
+        // Validate and collect skills (respecting persona overrides)
+        // Filter requested skills to only those enabled for this persona
+        let enabledRequestedSkills = requestedSkills.filter { skillName in
+            CapabilityService.shared.isSkillEnabled(skillName, for: effectivePersonaId)
+        }
+
+        // Load instructions for enabled skills (includes reference file contents)
+        let skillInstructionsMap = SkillManager.shared.loadInstructions(for: enabledRequestedSkills)
         for skillName in requestedSkills {
-            if let instructions = skillInstructionsMap[skillName] {
+            if enabledRequestedSkills.contains(skillName), let instructions = skillInstructionsMap[skillName] {
                 loadedSkillInstructions.append("## \(skillName)\n\n\(instructions)")
             } else {
                 errors.append("Skill '\(skillName)' not found or not enabled")
             }
         }
 
-        // Update session state
+        // Update session state - replace previous selection for context efficiency
         capabilitiesSelected = true
         selectedToolNames = loadedTools
-        selectedSkillNames = requestedSkills.filter { name in
-            SkillManager.shared.skill(named: name)?.enabled == true
-        }
+        selectedSkillNames = enabledRequestedSkills
         selectedSkillInstructions =
             loadedSkillInstructions.isEmpty
             ? ""
             : loadedSkillInstructions.joined(separator: "\n\n---\n\n")
 
-        // Build response
+        // Build response (keep it minimal)
         var response: [String] = []
         response.append("# Capabilities Loaded")
-        response.append("")
 
         if !loadedTools.isEmpty {
-            response.append("## Selected Tools")
-            response.append("The following tools are now available:")
-            for tool in loadedTools {
-                response.append("- \(tool)")
-            }
-            response.append("")
+            response.append("Tools: \(loadedTools.joined(separator: ", "))")
         }
 
-        if !selectedSkillNames.isEmpty {
-            response.append("## Activated Skills")
-            response.append("The following skills are now active and their instructions have been loaded:")
-            for skill in selectedSkillNames {
-                response.append("- \(skill)")
-            }
-            response.append("")
+        if !enabledRequestedSkills.isEmpty {
+            response.append("Skills: \(enabledRequestedSkills.joined(separator: ", "))")
         }
 
         if !errors.isEmpty {
-            response.append("## Warnings")
-            for error in errors {
-                response.append("- \(error)")
-            }
             response.append("")
+            for error in errors {
+                response.append("Warning: \(error)")
+            }
         }
 
-        if loadedTools.isEmpty && selectedSkillNames.isEmpty {
-            response.append("No capabilities were loaded. Proceeding without tools or skills.")
-        } else {
-            response.append("You can now proceed with your response using the loaded capabilities.")
+        if loadedTools.isEmpty && enabledRequestedSkills.isEmpty {
+            response.append("No capabilities loaded.")
         }
 
         return response.joined(separator: "\n")
@@ -757,6 +745,67 @@ final class ChatSession: ObservableObject {
         selectedToolNames = []
         selectedSkillNames = []
         selectedSkillInstructions = ""
+    }
+
+    /// Build system prompt based on capability selection state
+    private func buildSystemPrompt(base: String, personaId: UUID, needsSelection: Bool) -> String {
+        if needsSelection {
+            // Phase 1: Include full capability catalog for selection
+            return CapabilityService.shared.buildSystemPromptWithCatalog(
+                basePrompt: base,
+                personaId: personaId
+            )
+        } else if capabilitiesSelected {
+            // Phase 2: Include selected skill instructions + available capabilities reminder
+            var prompt = base
+
+            // Add active skill instructions
+            if !selectedSkillInstructions.isEmpty {
+                if !prompt.isEmpty { prompt += "\n\n" }
+                prompt += "# Active Skills\n\n"
+                prompt += selectedSkillInstructions
+            }
+
+            // Add compact reminder of other available capabilities
+            let catalog = CapabilityCatalogBuilder.build(for: personaId)
+            let unselectedTools = catalog.tools.map { $0.name }.filter { !selectedToolNames.contains($0) }
+            let unselectedSkills = catalog.skills.map { $0.name }.filter { !selectedSkillNames.contains($0) }
+
+            if !unselectedTools.isEmpty || !unselectedSkills.isEmpty {
+                if !prompt.isEmpty { prompt += "\n\n" }
+                prompt += "# Additional Capabilities Available\n"
+                prompt += "Call `select_capabilities` to add more:\n"
+                if !unselectedTools.isEmpty {
+                    prompt += "- tools: \(unselectedTools.joined(separator: ", "))\n"
+                }
+                if !unselectedSkills.isEmpty {
+                    prompt += "- skills: \(unselectedSkills.joined(separator: ", "))"
+                }
+            }
+
+            return prompt
+        } else {
+            // No capability selection needed, use base prompt
+            return base
+        }
+    }
+
+    /// Build tool specifications based on capability selection state
+    private func buildToolSpecs(needsSelection: Bool, overrides: [String: Bool]?) -> [Tool] {
+        if needsSelection {
+            // Phase 1: Only select_capabilities available
+            return ToolRegistry.shared.selectCapabilitiesSpec()
+        } else if capabilitiesSelected && !selectedToolNames.isEmpty {
+            // Phase 2: Selected tools + select_capabilities for adding more
+            var toolNames = selectedToolNames
+            if !toolNames.contains("select_capabilities") {
+                toolNames.append("select_capabilities")
+            }
+            return ToolRegistry.shared.specs(forTools: toolNames)
+        } else {
+            // Default: All enabled tools with persona overrides
+            return ToolRegistry.shared.specs(withOverrides: overrides)
+        }
     }
 
     func send(_ text: String, images: [Data] = []) {
@@ -811,55 +860,26 @@ final class ChatSession: ObservableObject {
                 let chatCfg = ChatConfigurationStore.load()
 
                 // MARK: - Two-Phase Capability Selection
-                // Check if we need to do capability selection (skills enabled but not yet selected)
-                let hasEnabledSkills = CapabilityService.shared.hasEnabledSkills
+                let effectivePersonaId = personaId ?? Persona.defaultId
+                let effectiveToolOverrides = PersonaManager.shared.effectiveToolOverrides(for: effectivePersonaId)
+                let hasEnabledSkills = CapabilityService.shared.hasEnabledSkills(for: effectivePersonaId)
                 let needsCapabilitySelection = hasEnabledSkills && !capabilitiesSelected
 
-                // Build system prompt based on capability selection state
-                let baseSystemPrompt = PersonaManager.shared.effectiveSystemPrompt(for: personaId ?? Persona.defaultId)
+                let baseSystemPrompt = PersonaManager.shared.effectiveSystemPrompt(for: effectivePersonaId)
                     .trimmingCharacters(in: .whitespacesAndNewlines)
 
-                var sys: String
-                if needsCapabilitySelection {
-                    // Phase 1: Include capability catalog for selection
-                    sys = CapabilityService.shared.buildSystemPromptWithCatalog(
-                        basePrompt: baseSystemPrompt,
-                        personaId: personaId ?? Persona.defaultId
-                    )
-                } else if capabilitiesSelected && !selectedSkillInstructions.isEmpty {
-                    // Phase 2: Include selected skill instructions
-                    sys = baseSystemPrompt
-                    if !sys.isEmpty { sys += "\n\n" }
-                    sys += "# Active Skills\n\n"
-                    sys += selectedSkillInstructions
-                } else {
-                    // No skills enabled, use base prompt
-                    sys = baseSystemPrompt
-                }
-
-                // Use per-session tool overrides if any, otherwise check persona, then global config
-                let effectiveOverrides: [String: Bool]? =
-                    enabledToolOverrides.isEmpty
-                    ? PersonaManager.shared.effectiveToolOverrides(for: personaId ?? Persona.defaultId)
-                    : enabledToolOverrides
-
-                // Determine which tools to use based on capability selection state
-                var toolSpecs: [Tool]
-                if needsCapabilitySelection {
-                    // Phase 1: Only select_capabilities tool available
-                    toolSpecs = ToolRegistry.shared.selectCapabilitiesSpec()
-                } else if capabilitiesSelected && !selectedToolNames.isEmpty {
-                    // Phase 2: Use selected tools
-                    toolSpecs = ToolRegistry.shared.specs(forTools: selectedToolNames)
-                } else {
-                    // Default: All enabled tools
-                    toolSpecs = ToolRegistry.shared.specs(withOverrides: effectiveOverrides)
-                }
-
-                // Get persona-specific generation settings
-                let effectiveMaxTokensForPersona = PersonaManager.shared.effectiveMaxTokens(
-                    for: personaId ?? Persona.defaultId
+                // Build system prompt and tool specs based on capability selection state
+                var sys = buildSystemPrompt(
+                    base: baseSystemPrompt,
+                    personaId: effectivePersonaId,
+                    needsSelection: needsCapabilitySelection
                 )
+                var toolSpecs = buildToolSpecs(
+                    needsSelection: needsCapabilitySelection,
+                    overrides: effectiveToolOverrides
+                )
+
+                let effectiveMaxTokensForPersona = PersonaManager.shared.effectiveMaxTokens(for: effectivePersonaId)
 
                 /// Convert a single turn to a ChatMessage (returns nil if should be skipped)
                 @MainActor
@@ -918,8 +938,7 @@ final class ChatSession: ObservableObject {
 
                 let maxAttempts = max(chatCfg.maxToolAttempts ?? 15, 1)
                 var attempts = 0
-                // Get persona-specific generation settings
-                let effectiveTemp = PersonaManager.shared.effectiveTemperature(for: personaId ?? Persona.defaultId)
+                let effectiveTemp = PersonaManager.shared.effectiveTemperature(for: effectivePersonaId)
 
                 outer: while attempts < maxAttempts {
                     attempts += 1
@@ -1215,26 +1234,28 @@ final class ChatSession: ObservableObject {
                             if inv.toolName == "select_capabilities" {
                                 resultText = try await handleSelectCapabilities(argumentsJSON: inv.jsonArguments)
 
-                                // Update tool specs for subsequent iterations
-                                if !selectedToolNames.isEmpty {
-                                    toolSpecs = ToolRegistry.shared.specs(forTools: selectedToolNames)
-                                } else {
-                                    // No tools selected, use all enabled tools
-                                    toolSpecs = ToolRegistry.shared.specs(withOverrides: effectiveOverrides)
+                                // Rebuild system prompt and tool specs using helper methods
+                                sys = buildSystemPrompt(
+                                    base: baseSystemPrompt,
+                                    personaId: effectivePersonaId,
+                                    needsSelection: false
+                                )
+                                toolSpecs = buildToolSpecs(
+                                    needsSelection: false,
+                                    overrides: effectiveToolOverrides
+                                )
+                            } else {
+                                // Build effective overrides: if capabilities were selected, allow those tools
+                                var executionOverrides = effectiveToolOverrides ?? [:]
+                                if capabilitiesSelected && selectedToolNames.contains(inv.toolName) {
+                                    // Tool was explicitly selected via select_capabilities, allow it
+                                    executionOverrides[inv.toolName] = true
                                 }
 
-                                // Rebuild system prompt with selected skill instructions
-                                if !selectedSkillInstructions.isEmpty {
-                                    sys = baseSystemPrompt
-                                    if !sys.isEmpty { sys += "\n\n" }
-                                    sys += "# Active Skills\n\n"
-                                    sys += selectedSkillInstructions
-                                }
-                            } else {
                                 resultText = try await ToolRegistry.shared.execute(
                                     name: inv.toolName,
                                     argumentsJSON: inv.jsonArguments,
-                                    overrides: effectiveOverrides
+                                    overrides: executionOverrides.isEmpty ? nil : executionOverrides
                                 )
                             }
 
@@ -1432,7 +1453,6 @@ struct ChatView: View {
                                 text: $observedSession.input,
                                 selectedModel: $observedSession.selectedModel,
                                 pendingImages: $observedSession.pendingImages,
-                                enabledToolOverrides: $observedSession.enabledToolOverrides,
                                 isContinuousVoiceMode: $observedSession.isContinuousVoiceMode,
                                 voiceInputState: $observedSession.voiceInputState,
                                 showVoiceOverlay: $observedSession.showVoiceOverlay,

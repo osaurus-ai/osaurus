@@ -406,7 +406,7 @@ extension Skill {
             guard let colonIndex = trimmed.firstIndex(of: ":") else { continue }
 
             let key = String(trimmed[..<colonIndex]).trimmingCharacters(in: .whitespaces)
-            var value = String(trimmed[trimmed.index(after: colonIndex)...]).trimmingCharacters(in: .whitespaces)
+            let value = String(trimmed[trimmed.index(after: colonIndex)...]).trimmingCharacters(in: .whitespaces)
 
             // Check if this is a nested key (indented)
             if leadingSpaces >= 2 && currentNestedKey != nil {

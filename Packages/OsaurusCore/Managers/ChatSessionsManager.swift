@@ -41,7 +41,6 @@ final class ChatSessionsManager: ObservableObject {
             updatedAt: Date(),
             selectedModel: selectedModel,
             turns: [],
-            enabledToolOverrides: nil,
             personaId: personaId
         )
         ChatSessionStore.save(session)

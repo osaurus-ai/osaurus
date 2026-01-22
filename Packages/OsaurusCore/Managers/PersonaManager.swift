@@ -68,6 +68,7 @@ public final class PersonaManager: ObservableObject {
         description: String = "",
         systemPrompt: String = "",
         enabledTools: [String: Bool]? = nil,
+        enabledSkills: [String: Bool]? = nil,
         themeId: UUID? = nil,
         defaultModel: String? = nil,
         temperature: Float? = nil,
@@ -79,6 +80,7 @@ public final class PersonaManager: ObservableObject {
             description: description,
             systemPrompt: systemPrompt,
             enabledTools: enabledTools,
+            enabledSkills: enabledSkills,
             themeId: themeId,
             defaultModel: defaultModel,
             temperature: temperature,
@@ -202,6 +204,20 @@ extension PersonaManager {
         }
 
         return persona.enabledTools
+    }
+
+    /// Get the effective skill overrides for a persona
+    public func effectiveSkillOverrides(for personaId: UUID) -> [String: Bool]? {
+        guard let persona = persona(for: personaId) else {
+            return nil
+        }
+
+        // Default persona uses global settings
+        if persona.id == Persona.defaultId {
+            return nil
+        }
+
+        return persona.enabledSkills
     }
 
     /// Get the effective model for a persona
