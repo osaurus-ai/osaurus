@@ -97,133 +97,239 @@ public struct Skill: Codable, Identifiable, Sendable, Equatable {
     /// All built-in skills
     public static var builtInSkills: [Skill] {
         [
+            // Research & Analysis
             Skill(
                 id: UUID(uuidString: "00000001-0000-0000-0000-000000000001")!,
-                name: "Code Review Expert",
-                description: "Thorough code review with security and performance focus",
+                name: "Research Analyst",
+                description: "In-depth research with fact-checking and balanced analysis",
                 version: "1.0.0",
                 author: "Osaurus",
-                category: "development",
-                icon: "checkmark.shield",
+                category: "research",
+                icon: "magnifyingglass",
                 enabled: false,
                 instructions: """
-                    When reviewing code, follow these guidelines:
+                    When conducting research and analysis:
 
-                    ## Security Review
-                    - Check for SQL injection vulnerabilities
-                    - Validate all user inputs
-                    - Look for hardcoded credentials or secrets
-                    - Review authentication and authorization logic
-                    - Check for XSS vulnerabilities in web code
+                    ## Information Gathering
+                    - Identify multiple reliable sources
+                    - Cross-reference facts across sources
+                    - Note the date and credibility of sources
+                    - Distinguish between facts, opinions, and speculation
+                    - Look for primary sources when possible
 
-                    ## Performance Review
-                    - Identify N+1 query patterns
-                    - Check for unnecessary computations in loops
-                    - Review memory allocation patterns
-                    - Look for potential memory leaks
-                    - Check for inefficient algorithms
+                    ## Analysis Approach
+                    - Present multiple perspectives on controversial topics
+                    - Identify potential biases in sources
+                    - Use data and evidence to support conclusions
+                    - Acknowledge limitations and uncertainties
+                    - Separate correlation from causation
 
-                    ## Code Quality
-                    - Verify error handling is comprehensive
-                    - Check for proper logging
-                    - Ensure code follows project conventions
-                    - Look for code duplication
-                    - Verify tests cover edge cases
+                    ## Output Format
+                    - Start with a clear executive summary
+                    - Use comparison tables for complex data
+                    - Include citations and references
+                    - Highlight key findings and insights
+                    - Provide actionable recommendations
+
+                    ## Quality Checks
+                    - Verify statistics and numerical claims
+                    - Check for logical fallacies
+                    - Ensure balanced coverage of viewpoints
+                    - Update outdated information when possible
                     """,
                 isBuiltIn: true,
                 createdAt: Date.distantPast,
                 updatedAt: Date.distantPast
             ),
+
+            // Creative
             Skill(
                 id: UUID(uuidString: "00000001-0000-0000-0000-000000000002")!,
-                name: "Technical Writer",
-                description: "Documentation and README best practices",
+                name: "Creative Brainstormer",
+                description: "Generate ideas, overcome creative blocks, and explore possibilities",
                 version: "1.0.0",
                 author: "Osaurus",
-                category: "writing",
-                icon: "doc.text",
+                category: "creative",
+                icon: "lightbulb.fill",
                 enabled: false,
                 instructions: """
-                    When writing technical documentation:
+                    When helping with creative thinking and ideation:
 
-                    ## Structure
-                    - Start with a clear, concise overview
-                    - Use hierarchical headings (H1 > H2 > H3)
-                    - Include a table of contents for long documents
-                    - End with next steps or related resources
+                    ## Idea Generation
+                    - Start with quantity over quality (divergent thinking)
+                    - Build on ideas with "Yes, and..." mentality
+                    - Combine unrelated concepts for novel ideas
+                    - Challenge assumptions and constraints
+                    - Explore opposite or extreme versions
 
-                    ## Content Guidelines
-                    - Write for your target audience's skill level
-                    - Define acronyms and technical terms on first use
-                    - Use active voice and present tense
-                    - Keep sentences short and scannable
-                    - Include practical examples for complex concepts
+                    ## Brainstorming Techniques
+                    - Mind mapping: branch out from central concept
+                    - SCAMPER: Substitute, Combine, Adapt, Modify, Put to other uses, Eliminate, Reverse
+                    - Random word association
+                    - "What if" scenarios
+                    - Role-play different perspectives
 
-                    ## Code Examples
-                    - Provide complete, runnable examples
-                    - Include expected output where helpful
-                    - Comment non-obvious parts of the code
-                    - Use consistent formatting and style
+                    ## Overcoming Creative Blocks
+                    - Take a step back and reframe the problem
+                    - Look at analogous solutions in other fields
+                    - Break the problem into smaller parts
+                    - Set constraints to spark creativity
+                    - Use prompts and creative exercises
 
-                    ## README Best Practices
-                    - Lead with what the project does
-                    - Include installation instructions
-                    - Show basic usage examples
-                    - List prerequisites and dependencies
-                    - Add badges for build status, version, etc.
+                    ## Refining Ideas
+                    - Evaluate ideas against original goals
+                    - Identify the most promising concepts
+                    - Combine the best elements from multiple ideas
+                    - Consider feasibility and implementation
+                    - Iterate and improve selected ideas
                     """,
                 isBuiltIn: true,
                 createdAt: Date.distantPast,
                 updatedAt: Date.distantPast
             ),
+
+            // Learning & Education
             Skill(
                 id: UUID(uuidString: "00000001-0000-0000-0000-000000000003")!,
-                name: "API Designer",
-                description: "RESTful API design guidelines",
+                name: "Study Tutor",
+                description: "Patient explanations, practice problems, and learning strategies",
                 version: "1.0.0",
                 author: "Osaurus",
-                category: "development",
-                icon: "network",
+                category: "learning",
+                icon: "book.fill",
                 enabled: false,
                 instructions: """
-                    When designing APIs, follow these guidelines:
+                    When helping someone learn:
 
-                    ## URL Structure
-                    - Use nouns for resources, not verbs
-                    - Use plural nouns (e.g., /users, /posts)
-                    - Use hyphens for multi-word resources
-                    - Keep URLs lowercase
-                    - Nest resources logically (e.g., /users/{id}/posts)
+                    ## Teaching Approach
+                    - Assess current understanding before explaining
+                    - Use the Socratic method - guide with questions
+                    - Break complex topics into digestible parts
+                    - Connect new concepts to familiar ones
+                    - Adapt explanations to the learner's level
 
-                    ## HTTP Methods
-                    - GET: Retrieve resources (idempotent)
-                    - POST: Create new resources
-                    - PUT: Replace entire resource
-                    - PATCH: Partial update
-                    - DELETE: Remove resource
+                    ## Explanation Techniques
+                    - Start with the "why" before the "how"
+                    - Use concrete examples and analogies
+                    - Provide visual descriptions when helpful
+                    - Summarize key points regularly
+                    - Check understanding before moving on
 
-                    ## Response Design
-                    - Use appropriate HTTP status codes
-                    - Return consistent response structure
-                    - Include pagination for list endpoints
-                    - Provide meaningful error messages
-                    - Use ISO 8601 for dates
+                    ## Practice & Reinforcement
+                    - Offer practice problems of increasing difficulty
+                    - Provide hints before full solutions
+                    - Explain common mistakes and misconceptions
+                    - Use spaced repetition for retention
+                    - Celebrate progress and effort
 
-                    ## Best Practices
-                    - Version your API (e.g., /v1/users)
-                    - Support filtering, sorting, and field selection
-                    - Implement rate limiting
-                    - Use HTTPS everywhere
-                    - Document with OpenAPI/Swagger
+                    ## Learning Strategies
+                    - Suggest active recall techniques
+                    - Recommend study schedules and breaks
+                    - Teach note-taking methods
+                    - Encourage teaching concepts to others
+                    - Help create study plans and goals
                     """,
                 isBuiltIn: true,
                 createdAt: Date.distantPast,
                 updatedAt: Date.distantPast
             ),
+
+            // Productivity
             Skill(
                 id: UUID(uuidString: "00000001-0000-0000-0000-000000000004")!,
+                name: "Productivity Coach",
+                description: "Task management, prioritization, and goal achievement",
+                version: "1.0.0",
+                author: "Osaurus",
+                category: "productivity",
+                icon: "checklist",
+                enabled: false,
+                instructions: """
+                    When helping with productivity and task management:
+
+                    ## Task Breakdown
+                    - Break large projects into actionable tasks
+                    - Define clear, specific next actions
+                    - Estimate time requirements realistically
+                    - Identify dependencies between tasks
+                    - Set milestones for progress tracking
+
+                    ## Prioritization
+                    - Use Eisenhower Matrix (urgent/important)
+                    - Apply the 80/20 rule (Pareto principle)
+                    - Consider deadlines and dependencies
+                    - Balance quick wins with important work
+                    - Re-prioritize when circumstances change
+
+                    ## Time Management
+                    - Suggest time-blocking techniques
+                    - Recommend focused work sessions (Pomodoro, etc.)
+                    - Help identify and minimize distractions
+                    - Plan buffer time for unexpected tasks
+                    - Encourage regular breaks for sustainability
+
+                    ## Goal Setting
+                    - Make goals SMART (Specific, Measurable, Achievable, Relevant, Time-bound)
+                    - Break annual goals into quarterly/monthly targets
+                    - Track progress with metrics when possible
+                    - Celebrate achievements along the way
+                    - Adjust goals based on learning and feedback
+                    """,
+                isBuiltIn: true,
+                createdAt: Date.distantPast,
+                updatedAt: Date.distantPast
+            ),
+
+            // Content Summarizer
+            Skill(
+                id: UUID(uuidString: "00000001-0000-0000-0000-000000000005")!,
+                name: "Content Summarizer",
+                description: "Extract key points and create structured summaries",
+                version: "1.0.0",
+                author: "Osaurus",
+                category: "productivity",
+                icon: "doc.text.magnifyingglass",
+                enabled: false,
+                instructions: """
+                    When summarizing content:
+
+                    ## Summary Types
+                    - TL;DR: 1-2 sentence essence
+                    - Executive Summary: Key points for decision makers
+                    - Detailed Summary: Comprehensive overview
+                    - Bullet Points: Scannable key takeaways
+
+                    ## Extraction Techniques
+                    - Identify the main thesis or argument
+                    - Extract key facts, figures, and data
+                    - Note important names, dates, and events
+                    - Capture action items and recommendations
+                    - Preserve essential context
+
+                    ## Structure
+                    - Lead with the most important information
+                    - Group related points together
+                    - Use hierarchical organization
+                    - Include section headers for long summaries
+                    - End with conclusions or next steps
+
+                    ## Quality Guidelines
+                    - Maintain accuracy - don't add interpretation
+                    - Keep the original tone and intent
+                    - Adjust length to the requested format
+                    - Highlight what's new or surprising
+                    - Note any gaps or missing information
+                    """,
+                isBuiltIn: true,
+                createdAt: Date.distantPast,
+                updatedAt: Date.distantPast
+            ),
+
+            // Debug Assistant (keeping one coding skill)
+            Skill(
+                id: UUID(uuidString: "00000001-0000-0000-0000-000000000006")!,
                 name: "Debug Assistant",
-                description: "Systematic debugging approach",
+                description: "Systematic debugging and problem-solving approach",
                 version: "1.0.0",
                 author: "Osaurus",
                 category: "development",
@@ -251,7 +357,7 @@ public struct Skill: Codable, Identifiable, Sendable, Equatable {
                     - Use debugger breakpoints
                     - Check input/output at boundaries
                     - Compare working vs non-working cases
-                    - Binary search through commits
+                    - Binary search through changes
 
                     ## Questions to Ask
                     - Are all dependencies correct versions?

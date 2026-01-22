@@ -20,23 +20,9 @@ struct SkillsView: View {
     @State private var isCreating = false
     @State private var editingSkill: Skill?
     @State private var hasAppeared = false
-    @State private var successMessage: String?
-    @State private var errorMessage: String?
-    @State private var searchText: String = ""
+    @State private var toastMessage: (text: String, isError: Bool)?
     @State private var showImportPicker = false
     @State private var exportingSkill: Skill?
-
-    private var filteredSkills: [Skill] {
-        if searchText.isEmpty {
-            return skillManager.skills
-        }
-        let query = searchText.lowercased()
-        return skillManager.skills.filter { skill in
-            skill.name.lowercased().contains(query)
-                || skill.description.lowercased().contains(query)
-                || (skill.category?.lowercased().contains(query) ?? false)
-        }
-    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -56,8 +42,8 @@ struct SkillsView: View {
                 } else {
                     ScrollView {
                         LazyVStack(spacing: 12) {
-                            ForEach(Array(filteredSkills.enumerated()), id: \.element.id) { index, skill in
-                                SkillCard(
+                            ForEach(Array(skillManager.skills.enumerated()), id: \.element.id) { index, skill in
+                                SkillRow(
                                     skill: skill,
                                     animationDelay: Double(index) * 0.03,
                                     hasAppeared: hasAppeared,
@@ -72,7 +58,7 @@ struct SkillsView: View {
                                     },
                                     onDelete: {
                                         skillManager.delete(id: skill.id)
-                                        showSuccess("Deleted \"\(skill.name)\"")
+                                        showToast("Deleted \"\(skill.name)\"")
                                     }
                                 )
                             }
@@ -82,21 +68,11 @@ struct SkillsView: View {
                     .opacity(hasAppeared ? 1 : 0)
                 }
 
-                // Success toast
-                if let message = successMessage {
+                // Toast notification
+                if let toast = toastMessage {
                     VStack {
                         Spacer()
-                        successToast(message)
-                            .transition(.move(edge: .bottom).combined(with: .opacity))
-                            .padding(.bottom, 20)
-                    }
-                }
-
-                // Error toast
-                if let message = errorMessage {
-                    VStack {
-                        Spacer()
-                        errorToast(message)
+                        ToastView(message: toast.text, isError: toast.isError, theme: theme)
                             .transition(.move(edge: .bottom).combined(with: .opacity))
                             .padding(.bottom, 20)
                     }
@@ -120,7 +96,7 @@ struct SkillsView: View {
                         instructions: skill.instructions
                     )
                     isCreating = false
-                    showSuccess("Created \"\(skill.name)\"")
+                    showToast("Created \"\(skill.name)\"")
                 },
                 onCancel: {
                     isCreating = false
@@ -133,7 +109,7 @@ struct SkillsView: View {
                 onSave: { updated in
                     skillManager.update(updated)
                     editingSkill = nil
-                    showSuccess("Updated \"\(updated.name)\"")
+                    showToast("Updated \"\(updated.name)\"")
                 },
                 onCancel: {
                     editingSkill = nil
@@ -175,7 +151,7 @@ struct SkillsView: View {
             do {
                 // Start accessing the security-scoped resource
                 guard url.startAccessingSecurityScopedResource() else {
-                    showError("Cannot access file")
+                    showToast("Cannot access file", isError: true)
                     return
                 }
                 defer { url.stopAccessingSecurityScopedResource() }
@@ -187,31 +163,31 @@ struct SkillsView: View {
                     let skill = try skillManager.importSkillFromZip(url)
                     let fileCount = skill.totalFileCount
                     if fileCount > 0 {
-                        showSuccess("Imported \"\(skill.name)\" with \(fileCount) files")
+                        showToast("Imported \"\(skill.name)\" with \(fileCount) files")
                     } else {
-                        showSuccess("Imported \"\(skill.name)\"")
+                        showToast("Imported \"\(skill.name)\"")
                     }
                 } else if ext == "json" {
                     // Import from JSON
                     let content = try String(contentsOf: url, encoding: .utf8)
                     guard let data = content.data(using: .utf8) else {
-                        showError("Invalid file content")
+                        showToast("Invalid file content", isError: true)
                         return
                     }
                     let skill = try skillManager.importSkill(from: data)
-                    showSuccess("Imported \"\(skill.name)\"")
+                    showToast("Imported \"\(skill.name)\"")
                 } else {
                     // Import from Markdown (SKILL.md or .md)
                     let content = try String(contentsOf: url, encoding: .utf8)
                     let skill = try skillManager.importSkillFromMarkdown(content)
-                    showSuccess("Imported \"\(skill.name)\"")
+                    showToast("Imported \"\(skill.name)\"")
                 }
             } catch {
-                showError("Import failed: \(error.localizedDescription)")
+                showToast("Import failed: \(error.localizedDescription)", isError: true)
             }
 
         case .failure(let error):
-            showError("Import failed: \(error.localizedDescription)")
+            showToast("Import failed: \(error.localizedDescription)", isError: true)
         }
     }
 
@@ -240,35 +216,24 @@ struct SkillsView: View {
                         try FileManager.default.copyItem(at: zipURL, to: url)
                         try? FileManager.default.removeItem(at: zipURL)
                         DispatchQueue.main.async {
-                            showSuccess("Exported \"\(skill.name)\" as ZIP")
+                            self.showToast("Exported \"\(skill.name)\" as ZIP")
                         }
                     } else {
                         // Export as SKILL.md
                         let content = skillManager.exportSkillAsAgentSkills(skill)
                         try content.write(to: url, atomically: true, encoding: .utf8)
                         DispatchQueue.main.async {
-                            showSuccess("Exported \"\(skill.name)\" as SKILL.md")
+                            self.showToast("Exported \"\(skill.name)\" as SKILL.md")
                         }
                     }
                 } catch {
                     DispatchQueue.main.async {
-                        showError("Export failed: \(error.localizedDescription)")
+                        self.showToast("Export failed: \(error.localizedDescription)", isError: true)
                     }
                 }
             }
             DispatchQueue.main.async {
                 exportingSkill = nil
-            }
-        }
-    }
-
-    private func showError(_ message: String) {
-        withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
-            errorMessage = message
-        }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 3.5) {
-            withAnimation(.easeOut(duration: 0.2)) {
-                errorMessage = nil
             }
         }
     }
@@ -284,7 +249,7 @@ struct SkillsView: View {
             HeaderIconButton("arrow.clockwise", help: "Refresh skills") {
                 skillManager.refresh()
             }
-            HeaderIconButton("square.and.arrow.down", help: "Import skill") {
+            HeaderSecondaryButton("Import", icon: "square.and.arrow.down") {
                 showImportPicker = true
             }
             HeaderPrimaryButton("Create Skill", icon: "plus") {
@@ -293,63 +258,48 @@ struct SkillsView: View {
         }
     }
 
-    // MARK: - Success Toast
+    // MARK: - Toast Helper
 
-    private func successToast(_ message: String) -> some View {
-        HStack(spacing: 10) {
-            Image(systemName: "checkmark.circle.fill")
-                .font(.system(size: 16))
-                .foregroundColor(theme.successColor)
-
-            Text(message)
-                .font(.system(size: 13, weight: .medium))
-                .foregroundColor(theme.primaryText)
-        }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 12)
-        .background(
-            Capsule()
-                .fill(theme.cardBackground)
-                .shadow(color: Color.black.opacity(0.15), radius: 10, x: 0, y: 4)
-        )
-        .overlay(
-            Capsule()
-                .stroke(theme.successColor.opacity(0.3), lineWidth: 1)
-        )
-    }
-
-    private func errorToast(_ message: String) -> some View {
-        HStack(spacing: 10) {
-            Image(systemName: "exclamationmark.circle.fill")
-                .font(.system(size: 16))
-                .foregroundColor(theme.errorColor)
-
-            Text(message)
-                .font(.system(size: 13, weight: .medium))
-                .foregroundColor(theme.primaryText)
-        }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 12)
-        .background(
-            Capsule()
-                .fill(theme.cardBackground)
-                .shadow(color: Color.black.opacity(0.15), radius: 10, x: 0, y: 4)
-        )
-        .overlay(
-            Capsule()
-                .stroke(theme.errorColor.opacity(0.3), lineWidth: 1)
-        )
-    }
-
-    private func showSuccess(_ message: String) {
+    private func showToast(_ message: String, isError: Bool = false) {
         withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
-            successMessage = message
+            toastMessage = (message, isError)
         }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + (isError ? 3.5 : 2.5)) {
             withAnimation(.easeOut(duration: 0.2)) {
-                successMessage = nil
+                toastMessage = nil
             }
         }
+    }
+}
+
+// MARK: - Toast View
+
+private struct ToastView: View {
+    let message: String
+    let isError: Bool
+    let theme: ThemeProtocol
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Image(systemName: isError ? "exclamationmark.circle.fill" : "checkmark.circle.fill")
+                .font(.system(size: 16))
+                .foregroundColor(isError ? theme.errorColor : theme.successColor)
+
+            Text(message)
+                .font(.system(size: 13, weight: .medium))
+                .foregroundColor(theme.primaryText)
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
+        .background(
+            Capsule()
+                .fill(theme.cardBackground)
+                .shadow(color: Color.black.opacity(0.15), radius: 10, x: 0, y: 4)
+        )
+        .overlay(
+            Capsule()
+                .stroke((isError ? theme.errorColor : theme.successColor).opacity(0.3), lineWidth: 1)
+        )
     }
 }
 
@@ -427,19 +377,19 @@ private struct SkillEmptyState: View {
             // Example use cases
             VStack(spacing: 8) {
                 SkillUseCaseRow(
-                    icon: "checkmark.shield",
-                    title: "Code Review Expert",
-                    description: "Security and performance focused reviews"
+                    icon: "magnifyingglass",
+                    title: "Research Analyst",
+                    description: "Fact-checking and balanced analysis"
                 )
                 SkillUseCaseRow(
-                    icon: "doc.text",
-                    title: "Technical Writer",
-                    description: "Documentation best practices"
+                    icon: "lightbulb.fill",
+                    title: "Creative Brainstormer",
+                    description: "Generate ideas and explore possibilities"
                 )
                 SkillUseCaseRow(
-                    icon: "ant",
-                    title: "Debug Assistant",
-                    description: "Systematic debugging approach"
+                    icon: "checklist",
+                    title: "Productivity Coach",
+                    description: "Task management and goal setting"
                 )
             }
             .frame(maxWidth: 320)
@@ -520,9 +470,9 @@ private struct SkillUseCaseRow: View {
     }
 }
 
-// MARK: - Skill Card
+// MARK: - Skill Row
 
-private struct SkillCard: View {
+private struct SkillRow: View {
     @Environment(\.theme) private var theme
 
     let skill: Skill
@@ -545,98 +495,87 @@ private struct SkillCard: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            // Header row
-            HStack(alignment: .center, spacing: 12) {
+            // Main row content
+            HStack(spacing: 12) {
                 // Skill icon
                 ZStack {
-                    RoundedRectangle(cornerRadius: 10)
-                        .fill(
-                            LinearGradient(
-                                colors: [skillColor.opacity(0.15), skillColor.opacity(0.05)],
-                                startPoint: .topLeading,
-                                endPoint: .bottomTrailing
-                            )
-                        )
-                    RoundedRectangle(cornerRadius: 10)
-                        .strokeBorder(skillColor.opacity(0.3), lineWidth: 1)
+                    RoundedRectangle(cornerRadius: 8)
+                        .fill(skillColor.opacity(0.1))
                     Image(systemName: skill.icon ?? "sparkles")
-                        .font(.system(size: 18, weight: .medium))
+                        .font(.system(size: 14, weight: .medium))
                         .foregroundColor(skillColor)
                 }
-                .frame(width: 40, height: 40)
+                .frame(width: 36, height: 36)
 
-                // Name and metadata
-                VStack(alignment: .leading, spacing: 4) {
-                    HStack(spacing: 8) {
-                        Text(skill.name)
-                            .font(.system(size: 15, weight: .semibold))
-                            .foregroundColor(theme.primaryText)
-                            .lineLimit(1)
-
-                        if skill.isBuiltIn {
-                            Text("Built-in")
-                                .font(.system(size: 9, weight: .semibold))
-                                .foregroundColor(theme.secondaryText)
-                                .padding(.horizontal, 6)
-                                .padding(.vertical, 2)
-                                .background(
-                                    Capsule()
-                                        .fill(theme.tertiaryBackground)
-                                )
-                        }
-
-                        if let category = skill.category {
-                            Text(category)
-                                .font(.system(size: 9, weight: .medium))
-                                .foregroundColor(skillColor)
-                                .padding(.horizontal, 6)
-                                .padding(.vertical, 2)
-                                .background(
-                                    Capsule()
-                                        .fill(skillColor.opacity(0.1))
-                                )
-                        }
-
-                        if skill.hasAssociatedFiles {
-                            HStack(spacing: 2) {
-                                Image(systemName: "folder.fill")
-                                    .font(.system(size: 8))
-                                Text("\(skill.totalFileCount)")
-                                    .font(.system(size: 9, weight: .medium))
-                            }
-                            .foregroundColor(theme.secondaryText)
-                            .padding(.horizontal, 6)
-                            .padding(.vertical, 2)
-                            .background(
-                                Capsule()
-                                    .fill(theme.tertiaryBackground)
-                            )
-                        }
-                    }
-
-                    Text(skill.description)
-                        .font(.system(size: 12))
-                        .foregroundColor(theme.secondaryText)
-                        .lineLimit(1)
-                }
-
-                Spacer(minLength: 8)
-
-                // Expand button
+                // Skill info and expand button combined
                 Button(action: {
                     withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
                         isExpanded.toggle()
                     }
                 }) {
-                    Image(systemName: "chevron.right")
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundColor(theme.tertiaryText)
-                        .rotationEffect(.degrees(isExpanded ? 90 : 0))
-                        .frame(width: 24, height: 24)
+                    HStack(spacing: 10) {
+                        VStack(alignment: .leading, spacing: 3) {
+                            HStack(spacing: 6) {
+                                Text(skill.name)
+                                    .font(.system(size: 14, weight: .semibold, design: .rounded))
+                                    .foregroundColor(theme.primaryText)
+
+                                if skill.isBuiltIn {
+                                    Text("Built-in")
+                                        .font(.system(size: 9, weight: .medium))
+                                        .foregroundColor(theme.secondaryText)
+                                        .padding(.horizontal, 6)
+                                        .padding(.vertical, 2)
+                                        .background(
+                                            Capsule()
+                                                .fill(theme.tertiaryBackground)
+                                        )
+                                }
+
+                                if let category = skill.category {
+                                    Text(category)
+                                        .font(.system(size: 9, weight: .medium))
+                                        .foregroundColor(skillColor)
+                                        .padding(.horizontal, 6)
+                                        .padding(.vertical, 2)
+                                        .background(
+                                            Capsule()
+                                                .fill(skillColor.opacity(0.1))
+                                        )
+                                }
+                            }
+
+                            Text(skill.description.isEmpty ? "No description" : skill.description)
+                                .font(.system(size: 12))
+                                .foregroundColor(theme.secondaryText)
+                                .lineLimit(1)
+                        }
+
+                        Spacer()
+
+                        // Instructions preview badge
+                        HStack(spacing: 4) {
+                            Image(systemName: "doc.text")
+                                .font(.system(size: 10))
+                            Text("\(skill.instructions.count) chars")
+                                .font(.system(size: 11, weight: .medium))
+                        }
+                        .foregroundColor(theme.secondaryText)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .background(Capsule().fill(theme.tertiaryBackground))
+
+                        // Chevron
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundColor(theme.tertiaryText)
+                            .rotationEffect(.degrees(isExpanded ? 90 : 0))
+                    }
+                    .contentShape(Rectangle())
                 }
                 .buttonStyle(PlainButtonStyle())
 
-                // Enable toggle
+                // Enable toggle - separate from expand area
                 Toggle(
                     "",
                     isOn: Binding(
@@ -644,14 +583,13 @@ private struct SkillCard: View {
                         set: { onToggle($0) }
                     )
                 )
-                .toggleStyle(.switch)
-                .controlSize(.small)
+                .toggleStyle(SwitchToggleStyle())
                 .labelsHidden()
             }
 
-            // Expanded content - instructions preview
+            // Expanded content
             if isExpanded {
-                VStack(alignment: .leading, spacing: 10) {
+                VStack(alignment: .leading, spacing: 12) {
                     Divider()
                         .padding(.vertical, 4)
 
@@ -659,75 +597,45 @@ private struct SkillCard: View {
                     VStack(alignment: .leading, spacing: 6) {
                         HStack {
                             Text("Instructions")
-                                .font(.system(size: 11, weight: .semibold))
-                                .foregroundColor(theme.secondaryText)
+                                .font(.system(size: 12, weight: .semibold))
+                                .foregroundColor(theme.primaryText)
+
                             Spacer()
-                            Text("\(skill.instructions.count) characters")
+
+                            if let author = skill.author {
+                                Label(author, systemImage: "person")
+                                    .font(.system(size: 10))
+                                    .foregroundColor(theme.tertiaryText)
+                            }
+
+                            Label("v\(skill.version)", systemImage: "tag")
                                 .font(.system(size: 10))
                                 .foregroundColor(theme.tertiaryText)
-                        }
 
-                        Text(skill.instructions.prefix(500) + (skill.instructions.count > 500 ? "..." : ""))
-                            .font(.system(size: 12, design: .monospaced))
-                            .foregroundColor(theme.primaryText)
-                            .lineLimit(10)
-                            .padding(10)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .background(
-                                RoundedRectangle(cornerRadius: 8)
-                                    .fill(theme.inputBackground)
-                            )
-                    }
-
-                    // Metadata
-                    HStack(spacing: 16) {
-                        if let author = skill.author {
-                            Label(author, systemImage: "person")
-                                .font(.system(size: 11))
-                                .foregroundColor(theme.tertiaryText)
-                        }
-
-                        Label("v\(skill.version)", systemImage: "tag")
-                            .font(.system(size: 11))
-                            .foregroundColor(theme.tertiaryText)
-
-                        if let dirName = skill.directoryName {
-                            Label(dirName, systemImage: "folder")
-                                .font(.system(size: 11))
-                                .foregroundColor(theme.tertiaryText)
-                        }
-                    }
-
-                    // Associated files (references loaded into context, assets for supporting files)
-                    if skill.hasAssociatedFiles {
-                        VStack(alignment: .leading, spacing: 8) {
-                            Text("Associated Files")
-                                .font(.system(size: 11, weight: .semibold))
-                                .foregroundColor(theme.secondaryText)
-
-                            HStack(spacing: 12) {
-                                if !skill.references.isEmpty {
-                                    SkillFileGroup(
-                                        icon: "doc.text",
-                                        label: "References",
-                                        files: skill.references,
-                                        color: .blue
-                                    )
-                                }
-                                if !skill.assets.isEmpty {
-                                    SkillFileGroup(
-                                        icon: "doc.zipper",
-                                        label: "Assets",
-                                        files: skill.assets,
-                                        color: .purple
-                                    )
-                                }
+                            if skill.hasAssociatedFiles {
+                                Label("\(skill.totalFileCount) files", systemImage: "folder")
+                                    .font(.system(size: 10))
+                                    .foregroundColor(theme.tertiaryText)
                             }
                         }
-                        .padding(10)
+
+                        ScrollView {
+                            Text(skill.instructions)
+                                .font(.system(size: 12, design: .monospaced))
+                                .foregroundColor(theme.primaryText)
+                                .lineSpacing(4)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .textSelection(.enabled)
+                        }
+                        .frame(maxHeight: 180)
+                        .padding(12)
                         .background(
                             RoundedRectangle(cornerRadius: 8)
-                                .fill(theme.inputBackground.opacity(0.5))
+                                .fill(theme.inputBackground)
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 8)
+                                        .stroke(theme.inputBorder, lineWidth: 1)
+                                )
                         )
                     }
 
@@ -735,13 +643,13 @@ private struct SkillCard: View {
                     HStack(spacing: 8) {
                         Button(action: onEdit) {
                             HStack(spacing: 4) {
-                                Image(systemName: "pencil")
+                                Image(systemName: skill.isBuiltIn ? "eye" : "pencil")
                                     .font(.system(size: 10))
-                                Text("Edit")
+                                Text(skill.isBuiltIn ? "View" : "Edit")
                                     .font(.system(size: 11, weight: .medium))
                             }
                             .foregroundColor(theme.accentColor)
-                            .padding(.horizontal, 10)
+                            .padding(.horizontal, 12)
                             .padding(.vertical, 6)
                             .background(
                                 RoundedRectangle(cornerRadius: 6)
@@ -749,8 +657,6 @@ private struct SkillCard: View {
                             )
                         }
                         .buttonStyle(PlainButtonStyle())
-                        .disabled(skill.isBuiltIn)
-                        .opacity(skill.isBuiltIn ? 0.5 : 1)
 
                         Button(action: onExport) {
                             HStack(spacing: 4) {
@@ -760,7 +666,7 @@ private struct SkillCard: View {
                                     .font(.system(size: 11, weight: .medium))
                             }
                             .foregroundColor(theme.secondaryText)
-                            .padding(.horizontal, 10)
+                            .padding(.horizontal, 12)
                             .padding(.vertical, 6)
                             .background(
                                 RoundedRectangle(cornerRadius: 6)
@@ -780,7 +686,7 @@ private struct SkillCard: View {
                                         .font(.system(size: 11, weight: .medium))
                                 }
                                 .foregroundColor(theme.errorColor)
-                                .padding(.horizontal, 10)
+                                .padding(.horizontal, 12)
                                 .padding(.vertical, 6)
                                 .background(
                                     RoundedRectangle(cornerRadius: 6)
@@ -794,33 +700,16 @@ private struct SkillCard: View {
                 .transition(.opacity.combined(with: .move(edge: .top)))
             }
         }
-        .padding(14)
-        .background(
-            RoundedRectangle(cornerRadius: 12)
-                .fill(theme.cardBackground)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 12)
-                        .stroke(
-                            isHovered ? theme.accentColor.opacity(0.3) : theme.cardBorder,
-                            lineWidth: 1
-                        )
-                )
-                .shadow(
-                    color: Color.black.opacity(isHovered ? 0.08 : 0.04),
-                    radius: isHovered ? 10 : 5,
-                    x: 0,
-                    y: isHovered ? 3 : 2
-                )
-        )
-        .scaleEffect(isHovered ? 1.005 : 1.0)
-        .animation(.spring(response: 0.3, dampingFraction: 0.7), value: isHovered)
-        .opacity(hasAppeared ? 1 : 0)
-        .offset(y: hasAppeared ? 0 : 20)
-        .animation(.spring(response: 0.4, dampingFraction: 0.8).delay(animationDelay), value: hasAppeared)
-        .contentShape(Rectangle())
+        .padding(16)
+        .frame(maxWidth: .infinity)
+        .background(cardBackground)
+        .animation(.easeOut(duration: 0.15), value: isHovered)
         .onHover { hovering in
             isHovered = hovering
         }
+        .opacity(hasAppeared ? 1 : 0)
+        .offset(y: hasAppeared ? 0 : 10)
+        .animation(.easeOut(duration: 0.25).delay(animationDelay), value: hasAppeared)
         .alert("Delete Skill", isPresented: $showDeleteConfirm) {
             Button("Cancel", role: .cancel) {}
             Button("Delete", role: .destructive, action: onDelete)
@@ -828,82 +717,23 @@ private struct SkillCard: View {
             Text("Are you sure you want to delete \"\(skill.name)\"? This action cannot be undone.")
         }
     }
-}
 
-// MARK: - Skill File Group
-
-private struct SkillFileGroup: View {
-    @Environment(\.theme) private var theme
-
-    let icon: String
-    let label: String
-    let files: [SkillFile]
-    let color: Color
-
-    @State private var isExpanded = false
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Button(action: { withAnimation { isExpanded.toggle() } }) {
-                HStack(spacing: 6) {
-                    Image(systemName: icon)
-                        .font(.system(size: 10))
-                        .foregroundColor(color)
-
-                    Text("\(label) (\(files.count))")
-                        .font(.system(size: 10, weight: .medium))
-                        .foregroundColor(theme.primaryText)
-
-                    Image(systemName: "chevron.right")
-                        .font(.system(size: 8))
-                        .foregroundColor(theme.tertiaryText)
-                        .rotationEffect(.degrees(isExpanded ? 90 : 0))
-                }
-                .padding(.horizontal, 8)
-                .padding(.vertical, 4)
-                .background(
-                    RoundedRectangle(cornerRadius: 4)
-                        .fill(color.opacity(0.1))
-                )
-            }
-            .buttonStyle(PlainButtonStyle())
-
-            if isExpanded {
-                VStack(alignment: .leading, spacing: 2) {
-                    ForEach(files) { file in
-                        HStack(spacing: 4) {
-                            Image(systemName: "doc")
-                                .font(.system(size: 9))
-                                .foregroundColor(theme.tertiaryText)
-
-                            Text(file.name)
-                                .font(.system(size: 10, design: .monospaced))
-                                .foregroundColor(theme.secondaryText)
-                                .lineLimit(1)
-
-                            Spacer()
-
-                            Text(formatFileSize(file.size))
-                                .font(.system(size: 9))
-                                .foregroundColor(theme.tertiaryText)
-                        }
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 2)
-                    }
-                }
-                .padding(.leading, 8)
-            }
-        }
-    }
-
-    private func formatFileSize(_ bytes: Int64) -> String {
-        if bytes < 1024 {
-            return "\(bytes) B"
-        } else if bytes < 1024 * 1024 {
-            return String(format: "%.1f KB", Double(bytes) / 1024)
-        } else {
-            return String(format: "%.1f MB", Double(bytes) / (1024 * 1024))
-        }
+    private var cardBackground: some View {
+        RoundedRectangle(cornerRadius: 12)
+            .fill(theme.cardBackground)
+            .overlay(
+                RoundedRectangle(cornerRadius: 12)
+                    .stroke(
+                        isHovered ? theme.accentColor.opacity(0.2) : theme.cardBorder,
+                        lineWidth: 1
+                    )
+            )
+            .shadow(
+                color: Color.black.opacity(isHovered ? 0.08 : 0.04),
+                radius: isHovered ? 12 : 6,
+                x: 0,
+                y: isHovered ? 4 : 2
+            )
     }
 }
 
