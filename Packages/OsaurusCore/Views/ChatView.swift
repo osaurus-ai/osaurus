@@ -18,7 +18,6 @@ final class ChatSession: ObservableObject {
     @Published var pendingImages: [Data] = []
     @Published var selectedModel: String? = nil
     @Published var modelOptions: [ModelOption] = []
-    @Published var scrollTick: Int = 0
     @Published var hasAnyModel: Bool = false
     @Published var isDiscoveringModels: Bool = true
     /// When true, voice input auto-restarts after AI responds (continuous conversation mode)
@@ -1048,18 +1047,15 @@ final class ChatSession: ObservableObject {
                             hasPendingContent = true
                         }
 
-                        /// Notify observers that content changed (triggers UI update)
+                        /// Sync pending content to the turn and trigger UI update
                         @MainActor
                         func syncChunksToTurn() {
                             guard hasPendingContent else { return }
                             syncCount += 1
-                            // ChatTurn already has the content via appendContent/appendThinking
-                            // Just notify observers to trigger UI update
                             assistantTurn.notifyContentChanged()
                             hasPendingContent = false
                             lastSyncTime = Date()
-
-                            // Debug: periodic log every 10 syncs
+                            objectWillChange.send()
                         }
 
                         @MainActor
@@ -1160,7 +1156,6 @@ final class ChatSession: ObservableObject {
                             }
                             // Always sync any remaining chunks to the turn
                             syncChunksToTurn()
-                            scrollTick &+= 1
                         }
 
                         let stream = try await engine.streamChat(request: req)
@@ -1209,7 +1204,6 @@ final class ChatSession: ObservableObject {
 
                                     if shouldSync {
                                         syncChunksToTurn()
-                                        scrollTick &+= 1
                                     }
                                 }
                             }
@@ -1786,9 +1780,9 @@ struct ChatView: View {
 
     /// Isolated message thread view to prevent cascading re-renders
     private func messageThread(_ width: CGFloat) -> some View {
-        // Use flattened content blocks for efficient LazyVStack recycling
         let blocks = session.visibleBlocks
         let displayName = windowState.cachedPersonaDisplayName
+        let lastAssistantTurnId = session.turns.last { $0.role == .assistant }?.id
 
         return ZStack {
             MessageThreadView(
@@ -1797,7 +1791,7 @@ struct ChatView: View {
                 personaName: displayName,
                 isStreaming: session.isStreaming,
                 turnsCount: session.turns.count,
-                scrollTick: session.scrollTick,
+                lastAssistantTurnId: lastAssistantTurnId,
                 onCopy: copyTurnContent,
                 onRegenerate: regenerateTurn,
                 onScrolledToBottom: { isPinnedToBottom = true },

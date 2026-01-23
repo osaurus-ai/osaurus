@@ -19,7 +19,7 @@ struct MessageThreadView: View {
     let personaName: String
     let isStreaming: Bool
     let turnsCount: Int
-    let scrollTick: Int
+    let lastAssistantTurnId: UUID?
 
     // Callbacks - excluded from Equatable comparison in child views
     let onCopy: (UUID) -> Void
@@ -59,28 +59,21 @@ struct MessageThreadView: View {
                     }
             }
             .scrollContentBackground(.hidden)
-            .scrollIndicators(.hidden)
+            .scrollIndicators(.visible)
             .onChange(of: turnsCount) { _, _ in
-                scrollToBottom(proxy: proxy, animated: true)
-            }
-            .onChange(of: scrollTick) { _, _ in
-                scrollToBottom(proxy: proxy, animated: false)
+                scrollToResponseStart(proxy: proxy)
             }
         }
     }
 
-    private func scrollToBottom(proxy: ScrollViewProxy, animated: Bool) {
+    /// Scroll to the start of the assistant's response header
+    private func scrollToResponseStart(proxy: ScrollViewProxy) {
+        guard let turnId = lastAssistantTurnId else { return }
+        let headerId = "header-\(turnId.uuidString)"
+
         DispatchQueue.main.async {
-            if animated {
-                withAnimation(theme.animationQuick()) {
-                    proxy.scrollTo("BOTTOM", anchor: .bottom)
-                }
-            } else {
-                var transaction = Transaction()
-                transaction.disablesAnimations = true
-                withTransaction(transaction) {
-                    proxy.scrollTo("BOTTOM", anchor: .bottom)
-                }
+            withAnimation(theme.animationQuick()) {
+                proxy.scrollTo(headerId, anchor: .top)
             }
         }
     }
@@ -106,7 +99,6 @@ private struct MessageBlocksList: View, Equatable {
     var body: some View {
         LazyVStack(spacing: 0) {
             ForEach(blocks) { block in
-                // Use EquatableView to skip body evaluation when block hasn't changed
                 EquatableView(
                     content: ContentBlockRow(
                         block: block,
@@ -116,6 +108,7 @@ private struct MessageBlocksList: View, Equatable {
                         onRegenerate: onRegenerate
                     )
                 )
+                .id(block.id)
             }
         }
         .padding(.top, 8)
