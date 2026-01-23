@@ -808,6 +808,13 @@ extension ModelManager {
             downloadURL: "https://huggingface.co/mlx-community/Kimi-VL-A3B-Thinking-4bit"
         ),
 
+        MLXModel(
+            id: "mlx-community/LFM2-VL-3B-5bit",
+            name: friendlyName(from: "mlx-community/LFM2-VL-3B-5bit"),
+            description: "Liquid AI's compact vision model. 3B params with 10 language support.",
+            downloadURL: "https://huggingface.co/mlx-community/LFM2-VL-3B-5bit"
+        ),
+
         // MARK: Compact Models
 
         MLXModel(
