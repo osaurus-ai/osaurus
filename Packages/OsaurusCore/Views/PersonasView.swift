@@ -519,15 +519,16 @@ private struct PersonaCard: View {
     private var toolsSummary: String? {
         guard let tools = persona.enabledTools, !tools.isEmpty else { return nil }
         let enabled = tools.values.filter { $0 }.count
-        let disabled = tools.values.filter { !$0 }.count
+        let total = tools.count
+        return "\(enabled)/\(total) tools"
+    }
 
-        if disabled > 0 && enabled == 0 {
-            return "\(disabled) tools disabled"
-        } else if enabled > 0 && disabled == 0 {
-            return "\(enabled) tools enabled"
-        } else {
-            return "\(enabled) on, \(disabled) off"
-        }
+    /// Get skill configuration summary
+    private var skillsSummary: String? {
+        guard let skills = persona.enabledSkills, !skills.isEmpty else { return nil }
+        let enabled = skills.values.filter { $0 }.count
+        let total = skills.count
+        return "\(enabled)/\(total) skills"
     }
 
     /// Get theme info if assigned
@@ -627,14 +628,14 @@ private struct PersonaCard: View {
                 }
             }
 
-            // Description section - always visible with fixed min height
-            Text(persona.description.isEmpty ? "No description provided" : persona.description)
+            // Description section - fixed height to maintain card alignment
+            Text(persona.description.isEmpty ? " " : persona.description)
                 .font(.system(size: 12))
-                .foregroundColor(persona.description.isEmpty ? theme.tertiaryText : theme.secondaryText)
-                .italic(persona.description.isEmpty)
-                .lineLimit(3)
+                .foregroundColor(theme.secondaryText)
+                .lineLimit(2)
                 .lineSpacing(2)
-                .frame(maxWidth: .infinity, minHeight: 44, alignment: .topLeading)
+                .frame(maxWidth: .infinity, minHeight: 32, alignment: .topLeading)
+                .opacity(persona.description.isEmpty ? 0 : 1)
 
             // System prompt section - always visible
             VStack(alignment: .leading, spacing: 6) {
@@ -718,8 +719,8 @@ private struct PersonaCard: View {
     @ViewBuilder
     private var configurationBadges: some View {
         let hasBadges =
-            persona.defaultModel != nil || toolsSummary != nil || persona.temperature != nil || persona.maxTokens != nil
-            || assignedTheme != nil
+            persona.defaultModel != nil || toolsSummary != nil || skillsSummary != nil
+            || persona.temperature != nil || persona.maxTokens != nil || assignedTheme != nil
 
         if hasBadges {
             ScrollView(.horizontal, showsIndicators: false) {
@@ -739,6 +740,15 @@ private struct PersonaCard: View {
                             icon: "wrench.and.screwdriver.fill",
                             text: tools,
                             color: .orange
+                        )
+                    }
+
+                    // Skills badge
+                    if let skills = skillsSummary {
+                        ConfigBadge(
+                            icon: "sparkles",
+                            text: skills,
+                            color: .cyan
                         )
                     }
 
@@ -777,7 +787,7 @@ private struct PersonaCard: View {
                     .foregroundColor(theme.tertiaryText)
             }
             .padding(.horizontal, 8)
-            .padding(.vertical, 5)
+            .frame(height: 22)
             .background(
                 Capsule()
                     .fill(theme.tertiaryBackground.opacity(0.5))
@@ -844,16 +854,16 @@ private struct ConfigBadge: View {
     var body: some View {
         HStack(spacing: 4) {
             Image(systemName: icon)
-                .font(.system(size: 8, weight: .semibold))
+                .font(.system(size: 9, weight: .semibold))
                 .foregroundColor(color)
 
             Text(text)
-                .font(.system(size: 9, weight: .medium))
+                .font(.system(size: 10, weight: .medium))
                 .foregroundColor(theme.secondaryText)
                 .lineLimit(1)
         }
-        .padding(.horizontal, 6)
-        .padding(.vertical, 4)
+        .padding(.horizontal, 8)
+        .frame(height: 22)
         .background(
             Capsule()
                 .fill(color.opacity(0.1))
@@ -891,7 +901,7 @@ private struct ThemePreviewBadge: View {
             }
         }
         .padding(.horizontal, 8)
-        .padding(.vertical, 5)
+        .frame(height: 22)
         .background(
             Capsule()
                 .fill(Color.pink.opacity(0.1))
