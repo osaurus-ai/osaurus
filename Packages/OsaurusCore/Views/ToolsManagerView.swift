@@ -30,6 +30,7 @@ struct ToolsManagerView: View {
     @State private var filteredPlugins: [PluginState] = []
     @State private var installedPluginsWithTools: [(plugin: PluginState, tools: [ToolRegistry.ToolEntry])] = []
     @State private var remoteProviderTools: [(provider: MCPProvider, tools: [ToolRegistry.ToolEntry])] = []
+    @State private var pluginsWithMissingPermissionsCount: Int = 0
 
     var body: some View {
         VStack(spacing: 0) {
@@ -70,7 +71,12 @@ struct ToolsManagerView: View {
                 hasAppeared = true
             }
         }
-        .task(id: searchText) { await updateFilteredLists() }
+        .task(id: searchText) {
+            // Debounce search input to avoid filtering on every keystroke
+            try? await Task.sleep(nanoseconds: 150_000_000)  // 150ms debounce
+            guard !Task.isCancelled else { return }
+            await updateFilteredLists()
+        }
         .task(id: repoService.plugins) { await updateFilteredLists() }
         .onReceive(NotificationCenter.default.publisher(for: .toolsListChanged)) { _ in
             reload()
@@ -132,22 +138,6 @@ struct ToolsManagerView: View {
 
     // MARK: - Available Tools Tab (shows all tools from plugins and providers)
 
-    /// Count of plugins that have tools with missing system permissions
-    private var pluginsWithMissingPermissions: Int {
-        var count = 0
-        for (_, tools) in installedPluginsWithTools {
-            for tool in tools {
-                if let info = ToolRegistry.shared.policyInfo(for: tool.name) {
-                    if info.systemPermissionStates.values.contains(false) {
-                        count += 1
-                        break
-                    }
-                }
-            }
-        }
-        return count
-    }
-
     private var availableToolsTabContent: some View {
         ScrollView {
             LazyVStack(spacing: 16) {
@@ -170,20 +160,19 @@ struct ToolsManagerView: View {
                     )
                 } else {
                     // Permission status banner
-                    if pluginsWithMissingPermissions > 0 {
-                        PermissionStatusBanner(count: pluginsWithMissingPermissions)
+                    if pluginsWithMissingPermissionsCount > 0 {
+                        PermissionStatusBanner(count: pluginsWithMissingPermissionsCount)
                     }
 
                     // Plugin tools section
                     if !plugins.isEmpty {
                         InstalledSectionHeader(title: "Plugin Tools", icon: "puzzlepiece.extension")
 
-                        ForEach(Array(plugins.enumerated()), id: \.element.plugin.id) { index, item in
+                        ForEach(plugins, id: \.plugin.id) { item in
                             InstalledPluginCard(
                                 plugin: item.plugin,
                                 tools: item.tools,
-                                repoService: repoService,
-                                animationIndex: index
+                                repoService: repoService
                             ) {
                                 reload()
                             }
@@ -194,12 +183,11 @@ struct ToolsManagerView: View {
                     if !remoteTools.isEmpty {
                         InstalledSectionHeader(title: "Remote Tools", icon: "server.rack")
 
-                        ForEach(Array(remoteTools.enumerated()), id: \.element.provider.id) { index, item in
+                        ForEach(remoteTools, id: \.provider.id) { item in
                             RemoteProviderToolsCard(
                                 provider: item.provider,
                                 tools: item.tools,
                                 providerState: providerManager.providerStates[item.provider.id],
-                                animationIndex: index,
                                 onDisconnect: {
                                     providerManager.disconnect(providerId: item.provider.id)
                                 },
@@ -237,11 +225,10 @@ struct ToolsManagerView: View {
                         subtitle: searchText.isEmpty ? nil : "Try a different search term"
                     )
                 } else {
-                    ForEach(Array(filteredPlugins.enumerated()), id: \.element.id) { index, plugin in
+                    ForEach(filteredPlugins, id: \.id) { plugin in
                         PluginRow(
                             plugin: plugin,
-                            repoService: repoService,
-                            animationIndex: index
+                            repoService: repoService
                         )
                     }
                 }
@@ -414,6 +401,20 @@ struct ToolsManagerView: View {
         filteredPlugins = filteredPluginsResult
         installedPluginsWithTools = installedPluginsResult
         remoteProviderTools = remoteToolsResult
+
+        // Calculate plugins with missing permissions (must be on main thread for ToolRegistry access)
+        var permissionCount = 0
+        for (_, tools) in installedPluginsResult {
+            for tool in tools {
+                if let info = ToolRegistry.shared.policyInfo(for: tool.name) {
+                    if info.systemPermissionStates.values.contains(false) {
+                        permissionCount += 1
+                        break
+                    }
+                }
+            }
+        }
+        pluginsWithMissingPermissionsCount = permissionCount
     }
 
     private func reload() {
@@ -520,13 +521,11 @@ private struct RemoteProviderToolsCard: View {
     let provider: MCPProvider
     let tools: [ToolRegistry.ToolEntry]
     let providerState: MCPProviderState?
-    var animationIndex: Int = 0
     let onDisconnect: () -> Void
     let onChange: () -> Void
 
-    @State private var isExpanded: Bool = true
+    @State private var isExpanded: Bool = false
     @State private var isHovering = false
-    @State private var hasAppeared = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -635,16 +634,8 @@ private struct RemoteProviderToolsCard: View {
         .padding(16)
         .frame(maxWidth: .infinity)
         .background(cardBackground)
-        .animation(.easeOut(duration: 0.15), value: isHovering)
         .onHover { hovering in
             isHovering = hovering
-        }
-        .opacity(hasAppeared ? 1 : 0)
-        .onAppear {
-            let delay = Double(animationIndex) * 0.03
-            withAnimation(.easeOut(duration: 0.25).delay(delay)) {
-                hasAppeared = true
-            }
         }
     }
 
@@ -659,12 +650,10 @@ private struct RemoteProviderToolsCard: View {
                     )
             )
             .shadow(
-                color: theme.shadowColor.opacity(
-                    isHovering ? theme.shadowOpacity * 1.5 : theme.shadowOpacity
-                ),
-                radius: isHovering ? 12 : theme.cardShadowRadius,
+                color: theme.shadowColor.opacity(theme.shadowOpacity),
+                radius: theme.cardShadowRadius,
                 x: 0,
-                y: isHovering ? 4 : theme.cardShadowY
+                y: theme.cardShadowY
             )
     }
 }
@@ -831,12 +820,10 @@ private struct InstalledPluginCard: View {
     let plugin: PluginState
     let tools: [ToolRegistry.ToolEntry]
     @ObservedObject var repoService: PluginRepositoryService
-    var animationIndex: Int = 0
     let onChange: () -> Void
 
-    @State private var isExpanded: Bool = true
+    @State private var isExpanded: Bool = false
     @State private var isHovering = false
-    @State private var hasAppeared = false
     @State private var errorMessage: String?
     @State private var showError: Bool = false
 
@@ -1156,17 +1143,11 @@ private struct InstalledPluginCard: View {
         .padding(16)
         .frame(maxWidth: .infinity)
         .background(cardBackground)
-        .animation(.easeOut(duration: 0.15), value: isHovering)
         .onHover { hovering in
             isHovering = hovering
         }
-        .opacity(hasAppeared ? 1 : 0)
         .onAppear {
             updatePermissions()
-            let delay = Double(animationIndex) * 0.03
-            withAnimation(.easeOut(duration: 0.25).delay(delay)) {
-                hasAppeared = true
-            }
         }
         .onChange(of: tools.map { $0.id }) { _, _ in
             updatePermissions()
@@ -1204,12 +1185,10 @@ private struct InstalledPluginCard: View {
                     )
             )
             .shadow(
-                color: theme.shadowColor.opacity(
-                    isHovering ? theme.shadowOpacity * 1.5 : theme.shadowOpacity
-                ),
-                radius: isHovering ? 12 : theme.cardShadowRadius,
+                color: theme.shadowColor.opacity(theme.shadowOpacity),
+                radius: theme.cardShadowRadius,
                 x: 0,
-                y: isHovering ? 4 : theme.cardShadowY
+                y: theme.cardShadowY
             )
     }
 
@@ -1469,12 +1448,10 @@ private struct PluginRow: View {
     @Environment(\.theme) private var theme
     let plugin: PluginState
     @ObservedObject var repoService: PluginRepositoryService
-    var animationIndex: Int = 0
 
     @State private var errorMessage: String?
     @State private var showError: Bool = false
     @State private var isHovering = false
-    @State private var hasAppeared = false
     @State private var isExpanded = false
 
     var body: some View {
@@ -1613,16 +1590,8 @@ private struct PluginRow: View {
         .padding(16)
         .frame(maxWidth: .infinity)
         .background(cardBackground)
-        .animation(.easeOut(duration: 0.15), value: isHovering)
         .onHover { hovering in
             isHovering = hovering
-        }
-        .opacity(hasAppeared ? 1 : 0)
-        .onAppear {
-            let delay = Double(animationIndex) * 0.02
-            withAnimation(.easeOut(duration: 0.2).delay(delay)) {
-                hasAppeared = true
-            }
         }
         .alert("Installation Error", isPresented: $showError) {
             Button("OK", role: .cancel) {}
@@ -1642,12 +1611,10 @@ private struct PluginRow: View {
                     )
             )
             .shadow(
-                color: theme.shadowColor.opacity(
-                    isHovering ? theme.shadowOpacity * 1.5 : theme.shadowOpacity
-                ),
-                radius: isHovering ? 12 : theme.cardShadowRadius,
+                color: theme.shadowColor.opacity(theme.shadowOpacity),
+                radius: theme.cardShadowRadius,
                 x: 0,
-                y: isHovering ? 4 : theme.cardShadowY
+                y: theme.cardShadowY
             )
     }
 
@@ -1819,13 +1786,11 @@ private struct ToolSettingsRow: View {
     @Environment(\.theme) private var theme
     let entry: ToolRegistry.ToolEntry
     @ObservedObject var repoService: PluginRepositoryService
-    var animationIndex: Int = 0
     let onChange: () -> Void
 
     @State private var isExpanded: Bool = false
     @State private var refreshToken: Int = 0
     @State private var isHovering = false
-    @State private var hasAppeared = false
 
     // Check if this tool's plugin has an update
     private var pluginState: PluginState? {
@@ -2038,16 +2003,8 @@ private struct ToolSettingsRow: View {
         .padding(16)
         .frame(maxWidth: .infinity)
         .background(cardBackground)
-        .animation(.easeOut(duration: 0.15), value: isHovering)
         .onHover { hovering in
             isHovering = hovering
-        }
-        .opacity(hasAppeared ? 1 : 0)
-        .onAppear {
-            let delay = Double(animationIndex) * 0.02
-            withAnimation(.easeOut(duration: 0.2).delay(delay)) {
-                hasAppeared = true
-            }
         }
     }
 
@@ -2062,12 +2019,10 @@ private struct ToolSettingsRow: View {
                     )
             )
             .shadow(
-                color: theme.shadowColor.opacity(
-                    isHovering ? theme.shadowOpacity * 1.5 : theme.shadowOpacity
-                ),
-                radius: isHovering ? 12 : theme.cardShadowRadius,
+                color: theme.shadowColor.opacity(theme.shadowOpacity),
+                radius: theme.cardShadowRadius,
                 x: 0,
-                y: isHovering ? 4 : theme.cardShadowY
+                y: theme.cardShadowY
             )
     }
 
