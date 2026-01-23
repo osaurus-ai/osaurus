@@ -18,7 +18,7 @@ final class MessageHeightCache: @unchecked Sendable {
     private let lock = NSLock()
 
     /// Maximum number of cached heights before eviction
-    private let maxEntries = 2000  // Increased for block-level caching
+    private let maxEntries = 1000
 
     private init() {}
 
