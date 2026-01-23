@@ -361,11 +361,8 @@ final class ChatSession: ObservableObject {
         _lastContentLength = currentContentLength
         _lastThinkingLength = currentThinkingLength
 
-        // Limit visible blocks during streaming to prevent layout explosion
-        // When streaming with many blocks, only show the most recent ones to maintain responsiveness
-        let maxBlocksDuringStreaming = 150
+        let maxBlocksDuringStreaming = 80
         if isStreaming && blocks.count > maxBlocksDuringStreaming {
-            // Keep the last N blocks to ensure the streaming content is visible
             return Array(blocks.suffix(maxBlocksDuringStreaming))
         }
 
@@ -859,7 +856,7 @@ final class ChatSession: ObservableObject {
             defer {
                 isStreaming = false
                 ServerController.signalGenerationEnd()
-                // Remove trailing empty assistant turn if present (can happen after tool calls)
+                // Remove trailing empty assistant turn if present
                 if let lastTurn = turns.last,
                     lastTurn.role == .assistant,
                     lastTurn.contentIsEmpty,
@@ -868,7 +865,10 @@ final class ChatSession: ObservableObject {
                 {
                     turns.removeLast()
                 }
-                // Auto-save after streaming completes
+                // Consolidate chunks and save
+                for turn in turns where turn.role == .assistant {
+                    turn.consolidateContent()
+                }
                 save()
             }
 

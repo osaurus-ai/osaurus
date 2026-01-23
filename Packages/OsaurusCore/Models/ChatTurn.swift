@@ -116,6 +116,20 @@ final class ChatTurn: ObservableObject, Identifiable {
         objectWillChange.send()
     }
 
+    /// Consolidate chunks into single strings after streaming completes
+    func consolidateContent() {
+        if contentChunks.count > 1 {
+            let joined = contentChunks.joined()
+            contentChunks = [joined]
+            _cachedContent = joined
+        }
+        if thinkingChunks.count > 1 {
+            let joined = thinkingChunks.joined()
+            thinkingChunks = [joined]
+            _cachedThinking = joined
+        }
+    }
+
     // MARK: - Other Published Properties
 
     /// Attached images for multimodal messages (stored as PNG data)
