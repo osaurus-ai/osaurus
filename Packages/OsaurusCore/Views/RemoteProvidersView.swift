@@ -108,7 +108,7 @@ struct RemoteProvidersView: View {
                     .foregroundColor(theme.primaryText)
 
                 Text(
-                    "Connect to Anthropic, OpenAI, Ollama, LM Studio,\nor other compatible APIs to access remote models."
+                    "Connect to Anthropic, OpenAI, xAI,\nor other compatible APIs to access remote models."
                 )
                 .font(.system(size: 14))
                 .foregroundColor(theme.secondaryText)

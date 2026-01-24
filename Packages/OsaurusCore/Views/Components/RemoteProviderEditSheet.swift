@@ -12,8 +12,7 @@ import SwiftUI
 enum ProviderPreset: String, CaseIterable, Identifiable {
     case anthropic = "Anthropic"
     case openai = "OpenAI"
-    case ollama = "Ollama"
-    case lmstudio = "LM Studio"
+    case xai = "xAI"
     case openrouter = "OpenRouter"
     case custom = "Custom"
 
@@ -23,8 +22,7 @@ enum ProviderPreset: String, CaseIterable, Identifiable {
         switch self {
         case .anthropic: return "brain.head.profile"
         case .openai: return "sparkles"
-        case .ollama: return "cube.fill"
-        case .lmstudio: return "desktopcomputer"
+        case .xai: return "bolt.fill"
         case .openrouter: return "arrow.triangle.branch"
         case .custom: return "slider.horizontal.3"
         }
@@ -34,8 +32,7 @@ enum ProviderPreset: String, CaseIterable, Identifiable {
         switch self {
         case .anthropic: return "Claude models"
         case .openai: return "GPT-4o, o1, etc."
-        case .ollama: return "Local models"
-        case .lmstudio: return "Local inference"
+        case .xai: return "Grok models"
         case .openrouter: return "Multi-provider"
         case .custom: return "Custom endpoint"
         }
@@ -45,8 +42,7 @@ enum ProviderPreset: String, CaseIterable, Identifiable {
         switch self {
         case .anthropic: return [Color(red: 0.85, green: 0.55, blue: 0.35), Color(red: 0.75, green: 0.4, blue: 0.25)]
         case .openai: return [Color(red: 0.0, green: 0.65, blue: 0.52), Color(red: 0.0, green: 0.5, blue: 0.4)]
-        case .ollama: return [Color(red: 0.3, green: 0.5, blue: 0.9), Color(red: 0.2, green: 0.35, blue: 0.7)]
-        case .lmstudio: return [Color(red: 0.7, green: 0.45, blue: 0.9), Color(red: 0.5, green: 0.3, blue: 0.7)]
+        case .xai: return [Color(red: 0.1, green: 0.1, blue: 0.1), Color(red: 0.2, green: 0.2, blue: 0.2)]
         case .openrouter: return [Color(red: 0.95, green: 0.55, blue: 0.25), Color(red: 0.85, green: 0.4, blue: 0.2)]
         case .custom: return [Color(red: 0.55, green: 0.55, blue: 0.6), Color(red: 0.4, green: 0.4, blue: 0.45)]
         }
@@ -84,24 +80,14 @@ enum ProviderPreset: String, CaseIterable, Identifiable {
                 authType: .apiKey,
                 providerType: .openai
             )
-        case .ollama:
+        case .xai:
             return Configuration(
-                name: "Ollama",
-                host: "localhost",
-                providerProtocol: .http,
-                port: 11434,
+                name: "xAI",
+                host: "api.x.ai",
+                providerProtocol: .https,
+                port: nil,
                 basePath: "/v1",
-                authType: .none,
-                providerType: .openai
-            )
-        case .lmstudio:
-            return Configuration(
-                name: "LM Studio",
-                host: "localhost",
-                providerProtocol: .http,
-                port: 1234,
-                basePath: "/v1",
-                authType: .none,
+                authType: .apiKey,
                 providerType: .openai
             )
         case .openrouter:

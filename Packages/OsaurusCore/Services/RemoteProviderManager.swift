@@ -412,9 +412,9 @@ public final class RemoteProviderManager: ObservableObject {
             print("[Osaurus] Test Connection: HTTP \(httpResponse.statusCode)")
 
             if httpResponse.statusCode >= 400 {
-                let errorMessage = String(data: data, encoding: .utf8) ?? "Unknown error"
+                let errorMessage = extractErrorMessage(from: data, statusCode: httpResponse.statusCode)
                 print("[Osaurus] Test Connection: Error response: \(errorMessage)")
-                throw RemoteProviderError.connectionFailed("HTTP \(httpResponse.statusCode): \(errorMessage)")
+                throw RemoteProviderError.connectionFailed(errorMessage)
             }
 
             // Parse models response
@@ -427,6 +427,40 @@ public final class RemoteProviderManager: ObservableObject {
             print("[Osaurus] Test Connection: Network error: \(error)")
             throw RemoteProviderError.connectionFailed(error.localizedDescription)
         }
+    }
+
+    /// Extract a human-readable error message from API error response data
+    private func extractErrorMessage(from data: Data, statusCode: Int) -> String {
+        // Try to parse as JSON error response (OpenAI/xAI format)
+        if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+            // OpenAI/xAI format: {"error": {"message": "...", "type": "...", "code": "..."}}
+            if let error = json["error"] as? [String: Any] {
+                if let message = error["message"] as? String {
+                    // Include error code if available for more context
+                    if let code = error["code"] as? String {
+                        return "\(message) (code: \(code))"
+                    }
+                    return message
+                }
+            }
+            // Alternative format: {"message": "..."}
+            if let message = json["message"] as? String {
+                return message
+            }
+            // Alternative format: {"detail": "..."}
+            if let detail = json["detail"] as? String {
+                return detail
+            }
+        }
+
+        // Fallback to raw string if JSON parsing fails
+        if let rawMessage = String(data: data, encoding: .utf8), !rawMessage.isEmpty {
+            // Truncate very long error messages
+            let truncated = rawMessage.count > 200 ? String(rawMessage.prefix(200)) + "..." : rawMessage
+            return "HTTP \(statusCode): \(truncated)"
+        }
+
+        return "HTTP \(statusCode): Unknown error"
     }
 
     /// Test Anthropic connection by making a minimal /messages request
@@ -477,16 +511,16 @@ public final class RemoteProviderManager: ObservableObject {
 
             // 401 = invalid API key
             if httpResponse.statusCode == 401 {
-                let errorMessage = String(data: data, encoding: .utf8) ?? "Invalid API key"
+                let errorMessage = extractErrorMessage(from: data, statusCode: httpResponse.statusCode)
                 print("[Osaurus] Test Connection (Anthropic): Auth error: \(errorMessage)")
-                throw RemoteProviderError.connectionFailed("Invalid API key")
+                throw RemoteProviderError.connectionFailed(errorMessage)
             }
 
             // 5xx = server errors
             if httpResponse.statusCode >= 500 {
-                let errorMessage = String(data: data, encoding: .utf8) ?? "Server error"
+                let errorMessage = extractErrorMessage(from: data, statusCode: httpResponse.statusCode)
                 print("[Osaurus] Test Connection (Anthropic): Server error: \(errorMessage)")
-                throw RemoteProviderError.connectionFailed("HTTP \(httpResponse.statusCode): \(errorMessage)")
+                throw RemoteProviderError.connectionFailed(errorMessage)
             }
 
             // Any 2xx or 4xx (except 401) means the connection works
