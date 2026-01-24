@@ -1449,13 +1449,47 @@ extension RemoteProviderService {
         }
 
         if httpResponse.statusCode >= 400 {
-            let errorMessage = String(data: data, encoding: .utf8) ?? "Unknown error"
-            throw RemoteProviderServiceError.requestFailed("HTTP \(httpResponse.statusCode): \(errorMessage)")
+            let errorMessage = extractErrorMessage(from: data, statusCode: httpResponse.statusCode)
+            throw RemoteProviderServiceError.requestFailed(errorMessage)
         }
 
         // Parse models response
         let modelsResponse = try JSONDecoder().decode(ModelsResponse.self, from: data)
         return modelsResponse.data.map { $0.id }
+    }
+
+    /// Extract a human-readable error message from API error response data
+    private static func extractErrorMessage(from data: Data, statusCode: Int) -> String {
+        // Try to parse as JSON error response (OpenAI/xAI format)
+        if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+            // OpenAI/xAI format: {"error": {"message": "...", "type": "...", "code": "..."}}
+            if let error = json["error"] as? [String: Any] {
+                if let message = error["message"] as? String {
+                    // Include error code if available for more context
+                    if let code = error["code"] as? String {
+                        return "\(message) (code: \(code))"
+                    }
+                    return message
+                }
+            }
+            // Alternative format: {"message": "..."}
+            if let message = json["message"] as? String {
+                return message
+            }
+            // Alternative format: {"detail": "..."}
+            if let detail = json["detail"] as? String {
+                return detail
+            }
+        }
+
+        // Fallback to raw string if JSON parsing fails
+        if let rawMessage = String(data: data, encoding: .utf8), !rawMessage.isEmpty {
+            // Truncate very long error messages
+            let truncated = rawMessage.count > 200 ? String(rawMessage.prefix(200)) + "..." : rawMessage
+            return "HTTP \(statusCode): \(truncated)"
+        }
+
+        return "HTTP \(statusCode): Unknown error"
     }
 
     /// Validate Anthropic connection by making a minimal API request
