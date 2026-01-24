@@ -43,8 +43,7 @@ struct FloatingInputCard: View {
     @Environment(\.colorScheme) private var colorScheme
     @State private var isDragOver = false
     @State private var showModelPicker = false
-    @State private var showToolPicker = false
-    @State private var showSkillPicker = false
+    @State private var showCapabilitiesPicker = false
     // Cache model options to prevent popover refresh during streaming
     @State private var cachedModelOptions: [ModelOption] = []
 
@@ -578,14 +577,9 @@ struct FloatingInputCard: View {
                 modelSelectorChip
             }
 
-            // Tool selector (when tools available)
-            if !toolRegistry.listTools().isEmpty {
-                toolSelectorChip
-            }
-
-            // Skill selector (when skills available)
-            if !skillManager.skills.isEmpty {
-                skillSelectorChip
+            // Capabilities selector (tools + skills combined)
+            if !toolRegistry.listTools().isEmpty || !skillManager.skills.isEmpty {
+                capabilitiesSelectorChip
             }
 
             // Context size indicator (when there's context)
@@ -718,7 +712,7 @@ struct FloatingInputCard: View {
         }
     }
 
-    // MARK: - Tool Selector
+    // MARK: - Capabilities Selector (Tools + Skills)
 
     private var effectivePersonaId: UUID {
         personaId ?? Persona.defaultId
@@ -737,40 +731,6 @@ struct FloatingInputCard: View {
         toolRegistry.listTools(withOverrides: toolOverrides).filter { $0.enabled }.count
     }
 
-    private var toolSelectorChip: some View {
-        Button(action: { showToolPicker.toggle() }) {
-            HStack(spacing: 6) {
-                Image(systemName: "wrench.and.screwdriver")
-                    .font(theme.font(size: CGFloat(theme.captionSize) - 2))
-                    .foregroundColor(theme.tertiaryText)
-
-                Text("\(enabledToolCount) \(enabledToolCount == 1 ? "tool" : "tools")")
-                    .font(theme.font(size: CGFloat(theme.captionSize), weight: .medium))
-                    .foregroundColor(theme.secondaryText)
-
-                Image(systemName: "chevron.up.chevron.down")
-                    .font(theme.font(size: CGFloat(theme.captionSize) - 3, weight: .semibold))
-                    .foregroundColor(theme.tertiaryText)
-            }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 6)
-            .background(
-                RoundedRectangle(cornerRadius: 18, style: .continuous)
-                    .fill(theme.secondaryBackground.opacity(0.8))
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 18, style: .continuous)
-                    .strokeBorder(theme.primaryBorder.opacity(0.5), lineWidth: 1)
-            )
-        }
-        .buttonStyle(.plain)
-        .popover(isPresented: $showToolPicker, arrowEdge: .top) {
-            ToolSelectorView(personaId: effectivePersonaId)
-        }
-    }
-
-    // MARK: - Skill Selector
-
     /// Count of enabled skills (with persona overrides applied)
     private var enabledSkillCount: Int {
         skillManager.skills.filter { skill in
@@ -781,14 +741,35 @@ struct FloatingInputCard: View {
         }.count
     }
 
-    private var skillSelectorChip: some View {
-        Button(action: { showSkillPicker.toggle() }) {
+    /// Total enabled capabilities count
+    private var totalEnabledCapabilities: Int {
+        enabledToolCount + enabledSkillCount
+    }
+
+    /// Human-readable description of enabled capabilities
+    private var capabilitiesDescription: String {
+        let toolText = enabledToolCount == 1 ? "1 tool" : "\(enabledToolCount) tools"
+        let skillText = enabledSkillCount == 1 ? "1 skill" : "\(enabledSkillCount) skills"
+
+        if enabledToolCount > 0 && enabledSkillCount > 0 {
+            return "\(toolText), \(skillText)"
+        } else if enabledToolCount > 0 {
+            return toolText
+        } else if enabledSkillCount > 0 {
+            return skillText
+        } else {
+            return "Abilities"
+        }
+    }
+
+    private var capabilitiesSelectorChip: some View {
+        Button(action: { showCapabilitiesPicker.toggle() }) {
             HStack(spacing: 6) {
-                Image(systemName: "lightbulb")
+                Image(systemName: "sparkles")
                     .font(theme.font(size: CGFloat(theme.captionSize) - 2))
                     .foregroundColor(theme.tertiaryText)
 
-                Text("\(enabledSkillCount) \(enabledSkillCount == 1 ? "skill" : "skills")")
+                Text(capabilitiesDescription)
                     .font(theme.font(size: CGFloat(theme.captionSize), weight: .medium))
                     .foregroundColor(theme.secondaryText)
 
@@ -808,8 +789,8 @@ struct FloatingInputCard: View {
             )
         }
         .buttonStyle(.plain)
-        .popover(isPresented: $showSkillPicker, arrowEdge: .top) {
-            SkillSelectorView(personaId: effectivePersonaId)
+        .popover(isPresented: $showCapabilitiesPicker, arrowEdge: .top) {
+            CapabilitiesSelectorView(personaId: effectivePersonaId)
         }
     }
 
