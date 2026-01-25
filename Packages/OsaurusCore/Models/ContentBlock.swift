@@ -221,7 +221,9 @@ extension ContentBlock {
 
         for (index, turn) in filteredTurns.enumerated() {
             let isStreaming = turn.id == streamingTurnId
-            let isFirstInGroup = turn.role != previousRole
+            // For user messages, always show header (each message is distinct input)
+            // For assistant messages, group consecutive turns (continuing responses)
+            let isFirstInGroup = turn.role != previousRole || turn.role == .user
             let isToolOnly = isToolOnlyTurn(turn)
             let nextTurn = index + 1 < filteredTurns.count ? filteredTurns[index + 1] : nil
             let nextIsToolOnly = nextTurn.map { isToolOnlyTurn($0) && $0.role == .assistant } ?? false
