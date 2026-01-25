@@ -86,7 +86,14 @@ struct ChatEmptyState: View {
     // MARK: - Ready State (has models)
 
     private var readyState: some View {
-        VStack(spacing: 32) {
+        VStack(spacing: 10) {
+            // Hero Orb - mesmerizing animated orb as the focal point
+            AnimatedOrb(color: theme.accentColor, size: .medium, seed: activePersona.name)
+                .frame(width: 88, height: 88)
+                .opacity(hasAppeared ? 1 : 0)
+                .scaleEffect(hasAppeared ? 1 : 0.85)
+                .animation(theme.springAnimation().delay(0.0), value: hasAppeared)
+
             // Greeting section
             VStack(spacing: 20) {
                 // Greeting text - staggered entrance
@@ -96,14 +103,14 @@ struct ChatEmptyState: View {
                         .foregroundColor(theme.primaryText)
                         .opacity(hasAppeared ? 1 : 0)
                         .offset(y: hasAppeared ? 0 : 20)
-                        .animation(theme.springAnimation().delay(0.05), value: hasAppeared)
+                        .animation(theme.springAnimation().delay(0.1), value: hasAppeared)
 
                     Text("How can I help you today?")
                         .font(theme.font(size: CGFloat(theme.bodySize) + 2))
                         .foregroundColor(theme.secondaryText)
                         .opacity(hasAppeared ? 1 : 0)
                         .offset(y: hasAppeared ? 0 : 15)
-                        .animation(theme.springAnimation().delay(0.12), value: hasAppeared)
+                        .animation(theme.springAnimation().delay(0.17), value: hasAppeared)
                 }
 
                 // Persona selector - prominent card with delayed entrance
@@ -111,7 +118,7 @@ struct ChatEmptyState: View {
                     .opacity(hasAppeared ? 1 : 0)
                     .offset(y: hasAppeared ? 0 : 12)
                     .scaleEffect(hasAppeared ? 1 : 0.97)
-                    .animation(theme.springAnimation().delay(0.2), value: hasAppeared)
+                    .animation(theme.springAnimation().delay(0.25), value: hasAppeared)
             }
 
             // Quick actions with staggered entrance
@@ -133,7 +140,7 @@ struct ChatEmptyState: View {
                     .opacity(hasAppeared ? 1 : 0)
                     .offset(y: hasAppeared ? 0 : 15)
                     .animation(
-                        theme.springAnimation().delay(0.3 + Double(index) * 0.05),
+                        theme.springAnimation().delay(0.35 + Double(index) * 0.05),
                         value: hasAppeared
                     )
             }
@@ -587,7 +594,7 @@ private struct SuggestedModelCard: View {
 
 // MARK: - Ambient Orbs Animation
 
-private struct Orb: Identifiable {
+private struct AmbientOrb: Identifiable {
     let id = UUID()
     let baseSize: CGFloat
     let xOffset: CGFloat  // Normalized -1 to 1
@@ -604,11 +611,44 @@ private struct AmbientOrbsView: View {
 
     @Environment(\.theme) private var theme
 
-    private let orbs: [Orb] = [
-        Orb(baseSize: 180, xOffset: -0.35, yOffset: -0.25, phaseOffset: 0, speed: 0.4, opacity: 0.25, blurRadius: 50),
-        Orb(baseSize: 140, xOffset: 0.4, yOffset: -0.15, phaseOffset: 1.5, speed: 0.55, opacity: 0.20, blurRadius: 45),
-        Orb(baseSize: 160, xOffset: 0.25, yOffset: 0.35, phaseOffset: 3.0, speed: 0.45, opacity: 0.18, blurRadius: 50),
-        Orb(baseSize: 100, xOffset: -0.3, yOffset: 0.4, phaseOffset: 4.5, speed: 0.6, opacity: 0.22, blurRadius: 40),
+    // Reduced opacity to complement the hero orb without visual clutter
+    private let orbs: [AmbientOrb] = [
+        AmbientOrb(
+            baseSize: 180,
+            xOffset: -0.35,
+            yOffset: -0.25,
+            phaseOffset: 0,
+            speed: 0.4,
+            opacity: 0.12,
+            blurRadius: 60
+        ),
+        AmbientOrb(
+            baseSize: 140,
+            xOffset: 0.4,
+            yOffset: -0.15,
+            phaseOffset: 1.5,
+            speed: 0.55,
+            opacity: 0.10,
+            blurRadius: 55
+        ),
+        AmbientOrb(
+            baseSize: 160,
+            xOffset: 0.25,
+            yOffset: 0.35,
+            phaseOffset: 3.0,
+            speed: 0.45,
+            opacity: 0.08,
+            blurRadius: 60
+        ),
+        AmbientOrb(
+            baseSize: 100,
+            xOffset: -0.3,
+            yOffset: 0.4,
+            phaseOffset: 4.5,
+            speed: 0.6,
+            opacity: 0.10,
+            blurRadius: 50
+        ),
     ]
 
     var body: some View {
@@ -628,7 +668,7 @@ private struct AmbientOrbsView: View {
         .allowsHitTesting(false)
     }
 
-    private func orbView(orb: Orb, time: TimeInterval, size: CGSize) -> some View {
+    private func orbView(orb: AmbientOrb, time: TimeInterval, size: CGSize) -> some View {
         let animatedTime = time * orb.speed + orb.phaseOffset
 
         // Create gentle floating motion
