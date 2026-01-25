@@ -112,6 +112,18 @@ struct EditableTextView: NSViewRepresentable {
             }
         }
 
+        func textViewDidChangeSelection(_ notification: Notification) {
+            guard let textView = notification.object as? NSTextView else { return }
+            parent.text = textView.string
+            // Invalidate intrinsic size to trigger resize
+            if let customTextView = textView as? CustomNSTextView {
+                customTextView.invalidateIntrinsicContentSize()
+            }
+            if let scrollView = textView.enclosingScrollView {
+                scrollView.invalidateIntrinsicContentSize()
+            }
+        }
+
         func textDidBeginEditing(_ notification: Notification) {
             parent.isFocused = true
         }
