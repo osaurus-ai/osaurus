@@ -20,6 +20,7 @@ struct OsaurusCLI {
         case mcp
         case ui
         case tools([String])
+        case manifest([String])
         case version
         case help
     }
@@ -41,6 +42,7 @@ struct OsaurusCLI {
         case "mcp": return .mcp
         case "ui": return .ui
         case "tools": return .tools(rest)
+        case "manifest": return .manifest(rest)
         case "version", "--version", "-v": return .version
         case "help", "-h", "--help": return .help
         default: return nil
@@ -74,6 +76,8 @@ struct OsaurusCLI {
             await UICommand.execute(args: [])
         case .tools(let args):
             await ToolsCommand.execute(args: args)
+        case .manifest(let args):
+            await ManifestCommand.execute(args: args)
         case .version:
             await VersionCommand.execute(args: [])
         case .help:
@@ -112,6 +116,8 @@ struct OsaurusCLI {
                                       Scaffold a tool project
               osaurus tools package   Build and zip the current tool
               osaurus tools reload    Ask the app to rescan tools
+              osaurus manifest extract <dylib>
+                                      Extract manifest JSON from built plugin
               osaurus help            Show this help
 
             """

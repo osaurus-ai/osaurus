@@ -44,6 +44,13 @@ public struct PluginManifest: Decodable, Sendable {
     public let description: String?
     public let capabilities: Capabilities
 
+    // Optional fields for registry
+    public let name: String?
+    public let license: String?
+    public let authors: [String]?
+    public let min_macos: String?
+    public let min_osaurus: String?
+
     public struct Capabilities: Decodable, Sendable {
         public let tools: [ToolSpec]?
         // Future: providers, apps, etc.

@@ -37,17 +37,21 @@ public struct ToolsCreate {
         let sources = dir.appendingPathComponent("Sources", isDirectory: true)
         // Use plugin name as module name to avoid duplicate Objective-C class names across plugins
         let moduleName = name.replacingOccurrences(of: "-", with: "_")
+        // Generate display name from plugin name (capitalize words, replace hyphens with spaces)
+        let displayName = name.split(separator: "-").map { $0.prefix(1).uppercased() + $0.dropFirst() }.joined(
+            separator: " "
+        )
         let pluginDir = sources.appendingPathComponent(moduleName, isDirectory: true)
         try? fm.createDirectory(at: pluginDir, withIntermediateDirectories: true)
 
         // Package.swift
         let packageSwift = """
-            // swift-tools-version: 5.9
+            // swift-tools-version: 6.0
             import PackageDescription
 
             let package = Package(
                 name: "\(name)",
-                platforms: [.macOS(.v13)],
+                platforms: [.macOS(.v15)],
                 products: [
                     .library(name: "\(name)", type: .dynamic, targets: ["\(moduleName)"])
                 ],
@@ -142,8 +146,13 @@ public struct ToolsCreate {
                     let manifest = \"\"\"
                     {
                       "plugin_id": "dev.example.\(name)",
+                      "name": "\(displayName)",
                       "version": "0.1.0",
                       "description": "An example plugin",
+                      "license": "MIT",
+                      "authors": [],
+                      "min_macos": "15.0",
+                      "min_osaurus": "0.5.0",
                       "capabilities": {
                         "tools": [
                           {
@@ -189,6 +198,25 @@ public struct ToolsCreate {
             """
         try? pluginSwift.write(to: pluginDir.appendingPathComponent("Plugin.swift"), atomically: true, encoding: .utf8)
 
+        // .github/workflows/release.yml
+        let githubDir = dir.appendingPathComponent(".github", isDirectory: true)
+        let workflowsDir = githubDir.appendingPathComponent("workflows", isDirectory: true)
+        try? fm.createDirectory(at: workflowsDir, withIntermediateDirectories: true)
+
+        let releaseYml = """
+            name: Release
+
+            on:
+              push:
+                tags: ['v*', '[0-9]+.[0-9]+.[0-9]+']
+
+            jobs:
+              release:
+                uses: dinoki-ai/osaurus-tools/.github/workflows/build-plugin.yml@main
+                secrets: inherit
+            """
+        try? releaseYml.write(to: workflowsDir.appendingPathComponent("release.yml"), atomically: true, encoding: .utf8)
+
         // README.md (with publishing instructions)
         let readme = """
             # \(name)
@@ -202,21 +230,35 @@ public struct ToolsCreate {
                swift build -c release
                cp .build/release/lib\(name).dylib ./lib\(name).dylib
                ```
+
+            2. Extract manifest (to verify):
+               ```bash
+               osaurus manifest extract .build/release/lib\(name).dylib
+               ```
                
-            2. Package (for distribution):
+            3. Package (for distribution):
                ```bash
                osaurus tools package dev.example.\(name) 0.1.0
                ```
                This creates `dev.example.\(name)-0.1.0.zip`.
                
-            3. Install locally:
+            4. Install locally:
                ```bash
                osaurus tools install ./dev.example.\(name)-0.1.0.zip
                ```
                
             ## Publishing
 
-            To publish this plugin to the central registry:
+            This project includes a GitHub Actions workflow (`.github/workflows/release.yml`) that
+            automatically builds and releases the plugin when you push a version tag.
+
+            To release:
+            ```bash
+            git tag v0.1.0
+            git push origin v0.1.0
+            ```
+
+            For manual publishing:
 
             1. Package it with the correct naming convention:
                ```bash
@@ -233,6 +275,7 @@ public struct ToolsCreate {
             - Plugin metadata (id, version, capabilities) is defined in `get_manifest()` in Plugin.swift
             - The zip filename determines the plugin_id and version during installation
             - Ensure the version in `get_manifest()` matches your zip filename
+            - CI extracts the manifest from the built dylib automatically
             """
         try? readme.write(to: dir.appendingPathComponent("README.md"), atomically: true, encoding: .utf8)
     }
