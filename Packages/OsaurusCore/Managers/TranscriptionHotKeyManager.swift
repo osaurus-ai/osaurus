@@ -91,8 +91,9 @@ public final class TranscriptionHotKeyManager {
                     let manager = Unmanaged<TranscriptionHotKeyManager>.fromOpaque(userData).takeUnretainedValue()
                     Task { @MainActor in manager.action?() }
                 }
+                return noErr
             }
-            return noErr
+            return OSStatus(eventNotHandledErr)
         }
         var refHandler: EventHandlerRef?
         let installStatus = InstallEventHandler(

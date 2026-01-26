@@ -72,8 +72,9 @@ final class HotKeyManager {
                     let manager = Unmanaged<HotKeyManager>.fromOpaque(userData).takeUnretainedValue()
                     Task { @MainActor in manager.action?() }
                 }
+                return noErr
             }
-            return noErr
+            return OSStatus(eventNotHandledErr)
         }
         var refHandler: EventHandlerRef?
         let installStatus = InstallEventHandler(
