@@ -168,7 +168,7 @@ private struct MemoizedMarkdownView: View {
                 let lines = max(1, CGFloat(text.count) / 70)
                 totalHeight += lines * 20 + 16
 
-            case .listItem(let text, _, _):
+            case .listItem(let text, _, _, _):
                 let lines = max(1, CGFloat(text.count) / 70)
                 totalHeight += lines * 20 + 8
             }
@@ -401,9 +401,16 @@ private func groupBlocksIntoSegments(_ blocks: [MessageBlock]) -> [ContentSegmen
         case .blockquote(let content):
             currentTextBlocks.append(.blockquote(content))
 
-        case .list(let items, let ordered):
-            for (index, item) in items.enumerated() {
-                currentTextBlocks.append(.listItem(text: item, index: index, ordered: ordered))
+        case .list(let items):
+            for item in items {
+                currentTextBlocks.append(
+                    .listItem(
+                        text: item.text,
+                        index: item.displayNumber - 1,  // Convert 1-based display number to 0-based index
+                        ordered: item.isOrdered,
+                        indentLevel: item.indentLevel
+                    )
+                )
             }
 
         case .code(let code, let lang):
@@ -514,6 +521,14 @@ private func spacingBeforeTextGroup(previousNonTextKind: MessageBlock.Kind?) -> 
 
 // MARK: - Message Block
 
+/// Represents a list item with its text, indentation level, and display number
+struct ListItem: Equatable, Hashable {
+    let text: String
+    let indentLevel: Int
+    let displayNumber: Int  // The number to display (1, 2, 3...) for ordered lists
+    let isOrdered: Bool  // Whether this specific item is ordered or unordered
+}
+
 struct MessageBlock: Identifiable {
     enum Kind: Equatable {
         case paragraph(String)
@@ -522,7 +537,7 @@ struct MessageBlock: Identifiable {
         case heading(level: Int, text: String)
         case blockquote(String)
         case horizontalRule
-        case list(items: [String], ordered: Bool)
+        case list(items: [ListItem])
         case table(headers: [String], rows: [[String]])
 
         /// Generate a stable hash for the block kind
@@ -549,10 +564,9 @@ struct MessageBlock: Identifiable {
                 hasher.combine(content)
             case .horizontalRule:
                 hasher.combine("hr")
-            case .list(let items, let ordered):
+            case .list(let items):
                 hasher.combine("l")
                 hasher.combine(items)
-                hasher.combine(ordered)
             case .table(let headers, let rows):
                 hasher.combine("t")
                 hasher.combine(headers)
@@ -611,8 +625,9 @@ private func parseBlocks(_ input: String) -> [MessageBlock] {
     var blocks: [MessageBlock] = []
     var currentParagraphLines: [Substring] = []
     var currentBlockquoteLines: [Substring] = []
-    var currentListItems: [String] = []
-    var isOrderedList = false
+    var currentListItems: [ListItem] = []
+    // Track numbering at each indent level for ordered lists
+    var orderedCounters: [Int: Int] = [:]  // indentLevel -> current count
     var blockIndex = 0
 
     // Normalize line endings once
@@ -654,25 +669,28 @@ private func parseBlocks(_ input: String) -> [MessageBlock] {
     }
 
     @inline(__always)
-    func flushList() {
+    func flushList(resetCounters: Bool = true) {
         if !currentListItems.isEmpty {
-            blocks.append(MessageBlock(index: blockIndex, kind: .list(items: currentListItems, ordered: isOrderedList)))
+            blocks.append(MessageBlock(index: blockIndex, kind: .list(items: currentListItems)))
             blockIndex += 1
             currentListItems.removeAll(keepingCapacity: true)
         }
+        if resetCounters {
+            orderedCounters.removeAll(keepingCapacity: true)
+        }
     }
 
-    /// Check if the next non-blank line is a list item of the same type
-    func nextNonBlankIsListItem(from startIndex: Int, ordered: Bool) -> Bool {
+    /// Check if the next non-blank line is any list item (ordered or unordered)
+    @inline(__always)
+    func nextNonBlankIsAnyListItem(from startIndex: Int) -> Bool {
         var j = startIndex
         while j < lines.count {
-            let nextTrimmed = lines[j].trimmingWhitespace()
-            if !nextTrimmed.isEmpty {
-                if ordered {
-                    return parseOrderedListItemFast(nextTrimmed) != nil
-                } else {
-                    return parseUnorderedListItemFast(nextTrimmed) != nil
-                }
+            let nextLine = lines[j]
+            let trimmed = nextLine.trimmingWhitespace()
+            if !trimmed.isEmpty {
+                // Pass pre-trimmed content to avoid redundant trimming
+                return parseUnorderedListItemWithIndent(nextLine, trimmed: trimmed) != nil
+                    || parseOrderedListItemWithIndent(nextLine, trimmed: trimmed) != nil
             }
             j += 1
         }
@@ -684,11 +702,11 @@ private func parseBlocks(_ input: String) -> [MessageBlock] {
         let line = lines[i]
         let trimmed = line.trimmingWhitespace()
 
-        // Fenced code block - check prefix efficiently
+        // Fenced code block
         if trimmed.hasPrefix("```") {
             flushParagraph()
             flushBlockquote()
-            flushList()
+            flushList(resetCounters: false)
 
             let langPart = trimmed.dropFirst(3)
             let lang = langPart.trimmingWhitespace()
@@ -715,7 +733,7 @@ private func parseBlocks(_ input: String) -> [MessageBlock] {
             if isTableSeparatorLine(nextLine) {
                 flushParagraph()
                 flushBlockquote()
-                flushList()
+                flushList(resetCounters: false)
 
                 // Parse headers from the current line
                 let headers = parseTableRow(trimmed)
@@ -745,7 +763,7 @@ private func parseBlocks(_ input: String) -> [MessageBlock] {
         if isHorizontalRuleFast(trimmed) {
             flushParagraph()
             flushBlockquote()
-            flushList()
+            flushList(resetCounters: false)
             blocks.append(MessageBlock(index: blockIndex, kind: .horizontalRule))
             blockIndex += 1
             i += 1
@@ -756,7 +774,7 @@ private func parseBlocks(_ input: String) -> [MessageBlock] {
         if let headingMatch = parseHeadingFast(trimmed) {
             flushParagraph()
             flushBlockquote()
-            flushList()
+            flushList(resetCounters: false)
             blocks.append(
                 MessageBlock(index: blockIndex, kind: .heading(level: headingMatch.level, text: headingMatch.text))
             )
@@ -768,7 +786,7 @@ private func parseBlocks(_ input: String) -> [MessageBlock] {
         // Blockquote (> ...)
         if trimmed.hasPrefix(">") {
             flushParagraph()
-            flushList()
+            flushList(resetCounters: false)
             let quoteContent = trimmed.dropFirst().trimmingWhitespace()
             currentBlockquoteLines.append(quoteContent)
             i += 1
@@ -777,28 +795,44 @@ private func parseBlocks(_ input: String) -> [MessageBlock] {
             flushBlockquote()
         }
 
-        // Unordered list (- or * or +)
-        if let listItem = parseUnorderedListItemFast(trimmed) {
+        // Unordered list (- * +)
+        if let parsed = parseUnorderedListItemWithIndent(line, trimmed: trimmed) {
             flushParagraph()
             flushBlockquote()
-            if !currentListItems.isEmpty && isOrderedList {
-                flushList()
-            }
-            isOrderedList = false
-            currentListItems.append(String(listItem))
+            currentListItems.append(
+                ListItem(
+                    text: String(parsed.text),
+                    indentLevel: parsed.indentLevel,
+                    displayNumber: 0,
+                    isOrdered: false
+                )
+            )
             i += 1
             continue
         }
 
         // Ordered list (1. 2. etc.)
-        if let listItem = parseOrderedListItemFast(trimmed) {
+        if let parsed = parseOrderedListItemWithIndent(line, trimmed: trimmed) {
             flushParagraph()
             flushBlockquote()
-            if !currentListItems.isEmpty && !isOrderedList {
-                flushList()
+
+            let indentLevel = parsed.indentLevel
+            let currentCount = orderedCounters[indentLevel, default: 0] + 1
+            orderedCounters[indentLevel] = currentCount
+
+            // Reset deeper indent counters when returning to shallower level
+            for key in orderedCounters.keys where key > indentLevel {
+                orderedCounters.removeValue(forKey: key)
             }
-            isOrderedList = true
-            currentListItems.append(String(listItem))
+
+            currentListItems.append(
+                ListItem(
+                    text: String(parsed.text),
+                    indentLevel: indentLevel,
+                    displayNumber: currentCount,
+                    isOrdered: true
+                )
+            )
             i += 1
             continue
         }
@@ -808,11 +842,11 @@ private func parseBlocks(_ input: String) -> [MessageBlock] {
             flushParagraph()
             flushBlockquote()
 
-            // For lists: only flush if the next non-blank line is NOT a list item of the same type
-            // This allows "loose" lists (lists with blank lines between items) to render with proper numbering
+            // For lists: only flush if the next non-blank line is NOT any list item
+            // This allows "loose" lists (lists with blank lines between items) to stay together
             if !currentListItems.isEmpty {
-                if !nextNonBlankIsListItem(from: i + 1, ordered: isOrderedList) {
-                    flushList()
+                if !nextNonBlankIsAnyListItem(from: i + 1) {
+                    flushList(resetCounters: true)
                 }
             }
 
@@ -820,9 +854,24 @@ private func parseBlocks(_ input: String) -> [MessageBlock] {
             continue
         }
 
-        // Flush list if we encounter non-list, non-empty content
+        // Continuation line: indented content following a list item
         if !currentListItems.isEmpty {
-            flushList()
+            let leadingSpaces = countLeadingSpaces(line)
+            if leadingSpaces >= 2 {
+                // Append to previous list item
+                let lastIndex = currentListItems.count - 1
+                let lastItem = currentListItems[lastIndex]
+                currentListItems[lastIndex] = ListItem(
+                    text: lastItem.text + " " + String(trimmed),
+                    indentLevel: lastItem.indentLevel,
+                    displayNumber: lastItem.displayNumber,
+                    isOrdered: lastItem.isOrdered
+                )
+                i += 1
+                continue
+            }
+            // Non-list content encountered
+            flushList(resetCounters: false)
         }
 
         // Regular paragraph line
@@ -964,59 +1013,110 @@ private func parseHeadingFast(_ line: Substring) -> (level: Int, text: String)? 
     return (level, String(line[textStart ..< textEnd]))
 }
 
-/// Fast unordered list item parser
-@inline(__always)
-private func parseUnorderedListItemFast(_ line: Substring) -> Substring? {
-    guard line.count >= 2 else { return nil }
-    let first = line.first!
-    let secondIndex = line.index(after: line.startIndex)
+// MARK: - List Parsing Helpers
 
-    if (first == "-" || first == "*" || first == "+") && line[secondIndex] == " " {
-        return line[line.index(secondIndex, offsetBy: 1)...]
+/// Result of parsing a list item, including indentation info
+private struct ParsedListItem {
+    let text: Substring
+    let indentLevel: Int
+    let isOrdered: Bool
+    let originalNumber: Int?  // Only set for ordered items
+}
+
+/// Count leading spaces in a line (tabs count as 4 spaces)
+@inline(__always)
+private func countLeadingSpaces(_ line: Substring) -> Int {
+    var spaces = 0
+    for char in line {
+        if char == " " {
+            spaces += 1
+        } else if char == "\t" {
+            spaces += 4
+        } else {
+            break
+        }
+    }
+    return spaces
+}
+
+/// Calculate indentation level from leading whitespace
+/// Returns the indent level (0 for no indent, 1 for 2-4 spaces, 2 for 4-6 spaces, etc.)
+@inline(__always)
+private func calculateIndentLevel(_ line: Substring) -> Int {
+    let spaces = countLeadingSpaces(line)
+    // Each indent level is approximately 2-4 spaces
+    // Use 2 spaces per level for better nested list detection
+    return spaces / 2
+}
+
+/// Parse an unordered list item, returning text and indentation info
+/// - Parameters:
+///   - line: The original line (used to calculate indent level)
+///   - trimmed: Pre-trimmed version of the line (optimization to avoid redundant trimming)
+@inline(__always)
+private func parseUnorderedListItemWithIndent(_ line: Substring, trimmed: Substring? = nil) -> ParsedListItem? {
+    let indentLevel = calculateIndentLevel(line)
+    let content = trimmed ?? line.trimmingWhitespace()
+
+    guard content.count >= 2 else { return nil }
+    let first = content.first!
+    let secondIndex = content.index(after: content.startIndex)
+
+    // Accept any whitespace character after the bullet, not just ASCII space
+    if (first == "-" || first == "*" || first == "+") && content[secondIndex].isWhitespace {
+        // Skip any additional whitespace
+        var textStart = content.index(after: secondIndex)
+        while textStart < content.endIndex && content[textStart].isWhitespace {
+            textStart = content.index(after: textStart)
+        }
+        let text = content[textStart...]
+        return ParsedListItem(text: text, indentLevel: indentLevel, isOrdered: false, originalNumber: nil)
     }
     return nil
 }
 
-/// Fast ordered list item parser without regex
+/// Parse an ordered list item, returning text, indentation info, and original number
+/// - Parameters:
+///   - line: The original line (used to calculate indent level)
+///   - trimmed: Pre-trimmed version of the line (optimization to avoid redundant trimming)
 @inline(__always)
-private func parseOrderedListItemFast(_ line: Substring) -> Substring? {
-    var index = line.startIndex
+private func parseOrderedListItemWithIndent(_ line: Substring, trimmed: Substring? = nil) -> ParsedListItem? {
+    let indentLevel = calculateIndentLevel(line)
+    let content = trimmed ?? line.trimmingWhitespace()
 
-    // Skip digits
-    while index < line.endIndex && line[index].isNumber {
-        index = line.index(after: index)
+    var index = content.startIndex
+    var numberStr = ""
+
+    // Skip digits and collect them
+    while index < content.endIndex && content[index].isNumber {
+        numberStr.append(content[index])
+        index = content.index(after: index)
     }
 
-    // Check for ". "
-    guard index > line.startIndex,
-        index < line.endIndex,
-        line[index] == "."
+    // Check for "." followed by whitespace (or ")" for alternate syntax)
+    guard index > content.startIndex,
+        index < content.endIndex,
+        (content[index] == "." || content[index] == ")")
     else { return nil }
 
-    let afterDot = line.index(after: index)
-    guard afterDot < line.endIndex, line[afterDot] == " " else { return nil }
+    let afterDot = content.index(after: index)
+    // Accept any whitespace character after the dot, not just ASCII space
+    guard afterDot < content.endIndex, content[afterDot].isWhitespace else { return nil }
 
-    let textStart = line.index(after: afterDot)
-    return line[textStart...]
-}
+    // Skip any additional whitespace
+    var textStart = content.index(after: afterDot)
+    while textStart < content.endIndex && content[textStart].isWhitespace {
+        textStart = content.index(after: textStart)
+    }
 
-// Legacy functions for compatibility
-private func isHorizontalRule(_ line: String) -> Bool {
-    isHorizontalRuleFast(Substring(line))
-}
+    let originalNumber = Int(numberStr) ?? 1
 
-private func parseHeading(_ line: String) -> (level: Int, text: String)? {
-    parseHeadingFast(Substring(line))
-}
-
-private func parseUnorderedListItem(_ line: String) -> String? {
-    guard let result = parseUnorderedListItemFast(Substring(line)) else { return nil }
-    return String(result)
-}
-
-private func parseOrderedListItem(_ line: String) -> String? {
-    guard let result = parseOrderedListItemFast(Substring(line)) else { return nil }
-    return String(result)
+    return ParsedListItem(
+        text: content[textStart...],
+        indentLevel: indentLevel,
+        isOrdered: true,
+        originalNumber: originalNumber
+    )
 }
 
 private func extractStandaloneImageKind(from text: String) -> MessageBlock.Kind? {
@@ -1074,6 +1174,14 @@ extension String {
             1. Step one
             2. Step two
             3. Step three
+
+            Nested list (ordered with unordered children):
+            1. Shang Dynasty (c. 1600–1046 BCE)
+              - First historically documented dynasty.
+              - Known for bronze vessels and oracle bones.
+            2. Zhou Dynasty (1046–256 BCE)
+              - Founded by King Wu.
+              - Introduced the "Mandate of Heaven".
 
             Loose ordered list (with blank lines):
 

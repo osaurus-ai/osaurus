@@ -15,7 +15,7 @@ enum SelectableTextBlock: Equatable {
     case paragraph(String)
     case heading(level: Int, text: String)
     case blockquote(String)
-    case listItem(text: String, index: Int, ordered: Bool)
+    case listItem(text: String, index: Int, ordered: Bool, indentLevel: Int)
 }
 
 // MARK: - Selectable Text View
@@ -332,7 +332,7 @@ struct SelectableTextView: NSViewRepresentable {
             )
             result.append(attrString)
 
-        case .listItem(let text, let itemIndex, let ordered):
+        case .listItem(let text, let itemIndex, let ordered, let indentLevel):
             let bulletWidth: CGFloat = ordered ? 28 : 20
             let bullet: String
             if ordered {
@@ -361,12 +361,13 @@ struct SelectableTextView: NSViewRepresentable {
             let itemAttr = renderInlineMarkdown(text, fontSize: bodyFontSize, weight: .regular)
             fullLine.append(itemAttr)
 
-            // Apply paragraph style with hanging indent
+            // Apply paragraph style with hanging indent, accounting for nesting level
             applyListParagraphStyle(
                 to: fullLine,
                 lineSpacing: 4,
                 spacingBefore: isFirst ? 0 : spacingBefore(block: block, previousBlock: previousBlock),
-                bulletWidth: bulletWidth
+                bulletWidth: bulletWidth,
+                indentLevel: indentLevel
             )
             result.append(fullLine)
         }
@@ -399,20 +400,25 @@ struct SelectableTextView: NSViewRepresentable {
         to attrString: NSMutableAttributedString,
         lineSpacing: CGFloat,
         spacingBefore: CGFloat,
-        bulletWidth: CGFloat
+        bulletWidth: CGFloat,
+        indentLevel: Int = 0
     ) {
         let paragraphStyle = NSMutableParagraphStyle()
         paragraphStyle.lineSpacing = lineSpacing
         paragraphStyle.paragraphSpacingBefore = spacingBefore
 
+        // Base indent for the list, plus additional indent per nesting level
+        let baseIndent: CGFloat = 24
+        let indentPerLevel: CGFloat = 20
+        let totalIndent = baseIndent + (CGFloat(indentLevel) * indentPerLevel)
+
         // Hanging indent: bullet at left margin, text indented
-        let indent: CGFloat = 24  // Left margin for the whole list
-        paragraphStyle.firstLineHeadIndent = indent
-        paragraphStyle.headIndent = indent + bulletWidth  // Wrap text aligns with first line text
+        paragraphStyle.firstLineHeadIndent = totalIndent
+        paragraphStyle.headIndent = totalIndent + bulletWidth  // Wrap text aligns with first line text
 
         // Tab stop for text after bullet
         paragraphStyle.tabStops = [
-            NSTextTab(textAlignment: .left, location: indent + bulletWidth, options: [:])
+            NSTextTab(textAlignment: .left, location: totalIndent + bulletWidth, options: [:])
         ]
 
         attrString.addAttribute(
