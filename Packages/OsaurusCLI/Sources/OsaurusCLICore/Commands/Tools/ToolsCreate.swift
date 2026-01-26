@@ -213,8 +213,6 @@ public struct ToolsCreate {
             jobs:
               release:
                 uses: dinoki-ai/osaurus-tools/.github/workflows/build-plugin.yml@main
-                with:
-                  plugin_id: dev.example.\(name)
                 secrets: inherit
             """
         try? releaseYml.write(to: workflowsDir.appendingPathComponent("release.yml"), atomically: true, encoding: .utf8)
