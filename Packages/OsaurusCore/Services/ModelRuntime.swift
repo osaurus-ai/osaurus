@@ -68,7 +68,7 @@ actor ModelRuntime {
     func unload(name: String) {
         // Remove from cache within autoreleasepool to encourage immediate ARC deallocation
         autoreleasepool {
-            modelCache.removeValue(forKey: name)
+            _ = modelCache.removeValue(forKey: name)
         }
         loadingTasks[name]?.cancel()
         loadingTasks.removeValue(forKey: name)
@@ -76,7 +76,7 @@ actor ModelRuntime {
 
         // Synchronize GPU stream to ensure all operations complete, then release Metal buffer pool
         Stream.gpu.synchronize()
-        GPU.clearCache()
+        MLX.Memory.clearCache()
     }
 
     func clearAll() {
@@ -90,7 +90,7 @@ actor ModelRuntime {
 
         // Synchronize GPU stream to ensure all operations complete, then release Metal buffer pool
         Stream.gpu.synchronize()
-        GPU.clearCache()
+        MLX.Memory.clearCache()
     }
 
     func warmUp(modelId: String, modelName: String, prefillChars: Int = 0, maxTokens: Int = 1) async {

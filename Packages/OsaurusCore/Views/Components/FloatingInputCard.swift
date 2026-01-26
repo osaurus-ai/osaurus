@@ -188,10 +188,8 @@ struct FloatingInputCard: View {
         .onAppear {
             localText = text
 
-            // Focus first with minimal delay for window readiness (1 frame at 60fps)
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.016) {
-                isFocused = true
-            }
+            // Focus immediately when view appears
+            isFocused = true
 
             // Load voice config (cached after first load)
             loadVoiceConfig()
