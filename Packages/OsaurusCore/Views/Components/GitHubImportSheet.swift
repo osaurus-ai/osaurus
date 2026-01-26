@@ -132,7 +132,8 @@ struct GitHubImportSheet: View {
         switch importState {
         case .urlInput: return "Paste a repository URL to get started"
         case .loading: return "Fetching repository information"
-        case .skillSelection(let result): return "\(result.skills.count) skills available"
+        case .skillSelection(let result):
+            return "\(result.skills.count) skill\(result.skills.count == 1 ? "" : "s") available"
         case .importing(let progress, let total): return "Importing skill \(progress) of \(total)"
         case .error(let error): return error.localizedDescription
         }
@@ -344,7 +345,7 @@ struct GitHubImportSheet: View {
 
                 Spacer()
 
-                Text("\(result.skills.count) skills")
+                Text("\(result.skills.count) skill\(result.skills.count == 1 ? "" : "s")")
                     .font(.system(size: 11))
                     .foregroundColor(theme.tertiaryText)
             }
@@ -478,7 +479,7 @@ struct GitHubImportSheet: View {
                     .keyboardShortcut(.return, modifiers: .command)
 
             case .skillSelection:
-                Button("Import \(selectedSkillPaths.count) Skills") {
+                Button("Import \(selectedSkillPaths.count) Skill\(selectedSkillPaths.count == 1 ? "" : "s")") {
                     if case .skillSelection(let result) = importState {
                         importSelectedSkills(from: result)
                     }
