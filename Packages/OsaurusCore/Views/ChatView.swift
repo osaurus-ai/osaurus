@@ -201,22 +201,29 @@ final class ChatSession: ObservableObject {
     /// Quick prewarm with just local models (no network wait)
     /// Call this early at launch so first window has something to show immediately
     public static func prewarmLocalModelsOnly() {
-        var options: [ModelOption] = []
+        Task {
+            // Run discovery in background
+            let localModels = await Task.detached(priority: .userInitiated) {
+                ModelManager.discoverLocalModels()
+            }.value
 
-        // Foundation model (instant check)
-        if AppConfiguration.shared.foundationModelAvailable {
-            options.append(.foundation())
+            await MainActor.run {
+                var options: [ModelOption] = []
+
+                // Foundation model (instant check)
+                if AppConfiguration.shared.foundationModelAvailable {
+                    options.append(.foundation())
+                }
+
+                for model in localModels {
+                    options.append(.fromMLXModel(model))
+                }
+
+                // Cache what we have - remote models will be added by prewarmModelCache later
+                cachedModelOptions = options
+                cacheValid = true
+            }
         }
-
-        // Local models (uses ModelManager's cache, fast after first scan)
-        let localModels = ModelManager.discoverLocalModels()
-        for model in localModels {
-            options.append(.fromMLXModel(model))
-        }
-
-        // Cache what we have - remote models will be added by prewarmModelCache later
-        cachedModelOptions = options
-        cacheValid = true
     }
 
     func refreshModelOptions() async {
@@ -1883,6 +1890,8 @@ struct ChatView: View {
 
         // Capture windowId for use in closure
         let capturedWindowId = windowState.windowId
+        // Capture session to check overlay state
+        let capturedSession = windowState.session
 
         // Monitor for KeyDown events in the local event loop
         keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
@@ -1896,8 +1905,9 @@ struct ChatView: View {
                     return event
                 }
 
-                // Check if voice input is active
-                if WhisperKitService.shared.isRecording {
+                // Check if voice input is active AND overlay is visible
+                // We check overlay visibility to avoid trapping Esc if recording is stuck/zombie but UI is hidden
+                if WhisperKitService.shared.isRecording && capturedSession.showVoiceOverlay {
                     // Stage 1: Cancel voice input
                     print("[ChatView] Esc pressed: Cancelling voice input")
                     Task {
@@ -1909,6 +1919,16 @@ struct ChatView: View {
                 } else {
                     // Stage 2: Close chat window
                     print("[ChatView] Esc pressed: Closing chat window")
+
+                    // Also ensure we cleanup any zombie recording if it exists (hidden but recording)
+                    if WhisperKitService.shared.isRecording {
+                        print("[ChatView] Cleaning up zombie voice recording on window close")
+                        Task {
+                            _ = await WhisperKitService.shared.stopStreamingTranscription()
+                            WhisperKitService.shared.clearTranscription()
+                        }
+                    }
+
                     Task { @MainActor in
                         ChatWindowManager.shared.closeWindow(id: capturedWindowId)
                     }
