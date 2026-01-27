@@ -53,6 +53,9 @@ final class PluginRepositoryService: ObservableObject {
     /// Error from last refresh attempt
     @Published private(set) var lastError: String?
 
+    /// Plugin ID that needs secrets configuration after installation (triggers secrets sheet in UI)
+    @Published var pendingSecretsPlugin: String?
+
     /// Interval for background refresh (4 hours)
     private let refreshInterval: TimeInterval = 4 * 60 * 60
 
@@ -148,6 +151,9 @@ final class PluginRepositoryService: ObservableObject {
             NotificationCenter.default.post(name: .toolsListChanged, object: nil)
 
             updateUpdatesCount()
+
+            // Check if the installed plugin requires secrets configuration
+            checkForPendingSecrets(pluginId: pluginId)
         } catch {
             plugins[index].isInstalling = false
             throw error
@@ -197,6 +203,9 @@ final class PluginRepositoryService: ObservableObject {
             try fm.removeItem(at: pluginDir)
         }
 
+        // Clean up any secrets stored in Keychain for this plugin
+        ToolSecretsKeychain.deleteAllSecrets(for: pluginId)
+
         // Update state to ensure UI reflects uninstallation immediately
         if let index = plugins.firstIndex(where: { $0.spec.plugin_id == pluginId }) {
             plugins[index].installedVersion = nil
@@ -243,5 +252,26 @@ final class PluginRepositoryService: ObservableObject {
 
     private func updateUpdatesCount() {
         updatesAvailableCount = plugins.filter { $0.hasUpdate }.count
+    }
+
+    /// Check if a newly installed plugin requires secrets and set pendingSecretsPlugin if needed
+    private func checkForPendingSecrets(pluginId: String) {
+        // Get the loaded plugin to check for secrets
+        guard let loadedPlugin = PluginManager.shared.loadedPlugins.first(where: { $0.id == pluginId }),
+            let secrets = loadedPlugin.manifest.secrets,
+            !secrets.isEmpty
+        else {
+            return
+        }
+
+        // Check if any required secrets are missing
+        let missingRequired = secrets.filter { spec in
+            spec.required && !ToolSecretsKeychain.hasSecret(id: spec.id, for: pluginId)
+        }
+
+        if !missingRequired.isEmpty {
+            // Set pending secrets plugin to trigger the secrets sheet in UI
+            pendingSecretsPlugin = pluginId
+        }
     }
 }

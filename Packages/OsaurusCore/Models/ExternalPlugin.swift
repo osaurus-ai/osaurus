@@ -63,6 +63,31 @@ public struct PluginManifest: Decodable, Sendable {
         public let requirements: [String]?
         public let permission_policy: String?
     }
+
+    /// Specification for a secret that a plugin requires (e.g., API key)
+    public struct SecretSpec: Decodable, Sendable {
+        /// Unique identifier for the secret (e.g., "api_key")
+        public let id: String
+        /// Display label for the secret (e.g., "API Key")
+        public let label: String
+        /// Rich text description with markdown links (e.g., "Get your key from [Example](https://example.com)")
+        public let description: String?
+        /// Whether this secret is required for the plugin to function
+        public let required: Bool
+        /// Optional URL to the settings page where users can obtain the secret
+        public let url: String?
+
+        public init(id: String, label: String, description: String? = nil, required: Bool = true, url: String? = nil) {
+            self.id = id
+            self.label = label
+            self.description = description
+            self.required = required
+            self.url = url
+        }
+    }
+
+    /// Plugin-level secrets (e.g., API keys, tokens)
+    public let secrets: [SecretSpec]?
 }
 
 final class ExternalPlugin: @unchecked Sendable {
@@ -128,5 +153,18 @@ final class ExternalPlugin: @unchecked Sendable {
         }
 
         return String(cString: resPtr)
+    }
+
+    /// Returns all configured secrets for this plugin from the Keychain
+    /// - Returns: Dictionary mapping secret IDs to their values
+    func resolvedSecrets() -> [String: String] {
+        return ToolSecretsKeychain.getAllSecrets(for: manifest.plugin_id)
+    }
+
+    /// Checks if all required secrets are configured
+    /// - Returns: True if all required secrets have values in the Keychain
+    func hasAllRequiredSecrets() -> Bool {
+        guard let specs = manifest.secrets else { return true }
+        return ToolSecretsKeychain.hasAllRequiredSecrets(specs: specs, for: manifest.plugin_id)
     }
 }

@@ -191,6 +191,88 @@ When a tool with system permission requirements is executed:
 2. If any are missing, execution fails with a clear error message
 3. Users can grant permissions via Settings → System Permissions or when prompted by the tool
 
+### Plugin Secrets
+
+Plugins that require API keys or other credentials can declare them in the manifest. Osaurus stores these securely in the system Keychain and prompts users to configure them during installation.
+
+**Declaring Secrets in Manifest:**
+
+```json
+{
+  "plugin_id": "com.acme.weather",
+  "version": "1.0.0",
+  "description": "Weather plugin",
+  "secrets": [
+    {
+      "id": "api_key",
+      "label": "OpenWeather API Key",
+      "description": "Get your API key from [OpenWeather](https://openweathermap.org/api)",
+      "required": true,
+      "url": "https://openweathermap.org/api"
+    },
+    {
+      "id": "backup_key",
+      "label": "Backup API Key",
+      "description": "Optional backup key for failover",
+      "required": false
+    }
+  ],
+  "capabilities": {
+    "tools": [...]
+  }
+}
+```
+
+**Secret Specification Fields:**
+
+| Field         | Type    | Required | Description                                                      |
+| ------------- | ------- | -------- | ---------------------------------------------------------------- |
+| `id`          | string  | Yes      | Unique identifier for the secret (e.g., `"api_key"`)             |
+| `label`       | string  | Yes      | Human-readable label shown in the UI                             |
+| `description` | string  | No       | Rich text description (supports markdown links)                  |
+| `required`    | boolean | Yes      | Whether the secret is required for the plugin to function        |
+| `url`         | string  | No       | URL to the settings page where users can obtain the secret       |
+
+**Accessing Secrets in Tools:**
+
+When a tool is invoked, Osaurus automatically injects configured secrets into the payload under the `_secrets` key:
+
+```swift
+private struct WeatherTool {
+    let name = "get_weather"
+    
+    struct Args: Decodable {
+        let location: String
+        let _secrets: [String: String]?  // Secrets are injected here
+    }
+    
+    func run(args: String) -> String {
+        guard let data = args.data(using: .utf8),
+              let input = try? JSONDecoder().decode(Args.self, from: data)
+        else {
+            return "{\"error\": \"Invalid arguments\"}"
+        }
+        
+        // Get the API key from secrets
+        guard let apiKey = input._secrets?["api_key"] else {
+            return "{\"error\": \"API key not configured. Please configure secrets in Osaurus settings.\"}"
+        }
+        
+        // Use the API key
+        let result = fetchWeather(location: input.location, apiKey: apiKey)
+        return "{\"weather\": \"\(result)\"}"
+    }
+}
+```
+
+**User Experience:**
+
+1. When a plugin with secrets is installed, Osaurus prompts the user to configure them
+2. If required secrets are missing, a "Needs API Key" badge appears on the plugin card
+3. Users can configure or edit secrets anytime via the plugin menu → "Configure Secrets"
+4. Secrets are stored securely in the macOS Keychain
+5. Secrets are automatically cleaned up when the plugin is uninstalled
+
 ### Invocation
 
 When Osaurus needs to execute a capability, it calls `invoke`:
@@ -198,6 +280,7 @@ When Osaurus needs to execute a capability, it calls `invoke`:
 - `type`: e.g. `"tool"`
 - `id`: e.g. `"echo_tool"`
 - `payload`: JSON string arguments (e.g. `{"message": "hello"}`)
+  - If the plugin has secrets configured, they are injected under the `_secrets` key
 
 The plugin returns a JSON string response (allocated; host frees it).
 

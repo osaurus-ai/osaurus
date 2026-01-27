@@ -32,6 +32,13 @@ struct ToolsManagerView: View {
     @State private var remoteProviderTools: [(provider: MCPProvider, tools: [ToolRegistry.ToolEntry])] = []
     @State private var pluginsWithMissingPermissionsCount: Int = 0
 
+    // Secrets sheet state for post-installation prompt
+    @State private var showSecretsSheet: Bool = false
+    @State private var secretsSheetPluginId: String?
+    @State private var secretsSheetPluginName: String?
+    @State private var secretsSheetPluginVersion: String?
+    @State private var secretsSheetSecrets: [PluginManifest.SecretSpec] = []
+
     var body: some View {
         VStack(spacing: 0) {
             // Header with tabs and search
@@ -86,6 +93,44 @@ struct ToolsManagerView: View {
             reload()
             Task { await updateFilteredLists() }
         }
+        .onChange(of: repoService.pendingSecretsPlugin) { _, newValue in
+            // Show secrets sheet when a plugin with missing secrets is installed
+            if let pluginId = newValue {
+                showSecretsSheetForPlugin(pluginId: pluginId)
+                // Clear the pending state
+                repoService.pendingSecretsPlugin = nil
+            }
+        }
+        .sheet(isPresented: $showSecretsSheet) {
+            if let pluginId = secretsSheetPluginId {
+                ToolSecretsSheet(
+                    pluginId: pluginId,
+                    pluginName: secretsSheetPluginName ?? pluginId,
+                    pluginVersion: secretsSheetPluginVersion,
+                    secrets: secretsSheetSecrets,
+                    onSave: {
+                        reload()
+                        Task { await updateFilteredLists() }
+                    }
+                )
+            }
+        }
+    }
+
+    /// Show the secrets sheet for a specific plugin
+    private func showSecretsSheetForPlugin(pluginId: String) {
+        guard let loadedPlugin = PluginManager.shared.loadedPlugins.first(where: { $0.id == pluginId }),
+            let secrets = loadedPlugin.manifest.secrets,
+            !secrets.isEmpty
+        else {
+            return
+        }
+
+        secretsSheetPluginId = pluginId
+        secretsSheetPluginName = loadedPlugin.manifest.name ?? pluginId
+        secretsSheetPluginVersion = loadedPlugin.manifest.version
+        secretsSheetSecrets = secrets
+        showSecretsSheet = true
     }
 
     // MARK: - Header Bar
@@ -826,12 +871,30 @@ private struct InstalledPluginCard: View {
     @State private var isHovering = false
     @State private var errorMessage: String?
     @State private var showError: Bool = false
+    @State private var showSecretsSheet: Bool = false
 
     // Cache permission status to avoid re-calculation in body
     @State private var missingSystemPermissions: [SystemPermission] = []
 
+    // Cache secrets status
+    @State private var hasMissingSecrets: Bool = false
+
     private var hasMissingPermissions: Bool {
         !missingSystemPermissions.isEmpty
+    }
+
+    /// Get the secrets defined by this plugin (from loaded manifest or spec)
+    private var pluginSecrets: [PluginManifest.SecretSpec] {
+        // Try to get from loaded plugin first
+        if let loadedPlugin = PluginManager.shared.loadedPlugins.first(where: { $0.id == plugin.spec.plugin_id }) {
+            return loadedPlugin.manifest.secrets ?? []
+        }
+        // Fallback to spec (might not have secrets if not loaded)
+        return []
+    }
+
+    private var hasSecrets: Bool {
+        !pluginSecrets.isEmpty
     }
 
     var body: some View {
@@ -901,6 +964,8 @@ private struct InstalledPluginCard: View {
 
                                 if plugin.hasLoadError {
                                     loadErrorBadge
+                                } else if hasMissingSecrets {
+                                    secretsWarningBadge
                                 } else if hasMissingPermissions {
                                     permissionWarningBadge
                                 } else if plugin.hasUpdate {
@@ -992,6 +1057,16 @@ private struct InstalledPluginCard: View {
                                 Label("Retry Loading", systemImage: "arrow.clockwise")
                             }
                         }
+                        if hasSecrets {
+                            Button {
+                                showSecretsSheet = true
+                            } label: {
+                                Label(
+                                    hasMissingSecrets ? "Configure Secrets" : "Edit Secrets",
+                                    systemImage: "key.fill"
+                                )
+                            }
+                        }
                         Button(role: .destructive) {
                             uninstall()
                             onChange()  // Trigger immediate reload after uninstall
@@ -1039,6 +1114,56 @@ private struct InstalledPluginCard: View {
                 .background(
                     RoundedRectangle(cornerRadius: 8)
                         .fill(Color.red.opacity(0.08))
+                )
+                .transition(.opacity.combined(with: .move(edge: .top)))
+            }
+
+            // Secrets warning banner
+            if isExpanded && hasMissingSecrets && !plugin.hasLoadError {
+                Divider()
+                    .padding(.vertical, 4)
+
+                HStack(spacing: 12) {
+                    Image(systemName: "key.fill")
+                        .font(.system(size: 16))
+                        .foregroundColor(theme.warningColor)
+
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("API Keys Required")
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundColor(theme.primaryText)
+                        Text("This plugin requires credentials to function properly.")
+                            .font(.system(size: 11))
+                            .foregroundColor(theme.secondaryText)
+                    }
+
+                    Spacer()
+
+                    Button(action: { showSecretsSheet = true }) {
+                        HStack(spacing: 4) {
+                            Image(systemName: "key.fill")
+                                .font(.system(size: 10))
+                            Text("Configure")
+                                .font(.system(size: 12, weight: .semibold))
+                        }
+                        .foregroundColor(.white)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 8)
+                        .background(
+                            RoundedRectangle(cornerRadius: 6)
+                                .fill(theme.accentColor)
+                        )
+                    }
+                    .buttonStyle(PlainButtonStyle())
+                }
+                .padding(12)
+                .background(
+                    RoundedRectangle(cornerRadius: 10)
+                        .fill(theme.warningColor.opacity(0.08))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 10)
+                                .stroke(theme.warningColor.opacity(0.2), lineWidth: 1)
+                        )
                 )
                 .transition(.opacity.combined(with: .move(edge: .top)))
             }
@@ -1148,14 +1273,28 @@ private struct InstalledPluginCard: View {
         }
         .onAppear {
             updatePermissions()
+            updateSecretsStatus()
         }
         .onChange(of: tools.map { $0.id }) { _, _ in
             updatePermissions()
+            updateSecretsStatus()
         }
         .alert("Error", isPresented: $showError) {
             Button("OK", role: .cancel) {}
         } message: {
             Text(errorMessage ?? "Unknown error")
+        }
+        .sheet(isPresented: $showSecretsSheet) {
+            ToolSecretsSheet(
+                pluginId: plugin.spec.plugin_id,
+                pluginName: plugin.spec.name ?? plugin.spec.plugin_id,
+                pluginVersion: plugin.installedVersion?.description,
+                secrets: pluginSecrets,
+                onSave: {
+                    updateSecretsStatus()
+                    onChange()
+                }
+            )
         }
     }
 
@@ -1172,6 +1311,18 @@ private struct InstalledPluginCard: View {
             }
         }
         missingSystemPermissions = Array(missing).sorted { $0.rawValue < $1.rawValue }
+    }
+
+    private func updateSecretsStatus() {
+        let secrets = pluginSecrets
+        if secrets.isEmpty {
+            hasMissingSecrets = false
+        } else {
+            hasMissingSecrets = !ToolSecretsKeychain.hasAllRequiredSecrets(
+                specs: secrets,
+                for: plugin.spec.plugin_id
+            )
+        }
     }
 
     private var cardBackground: some View {
@@ -1229,6 +1380,22 @@ private struct InstalledPluginCard: View {
             Image(systemName: "lock.shield")
                 .font(.system(size: 10))
             Text("Needs Permission")
+                .font(.system(size: 10, weight: .semibold))
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 3)
+        .background(
+            Capsule()
+                .fill(theme.warningColor.opacity(0.15))
+        )
+        .foregroundColor(theme.warningColor)
+    }
+
+    private var secretsWarningBadge: some View {
+        HStack(spacing: 4) {
+            Image(systemName: "key.fill")
+                .font(.system(size: 10))
+            Text("Needs API Key")
                 .font(.system(size: 10, weight: .semibold))
         }
         .padding(.horizontal, 8)
