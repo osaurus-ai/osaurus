@@ -33,7 +33,9 @@ struct CapabilitiesSelectorView: View {
     // MARK: - Tool Data
 
     private var tools: [ToolRegistry.ToolEntry] {
+        // Filter out internal tools (select_capabilities is always available, not user-toggleable)
         toolRegistry.listTools(withOverrides: toolOverrides)
+            .filter { $0.name != "select_capabilities" }
     }
 
     private var toolOverrides: [String: Bool]? {
