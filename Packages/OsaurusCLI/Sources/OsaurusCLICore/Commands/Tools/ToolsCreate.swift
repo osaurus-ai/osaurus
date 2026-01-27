@@ -78,12 +78,18 @@ public struct ToolsCreate {
                 func run(args: String) -> String {
                     struct Args: Decodable {
                         let name: String
+                        // Secrets are automatically injected by Osaurus under the _secrets key
+                        let _secrets: [String: String]?
                     }
                     guard let data = args.data(using: .utf8),
                           let input = try? JSONDecoder().decode(Args.self, from: data)
                     else {
                         return "{\\"error\\": \\"Invalid arguments\\"}"
                     }
+                    
+                    // Example: Access a configured secret (if your plugin declares secrets in manifest)
+                    // let apiKey = input._secrets?["api_key"] ?? "no-key"
+                    
                     return "{\\"message\\": \\"Hello, \\(input.name)!\\"}"
                 }
             }
@@ -143,6 +149,12 @@ public struct ToolsCreate {
                 
                 api.get_manifest = { ctxPtr in
                     // Manifest JSON matching new spec
+                    // NOTE: To require API keys or other secrets, add a "secrets" array at the top level.
+                    // Example:
+                    //   "secrets": [
+                    //     {"id": "api_key", "label": "API Key", "description": "Your API key", "required": true, "url": "https://example.com/api"}
+                    //   ],
+                    // Secrets are injected into tool payloads under the "_secrets" key.
                     let manifest = \"\"\"
                     {
                       "plugin_id": "dev.example.\(name)",
@@ -480,6 +492,106 @@ public struct ToolsCreate {
             }
             ```
             """)
+
+            ## Using Secrets (API Keys)
+
+            If your plugin needs API keys or other credentials, declare them in the manifest and access them via the `_secrets` key in the payload.
+
+            ### Step 1: Declare Secrets in Manifest
+
+            Add a `secrets` array at the top level of your manifest:
+
+            ```json
+            {
+              "plugin_id": "dev.example.\(name)",
+              "name": "\(displayName)",
+              "version": "0.1.0",
+              "secrets": [
+                {
+                  "id": "api_key",
+                  "label": "API Key",
+                  "description": "Get your key from [Example](https://example.com/api)",
+                  "required": true,
+                  "url": "https://example.com/api"
+                }
+              ],
+              "capabilities": { ... }
+            }
+            ```
+
+            ### Step 2: Access Secrets in Your Tool
+
+            \(isSwift ? """
+            ```swift
+            private struct MyAPITool {
+                let name = "call_api"
+                
+                struct Args: Decodable {
+                    let query: String
+                    let _secrets: [String: String]?  // Secrets injected by Osaurus
+                }
+                
+                func run(args: String) -> String {
+                    guard let data = args.data(using: .utf8),
+                          let input = try? JSONDecoder().decode(Args.self, from: data)
+                    else {
+                        return "{\\"error\\": \\"Invalid arguments\\"}"
+                    }
+                    
+                    // Get the API key
+                    guard let apiKey = input._secrets?["api_key"] else {
+                        return "{\\"error\\": \\"API key not configured\\"}"
+                    }
+                    
+                    // Use the API key in your request
+                    let result = makeAPICall(apiKey: apiKey, query: input.query)
+                    return "{\\"result\\": \\"\\(result)\\"}"
+                }
+            }
+            ```
+            """ : """
+            ```rust
+            fn run(&self, args: &str) -> String {
+                #[derive(Deserialize)]
+                struct Args {
+                    query: String,
+                    _secrets: Option<HashMap<String, String>>,
+                }
+                
+                let input: Args = match serde_json::from_str(args) {
+                    Ok(v) => v,
+                    Err(_) => return r#"{"error": "Invalid arguments"}"#.to_string(),
+                };
+                
+                // Get the API key
+                let api_key = match input._secrets.as_ref().and_then(|s| s.get("api_key")) {
+                    Some(key) => key,
+                    None => return r#"{"error": "API key not configured"}"#.to_string(),
+                };
+                
+                // Use the API key
+                let result = self.make_api_call(api_key, &input.query);
+                format!(r#"{{"result": "{}"}}"#, result)
+            }
+            ```
+            """)
+
+            ### Secret Fields
+
+            | Field | Type | Required | Description |
+            |-------|------|----------|-------------|
+            | `id` | string | Yes | Unique key (e.g., "api_key") |
+            | `label` | string | Yes | Display name in UI |
+            | `description` | string | No | Help text (supports markdown links) |
+            | `required` | boolean | Yes | Whether the secret is required |
+            | `url` | string | No | Link to get the secret |
+
+            ### User Experience
+
+            - Users are prompted to configure secrets when installing plugins that require them
+            - A "Needs API Key" badge appears if required secrets are missing
+            - Users can edit secrets anytime via the plugin menu
+            - Secrets are stored securely in the macOS Keychain
 
             ## Porting Existing Tools
 
