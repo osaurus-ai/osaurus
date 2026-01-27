@@ -278,6 +278,9 @@ public struct ToolsCreate {
             - CI extracts the manifest from the built dylib automatically
             """
         try? readme.write(to: dir.appendingPathComponent("README.md"), atomically: true, encoding: .utf8)
+
+        // CLAUDE.md (AI agent guidance)
+        createClaudeMd(name: name, displayName: displayName, dir: dir, language: "swift")
     }
 
     private static func createRustPlugin(name: String) {
@@ -292,5 +295,541 @@ public struct ToolsCreate {
             `osaurus_plugin_entry` that returns the generic ABI table.
             """
         try? readme.write(to: dir.appendingPathComponent("README.md"), atomically: true, encoding: .utf8)
+
+        // Generate display name for CLAUDE.md
+        let displayName = name.split(separator: "-").map { $0.prefix(1).uppercased() + $0.dropFirst() }.joined(
+            separator: " "
+        )
+        createClaudeMd(name: name, displayName: displayName, dir: dir, language: "rust")
+    }
+
+    // MARK: - AI Agent Guidance
+
+    private static func createClaudeMd(name: String, displayName: String, dir: URL, language: String) {
+        let moduleName = name.replacingOccurrences(of: "-", with: "_")
+        let isSwift = language == "swift"
+
+        let claudeMd = """
+            # \(displayName) - Osaurus Plugin
+
+            This is an Osaurus plugin project. Use this guide to develop, test, and submit the plugin.
+
+            ## Project Structure
+
+            ```
+            \(name)/
+            \(isSwift ? """
+            ├── Package.swift              # Swift Package Manager configuration
+            ├── Sources/
+            │   └── \(moduleName)/
+            │       └── Plugin.swift       # Main plugin implementation
+            """ : """
+            ├── Cargo.toml                 # Rust package configuration
+            ├── src/
+            │   └── lib.rs                 # Main plugin implementation
+            """)
+            ├── README.md                  # User-facing documentation
+            ├── CLAUDE.md                  # This file (AI guidance)
+            └── .github/
+                └── workflows/
+                    └── release.yml        # CI/CD for releases
+            ```
+
+            ## Architecture Overview
+
+            Osaurus plugins use a C ABI interface. The plugin exports a single entry point (`osaurus_plugin_entry`) that returns a function table with:
+
+            - `init()` - Initialize plugin, return context pointer
+            - `destroy(ctx)` - Clean up resources
+            - `get_manifest(ctx)` - Return JSON describing plugin capabilities
+            - `invoke(ctx, type, id, payload)` - Execute a tool with JSON payload
+            - `free_string(s)` - Free strings returned to host
+
+            ## Adding New Tools
+
+            ### Step 1: Define the Tool Structure
+
+            \(isSwift ? """
+            ```swift
+            private struct MyTool {
+                let name = "my_tool"  // Must match manifest id
+                let description = "What this tool does"
+                
+                struct Args: Decodable {
+                    let inputParam: String
+                    let optionalParam: String?
+                }
+                
+                func run(args: String) -> String {
+                    // 1. Parse JSON input
+                    guard let data = args.data(using: .utf8),
+                          let input = try? JSONDecoder().decode(Args.self, from: data) else {
+                        return "{\\"error\\": \\"Invalid arguments\\"}"
+                    }
+                    
+                    // 2. Execute tool logic
+                    let result = processInput(input.inputParam)
+                    
+                    // 3. Return JSON response
+                    return "{\\"result\\": \\"\\(result)\\"}"
+                }
+            }
+            ```
+            """ : """
+            ```rust
+            struct MyTool;
+
+            impl MyTool {
+                fn run(&self, args: &str) -> String {
+                    // 1. Parse JSON input
+                    let input: serde_json::Value = match serde_json::from_str(args) {
+                        Ok(v) => v,
+                        Err(_) => return r#"{"error": "Invalid arguments"}"#.to_string(),
+                    };
+                    
+                    // 2. Execute tool logic
+                    let result = self.process_input(&input);
+                    
+                    // 3. Return JSON response
+                    format!(r#"{{"result": "{}"}}"#, result)
+                }
+            }
+            ```
+            """)
+
+            ### Step 2: Add Tool to PluginContext
+
+            \(isSwift ? """
+            ```swift
+            private class PluginContext {
+                let helloTool = HelloTool()
+                let myTool = MyTool()  // Add your new tool
+            }
+            ```
+            """ : """
+            ```rust
+            struct PluginContext {
+                hello_tool: HelloTool,
+                my_tool: MyTool,  // Add your new tool
+            }
+            ```
+            """)
+
+            ### Step 3: Register in Manifest
+
+            Add the tool to the `capabilities.tools` array in `get_manifest()`:
+
+            ```json
+            {
+              "id": "my_tool",
+              "description": "What this tool does (shown to users)",
+              "parameters": {
+                "type": "object",
+                "properties": {
+                  "inputParam": {
+                    "type": "string",
+                    "description": "Description of this parameter"
+                  },
+                  "optionalParam": {
+                    "type": "string",
+                    "description": "Optional parameter"
+                  }
+                },
+                "required": ["inputParam"]
+              },
+              "requirements": [],
+              "permission_policy": "ask"
+            }
+            ```
+
+            ### Step 4: Handle in invoke()
+
+            \(isSwift ? """
+            ```swift
+            api.invoke = { ctxPtr, typePtr, idPtr, payloadPtr in
+                // ... existing code ...
+                
+                if type == "tool" {
+                    switch id {
+                    case ctx.helloTool.name:
+                        return makeCString(ctx.helloTool.run(args: payload))
+                    case ctx.myTool.name:
+                        return makeCString(ctx.myTool.run(args: payload))
+                    default:
+                        return makeCString("{\\"error\\": \\"Unknown tool\\"}")
+                    }
+                }
+                
+                return makeCString("{\\"error\\": \\"Unknown capability\\"}")
+            }
+            ```
+            """ : """
+            ```rust
+            extern "C" fn invoke(ctx: *mut c_void, type_ptr: *const c_char, id_ptr: *const c_char, payload_ptr: *const c_char) -> *const c_char {
+                // ... existing code ...
+                
+                if type_str == "tool" {
+                    match id_str {
+                        "hello_world" => make_c_string(&ctx.hello_tool.run(payload)),
+                        "my_tool" => make_c_string(&ctx.my_tool.run(payload)),
+                        _ => make_c_string(r#"{"error": "Unknown tool"}"#),
+                    }
+                } else {
+                    make_c_string(r#"{"error": "Unknown capability"}"#)
+                }
+            }
+            ```
+            """)
+
+            ## Porting Existing Tools
+
+            ### From MCP (Model Context Protocol)
+
+            MCP tools map directly to Osaurus tools:
+
+            | MCP Concept | Osaurus Equivalent |
+            |-------------|-------------------|
+            | Tool name | `id` in manifest |
+            | Input schema | `parameters` (JSON Schema) |
+            | Tool handler | `run()` method in tool struct |
+            | Response | JSON string return value |
+
+            Example MCP tool conversion:
+            ```json
+            // MCP tool definition
+            {
+              "name": "get_weather",
+              "description": "Get weather for a location",
+              "inputSchema": {
+                "type": "object",
+                "properties": {
+                  "location": { "type": "string" }
+                },
+                "required": ["location"]
+              }
+            }
+            ```
+
+            Becomes this Osaurus manifest entry:
+            ```json
+            {
+              "id": "get_weather",
+              "description": "Get weather for a location",
+              "parameters": {
+                "type": "object",
+                "properties": {
+                  "location": { "type": "string" }
+                },
+                "required": ["location"]
+              },
+              "requirements": [],
+              "permission_policy": "ask"
+            }
+            ```
+
+            ### From CLI Tools
+
+            Wrap command-line tools using Process/subprocess:
+
+            \(isSwift ? """
+            ```swift
+            func run(args: String) -> String {
+                guard let input = parseArgs(args) else {
+                    return "{\\"error\\": \\"Invalid arguments\\"}"
+                }
+                
+                let process = Process()
+                process.executableURL = URL(fileURLWithPath: "/usr/bin/some-cli")
+                process.arguments = [input.flag, input.value]
+                
+                let pipe = Pipe()
+                process.standardOutput = pipe
+                process.standardError = pipe
+                
+                do {
+                    try process.run()
+                    process.waitUntilExit()
+                    
+                    let data = pipe.fileHandleForReading.readDataToEndOfFile()
+                    let output = String(data: data, encoding: .utf8) ?? ""
+                    
+                    if process.terminationStatus == 0 {
+                        return "{\\"output\\": \\"\\(output.escapedForJSON)\\"}"
+                    } else {
+                        return "{\\"error\\": \\"Command failed: \\(output.escapedForJSON)\\"}"
+                    }
+                } catch {
+                    return "{\\"error\\": \\"\\(error.localizedDescription)\\"}"
+                }
+            }
+            ```
+            """ : """
+            ```rust
+            fn run(&self, args: &str) -> String {
+                let input: Args = match serde_json::from_str(args) {
+                    Ok(v) => v,
+                    Err(_) => return r#"{"error": "Invalid arguments"}"#.to_string(),
+                };
+                
+                let output = std::process::Command::new("/usr/bin/some-cli")
+                    .args(&[&input.flag, &input.value])
+                    .output();
+                
+                match output {
+                    Ok(out) if out.status.success() => {
+                        let stdout = String::from_utf8_lossy(&out.stdout);
+                        format!(r#"{{"output": "{}"}}"#, escape_json(&stdout))
+                    }
+                    Ok(out) => {
+                        let stderr = String::from_utf8_lossy(&out.stderr);
+                        format!(r#"{{"error": "{}"}}"#, escape_json(&stderr))
+                    }
+                    Err(e) => format!(r#"{{"error": "{}"}}"#, e),
+                }
+            }
+            ```
+            """)
+
+            ### From Web APIs
+
+            Make HTTP requests to wrap external APIs:
+
+            \(isSwift ? """
+            ```swift
+            func run(args: String) -> String {
+                guard let input = parseArgs(args) else {
+                    return "{\\"error\\": \\"Invalid arguments\\"}"
+                }
+                
+                // Use synchronous URLSession for plugin context
+                let semaphore = DispatchSemaphore(value: 0)
+                var result = "{\\"error\\": \\"Request failed\\"}"
+                
+                let url = URL(string: "https://api.example.com/endpoint")!
+                var request = URLRequest(url: url)
+                request.httpMethod = "POST"
+                request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+                request.httpBody = try? JSONEncoder().encode(input)
+                
+                URLSession.shared.dataTask(with: request) { data, response, error in
+                    defer { semaphore.signal() }
+                    
+                    if let data = data,
+                       let json = try? JSONSerialization.jsonObject(with: data) {
+                        result = String(data: try! JSONSerialization.data(withJSONObject: json), encoding: .utf8)!
+                    }
+                }.resume()
+                
+                semaphore.wait()
+                return result
+            }
+            ```
+            """ : """
+            ```rust
+            fn run(&self, args: &str) -> String {
+                let input: Args = match serde_json::from_str(args) {
+                    Ok(v) => v,
+                    Err(_) => return r#"{"error": "Invalid arguments"}"#.to_string(),
+                };
+                
+                // Use blocking HTTP client (reqwest with blocking feature)
+                let client = reqwest::blocking::Client::new();
+                let response = client
+                    .post("https://api.example.com/endpoint")
+                    .json(&input)
+                    .send();
+                
+                match response {
+                    Ok(resp) => match resp.json::<serde_json::Value>() {
+                        Ok(json) => json.to_string(),
+                        Err(e) => format!(r#"{{"error": "{}"}}"#, e),
+                    },
+                    Err(e) => format!(r#"{{"error": "{}"}}"#, e),
+                }
+            }
+            ```
+            """)
+
+            ## Testing Workflow
+
+            ### 1. Build the Plugin
+
+            \(isSwift ? """
+            ```bash
+            swift build -c release
+            ```
+            """ : """
+            ```bash
+            cargo build --release
+            ```
+            """)
+
+            ### 2. Verify Manifest
+
+            Extract and validate the manifest JSON:
+
+            ```bash
+            osaurus manifest extract .build/release/lib\(name).dylib
+            ```
+
+            Check for:
+            - Valid JSON structure
+            - All tools have unique `id` values
+            - Parameters use valid JSON Schema
+            - Version follows semver (e.g., "0.1.0")
+
+            ### 3. Test Locally
+
+            Package and install for local testing:
+
+            ```bash
+            # Package the plugin
+            osaurus tools package dev.example.\(name) 0.1.0
+
+            # Install locally
+            osaurus tools install ./dev.example.\(name)-0.1.0.zip
+
+            # Verify installation
+            osaurus tools verify
+            ```
+
+            ### 4. Test in Osaurus
+
+            1. Open Osaurus app
+            2. Go to Tools settings (Cmd+Shift+M → Tools)
+            3. Verify your plugin appears
+            4. Test each tool by asking the AI to use it
+
+            ### 5. Iterate
+
+            After making changes:
+            ```bash
+            swift build -c release && osaurus tools package dev.example.\(name) 0.1.0 && osaurus tools install ./dev.example.\(name)-0.1.0.zip
+            ```
+
+            ## Best Practices
+
+            ### JSON Schema for Parameters
+
+            - Always specify `type` for each property
+            - Use `description` to help the AI understand parameter purpose
+            - Mark truly required fields in `required` array
+            - Use appropriate types: `string`, `number`, `integer`, `boolean`, `array`, `object`
+
+            ```json
+            {
+              "type": "object",
+              "properties": {
+                "query": {
+                  "type": "string",
+                  "description": "Search query text"
+                },
+                "limit": {
+                  "type": "integer",
+                  "description": "Maximum results to return",
+                  "default": 10
+                },
+                "filters": {
+                  "type": "array",
+                  "items": { "type": "string" },
+                  "description": "Optional filter tags"
+                }
+              },
+              "required": ["query"]
+            }
+            ```
+
+            ### Error Handling
+
+            Always return valid JSON, even for errors:
+
+            ```json
+            {"error": "Clear description of what went wrong"}
+            ```
+
+            For detailed errors:
+            ```json
+            {"error": "Validation failed", "details": {"field": "query", "message": "Cannot be empty"}}
+            ```
+
+            ### Tool Naming
+
+            - Use `snake_case` for tool IDs: `get_weather`, `search_files`
+            - Be descriptive but concise
+            - Prefix related tools: `github_create_issue`, `github_list_repos`
+
+            ### Permission Policies
+
+            | Policy | When to Use |
+            |--------|-------------|
+            | `ask` | Default. User confirms each execution |
+            | `auto` | Safe, read-only operations |
+            | `deny` | Dangerous operations (use sparingly) |
+
+            ### System Requirements
+
+            Add to `requirements` array when your tool needs:
+
+            | Requirement | Use Case |
+            |-------------|----------|
+            | `automation` | AppleScript, controlling other apps |
+            | `accessibility` | UI automation, input simulation |
+            | `calendar` | Reading/writing calendar events |
+            | `contacts` | Accessing contact information |
+            | `location` | Getting user's location |
+            | `disk` | Full disk access (Messages, Safari data) |
+            | `reminders` | Reading/writing reminders |
+            | `notes` | Accessing Notes app |
+            | `maps` | Controlling Maps app |
+
+            ## Submission Checklist
+
+            Before submitting to the Osaurus plugin registry:
+
+            - [ ] Plugin builds without warnings
+            - [ ] `osaurus manifest extract` returns valid JSON
+            - [ ] All tools have clear descriptions
+            - [ ] Parameters use proper JSON Schema
+            - [ ] Error cases return valid JSON errors
+            - [ ] Version follows semver (X.Y.Z)
+            - [ ] plugin_id follows reverse-domain format (com.yourname.pluginname)
+            - [ ] README.md documents all tools
+            - [ ] Code is signed with Developer ID (for distribution)
+
+            ### Code Signing (Required for Distribution)
+
+            ```bash
+            codesign --force --options runtime --timestamp \\
+              --sign "Developer ID Application: Your Name (TEAMID)" \\
+              .build/release/lib\(name).dylib
+            ```
+
+            ### Registry Submission
+
+            1. Fork the [osaurus-tools](https://github.com/dinoki-ai/osaurus-tools) repository
+            2. Add `plugins/<your-plugin-id>.json` with metadata
+            3. Submit a pull request
+
+            ## Common Issues
+
+            ### Plugin not loading
+
+            - Check `osaurus manifest extract` for errors
+            - Verify the dylib is properly signed
+            - Check Console.app for loading errors
+
+            ### Tool not appearing
+
+            - Ensure tool is in manifest `capabilities.tools` array
+            - Verify `invoke()` handles the tool ID
+            - Check tool ID matches exactly (case-sensitive)
+
+            ### JSON parsing errors
+
+            - Validate JSON escaping in strings
+            - Use proper encoding for special characters
+            - Test with `echo '{"param":"value"}' | osaurus manifest extract ...`
+            """
+        try? claudeMd.write(to: dir.appendingPathComponent("CLAUDE.md"), atomically: true, encoding: .utf8)
     }
 }
