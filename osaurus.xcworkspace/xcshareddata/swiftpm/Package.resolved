@@ -34,7 +34,7 @@
       "location" : "https://github.com/ml-explore/mlx-swift-lm",
       "state" : {
         "branch" : "main",
-        "revision" : "3ce6452313c3d4e3ed0c2be0ad850198c46f0b65"
+        "revision" : "2c700546340c37f275d23302163701b77c4dcbd9"
       }
     },
     {
@@ -78,8 +78,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/huggingface/swift-jinja.git",
       "state" : {
-        "revision" : "2df5669276ef62ee51ce56d11db0771c673113ce",
-        "version" : "2.3.0"
+        "revision" : "d81197f35f41445bc10e94600795e68c6f5e94b0",
+        "version" : "2.3.1"
       }
     },
     {

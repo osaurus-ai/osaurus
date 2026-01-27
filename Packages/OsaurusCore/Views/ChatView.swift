@@ -394,9 +394,9 @@ final class ChatSession: ObservableObject {
         }
 
         // Tool and skill tokens depend on two-phase loading state
+        // Two-phase is always active - select_capabilities is always available
         let toolOverrides = PersonaManager.shared.effectiveToolOverrides(for: effectiveId)
         let allTools = ToolRegistry.shared.listTools(withOverrides: toolOverrides)
-        let hasSkills = CapabilityService.shared.hasEnabledSkills(for: effectiveId)
 
         // Helper to check if tool is enabled
         func isEnabled(_ tool: ToolRegistry.ToolEntry) -> Bool {
@@ -404,21 +404,18 @@ final class ChatSession: ObservableObject {
             return tool.enabled
         }
 
-        if hasSkills && !capabilitiesSelected {
+        if !capabilitiesSelected {
             // Phase 1: Catalog entries + select_capabilities
             total += allTools.filter(isEnabled).reduce(0) { $0 + $1.catalogEntryTokens }
             total += ToolRegistry.shared.estimatedTokens(for: "select_capabilities")
             total += CapabilityService.shared.estimateCatalogSkillTokens(for: effectiveId)
-        } else if capabilitiesSelected {
+        } else {
             // Phase 2: Selected tools + select_capabilities + skill instructions
             total += selectedToolNames.reduce(0) { $0 + ToolRegistry.shared.estimatedTokens(for: $1) }
             total += ToolRegistry.shared.estimatedTokens(for: "select_capabilities")
             if !selectedSkillInstructions.isEmpty {
                 total += max(1, selectedSkillInstructions.count / 4)
             }
-        } else {
-            // No two-phase: All enabled tool schemas
-            total += allTools.filter(isEnabled).reduce(0) { $0 + $1.estimatedTokens }
         }
 
         // All turns - use cached lengths to avoid forcing lazy string joins
@@ -826,8 +823,13 @@ final class ChatSession: ObservableObject {
             }
             return ToolRegistry.shared.specs(forTools: toolNames)
         } else {
-            // Default: All enabled tools with persona overrides
-            return ToolRegistry.shared.specs(withOverrides: overrides)
+            // Default: All enabled tools + select_capabilities (always available)
+            var specs = ToolRegistry.shared.specs(withOverrides: overrides)
+            let selectCapSpec = ToolRegistry.shared.selectCapabilitiesSpec()
+            if !specs.contains(where: { $0.function.name == "select_capabilities" }) {
+                specs.append(contentsOf: selectCapSpec)
+            }
+            return specs
         }
     }
 
@@ -888,8 +890,8 @@ final class ChatSession: ObservableObject {
                 // MARK: - Two-Phase Capability Selection
                 let effectivePersonaId = personaId ?? Persona.defaultId
                 let effectiveToolOverrides = PersonaManager.shared.effectiveToolOverrides(for: effectivePersonaId)
-                let hasEnabledSkills = CapabilityService.shared.hasEnabledSkills(for: effectivePersonaId)
-                let needsCapabilitySelection = hasEnabledSkills && !capabilitiesSelected
+                // Always use two-phase approach - select_capabilities is always available
+                let needsCapabilitySelection = !capabilitiesSelected
 
                 let baseSystemPrompt = PersonaManager.shared.effectiveSystemPrompt(for: effectivePersonaId)
                     .trimmingCharacters(in: .whitespacesAndNewlines)
