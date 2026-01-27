@@ -119,16 +119,16 @@ struct ToolsManagerView: View {
 
     /// Show the secrets sheet for a specific plugin
     private func showSecretsSheetForPlugin(pluginId: String) {
-        guard let loadedPlugin = PluginManager.shared.loadedPlugins.first(where: { $0.id == pluginId }),
-            let secrets = loadedPlugin.manifest.secrets,
+        guard let loaded = PluginManager.shared.plugins.first(where: { $0.plugin.id == pluginId }),
+            let secrets = loaded.plugin.manifest.secrets,
             !secrets.isEmpty
         else {
             return
         }
 
         secretsSheetPluginId = pluginId
-        secretsSheetPluginName = loadedPlugin.manifest.name ?? pluginId
-        secretsSheetPluginVersion = loadedPlugin.manifest.version
+        secretsSheetPluginName = loaded.plugin.manifest.name ?? pluginId
+        secretsSheetPluginVersion = loaded.plugin.manifest.version
         secretsSheetSecrets = secrets
         showSecretsSheet = true
     }
@@ -886,8 +886,8 @@ private struct InstalledPluginCard: View {
     /// Get the secrets defined by this plugin (from loaded manifest or spec)
     private var pluginSecrets: [PluginManifest.SecretSpec] {
         // Try to get from loaded plugin first
-        if let loadedPlugin = PluginManager.shared.loadedPlugins.first(where: { $0.id == plugin.spec.plugin_id }) {
-            return loadedPlugin.manifest.secrets ?? []
+        if let loaded = PluginManager.shared.plugins.first(where: { $0.plugin.id == plugin.spec.plugin_id }) {
+            return loaded.plugin.manifest.secrets ?? []
         }
         // Fallback to spec (might not have secrets if not loaded)
         return []

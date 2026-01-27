@@ -257,8 +257,8 @@ final class PluginRepositoryService: ObservableObject {
     /// Check if a newly installed plugin requires secrets and set pendingSecretsPlugin if needed
     private func checkForPendingSecrets(pluginId: String) {
         // Get the loaded plugin to check for secrets
-        guard let loadedPlugin = PluginManager.shared.loadedPlugins.first(where: { $0.id == pluginId }),
-            let secrets = loadedPlugin.manifest.secrets,
+        guard let loaded = PluginManager.shared.plugins.first(where: { $0.plugin.id == pluginId }),
+            let secrets = loaded.plugin.manifest.secrets,
             !secrets.isEmpty
         else {
             return
