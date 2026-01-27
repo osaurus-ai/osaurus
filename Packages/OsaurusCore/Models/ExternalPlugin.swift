@@ -40,12 +40,12 @@ typealias osr_plugin_entry_t = @convention(c) () -> UnsafeRawPointer?
 
 public struct PluginManifest: Decodable, Sendable {
     public let plugin_id: String
-    public let version: String
     public let description: String?
     public let capabilities: Capabilities
 
     // Optional fields for registry
     public let name: String?
+    public let version: String?
     public let license: String?
     public let authors: [String]?
     public let min_macos: String?
