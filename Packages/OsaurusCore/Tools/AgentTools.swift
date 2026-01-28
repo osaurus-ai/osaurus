@@ -164,25 +164,32 @@ public struct ReportDiscoveryTool: OsaurusTool {
 /// Tool for the agent to mark the current task as complete
 public struct CompleteTaskTool: OsaurusTool {
     public let name = "complete_task"
-    public let description = "Mark the current task as complete with a summary of what was accomplished."
+    public let description =
+        "Mark the current task as complete with a detailed artifact summarizing the results. The artifact is required and should be a comprehensive markdown document."
 
     public let parameters: JSONValue? = .object([
         "type": .string("object"),
         "properties": .object([
             "summary": .object([
                 "type": .string("string"),
-                "description": .string("Summary of what was accomplished"),
+                "description": .string("Brief one-line summary of what was accomplished"),
             ]),
             "success": .object([
                 "type": .string("boolean"),
                 "description": .string("Whether the task was fully successful"),
+            ]),
+            "artifact": .object([
+                "type": .string("string"),
+                "description": .string(
+                    "Final artifact in markdown format. Must include: a title, summary of work done, key findings or results, any code snippets or examples, and next steps if applicable. This will be displayed to the user as the final output."
+                ),
             ]),
             "remaining_work": .object([
                 "type": .string("string"),
                 "description": .string("Any remaining work that wasn't completed (optional)"),
             ]),
         ]),
-        "required": .array([.string("summary"), .string("success")]),
+        "required": .array([.string("summary"), .string("success"), .string("artifact")]),
     ])
 
     public init() {}
@@ -192,28 +199,120 @@ public struct CompleteTaskTool: OsaurusTool {
         guard let data = argumentsJSON.data(using: .utf8),
             let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
             let summary = json["summary"] as? String,
-            let success = json["success"] as? Bool
+            let success = json["success"] as? Bool,
+            let rawArtifact = json["artifact"] as? String
         else {
             throw NSError(
                 domain: "AgentTools",
                 code: 3,
-                userInfo: [NSLocalizedDescriptionKey: "Invalid completion format"]
+                userInfo: [
+                    NSLocalizedDescriptionKey:
+                        "Invalid completion format. Required: summary (string), success (boolean), artifact (string)"
+                ]
             )
         }
 
+        // Unescape literal \n and \t sequences that models sometimes send
+        let artifact =
+            rawArtifact
+            .replacingOccurrences(of: "\\n", with: "\n")
+            .replacingOccurrences(of: "\\t", with: "\t")
+
         let remainingWork = json["remaining_work"] as? String
 
+        // Build result with artifact content encoded for parsing by AgentEngine
         var result = """
             Task completion reported:
             - Status: \(success ? "SUCCESS" : "PARTIAL")
             - Summary: \(summary)
+            - Artifact Length: \(artifact.count) characters
             """
 
         if let remaining = remainingWork, !remaining.isEmpty {
             result += "\n- Remaining work: \(remaining)"
         }
 
+        // Append artifact in a structured format for extraction
+        result += "\n\n---ARTIFACT_START---\n\(artifact)\n---ARTIFACT_END---"
+
         return result
+    }
+}
+
+// MARK: - Generate Artifact Tool
+
+/// Tool for generating downloadable artifacts during execution
+public struct GenerateArtifactTool: OsaurusTool {
+    public let name = "generate_artifact"
+    public let description =
+        "Generate a downloadable artifact file with markdown or text content. Use this to create reports, documentation, code snippets, or any other content the user might want to save."
+
+    public let parameters: JSONValue? = .object([
+        "type": .string("object"),
+        "properties": .object([
+            "filename": .object([
+                "type": .string("string"),
+                "description": .string(
+                    "Name for the artifact file with extension (e.g., 'report.md', 'summary.txt', 'analysis.md')"
+                ),
+            ]),
+            "content": .object([
+                "type": .string("string"),
+                "description": .string("The content of the artifact in markdown or plain text format"),
+            ]),
+        ]),
+        "required": .array([.string("filename"), .string("content")]),
+    ])
+
+    public init() {}
+
+    public func execute(argumentsJSON: String) async throws -> String {
+        // Parse the arguments
+        guard let data = argumentsJSON.data(using: .utf8),
+            let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+            let filename = json["filename"] as? String,
+            let rawContent = json["content"] as? String
+        else {
+            throw NSError(
+                domain: "AgentTools",
+                code: 4,
+                userInfo: [
+                    NSLocalizedDescriptionKey: "Invalid artifact format. Required: filename (string), content (string)"
+                ]
+            )
+        }
+
+        // Unescape literal \n and \t sequences that models sometimes send
+        let content =
+            rawContent
+            .replacingOccurrences(of: "\\n", with: "\n")
+            .replacingOccurrences(of: "\\t", with: "\t")
+
+        // Validate filename
+        let trimmedFilename = filename.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedFilename.isEmpty else {
+            throw NSError(
+                domain: "AgentTools",
+                code: 4,
+                userInfo: [NSLocalizedDescriptionKey: "Filename cannot be empty"]
+            )
+        }
+
+        // Determine content type from extension
+        let contentType = Artifact.contentType(from: trimmedFilename)
+
+        // Return structured result for extraction by AgentEngine
+        return """
+            Artifact generated:
+            - Filename: \(trimmedFilename)
+            - Content Type: \(contentType.rawValue)
+            - Size: \(content.count) characters
+
+            ---GENERATED_ARTIFACT_START---
+            {"filename": "\(trimmedFilename)", "content_type": "\(contentType.rawValue)"}
+            \(content)
+            ---GENERATED_ARTIFACT_END---
+            """
     }
 }
 
@@ -230,6 +329,7 @@ public final class AgentToolManager {
         SubmitPlanTool(),
         ReportDiscoveryTool(),
         CompleteTaskTool(),
+        GenerateArtifactTool(),
     ]
 
     /// Reference count for active agent sessions

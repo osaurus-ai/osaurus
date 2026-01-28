@@ -5,7 +5,9 @@
 //  Main view for agent mode - displays task execution with issue tracking.
 //
 
+import CoreText
 import SwiftUI
+import UniformTypeIdentifiers
 
 struct AgentView: View {
     @ObservedObject var windowState: ChatWindowState
@@ -19,6 +21,10 @@ struct AgentView: View {
     @State private var isProgressSidebarCollapsed: Bool = false
     private let minProgressSidebarWidth: CGFloat = 200
     private let maxProgressSidebarWidth: CGFloat = 400
+
+    // Artifact viewer state
+    @State private var showArtifactViewer: Bool = false
+    @State private var selectedArtifact: Artifact?
 
     private var theme: ThemeProtocol { windowState.theme }
 
@@ -100,6 +106,42 @@ struct AgentView: View {
         .animation(theme.animationQuick(), value: showSidebar)
         .environment(\.theme, windowState.theme)
         .tint(theme.accentColor)
+        .sheet(isPresented: $showArtifactViewer) {
+            if let artifact = selectedArtifact {
+                ArtifactViewerSheet(
+                    artifact: artifact,
+                    onDownload: { downloadArtifact(artifact) },
+                    onDismiss: { showArtifactViewer = false }
+                )
+                .environment(\.theme, windowState.theme)
+            }
+        }
+    }
+
+    // MARK: - Artifact Actions
+
+    private func viewArtifact(_ artifact: Artifact) {
+        selectedArtifact = artifact
+        showArtifactViewer = true
+    }
+
+    private func downloadArtifact(_ artifact: Artifact) {
+        let panel = NSSavePanel()
+        panel.nameFieldStringValue = artifact.filename
+        panel.allowedContentTypes =
+            artifact.contentType == .markdown
+            ? [UTType(filenameExtension: "md") ?? .plainText]
+            : [.plainText]
+
+        panel.begin { response in
+            guard response == .OK, let url = panel.url else { return }
+
+            do {
+                try artifact.content.write(to: url, atomically: true, encoding: .utf8)
+            } catch {
+                print("[AgentView] Failed to save artifact: \(error)")
+            }
+        }
     }
 
     // MARK: - Window Controls
@@ -324,6 +366,8 @@ struct AgentView: View {
                     issues: session.issues,
                     activeIssueId: session.activeIssue?.id,
                     selectedIssueId: session.selectedIssueId,
+                    finalArtifact: session.finalArtifact,
+                    artifacts: session.artifacts,
                     isCollapsed: $isProgressSidebarCollapsed,
                     onIssueSelect: { issue in
                         session.selectIssue(issue)
@@ -337,6 +381,12 @@ struct AgentView: View {
                         Task {
                             await session.closeIssue(issueId, reason: "Manually closed")
                         }
+                    },
+                    onArtifactView: { artifact in
+                        viewArtifact(artifact)
+                    },
+                    onArtifactDownload: { artifact in
+                        downloadArtifact(artifact)
                     }
                 )
                 .frame(width: progressSidebarWidth)
@@ -566,3 +616,356 @@ private struct ProgressSidebarResizeHandle: View {
 
 // MARK: - Shared Header Components
 // HeaderActionButton, ModeToggleButton, ModeIndicatorBadge are now in SharedHeaderComponents.swift
+
+// MARK: - Artifact Viewer Sheet
+
+struct ArtifactViewerSheet: View {
+    let artifact: Artifact
+    let onDownload: () -> Void
+    let onDismiss: () -> Void
+
+    @Environment(\.theme) private var theme: ThemeProtocol
+    @State private var isCopied = false
+    @State private var showRawSource = false
+
+    var body: some View {
+        VStack(spacing: 0) {
+            // Header
+            HStack(spacing: 12) {
+                // File icon and name
+                HStack(spacing: 8) {
+                    Image(systemName: artifact.contentType == .markdown ? "doc.richtext" : "doc.text")
+                        .font(.system(size: 16))
+                        .foregroundColor(theme.accentColor)
+
+                    Text(artifact.filename)
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundColor(theme.primaryText)
+                }
+
+                Spacer()
+
+                // View toggle (for markdown)
+                if artifact.contentType == .markdown {
+                    Picker("", selection: $showRawSource) {
+                        Text("Rendered").tag(false)
+                        Text("Source").tag(true)
+                    }
+                    .pickerStyle(.segmented)
+                    .frame(width: 160)
+                }
+
+                // Action buttons
+                HStack(spacing: 8) {
+                    // Copy button
+                    Button {
+                        copyToClipboard()
+                    } label: {
+                        HStack(spacing: 4) {
+                            Image(systemName: isCopied ? "checkmark" : "doc.on.doc")
+                                .font(.system(size: 11))
+                            Text(isCopied ? "Copied" : "Copy")
+                                .font(.system(size: 11, weight: .medium))
+                        }
+                        .foregroundColor(isCopied ? theme.successColor : theme.secondaryText)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 6)
+                        .background(
+                            RoundedRectangle(cornerRadius: 6)
+                                .fill(theme.tertiaryBackground.opacity(0.5))
+                        )
+                    }
+                    .buttonStyle(.plain)
+
+                    // Download menu
+                    Menu {
+                        Button {
+                            onDownload()
+                        } label: {
+                            Label("Download as Markdown", systemImage: "doc.text")
+                        }
+
+                        if artifact.contentType == .markdown {
+                            Button {
+                                exportAsPDF()
+                            } label: {
+                                Label("Download as PDF", systemImage: "doc.richtext")
+                            }
+                        }
+                    } label: {
+                        HStack(spacing: 4) {
+                            Image(systemName: "arrow.down.circle")
+                                .font(.system(size: 11))
+                            Text("Download")
+                                .font(.system(size: 11, weight: .medium))
+                            Image(systemName: "chevron.down")
+                                .font(.system(size: 8, weight: .semibold))
+                        }
+                        .foregroundColor(theme.accentColor)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 6)
+                        .background(
+                            RoundedRectangle(cornerRadius: 6)
+                                .fill(theme.accentColor.opacity(0.1))
+                        )
+                    }
+                    .menuStyle(.borderlessButton)
+                    .menuIndicator(.hidden)
+
+                    // Close button
+                    Button {
+                        onDismiss()
+                    } label: {
+                        Image(systemName: "xmark")
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundColor(theme.tertiaryText)
+                            .frame(width: 28, height: 28)
+                            .background(
+                                Circle()
+                                    .fill(theme.tertiaryBackground.opacity(0.5))
+                            )
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            .padding(.horizontal, 20)
+            .padding(.vertical, 16)
+            .background(theme.secondaryBackground.opacity(0.5))
+
+            Divider()
+                .background(theme.primaryBorder.opacity(0.2))
+
+            // Content
+            GeometryReader { geometry in
+                ScrollView {
+                    if artifact.contentType == .markdown && !showRawSource {
+                        // Rendered markdown view
+                        MarkdownMessageView(
+                            text: artifact.content,
+                            baseWidth: min(geometry.size.width - 80, 700)
+                        )
+                        .padding(40)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    } else {
+                        // Raw source view
+                        Text(artifact.content)
+                            .font(.system(size: 13, design: .monospaced))
+                            .foregroundColor(theme.primaryText)
+                            .lineSpacing(4)
+                            .textSelection(.enabled)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(20)
+                    }
+                }
+            }
+        }
+        .frame(minWidth: 600, idealWidth: 900, maxWidth: 1200)
+        .frame(minHeight: 500, idealHeight: 700, maxHeight: 900)
+        .background(theme.primaryBackground)
+    }
+
+    private func copyToClipboard() {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(artifact.content, forType: .string)
+        isCopied = true
+
+        // Reset after delay
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+            isCopied = false
+        }
+    }
+
+    private func exportAsPDF() {
+        // Create save panel
+        let panel = NSSavePanel()
+        let baseName = (artifact.filename as NSString).deletingPathExtension
+        panel.nameFieldStringValue = "\(baseName).pdf"
+        panel.allowedContentTypes = [.pdf]
+
+        panel.begin { response in
+            guard response == .OK, let url = panel.url else { return }
+
+            // Generate PDF from markdown
+            generatePDF(to: url)
+        }
+    }
+
+    private func generatePDF(to url: URL) {
+        // Use NSAttributedString for reliable PDF generation
+        let pdfWidth: CGFloat = 612  // US Letter width
+        let pdfHeight: CGFloat = 792  // US Letter height
+        let margin: CGFloat = 72  // 1 inch margins
+        let contentWidth = pdfWidth - (margin * 2)
+
+        // Convert markdown to attributed string
+        let attributedString = markdownToAttributedString(artifact.content)
+
+        // Create PDF context
+        var mediaBox = CGRect(x: 0, y: 0, width: pdfWidth, height: pdfHeight)
+
+        guard let consumer = CGDataConsumer(url: url as CFURL),
+            let context = CGContext(consumer: consumer, mediaBox: &mediaBox, nil)
+        else {
+            print("[ArtifactViewerSheet] Failed to create PDF context")
+            return
+        }
+
+        // Calculate text layout
+        let framesetter = CTFramesetterCreateWithAttributedString(attributedString)
+        var currentPosition = 0
+        let pageContentHeight = pdfHeight - (margin * 2)
+
+        while currentPosition < attributedString.length {
+            context.beginPDFPage(nil)
+
+            // Create frame for this page (CoreText uses bottom-left origin)
+            let framePath = CGPath(
+                rect: CGRect(x: margin, y: margin, width: contentWidth, height: pageContentHeight),
+                transform: nil
+            )
+
+            let frameRange = CFRangeMake(currentPosition, 0)
+            let frame = CTFramesetterCreateFrame(framesetter, frameRange, framePath, nil)
+
+            // Draw the frame
+            CTFrameDraw(frame, context)
+
+            // Get the visible range to advance position
+            let visibleRange = CTFrameGetVisibleStringRange(frame)
+            currentPosition += max(visibleRange.length, 1)
+
+            context.endPDFPage()
+
+            // Safety: prevent infinite loop
+            if visibleRange.length == 0 {
+                break
+            }
+        }
+
+        context.closePDF()
+        print("[ArtifactViewerSheet] PDF saved to \(url.path)")
+    }
+
+    private func markdownToAttributedString(_ markdown: String) -> NSAttributedString {
+        let result = NSMutableAttributedString()
+
+        // Default paragraph style
+        let paragraphStyle = NSMutableParagraphStyle()
+        paragraphStyle.lineSpacing = 4
+        paragraphStyle.paragraphSpacing = 12
+
+        let defaultFont = NSFont.systemFont(ofSize: 12)
+        let defaultAttrs: [NSAttributedString.Key: Any] = [
+            .font: defaultFont,
+            .foregroundColor: NSColor.black,
+            .paragraphStyle: paragraphStyle,
+        ]
+
+        let headingFont = NSFont.boldSystemFont(ofSize: 18)
+        let subheadingFont = NSFont.boldSystemFont(ofSize: 14)
+        let codeFont = NSFont.monospacedSystemFont(ofSize: 11, weight: .regular)
+
+        let lines = markdown.components(separatedBy: "\n")
+        var inCodeBlock = false
+        var codeBlockContent: [String] = []
+
+        for line in lines {
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+
+            // Handle code blocks
+            if trimmed.hasPrefix("```") {
+                if inCodeBlock {
+                    // End code block
+                    let codeText = codeBlockContent.joined(separator: "\n")
+                    result.append(
+                        NSAttributedString(
+                            string: codeText + "\n\n",
+                            attributes: [
+                                .font: codeFont,
+                                .foregroundColor: NSColor.darkGray,
+                                .paragraphStyle: paragraphStyle,
+                            ]
+                        )
+                    )
+                    codeBlockContent = []
+                    inCodeBlock = false
+                } else {
+                    inCodeBlock = true
+                }
+                continue
+            }
+
+            if inCodeBlock {
+                codeBlockContent.append(line)
+                continue
+            }
+
+            // Headings
+            if trimmed.hasPrefix("# ") {
+                let text = String(trimmed.dropFirst(2))
+                result.append(
+                    NSAttributedString(
+                        string: text + "\n",
+                        attributes: [
+                            .font: headingFont,
+                            .foregroundColor: NSColor.black,
+                            .paragraphStyle: paragraphStyle,
+                        ]
+                    )
+                )
+            } else if trimmed.hasPrefix("## ") {
+                let text = String(trimmed.dropFirst(3))
+                result.append(
+                    NSAttributedString(
+                        string: text + "\n",
+                        attributes: [
+                            .font: subheadingFont,
+                            .foregroundColor: NSColor.black,
+                            .paragraphStyle: paragraphStyle,
+                        ]
+                    )
+                )
+            } else if trimmed.hasPrefix("### ") || trimmed.hasPrefix("#### ") {
+                let dropCount = trimmed.hasPrefix("### ") ? 4 : 5
+                let text = String(trimmed.dropFirst(dropCount))
+                result.append(
+                    NSAttributedString(
+                        string: text + "\n",
+                        attributes: [
+                            .font: NSFont.boldSystemFont(ofSize: 12),
+                            .foregroundColor: NSColor.black,
+                            .paragraphStyle: paragraphStyle,
+                        ]
+                    )
+                )
+            }
+            // List items
+            else if trimmed.hasPrefix("- ") || trimmed.hasPrefix("* ") {
+                let text = String(trimmed.dropFirst(2))
+                result.append(NSAttributedString(string: "• " + text + "\n", attributes: defaultAttrs))
+            }
+            // Numbered lists
+            else if let match = trimmed.range(of: #"^\d+\.\s"#, options: .regularExpression) {
+                let text = String(trimmed[match.upperBound...])
+                let number = String(trimmed[..<match.upperBound])
+                result.append(NSAttributedString(string: number + text + "\n", attributes: defaultAttrs))
+            }
+            // Empty line
+            else if trimmed.isEmpty {
+                result.append(NSAttributedString(string: "\n", attributes: defaultAttrs))
+            }
+            // Regular text - strip markdown formatting
+            else {
+                var text = trimmed
+                // Remove bold/italic markers for PDF
+                text = text.replacingOccurrences(of: "**", with: "")
+                text = text.replacingOccurrences(of: "__", with: "")
+                text = text.replacingOccurrences(of: "*", with: "")
+                text = text.replacingOccurrences(of: "_", with: "")
+                result.append(NSAttributedString(string: text + "\n", attributes: defaultAttrs))
+            }
+        }
+
+        return result
+    }
+}

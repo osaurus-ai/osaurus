@@ -205,6 +205,25 @@ public final class AgentDatabase: @unchecked Sendable {
         try executeRaw("CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status)")
         try executeRaw("CREATE INDEX IF NOT EXISTS idx_tasks_persona ON tasks(persona_id)")
 
+        // Create artifacts table for storing generated content
+        try executeRaw(
+            """
+                CREATE TABLE IF NOT EXISTS artifacts (
+                    id TEXT PRIMARY KEY,
+                    task_id TEXT NOT NULL,
+                    filename TEXT NOT NULL,
+                    content TEXT NOT NULL,
+                    content_type TEXT NOT NULL,
+                    is_final_result INTEGER NOT NULL DEFAULT 0,
+                    created_at TEXT NOT NULL,
+                    FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE
+                )
+            """
+        )
+
+        // Create index for efficient artifact lookups by task
+        try executeRaw("CREATE INDEX IF NOT EXISTS idx_artifacts_task ON artifacts(task_id)")
+
         try setSchemaVersion(1)
     }
 

@@ -315,6 +315,8 @@ public actor AgentEngine {
     ) async throws -> ExecutionResult {
         var messages: [ChatMessage] = []
         var allDiscoveries: [Discovery] = []
+        var generatedArtifacts: [Artifact] = []
+        var finalArtifact: Artifact?
 
         // Execute each step
         for stepIndex in 0 ..< plan.steps.count {
@@ -338,8 +340,68 @@ public actor AgentEngine {
 
                 await delegate?.agentEngine(self, didCompleteStep: stepIndex, result: stepResult, forIssue: issue)
 
-                // Analyze tool output for discoveries
+                // Check for artifacts in tool results
                 if let toolResult = stepResult.toolCallResult {
+                    let toolName = toolResult.toolCall.function.name
+
+                    // Extract artifact from complete_task
+                    if toolName == "complete_task" {
+                        if let artifact = extractFinalArtifact(
+                            from: toolResult.result,
+                            taskId: issue.taskId
+                        ) {
+                            finalArtifact = artifact
+                            generatedArtifacts.append(artifact)
+
+                            // Persist artifact to database
+                            try? IssueStore.createArtifact(artifact)
+
+                            // Log artifact event
+                            try? IssueStore.createEvent(
+                                IssueEvent.withPayload(
+                                    issueId: issue.id,
+                                    eventType: .artifactGenerated,
+                                    payload: EventPayload.ArtifactGenerated(
+                                        artifactId: artifact.id,
+                                        filename: artifact.filename,
+                                        contentType: artifact.contentType.rawValue
+                                    )
+                                )
+                            )
+
+                            await delegate?.agentEngine(self, didGenerateArtifact: artifact, forIssue: issue)
+                        }
+                    }
+
+                    // Extract artifact from generate_artifact
+                    if toolName == "generate_artifact" {
+                        if let artifact = extractGeneratedArtifact(
+                            from: toolResult.result,
+                            taskId: issue.taskId
+                        ) {
+                            generatedArtifacts.append(artifact)
+
+                            // Persist artifact to database
+                            try? IssueStore.createArtifact(artifact)
+
+                            // Log artifact event
+                            try? IssueStore.createEvent(
+                                IssueEvent.withPayload(
+                                    issueId: issue.id,
+                                    eventType: .artifactGenerated,
+                                    payload: EventPayload.ArtifactGenerated(
+                                        artifactId: artifact.id,
+                                        filename: artifact.filename,
+                                        contentType: artifact.contentType.rawValue
+                                    )
+                                )
+                            )
+
+                            await delegate?.agentEngine(self, didGenerateArtifact: artifact, forIssue: issue)
+                        }
+                    }
+
+                    // Analyze tool output for discoveries
                     let context = DiscoveryContext(
                         issueId: issue.id,
                         taskId: issue.taskId,
@@ -347,7 +409,7 @@ public actor AgentEngine {
                     )
                     let discoveries = await discoveryDetector.analyze(
                         toolOutput: toolResult.result,
-                        toolName: toolResult.toolCall.function.name,
+                        toolName: toolName,
                         context: context
                     )
                     allDiscoveries.append(contentsOf: discoveries)
@@ -458,7 +520,70 @@ public actor AgentEngine {
             success: success,
             message: resultMessage,
             discoveries: allDiscoveries,
-            childIssues: createdDiscoveries
+            childIssues: createdDiscoveries,
+            artifact: finalArtifact
+        )
+    }
+
+    // MARK: - Artifact Extraction
+
+    /// Extracts the final artifact from complete_task tool result
+    private func extractFinalArtifact(from result: String, taskId: String) -> Artifact? {
+        // Look for the artifact markers
+        guard let startRange = result.range(of: "---ARTIFACT_START---\n"),
+            let endRange = result.range(of: "\n---ARTIFACT_END---")
+        else {
+            return nil
+        }
+
+        let content = String(result[startRange.upperBound ..< endRange.lowerBound])
+        guard !content.isEmpty else { return nil }
+
+        return Artifact(
+            taskId: taskId,
+            filename: "result.md",
+            content: content,
+            contentType: .markdown,
+            isFinalResult: true
+        )
+    }
+
+    /// Extracts an artifact from generate_artifact tool result
+    private func extractGeneratedArtifact(from result: String, taskId: String) -> Artifact? {
+        // Look for the artifact markers
+        guard let startRange = result.range(of: "---GENERATED_ARTIFACT_START---\n"),
+            let endRange = result.range(of: "\n---GENERATED_ARTIFACT_END---")
+        else {
+            return nil
+        }
+
+        let fullContent = String(result[startRange.upperBound ..< endRange.lowerBound])
+
+        // First line is JSON metadata, rest is content
+        let lines = fullContent.components(separatedBy: "\n")
+        guard lines.count >= 2, let metadataLine = lines.first else {
+            return nil
+        }
+
+        // Parse metadata
+        guard let metadataData = metadataLine.data(using: .utf8),
+            let metadata = try? JSONSerialization.jsonObject(with: metadataData) as? [String: String],
+            let filename = metadata["filename"]
+        else {
+            return nil
+        }
+
+        let contentType = metadata["content_type"].flatMap { ArtifactContentType(rawValue: $0) } ?? .text
+        let content = lines.dropFirst().joined(separator: "\n")
+
+        guard !content.isEmpty else { return nil }
+
+        return Artifact(
+            taskId: taskId,
+            filename: filename,
+            content: content,
+            contentType: contentType,
+            isFinalResult: false
         )
     }
 
@@ -570,6 +695,7 @@ public protocol AgentEngineDelegate: AnyObject {
     func agentEngine(_ engine: AgentEngine, didEncounterError error: Error, forStep stepIndex: Int, issue: Issue)
     func agentEngine(_ engine: AgentEngine, didVerifyGoal verification: VerificationResult, forIssue issue: Issue)
     func agentEngine(_ engine: AgentEngine, didDecomposeIssue issue: Issue, into children: [Issue])
+    func agentEngine(_ engine: AgentEngine, didGenerateArtifact artifact: Artifact, forIssue issue: Issue)
     func agentEngine(_ engine: AgentEngine, didCompleteIssue issue: Issue, success: Bool)
     func agentEngine(_ engine: AgentEngine, willRetryIssue issue: Issue, attempt: Int, afterDelay: TimeInterval)
 }
@@ -599,6 +725,7 @@ extension AgentEngineDelegate {
         forIssue issue: Issue
     ) {}
     public func agentEngine(_ engine: AgentEngine, didDecomposeIssue issue: Issue, into children: [Issue]) {}
+    public func agentEngine(_ engine: AgentEngine, didGenerateArtifact artifact: Artifact, forIssue issue: Issue) {}
     public func agentEngine(_ engine: AgentEngine, didCompleteIssue issue: Issue, success: Bool) {}
     public func agentEngine(_ engine: AgentEngine, willRetryIssue issue: Issue, attempt: Int, afterDelay: TimeInterval)
     {}

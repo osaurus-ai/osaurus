@@ -82,6 +82,14 @@ public final class AgentSession: ObservableObject {
     /// Issue that failed and can be retried
     @Published public var failedIssue: Issue?
 
+    // MARK: - Artifact State
+
+    /// All artifacts generated during execution
+    @Published public var artifacts: [Artifact] = []
+
+    /// The final completion artifact (from complete_task)
+    @Published public var finalArtifact: Artifact?
+
     // MARK: - Input State
 
     /// User input for new tasks
@@ -169,6 +177,10 @@ public final class AgentSession: ObservableObject {
         let task = try await IssueManager.shared.createTask(query: query, personaId: personaId)
         currentTask = task
 
+        // Clear artifacts for new task
+        artifacts = []
+        finalArtifact = nil
+
         // Refresh UI
         await refreshIssues()
         windowState?.refreshAgentTasks()
@@ -203,6 +215,11 @@ public final class AgentSession: ObservableObject {
     public func loadTask(_ task: AgentTask) async {
         currentTask = task
         await IssueManager.shared.setActiveTask(task)
+
+        // Load artifacts for the task
+        loadArtifacts(forTask: task.id)
+
+        // Refresh issues (this also ensures an issue is selected)
         await refreshIssues()
     }
 
@@ -215,6 +232,32 @@ public final class AgentSession: ObservableObject {
 
         await IssueManager.shared.loadIssues(forTask: taskId)
         issues = IssueManager.shared.issues
+
+        // Ensure an issue is always selected if there are issues
+        ensureIssueSelected()
+    }
+
+    /// Ensures an issue is selected when issues exist
+    private func ensureIssueSelected() {
+        // Skip if already have a valid selection
+        if let selectedId = selectedIssueId,
+            issues.contains(where: { $0.id == selectedId })
+        {
+            return
+        }
+
+        // Skip if actively executing (will be selected automatically)
+        if isExecuting, let activeId = activeIssue?.id {
+            selectedIssueId = activeId
+            return
+        }
+
+        // Select the most recent completed issue, or first issue
+        if let completedIssue = issues.filter({ $0.status == .closed }).last {
+            selectIssue(completedIssue)
+        } else if let firstIssue = issues.first {
+            selectIssue(firstIssue)
+        }
     }
 
     // MARK: - Execution
@@ -320,6 +363,14 @@ public final class AgentSession: ObservableObject {
         } else {
             errorMessage = result.message
             failedIssue = result.issue
+        }
+
+        // Store the final artifact if present
+        if let artifact = result.artifact {
+            finalArtifact = artifact
+            if !artifacts.contains(where: { $0.id == artifact.id }) {
+                artifacts.append(artifact)
+            }
         }
 
         // Refresh issues to show updated state
@@ -434,6 +485,18 @@ public final class AgentSession: ObservableObject {
             selectedIssueTurns = []
             turnsVersion += 1
             print("[AgentSession] Failed to load issue history: \(error)")
+        }
+    }
+
+    /// Loads artifacts from the database for a task
+    private func loadArtifacts(forTask taskId: String) {
+        do {
+            artifacts = try IssueStore.listArtifacts(forTask: taskId)
+            finalArtifact = try IssueStore.getFinalArtifact(forTask: taskId)
+        } catch {
+            artifacts = []
+            finalArtifact = nil
+            print("[AgentSession] Failed to load artifacts: \(error)")
         }
     }
 
@@ -668,6 +731,23 @@ extension AgentSession: AgentEngineDelegate {
 
         Task {
             await self.refreshIssues()
+        }
+    }
+
+    public func agentEngine(_ engine: AgentEngine, didGenerateArtifact artifact: Artifact, forIssue issue: Issue) {
+        // Ensure UI updates happen on main thread
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self else { return }
+
+            // Add to artifacts list
+            if !self.artifacts.contains(where: { $0.id == artifact.id }) {
+                self.artifacts.append(artifact)
+            }
+
+            // Track final artifact
+            if artifact.isFinalResult {
+                self.finalArtifact = artifact
+            }
         }
     }
 

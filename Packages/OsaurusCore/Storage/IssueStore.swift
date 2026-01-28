@@ -653,4 +653,151 @@ public struct IssueStore {
             updatedAt: updatedAt
         )
     }
+
+    // MARK: - Artifact Operations
+
+    /// Creates a new artifact in the database
+    @discardableResult
+    public static func createArtifact(_ artifact: Artifact) throws -> Artifact {
+        let sql = """
+                INSERT INTO artifacts (id, task_id, filename, content, content_type, is_final_result, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            """
+
+        try AgentDatabase.shared.prepareAndExecute(
+            sql,
+            bind: { stmt in
+                AgentDatabase.bindText(stmt, index: 1, value: artifact.id)
+                AgentDatabase.bindText(stmt, index: 2, value: artifact.taskId)
+                AgentDatabase.bindText(stmt, index: 3, value: artifact.filename)
+                AgentDatabase.bindText(stmt, index: 4, value: artifact.content)
+                AgentDatabase.bindText(stmt, index: 5, value: artifact.contentType.rawValue)
+                AgentDatabase.bindInt(stmt, index: 6, value: artifact.isFinalResult ? 1 : 0)
+                AgentDatabase.bindDate(stmt, index: 7, value: artifact.createdAt)
+            }
+        ) { stmt in
+            let result = sqlite3_step(stmt)
+            if result != SQLITE_DONE {
+                throw AgentDatabaseError.failedToExecute("Failed to insert artifact")
+            }
+        }
+
+        return artifact
+    }
+
+    /// Gets an artifact by ID
+    public static func getArtifact(id: String) throws -> Artifact? {
+        let sql = "SELECT * FROM artifacts WHERE id = ?"
+        var artifact: Artifact?
+
+        try AgentDatabase.shared.prepareAndExecute(
+            sql,
+            bind: { stmt in
+                AgentDatabase.bindText(stmt, index: 1, value: id)
+            }
+        ) { stmt in
+            if sqlite3_step(stmt) == SQLITE_ROW {
+                artifact = parseArtifactRow(stmt)
+            }
+        }
+
+        return artifact
+    }
+
+    /// Lists all artifacts for a specific task
+    public static func listArtifacts(forTask taskId: String) throws -> [Artifact] {
+        let sql = "SELECT * FROM artifacts WHERE task_id = ? ORDER BY created_at ASC"
+        var artifacts: [Artifact] = []
+
+        try AgentDatabase.shared.prepareAndExecute(
+            sql,
+            bind: { stmt in
+                AgentDatabase.bindText(stmt, index: 1, value: taskId)
+            }
+        ) { stmt in
+            while sqlite3_step(stmt) == SQLITE_ROW {
+                if let artifact = parseArtifactRow(stmt) {
+                    artifacts.append(artifact)
+                }
+            }
+        }
+
+        return artifacts
+    }
+
+    /// Gets the final result artifact for a task (if any)
+    public static func getFinalArtifact(forTask taskId: String) throws -> Artifact? {
+        let sql = "SELECT * FROM artifacts WHERE task_id = ? AND is_final_result = 1 ORDER BY created_at DESC LIMIT 1"
+        var artifact: Artifact?
+
+        try AgentDatabase.shared.prepareAndExecute(
+            sql,
+            bind: { stmt in
+                AgentDatabase.bindText(stmt, index: 1, value: taskId)
+            }
+        ) { stmt in
+            if sqlite3_step(stmt) == SQLITE_ROW {
+                artifact = parseArtifactRow(stmt)
+            }
+        }
+
+        return artifact
+    }
+
+    /// Deletes an artifact by ID
+    public static func deleteArtifact(id: String) throws {
+        let sql = "DELETE FROM artifacts WHERE id = ?"
+
+        try AgentDatabase.shared.prepareAndExecute(
+            sql,
+            bind: { stmt in
+                AgentDatabase.bindText(stmt, index: 1, value: id)
+            }
+        ) { stmt in
+            let result = sqlite3_step(stmt)
+            if result != SQLITE_DONE {
+                throw AgentDatabaseError.failedToExecute("Failed to delete artifact")
+            }
+        }
+    }
+
+    /// Deletes all artifacts for a task
+    public static func deleteArtifacts(forTask taskId: String) throws {
+        let sql = "DELETE FROM artifacts WHERE task_id = ?"
+
+        try AgentDatabase.shared.prepareAndExecute(
+            sql,
+            bind: { stmt in
+                AgentDatabase.bindText(stmt, index: 1, value: taskId)
+            }
+        ) { stmt in
+            let result = sqlite3_step(stmt)
+            if result != SQLITE_DONE {
+                throw AgentDatabaseError.failedToExecute("Failed to delete artifacts for task")
+            }
+        }
+    }
+
+    private static func parseArtifactRow(_ stmt: OpaquePointer) -> Artifact? {
+        guard let id = AgentDatabase.getText(stmt, column: 0),
+            let taskId = AgentDatabase.getText(stmt, column: 1),
+            let filename = AgentDatabase.getText(stmt, column: 2),
+            let content = AgentDatabase.getText(stmt, column: 3),
+            let contentTypeRaw = AgentDatabase.getText(stmt, column: 4),
+            let contentType = ArtifactContentType(rawValue: contentTypeRaw),
+            let createdAt = AgentDatabase.getDate(stmt, column: 6)
+        else { return nil }
+
+        let isFinalResult = AgentDatabase.getInt(stmt, column: 5) == 1
+
+        return Artifact(
+            id: id,
+            taskId: taskId,
+            filename: filename,
+            content: content,
+            contentType: contentType,
+            isFinalResult: isFinalResult,
+            createdAt: createdAt
+        )
+    }
 }
