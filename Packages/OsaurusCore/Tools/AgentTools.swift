@@ -1,0 +1,314 @@
+//
+//  AgentTools.swift
+//  osaurus
+//
+//  Agent-specific tools for plan submission and completion reporting.
+//
+
+import Foundation
+
+// MARK: - Submit Plan Tool
+
+/// Tool for the agent to submit an execution plan
+public struct SubmitPlanTool: OsaurusTool {
+    public let name = "submit_plan"
+    public let description =
+        "Submit an execution plan for the current task. The plan should contain concrete, actionable steps."
+
+    public let parameters: JSONValue? = .object([
+        "type": .string("object"),
+        "properties": .object([
+            "steps": .object([
+                "type": .string("array"),
+                "items": .object([
+                    "type": .string("object"),
+                    "properties": .object([
+                        "description": .object([
+                            "type": .string("string"),
+                            "description": .string("What this step accomplishes"),
+                        ]),
+                        "tool": .object([
+                            "type": .string("string"),
+                            "description": .string("The tool to use for this step (optional)"),
+                        ]),
+                    ]),
+                    "required": .array([.string("description")]),
+                ]),
+                "description": .string("Array of steps in the plan"),
+            ]),
+            "reasoning": .object([
+                "type": .string("string"),
+                "description": .string("Brief explanation of the approach"),
+            ]),
+        ]),
+        "required": .array([.string("steps")]),
+    ])
+
+    public init() {}
+
+    public func execute(argumentsJSON: String) async throws -> String {
+        // Parse the arguments
+        guard let data = argumentsJSON.data(using: .utf8),
+            let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+            let steps = json["steps"] as? [[String: Any]]
+        else {
+            throw NSError(
+                domain: "AgentTools",
+                code: 1,
+                userInfo: [NSLocalizedDescriptionKey: "Invalid plan format"]
+            )
+        }
+
+        let stepCount = steps.count
+        let maxSteps = AgentExecutionEngine.maxToolCallsPerIssue
+
+        if stepCount > maxSteps {
+            return """
+                Plan has \(stepCount) steps, which exceeds the maximum of \(maxSteps) steps per issue.
+                The task will be decomposed into smaller chunks.
+
+                Steps submitted:
+                \(steps.enumerated().map { "  \($0.offset + 1). \(($0.element["description"] as? String) ?? "Unknown")" }.joined(separator: "\n"))
+                """
+        }
+
+        return """
+            Plan accepted with \(stepCount) step(s).
+            Proceeding with execution.
+
+            Steps:
+            \(steps.enumerated().map { "  \($0.offset + 1). \(($0.element["description"] as? String) ?? "Unknown")" }.joined(separator: "\n"))
+            """
+    }
+}
+
+// MARK: - Report Discovery Tool
+
+/// Tool for the agent to report discovered work
+public struct ReportDiscoveryTool: OsaurusTool {
+    public let name = "report_discovery"
+    public let description =
+        "Report discovered work such as bugs, TODOs, prerequisites, or follow-up tasks that should be tracked."
+
+    public let parameters: JSONValue? = .object([
+        "type": .string("object"),
+        "properties": .object([
+            "type": .object([
+                "type": .string("string"),
+                "enum": .array([
+                    .string("error"),
+                    .string("todo"),
+                    .string("fixme"),
+                    .string("prerequisite"),
+                    .string("follow_up"),
+                ]),
+                "description": .string("Type of discovery"),
+            ]),
+            "title": .object([
+                "type": .string("string"),
+                "description": .string("Short title for the discovered issue"),
+            ]),
+            "description": .object([
+                "type": .string("string"),
+                "description": .string("Detailed description of the discovery"),
+            ]),
+            "priority": .object([
+                "type": .string("string"),
+                "enum": .array([
+                    .string("p0"),
+                    .string("p1"),
+                    .string("p2"),
+                    .string("p3"),
+                ]),
+                "description": .string("Suggested priority (p0=urgent, p3=low)"),
+            ]),
+        ]),
+        "required": .array([.string("type"), .string("title")]),
+    ])
+
+    public init() {}
+
+    public func execute(argumentsJSON: String) async throws -> String {
+        // Parse the arguments
+        guard let data = argumentsJSON.data(using: .utf8),
+            let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+            let typeStr = json["type"] as? String,
+            let title = json["title"] as? String
+        else {
+            throw NSError(
+                domain: "AgentTools",
+                code: 2,
+                userInfo: [NSLocalizedDescriptionKey: "Invalid discovery format"]
+            )
+        }
+
+        let description = json["description"] as? String
+        let priorityStr = json["priority"] as? String ?? "p2"
+
+        // Note: The actual issue creation is handled by DiscoveryDetector or AgentEngine
+        // This tool just acknowledges the discovery for now
+        return """
+            Discovery reported:
+            - Type: \(typeStr)
+            - Title: \(title)
+            - Priority: \(priorityStr.uppercased())
+            \(description.map { "- Description: \($0)" } ?? "")
+
+            This will be tracked as a new issue linked to the current task.
+            """
+    }
+}
+
+// MARK: - Complete Task Tool
+
+/// Tool for the agent to mark the current task as complete
+public struct CompleteTaskTool: OsaurusTool {
+    public let name = "complete_task"
+    public let description = "Mark the current task as complete with a summary of what was accomplished."
+
+    public let parameters: JSONValue? = .object([
+        "type": .string("object"),
+        "properties": .object([
+            "summary": .object([
+                "type": .string("string"),
+                "description": .string("Summary of what was accomplished"),
+            ]),
+            "success": .object([
+                "type": .string("boolean"),
+                "description": .string("Whether the task was fully successful"),
+            ]),
+            "remaining_work": .object([
+                "type": .string("string"),
+                "description": .string("Any remaining work that wasn't completed (optional)"),
+            ]),
+        ]),
+        "required": .array([.string("summary"), .string("success")]),
+    ])
+
+    public init() {}
+
+    public func execute(argumentsJSON: String) async throws -> String {
+        // Parse the arguments
+        guard let data = argumentsJSON.data(using: .utf8),
+            let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+            let summary = json["summary"] as? String,
+            let success = json["success"] as? Bool
+        else {
+            throw NSError(
+                domain: "AgentTools",
+                code: 3,
+                userInfo: [NSLocalizedDescriptionKey: "Invalid completion format"]
+            )
+        }
+
+        let remainingWork = json["remaining_work"] as? String
+
+        var result = """
+            Task completion reported:
+            - Status: \(success ? "SUCCESS" : "PARTIAL")
+            - Summary: \(summary)
+            """
+
+        if let remaining = remainingWork, !remaining.isEmpty {
+            result += "\n- Remaining work: \(remaining)"
+        }
+
+        return result
+    }
+}
+
+// MARK: - Tool Registration
+
+/// Manager for agent-specific tool registration
+/// Uses reference counting to support multiple concurrent agent sessions
+@MainActor
+public final class AgentToolManager {
+    public static let shared = AgentToolManager()
+
+    /// Cached tool instances (created once, reused)
+    private lazy var tools: [OsaurusTool] = [
+        SubmitPlanTool(),
+        ReportDiscoveryTool(),
+        CompleteTaskTool(),
+    ]
+
+    /// Reference count for active agent sessions
+    /// Tools stay registered while count > 0
+    private var referenceCount = 0
+
+    /// Previous enabled state for each tool (to restore on unregister)
+    private var previousEnabledState: [String: Bool] = [:]
+
+    private init() {}
+
+    /// Whether agent tools are currently registered
+    public var isRegistered: Bool {
+        referenceCount > 0
+    }
+
+    /// Returns the names of all agent tools
+    public var toolNames: [String] {
+        tools.map { $0.name }
+    }
+
+    /// Registers agent-specific tools with the tool registry and enables them
+    /// Uses reference counting - safe to call multiple times from different sessions
+    /// Call this when entering Agent Mode
+    public func registerTools() {
+        referenceCount += 1
+
+        // Only register on first reference
+        guard referenceCount == 1 else { return }
+
+        // Save previous enabled state and register tools
+        for tool in tools {
+            // Save current state (might be nil/false, that's fine)
+            previousEnabledState[tool.name] = ToolRegistry.shared.isGlobalEnabled(tool.name)
+
+            // Register and enable
+            ToolRegistry.shared.register(tool)
+            ToolRegistry.shared.setEnabled(true, for: tool.name)
+        }
+    }
+
+    /// Unregisters agent-specific tools from the tool registry
+    /// Uses reference counting - only unregisters when last session leaves
+    /// Call this when leaving Agent Mode
+    public func unregisterTools() {
+        guard referenceCount > 0 else { return }
+
+        referenceCount -= 1
+
+        // Only unregister when no more references
+        guard referenceCount == 0 else { return }
+
+        // Restore previous enabled state and unregister
+        for tool in tools {
+            // Restore previous state (or disable if wasn't set)
+            let wasEnabled = previousEnabledState[tool.name] ?? false
+            ToolRegistry.shared.setEnabled(wasEnabled, for: tool.name)
+        }
+
+        // Clear saved state
+        previousEnabledState.removeAll()
+
+        // Unregister the tools
+        ToolRegistry.shared.unregister(names: toolNames)
+    }
+
+    /// Force unregisters all agent tools regardless of reference count
+    /// Use for cleanup during app termination
+    public func forceUnregisterAll() {
+        guard referenceCount > 0 else { return }
+
+        // Restore previous enabled state
+        for tool in tools {
+            let wasEnabled = previousEnabledState[tool.name] ?? false
+            ToolRegistry.shared.setEnabled(wasEnabled, for: tool.name)
+        }
+
+        previousEnabledState.removeAll()
+        ToolRegistry.shared.unregister(names: toolNames)
+        referenceCount = 0
+    }
+}

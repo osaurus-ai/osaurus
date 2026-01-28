@@ -1386,6 +1386,17 @@ struct ChatView: View {
     }
 
     var body: some View {
+        // Switch between Chat and Agent modes
+        if windowState.mode == .agent, let agentSession = windowState.agentSession {
+            AgentView(windowState: windowState, session: agentSession)
+        } else {
+            chatModeContent
+        }
+    }
+
+    /// Chat mode content - the original ChatView implementation
+    @ViewBuilder
+    private var chatModeContent: some View {
         GeometryReader { proxy in
             let sidebarWidth: CGFloat = showSidebar ? 240 : 0
             let chatWidth = proxy.size.width - sidebarWidth
@@ -1749,6 +1760,26 @@ struct ChatView: View {
                 }
 
                 Spacer()
+
+                // Mode toggle - Agent mode
+                Button(action: {
+                    windowState.switchMode(to: .agent)
+                }) {
+                    HStack(spacing: 4) {
+                        Image(systemName: "bolt.circle")
+                        Text("Agent")
+                    }
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundColor(theme.secondaryText)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 5)
+                    .background(
+                        Capsule()
+                            .fill(theme.secondaryBackground.opacity(0.6))
+                    )
+                }
+                .buttonStyle(.plain)
+                .help("Switch to Agent mode")
             }
             .padding(.leading, 20)
             .padding(.trailing, 56)  // Leave room for close button

@@ -1,0 +1,461 @@
+//
+//  AgentModels.swift
+//  osaurus
+//
+//  Data models for Osaurus Agents issue tracking system.
+//  Defines Issue, Dependency, Event, and Task structures.
+//
+
+import Foundation
+
+// MARK: - Issue Status
+
+/// Status of an issue in the agent workflow
+public enum IssueStatus: String, Codable, Sendable, CaseIterable {
+    /// Issue is ready to be worked on
+    case open
+    /// Issue is currently being executed
+    case inProgress = "in_progress"
+    /// Issue is waiting on other issues to complete
+    case blocked
+    /// Issue has been completed
+    case closed
+
+    public var displayName: String {
+        switch self {
+        case .open: return "Open"
+        case .inProgress: return "In Progress"
+        case .blocked: return "Blocked"
+        case .closed: return "Closed"
+        }
+    }
+}
+
+// MARK: - Issue Priority
+
+/// Priority levels for issues (P0 = most urgent)
+public enum IssuePriority: Int, Codable, Sendable, CaseIterable, Comparable {
+    case p0 = 0  // Urgent
+    case p1 = 1  // High
+    case p2 = 2  // Medium (default)
+    case p3 = 3  // Low
+
+    public var displayName: String {
+        switch self {
+        case .p0: return "P0 - Urgent"
+        case .p1: return "P1 - High"
+        case .p2: return "P2 - Medium"
+        case .p3: return "P3 - Low"
+        }
+    }
+
+    public var shortName: String {
+        switch self {
+        case .p0: return "P0"
+        case .p1: return "P1"
+        case .p2: return "P2"
+        case .p3: return "P3"
+        }
+    }
+
+    public static func < (lhs: IssuePriority, rhs: IssuePriority) -> Bool {
+        lhs.rawValue < rhs.rawValue
+    }
+}
+
+// MARK: - Issue Type
+
+/// Type of issue
+public enum IssueType: String, Codable, Sendable, CaseIterable {
+    /// Standard work item
+    case task
+    /// Bug or error to fix
+    case bug
+    /// Work discovered during execution
+    case discovery
+
+    public var displayName: String {
+        switch self {
+        case .task: return "Task"
+        case .bug: return "Bug"
+        case .discovery: return "Discovery"
+        }
+    }
+}
+
+// MARK: - Dependency Type
+
+/// Type of relationship between issues
+public enum DependencyType: String, Codable, Sendable {
+    /// The "from" issue blocks the "to" issue
+    /// "to" issue cannot start until "from" is closed
+    case blocks
+    /// Parent-child relationship (decomposition)
+    case parentChild = "parent_child"
+    /// Issue was discovered while working on another
+    case discoveredFrom = "discovered_from"
+}
+
+// MARK: - Issue
+
+/// The fundamental unit of work in Osaurus Agents
+public struct Issue: Identifiable, Codable, Sendable, Equatable {
+    /// Unique ID (hash-based, e.g., "os-a1b2c3d4")
+    public let id: String
+    /// ID of the task this issue belongs to
+    public let taskId: String
+    /// Short title describing the issue
+    public var title: String
+    /// Detailed description of the work
+    public var description: String?
+    /// Current status
+    public var status: IssueStatus
+    /// Priority level
+    public var priority: IssuePriority
+    /// Type of issue
+    public var type: IssueType
+    /// Result/summary when closed
+    public var result: String?
+    /// When the issue was created
+    public let createdAt: Date
+    /// When the issue was last updated
+    public var updatedAt: Date
+
+    public init(
+        id: String = Issue.generateId(),
+        taskId: String,
+        title: String,
+        description: String? = nil,
+        status: IssueStatus = .open,
+        priority: IssuePriority = .p2,
+        type: IssueType = .task,
+        result: String? = nil,
+        createdAt: Date = Date(),
+        updatedAt: Date = Date()
+    ) {
+        self.id = id
+        self.taskId = taskId
+        self.title = title
+        self.description = description
+        self.status = status
+        self.priority = priority
+        self.type = type
+        self.result = result
+        self.createdAt = createdAt
+        self.updatedAt = updatedAt
+    }
+
+    /// Generates a unique issue ID in the format "os-xxxxxxxx"
+    public static func generateId() -> String {
+        let uuid = UUID().uuidString.lowercased()
+        let hash = String(uuid.replacingOccurrences(of: "-", with: "").prefix(8))
+        return "os-\(hash)"
+    }
+
+    /// Whether this issue can be worked on (open with no blockers)
+    /// Note: Actual blocker check requires dependency lookup
+    public var isOpen: Bool {
+        status == .open
+    }
+
+    /// Whether this issue is currently being worked on
+    public var isInProgress: Bool {
+        status == .inProgress
+    }
+
+    /// Whether this issue is complete
+    public var isClosed: Bool {
+        status == .closed
+    }
+}
+
+// MARK: - Issue Dependency
+
+/// A relationship between two issues
+public struct IssueDependency: Identifiable, Codable, Sendable, Equatable {
+    /// Unique ID for this dependency
+    public let id: String
+    /// The issue that affects another (e.g., the blocker)
+    public let fromIssueId: String
+    /// The issue being affected (e.g., the blocked issue)
+    public let toIssueId: String
+    /// Type of dependency relationship
+    public let type: DependencyType
+    /// When the dependency was created
+    public let createdAt: Date
+
+    public init(
+        id: String = UUID().uuidString,
+        fromIssueId: String,
+        toIssueId: String,
+        type: DependencyType,
+        createdAt: Date = Date()
+    ) {
+        self.id = id
+        self.fromIssueId = fromIssueId
+        self.toIssueId = toIssueId
+        self.type = type
+        self.createdAt = createdAt
+    }
+}
+
+// MARK: - Issue Event
+
+/// Event types for the audit log
+public enum IssueEventType: String, Codable, Sendable {
+    case created
+    case statusChanged = "status_changed"
+    case priorityChanged = "priority_changed"
+    case descriptionUpdated = "description_updated"
+    case dependencyAdded = "dependency_added"
+    case dependencyRemoved = "dependency_removed"
+    case executionStarted = "execution_started"
+    case executionCompleted = "execution_completed"
+    case toolCallExecuted = "tool_call_executed"
+    case planCreated = "plan_created"
+    case decomposed
+    case discovered
+    case closed
+}
+
+/// An event in the issue's history (append-only audit log)
+public struct IssueEvent: Identifiable, Codable, Sendable {
+    /// Unique ID for this event
+    public let id: String
+    /// The issue this event belongs to
+    public let issueId: String
+    /// Type of event
+    public let eventType: IssueEventType
+    /// Additional event data as JSON
+    public var payload: String?
+    /// When the event occurred
+    public let createdAt: Date
+
+    public init(
+        id: String = UUID().uuidString,
+        issueId: String,
+        eventType: IssueEventType,
+        payload: String? = nil,
+        createdAt: Date = Date()
+    ) {
+        self.id = id
+        self.issueId = issueId
+        self.eventType = eventType
+        self.payload = payload
+        self.createdAt = createdAt
+    }
+
+    /// Creates an event with a Codable payload
+    public static func withPayload<T: Encodable>(
+        issueId: String,
+        eventType: IssueEventType,
+        payload: T
+    ) -> IssueEvent {
+        let encoder = JSONEncoder()
+        let payloadString = (try? encoder.encode(payload)).flatMap { String(data: $0, encoding: .utf8) }
+        return IssueEvent(issueId: issueId, eventType: eventType, payload: payloadString)
+    }
+}
+
+// MARK: - Agent Task
+
+/// Task status
+public enum AgentTaskStatus: String, Codable, Sendable {
+    /// Task is currently active
+    case active
+    /// All issues in task are complete
+    case completed
+    /// Task was cancelled
+    case cancelled
+}
+
+/// A task groups issues by the original user query
+public struct AgentTask: Identifiable, Codable, Sendable, Equatable {
+    /// Unique ID for this task
+    public let id: String
+    /// Display title (generated from query)
+    public var title: String
+    /// Original user query that created this task
+    public let query: String
+    /// Persona this task belongs to (nil = default)
+    public var personaId: UUID?
+    /// Current status
+    public var status: AgentTaskStatus
+    /// When the task was created
+    public let createdAt: Date
+    /// When the task was last updated
+    public var updatedAt: Date
+
+    public init(
+        id: String = UUID().uuidString,
+        title: String,
+        query: String,
+        personaId: UUID? = nil,
+        status: AgentTaskStatus = .active,
+        createdAt: Date = Date(),
+        updatedAt: Date = Date()
+    ) {
+        self.id = id
+        self.title = title
+        self.query = query
+        self.personaId = personaId
+        self.status = status
+        self.createdAt = createdAt
+        self.updatedAt = updatedAt
+    }
+
+    /// Generates a title from the query
+    public static func generateTitle(from query: String) -> String {
+        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.isEmpty { return "New Task" }
+
+        let firstLine = trimmed.components(separatedBy: .newlines).first ?? trimmed
+        if firstLine.count <= 50 {
+            return firstLine
+        }
+        return String(firstLine.prefix(47)) + "..."
+    }
+}
+
+// MARK: - Execution Plan
+
+/// A step in an execution plan
+public struct PlanStep: Codable, Sendable, Equatable {
+    /// Step number (1-based)
+    public let stepNumber: Int
+    /// Description of what this step does
+    public let description: String
+    /// Tool to use (if any)
+    public var toolName: String?
+    /// Whether this step is complete
+    public var isComplete: Bool
+
+    public init(
+        stepNumber: Int,
+        description: String,
+        toolName: String? = nil,
+        isComplete: Bool = false
+    ) {
+        self.stepNumber = stepNumber
+        self.description = description
+        self.toolName = toolName
+        self.isComplete = isComplete
+    }
+}
+
+/// An execution plan for an issue
+public struct ExecutionPlan: Codable, Sendable {
+    /// The issue this plan is for
+    public let issueId: String
+    /// Steps to execute
+    public var steps: [PlanStep]
+    /// Maximum allowed tool calls
+    public let maxToolCalls: Int
+    /// Current tool call count
+    public var toolCallCount: Int
+
+    /// Default maximum tool calls per issue execution
+    public static let defaultMaxToolCalls = 10
+
+    public init(
+        issueId: String,
+        steps: [PlanStep] = [],
+        maxToolCalls: Int = ExecutionPlan.defaultMaxToolCalls,
+        toolCallCount: Int = 0
+    ) {
+        self.issueId = issueId
+        self.steps = steps
+        self.maxToolCalls = maxToolCalls
+        self.toolCallCount = toolCallCount
+    }
+
+    /// Whether the plan exceeds the tool call limit
+    public var exceedsLimit: Bool {
+        steps.count > maxToolCalls
+    }
+
+    /// Whether we've reached the tool call limit
+    public var isAtLimit: Bool {
+        toolCallCount >= maxToolCalls
+    }
+
+    /// Number of completed steps
+    public var completedSteps: Int {
+        steps.filter { $0.isComplete }.count
+    }
+
+    /// Progress as a fraction (0.0 to 1.0)
+    public var progress: Double {
+        guard !steps.isEmpty else { return 0 }
+        return Double(completedSteps) / Double(steps.count)
+    }
+}
+
+// MARK: - Discovery
+
+/// A discovered piece of work
+public struct Discovery: Codable, Sendable {
+    /// Type of discovery
+    public enum DiscoveryType: String, Codable, Sendable {
+        case error
+        case todo
+        case fixme
+        case prerequisite
+        case followUp = "follow_up"
+    }
+
+    /// Type of discovery
+    public let type: DiscoveryType
+    /// Title for the discovered issue
+    public let title: String
+    /// Description of the discovery
+    public let description: String?
+    /// Source context (e.g., file path, tool output)
+    public let source: String?
+    /// Suggested priority
+    public let suggestedPriority: IssuePriority
+
+    public init(
+        type: DiscoveryType,
+        title: String,
+        description: String? = nil,
+        source: String? = nil,
+        suggestedPriority: IssuePriority = .p2
+    ) {
+        self.type = type
+        self.title = title
+        self.description = description
+        self.source = source
+        self.suggestedPriority = suggestedPriority
+    }
+}
+
+// MARK: - Execution Result
+
+/// Result of executing an issue
+public struct ExecutionResult: Sendable {
+    /// The executed issue
+    public let issue: Issue
+    /// Whether execution was successful
+    public let success: Bool
+    /// Result message/summary
+    public let message: String
+    /// Discoveries made during execution
+    public let discoveries: [Discovery]
+    /// Child issues created (from decomposition)
+    public let childIssues: [Issue]
+
+    public init(
+        issue: Issue,
+        success: Bool,
+        message: String,
+        discoveries: [Discovery] = [],
+        childIssues: [Issue] = []
+    ) {
+        self.issue = issue
+        self.success = success
+        self.message = message
+        self.discoveries = discoveries
+        self.childIssues = childIssues
+    }
+}
