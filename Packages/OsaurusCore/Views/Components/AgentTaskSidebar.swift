@@ -3,6 +3,7 @@
 //  osaurus
 //
 //  Sidebar displaying the list of agent tasks for the current persona.
+//  Uses shared sidebar components for consistent styling.
 //
 
 import SwiftUI
@@ -16,95 +17,89 @@ struct AgentTaskSidebar: View {
     @Environment(\.theme) private var theme: ThemeProtocol
     @State private var searchQuery: String = ""
     @State private var hoveredTaskId: String?
+    @FocusState private var isSearchFocused: Bool
 
     var body: some View {
-        VStack(spacing: 0) {
+        SidebarContainer {
             // Header
             sidebarHeader
 
-            Divider()
-                .background(theme.tertiaryBackground)
+            // Search field
+            SidebarSearchField(
+                text: $searchQuery,
+                placeholder: "Search tasks...",
+                isFocused: $isSearchFocused
+            )
+            .padding(.horizontal, 12)
+            .padding(.bottom, 8)
 
-            // Search
-            SearchField(text: $searchQuery, placeholder: "Search tasks...")
-                .padding(.horizontal, 12)
-                .padding(.vertical, 8)
+            Divider()
+                .opacity(0.3)
 
             // Task list
-            if filteredTasks.isEmpty {
+            if tasks.isEmpty {
                 emptyState
+            } else if filteredTasks.isEmpty {
+                SidebarNoResultsView(searchQuery: searchQuery) {
+                    withAnimation(theme.animationQuick()) {
+                        searchQuery = ""
+                    }
+                }
             } else {
                 taskList
             }
         }
-        .background(theme.secondaryBackground.opacity(0.5))
     }
 
     // MARK: - Header
 
     private var sidebarHeader: some View {
         HStack {
-            HStack(spacing: 6) {
-                Image(systemName: "bolt.circle.fill")
-                    .foregroundColor(.orange)
-                Text("Tasks")
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundColor(theme.primaryText)
-            }
+            Text("Tasks")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundColor(theme.primaryText)
 
             Spacer()
 
-            // Task count
-            Text("\(tasks.count)")
-                .font(.system(size: 11, weight: .medium))
-                .foregroundColor(theme.tertiaryText)
-                .padding(.horizontal, 6)
-                .padding(.vertical, 2)
-                .background(
-                    Capsule()
-                        .fill(theme.tertiaryBackground)
-                )
+            // Task count badge
+            if !tasks.isEmpty {
+                Text("\(tasks.count)")
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundColor(theme.tertiaryText)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(
+                        Capsule()
+                            .fill(theme.tertiaryBackground.opacity(0.6))
+                    )
+            }
         }
         .padding(.horizontal, 16)
-        .padding(.vertical, 12)
+        .padding(.top, 20)
+        .padding(.bottom, 8)
     }
 
     // MARK: - Empty State
 
     private var emptyState: some View {
         VStack(spacing: 8) {
-            if searchQuery.isEmpty {
-                Image(systemName: "tray")
-                    .font(.system(size: 28))
-                    .foregroundColor(theme.tertiaryText)
-
-                Text("No tasks yet")
-                    .font(.system(size: 13))
-                    .foregroundColor(theme.secondaryText)
-
-                Text("Enter a query to create your first task")
-                    .font(.system(size: 11))
-                    .foregroundColor(theme.tertiaryText)
-                    .multilineTextAlignment(.center)
-            } else {
-                Image(systemName: "magnifyingglass")
-                    .font(.system(size: 28))
-                    .foregroundColor(theme.tertiaryText)
-
-                Text("No matching tasks")
-                    .font(.system(size: 13))
-                    .foregroundColor(theme.secondaryText)
-            }
+            Spacer()
+            Image(systemName: "bolt.circle")
+                .font(.system(size: 28))
+                .foregroundColor(theme.secondaryText.opacity(0.5))
+            Text("No tasks yet")
+                .font(.system(size: 12))
+                .foregroundColor(theme.secondaryText.opacity(0.7))
+            Spacer()
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .padding()
+        .frame(maxWidth: .infinity)
     }
 
     // MARK: - Task List
 
     private var taskList: some View {
         ScrollView {
-            LazyVStack(spacing: 4) {
+            LazyVStack(spacing: 2) {
                 ForEach(filteredTasks) { task in
                     TaskRow(
                         task: task,
@@ -118,9 +113,10 @@ struct AgentTaskSidebar: View {
                     }
                 }
             }
+            .padding(.vertical, 8)
             .padding(.horizontal, 8)
-            .padding(.vertical, 4)
         }
+        .scrollIndicators(.hidden)
     }
 
     // MARK: - Filtered Tasks
@@ -129,9 +125,9 @@ struct AgentTaskSidebar: View {
         if searchQuery.isEmpty {
             return tasks
         }
-        let query = searchQuery.lowercased()
         return tasks.filter { task in
-            task.title.lowercased().contains(query) || task.query.lowercased().contains(query)
+            SearchService.matches(query: searchQuery, in: task.title)
+                || SearchService.matches(query: searchQuery, in: task.query)
         }
     }
 }
@@ -148,43 +144,39 @@ private struct TaskRow: View {
     @Environment(\.theme) private var theme: ThemeProtocol
 
     var body: some View {
-        HStack(spacing: 10) {
+        HStack(spacing: 8) {
             // Status indicator
             statusIndicator
-                .frame(width: 8, height: 8)
 
             // Content
             VStack(alignment: .leading, spacing: 2) {
                 Text(task.title)
-                    .font(.system(size: 13, weight: isSelected ? .semibold : .regular))
+                    .font(.system(size: 12, weight: .medium))
                     .foregroundColor(theme.primaryText)
                     .lineLimit(1)
 
-                Text(relativeDate(task.updatedAt))
+                Text(formatRelativeDate(task.updatedAt))
                     .font(.system(size: 10))
-                    .foregroundColor(theme.tertiaryText)
+                    .foregroundColor(theme.secondaryText.opacity(0.85))
             }
 
             Spacer()
 
             // Delete button (on hover)
             if isHovered {
-                Button(action: onDelete) {
-                    Image(systemName: "trash")
-                        .font(.system(size: 11))
-                        .foregroundColor(theme.tertiaryText)
-                }
-                .buttonStyle(.plain)
-                .help("Delete task")
+                SidebarRowActionButton(
+                    icon: "trash",
+                    help: "Delete",
+                    action: onDelete
+                )
+                .transition(.opacity.combined(with: .scale(scale: 0.9)))
             }
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 8)
-        .background(
-            RoundedRectangle(cornerRadius: 8)
-                .fill(backgroundColor)
-        )
-        .contentShape(Rectangle())
+        .background(SidebarRowBackground(isSelected: isSelected, isHovered: isHovered))
+        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
         .onTapGesture {
             onSelect()
         }
@@ -197,38 +189,18 @@ private struct TaskRow: View {
 
     // MARK: - Status Indicator
 
-    @ViewBuilder
     private var statusIndicator: some View {
         Circle()
             .fill(statusColor)
+            .frame(width: 8, height: 8)
     }
 
     private var statusColor: Color {
         switch task.status {
-        case .active: return .orange
+        case .active: return theme.accentColor
         case .completed: return .green
-        case .cancelled: return .gray
+        case .cancelled: return theme.tertiaryText
         }
-    }
-
-    // MARK: - Background
-
-    private var backgroundColor: Color {
-        if isSelected {
-            return theme.accentColor.opacity(0.15)
-        } else if isHovered {
-            return theme.tertiaryBackground.opacity(0.5)
-        } else {
-            return Color.clear
-        }
-    }
-
-    // MARK: - Relative Date
-
-    private func relativeDate(_ date: Date) -> String {
-        let formatter = RelativeDateTimeFormatter()
-        formatter.unitsStyle = .abbreviated
-        return formatter.localizedString(for: date, relativeTo: Date())
     }
 }
 

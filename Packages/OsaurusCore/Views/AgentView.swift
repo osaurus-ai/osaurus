@@ -43,7 +43,6 @@ struct AgentView: View {
                             }
                         }
                     )
-                    .frame(width: 240)
                     .transition(.move(edge: .leading))
                 }
 

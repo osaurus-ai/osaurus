@@ -19,7 +19,6 @@ struct ChatSessionSidebar: View {
     var onOpenInNewWindow: ((ChatSessionData) -> Void)? = nil
 
     @Environment(\.theme) private var theme
-    @Environment(\.colorScheme) private var colorScheme
     @StateObject private var personaManager = PersonaManager.shared
     @State private var editingSessionId: UUID?
     @State private var editingTitle: String = ""
@@ -38,14 +37,18 @@ struct ChatSessionSidebar: View {
     }
 
     var body: some View {
-        VStack(spacing: 0) {
+        SidebarContainer {
             // Header with New Chat button
             sidebarHeader
 
             // Search field
-            searchField
-                .padding(.horizontal, 12)
-                .padding(.bottom, 8)
+            SidebarSearchField(
+                text: $searchQuery,
+                placeholder: "Search conversations...",
+                isFocused: $isSearchFocused
+            )
+            .padding(.horizontal, 12)
+            .padding(.bottom, 8)
 
             Divider()
                 .opacity(0.3)
@@ -54,18 +57,13 @@ struct ChatSessionSidebar: View {
             if sessions.isEmpty {
                 emptyState
             } else if filteredSessions.isEmpty {
-                noResultsState
+                SidebarNoResultsView(searchQuery: searchQuery) {
+                    withAnimation(theme.animationQuick()) {
+                        searchQuery = ""
+                    }
+                }
             } else {
                 sessionList
-            }
-        }
-        .frame(width: 240, alignment: .top)
-        .frame(maxHeight: .infinity, alignment: .top)
-        .background {
-            if theme.glassEnabled {
-                ThemedGlassSurface(cornerRadius: 0)
-            } else {
-                theme.secondaryBackground
             }
         }
     }
@@ -101,58 +99,6 @@ struct ChatSessionSidebar: View {
         .padding(.bottom, 8)
     }
 
-    // MARK: - Search Field
-
-    private var searchField: some View {
-        HStack(spacing: 8) {
-            Image(systemName: "magnifyingglass")
-                .font(.system(size: 12, weight: .medium))
-                .foregroundColor(isSearchFocused ? theme.primaryText : theme.secondaryText.opacity(0.7))
-
-            ZStack(alignment: .leading) {
-                if searchQuery.isEmpty {
-                    Text("Search conversations...")
-                        .font(.system(size: 12))
-                        .foregroundColor(theme.secondaryText.opacity(0.7))
-                }
-                TextField("", text: $searchQuery)
-                    .textFieldStyle(.plain)
-                    .font(.system(size: 12))
-                    .foregroundColor(theme.primaryText)
-                    .focused($isSearchFocused)
-            }
-
-            if !searchQuery.isEmpty {
-                Button(action: {
-                    withAnimation(theme.animationQuick()) {
-                        searchQuery = ""
-                    }
-                }) {
-                    Image(systemName: "xmark.circle.fill")
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundColor(theme.secondaryText.opacity(0.7))
-                }
-                .buttonStyle(.plain)
-                .transition(.opacity.combined(with: .scale(scale: 0.8)))
-            }
-        }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 7)
-        .background(
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .fill(theme.isDark ? theme.primaryBackground.opacity(0.5) : theme.tertiaryBackground.opacity(0.8))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .stroke(
-                    isSearchFocused ? theme.accentColor.opacity(0.3) : Color.clear,
-                    lineWidth: 1
-                )
-        )
-        .animation(theme.animationQuick(), value: isSearchFocused)
-        .animation(theme.animationQuick(), value: searchQuery.isEmpty)
-    }
-
     // MARK: - Empty State
 
     private var emptyState: some View {
@@ -167,51 +113,6 @@ struct ChatSessionSidebar: View {
             Spacer()
         }
         .frame(maxWidth: .infinity)
-    }
-
-    // MARK: - No Results State
-
-    private var noResultsState: some View {
-        VStack(spacing: 12) {
-            Spacer()
-
-            Image(systemName: "magnifyingglass")
-                .font(.system(size: 24, weight: .light))
-                .foregroundColor(theme.secondaryText.opacity(0.4))
-
-            VStack(spacing: 4) {
-                Text("No matches found")
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(theme.secondaryText.opacity(0.8))
-
-                Text("for \"\(searchQuery)\"")
-                    .font(.system(size: 11))
-                    .foregroundColor(theme.secondaryText.opacity(0.6))
-                    .lineLimit(1)
-                    .truncationMode(.tail)
-            }
-
-            Button(action: {
-                withAnimation(theme.animationQuick()) {
-                    searchQuery = ""
-                }
-            }) {
-                Text("Clear search")
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundColor(theme.accentColor)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 6)
-                    .background(
-                        RoundedRectangle(cornerRadius: 6, style: .continuous)
-                            .fill(theme.accentColor.opacity(0.1))
-                    )
-            }
-            .buttonStyle(.plain)
-
-            Spacer()
-        }
-        .frame(maxWidth: .infinity)
-        .padding(.horizontal, 16)
     }
 
     // MARK: - Session List
@@ -311,7 +212,7 @@ private struct SessionRow: View {
             editingView
                 .padding(.horizontal, 10)
                 .padding(.vertical, 8)
-                .background(rowBackground)
+                .background(SidebarRowBackground(isSelected: isSelected, isHovered: isHovered))
                 .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
         } else {
             HStack(spacing: 8) {
@@ -328,7 +229,7 @@ private struct SessionRow: View {
                         .foregroundColor(theme.primaryText)
                         .lineLimit(1)
 
-                    Text(relativeDate(session.updatedAt))
+                    Text(formatRelativeDate(session.updatedAt))
                         .font(.system(size: 10))
                         .foregroundColor(theme.secondaryText.opacity(0.85))
                 }
@@ -337,13 +238,13 @@ private struct SessionRow: View {
                 // Action buttons (visible on hover)
                 if isHovered {
                     HStack(spacing: 4) {
-                        ActionButton(
+                        SidebarRowActionButton(
                             icon: "pencil",
                             help: "Rename",
                             action: onStartRename
                         )
 
-                        ActionButton(
+                        SidebarRowActionButton(
                             icon: "trash",
                             help: "Delete",
                             action: onDelete
@@ -354,7 +255,7 @@ private struct SessionRow: View {
             }
             .padding(.horizontal, 10)
             .padding(.vertical, 8)
-            .background(rowBackground)
+            .background(SidebarRowBackground(isSelected: isSelected, isHovered: isHovered))
             .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
             .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
             .onTapGesture {
@@ -406,10 +307,6 @@ private struct SessionRow: View {
             .help(persona.name)
     }
 
-    private var normalView: some View {
-        EmptyView()  // Keeping for compilation but not used
-    }
-
     private var editingView: some View {
         TextField("Title", text: $editingTitle, onCommit: onConfirmRename)
             .textFieldStyle(.plain)
@@ -432,55 +329,6 @@ private struct SessionRow: View {
             }
     }
 
-    private var rowBackground: some View {
-        Group {
-            if isSelected {
-                theme.accentColor.opacity(0.15)
-            } else if isHovered {
-                theme.secondaryBackground.opacity(0.5)
-            } else {
-                Color.clear
-            }
-        }
-    }
-
-    private func relativeDate(_ date: Date) -> String {
-        let formatter = RelativeDateTimeFormatter()
-        formatter.unitsStyle = .abbreviated
-        return formatter.localizedString(for: date, relativeTo: Date())
-    }
-}
-
-// MARK: - Action Button
-
-private struct ActionButton: View {
-    let icon: String
-    let help: String
-    let action: () -> Void
-
-    @Environment(\.theme) private var theme
-    @State private var isHovered = false
-
-    var body: some View {
-        Button(action: action) {
-            Image(systemName: icon)
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundColor(isHovered ? theme.primaryText : theme.secondaryText)
-                .frame(width: 24, height: 24)
-                .background(
-                    RoundedRectangle(cornerRadius: 5, style: .continuous)
-                        .fill(isHovered ? theme.secondaryBackground : Color.clear)
-                )
-                .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .help(help)
-        .onHover { hovering in
-            withAnimation(.easeInOut(duration: 0.15)) {
-                isHovered = hovering
-            }
-        }
-    }
 }
 
 // MARK: - Preview
