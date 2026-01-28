@@ -250,10 +250,10 @@ public actor AgentEngine {
         case .ready(let plan):
             // Log plan creation
             try IssueStore.createEvent(
-                IssueEvent(
+                IssueEvent.withPayload(
                     issueId: issue.id,
                     eventType: .planCreated,
-                    payload: "{\"stepCount\": \(plan.steps.count)}"
+                    payload: EventPayload.StepCount(stepCount: plan.steps.count)
                 )
             )
 
@@ -433,10 +433,10 @@ public actor AgentEngine {
 
         // Log execution completed
         try IssueStore.createEvent(
-            IssueEvent(
+            IssueEvent.withPayload(
                 issueId: issue.id,
                 eventType: .executionCompleted,
-                payload: "{\"success\": \(success), \"discoveries\": \(allDiscoveries.count)}"
+                payload: EventPayload.ExecutionCompleted(success: success, discoveries: allDiscoveries.count)
             )
         )
 

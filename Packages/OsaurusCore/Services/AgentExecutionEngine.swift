@@ -102,47 +102,91 @@ public actor AgentExecutionEngine {
 
     /// Builds the prompt for plan generation
     private func buildPlanPrompt(for issue: Issue, tools: [Tool]) -> String {
-        var prompt = """
-            I need to complete the following task:
-
-            **Title:** \(issue.title)
-            """
-
-        if let description = issue.description {
-            prompt += "\n**Description:** \(description)"
-        }
-
-        prompt += """
-
-
-            Available tools:
-            """
-
+        var toolList = ""
         for tool in tools {
             let desc = tool.function.description ?? "No description"
-            prompt += "\n- `\(tool.function.name)`: \(desc)"
+            toolList += "\n- `\(tool.function.name)`: \(desc)"
         }
 
-        prompt += """
+        return """
+            I need to complete the following task:
 
+            **Title:** \(issue.title)\(issue.description.map { "\n**Description:** \($0)" } ?? "")
 
-            Please create a step-by-step plan to complete this task.
+            Available tools:\(toolList)
+
+            Create a step-by-step plan to complete this task.
             Each step should be a single, concrete action.
             Maximum \(Self.maxToolCallsPerIssue) steps allowed.
+            If the task requires more steps, list all of them anyway.
 
-            Format your response as:
-            STEP 1: [description] (tool: [tool_name] if applicable)
-            STEP 2: [description] (tool: [tool_name] if applicable)
-            ...
+            IMPORTANT: Respond with valid JSON only, no markdown or extra text:
+            {"steps": [{"description": "what to do", "tool": "tool_name or null"}]}
 
-            If this task requires more than \(Self.maxToolCallsPerIssue) steps, list all steps anyway and I will decompose the task.
+            Example:
+            {"steps": [{"description": "Read the config file", "tool": "read_file"}, {"description": "Update the setting", "tool": "write_file"}]}
             """
-
-        return prompt
     }
 
-    /// Parses plan steps from LLM response
+    /// JSON structure for plan parsing
+    private struct JSONPlan: Codable {
+        let steps: [JSONPlanStep]
+    }
+
+    private struct JSONPlanStep: Codable {
+        let description: String
+        let tool: String?
+    }
+
+    /// Parses plan steps from LLM response (JSON first, then text fallback)
     private func parsePlanSteps(from content: String) -> [PlanStep] {
+        // Try JSON parsing first
+        if let steps = parseStepsFromJSON(content) {
+            return steps
+        }
+
+        // Fallback to text parsing
+        return parseStepsFromText(content)
+    }
+
+    /// Attempts to parse steps from JSON format
+    private func parseStepsFromJSON(_ content: String) -> [PlanStep]? {
+        // Try to find JSON in the response (LLM might include extra text)
+        let jsonPatterns = [
+            content,  // Try raw content first
+            extractJSONObject(from: content),  // Extract {...} if wrapped
+        ].compactMap { $0 }
+
+        for jsonString in jsonPatterns {
+            guard let data = jsonString.data(using: .utf8) else { continue }
+
+            if let plan = try? JSONDecoder().decode(JSONPlan.self, from: data) {
+                return plan.steps.enumerated().map { index, step in
+                    PlanStep(
+                        stepNumber: index + 1,
+                        description: step.description,
+                        toolName: step.tool
+                    )
+                }
+            }
+        }
+
+        return nil
+    }
+
+    /// Extracts a JSON object from text that might have surrounding content
+    private func extractJSONObject(from text: String) -> String? {
+        guard let start = text.firstIndex(of: "{"),
+            let end = text.lastIndex(of: "}"),
+            start < end
+        else {
+            return nil
+        }
+        return String(text[start ... end])
+    }
+
+    /// Fallback text parsing for when JSON fails
+    private func parseStepsFromText(_ content: String) -> [PlanStep] {
         var steps: [PlanStep] = []
         let lines = content.components(separatedBy: .newlines)
 
@@ -153,77 +197,88 @@ public actor AgentExecutionEngine {
             // Try to parse "STEP N:" format (case insensitive)
             let upperLine = trimmedLine.uppercased()
             if upperLine.hasPrefix("STEP") {
-                if let colonIndex = trimmedLine.firstIndex(of: ":") {
-                    let beforeColon = trimmedLine[trimmedLine.startIndex ..< colonIndex]
-                    let afterColon = trimmedLine[trimmedLine.index(after: colonIndex)...]
-                        .trimmingCharacters(in: .whitespaces)
-
-                    // Extract step number
-                    let stepNumStr = beforeColon.filter { $0.isNumber }
-                    let stepNumber = Int(stepNumStr) ?? steps.count + 1
-
-                    var description = String(afterColon)
-                    var toolName: String? = nil
-
-                    // Check for (tool: xxx) at the end
-                    if let toolStart = description.range(of: "(tool:", options: .caseInsensitive) {
-                        if let toolEnd = description.range(
-                            of: ")",
-                            range: toolStart.upperBound ..< description.endIndex
-                        ) {
-                            toolName = String(description[toolStart.upperBound ..< toolEnd.lowerBound])
-                                .trimmingCharacters(in: .whitespaces)
-                            description = String(description[..<toolStart.lowerBound])
-                                .trimmingCharacters(in: .whitespaces)
-                        }
-                    }
-
-                    if !description.isEmpty {
-                        steps.append(
-                            PlanStep(
-                                stepNumber: stepNumber,
-                                description: description,
-                                toolName: toolName
-                            )
-                        )
-                    }
+                if let step = parseStepLine(trimmedLine, fallbackNumber: steps.count + 1) {
+                    steps.append(step)
                 }
             }
         }
 
         // If no STEP format found, try numbered list format (1. xxx, 2) xxx, etc.)
         if steps.isEmpty {
-            for line in lines {
-                let trimmed = line.trimmingCharacters(in: .whitespaces)
-                guard !trimmed.isEmpty, let firstChar = trimmed.first, firstChar.isNumber else { continue }
+            steps = parseNumberedList(lines)
+        }
 
-                // Find where the number ends
-                var numberEndIndex = trimmed.startIndex
-                for char in trimmed {
-                    if char.isNumber {
-                        numberEndIndex = trimmed.index(after: numberEndIndex)
-                    } else {
-                        break
-                    }
+        // Last resort: treat each non-empty line as a step
+        if steps.isEmpty {
+            steps =
+                lines
+                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                .filter { !$0.isEmpty && $0.count > 10 }  // Skip very short lines
+                .prefix(Self.maxToolCallsPerIssue + 5)  // Reasonable limit
+                .enumerated()
+                .map { PlanStep(stepNumber: $0.offset + 1, description: $0.element, toolName: nil) }
+        }
+
+        return steps
+    }
+
+    /// Parses a single "STEP N: description (tool: name)" line
+    private func parseStepLine(_ line: String, fallbackNumber: Int) -> PlanStep? {
+        guard let colonIndex = line.firstIndex(of: ":") else { return nil }
+
+        let beforeColon = line[line.startIndex ..< colonIndex]
+        let afterColon = line[line.index(after: colonIndex)...].trimmingCharacters(in: .whitespaces)
+
+        guard !afterColon.isEmpty else { return nil }
+
+        // Extract step number
+        let stepNumStr = beforeColon.filter { $0.isNumber }
+        let stepNumber = Int(stepNumStr) ?? fallbackNumber
+
+        var description = String(afterColon)
+        var toolName: String? = nil
+
+        // Check for (tool: xxx) at the end
+        if let toolStart = description.range(of: "(tool:", options: .caseInsensitive),
+            let toolEnd = description.range(of: ")", range: toolStart.upperBound ..< description.endIndex)
+        {
+            toolName = String(description[toolStart.upperBound ..< toolEnd.lowerBound])
+                .trimmingCharacters(in: .whitespaces)
+            description = String(description[..<toolStart.lowerBound])
+                .trimmingCharacters(in: .whitespaces)
+        }
+
+        return PlanStep(stepNumber: stepNumber, description: description, toolName: toolName)
+    }
+
+    /// Parses numbered list format (1. xxx, 2) xxx, etc.)
+    private func parseNumberedList(_ lines: [String]) -> [PlanStep] {
+        var steps: [PlanStep] = []
+
+        for line in lines {
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            guard !trimmed.isEmpty, let firstChar = trimmed.first, firstChar.isNumber else { continue }
+
+            // Find where the number ends
+            var numberEndIndex = trimmed.startIndex
+            for char in trimmed {
+                if char.isNumber {
+                    numberEndIndex = trimmed.index(after: numberEndIndex)
+                } else {
+                    break
                 }
+            }
 
-                let numberPart = trimmed[..<numberEndIndex]
-                let afterNumber = trimmed[numberEndIndex...]
+            let numberPart = trimmed[..<numberEndIndex]
+            let afterNumber = trimmed[numberEndIndex...]
 
-                // Check for separator (., ), :)
-                if let firstAfter = afterNumber.first, [".", ")", ":"].contains(String(firstAfter)) {
-                    let descStart = afterNumber.index(after: afterNumber.startIndex)
-                    let description = String(afterNumber[descStart...]).trimmingCharacters(in: .whitespaces)
+            // Check for separator (., ), :)
+            if let firstAfter = afterNumber.first, [".", ")", ":"].contains(String(firstAfter)) {
+                let descStart = afterNumber.index(after: afterNumber.startIndex)
+                let description = String(afterNumber[descStart...]).trimmingCharacters(in: .whitespaces)
 
-                    if let stepNum = Int(numberPart), !description.isEmpty {
-                        steps.append(
-                            PlanStep(
-                                stepNumber: stepNum,
-                                description: description,
-                                toolName: nil
-                            )
-                        )
-                    }
+                if let stepNum = Int(numberPart), !description.isEmpty {
+                    steps.append(PlanStep(stepNumber: stepNum, description: description, toolName: nil))
                 }
             }
         }
@@ -333,11 +388,10 @@ public actor AgentExecutionEngine {
 
             // Log the tool call event
             _ = try? IssueStore.createEvent(
-                IssueEvent(
+                IssueEvent.withPayload(
                     issueId: issue.id,
                     eventType: .toolCallExecuted,
-                    payload:
-                        "{\"tool\": \"\(toolInvocation.toolName)\", \"step\": \(stepIndex)}"
+                    payload: EventPayload.ToolCall(tool: toolInvocation.toolName, step: stepIndex)
                 )
             )
         }

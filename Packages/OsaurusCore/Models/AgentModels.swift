@@ -257,6 +257,43 @@ public struct IssueEvent: Identifiable, Codable, Sendable {
     }
 }
 
+// MARK: - Event Payloads
+
+/// Payload types for event logging (enables type-safe JSON encoding)
+public enum EventPayload {
+    public struct ExecutionCompleted: Encodable {
+        public let success: Bool
+        public let discoveries: Int
+        public init(success: Bool, discoveries: Int) {
+            self.success = success
+            self.discoveries = discoveries
+        }
+    }
+
+    public struct ToolCall: Encodable {
+        public let tool: String
+        public let step: Int
+        public init(tool: String, step: Int) {
+            self.tool = tool
+            self.step = step
+        }
+    }
+
+    public struct StepCount: Encodable {
+        public let stepCount: Int
+        public init(stepCount: Int) {
+            self.stepCount = stepCount
+        }
+    }
+
+    public struct ChildCount: Encodable {
+        public let childCount: Int
+        public init(childCount: Int) {
+            self.childCount = childCount
+        }
+    }
+}
+
 // MARK: - Agent Task
 
 /// Task status

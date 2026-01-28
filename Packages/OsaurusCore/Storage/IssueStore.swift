@@ -10,7 +10,9 @@ import Foundation
 import SQLite3
 
 /// Storage layer for agent issues and related data
-public enum IssueStore {
+public struct IssueStore {
+    private init() {}
+
     // MARK: - Issue Operations
 
     /// Creates a new issue in the database
@@ -112,7 +114,7 @@ public enum IssueStore {
     /// Lists all issues, optionally filtered by status
     public static func listIssues(status: IssueStatus? = nil) throws -> [Issue] {
         let sql: String
-        if let status = status {
+        if status != nil {
             sql = "SELECT * FROM issues WHERE status = ? ORDER BY priority ASC, created_at ASC"
         } else {
             sql = "SELECT * FROM issues ORDER BY priority ASC, created_at ASC"

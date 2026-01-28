@@ -72,10 +72,10 @@ public final class IssueManager: ObservableObject {
 
         // Log the creation event
         try IssueStore.createEvent(
-            IssueEvent(
+            IssueEvent.withPayload(
                 issueId: issue.id,
                 eventType: .created,
-                payload: "{\"query\": \"\(query.replacingOccurrences(of: "\"", with: "\\\""))\"}"
+                payload: ["query": query]
             )
         )
 
@@ -185,10 +185,10 @@ public final class IssueManager: ObservableObject {
 
         // Log the status change event
         try IssueStore.createEvent(
-            IssueEvent(
+            IssueEvent.withPayload(
                 issueId: issueId,
                 eventType: .statusChanged,
-                payload: "{\"from\": \"\(oldStatus.rawValue)\", \"to\": \"\(newStatus.rawValue)\"}"
+                payload: ["from": oldStatus.rawValue, "to": newStatus.rawValue]
             )
         )
 
@@ -215,17 +215,17 @@ public final class IssueManager: ObservableObject {
 
         // Log events
         try IssueStore.createEvent(
-            IssueEvent(
+            IssueEvent.withPayload(
                 issueId: issueId,
                 eventType: .statusChanged,
-                payload: "{\"from\": \"\(oldStatus.rawValue)\", \"to\": \"closed\"}"
+                payload: ["from": oldStatus.rawValue, "to": "closed"]
             )
         )
         try IssueStore.createEvent(
-            IssueEvent(
+            IssueEvent.withPayload(
                 issueId: issueId,
                 eventType: .closed,
-                payload: "{\"result\": \"\(result.replacingOccurrences(of: "\"", with: "\\\""))\"}"
+                payload: ["result": result]
             )
         )
 
@@ -291,6 +291,16 @@ public final class IssueManager: ObservableObject {
 
     /// Adds a blocking dependency (fromIssue blocks toIssue)
     public func addBlocker(fromIssueId: String, toIssueId: String) async throws {
+        // Prevent self-blocking
+        guard fromIssueId != toIssueId else {
+            throw IssueManagerError.wouldCreateCycle(from: fromIssueId, to: toIssueId)
+        }
+
+        // Check for cycles before adding
+        if try wouldCreateCycle(from: fromIssueId, to: toIssueId) {
+            throw IssueManagerError.wouldCreateCycle(from: fromIssueId, to: toIssueId)
+        }
+
         let dependency = IssueDependency(
             fromIssueId: fromIssueId,
             toIssueId: toIssueId,
@@ -301,10 +311,10 @@ public final class IssueManager: ObservableObject {
 
         // Log the event
         try IssueStore.createEvent(
-            IssueEvent(
+            IssueEvent.withPayload(
                 issueId: toIssueId,
                 eventType: .dependencyAdded,
-                payload: "{\"blocker\": \"\(fromIssueId)\", \"type\": \"blocks\"}"
+                payload: ["blocker": fromIssueId, "type": "blocks"]
             )
         )
 
@@ -312,6 +322,27 @@ public final class IssueManager: ObservableObject {
         if let issue = try IssueStore.getIssue(id: toIssueId), issue.status == .open {
             try await updateIssueStatus(toIssueId, to: .blocked)
         }
+    }
+
+    /// Checks if adding a blocker would create a cycle
+    /// Returns true if 'to' already blocks 'from' (directly or transitively)
+    private func wouldCreateCycle(from: String, to: String) throws -> Bool {
+        var visited = Set<String>()
+        var queue = [to]
+
+        while !queue.isEmpty {
+            let current = queue.removeFirst()
+            if current == from { return true }
+            if visited.contains(current) { continue }
+            visited.insert(current)
+
+            // Get issues that 'current' blocks
+            let deps = try IssueStore.getDependencies(fromIssueId: current)
+            for dep in deps where dep.type == .blocks {
+                queue.append(dep.toIssueId)
+            }
+        }
+        return false
     }
 
     /// Adds a parent-child relationship
@@ -326,10 +357,10 @@ public final class IssueManager: ObservableObject {
 
         // Log the event
         try IssueStore.createEvent(
-            IssueEvent(
+            IssueEvent.withPayload(
                 issueId: childId,
                 eventType: .dependencyAdded,
-                payload: "{\"parent\": \"\(parentId)\", \"type\": \"parent_child\"}"
+                payload: ["parent": parentId, "type": "parent_child"]
             )
         )
     }
@@ -346,10 +377,10 @@ public final class IssueManager: ObservableObject {
 
         // Log the event
         try IssueStore.createEvent(
-            IssueEvent(
+            IssueEvent.withPayload(
                 issueId: discoveredIssueId,
                 eventType: .dependencyAdded,
-                payload: "{\"source\": \"\(sourceIssueId)\", \"type\": \"discovered_from\"}"
+                payload: ["source": sourceIssueId, "type": "discovered_from"]
             )
         )
     }
@@ -382,7 +413,7 @@ public final class IssueManager: ObservableObject {
         var createdIssues: [Issue] = []
         var previousIssueId: String?
 
-        for (index, child) in children.enumerated() {
+        for child in children {
             let childIssue = try await createIssue(
                 taskId: parentIssue.taskId,
                 title: child.title,
@@ -405,10 +436,10 @@ public final class IssueManager: ObservableObject {
 
         // Log the decomposition
         try IssueStore.createEvent(
-            IssueEvent(
+            IssueEvent.withPayload(
                 issueId: issueId,
                 eventType: .decomposed,
-                payload: "{\"childCount\": \(children.count)}"
+                payload: EventPayload.ChildCount(childCount: children.count)
             )
         )
 
@@ -472,13 +503,23 @@ public final class IssueManager: ObservableObject {
 
     // MARK: - Safe Methods for Actor Calls
 
+    /// Generic wrapper that catches errors and logs them
+    private func safe<T: Sendable>(
+        _ operation: String,
+        _ block: @Sendable () async throws -> T
+    ) async -> T? {
+        do {
+            return try await block()
+        } catch {
+            print("[IssueManager] \(operation) failed: \(error)")
+            return nil
+        }
+    }
+
     /// Creates a task without throwing (returns nil on failure)
     public func createTaskSafe(query: String, personaId: UUID? = nil) async -> AgentTask? {
-        do {
-            return try await createTask(query: query, personaId: personaId)
-        } catch {
-            print("[IssueManager] createTaskSafe failed: \(error)")
-            return nil
+        await safe("createTask") {
+            try await createTask(query: query, personaId: personaId)
         }
     }
 
@@ -490,62 +531,43 @@ public final class IssueManager: ObservableObject {
         priority: IssuePriority = .p2,
         type: IssueType = .task
     ) async -> Issue? {
-        do {
-            return try await createIssue(
+        await safe("createIssue") {
+            try await createIssue(
                 taskId: taskId,
                 title: title,
                 description: description,
                 priority: priority,
                 type: type
             )
-        } catch {
-            print("[IssueManager] createIssueSafe failed: \(error)")
-            return nil
         }
     }
 
     /// Closes an issue without throwing (returns success)
     public func closeIssueSafe(_ issueId: String, result: String) async -> Bool {
-        do {
+        await safe("closeIssue") {
             try await closeIssue(issueId, result: result)
-            return true
-        } catch {
-            print("[IssueManager] closeIssueSafe failed: \(error)")
-            return false
-        }
+        } != nil
     }
 
     /// Starts an issue without throwing (returns success)
     public func startIssueSafe(_ issueId: String) async -> Bool {
-        do {
+        await safe("startIssue") {
             try await startIssue(issueId)
-            return true
-        } catch {
-            print("[IssueManager] startIssueSafe failed: \(error)")
-            return false
-        }
+        } != nil
     }
 
     /// Updates issue status without throwing (returns success)
     public func updateIssueStatusSafe(_ issueId: String, to status: IssueStatus) async -> Bool {
-        do {
+        await safe("updateIssueStatus") {
             try await updateIssueStatus(issueId, to: status)
-            return true
-        } catch {
-            print("[IssueManager] updateIssueStatusSafe failed: \(error)")
-            return false
-        }
+        } != nil
     }
 
     /// Links a discovery without throwing (returns success)
     public func linkDiscoverySafe(sourceIssueId: String, discoveredIssueId: String) async -> Bool {
-        do {
+        await safe("linkDiscovery") {
             try await linkDiscovery(sourceIssueId: sourceIssueId, discoveredIssueId: discoveredIssueId)
-            return true
-        } catch {
-            print("[IssueManager] linkDiscoverySafe failed: \(error)")
-            return false
-        }
+        } != nil
     }
 
     /// Decomposes an issue without throwing (returns empty array on failure)
@@ -553,12 +575,9 @@ public final class IssueManager: ObservableObject {
         _ issueId: String,
         into children: [(title: String, description: String?)]
     ) async -> [Issue] {
-        do {
-            return try await decomposeIssue(issueId, into: children)
-        } catch {
-            print("[IssueManager] decomposeIssueSafe failed: \(error)")
-            return []
-        }
+        await safe("decomposeIssue") {
+            try await decomposeIssue(issueId, into: children)
+        } ?? []
     }
 }
 
@@ -570,6 +589,7 @@ public enum IssueManagerError: Error, LocalizedError {
     case taskNotFound(String)
     case invalidStatusTransition(from: IssueStatus, to: IssueStatus)
     case notInitialized
+    case wouldCreateCycle(from: String, to: String)
 
     public var errorDescription: String? {
         switch self {
@@ -581,6 +601,8 @@ public enum IssueManagerError: Error, LocalizedError {
             return "Invalid status transition from \(from.rawValue) to \(to.rawValue)"
         case .notInitialized:
             return "IssueManager is not initialized"
+        case .wouldCreateCycle(let from, let to):
+            return "Adding blocker would create a cycle: \(from) -> \(to)"
         }
     }
 }
