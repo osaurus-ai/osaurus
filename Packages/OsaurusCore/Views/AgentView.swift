@@ -23,7 +23,6 @@ struct AgentView: View {
     private let maxProgressSidebarWidth: CGFloat = 400
 
     // Artifact viewer state
-    @State private var showArtifactViewer: Bool = false
     @State private var selectedArtifact: Artifact?
 
     private var theme: ThemeProtocol { windowState.theme }
@@ -106,15 +105,13 @@ struct AgentView: View {
         .animation(theme.animationQuick(), value: showSidebar)
         .environment(\.theme, windowState.theme)
         .tint(theme.accentColor)
-        .sheet(isPresented: $showArtifactViewer) {
-            if let artifact = selectedArtifact {
-                ArtifactViewerSheet(
-                    artifact: artifact,
-                    onDownload: { downloadArtifact(artifact) },
-                    onDismiss: { showArtifactViewer = false }
-                )
-                .environment(\.theme, windowState.theme)
-            }
+        .sheet(item: $selectedArtifact) { artifact in
+            ArtifactViewerSheet(
+                artifact: artifact,
+                onDownload: { downloadArtifact(artifact) },
+                onDismiss: { selectedArtifact = nil }
+            )
+            .environment(\.theme, windowState.theme)
         }
     }
 
@@ -122,7 +119,6 @@ struct AgentView: View {
 
     private func viewArtifact(_ artifact: Artifact) {
         selectedArtifact = artifact
-        showArtifactViewer = true
     }
 
     private func downloadArtifact(_ artifact: Artifact) {

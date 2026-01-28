@@ -501,44 +501,47 @@ private struct ArtifactPreviewCard: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            // Filename badge
-            HStack(spacing: 4) {
-                Image(systemName: artifact.contentType == .markdown ? "doc.richtext" : "doc.text")
-                    .font(.system(size: 9))
-                    .foregroundColor(theme.accentColor)
+        Button {
+            onView()
+        } label: {
+            VStack(alignment: .leading, spacing: 8) {
+                // Filename badge
+                HStack(spacing: 4) {
+                    Image(systemName: artifact.contentType == .markdown ? "doc.richtext" : "doc.text")
+                        .font(.system(size: 9))
+                        .foregroundColor(theme.accentColor)
 
-                Text(artifact.filename)
-                    .font(.system(size: 10, weight: .medium))
-                    .foregroundColor(theme.accentColor)
+                    Text(artifact.filename)
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundColor(theme.accentColor)
+                }
+                .padding(.horizontal, 6)
+                .padding(.vertical, 3)
+                .background(
+                    Capsule()
+                        .fill(theme.accentColor.opacity(0.1))
+                )
+
+                // Content preview - plain text
+                Text(contentPreview)
+                    .font(.system(size: 11, design: .monospaced))
+                    .foregroundColor(theme.secondaryText)
+                    .lineLimit(6)
+                    .lineSpacing(2)
+                    .frame(maxWidth: .infinity, alignment: .leading)
             }
-            .padding(.horizontal, 6)
-            .padding(.vertical, 3)
+            .padding(10)
             .background(
-                Capsule()
-                    .fill(theme.accentColor.opacity(0.1))
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(theme.tertiaryBackground.opacity(isHovered ? 0.6 : 0.4))
             )
-
-            // Content preview - plain text
-            Text(contentPreview)
-                .font(.system(size: 11, design: .monospaced))
-                .foregroundColor(theme.secondaryText)
-                .lineLimit(6)
-                .lineSpacing(2)
-                .frame(maxWidth: .infinity, alignment: .leading)
+            .overlay(
+                RoundedRectangle(cornerRadius: 8)
+                    .stroke(theme.primaryBorder.opacity(0.2), lineWidth: 1)
+            )
         }
-        .padding(10)
-        .background(
-            RoundedRectangle(cornerRadius: 8)
-                .fill(theme.tertiaryBackground.opacity(isHovered ? 0.6 : 0.4))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 8)
-                .stroke(theme.primaryBorder.opacity(0.2), lineWidth: 1)
-        )
-        .contentShape(Rectangle())
+        .buttonStyle(.plain)
         .onHover { isHovered = $0 }
-        .onTapGesture { onView() }
     }
 }
 
@@ -553,55 +556,58 @@ private struct ArtifactRow: View {
     @State private var isHovered = false
 
     var body: some View {
-        HStack(spacing: 8) {
-            // File icon
-            Image(systemName: artifact.contentType == .markdown ? "doc.richtext" : "doc.text")
-                .font(.system(size: 12))
-                .foregroundColor(theme.secondaryText)
+        Button {
+            onView()
+        } label: {
+            HStack(spacing: 8) {
+                // File icon
+                Image(systemName: artifact.contentType == .markdown ? "doc.richtext" : "doc.text")
+                    .font(.system(size: 12))
+                    .foregroundColor(theme.secondaryText)
 
-            // Filename
-            Text(artifact.filename)
-                .font(.system(size: 11, weight: .medium))
-                .foregroundColor(theme.primaryText)
-                .lineLimit(1)
+                // Filename
+                Text(artifact.filename)
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundColor(theme.primaryText)
+                    .lineLimit(1)
 
-            Spacer()
+                Spacer()
 
-            // Actions on hover
-            if isHovered {
-                HStack(spacing: 4) {
-                    Button(action: onView) {
-                        Image(systemName: "eye")
-                            .font(.system(size: 9))
-                            .foregroundColor(theme.accentColor)
-                            .frame(width: 20, height: 20)
-                            .background(Circle().fill(theme.primaryBackground))
-                            .overlay(Circle().stroke(theme.accentColor.opacity(0.3), lineWidth: 1))
+                // Actions on hover
+                if isHovered {
+                    HStack(spacing: 4) {
+                        Button(action: onView) {
+                            Image(systemName: "eye")
+                                .font(.system(size: 9))
+                                .foregroundColor(theme.accentColor)
+                                .frame(width: 20, height: 20)
+                                .background(Circle().fill(theme.primaryBackground))
+                                .overlay(Circle().stroke(theme.accentColor.opacity(0.3), lineWidth: 1))
+                        }
+                        .buttonStyle(.plain)
+                        .help("View")
+
+                        Button(action: onDownload) {
+                            Image(systemName: "arrow.down")
+                                .font(.system(size: 9))
+                                .foregroundColor(theme.secondaryText)
+                                .frame(width: 20, height: 20)
+                                .background(Circle().fill(theme.primaryBackground))
+                                .overlay(Circle().stroke(theme.primaryBorder.opacity(0.3), lineWidth: 1))
+                        }
+                        .buttonStyle(.plain)
+                        .help("Download")
                     }
-                    .buttonStyle(.plain)
-                    .help("View")
-
-                    Button(action: onDownload) {
-                        Image(systemName: "arrow.down")
-                            .font(.system(size: 9))
-                            .foregroundColor(theme.secondaryText)
-                            .frame(width: 20, height: 20)
-                            .background(Circle().fill(theme.primaryBackground))
-                            .overlay(Circle().stroke(theme.primaryBorder.opacity(0.3), lineWidth: 1))
-                    }
-                    .buttonStyle(.plain)
-                    .help("Download")
                 }
             }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 6)
+            .background(
+                RoundedRectangle(cornerRadius: 6)
+                    .fill(isHovered ? theme.tertiaryBackground.opacity(0.4) : Color.clear)
+            )
         }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 6)
-        .background(
-            RoundedRectangle(cornerRadius: 6)
-                .fill(isHovered ? theme.tertiaryBackground.opacity(0.4) : Color.clear)
-        )
-        .contentShape(Rectangle())
+        .buttonStyle(.plain)
         .onHover { isHovered = $0 }
-        .onTapGesture { onView() }
     }
 }
