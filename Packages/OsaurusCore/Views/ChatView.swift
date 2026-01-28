@@ -1730,9 +1730,9 @@ struct ChatView: View {
 
             // Header content on top
             HStack(spacing: 12) {
-                // Sidebar toggle
+                // Sidebar toggle - far left
                 HeaderActionButton(
-                    icon: showSidebar ? "sidebar.left" : "sidebar.left",
+                    icon: "sidebar.left",
                     help: showSidebar ? "Hide sidebar" : "Show sidebar",
                     action: {
                         withAnimation(theme.animationQuick()) {
@@ -1741,45 +1741,17 @@ struct ChatView: View {
                     }
                 )
 
+                // Mode toggle - Agent mode (to the right of sidebar toggle)
+                ModeToggleButton(currentMode: .chat) {
+                    windowState.switchMode(to: .agent)
+                }
+
                 // Model indicator
                 if let model = session.selectedModel, session.modelOptions.count <= 1 {
-                    HStack(spacing: 6) {
-                        Circle()
-                            .fill(Color.green)
-                            .frame(width: 6, height: 6)
-                        Text(displayModelName(model))
-                            .font(.system(size: 12, weight: .medium))
-                            .foregroundColor(theme.secondaryText)
-                    }
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 5)
-                    .background(
-                        Capsule()
-                            .fill(theme.secondaryBackground.opacity(0.6))
-                    )
+                    ModeIndicatorBadge(style: .model(name: displayModelName(model)))
                 }
 
                 Spacer()
-
-                // Mode toggle - Agent mode
-                Button(action: {
-                    windowState.switchMode(to: .agent)
-                }) {
-                    HStack(spacing: 4) {
-                        Image(systemName: "bolt.circle")
-                        Text("Agent")
-                    }
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundColor(theme.secondaryText)
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 5)
-                    .background(
-                        Capsule()
-                            .fill(theme.secondaryBackground.opacity(0.6))
-                    )
-                }
-                .buttonStyle(.plain)
-                .help("Switch to Agent mode")
             }
             .padding(.leading, 20)
             .padding(.trailing, 56)  // Leave room for close button
@@ -1980,131 +1952,8 @@ struct ChatView: View {
     }
 }
 
-// MARK: - Header Action Button
-
-private struct HeaderActionButton: View {
-    let icon: String
-    let help: String
-    let action: () -> Void
-
-    @State private var isHovered = false
-    @Environment(\.theme) private var theme
-
-    var body: some View {
-        Button(action: action) {
-            Image(systemName: icon)
-                .font(.system(size: 12, weight: .medium))
-                .foregroundColor(isHovered ? theme.primaryText : theme.secondaryText)
-                .frame(width: 28, height: 28)
-                .background(
-                    Circle()
-                        .fill(theme.secondaryBackground.opacity(isHovered ? 0.8 : 0.5))
-                )
-        }
-        .buttonStyle(.plain)
-        .onHover { hovering in
-            withAnimation(theme.animationQuick()) {
-                isHovered = hovering
-            }
-        }
-        .help(help)
-    }
-}
-
-// MARK: - Settings Button
-
-private struct SettingsButton: View {
-    let action: () -> Void
-
-    @State private var isHovered = false
-    @Environment(\.theme) private var theme
-
-    var body: some View {
-        Button(action: action) {
-            Image(systemName: "gearshape.fill")
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundColor(isHovered ? theme.primaryText : theme.secondaryText)
-                .frame(width: 28, height: 28)
-                .background(
-                    Circle()
-                        .fill(theme.secondaryBackground.opacity(isHovered ? 0.8 : 0.5))
-                )
-        }
-        .buttonStyle(.plain)
-        .onHover { hovering in
-            withAnimation(theme.animationQuick()) {
-                isHovered = hovering
-            }
-        }
-        .help("Settings")
-    }
-}
-
-// MARK: - Close Button
-
-private struct CloseButton: View {
-    let action: () -> Void
-
-    @State private var isHovered = false
-    @Environment(\.theme) private var theme
-
-    var body: some View {
-        Button(action: action) {
-            Image(systemName: "xmark")
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundColor(isHovered ? theme.primaryText : theme.secondaryText)
-                .frame(width: 28, height: 28)
-                .background(
-                    Circle()
-                        .fill(theme.secondaryBackground.opacity(isHovered ? 0.8 : 0.5))
-                )
-        }
-        .buttonStyle(.plain)
-        .onHover { hovering in
-            withAnimation(theme.animationQuick()) {
-                isHovered = hovering
-            }
-        }
-        .help("Close")
-    }
-}
-
-// MARK: - Pin Button
-
-private struct PinButton: View {
-    /// Window ID for this window
-    let windowId: UUID
-
-    @State private var isHovered = false
-    @State private var isPinned = false
-    @Environment(\.theme) private var theme
-
-    var body: some View {
-        Button {
-            isPinned.toggle()
-            // Set window level via ChatWindowManager
-            ChatWindowManager.shared.setWindowPinned(id: windowId, pinned: isPinned)
-        } label: {
-            Image(systemName: isPinned ? "pin.fill" : "pin")
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundColor(isPinned ? theme.accentColor : (isHovered ? theme.primaryText : theme.secondaryText))
-                .frame(width: 28, height: 28)
-                .background(
-                    Circle()
-                        .fill(theme.secondaryBackground.opacity(isHovered ? 0.8 : 0.5))
-                )
-                .rotationEffect(.degrees(isPinned ? 0 : 45))
-        }
-        .buttonStyle(.plain)
-        .onHover { hovering in
-            withAnimation(theme.animationQuick()) {
-                isHovered = hovering
-            }
-        }
-        .help(isPinned ? "Unpin from top" : "Pin to top")
-        .animation(theme.animationQuick(), value: isPinned)
-    }
-}
+// MARK: - Shared Header Components
+// HeaderActionButton, SettingsButton, CloseButton, PinButton are now in SharedHeaderComponents.swift
 
 // MARK: - Window Accessor Helper
 

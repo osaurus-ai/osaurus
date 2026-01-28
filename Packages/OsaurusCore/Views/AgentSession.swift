@@ -24,6 +24,14 @@ public final class AgentSession: ObservableObject {
     /// Currently executing issue
     @Published public var activeIssue: Issue?
 
+    // MARK: - Issue Detail State
+
+    /// Currently selected issue for viewing (distinct from active/executing)
+    @Published public var selectedIssueId: String?
+
+    /// Content blocks for the selected issue (for MessageThreadView rendering)
+    @Published var issueBlocks: [ContentBlock] = []
+
     // MARK: - Execution State
 
     /// Whether execution is in progress
@@ -61,6 +69,11 @@ public final class AgentSession: ObservableObject {
     /// Model options
     @Published var modelOptions: [ModelOption] = []
 
+    /// Estimated context tokens (synced from chat session for consistency)
+    var estimatedContextTokens: Int {
+        windowState?.session.estimatedContextTokens ?? 0
+    }
+
     // MARK: - Session Config
 
     /// Persona ID for this session
@@ -72,6 +85,9 @@ public final class AgentSession: ObservableObject {
     // MARK: - Private
 
     private var executionTask: Task<Void, Never>?
+
+    /// Content block builder for live execution and history viewing
+    private let blockBuilder = AgentContentBlockBuilder()
 
     // MARK: - Initialization
 
@@ -324,6 +340,56 @@ public final class AgentSession: ObservableObject {
         await executeIssue(issue)
     }
 
+    // MARK: - Issue Selection & History
+
+    /// Selects an issue for viewing its history/details
+    /// - Parameter issue: The issue to select, or nil to clear selection
+    public func selectIssue(_ issue: Issue?) {
+        guard let issue = issue else {
+            selectedIssueId = nil
+            issueBlocks = []
+            return
+        }
+
+        selectedIssueId = issue.id
+
+        // If this issue is currently executing, show live blocks
+        if activeIssue?.id == issue.id {
+            issueBlocks = blockBuilder.blocks
+            return
+        }
+
+        // Otherwise, load historical events
+        loadIssueHistory(for: issue)
+    }
+
+    /// Loads the event history for an issue and builds content blocks
+    private func loadIssueHistory(for issue: Issue) {
+        do {
+            let events = try IssueManager.shared.getHistory(issueId: issue.id)
+            let personaName = windowState?.cachedPersonaDisplayName ?? "Agent"
+            blockBuilder.reset()
+            issueBlocks = AgentContentBlockBuilder(personaName: personaName)
+                .buildFromHistory(events: events, issue: issue)
+        } catch {
+            // On error, show basic issue info
+            issueBlocks = []
+            print("[AgentSession] Failed to load issue history: \(error)")
+        }
+    }
+
+    /// Clears the current issue selection
+    public func clearSelection() {
+        selectedIssueId = nil
+        issueBlocks = []
+    }
+
+    /// The currently selected issue object
+    public var selectedIssue: Issue? {
+        guard let id = selectedIssueId else { return nil }
+        return issues.first { $0.id == id }
+    }
+
     // MARK: - Computed Properties
 
     /// Progress of current task (0.0 to 1.0)
@@ -362,6 +428,13 @@ extension AgentSession: AgentEngineDelegate {
             updatedIssue.status = .inProgress
             issues[index] = updatedIssue
         }
+
+        // Start building blocks for this execution
+        blockBuilder.startExecution(for: issue)
+
+        // Auto-select the executing issue
+        selectedIssueId = issue.id
+        issueBlocks = blockBuilder.blocks
     }
 
     public func agentEngine(
@@ -370,6 +443,12 @@ extension AgentSession: AgentEngineDelegate {
         forIssue issue: Issue
     ) {
         self.currentPlan = plan
+
+        // Update block builder with plan
+        blockBuilder.handlePlanCreated(plan)
+        if selectedIssueId == issue.id {
+            issueBlocks = blockBuilder.blocks
+        }
     }
 
     public func agentEngine(
@@ -388,6 +467,12 @@ extension AgentSession: AgentEngineDelegate {
     ) {
         // Append streaming content - this is the main streaming path
         self.streamingContent += delta
+
+        // Update block builder
+        blockBuilder.appendDelta(delta)
+        if let activeId = activeIssue?.id, selectedIssueId == activeId {
+            issueBlocks = blockBuilder.blocks
+        }
     }
 
     public func agentEngine(
@@ -396,7 +481,11 @@ extension AgentSession: AgentEngineDelegate {
         result: StepResult,
         forIssue issue: Issue
     ) {
-        // Step completed - streaming already handled via didReceiveStreamingDelta
+        // Step completed - update block builder
+        blockBuilder.handleStepCompleted(stepIndex: stepIndex, content: result.responseContent)
+        if selectedIssueId == issue.id {
+            issueBlocks = blockBuilder.blocks
+        }
     }
 
     public func agentEngine(
@@ -414,6 +503,13 @@ extension AgentSession: AgentEngineDelegate {
         forIssue issue: Issue
     ) {
         self.streamingContent += "\n\n---\n✅ **Result:** \(verification.summary)"
+
+        // Update block builder with verification
+        let isSuccess = verification.status == .achieved
+        blockBuilder.handleVerification(summary: verification.summary, success: isSuccess)
+        if selectedIssueId == issue.id {
+            issueBlocks = blockBuilder.blocks
+        }
     }
 
     public func agentEngine(_ engine: AgentEngine, didDecomposeIssue issue: Issue, into children: [Issue]) {
@@ -423,6 +519,12 @@ extension AgentSession: AgentEngineDelegate {
     }
 
     public func agentEngine(_ engine: AgentEngine, didCompleteIssue issue: Issue, success: Bool) {
+        // Complete the block builder
+        blockBuilder.completeExecution(success: success, message: nil)
+        if selectedIssueId == issue.id {
+            issueBlocks = blockBuilder.blocks
+        }
+
         Task {
             await self.refreshIssues()
         }
@@ -433,5 +535,11 @@ extension AgentSession: AgentEngineDelegate {
         self.retryAttempt = attempt
         self.isRetrying = true
         self.streamingContent += "\n\n⚠️ **Retrying...** (attempt \(attempt), waiting \(Int(afterDelay))s)\n"
+
+        // Update block builder
+        blockBuilder.appendDelta("\n\n⚠️ **Retrying...** (attempt \(attempt), waiting \(Int(afterDelay))s)\n")
+        if selectedIssueId == issue.id {
+            issueBlocks = blockBuilder.blocks
+        }
     }
 }

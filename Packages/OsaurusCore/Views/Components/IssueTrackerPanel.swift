@@ -9,8 +9,15 @@ import SwiftUI
 
 struct IssueTrackerPanel: View {
     let issues: [Issue]
+    /// ID of the issue currently being executed
     let activeIssueId: String?
+    /// ID of the issue currently selected for viewing
+    let selectedIssueId: String?
+    /// Called when user clicks to view an issue's details
     let onIssueSelect: (Issue) -> Void
+    /// Called when user clicks to run/execute an issue
+    let onIssueRun: (Issue) -> Void
+    /// Called when user closes an issue
     let onIssueClose: (String) -> Void
 
     @Environment(\.theme) private var theme: ThemeProtocol
@@ -83,7 +90,9 @@ struct IssueTrackerPanel: View {
                 IssueRow(
                     issue: issue,
                     isActive: issue.id == activeIssueId,
+                    isSelected: issue.id == selectedIssueId,
                     onSelect: { onIssueSelect(issue) },
+                    onRun: { onIssueRun(issue) },
                     onClose: { onIssueClose(issue.id) }
                 )
             }
@@ -97,6 +106,10 @@ struct IssueTrackerPanel: View {
             // Active issues first
             if (lhs.id == activeIssueId) != (rhs.id == activeIssueId) {
                 return lhs.id == activeIssueId
+            }
+            // Selected issue next
+            if (lhs.id == selectedIssueId) != (rhs.id == selectedIssueId) {
+                return lhs.id == selectedIssueId
             }
             // Then by status (in_progress > open > blocked > closed)
             let statusOrder: [IssueStatus] = [.inProgress, .open, .blocked, .closed]
@@ -127,8 +140,15 @@ struct IssueTrackerPanel: View {
 
 private struct IssueRow: View {
     let issue: Issue
+    /// Whether this issue is currently being executed
     let isActive: Bool
+    /// Whether this issue is selected for viewing details
+    let isSelected: Bool
+    /// Called when user clicks to view issue details
     let onSelect: () -> Void
+    /// Called when user clicks to run/execute the issue
+    let onRun: () -> Void
+    /// Called when user closes the issue
     let onClose: () -> Void
 
     @Environment(\.theme) private var theme: ThemeProtocol
@@ -154,38 +174,52 @@ private struct IssueRow: View {
 
                 // Title
                 Text(issue.title)
-                    .font(.system(size: 13, weight: isActive ? .semibold : .regular))
+                    .font(.system(size: 13, weight: (isActive || isSelected) ? .semibold : .regular))
                     .foregroundColor(theme.primaryText)
                     .lineLimit(1)
             }
 
             Spacer()
 
-            // Actions
+            // Actions (visible on hover or when not closed)
             if isHovered && issue.status != .closed {
-                HStack(spacing: 4) {
-                    if issue.status == .open {
-                        Button(action: onSelect) {
+                HStack(spacing: 6) {
+                    // Run button - only show for open issues that aren't already active
+                    if issue.status == .open && !isActive {
+                        Button(action: onRun) {
                             Image(systemName: "play.fill")
                                 .font(.system(size: 10))
-                                .foregroundColor(.blue)
+                                .foregroundColor(.green)
+                                .frame(width: 20, height: 20)
+                                .background(
+                                    Circle()
+                                        .fill(Color.green.opacity(0.15))
+                                )
                         }
                         .buttonStyle(.plain)
-                        .help("Execute this issue")
+                        .help("Run this issue")
                     }
 
+                    // Close button
                     Button(action: onClose) {
                         Image(systemName: "xmark")
                             .font(.system(size: 10))
                             .foregroundColor(theme.tertiaryText)
+                            .frame(width: 20, height: 20)
+                            .background(
+                                Circle()
+                                    .fill(theme.tertiaryBackground.opacity(0.5))
+                            )
                     }
                     .buttonStyle(.plain)
                     .help("Close issue")
                 }
             }
 
-            // Type indicator
-            typeIndicator
+            // Type indicator (hidden when hovering to make room for actions)
+            if !isHovered || issue.status == .closed {
+                typeIndicator
+            }
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
@@ -195,16 +229,15 @@ private struct IssueRow: View {
         )
         .overlay(
             RoundedRectangle(cornerRadius: 8)
-                .stroke(isActive ? Color.orange.opacity(0.5) : Color.clear, lineWidth: 1)
+                .stroke(borderColor, lineWidth: borderWidth)
         )
         .contentShape(Rectangle())
         .onHover { hovering in
             isHovered = hovering
         }
         .onTapGesture {
-            if issue.status == .open {
-                onSelect()
-            }
+            // Tap always selects for viewing (any status)
+            onSelect()
         }
     }
 
@@ -283,11 +316,13 @@ private struct IssueRow: View {
         }
     }
 
-    // MARK: - Background
+    // MARK: - Background & Border
 
     private var backgroundColor: Color {
         if isActive {
             return Color.orange.opacity(0.1)
+        } else if isSelected {
+            return theme.accentColor.opacity(0.08)
         } else if isHovered {
             return theme.tertiaryBackground.opacity(0.5)
         } else if issue.status == .closed {
@@ -295,6 +330,20 @@ private struct IssueRow: View {
         } else {
             return Color.clear
         }
+    }
+
+    private var borderColor: Color {
+        if isActive {
+            return Color.orange.opacity(0.5)
+        } else if isSelected {
+            return theme.accentColor.opacity(0.4)
+        } else {
+            return Color.clear
+        }
+    }
+
+    private var borderWidth: CGFloat {
+        (isActive || isSelected) ? 1.5 : 0
     }
 }
 

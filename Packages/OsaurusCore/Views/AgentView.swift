@@ -12,6 +12,7 @@ struct AgentView: View {
     @ObservedObject var session: AgentSession
 
     @State private var showSidebar: Bool = false
+    @State private var isPinnedToBottom: Bool = true
 
     private var theme: ThemeProtocol { windowState.theme }
 
@@ -64,47 +65,153 @@ struct AgentView: View {
                             taskExecutionView(width: mainWidth)
                         }
 
-                        // Input card
-                        agentInputCard
+                        // Input card - reuse FloatingInputCard for consistency
+                        FloatingInputCard(
+                            text: $session.input,
+                            selectedModel: $session.selectedModel,
+                            pendingImages: .constant([]),
+                            isContinuousVoiceMode: .constant(false),
+                            voiceInputState: .constant(.idle),
+                            showVoiceOverlay: .constant(false),
+                            modelOptions: session.modelOptions,
+                            isStreaming: session.isExecuting,
+                            supportsImages: false,
+                            estimatedContextTokens: session.estimatedContextTokens,
+                            onSend: { Task { await session.startNewTask() } },
+                            onStop: { session.stopExecution() },
+                            personaId: windowState.personaId,
+                            windowId: windowState.windowId
+                        )
                     }
                 }
             }
         }
         .frame(minWidth: 800, idealWidth: 950)
+        .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
+        .overlay(alignment: .topTrailing) {
+            windowControls
+        }
+        .ignoresSafeArea()
+        .animation(theme.animationQuick(), value: showSidebar)
+        .environment(\.theme, windowState.theme)
+        .tint(theme.accentColor)
+    }
+
+    // MARK: - Window Controls
+
+    private var windowControls: some View {
+        HStack(spacing: 8) {
+            if session.currentTask == nil {
+                SettingsButton(action: {
+                    AppDelegate.shared?.showManagementWindow(initialTab: .settings)
+                })
+            } else {
+                HeaderActionButton(
+                    icon: "plus",
+                    help: "New task",
+                    action: {
+                        session.currentTask = nil
+                        session.issues = []
+                        session.selectedIssueId = nil
+                        session.issueBlocks = []
+                    }
+                )
+            }
+            PinButton(windowId: windowState.windowId)
+            CloseButton(action: closeWindow)
+        }
+        .padding(16)
+    }
+
+    /// Close this window via ChatWindowManager
+    private func closeWindow() {
+        ChatWindowManager.shared.closeWindow(id: windowState.windowId)
     }
 
     // MARK: - Background
 
-    @ViewBuilder
     private var agentBackground: some View {
-        if let bgImage = windowState.cachedBackgroundImage {
-            Image(nsImage: bgImage)
-                .resizable()
-                .aspectRatio(contentMode: .fill)
-                .ignoresSafeArea()
-        } else if let custom = theme.customThemeConfig {
-            switch custom.background.type {
+        ZStack {
+            // Layer 1: Base background (solid, gradient, or image)
+            baseBackgroundLayer
+                .clipShape(backgroundShape)
+
+            // Layer 2: Glass effect (if enabled)
+            if theme.glassEnabled {
+                ThemedGlassSurface(
+                    cornerRadius: 24,
+                    topLeadingRadius: showSidebar ? 0 : nil,
+                    bottomLeadingRadius: showSidebar ? 0 : nil
+                )
+                .allowsHitTesting(false)
+
+                // Solid backing layer for text contrast
+                let baseBackingOpacity = theme.isDark ? 0.6 : 0.7
+                let themeBoost = theme.glassOpacityPrimary * 0.8
+                let backingOpacity = min(0.92, baseBackingOpacity + themeBoost)
+
+                backgroundShape
+                    .fill(theme.primaryBackground.opacity(backingOpacity))
+                    .allowsHitTesting(false)
+
+                // Gradient overlay for depth and polish
+                LinearGradient(
+                    colors: [
+                        theme.primaryBackground.opacity(theme.glassOpacityPrimary * 1.5),
+                        theme.primaryBackground.opacity(theme.glassOpacitySecondary),
+                    ],
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
+                .clipShape(backgroundShape)
+                .allowsHitTesting(false)
+            }
+        }
+    }
+
+    private var backgroundShape: UnevenRoundedRectangle {
+        UnevenRoundedRectangle(
+            topLeadingRadius: showSidebar ? 0 : 24,
+            bottomLeadingRadius: showSidebar ? 0 : 24,
+            bottomTrailingRadius: 24,
+            topTrailingRadius: 24,
+            style: .continuous
+        )
+    }
+
+    @ViewBuilder
+    private var baseBackgroundLayer: some View {
+        if let customTheme = theme.customThemeConfig {
+            switch customTheme.background.type {
             case .solid:
-                if let solidColor = custom.background.solidColor {
-                    Color(themeHex: solidColor).ignoresSafeArea()
-                } else {
-                    theme.primaryBackground.ignoresSafeArea()
-                }
+                Color(themeHex: customTheme.background.solidColor ?? customTheme.colors.primaryBackground)
+
             case .gradient:
-                if let gradientColors = custom.background.gradientColors {
-                    LinearGradient(
-                        colors: gradientColors.map { Color(themeHex: $0) },
-                        startPoint: .top,
-                        endPoint: .bottom
-                    ).ignoresSafeArea()
-                } else {
-                    theme.primaryBackground.ignoresSafeArea()
-                }
+                let colors = (customTheme.background.gradientColors ?? ["#000000", "#333333"])
+                    .map { Color(themeHex: $0) }
+                LinearGradient(
+                    colors: colors,
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
+
             case .image:
-                theme.primaryBackground.ignoresSafeArea()
+                if let image = windowState.cachedBackgroundImage {
+                    ZStack {
+                        Image(nsImage: image)
+                            .resizable()
+                            .aspectRatio(contentMode: .fill)
+                            .opacity(customTheme.background.imageOpacity ?? 1.0)
+
+                        // Overlay tint for contrast
+                        theme.primaryBackground.opacity(0.7)
+                    }
+                } else {
+                    theme.primaryBackground
+                }
             }
         } else {
-            theme.primaryBackground.ignoresSafeArea()
+            theme.primaryBackground
         }
     }
 
@@ -116,7 +223,7 @@ struct AgentView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
 
             HStack(spacing: 12) {
-                // Sidebar toggle
+                // Sidebar toggle - far left
                 HeaderActionButton(
                     icon: "sidebar.left",
                     help: showSidebar ? "Hide sidebar" : "Show sidebar",
@@ -127,20 +234,10 @@ struct AgentView: View {
                     }
                 )
 
-                // Mode indicator
-                HStack(spacing: 6) {
-                    Image(systemName: "bolt.circle.fill")
-                        .foregroundColor(.orange)
-                    Text("Agent Mode")
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundColor(theme.secondaryText)
+                // Mode toggle - Chat mode (to the right of sidebar toggle)
+                ModeToggleButton(currentMode: .agent) {
+                    windowState.switchMode(to: .chat)
                 }
-                .padding(.horizontal, 10)
-                .padding(.vertical, 5)
-                .background(
-                    Capsule()
-                        .fill(Color.orange.opacity(0.15))
-                )
 
                 // Task title
                 if let task = session.currentTask {
@@ -151,26 +248,6 @@ struct AgentView: View {
                 }
 
                 Spacer()
-
-                // Mode toggle - switch back to chat
-                Button(action: {
-                    windowState.switchMode(to: .chat)
-                }) {
-                    HStack(spacing: 4) {
-                        Image(systemName: "bubble.left.and.bubble.right")
-                        Text("Chat")
-                    }
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundColor(theme.secondaryText)
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 5)
-                    .background(
-                        Capsule()
-                            .fill(theme.secondaryBackground.opacity(0.6))
-                    )
-                }
-                .buttonStyle(.plain)
-                .help("Switch to Chat mode")
             }
             .padding(.leading, 20)
             .padding(.trailing, 56)
@@ -181,60 +258,22 @@ struct AgentView: View {
     // MARK: - Empty State
 
     private var agentEmptyState: some View {
-        VStack(spacing: 20) {
-            Spacer()
-
-            Image(systemName: "bolt.circle")
-                .font(.system(size: 64))
-                .foregroundColor(theme.tertiaryText)
-
-            Text("Osaurus Agent")
-                .font(.system(size: 24, weight: .semibold))
-                .foregroundColor(theme.primaryText)
-
-            Text(
-                "Enter a task to get started. The agent will break it down into\nactionable issues and execute them step by step."
-            )
-            .font(.system(size: 14))
-            .foregroundColor(theme.secondaryText)
-            .multilineTextAlignment(.center)
-
-            if !windowState.agentTasks.isEmpty {
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("Recent Tasks")
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundColor(theme.tertiaryText)
-
-                    ForEach(windowState.agentTasks.prefix(3)) { task in
-                        Button(action: {
-                            Task {
-                                await session.loadTask(task)
-                            }
-                        }) {
-                            HStack {
-                                Image(systemName: statusIcon(for: task.status))
-                                    .foregroundColor(statusColor(for: task.status))
-                                Text(task.title)
-                                    .foregroundColor(theme.primaryText)
-                                    .lineLimit(1)
-                                Spacer()
-                            }
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 8)
-                            .background(
-                                RoundedRectangle(cornerRadius: 8)
-                                    .fill(theme.secondaryBackground.opacity(0.5))
-                            )
-                        }
-                        .buttonStyle(.plain)
-                    }
-                }
-                .frame(maxWidth: 400)
+        AgentEmptyState(
+            hasModels: session.modelOptions.count > 0,
+            selectedModel: session.selectedModel,
+            personas: windowState.personas,
+            activePersonaId: windowState.personaId,
+            onOpenModelManager: {
+                AppDelegate.shared?.showManagementWindow(initialTab: .models)
+            },
+            onUseFoundation: windowState.foundationModelAvailable
+                ? {
+                    session.selectedModel = session.modelOptions.first?.id ?? "foundation"
+                } : nil,
+            onSelectPersona: { newPersonaId in
+                windowState.switchPersona(to: newPersonaId)
             }
-
-            Spacer()
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        )
     }
 
     // MARK: - Task Execution View
@@ -253,7 +292,13 @@ struct AgentView: View {
             IssueTrackerPanel(
                 issues: session.issues,
                 activeIssueId: session.activeIssue?.id,
+                selectedIssueId: session.selectedIssueId,
                 onIssueSelect: { issue in
+                    // Select to view details
+                    session.selectIssue(issue)
+                },
+                onIssueRun: { issue in
+                    // Execute the issue
                     Task {
                         await session.executeIssue(issue)
                     }
@@ -267,89 +312,17 @@ struct AgentView: View {
             .frame(maxWidth: min(width - 40, 800))
             .padding(.horizontal, 20)
 
-            // Streaming content / Results
-            if !session.streamingContent.isEmpty || session.isExecuting {
-                ScrollViewReader { proxy in
-                    ScrollView {
-                        VStack(alignment: .leading, spacing: 0) {
-                            Text(session.streamingContent.isEmpty ? "Starting..." : session.streamingContent)
-                                .font(.system(size: 14, design: .monospaced))
-                                .foregroundColor(theme.primaryText)
-                                .textSelection(.enabled)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                                .padding(16)
-
-                            // Anchor for auto-scroll
-                            Color.clear
-                                .frame(height: 1)
-                                .id("bottom")
-                        }
-                    }
-                    .onChange(of: session.streamingContent) { _, _ in
-                        withAnimation {
-                            proxy.scrollTo("bottom", anchor: .bottom)
-                        }
-                    }
-                }
-                .frame(maxHeight: 300)
-                .background(
-                    RoundedRectangle(cornerRadius: 12)
-                        .fill(theme.secondaryBackground.opacity(0.5))
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 12)
-                                .stroke(theme.primaryBorder.opacity(0.3), lineWidth: 1)
-                        )
-                )
-                .padding(.horizontal, 20)
-                .padding(.top, 12)
+            // Issue detail view with MessageThreadView
+            if session.selectedIssueId != nil && !session.issueBlocks.isEmpty {
+                issueDetailView(width: width)
+            } else if session.selectedIssueId != nil {
+                // Selected issue but no blocks yet (loading or empty)
+                issueEmptyDetailView
             }
 
             // Error message with retry button
             if let error = session.errorMessage {
-                VStack(spacing: 12) {
-                    HStack {
-                        Image(systemName: "exclamationmark.triangle.fill")
-                            .foregroundColor(.red)
-                        Text(error)
-                            .font(.system(size: 13))
-                            .foregroundColor(.red)
-                        Spacer()
-                    }
-
-                    if let failedIssue = session.failedIssue {
-                        HStack(spacing: 12) {
-                            Button {
-                                Task {
-                                    session.errorMessage = nil
-                                    await session.executeIssue(failedIssue, withRetry: true)
-                                }
-                            } label: {
-                                Label("Retry", systemImage: "arrow.clockwise")
-                                    .font(.system(size: 13, weight: .medium))
-                            }
-                            .buttonStyle(.borderedProminent)
-                            .tint(.orange)
-
-                            Button {
-                                session.errorMessage = nil
-                                session.failedIssue = nil
-                            } label: {
-                                Text("Dismiss")
-                                    .font(.system(size: 13, weight: .medium))
-                            }
-                            .buttonStyle(.bordered)
-
-                            Spacer()
-                        }
-                    }
-                }
-                .padding(12)
-                .background(
-                    RoundedRectangle(cornerRadius: 8)
-                        .fill(Color.red.opacity(0.1))
-                )
-                .padding(.horizontal, 20)
-                .padding(.top, 12)
+                errorView(error: error)
             }
 
             // Cancel button during execution
@@ -373,56 +346,114 @@ struct AgentView: View {
         }
     }
 
-    // MARK: - Input Card
+    // MARK: - Issue Detail View
 
-    private var agentInputCard: some View {
-        VStack(spacing: 0) {
-            // Input field
-            HStack(spacing: 12) {
-                TextField("Enter a task for the agent...", text: $session.input)
-                    .textFieldStyle(.plain)
-                    .font(.system(size: 15))
-                    .onSubmit {
-                        Task {
-                            await session.startNewTask()
-                        }
-                    }
+    private func issueDetailView(width: CGFloat) -> some View {
+        let personaName = windowState.cachedPersonaDisplayName
 
-                if session.isExecuting {
-                    Button(action: {
-                        session.stopExecution()
-                    }) {
-                        Image(systemName: "stop.circle.fill")
-                            .font(.system(size: 24))
-                            .foregroundColor(.red)
-                    }
-                    .buttonStyle(.plain)
-                    .help("Stop execution")
-                } else {
-                    Button(action: {
+        return ZStack(alignment: .bottomTrailing) {
+            MessageThreadView(
+                blocks: session.issueBlocks,
+                width: min(width - 40, 800),
+                personaName: personaName,
+                isStreaming: session.isExecuting && session.activeIssue?.id == session.selectedIssueId,
+                turnsCount: session.issueBlocks.count,
+                lastAssistantTurnId: session.issueBlocks.last?.turnId,
+                onCopy: { _ in },
+                onRegenerate: { _ in },
+                onScrolledToBottom: { isPinnedToBottom = true },
+                onScrolledAwayFromBottom: { isPinnedToBottom = false }
+            )
+
+            // Scroll to bottom button
+            ScrollToBottomButton(
+                isPinnedToBottom: isPinnedToBottom,
+                hasTurns: !session.issueBlocks.isEmpty,
+                onTap: { isPinnedToBottom = true }
+            )
+        }
+        .frame(maxWidth: min(width - 40, 800))
+        .frame(maxHeight: .infinity)
+        .background(
+            RoundedRectangle(cornerRadius: 12)
+                .fill(theme.secondaryBackground.opacity(0.3))
+        )
+        .padding(.horizontal, 20)
+        .padding(.top, 12)
+    }
+
+    private var issueEmptyDetailView: some View {
+        VStack(spacing: 12) {
+            Image(systemName: "doc.text.magnifyingglass")
+                .font(.system(size: 32))
+                .foregroundColor(theme.tertiaryText)
+
+            Text("No execution history")
+                .font(.system(size: 14, weight: .medium))
+                .foregroundColor(theme.secondaryText)
+
+            Text("Select an issue to view its details, or run it to see live execution.")
+                .font(.system(size: 12))
+                .foregroundColor(theme.tertiaryText)
+                .multilineTextAlignment(.center)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 40)
+        .background(
+            RoundedRectangle(cornerRadius: 12)
+                .fill(theme.secondaryBackground.opacity(0.3))
+        )
+        .padding(.horizontal, 20)
+        .padding(.top, 12)
+    }
+
+    // MARK: - Error View
+
+    private func errorView(error: String) -> some View {
+        VStack(spacing: 12) {
+            HStack {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .foregroundColor(.red)
+                Text(error)
+                    .font(.system(size: 13))
+                    .foregroundColor(.red)
+                Spacer()
+            }
+
+            if let failedIssue = session.failedIssue {
+                HStack(spacing: 12) {
+                    Button {
                         Task {
-                            await session.startNewTask()
+                            session.errorMessage = nil
+                            await session.executeIssue(failedIssue, withRetry: true)
                         }
-                    }) {
-                        Image(systemName: "arrow.up.circle.fill")
-                            .font(.system(size: 24))
-                            .foregroundColor(session.input.isEmpty ? theme.tertiaryText : .orange)
+                    } label: {
+                        Label("Retry", systemImage: "arrow.clockwise")
+                            .font(.system(size: 13, weight: .medium))
                     }
-                    .buttonStyle(.plain)
-                    .disabled(session.input.isEmpty)
-                    .help("Start task")
+                    .buttonStyle(.borderedProminent)
+                    .tint(.orange)
+
+                    Button {
+                        session.errorMessage = nil
+                        session.failedIssue = nil
+                    } label: {
+                        Text("Dismiss")
+                            .font(.system(size: 13, weight: .medium))
+                    }
+                    .buttonStyle(.bordered)
+
+                    Spacer()
                 }
             }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 12)
-            .background(
-                RoundedRectangle(cornerRadius: 16)
-                    .fill(theme.secondaryBackground)
-                    .shadow(color: .black.opacity(0.1), radius: 8, y: 4)
-            )
-            .padding(.horizontal, 20)
-            .padding(.bottom, 20)
         }
+        .padding(12)
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(Color.red.opacity(0.1))
+        )
+        .padding(.horizontal, 20)
+        .padding(.top, 12)
     }
 
     // MARK: - Helpers
@@ -444,22 +475,5 @@ struct AgentView: View {
     }
 }
 
-// MARK: - Header Action Button
-
-private struct HeaderActionButton: View {
-    let icon: String
-    let help: String
-    let action: () -> Void
-
-    var body: some View {
-        Button(action: action) {
-            Image(systemName: icon)
-                .font(.system(size: 14, weight: .medium))
-                .foregroundColor(.secondary)
-                .frame(width: 28, height: 28)
-                .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .help(help)
-    }
-}
+// MARK: - Shared Header Components
+// HeaderActionButton, ModeToggleButton, ModeIndicatorBadge are now in SharedHeaderComponents.swift

@@ -724,9 +724,11 @@ struct FloatingInputCard: View {
         personaManager.effectiveSkillOverrides(for: effectivePersonaId)
     }
 
-    /// Count of enabled tools (with persona overrides applied)
+    /// Count of enabled tools (with persona overrides applied, excluding agent tools)
     private var enabledToolCount: Int {
-        toolRegistry.listTools(withOverrides: toolOverrides).filter { $0.enabled }.count
+        toolRegistry.listUserTools(withOverrides: toolOverrides)
+            .filter { $0.enabled }
+            .count
     }
 
     /// Count of enabled skills (with persona overrides applied)

@@ -359,4 +359,33 @@ final class ToolRegistry: ObservableObject {
             await MCPServerManager.shared.notifyToolsListChanged()
         }
     }
+
+    // MARK: - User-Facing Tool List
+
+    /// Agent tool names that should be excluded from user-facing tool lists.
+    /// These tools are always included by default in agent mode.
+    static var agentToolNames: Set<String> {
+        Set(AgentToolManager.shared.toolNames)
+    }
+
+    /// List tools excluding agent-specific and optionally internal tools.
+    /// Use this for user-facing tool lists and counts.
+    ///
+    /// - Parameters:
+    ///   - overrides: Persona-specific tool overrides
+    ///   - excludeInternal: If true, also excludes internal tools like `select_capabilities`
+    /// - Returns: Filtered list of tool entries
+    func listUserTools(
+        withOverrides overrides: [String: Bool]?,
+        excludeInternal: Bool = false
+    ) -> [ToolEntry] {
+        var tools = listTools(withOverrides: overrides)
+        // Always exclude agent tools from user-facing lists
+        tools = tools.filter { !Self.agentToolNames.contains($0.name) }
+        // Optionally exclude internal tools
+        if excludeInternal {
+            tools = tools.filter { $0.name != "select_capabilities" }
+        }
+        return tools
+    }
 }
