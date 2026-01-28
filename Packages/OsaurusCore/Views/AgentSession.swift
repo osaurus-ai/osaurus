@@ -29,8 +29,32 @@ public final class AgentSession: ObservableObject {
     /// Currently selected issue for viewing (distinct from active/executing)
     @Published public var selectedIssueId: String?
 
-    /// Content blocks for the selected issue (for MessageThreadView rendering)
-    @Published var issueBlocks: [ContentBlock] = []
+    /// Turns for the actively executing issue (live data)
+    private var liveExecutionTurns: [ChatTurn] = []
+
+    /// Turns for the selected issue (may be live or historical)
+    private var selectedIssueTurns: [ChatTurn] = []
+
+    /// Trigger for UI updates when turns change
+    @Published private var turnsVersion: Int = 0
+
+    /// Content blocks for the selected issue - computed from selectedIssueTurns
+    /// Uses ContentBlock.generateBlocks() for consistent rendering with ChatView
+    var issueBlocks: [ContentBlock] {
+        // Use live data if viewing the active issue, otherwise use loaded turns
+        let turns: [ChatTurn]
+        if let activeId = activeIssue?.id, selectedIssueId == activeId {
+            turns = liveExecutionTurns
+        } else {
+            turns = selectedIssueTurns
+        }
+        let isStreamingThisIssue = isExecuting && activeIssue?.id == selectedIssueId
+        return ContentBlock.generateBlocks(
+            from: turns,
+            streamingTurnId: isStreamingThisIssue ? turns.last?.id : nil,
+            personaName: windowState?.cachedPersonaDisplayName ?? "Agent"
+        )
+    }
 
     // MARK: - Execution State
 
@@ -86,9 +110,6 @@ public final class AgentSession: ObservableObject {
 
     private var executionTask: Task<Void, Never>?
 
-    /// Content block builder for live execution and history viewing
-    private let blockBuilder = AgentContentBlockBuilder()
-
     // MARK: - Initialization
 
     init(personaId: UUID, windowState: ChatWindowState? = nil) {
@@ -121,8 +142,8 @@ public final class AgentSession: ObservableObject {
 
     // MARK: - Task Management
 
-    /// Creates and starts a new task from user input
-    public func startNewTask() async {
+    /// Handles user input - creates new task or adds issue to current task
+    public func handleUserInput() async {
         let query = input.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !query.isEmpty else { return }
 
@@ -131,19 +152,51 @@ public final class AgentSession: ObservableObject {
         streamingContent = ""
 
         do {
-            // Create task
-            let task = try await IssueManager.shared.createTask(query: query, personaId: personaId)
-            currentTask = task
-
-            // Refresh UI
-            await refreshIssues()
-            windowState?.refreshAgentTasks()
-
-            // Start execution
-            await executeNextIssue()
+            if let task = currentTask {
+                // Add new issue to existing task
+                try await addIssueToTask(query: query, task: task)
+            } else {
+                // Create new task
+                try await startNewTask(query: query)
+            }
         } catch {
-            errorMessage = "Failed to create task: \(error.localizedDescription)"
+            errorMessage = "Failed: \(error.localizedDescription)"
         }
+    }
+
+    /// Creates and starts a new task
+    private func startNewTask(query: String) async throws {
+        let task = try await IssueManager.shared.createTask(query: query, personaId: personaId)
+        currentTask = task
+
+        // Refresh UI
+        await refreshIssues()
+        windowState?.refreshAgentTasks()
+
+        // Start execution
+        await executeNextIssue()
+    }
+
+    /// Adds a new issue to an existing task
+    private func addIssueToTask(query: String, task: AgentTask) async throws {
+        // Create issue on the current task
+        guard
+            let issue = await IssueManager.shared.createIssueSafe(
+                taskId: task.id,
+                title: query,
+                description: query,
+                priority: .p2,
+                type: .task
+            )
+        else {
+            throw AgentEngineError.noIssueCreated
+        }
+
+        // Refresh issues list
+        await refreshIssues()
+
+        // Execute the new issue
+        await executeIssue(issue)
     }
 
     /// Loads an existing task
@@ -347,33 +400,39 @@ public final class AgentSession: ObservableObject {
     public func selectIssue(_ issue: Issue?) {
         guard let issue = issue else {
             selectedIssueId = nil
-            issueBlocks = []
+            selectedIssueTurns = []
+            turnsVersion += 1
             return
         }
 
         selectedIssueId = issue.id
 
-        // If this issue is currently executing, show live blocks
+        // If this issue is currently executing, use live data (issueBlocks handles this)
         if activeIssue?.id == issue.id {
-            issueBlocks = blockBuilder.blocks
+            // Live execution - issueBlocks will use liveExecutionTurns
+            turnsVersion += 1
             return
         }
 
-        // Otherwise, load historical events
+        // Otherwise, load historical events into selectedIssueTurns
         loadIssueHistory(for: issue)
     }
 
-    /// Loads the event history for an issue and builds content blocks
+    /// Loads the event history for an issue and builds ChatTurns for rendering
     private func loadIssueHistory(for issue: Issue) {
         do {
             let events = try IssueManager.shared.getHistory(issueId: issue.id)
             let personaName = windowState?.cachedPersonaDisplayName ?? "Agent"
-            blockBuilder.reset()
-            issueBlocks = AgentContentBlockBuilder(personaName: personaName)
-                .buildFromHistory(events: events, issue: issue)
+            selectedIssueTurns = AgentContentBlockBuilder.buildTurnsFromHistory(
+                events: events,
+                issue: issue,
+                personaName: personaName
+            )
+            turnsVersion += 1
         } catch {
             // On error, show basic issue info
-            issueBlocks = []
+            selectedIssueTurns = []
+            turnsVersion += 1
             print("[AgentSession] Failed to load issue history: \(error)")
         }
     }
@@ -381,7 +440,9 @@ public final class AgentSession: ObservableObject {
     /// Clears the current issue selection
     public func clearSelection() {
         selectedIssueId = nil
-        issueBlocks = []
+        selectedIssueTurns = []
+        liveExecutionTurns = []
+        turnsVersion += 1
     }
 
     /// The currently selected issue object
@@ -429,12 +490,27 @@ extension AgentSession: AgentEngineDelegate {
             issues[index] = updatedIssue
         }
 
-        // Start building blocks for this execution
-        blockBuilder.startExecution(for: issue)
+        // Start fresh live execution turns
+        liveExecutionTurns = []
+
+        // 1. Create user turn with issue context (shows as "task" from user)
+        // Use description if available (it's the full text), otherwise use title
+        let displayContent: String
+        if let description = issue.description, !description.isEmpty {
+            displayContent = description
+        } else {
+            displayContent = issue.title
+        }
+        let userTurn = ChatTurn(role: .user, content: displayContent)
+        liveExecutionTurns.append(userTurn)
+
+        // 2. Create assistant turn for plan and execution responses
+        let assistantTurn = ChatTurn(role: .assistant, content: "")
+        liveExecutionTurns.append(assistantTurn)
 
         // Auto-select the executing issue
         selectedIssueId = issue.id
-        issueBlocks = blockBuilder.blocks
+        turnsVersion += 1
     }
 
     public func agentEngine(
@@ -444,10 +520,15 @@ extension AgentSession: AgentEngineDelegate {
     ) {
         self.currentPlan = plan
 
-        // Update block builder with plan
-        blockBuilder.handlePlanCreated(plan)
+        // Store plan on the current assistant turn for PlanBlockView rendering
+        if let assistantTurn = liveExecutionTurns.last(where: { $0.role == .assistant }) {
+            assistantTurn.plan = plan
+            assistantTurn.currentPlanStep = 0
+            assistantTurn.notifyContentChanged()
+        }
+
         if selectedIssueId == issue.id {
-            issueBlocks = blockBuilder.blocks
+            turnsVersion += 1
         }
     }
 
@@ -458,6 +539,16 @@ extension AgentSession: AgentEngineDelegate {
         forIssue issue: Issue
     ) {
         self.currentStep = stepIndex
+
+        // Update current step on the assistant turn for plan progress
+        if let assistantTurn = liveExecutionTurns.last(where: { $0.role == .assistant }) {
+            assistantTurn.currentPlanStep = stepIndex
+            assistantTurn.notifyContentChanged()
+        }
+
+        if selectedIssueId == issue.id {
+            turnsVersion += 1
+        }
     }
 
     public func agentEngine(
@@ -468,10 +559,18 @@ extension AgentSession: AgentEngineDelegate {
         // Append streaming content - this is the main streaming path
         self.streamingContent += delta
 
-        // Update block builder
-        blockBuilder.appendDelta(delta)
+        // Find the current assistant turn (might not be the last turn if tool turns were added)
+        if let assistantTurn = liveExecutionTurns.last(where: { $0.role == .assistant }) {
+            assistantTurn.appendContent(delta)
+            assistantTurn.notifyContentChanged()
+        } else {
+            // Create new assistant turn if none exists (shouldn't happen normally)
+            let turn = ChatTurn(role: .assistant, content: delta)
+            liveExecutionTurns.append(turn)
+        }
+
         if let activeId = activeIssue?.id, selectedIssueId == activeId {
-            issueBlocks = blockBuilder.blocks
+            turnsVersion += 1
         }
     }
 
@@ -481,10 +580,51 @@ extension AgentSession: AgentEngineDelegate {
         result: StepResult,
         forIssue issue: Issue
     ) {
-        // Step completed - update block builder
-        blockBuilder.handleStepCompleted(stepIndex: stepIndex, content: result.responseContent)
+        // Find or create the current assistant turn
+        var assistantTurn: ChatTurn
+        if let lastTurn = liveExecutionTurns.last, lastTurn.role == .assistant {
+            assistantTurn = lastTurn
+        } else if let lastAssistant = liveExecutionTurns.last(where: { $0.role == .assistant }) {
+            assistantTurn = lastAssistant
+        } else {
+            // Create new assistant turn if none exists
+            assistantTurn = ChatTurn(role: .assistant, content: "")
+            liveExecutionTurns.append(assistantTurn)
+        }
+
+        // Add tool call if present - attach to the same assistant turn
+        if let toolCallResult = result.toolCallResult {
+            // Add tool call to current assistant turn
+            if assistantTurn.toolCalls == nil {
+                assistantTurn.toolCalls = []
+            }
+            assistantTurn.toolCalls?.append(toolCallResult.toolCall)
+            assistantTurn.toolResults[toolCallResult.toolCall.id] = toolCallResult.result
+
+            // Add a hidden tool turn for proper message flow (required for API)
+            let toolTurn = ChatTurn(role: .tool, content: toolCallResult.result)
+            toolTurn.toolCallId = toolCallResult.toolCall.id
+            liveExecutionTurns.append(toolTurn)
+
+            // Note: We do NOT create a new assistant turn here anymore.
+            // The existing assistant turn continues to accumulate content and tool calls.
+        }
+
+        // Append response content if present
+        if !result.responseContent.isEmpty {
+            if assistantTurn.contentIsEmpty {
+                assistantTurn.content = result.responseContent
+            } else {
+                assistantTurn.appendContent("\n\n" + result.responseContent)
+            }
+            assistantTurn.notifyContentChanged()
+        }
+
+        // Update current step for plan progress tracking
+        self.currentStep = stepIndex + 1
+
         if selectedIssueId == issue.id {
-            issueBlocks = blockBuilder.blocks
+            turnsVersion += 1
         }
     }
 
@@ -502,27 +642,43 @@ extension AgentSession: AgentEngineDelegate {
         didVerifyGoal verification: VerificationResult,
         forIssue issue: Issue
     ) {
-        self.streamingContent += "\n\n---\n✅ **Result:** \(verification.summary)"
+        let emoji = verification.status == .achieved ? "✅" : "❌"
+        let verificationContent = "\n\n---\n\(emoji) **Result:** \(verification.summary)"
+        self.streamingContent += verificationContent
 
-        // Update block builder with verification
-        let isSuccess = verification.status == .achieved
-        blockBuilder.handleVerification(summary: verification.summary, success: isSuccess)
+        // Append to current turn
+        if let lastTurn = liveExecutionTurns.last, lastTurn.role == .assistant {
+            lastTurn.appendContent(verificationContent)
+            lastTurn.notifyContentChanged()
+        }
+
         if selectedIssueId == issue.id {
-            issueBlocks = blockBuilder.blocks
+            turnsVersion += 1
         }
     }
 
     public func agentEngine(_ engine: AgentEngine, didDecomposeIssue issue: Issue, into children: [Issue]) {
+        // Add decomposition info to content
+        let decomposeContent = "\n\n🔀 **Decomposed into \(children.count) sub-issues**"
+        if let lastTurn = liveExecutionTurns.last, lastTurn.role == .assistant {
+            lastTurn.appendContent(decomposeContent)
+            lastTurn.notifyContentChanged()
+        }
+        turnsVersion += 1
+
         Task {
             await self.refreshIssues()
         }
     }
 
     public func agentEngine(_ engine: AgentEngine, didCompleteIssue issue: Issue, success: Bool) {
-        // Complete the block builder
-        blockBuilder.completeExecution(success: success, message: nil)
+        // Consolidate content chunks for final storage
+        for turn in liveExecutionTurns where turn.role == .assistant {
+            turn.consolidateContent()
+        }
+
         if selectedIssueId == issue.id {
-            issueBlocks = blockBuilder.blocks
+            turnsVersion += 1
         }
 
         Task {
@@ -534,12 +690,18 @@ extension AgentSession: AgentEngineDelegate {
     {
         self.retryAttempt = attempt
         self.isRetrying = true
-        self.streamingContent += "\n\n⚠️ **Retrying...** (attempt \(attempt), waiting \(Int(afterDelay))s)\n"
 
-        // Update block builder
-        blockBuilder.appendDelta("\n\n⚠️ **Retrying...** (attempt \(attempt), waiting \(Int(afterDelay))s)\n")
+        let retryContent = "\n\n⚠️ **Retrying...** (attempt \(attempt), waiting \(Int(afterDelay))s)\n"
+        self.streamingContent += retryContent
+
+        // Append to current turn
+        if let lastTurn = liveExecutionTurns.last, lastTurn.role == .assistant {
+            lastTurn.appendContent(retryContent)
+            lastTurn.notifyContentChanged()
+        }
+
         if selectedIssueId == issue.id {
-            issueBlocks = blockBuilder.blocks
+            turnsVersion += 1
         }
     }
 }

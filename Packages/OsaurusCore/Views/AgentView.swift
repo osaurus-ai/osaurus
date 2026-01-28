@@ -14,6 +14,12 @@ struct AgentView: View {
     @State private var showSidebar: Bool = false
     @State private var isPinnedToBottom: Bool = true
 
+    // Progress sidebar state (right side)
+    @State private var progressSidebarWidth: CGFloat = 280
+    @State private var isProgressSidebarCollapsed: Bool = false
+    private let minProgressSidebarWidth: CGFloat = 200
+    private let maxProgressSidebarWidth: CGFloat = 400
+
     private var theme: ThemeProtocol { windowState.theme }
 
     var body: some View {
@@ -76,7 +82,7 @@ struct AgentView: View {
                             isStreaming: session.isExecuting,
                             supportsImages: false,
                             estimatedContextTokens: session.estimatedContextTokens,
-                            onSend: { Task { await session.startNewTask() } },
+                            onSend: { Task { await session.handleUserInput() } },
                             onStop: { session.stopExecution() },
                             personaId: windowState.personaId,
                             windowId: windowState.windowId
@@ -111,8 +117,7 @@ struct AgentView: View {
                     action: {
                         session.currentTask = nil
                         session.issues = []
-                        session.selectedIssueId = nil
-                        session.issueBlocks = []
+                        session.clearSelection()
                     }
                 )
             }
@@ -278,82 +283,136 @@ struct AgentView: View {
     // MARK: - Task Execution View
 
     private func taskExecutionView(width: CGFloat) -> some View {
-        VStack(spacing: 0) {
-            // Progress bar
-            if session.isExecuting {
-                ProgressView(value: session.currentPlan?.progress ?? 0)
-                    .tint(.orange)
-                    .padding(.horizontal, 20)
-                    .padding(.vertical, 8)
-            }
+        let collapsedWidth: CGFloat = 36
+        let sidebarWidth = isProgressSidebarCollapsed ? collapsedWidth : progressSidebarWidth
+        let chatWidth = width - sidebarWidth
 
-            // Issue tracker panel
-            IssueTrackerPanel(
-                issues: session.issues,
-                activeIssueId: session.activeIssue?.id,
-                selectedIssueId: session.selectedIssueId,
-                onIssueSelect: { issue in
-                    // Select to view details
-                    session.selectIssue(issue)
-                },
-                onIssueRun: { issue in
-                    // Execute the issue
-                    Task {
-                        await session.executeIssue(issue)
-                    }
-                },
-                onIssueClose: { issueId in
-                    Task {
-                        await session.closeIssue(issueId, reason: "Manually closed")
-                    }
+        return HStack(spacing: 0) {
+            // Main chat area
+            VStack(spacing: 0) {
+                // Issue detail view with MessageThreadView
+                if session.selectedIssueId != nil && !session.issueBlocks.isEmpty {
+                    issueDetailView(width: chatWidth)
+                } else if session.selectedIssueId != nil {
+                    // Selected issue but no blocks yet (loading or empty)
+                    issueEmptyDetailView
+                } else {
+                    // No issue selected - show prompt
+                    noIssueSelectedView
                 }
-            )
-            .frame(maxWidth: min(width - 40, 800))
-            .padding(.horizontal, 20)
 
-            // Issue detail view with MessageThreadView
-            if session.selectedIssueId != nil && !session.issueBlocks.isEmpty {
-                issueDetailView(width: width)
-            } else if session.selectedIssueId != nil {
-                // Selected issue but no blocks yet (loading or empty)
-                issueEmptyDetailView
-            }
-
-            // Error message with retry button
-            if let error = session.errorMessage {
-                errorView(error: error)
-            }
-
-            // Cancel button during execution
-            if session.isExecuting {
-                HStack {
-                    Spacer()
-                    Button {
-                        session.stopExecution()
-                    } label: {
-                        Label(session.isRetrying ? "Cancel Retry" : "Stop Execution", systemImage: "stop.fill")
-                            .font(.system(size: 13, weight: .medium))
-                    }
-                    .buttonStyle(.bordered)
-                    .tint(.red)
-                    Spacer()
+                // Error message with retry button
+                if let error = session.errorMessage {
+                    errorView(error: error)
                 }
-                .padding(.top, 12)
+
+                Spacer(minLength: 0)
             }
+            .frame(maxWidth: .infinity)
+
+            // Resize handle + Progress sidebar (right side)
+            if !isProgressSidebarCollapsed {
+                // Resize handle
+                ProgressSidebarResizeHandle(
+                    width: $progressSidebarWidth,
+                    minWidth: minProgressSidebarWidth,
+                    maxWidth: maxProgressSidebarWidth
+                )
+
+                // Progress sidebar
+                IssueTrackerPanel(
+                    issues: session.issues,
+                    activeIssueId: session.activeIssue?.id,
+                    selectedIssueId: session.selectedIssueId,
+                    isCollapsed: $isProgressSidebarCollapsed,
+                    onIssueSelect: { issue in
+                        session.selectIssue(issue)
+                    },
+                    onIssueRun: { issue in
+                        Task {
+                            await session.executeIssue(issue)
+                        }
+                    },
+                    onIssueClose: { issueId in
+                        Task {
+                            await session.closeIssue(issueId, reason: "Manually closed")
+                        }
+                    }
+                )
+                .frame(width: progressSidebarWidth)
+                .transition(.move(edge: .trailing).combined(with: .opacity))
+            } else {
+                // Collapsed state - thin expand button
+                collapsedProgressSidebar
+                    .transition(.move(edge: .trailing).combined(with: .opacity))
+            }
+        }
+        .animation(theme.animationQuick(), value: isProgressSidebarCollapsed)
+        .onChange(of: isProgressSidebarCollapsed) { _, _ in
+            // Clear height cache when sidebar state changes to prevent layout glitches
+            MessageHeightCache.shared.clear()
+        }
+    }
+
+    // MARK: - No Issue Selected View
+
+    private var noIssueSelectedView: some View {
+        VStack(spacing: 12) {
+            Image(systemName: "hand.point.right")
+                .font(.system(size: 32))
+                .foregroundColor(theme.tertiaryText)
+
+            Text("Select an issue to view details")
+                .font(.system(size: 14, weight: .medium))
+                .foregroundColor(theme.secondaryText)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    // MARK: - Collapsed Progress Sidebar
+
+    private var collapsedProgressSidebar: some View {
+        VStack {
+            Button {
+                withAnimation(theme.animationQuick()) {
+                    isProgressSidebarCollapsed = false
+                }
+            } label: {
+                Image(systemName: "sidebar.right")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundColor(theme.tertiaryText)
+                    .frame(width: 24, height: 24)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help("Show progress")
+            .padding(.top, 10)
 
             Spacer()
+        }
+        .frame(width: 36)
+        .background(theme.primaryBackground.opacity(0.5))
+        .overlay(alignment: .leading) {
+            Rectangle()
+                .fill(theme.primaryBorder.opacity(0.2))
+                .frame(width: 1)
         }
     }
 
     // MARK: - Issue Detail View
 
+    /// Maximum content width for chat readability
+    private let maxChatContentWidth: CGFloat = 700
+
     private func issueDetailView(width: CGFloat) -> some View {
         let personaName = windowState.cachedPersonaDisplayName
+        // Use available width minus padding, capped at max for readability
+        let contentWidth = min(width - 40, maxChatContentWidth)
 
         return ZStack(alignment: .bottomTrailing) {
             MessageThreadView(
                 blocks: session.issueBlocks,
-                width: min(width - 40, 800),
+                width: contentWidth,
                 personaName: personaName,
                 isStreaming: session.isExecuting && session.activeIssue?.id == session.selectedIssueId,
                 turnsCount: session.issueBlocks.count,
@@ -371,12 +430,8 @@ struct AgentView: View {
                 onTap: { isPinnedToBottom = true }
             )
         }
-        .frame(maxWidth: min(width - 40, 800))
+        .frame(maxWidth: contentWidth)
         .frame(maxHeight: .infinity)
-        .background(
-            RoundedRectangle(cornerRadius: 12)
-                .fill(theme.secondaryBackground.opacity(0.3))
-        )
         .padding(.horizontal, 20)
         .padding(.top, 12)
     }
@@ -398,10 +453,6 @@ struct AgentView: View {
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 40)
-        .background(
-            RoundedRectangle(cornerRadius: 12)
-                .fill(theme.secondaryBackground.opacity(0.3))
-        )
         .padding(.horizontal, 20)
         .padding(.top, 12)
     }
@@ -471,6 +522,45 @@ struct AgentView: View {
         case .completed: return .green
         case .cancelled: return .gray
         }
+    }
+}
+
+// MARK: - Progress Sidebar Resize Handle
+
+private struct ProgressSidebarResizeHandle: View {
+    @Binding var width: CGFloat
+    let minWidth: CGFloat
+    let maxWidth: CGFloat
+
+    @Environment(\.theme) private var theme: ThemeProtocol
+    @State private var isHovered = false
+    @GestureState private var dragOffset: CGFloat = 0
+
+    var body: some View {
+        Rectangle()
+            .fill(isHovered ? theme.accentColor.opacity(0.5) : theme.primaryBorder.opacity(0.3))
+            .frame(width: isHovered ? 3 : 1)
+            .contentShape(Rectangle().inset(by: -6))
+            .onHover { hovering in
+                isHovered = hovering
+                if hovering {
+                    NSCursor.resizeLeftRight.push()
+                } else {
+                    NSCursor.pop()
+                }
+            }
+            .gesture(
+                DragGesture()
+                    .updating($dragOffset) { value, state, _ in
+                        state = value.translation.width
+                    }
+                    .onChanged { value in
+                        // Dragging left increases width, dragging right decreases
+                        let newWidth = width - value.translation.width
+                        width = min(maxWidth, max(minWidth, newWidth))
+                    }
+            )
+            .animation(theme.animationQuick(), value: isHovered)
     }
 }
 

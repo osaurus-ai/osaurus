@@ -69,6 +69,10 @@ struct ContentBlockView: View {
             let estimatedLines = max(1, CGFloat(text.count) / 80)
             return min(max(50, estimatedLines * 20 + 30), 300)
 
+        case let .plan(steps, _, _):
+            // Collapsed: ~50px, Expanded: ~50px header + ~44px per step
+            return CGFloat(50 + steps.count * 44)
+
         case .image:
             return 170  // max image height + padding
 
@@ -148,6 +152,15 @@ struct ContentBlockView: View {
             )
             .padding(.top, 6)
             .padding(.bottom, isLastInTurn ? 16 : 6)
+
+        case let .plan(steps, currentStep, isStreaming):
+            PlanBlockView(
+                steps: steps,
+                currentStep: currentStep,
+                isStreaming: isStreaming
+            )
+            .padding(.top, 6)
+            .padding(.bottom, isLastInTurn ? 12 : 4)
 
         case let .image(_, imageData):
             if let nsImage = NSImage(data: imageData) {

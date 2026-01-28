@@ -354,9 +354,6 @@ public actor AgentExecutionEngine {
         var responseContent = ""
         var toolCallResult: ToolCallResult?
 
-        // Notify delegate that step is starting
-        await notifyDelta("\n🔄 **Step \(stepIndex + 1):** \(step.description)\n", forStep: stepIndex)
-
         do {
             let stream = try await chatEngine.streamChat(request: request)
 
@@ -365,9 +362,7 @@ public actor AgentExecutionEngine {
                 await notifyDelta(delta, forStep: stepIndex)
             }
         } catch let toolInvocation as ServiceToolInvocation {
-            // Tool call detected - notify about the tool being called
-            await notifyDelta("\n🔧 Calling tool: `\(toolInvocation.toolName)`\n", forStep: stepIndex)
-
+            // Tool call detected - handle via StepResult.toolCallResult for UI rendering
             plan.toolCallCount += 1
             currentPlan = plan
 
@@ -379,19 +374,17 @@ public actor AgentExecutionEngine {
 
             toolCallResult = toolResult
 
-            // Notify about tool result
-            let resultPreview = String(toolResult.result.prefix(500))
-            await notifyDelta(
-                "```\n\(resultPreview)\(toolResult.result.count > 500 ? "..." : "")\n```\n",
-                forStep: stepIndex
-            )
-
-            // Log the tool call event
+            // Log the tool call event with full details
             _ = try? IssueStore.createEvent(
                 IssueEvent.withPayload(
                     issueId: issue.id,
                     eventType: .toolCallExecuted,
-                    payload: EventPayload.ToolCall(tool: toolInvocation.toolName, step: stepIndex)
+                    payload: EventPayload.ToolCall(
+                        tool: toolInvocation.toolName,
+                        step: stepIndex,
+                        arguments: toolInvocation.jsonArguments,
+                        result: toolResult.result
+                    )
                 )
             )
         }
@@ -436,14 +429,20 @@ public actor AgentExecutionEngine {
 
     /// Builds the prompt for executing a specific step
     private func buildStepPrompt(step: PlanStep, stepIndex: Int, totalSteps: Int) -> String {
-        var prompt = "Execute step \(stepIndex + 1) of \(totalSteps):\n\n"
-        prompt += step.description
+        var prompt = "Execute this step: \(step.description)"
 
         if let toolName = step.toolName {
-            prompt += "\n\nUse the `\(toolName)` tool to complete this step."
+            prompt += "\n\nYou should use the `\(toolName)` tool to complete this step."
         }
 
-        prompt += "\n\nAfter completing this step, briefly summarize what was done."
+        // Add tool usage reminder to encourage actual tool invocation
+        prompt += """
+
+
+            IMPORTANT: When you need to perform an action (read files, search, execute commands, etc.), you MUST invoke the appropriate tool. Do not just describe what you would do - actually call the tool to perform the action.
+
+            Provide a concise response after completing the action.
+            """
 
         return prompt
     }

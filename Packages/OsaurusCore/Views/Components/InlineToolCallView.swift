@@ -325,7 +325,7 @@ struct InlineToolCallView: View {
 
     /// Extract a key argument preview from the JSON arguments
     private var argPreview: String? {
-        PreviewGenerator.jsonPreview(call.function.arguments, maxLength: 50)
+        PreviewGenerator.jsonPreview(call.function.arguments, maxLength: 80)
     }
 
     var body: some View {

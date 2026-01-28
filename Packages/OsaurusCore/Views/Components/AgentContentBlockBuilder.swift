@@ -2,440 +2,230 @@
 //  AgentContentBlockBuilder.swift
 //  osaurus
 //
-//  Converts agent execution data (IssueEvents, streaming content) into ContentBlocks
-//  for rendering in MessageThreadView.
+//  Converts historical agent execution events (IssueEvents) into ChatTurns
+//  for rendering via ContentBlock.generateBlocks() in MessageThreadView.
 //
 
 import Foundation
 
 // MARK: - Agent Content Block Builder
 
-/// Builds ContentBlock arrays from agent execution data for MessageThreadView rendering.
-/// Supports both live execution (streaming) and historical event viewing.
-@MainActor
-final class AgentContentBlockBuilder {
-    /// Unique turn ID for this execution session
-    private var turnId: UUID
-
-    /// Current blocks being built
-    private(set) var blocks: [ContentBlock] = []
-
-    /// Issue being displayed
-    private var issue: Issue?
-
-    /// Persona name for headers
-    private var personaName: String
-
-    /// Current paragraph index (for streaming text)
-    private var currentParagraphIndex: Int = 0
-
-    /// Current text content being streamed
-    private var currentContent: String = ""
-
-    /// Whether streaming is active
-    private var isStreaming: Bool = false
-
-    /// Tool calls accumulated during execution
-    private var toolCalls: [ToolCallItem] = []
-
-    init(personaName: String = "Agent") {
-        self.turnId = UUID()
-        self.personaName = personaName
-    }
-
-    // MARK: - Live Execution Support
-
-    /// Starts a new execution session for an issue
-    func startExecution(for issue: Issue) {
-        self.issue = issue
-        self.turnId = UUID()
-        self.blocks = []
-        self.currentParagraphIndex = 0
-        self.currentContent = ""
-        self.isStreaming = true
-        self.toolCalls = []
-
-        // Add header for the execution
-        blocks.append(
-            .header(
-                turnId: turnId,
-                role: .assistant,
-                personaName: personaName,
-                isFirstInGroup: true,
-                position: .first
-            )
-        )
-
-        // Add issue context as thinking block
-        let contextText = "Working on: **\(issue.title)**"
-        blocks.append(
-            .thinking(
-                turnId: turnId,
-                index: 0,
-                text: contextText,
-                isStreaming: false,
-                position: .middle
-            )
-        )
-    }
-
-    /// Appends streaming delta content
-    func appendDelta(_ delta: String) {
-        currentContent += delta
-        isStreaming = true
-        rebuildCurrentParagraph()
-    }
-
-    /// Handles a plan creation event
-    func handlePlanCreated(_ plan: ExecutionPlan) {
-        // Add plan as thinking block
-        let planSummary = plan.steps.enumerated().map { idx, step in
-            "\(idx + 1). \(step.description)"
-        }.joined(separator: "\n")
-
-        let thinkingText = "**Plan:**\n\(planSummary)"
-        blocks.append(
-            .thinking(
-                turnId: turnId,
-                index: blocks.count,
-                text: thinkingText,
-                isStreaming: false,
-                position: .middle
-            )
-        )
-    }
-
-    /// Handles a tool call execution
-    func handleToolCall(name: String, arguments: String, result: String?) {
-        // Create a ToolCall for display
-        let toolCall = ToolCall(
-            id: UUID().uuidString,
-            type: "function",
-            function: ToolCallFunction(name: name, arguments: arguments)
-        )
-
-        let item = ToolCallItem(call: toolCall, result: result)
-        toolCalls.append(item)
-
-        // If we have multiple tool calls, group them
-        if toolCalls.count > 1 {
-            // Remove any existing tool call blocks and add grouped
-            blocks.removeAll { block in
-                if case .toolCall = block.kind { return true }
-                if case .toolCallGroup = block.kind { return true }
-                return false
-            }
-            blocks.append(
-                .toolCallGroup(turnId: turnId, calls: toolCalls, position: .middle)
-            )
-        } else {
-            // Single tool call
-            blocks.append(
-                .toolCall(turnId: turnId, call: toolCall, result: result, position: .middle)
-            )
-        }
-    }
-
-    /// Handles step completion
-    func handleStepCompleted(stepIndex: Int, content: String?) {
-        if let content = content, !content.isEmpty {
-            // If there's content, append it
-            if !currentContent.isEmpty {
-                currentContent += "\n\n"
-            }
-            currentContent += content
-            rebuildCurrentParagraph()
-        }
-    }
-
-    /// Handles verification result
-    func handleVerification(summary: String, success: Bool) {
-        let emoji = success ? "✅" : "❌"
-        let verificationText = "\n\n---\n\(emoji) **Result:** \(summary)"
-        currentContent += verificationText
-        isStreaming = false
-        rebuildCurrentParagraph()
-    }
-
-    /// Marks execution as complete
-    func completeExecution(success: Bool, message: String?) {
-        isStreaming = false
-
-        if let message = message, !message.isEmpty {
-            if !currentContent.isEmpty && !currentContent.hasSuffix("\n") {
-                currentContent += "\n\n"
-            }
-            currentContent += message
-        }
-
-        rebuildCurrentParagraph()
-        updatePositions()
-    }
+/// Converts historical IssueEvent records into ChatTurn arrays.
+/// The resulting turns can be passed to ContentBlock.generateBlocks() for
+/// consistent rendering with ChatView.
+///
+/// Note: Live execution is now handled directly in AgentSession by populating
+/// executionTurns and using ContentBlock.generateBlocks().
+enum AgentContentBlockBuilder {
 
     // MARK: - Historical Event Loading
 
-    /// Builds blocks from historical IssueEvent records
-    func buildFromHistory(events: [IssueEvent], issue: Issue) -> [ContentBlock] {
-        self.issue = issue
-        self.turnId = UUID()
-        self.blocks = []
-        self.currentContent = ""
-        self.toolCalls = []
+    /// Builds ChatTurn array from historical IssueEvent records
+    /// - Parameters:
+    ///   - events: The historical events to process
+    ///   - issue: The issue these events belong to
+    ///   - personaName: Display name for assistant messages (unused, kept for API compatibility)
+    /// - Returns: Array of ChatTurn representing the execution history
+    @MainActor
+    static func buildTurnsFromHistory(
+        events: [IssueEvent],
+        issue: Issue,
+        personaName: String = "Agent"
+    ) -> [ChatTurn] {
+        var turns: [ChatTurn] = []
 
-        // Add header
-        blocks.append(
-            .header(
-                turnId: turnId,
-                role: .assistant,
-                personaName: personaName,
-                isFirstInGroup: true,
-                position: .first
-            )
-        )
+        // 1. Create user turn with issue context (matches live execution flow)
+        // Use description if available (it's the full text), otherwise use title
+        let displayContent: String
+        if let description = issue.description, !description.isEmpty {
+            displayContent = description
+        } else {
+            displayContent = issue.title
+        }
+        let userTurn = ChatTurn(role: .user, content: displayContent)
+        turns.append(userTurn)
 
-        // Add issue context
-        blocks.append(
-            .thinking(
-                turnId: turnId,
-                index: 0,
-                text: "**\(issue.title)**\n\(issue.description ?? "")",
-                isStreaming: false,
-                position: .middle
-            )
-        )
+        // 2. Create assistant turn for responses
+        let assistantTurn = ChatTurn(role: .assistant, content: "")
+        turns.append(assistantTurn)
 
-        // Process events
+        // Collect data from events
+        var planSteps: [PlanStep] = []
+        var toolCalls: [ToolCallPayload] = []
+
+        // First pass: collect plan and tool info
         for event in events {
-            processHistoricalEvent(event)
+            switch event.eventType {
+            case .planCreated:
+                if let payload = event.payload,
+                    let data = payload.data(using: .utf8)
+                {
+                    // Try new format first (with full step data)
+                    if let decoded = try? JSONDecoder().decode(PlanCreatedPayload.self, from: data) {
+                        planSteps = decoded.steps.map { stepData in
+                            PlanStep(
+                                stepNumber: stepData.stepNumber,
+                                description: stepData.description,
+                                toolName: stepData.toolName,
+                                isComplete: true  // Historical steps are complete
+                            )
+                        }
+                    }
+                    // Fallback to legacy format (step count only)
+                    else if let decoded = try? JSONDecoder().decode(StepCountPayload.self, from: data) {
+                        // Create placeholder steps for legacy data
+                        for index in 0 ..< decoded.stepCount {
+                            planSteps.append(
+                                PlanStep(
+                                    stepNumber: index + 1,
+                                    description: "Step \(index + 1)",
+                                    toolName: nil,
+                                    isComplete: true
+                                )
+                            )
+                        }
+                    }
+                }
+
+            case .toolCallExecuted:
+                if let payload = event.payload,
+                    let data = payload.data(using: .utf8),
+                    let decoded = try? JSONDecoder().decode(ToolCallPayload.self, from: data)
+                {
+                    toolCalls.append(decoded)
+                }
+
+            default:
+                break
+            }
+        }
+
+        // Build plan if we have steps
+        if !planSteps.isEmpty {
+            let plan = ExecutionPlan(
+                issueId: issue.id,
+                steps: planSteps,
+                maxToolCalls: planSteps.count,
+                toolCallCount: toolCalls.count
+            )
+            assistantTurn.plan = plan
+            assistantTurn.currentPlanStep = planSteps.count  // All steps complete
+        }
+
+        // Second pass: process events for display
+        for event in events {
+            switch event.eventType {
+            case .toolCallExecuted:
+                if let payload = event.payload,
+                    let data = payload.data(using: .utf8),
+                    let decoded = try? JSONDecoder().decode(ToolCallPayload.self, from: data)
+                {
+                    // Create tool call with full arguments
+                    let toolCall = ToolCall(
+                        id: event.id,
+                        type: "function",
+                        function: ToolCallFunction(
+                            name: decoded.tool,
+                            arguments: decoded.arguments ?? "{}"
+                        )
+                    )
+
+                    // Add to assistant turn's tool calls
+                    if assistantTurn.toolCalls == nil {
+                        assistantTurn.toolCalls = []
+                    }
+                    assistantTurn.toolCalls?.append(toolCall)
+
+                    // Store result if available
+                    if let result = decoded.result {
+                        assistantTurn.toolResults[toolCall.id] = result
+                    } else {
+                        assistantTurn.toolResults[toolCall.id] = "[Completed]"
+                    }
+                }
+
+            case .executionCompleted:
+                if let payload = event.payload,
+                    let data = payload.data(using: .utf8),
+                    let decoded = try? JSONDecoder().decode(ExecutionCompletedPayload.self, from: data)
+                {
+                    // Use summary if available, otherwise generate status
+                    if let summary = decoded.summary, !summary.isEmpty {
+                        assistantTurn.appendContent(summary)
+                    } else {
+                        let status = decoded.success ? "Completed successfully" : "Failed"
+                        var text = status
+                        if decoded.discoveries > 0 {
+                            text += " (discovered \(decoded.discoveries) new issues)"
+                        }
+                        assistantTurn.appendContent(text)
+                    }
+                }
+
+            case .decomposed:
+                if let payload = event.payload,
+                    let data = payload.data(using: .utf8),
+                    let decoded = try? JSONDecoder().decode(ChildCountPayload.self, from: data)
+                {
+                    assistantTurn.appendContent("Decomposed into \(decoded.childCount) sub-issues")
+                }
+
+            default:
+                // Other events handled elsewhere or not displayed
+                break
+            }
         }
 
         // Add result if issue is closed
         if issue.status == .closed, let result = issue.result {
-            blocks.append(
-                .paragraph(
-                    turnId: turnId,
-                    index: blocks.count,
-                    text: "---\n✅ **Completed:** \(result)",
-                    isStreaming: false,
-                    role: .assistant,
-                    position: .middle
-                )
-            )
+            if !assistantTurn.contentIsEmpty {
+                assistantTurn.appendContent("\n\n")
+            }
+            assistantTurn.appendContent(result)
         }
 
-        updatePositions()
-        return blocks
-    }
-
-    private func processHistoricalEvent(_ event: IssueEvent) {
-        switch event.eventType {
-        case .executionStarted:
-            blocks.append(
-                .paragraph(
-                    turnId: turnId,
-                    index: blocks.count,
-                    text: "Execution started...",
-                    isStreaming: false,
-                    role: .assistant,
-                    position: .middle
-                )
-            )
-
-        case .planCreated:
-            if let payload = event.payload,
-                let data = payload.data(using: .utf8),
-                let decoded = try? JSONDecoder().decode(StepCountPayload.self, from: data)
-            {
-                blocks.append(
-                    .thinking(
-                        turnId: turnId,
-                        index: blocks.count,
-                        text: "Created plan with \(decoded.stepCount) steps",
-                        isStreaming: false,
-                        position: .middle
-                    )
-                )
-            }
-
-        case .toolCallExecuted:
-            if let payload = event.payload,
-                let data = payload.data(using: .utf8),
-                let decoded = try? JSONDecoder().decode(ToolCallPayload.self, from: data)
-            {
-                // Create a minimal tool call display
-                let toolCall = ToolCall(
-                    id: event.id,
-                    type: "function",
-                    function: ToolCallFunction(name: decoded.tool, arguments: "{}")
-                )
-                blocks.append(
-                    .toolCall(
-                        turnId: turnId,
-                        call: toolCall,
-                        result: nil,
-                        position: .middle
-                    )
-                )
-            }
-
-        case .executionCompleted:
-            if let payload = event.payload,
-                let data = payload.data(using: .utf8),
-                let decoded = try? JSONDecoder().decode(ExecutionCompletedPayload.self, from: data)
-            {
-                let status = decoded.success ? "✅ Completed" : "❌ Failed"
-                var text = status
-                if decoded.discoveries > 0 {
-                    text += " (discovered \(decoded.discoveries) new issues)"
-                }
-                blocks.append(
-                    .paragraph(
-                        turnId: turnId,
-                        index: blocks.count,
-                        text: text,
-                        isStreaming: false,
-                        role: .assistant,
-                        position: .middle
-                    )
-                )
-            }
-
-        case .decomposed:
-            if let payload = event.payload,
-                let data = payload.data(using: .utf8),
-                let decoded = try? JSONDecoder().decode(ChildCountPayload.self, from: data)
-            {
-                blocks.append(
-                    .paragraph(
-                        turnId: turnId,
-                        index: blocks.count,
-                        text: "🔀 Decomposed into \(decoded.childCount) sub-issues",
-                        isStreaming: false,
-                        role: .assistant,
-                        position: .middle
-                    )
-                )
-            }
-
-        case .closed:
-            // Already handled via issue.result
-            break
-
-        default:
-            // Other events not displayed in thread
-            break
-        }
-    }
-
-    // MARK: - Private Helpers
-
-    private func rebuildCurrentParagraph() {
-        // Remove existing paragraph if any
-        blocks.removeAll { block in
-            if case .paragraph = block.kind {
-                return true
-            }
-            return false
+        // Consolidate all content
+        for turn in turns {
+            turn.consolidateContent()
         }
 
-        // Add current content as paragraph(s)
-        if !currentContent.isEmpty {
-            let paragraphs = splitIntoParagraphs(currentContent)
-            for (idx, text) in paragraphs.enumerated() {
-                let isLast = idx == paragraphs.count - 1
-                blocks.append(
-                    .paragraph(
-                        turnId: turnId,
-                        index: idx,
-                        text: text,
-                        isStreaming: isStreaming && isLast,
-                        role: .assistant,
-                        position: .middle
-                    )
-                )
-            }
-        }
-    }
-
-    private func splitIntoParagraphs(_ text: String) -> [String] {
-        let maxSize = 600
-        guard text.count > maxSize else { return [text] }
-
-        var result: [String] = []
-        var chunk = ""
-        var inCodeBlock = false
-        let lines = text.components(separatedBy: "\n")
-
-        for (index, line) in lines.enumerated() {
-            let trimmed = line.trimmingCharacters(in: .whitespaces)
-            if trimmed.hasPrefix("```") { inCodeBlock.toggle() }
-            if !chunk.isEmpty { chunk += "\n" }
-            chunk += line
-
-            let isLastLine = index == lines.count - 1
-            let isBlankLine = trimmed.isEmpty
-            let nextIsBlank = index + 1 < lines.count && lines[index + 1].trimmingCharacters(in: .whitespaces).isEmpty
-            let shouldSplit =
-                !inCodeBlock && !isLastLine
-                && ((chunk.count >= maxSize && (isBlankLine || nextIsBlank))
-                    || chunk.count >= maxSize * 2)
-
-            if shouldSplit {
-                result.append(chunk.trimmingCharacters(in: .whitespacesAndNewlines))
-                chunk = ""
-            }
-        }
-
-        let remaining = chunk.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !remaining.isEmpty { result.append(remaining) }
-        return result.isEmpty ? [text] : result
-    }
-
-    private func updatePositions() {
-        guard !blocks.isEmpty else { return }
-        for i in 0 ..< blocks.count {
-            let position: BlockPosition
-            if blocks.count == 1 {
-                position = .only
-            } else if i == 0 {
-                position = .first
-            } else if i == blocks.count - 1 {
-                position = .last
-            } else {
-                position = .middle
-            }
-            blocks[i] = blocks[i].withPosition(position)
-        }
-    }
-
-    /// Resets the builder for a new session
-    func reset() {
-        turnId = UUID()
-        blocks = []
-        issue = nil
-        currentParagraphIndex = 0
-        currentContent = ""
-        isStreaming = false
-        toolCalls = []
+        return turns
     }
 }
 
 // MARK: - Payload Decoding Types
 
+/// Enhanced tool call payload with arguments and result
 private struct ToolCallPayload: Decodable {
     let tool: String
     let step: Int
+    let arguments: String?
+    let result: String?
 }
 
+/// Enhanced plan payload with full step details
+private struct PlanCreatedPayload: Decodable {
+    let steps: [PlanStepData]
+
+    struct PlanStepData: Decodable {
+        let stepNumber: Int
+        let description: String
+        let toolName: String?
+    }
+}
+
+/// Execution completed payload with optional summary
 private struct ExecutionCompletedPayload: Decodable {
     let success: Bool
     let discoveries: Int
+    let summary: String?
 }
 
 private struct ChildCountPayload: Decodable {
     let childCount: Int
 }
 
+/// Legacy step count payload (for backward compatibility)
 private struct StepCountPayload: Decodable {
     let stepCount: Int
 }

@@ -248,12 +248,19 @@ public actor AgentEngine {
             )
 
         case .ready(let plan):
-            // Log plan creation
+            // Log plan creation with full step details
+            let planStepData = plan.steps.map { step in
+                EventPayload.PlanCreated.PlanStepData(
+                    stepNumber: step.stepNumber,
+                    description: step.description,
+                    toolName: step.toolName
+                )
+            }
             try IssueStore.createEvent(
                 IssueEvent.withPayload(
                     issueId: issue.id,
                     eventType: .planCreated,
-                    payload: EventPayload.StepCount(stepCount: plan.steps.count)
+                    payload: EventPayload.PlanCreated(steps: planStepData)
                 )
             )
 
@@ -431,12 +438,16 @@ public actor AgentEngine {
             _ = await IssueManager.shared.updateIssueStatusSafe(issue.id, to: .open)
         }
 
-        // Log execution completed
+        // Log execution completed with summary
         try IssueStore.createEvent(
             IssueEvent.withPayload(
                 issueId: issue.id,
                 eventType: .executionCompleted,
-                payload: EventPayload.ExecutionCompleted(success: success, discoveries: allDiscoveries.count)
+                payload: EventPayload.ExecutionCompleted(
+                    success: success,
+                    discoveries: allDiscoveries.count,
+                    summary: resultMessage
+                )
             )
         )
 

@@ -261,32 +261,59 @@ public struct IssueEvent: Identifiable, Codable, Sendable {
 
 /// Payload types for event logging (enables type-safe JSON encoding)
 public enum EventPayload {
-    public struct ExecutionCompleted: Encodable {
+    public struct ExecutionCompleted: Codable {
         public let success: Bool
         public let discoveries: Int
-        public init(success: Bool, discoveries: Int) {
+        public let summary: String?
+        public init(success: Bool, discoveries: Int, summary: String? = nil) {
             self.success = success
             self.discoveries = discoveries
+            self.summary = summary
         }
     }
 
-    public struct ToolCall: Encodable {
+    /// Enhanced tool call payload with arguments and result
+    public struct ToolCall: Codable {
         public let tool: String
         public let step: Int
-        public init(tool: String, step: Int) {
+        public let arguments: String?
+        public let result: String?
+        public init(tool: String, step: Int, arguments: String? = nil, result: String? = nil) {
             self.tool = tool
             self.step = step
+            self.arguments = arguments
+            self.result = result
         }
     }
 
-    public struct StepCount: Encodable {
+    /// Legacy step count (for backward compatibility)
+    public struct StepCount: Codable {
         public let stepCount: Int
         public init(stepCount: Int) {
             self.stepCount = stepCount
         }
     }
 
-    public struct ChildCount: Encodable {
+    /// Enhanced plan payload with full step details
+    public struct PlanCreated: Codable {
+        public let steps: [PlanStepData]
+        public init(steps: [PlanStepData]) {
+            self.steps = steps
+        }
+
+        public struct PlanStepData: Codable {
+            public let stepNumber: Int
+            public let description: String
+            public let toolName: String?
+            public init(stepNumber: Int, description: String, toolName: String?) {
+                self.stepNumber = stepNumber
+                self.description = description
+                self.toolName = toolName
+            }
+        }
+    }
+
+    public struct ChildCount: Codable {
         public let childCount: Int
         public init(childCount: Int) {
             self.childCount = childCount

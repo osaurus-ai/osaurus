@@ -32,6 +32,7 @@ enum ContentBlockKind: Equatable {
     case toolCall(call: ToolCall, result: String?)
     case toolCallGroup(calls: [ToolCallItem])
     case thinking(index: Int, text: String, isStreaming: Bool)
+    case plan(steps: [PlanStep], currentStep: Int?, isStreaming: Bool)
     case image(index: Int, imageData: Data)
     case typingIndicator
     case groupSpacer
@@ -62,6 +63,9 @@ enum ContentBlockKind: Equatable {
             guard lText.count == rText.count else { return false }
             return lText == rText
 
+        case let (.plan(lSteps, lCurrent, lStream), .plan(rSteps, rCurrent, rStream)):
+            return lSteps == rSteps && lCurrent == rCurrent && lStream == rStream
+
         case let (.image(lIdx, lData), .image(rIdx, rData)):
             return lIdx == rIdx && lData == rData
 
@@ -90,7 +94,7 @@ struct ContentBlock: Identifiable, Equatable {
         switch kind {
         case let .header(role, _, _): return role
         case let .paragraph(_, _, _, role): return role
-        case .toolCall, .toolCallGroup, .thinking, .typingIndicator, .groupSpacer: return .assistant
+        case .toolCall, .toolCallGroup, .thinking, .plan, .typingIndicator, .groupSpacer: return .assistant
         case .image: return .user
         }
     }
@@ -162,6 +166,17 @@ struct ContentBlock: Identifiable, Equatable {
             id: "think-\(turnId.uuidString)-\(index)",
             turnId: turnId,
             kind: .thinking(index: index, text: text, isStreaming: isStreaming),
+            position: position
+        )
+    }
+
+    static func plan(turnId: UUID, steps: [PlanStep], currentStep: Int?, isStreaming: Bool, position: BlockPosition)
+        -> ContentBlock
+    {
+        ContentBlock(
+            id: "plan-\(turnId.uuidString)",
+            turnId: turnId,
+            kind: .plan(steps: steps, currentStep: currentStep, isStreaming: isStreaming),
             position: position
         )
     }
@@ -250,6 +265,19 @@ extension ContentBlock {
 
             for (idx, imageData) in turn.attachedImages.enumerated() {
                 turnBlocks.append(.image(turnId: turn.id, index: idx, imageData: imageData, position: .middle))
+            }
+
+            // Add plan block if present (agent mode)
+            if turn.role == .assistant, let plan = turn.plan, !plan.steps.isEmpty {
+                turnBlocks.append(
+                    .plan(
+                        turnId: turn.id,
+                        steps: plan.steps,
+                        currentStep: turn.currentPlanStep,
+                        isStreaming: isStreaming,
+                        position: .middle
+                    )
+                )
             }
 
             if turn.role == .assistant && turn.hasThinking {
@@ -345,6 +373,10 @@ extension ContentBlock {
         case let .thinking(_, text, _):
             let estimatedLines = max(1, CGFloat(text.count) / 80)
             return min(max(50, estimatedLines * 20 + 30), 300)
+
+        case let .plan(steps, _, _):
+            // Collapsed: ~50px, Expanded: ~50px header + ~44px per step
+            return CGFloat(50 + steps.count * 44)
 
         case .image:
             return 170
