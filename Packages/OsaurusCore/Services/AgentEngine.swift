@@ -448,10 +448,13 @@ public actor AgentEngine {
         // Create discovered issues
         var createdDiscoveries: [Issue] = []
         for discovery in allDiscoveries {
+            // Build sanitized description including source context
+            let sanitizedDescription = buildDiscoveryDescription(discovery)
+
             if let discoveryIssue = await IssueManager.shared.createIssueSafe(
                 taskId: issue.taskId,
                 title: discovery.title,
-                description: discovery.description,
+                description: sanitizedDescription,
                 priority: discovery.suggestedPriority,
                 type: .discovery
             ) {
@@ -585,6 +588,40 @@ public actor AgentEngine {
             contentType: contentType,
             isFinalResult: false
         )
+    }
+
+    // MARK: - Description Sanitization
+
+    /// Sanitizes text by collapsing whitespace and truncating to max length
+    private func sanitizeDescription(_ text: String?, maxLength: Int = 500) -> String? {
+        guard let text = text, !text.isEmpty else { return nil }
+
+        var cleaned =
+            text
+            .replacingOccurrences(of: "\\n{3,}", with: "\n\n", options: .regularExpression)
+            .replacingOccurrences(of: "[ \\t]+", with: " ", options: .regularExpression)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+
+        if cleaned.count > maxLength {
+            let truncated = String(cleaned.prefix(maxLength - 3))
+            if let lastSpace = truncated.lastIndex(of: " "), lastSpace > truncated.startIndex {
+                cleaned = String(truncated[..<lastSpace]) + "..."
+            } else {
+                cleaned = truncated + "..."
+            }
+        }
+
+        return cleaned.isEmpty ? nil : cleaned
+    }
+
+    /// Builds a sanitized description from a discovery, combining description and source
+    private func buildDiscoveryDescription(_ discovery: Discovery) -> String? {
+        let parts = [
+            discovery.description,
+            discovery.source.map { "Source: \($0)" },
+        ].compactMap { $0 }.filter { !$0.isEmpty }
+
+        return sanitizeDescription(parts.joined(separator: "\n\n"))
     }
 
     // MARK: - Retry Logic

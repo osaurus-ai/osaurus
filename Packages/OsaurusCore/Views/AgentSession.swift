@@ -351,6 +351,10 @@ public final class AgentSession: ObservableObject {
 
     /// Handles the result of an execution
     private func handleExecutionResult(_ result: ExecutionResult) {
+        // Copy live turns to selected turns before clearing active issue
+        // This ensures the execution history is still visible after completion
+        selectedIssueTurns = liveExecutionTurns
+
         isExecuting = false
         activeIssue = nil
         currentPlan = nil
@@ -387,6 +391,9 @@ public final class AgentSession: ObservableObject {
 
     /// Handles execution errors
     private func handleExecutionError(_ error: Error, issue: Issue) {
+        // Copy live turns to selected turns before clearing active issue
+        selectedIssueTurns = liveExecutionTurns
+
         isExecuting = false
         activeIssue = nil
         isRetrying = false

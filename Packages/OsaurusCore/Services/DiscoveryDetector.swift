@@ -21,55 +21,63 @@ public actor DiscoveryDetector {
 
     /// Analyzes tool output for discoveries
     public func analyze(toolOutput: String, toolName: String, context: DiscoveryContext) -> [Discovery] {
-        var discoveries: [Discovery] = []
+        let sourcePrefix = buildSourcePrefix(toolName: toolName, context: context)
 
-        for pattern in patterns {
-            let matches = pattern.detect(in: toolOutput)
-            for match in matches {
-                let discovery = Discovery(
+        let discoveries = patterns.flatMap { pattern in
+            pattern.detect(in: toolOutput).map { match in
+                let source = match.source.map { "\(sourcePrefix): \($0)" } ?? sourcePrefix
+                return Discovery(
                     type: match.type,
                     title: match.title,
                     description: match.description,
-                    source: "\(toolName): \(match.source ?? "")",
+                    source: source,
                     suggestedPriority: match.suggestedPriority
                 )
-                discoveries.append(discovery)
             }
         }
 
-        // Deduplicate similar discoveries
         return deduplicateDiscoveries(discoveries)
     }
 
     /// Analyzes LLM response for discoveries
     public func analyzeResponse(response: String, context: DiscoveryContext) -> [Discovery] {
+        let sourcePrefix = buildSourcePrefix(toolName: "Agent response", context: context)
         var discoveries: [Discovery] = []
 
-        // Look for explicit discovery markers in the response
         let markerPattern = #"(?:DISCOVERY|FOUND|TODO|FIXME|BUG|NOTE|WARNING):\s*(.+)"#
-        if let regex = try? NSRegularExpression(pattern: markerPattern, options: .caseInsensitive) {
-            let range = NSRange(response.startIndex..., in: response)
-            let matches = regex.matches(in: response, options: [], range: range)
+        guard let regex = try? NSRegularExpression(pattern: markerPattern, options: .caseInsensitive) else {
+            return []
+        }
 
-            for match in matches {
-                if let descRange = Range(match.range(at: 1), in: response) {
-                    let description = String(response[descRange]).trimmingCharacters(in: .whitespaces)
-                    let type = detectDiscoveryType(from: response[Range(match.range, in: response)!])
+        let range = NSRange(response.startIndex..., in: response)
+        for match in regex.matches(in: response, options: [], range: range) {
+            guard let descRange = Range(match.range(at: 1), in: response),
+                let fullRange = Range(match.range, in: response)
+            else { continue }
 
-                    discoveries.append(
-                        Discovery(
-                            type: type,
-                            title: truncateTitle(description),
-                            description: description,
-                            source: "Agent response",
-                            suggestedPriority: type == .error ? .p1 : .p2
-                        )
-                    )
-                }
-            }
+            let description = String(response[descRange]).trimmingCharacters(in: .whitespaces)
+            let type = detectDiscoveryType(from: response[fullRange])
+
+            discoveries.append(
+                Discovery(
+                    type: type,
+                    title: truncateTitle(description),
+                    description: description,
+                    source: sourcePrefix,
+                    suggestedPriority: type == .error ? .p1 : .p2
+                )
+            )
         }
 
         return deduplicateDiscoveries(discoveries)
+    }
+
+    /// Builds source prefix like "Step 3 - search" from context
+    private func buildSourcePrefix(toolName: String, context: DiscoveryContext) -> String {
+        let stepPart = context.currentStep.map { "Step \($0 + 1)" }
+        return [stepPart, toolName.isEmpty ? nil : toolName]
+            .compactMap { $0 }
+            .joined(separator: " - ")
     }
 
     /// Detects the discovery type from the marker text
