@@ -843,9 +843,8 @@ public final class AgentSession: ObservableObject {
 
     /// Builds the skill catalog for capability selection during planning
     private func buildSkillCatalog() -> [CapabilityEntry] {
-        let effectivePersonaId = personaId ?? Persona.defaultId
         return SkillManager.shared.enabledCatalogEntries(
-            withOverrides: PersonaManager.shared.effectiveSkillOverrides(for: effectivePersonaId)
+            withOverrides: PersonaManager.shared.effectiveSkillOverrides(for: personaId)
         )
     }
 }
