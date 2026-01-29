@@ -90,7 +90,10 @@ struct AgentView: View {
                             onSend: { Task { await session.handleUserInput() } },
                             onStop: { session.stopExecution() },
                             personaId: windowState.personaId,
-                            windowId: windowState.windowId
+                            windowId: windowState.windowId,
+                            agentInputState: session.inputState,
+                            pendingQueuedMessage: session.pendingQueuedMessage,
+                            onEndTask: { session.endTask() }
                         )
                     }
                 }
@@ -144,21 +147,9 @@ struct AgentView: View {
 
     private var windowControls: some View {
         HStack(spacing: 8) {
-            if session.currentTask == nil {
-                SettingsButton(action: {
-                    AppDelegate.shared?.showManagementWindow(initialTab: .settings)
-                })
-            } else {
-                HeaderActionButton(
-                    icon: "plus",
-                    help: "New task",
-                    action: {
-                        session.currentTask = nil
-                        session.issues = []
-                        session.clearSelection()
-                    }
-                )
-            }
+            SettingsButton(action: {
+                AppDelegate.shared?.showManagementWindow(initialTab: .settings)
+            })
             PinButton(windowId: windowState.windowId)
             CloseButton(action: closeWindow)
         }

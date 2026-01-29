@@ -32,6 +32,9 @@ public actor AgentEngine {
     /// Error states by issue ID
     private var errorStates: [String: IssueErrorState] = [:]
 
+    /// Pending user inputs by issue ID (for mid-execution injection)
+    private var pendingInputs: [String: [String]] = [:]
+
     /// Retry configuration
     private var retryConfig = RetryConfiguration.default
 
@@ -59,6 +62,28 @@ public actor AgentEngine {
     /// Clears the error state for an issue
     public func clearErrorState(for issueId: String) {
         errorStates.removeValue(forKey: issueId)
+    }
+
+    // MARK: - User Input Queue
+
+    /// Queue user input for injection at next step boundary
+    public func queueInput(issueId: String, message: String) async {
+        if pendingInputs[issueId] == nil {
+            pendingInputs[issueId] = []
+        }
+        pendingInputs[issueId]?.append(message)
+    }
+
+    /// Consume and clear pending inputs for an issue
+    private func consumePendingInputs(for issueId: String) -> [String] {
+        let inputs = pendingInputs[issueId] ?? []
+        pendingInputs[issueId] = []
+        return inputs
+    }
+
+    /// Clear pending inputs for an issue (e.g., on cancel)
+    private func clearPendingInputs(for issueId: String) {
+        pendingInputs.removeValue(forKey: issueId)
     }
 
     /// Ensures streaming callback is configured
@@ -205,6 +230,9 @@ public actor AgentEngine {
 
     /// Cancels the current execution
     public func cancel() async {
+        if let issueId = currentIssueId {
+            clearPendingInputs(for: issueId)
+        }
         isExecuting = false
         currentIssueId = nil
         awaitingClarification = nil
@@ -444,6 +472,13 @@ public actor AgentEngine {
         for stepIndex in 0 ..< plan.steps.count {
             guard isExecuting else {
                 throw AgentExecutionError.executionCancelled
+            }
+
+            // Inject any queued user input before this step
+            let queuedInputs = consumePendingInputs(for: issue.id)
+            for input in queuedInputs {
+                messages.append(ChatMessage(role: "user", content: "[User Context]: \(input)"))
+                await delegate?.agentEngine(self, didInjectUserInput: input, forIssue: issue)
             }
 
             let step = plan.steps[stepIndex]
@@ -858,6 +893,7 @@ public protocol AgentEngineDelegate: AnyObject {
     func agentEngine(_ engine: AgentEngine, didCompleteIssue issue: Issue, success: Bool)
     func agentEngine(_ engine: AgentEngine, willRetryIssue issue: Issue, attempt: Int, afterDelay: TimeInterval)
     func agentEngine(_ engine: AgentEngine, needsClarification request: ClarificationRequest, forIssue issue: Issue)
+    func agentEngine(_ engine: AgentEngine, didInjectUserInput input: String, forIssue issue: Issue)
 }
 
 /// Default implementations for optional delegate methods
@@ -894,6 +930,7 @@ extension AgentEngineDelegate {
         needsClarification request: ClarificationRequest,
         forIssue issue: Issue
     ) {}
+    public func agentEngine(_ engine: AgentEngine, didInjectUserInput input: String, forIssue issue: Issue) {}
 }
 
 // MARK: - Pending Execution Context

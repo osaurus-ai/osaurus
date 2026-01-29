@@ -10,6 +10,16 @@ import Combine
 import Foundation
 import SwiftUI
 
+/// Input state for agent mode - determines input behavior and placeholder text
+public enum AgentInputState: Equatable {
+    /// No active task - input creates new task
+    case noTask
+    /// Task is executing - input will be queued for injection at next step
+    case executing
+    /// Task open but not executing - input creates follow-up issue
+    case idle
+}
+
 /// Observable session state for agent mode
 @MainActor
 public final class AgentSession: ObservableObject {
@@ -152,6 +162,9 @@ public final class AgentSession: ObservableObject {
     /// User input for new tasks
     @Published public var input: String = ""
 
+    /// Message queued for injection at next step boundary (during execution)
+    @Published public var pendingQueuedMessage: String?
+
     /// Selected model
     @Published var selectedModel: String?
 
@@ -161,6 +174,17 @@ public final class AgentSession: ObservableObject {
     /// Estimated context tokens (synced from chat session for consistency)
     var estimatedContextTokens: Int {
         windowState?.session.estimatedContextTokens ?? 0
+    }
+
+    /// Current input state - determines input behavior
+    public var inputState: AgentInputState {
+        if currentTask == nil {
+            return .noTask
+        } else if isExecuting {
+            return .executing
+        } else {
+            return .idle
+        }
     }
 
     // MARK: - Session Config
@@ -207,22 +231,33 @@ public final class AgentSession: ObservableObject {
 
     // MARK: - Task Management
 
-    /// Handles user input - creates new task or adds issue to current task
+    /// Handles user input based on current input state
     public func handleUserInput() async {
         let query = input.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !query.isEmpty else { return }
 
         input = ""
         errorMessage = nil
-        streamingContent = ""
 
         do {
-            if let task = currentTask {
-                // Add new issue to existing task
-                try await addIssueToTask(query: query, task: task)
-            } else {
+            switch inputState {
+            case .noTask:
                 // Create new task
+                streamingContent = ""
                 try await startNewTask(query: query)
+
+            case .executing:
+                // Queue for injection at next step boundary
+                pendingQueuedMessage = query
+                if let issueId = activeIssue?.id {
+                    await AgentEngine.shared.queueInput(issueId: issueId, message: query)
+                }
+
+            case .idle:
+                // Create follow-up issue in existing task
+                guard let task = currentTask else { return }
+                streamingContent = ""
+                try await addIssueToTask(query: query, task: task)
             }
         } catch {
             errorMessage = "Failed: \(error.localizedDescription)"
@@ -474,6 +509,32 @@ public final class AgentSession: ObservableObject {
         retryAttempt = 0
         isRetrying = false
         failedIssue = nil
+        pendingQueuedMessage = nil  // Clear any queued message
+    }
+
+    /// Ends the current task and resets to empty state
+    public func endTask() {
+        executionTask?.cancel()
+        executionTask = nil
+        Task { await AgentEngine.shared.cancel() }
+
+        currentTask = nil
+        issues = []
+        activeIssue = nil
+        clearSelection()
+        clearTurns()
+        artifacts = []
+        finalArtifact = nil
+        pendingQueuedMessage = nil
+        isExecuting = false
+        currentPlan = nil
+        errorMessage = nil
+        streamingContent = ""
+        retryAttempt = 0
+        isRetrying = false
+        failedIssue = nil
+        pendingClarification = nil
+        clarificationIssueId = nil
     }
 
     /// Checks if an error can be retried
@@ -860,6 +921,15 @@ extension AgentSession: AgentEngineDelegate {
         let turn = lastAssistantTurn()
         turn.pendingClarification = request
         turn.notifyContentChanged()
+        notifyIfSelected(issue.id)
+    }
+
+    public func agentEngine(_ engine: AgentEngine, didInjectUserInput input: String, forIssue issue: Issue) {
+        // Clear the pending queued message since it was injected
+        pendingQueuedMessage = nil
+
+        // Add user input turn to live execution
+        liveExecutionTurns.append(ChatTurn(role: .user, content: "**[Context]** \(input)"))
         notifyIfSelected(issue.id)
     }
 }
