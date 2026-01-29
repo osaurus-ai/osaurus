@@ -453,6 +453,7 @@ public final class AgentSession: ObservableObject {
 
         let config = buildExecutionConfig()
         let tools = ToolRegistry.shared.specs(withOverrides: config.toolOverrides)
+        let skillCatalog = buildSkillCatalog()
 
         executionTask = Task { [engine] in
             do {
@@ -463,7 +464,8 @@ public final class AgentSession: ObservableObject {
                             model: config.model,
                             systemPrompt: config.systemPrompt,
                             tools: tools,
-                            toolOverrides: config.toolOverrides
+                            toolOverrides: config.toolOverrides,
+                            skillCatalog: skillCatalog
                         )
                     } else {
                         try await engine.resume(
@@ -471,7 +473,8 @@ public final class AgentSession: ObservableObject {
                             model: config.model,
                             systemPrompt: config.systemPrompt,
                             tools: tools,
-                            toolOverrides: config.toolOverrides
+                            toolOverrides: config.toolOverrides,
+                            skillCatalog: skillCatalog
                         )
                     }
                 await MainActor.run { self.handleExecutionResult(result) }
@@ -817,6 +820,7 @@ public final class AgentSession: ObservableObject {
         resetExecutionState(for: issue)
         let config = buildExecutionConfig()
         let tools = ToolRegistry.shared.specs(withOverrides: config.toolOverrides)
+        let skillCatalog = buildSkillCatalog()
 
         executionTask = Task {
             do {
@@ -825,13 +829,24 @@ public final class AgentSession: ObservableObject {
                     model: config.model,
                     systemPrompt: config.systemPrompt,
                     tools: tools,
-                    toolOverrides: config.toolOverrides
+                    toolOverrides: config.toolOverrides,
+                    skillCatalog: skillCatalog
                 )
                 await MainActor.run { self.handleExecutionResult(result) }
             } catch {
                 await MainActor.run { self.handleExecutionError(error, issue: issue) }
             }
         }
+    }
+
+    // MARK: - Skill Catalog
+
+    /// Builds the skill catalog for capability selection during planning
+    private func buildSkillCatalog() -> [CapabilityEntry] {
+        let effectivePersonaId = personaId ?? Persona.defaultId
+        return SkillManager.shared.enabledCatalogEntries(
+            withOverrides: PersonaManager.shared.effectiveSkillOverrides(for: effectivePersonaId)
+        )
     }
 }
 

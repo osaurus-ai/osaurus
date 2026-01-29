@@ -405,7 +405,10 @@ public final class IssueManager: ObservableObject {
 
     /// Decomposes an issue into child issues
     /// Used when a plan exceeds the step limit
-    public func decomposeIssue(_ issueId: String, into children: [(title: String, description: String?)]) async throws
+    public func decomposeIssue(
+        _ issueId: String,
+        into children: [(title: String, description: String?, context: String?)]
+    ) async throws
         -> [Issue]
     {
         guard var parentIssue = try IssueStore.getIssue(id: issueId) else {
@@ -420,6 +423,7 @@ public final class IssueManager: ObservableObject {
                 taskId: parentIssue.taskId,
                 title: child.title,
                 description: child.description,
+                context: child.context,
                 priority: parentIssue.priority,
                 type: parentIssue.type
             )
@@ -577,7 +581,7 @@ public final class IssueManager: ObservableObject {
     /// Decomposes an issue without throwing (returns empty array on failure)
     public func decomposeIssueSafe(
         _ issueId: String,
-        into children: [(title: String, description: String?)]
+        into children: [(title: String, description: String?, context: String?)]
     ) async -> [Issue] {
         await safe("decomposeIssue") {
             try await decomposeIssue(issueId, into: children)

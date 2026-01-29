@@ -47,13 +47,27 @@ public actor AgentExecutionEngine {
 
     /// Generates an execution plan for an issue
     /// Returns the plan, or decomposes if steps exceed limit
+    /// - Parameters:
+    ///   - issue: The issue to generate a plan for
+    ///   - systemPrompt: Base system prompt
+    ///   - model: Model to use for generation
+    ///   - tools: Available tool specifications
+    ///   - skillCatalog: Available skills (names and descriptions only)
     func generatePlan(
         for issue: Issue,
         systemPrompt: String,
         model: String?,
-        tools: [Tool]
+        tools: [Tool],
+        skillCatalog: [CapabilityEntry] = []
     ) async throws -> PlanResult {
-        let planPrompt = buildPlanPrompt(for: issue, tools: tools)
+        // Check if this issue has pre-selected capabilities from parent (decomposed task)
+        let inheritedCapabilities = SelectedCapabilitiesContext.parse(from: issue.context)
+        let planPrompt = buildPlanPrompt(
+            for: issue,
+            tools: tools,
+            skillCatalog: skillCatalog,
+            inheritedCapabilities: inheritedCapabilities
+        )
 
         let messages: [ChatMessage] = [
             ChatMessage(role: "system", content: systemPrompt + "\n\n" + agentPlanningInstructions),
@@ -96,23 +110,29 @@ public actor AgentExecutionEngine {
             return clarificationResult
         }
 
-        // Fallback: Parse the plan from the response (legacy format)
+        // Fallback: Parse the plan from the response (legacy format - no capability selection)
         let steps = parsePlanSteps(from: content)
 
         if steps.count > Self.maxToolCallsPerIssue {
             // Plan exceeds limit - return decomposition suggestion
+            // Legacy format doesn't have capability selection, so pass empty arrays
             return .needsDecomposition(
                 steps: steps,
                 suggestedChunks: chunkSteps(steps),
                 inputTokens: inputTokens,
-                outputTokens: outputTokens
+                outputTokens: outputTokens,
+                selectedTools: [],
+                selectedSkills: []
             )
         }
 
+        // Legacy format doesn't have capability selection
         let plan = ExecutionPlan(
             issueId: issue.id,
             steps: steps,
-            maxToolCalls: Self.maxToolCallsPerIssue
+            maxToolCalls: Self.maxToolCallsPerIssue,
+            selectedTools: [],
+            selectedSkills: []
         )
         currentPlan = plan
 
@@ -164,42 +184,147 @@ public actor AgentExecutionEngine {
             )
         }
 
+        // Extract selected capabilities from the response
+        let selectedTools = response.selected_tools ?? []
+        let selectedSkills = response.selected_skills ?? []
+
         if steps.count > Self.maxToolCallsPerIssue {
             return .needsDecomposition(
                 steps: steps,
                 suggestedChunks: chunkSteps(steps),
                 inputTokens: inputTokens,
-                outputTokens: outputTokens
+                outputTokens: outputTokens,
+                selectedTools: selectedTools,
+                selectedSkills: selectedSkills
             )
         }
 
         let plan = ExecutionPlan(
             issueId: issueId,
             steps: steps,
-            maxToolCalls: Self.maxToolCallsPerIssue
+            maxToolCalls: Self.maxToolCallsPerIssue,
+            selectedTools: selectedTools,
+            selectedSkills: selectedSkills
         )
         currentPlan = plan
 
         return .ready(plan, inputTokens: inputTokens, outputTokens: outputTokens)
     }
 
-    /// Builds the prompt for plan generation with ambiguity analysis
-    private func buildPlanPrompt(for issue: Issue, tools: [Tool]) -> String {
-        var toolList = ""
-        for tool in tools {
-            let desc = tool.function.description ?? "No description"
-            toolList += "\n- `\(tool.function.name)`: \(desc)"
+    /// Builds the prompt for plan generation with capability selection
+    private func buildPlanPrompt(
+        for issue: Issue,
+        tools: [Tool],
+        skillCatalog: [CapabilityEntry],
+        inheritedCapabilities: SelectedCapabilitiesContext?
+    ) -> String {
+        // If this issue inherited capabilities from parent, skip capability selection
+        if let inherited = inheritedCapabilities {
+            return buildPlanPromptWithInheritedCapabilities(for: issue, tools: tools, inherited: inherited)
         }
 
-        // Include prior context if available
-        let contextSection = issue.context.map { "\n**Prior Context:**\n\($0)\n" } ?? ""
+        // Build tool catalog
+        var toolCatalog = ""
+        for tool in tools {
+            let desc = tool.function.description ?? "No description"
+            toolCatalog += "\n- `\(tool.function.name)`: \(desc)"
+        }
+
+        // Build skill catalog
+        var skillList = ""
+        for skill in skillCatalog {
+            skillList += "\n- `\(skill.name)`: \(skill.description)"
+        }
+
+        // Include prior context if available (but not capability context which is JSON)
+        let contextSection: String
+        if let context = issue.context,
+            SelectedCapabilitiesContext.parse(from: context) == nil
+        {
+            contextSection = "\n**Prior Context:**\n\(context)\n"
+        } else {
+            contextSection = ""
+        }
+
+        // Capability selection section
+        let capabilitySection: String
+        if !tools.isEmpty || !skillCatalog.isEmpty {
+            var section = "\n## Available Capabilities\n"
+            section += "Select which capabilities you need for this task.\n"
+            if !tools.isEmpty {
+                section += "\n**Tools** (callable functions):\(toolCatalog)"
+            }
+            if !skillCatalog.isEmpty {
+                section += "\n\n**Skills** (specialized knowledge/guidance):\(skillList)"
+            }
+            capabilitySection = section
+        } else {
+            capabilitySection = ""
+        }
 
         return """
             I need to complete the following task:
 
-            **Title:** \(issue.title)\(issue.description.map { "\n**Description:** \($0)" } ?? "")\(contextSection)
+            **Title:** \(issue.title)\(issue.description.map { "\n**Description:** \($0)" } ?? "")\(contextSection)\(capabilitySection)
 
-            Available tools:\(toolList)
+            IMPORTANT: Before creating a plan, analyze if this task has critical ambiguities that would significantly affect the approach. Consider:
+            - Are there multiple valid interpretations that lead to very different outcomes?
+            - Is essential information missing that is required to proceed correctly?
+            - Are there implicit assumptions that need confirmation before proceeding?
+
+            Only request clarification for CRITICAL ambiguities that would lead to wrong results if assumed incorrectly. Do NOT ask for clarification on minor details or preferences.
+
+            Respond with valid JSON only, no markdown or extra text:
+
+            If clarification is needed:
+            {"needs_clarification": true, "clarification": {"question": "Clear, specific question", "options": ["Option 1", "Option 2"] or null, "context": "Brief explanation of why this is ambiguous"}}
+
+            If no clarification is needed, create a plan with capability selection:
+            {"needs_clarification": false, "steps": [{"description": "what to do", "tool": "tool_name or null"}], "selected_tools": ["tool_names_you_need"], "selected_skills": ["skill_names_you_need"]}
+
+            Important:
+            - Only include tools/skills in your selection that you actually need for this task
+            - If you don't need any capabilities, use empty arrays: "selected_tools": [], "selected_skills": []
+            - Your selection persists for the entire task including any subtasks
+            - Maximum \(Self.maxToolCallsPerIssue) steps allowed
+            """
+    }
+
+    /// Builds prompt for issues with inherited capabilities (from decomposed parent)
+    private func buildPlanPromptWithInheritedCapabilities(
+        for issue: Issue,
+        tools: [Tool],
+        inherited: SelectedCapabilitiesContext
+    ) -> String {
+        // Filter tools to only inherited ones
+        let filteredTools = tools.filter { inherited.selectedTools.contains($0.function.name) }
+        var toolList = ""
+        for tool in filteredTools {
+            let desc = tool.function.description ?? "No description"
+            toolList += "\n- `\(tool.function.name)`: \(desc)"
+        }
+
+        // Include prior context if available (but not capability context)
+        let contextSection: String
+        if let context = issue.context,
+            SelectedCapabilitiesContext.parse(from: context) == nil
+        {
+            contextSection = "\n**Prior Context:**\n\(context)\n"
+        } else {
+            contextSection = ""
+        }
+
+        let toolSection = toolList.isEmpty ? "" : "\nAvailable tools:\(toolList)"
+        let skillSection =
+            inherited.selectedSkills.isEmpty
+            ? "" : "\nActive skills: \(inherited.selectedSkills.joined(separator: ", "))"
+
+        return """
+            I need to complete the following task:
+
+            **Title:** \(issue.title)\(issue.description.map { "\n**Description:** \($0)" } ?? "")\(contextSection)\(toolSection)\(skillSection)
+
+            Note: This is a subtask with pre-selected capabilities from the parent task.
 
             IMPORTANT: Before creating a plan, analyze if this task has critical ambiguities that would significantly affect the approach. Consider:
             - Are there multiple valid interpretations that lead to very different outcomes?
@@ -214,17 +339,24 @@ public actor AgentExecutionEngine {
             {"needs_clarification": true, "clarification": {"question": "Clear, specific question", "options": ["Option 1", "Option 2"] or null, "context": "Brief explanation of why this is ambiguous"}}
 
             If no clarification is needed, create a plan:
-            {"needs_clarification": false, "steps": [{"description": "what to do", "tool": "tool_name or null"}]}
+            {"needs_clarification": false, "steps": [{"description": "what to do", "tool": "tool_name or null"}], "selected_tools": \(toJSONArray(inherited.selectedTools)), "selected_skills": \(toJSONArray(inherited.selectedSkills))}
 
             Maximum \(Self.maxToolCallsPerIssue) steps allowed.
             """
     }
 
-    /// JSON structure for plan parsing (with optional clarification)
+    private func toJSONArray(_ items: [String]) -> String {
+        let json = items.map { "\"\($0)\"" }.joined(separator: ", ")
+        return "[\(json)]"
+    }
+
+    /// JSON structure for plan parsing (with optional clarification and capability selection)
     private struct JSONPlanResponse: Codable {
         let needs_clarification: Bool?
         let clarification: JSONClarification?
         let steps: [JSONPlanStep]?
+        let selected_tools: [String]?
+        let selected_skills: [String]?
     }
 
     private struct JSONClarification: Codable {
@@ -750,12 +882,28 @@ public actor AgentExecutionEngine {
         """
         You are an agent that plans and executes tasks systematically.
 
+        ## Capability Selection
+
+        You have access to tools (callable functions) and skills (specialized knowledge/guidance).
+        When creating your plan, select which capabilities you need:
+
+        - Review the available capabilities catalog carefully
+        - Select only the tools and skills that are relevant to this specific task
+        - Include your selections in the JSON response as `selected_tools` and `selected_skills`
+        - If you don't need any capabilities, use empty arrays
+        - Your selection persists for the entire task, including any subtasks
+        - Only selected capabilities will be available during execution
+
+        ## Planning Guidelines
+
         When creating a plan:
         1. Break down the task into concrete, actionable steps
         2. Each step should accomplish one specific thing
         3. Consider dependencies between steps
-        4. Use available tools when appropriate
+        4. Use selected tools when appropriate
         5. Keep the plan focused and efficient
+
+        ## Execution Guidelines
 
         When executing steps:
         1. Follow the plan systematically
@@ -763,9 +911,11 @@ public actor AgentExecutionEngine {
         3. Report what was done after each step
         4. Note any discoveries or issues encountered
 
-        Important constraints:
+        ## Constraints
+
         - Maximum \(Self.maxToolCallsPerIssue) tool calls per task
         - If a task is too large, it will be decomposed into subtasks
+        - Subtasks inherit the same capability selection from the parent
         """
     }
 }
@@ -775,7 +925,14 @@ public actor AgentExecutionEngine {
 /// Result of plan generation
 public enum PlanResult: Sendable {
     case ready(ExecutionPlan, inputTokens: Int, outputTokens: Int)
-    case needsDecomposition(steps: [PlanStep], suggestedChunks: [[PlanStep]], inputTokens: Int, outputTokens: Int)
+    case needsDecomposition(
+        steps: [PlanStep],
+        suggestedChunks: [[PlanStep]],
+        inputTokens: Int,
+        outputTokens: Int,
+        selectedTools: [String],
+        selectedSkills: [String]
+    )
     case needsClarification(ClarificationRequest, inputTokens: Int, outputTokens: Int)
 }
 

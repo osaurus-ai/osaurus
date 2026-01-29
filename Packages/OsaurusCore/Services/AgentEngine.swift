@@ -229,6 +229,7 @@ public actor AgentEngine {
     ///   - systemPrompt: System prompt to use
     ///   - tools: Available tools
     ///   - toolOverrides: Per-session tool overrides
+    ///   - skillCatalog: Available skills for capability selection
     /// - Returns: The execution result
     func run(
         query: String,
@@ -236,7 +237,8 @@ public actor AgentEngine {
         model: String?,
         systemPrompt: String,
         tools: [Tool],
-        toolOverrides: [String: Bool]? = nil
+        toolOverrides: [String: Bool]? = nil,
+        skillCatalog: [CapabilityEntry] = []
     ) async throws -> ExecutionResult {
         guard !isExecuting else {
             throw AgentEngineError.alreadyExecuting
@@ -260,7 +262,8 @@ public actor AgentEngine {
             model: model,
             systemPrompt: systemPrompt,
             tools: tools,
-            toolOverrides: toolOverrides
+            toolOverrides: toolOverrides,
+            skillCatalog: skillCatalog
         )
     }
 
@@ -270,7 +273,8 @@ public actor AgentEngine {
         model: String?,
         systemPrompt: String,
         tools: [Tool],
-        toolOverrides: [String: Bool]? = nil
+        toolOverrides: [String: Bool]? = nil,
+        skillCatalog: [CapabilityEntry] = []
     ) async throws -> ExecutionResult {
         guard !isExecuting else {
             throw AgentEngineError.alreadyExecuting
@@ -286,6 +290,7 @@ public actor AgentEngine {
             systemPrompt: systemPrompt,
             tools: tools,
             toolOverrides: toolOverrides,
+            skillCatalog: skillCatalog,
             attemptResume: true
         )
     }
@@ -296,7 +301,8 @@ public actor AgentEngine {
         model: String?,
         systemPrompt: String,
         tools: [Tool],
-        toolOverrides: [String: Bool]? = nil
+        toolOverrides: [String: Bool]? = nil,
+        skillCatalog: [CapabilityEntry] = []
     ) async throws -> ExecutionResult? {
         guard !isExecuting else {
             throw AgentEngineError.alreadyExecuting
@@ -313,7 +319,8 @@ public actor AgentEngine {
             model: model,
             systemPrompt: systemPrompt,
             tools: tools,
-            toolOverrides: toolOverrides
+            toolOverrides: toolOverrides,
+            skillCatalog: skillCatalog
         )
     }
 
@@ -415,7 +422,8 @@ public actor AgentEngine {
             model: context.model,
             systemPrompt: context.systemPrompt,
             tools: context.tools,
-            toolOverrides: context.toolOverrides
+            toolOverrides: context.toolOverrides,
+            skillCatalog: context.skillCatalog
         )
     }
 
@@ -442,6 +450,7 @@ public actor AgentEngine {
         systemPrompt: String,
         tools: [Tool],
         toolOverrides: [String: Bool]?,
+        skillCatalog: [CapabilityEntry] = [],
         attemptResume: Bool = false
     ) async throws -> ExecutionResult {
         // Ensure streaming is setup before execution
@@ -470,12 +479,26 @@ public actor AgentEngine {
                 )
             )
 
+            // Filter tools to only those selected during planning (same as fresh execution)
+            let filteredTools: [Tool]
+            if resumeState.plan.selectedTools.isEmpty {
+                filteredTools = []
+            } else {
+                filteredTools = tools.filter { resumeState.plan.selectedTools.contains($0.function.name) }
+            }
+
+            // Build enhanced system prompt with selected skill instructions
+            let executionSystemPrompt = await buildExecutionSystemPrompt(
+                base: systemPrompt,
+                selectedSkills: resumeState.plan.selectedSkills
+            )
+
             return try await executePlan(
                 plan: resumeState.plan,
                 issue: issue,
                 model: model,
-                systemPrompt: systemPrompt,
-                tools: tools,
+                systemPrompt: executionSystemPrompt,
+                tools: filteredTools,
                 toolOverrides: toolOverrides,
                 initialMessages: resumeState.messages,
                 startStepIndex: resumeState.startStepIndex
@@ -487,24 +510,34 @@ public actor AgentEngine {
 
         await delegate?.agentEngine(self, didStartIssue: issue)
 
-        // Generate plan
+        // Generate plan with capability selection
         let planResult = try await executionEngine.generatePlan(
             for: issue,
             systemPrompt: systemPrompt,
             model: model,
-            tools: tools
+            tools: tools,
+            skillCatalog: skillCatalog
         )
 
         switch planResult {
-        case .needsDecomposition(let steps, let chunks, let inputTokens, let outputTokens):
+        case .needsDecomposition(
+            let steps,
+            let chunks,
+            let inputTokens,
+            let outputTokens,
+            let selectedTools,
+            let selectedSkills
+        ):
             // Report token consumption for plan generation
             await delegate?.agentEngine(self, didConsumeTokens: inputTokens, output: outputTokens, forIssue: issue)
 
-            // Decompose the issue
+            // Decompose the issue (child issues inherit selected capabilities)
             return try await decomposeIssue(
                 issue: issue,
                 steps: steps,
-                chunks: chunks
+                chunks: chunks,
+                selectedTools: selectedTools,
+                selectedSkills: selectedSkills
             )
 
         case .needsClarification(let request, let inputTokens, let outputTokens):
@@ -523,7 +556,8 @@ public actor AgentEngine {
                 model: model,
                 systemPrompt: systemPrompt,
                 tools: tools,
-                toolOverrides: toolOverrides
+                toolOverrides: toolOverrides,
+                skillCatalog: skillCatalog
             )
 
             // Log clarification requested event
@@ -572,13 +606,28 @@ public actor AgentEngine {
 
             await delegate?.agentEngine(self, didCreatePlan: plan, forIssue: issue)
 
-            // Execute the plan
+            // Filter tools to only those selected during planning
+            // If no tools were selected, pass empty array (respect the agent's choice)
+            let filteredTools: [Tool]
+            if plan.selectedTools.isEmpty {
+                filteredTools = []
+            } else {
+                filteredTools = tools.filter { plan.selectedTools.contains($0.function.name) }
+            }
+
+            // Build enhanced system prompt with selected skill instructions
+            let executionSystemPrompt = await buildExecutionSystemPrompt(
+                base: systemPrompt,
+                selectedSkills: plan.selectedSkills
+            )
+
+            // Execute the plan with filtered tools and enhanced prompt
             return try await executePlan(
                 plan: plan,
                 issue: issue,
                 model: model,
-                systemPrompt: systemPrompt,
-                tools: tools,
+                systemPrompt: executionSystemPrompt,
+                tools: filteredTools,
                 toolOverrides: toolOverrides
             )
         }
@@ -588,13 +637,31 @@ public actor AgentEngine {
     private func decomposeIssue(
         issue: Issue,
         steps: [PlanStep],
-        chunks: [[PlanStep]]
+        chunks: [[PlanStep]],
+        selectedTools: [String] = [],
+        selectedSkills: [String] = []
     ) async throws -> ExecutionResult {
+        // Encode selected capabilities as JSON context for child issues to inherit
+        var contextJSON: String?
+        if !selectedTools.isEmpty || !selectedSkills.isEmpty {
+            let capabilityContext = SelectedCapabilitiesContext(
+                selectedTools: selectedTools,
+                selectedSkills: selectedSkills
+            )
+            if let data = try? JSONEncoder().encode(capabilityContext),
+                let json = String(data: data, encoding: .utf8)
+            {
+                contextJSON = json
+            }
+        }
+
         // Create child issues from chunks
-        let children = chunks.enumerated().map { index, chunk -> (title: String, description: String?) in
+        let children = chunks.enumerated().map {
+            index,
+            chunk -> (title: String, description: String?, context: String?) in
             let title = "Part \(index + 1): \(chunk.first?.description ?? "Execute steps")"
             let description = chunk.map { "- \($0.description)" }.joined(separator: "\n")
-            return (title, description)
+            return (title, description, contextJSON)
         }
 
         let childIssues = await IssueManager.shared.decomposeIssueSafe(issue.id, into: children)
@@ -938,6 +1005,40 @@ public actor AgentEngine {
         )
     }
 
+    // MARK: - System Prompt Building
+
+    /// Builds the execution system prompt with selected skill instructions
+    @MainActor
+    private func buildExecutionSystemPrompt(base: String, selectedSkills: [String]) async -> String {
+        guard !selectedSkills.isEmpty else {
+            return base
+        }
+
+        // Load full instructions for selected skills
+        let skillInstructionsMap = SkillManager.shared.loadInstructions(for: selectedSkills)
+
+        guard !skillInstructionsMap.isEmpty else {
+            return base
+        }
+
+        var enhanced = base
+
+        if !enhanced.isEmpty {
+            enhanced += "\n\n"
+        }
+
+        enhanced += "# Active Skills\n\n"
+        enhanced += "The following skills provide specialized guidance for this task:\n\n"
+
+        for skillName in selectedSkills {
+            if let instructions = skillInstructionsMap[skillName] {
+                enhanced += "## \(skillName)\n\n\(instructions)\n\n---\n\n"
+            }
+        }
+
+        return enhanced.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
     // MARK: - Description Sanitization
 
     /// Sanitizes text by collapsing whitespace and truncating to max length
@@ -980,7 +1081,8 @@ public actor AgentEngine {
         model: String?,
         systemPrompt: String,
         tools: [Tool],
-        toolOverrides: [String: Bool]? = nil
+        toolOverrides: [String: Bool]? = nil,
+        skillCatalog: [CapabilityEntry] = []
     ) async throws -> ExecutionResult {
         guard let issue = try IssueStore.getIssue(id: issueId) else {
             throw AgentEngineError.issueNotFound(issueId)
@@ -1008,7 +1110,8 @@ public actor AgentEngine {
                     model: model,
                     systemPrompt: systemPrompt,
                     tools: tools,
-                    toolOverrides: toolOverrides
+                    toolOverrides: toolOverrides,
+                    skillCatalog: skillCatalog
                 )
 
                 // Success - clear any error state
@@ -1136,6 +1239,7 @@ struct PendingExecutionContext {
     let systemPrompt: String
     let tools: [Tool]
     let toolOverrides: [String: Bool]?
+    let skillCatalog: [CapabilityEntry]
 }
 
 // MARK: - Errors

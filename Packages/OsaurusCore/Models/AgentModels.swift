@@ -458,6 +458,10 @@ public struct ExecutionPlan: Codable, Sendable {
     public let maxToolCalls: Int
     /// Current tool call count
     public var toolCallCount: Int
+    /// Selected tools for this task (from capability selection)
+    public let selectedTools: [String]
+    /// Selected skills for this task (from capability selection)
+    public let selectedSkills: [String]
 
     /// Default maximum tool calls per issue execution
     public static let defaultMaxToolCalls = 10
@@ -466,12 +470,16 @@ public struct ExecutionPlan: Codable, Sendable {
         issueId: String,
         steps: [PlanStep] = [],
         maxToolCalls: Int = ExecutionPlan.defaultMaxToolCalls,
-        toolCallCount: Int = 0
+        toolCallCount: Int = 0,
+        selectedTools: [String] = [],
+        selectedSkills: [String] = []
     ) {
         self.issueId = issueId
         self.steps = steps
         self.maxToolCalls = maxToolCalls
         self.toolCallCount = toolCallCount
+        self.selectedTools = selectedTools
+        self.selectedSkills = selectedSkills
     }
 
     /// Whether the plan exceeds the tool call limit
@@ -493,6 +501,32 @@ public struct ExecutionPlan: Codable, Sendable {
     public var progress: Double {
         guard !steps.isEmpty else { return 0 }
         return Double(completedSteps) / Double(steps.count)
+    }
+}
+
+// MARK: - Capability Selection Context
+
+/// Context for storing selected capabilities in child issues
+/// When a task is decomposed, child issues inherit the parent's capability selection
+public struct SelectedCapabilitiesContext: Codable, Sendable {
+    /// Selected tools for this task
+    public let selectedTools: [String]
+    /// Selected skills for this task
+    public let selectedSkills: [String]
+
+    public init(selectedTools: [String] = [], selectedSkills: [String] = []) {
+        self.selectedTools = selectedTools
+        self.selectedSkills = selectedSkills
+    }
+
+    /// Parse capability context from an issue's context string (JSON)
+    public static func parse(from context: String?) -> SelectedCapabilitiesContext? {
+        guard let context = context,
+            let data = context.data(using: .utf8)
+        else {
+            return nil
+        }
+        return try? JSONDecoder().decode(SelectedCapabilitiesContext.self, from: data)
     }
 }
 
