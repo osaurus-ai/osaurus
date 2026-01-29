@@ -42,69 +42,57 @@ struct HeaderActionButton: View {
 
 // MARK: - Mode Toggle Button
 
-/// A capsule button for switching between Chat and Agent modes.
-/// Positioned on the left side of the header for seamless mode transitions.
+/// Segmented toggle for switching between Chat and Agent modes with sliding indicator.
 struct ModeToggleButton: View {
-    enum Mode {
-        case chat
-        case agent
-    }
+    enum Mode { case chat, agent }
 
     let currentMode: Mode
     let action: () -> Void
 
     @State private var isHovered = false
     @Environment(\.theme) private var theme
-
-    private var icon: String {
-        switch currentMode {
-        case .chat:
-            return "bolt.circle"
-        case .agent:
-            return "bubble.left.and.bubble.right"
-        }
-    }
-
-    private var label: String {
-        switch currentMode {
-        case .chat:
-            return "Agent"
-        case .agent:
-            return "Chat"
-        }
-    }
-
-    private var helpText: String {
-        switch currentMode {
-        case .chat:
-            return "Switch to Agent mode"
-        case .agent:
-            return "Switch to Chat mode"
-        }
-    }
+    @Namespace private var animation
 
     var body: some View {
         Button(action: action) {
-            HStack(spacing: 4) {
-                Image(systemName: icon)
-                Text(label)
+            HStack(spacing: 2) {
+                segment(icon: "bubble.left.and.bubble.right", label: "Chat", isSelected: currentMode == .chat)
+                segment(icon: "bolt.fill", label: "Agent", isSelected: currentMode == .agent)
             }
-            .font(.system(size: 11, weight: .medium))
-            .foregroundColor(isHovered ? theme.primaryText : theme.secondaryText)
-            .padding(.horizontal, 10)
-            .padding(.vertical, 5)
+            .padding(3)
             .background(
-                Capsule()
-                    .fill(theme.secondaryBackground.opacity(isHovered ? 0.8 : 0.6))
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .fill(theme.secondaryBackground.opacity(isHovered ? 0.9 : 0.7))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 10, style: .continuous)
+                            .strokeBorder(theme.primaryBorder.opacity(0.15), lineWidth: 1)
+                    )
             )
         }
         .buttonStyle(.plain)
-        .onHover { hovering in
-            withAnimation(theme.animationQuick()) {
-                isHovered = hovering
+        .onHover { isHovered = $0 }
+        .animation(theme.animationQuick(), value: isHovered)
+        .help(currentMode == .chat ? "Switch to Agent mode" : "Switch to Chat mode")
+    }
+
+    @ViewBuilder
+    private func segment(icon: String, label: String, isSelected: Bool) -> some View {
+        HStack(spacing: 5) {
+            Image(systemName: icon).font(.system(size: 10, weight: .semibold))
+            Text(label).font(.system(size: 11, weight: .semibold))
+        }
+        .foregroundColor(isSelected ? theme.primaryText : theme.tertiaryText)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 6)
+        .background {
+            if isSelected {
+                RoundedRectangle(cornerRadius: 7, style: .continuous)
+                    .fill(theme.primaryBackground)
+                    .shadow(color: theme.shadowColor.opacity(0.1), radius: 2, x: 0, y: 1)
+                    .matchedGeometryEffect(id: "modeIndicator", in: animation)
             }
         }
-        .help(helpText)
+        .animation(theme.springAnimation(), value: isSelected)
     }
 }
 

@@ -81,7 +81,8 @@ struct AgentView: View {
                             onEndTask: { session.endTask() },
                             onResume: { Task { await session.resumeSelectedIssue() } },
                             canResume: session.canResumeSelectedIssue,
-                            cumulativeTokens: session.cumulativeTokens
+                            cumulativeTokens: session.cumulativeTokens,
+                            hideContextIndicator: session.currentTask == nil
                         )
                     }
                 }
@@ -291,6 +292,9 @@ struct AgentView: View {
                 ? {
                     session.selectedModel = session.modelOptions.first?.id ?? "foundation"
                 } : nil,
+            onQuickAction: { prompt in
+                session.input = prompt
+            },
             onSelectPersona: { newPersonaId in
                 windowState.switchPersona(to: newPersonaId)
             }

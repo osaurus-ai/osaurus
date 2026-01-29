@@ -40,8 +40,10 @@ struct FloatingInputCard: View {
     var onResume: (() -> Void)? = nil
     /// Whether there's an issue that can be resumed (agent mode)
     var canResume: Bool = false
-    /// Cumulative token usage for agent mode (nil = chat mode, non-nil = show cumulative usage)
+    /// Cumulative token usage for agent mode
     var cumulativeTokens: Int? = nil
+    /// Hide context indicator in empty states
+    var hideContextIndicator: Bool = false
 
     // Observe managers for reactive updates
     @ObservedObject private var toolRegistry = ToolRegistry.shared
@@ -600,8 +602,8 @@ struct FloatingInputCard: View {
                 capabilitiesSelectorChip
             }
 
-            // Context size indicator (when there's context or cumulative tokens in agent mode)
-            if displayContextTokens > 0 || (cumulativeTokens ?? 0) > 0 {
+            // Context size indicator
+            if !hideContextIndicator && (displayContextTokens > 0 || (cumulativeTokens ?? 0) > 0) {
                 contextIndicatorChip
             }
 
@@ -959,7 +961,7 @@ struct FloatingInputCard: View {
         if let state = agentInputState {
             switch state {
             case .noTask:
-                return supportsImages ? "Message or paste image..." : "Message..."
+                return "What do you want done?"
             case .executing:
                 return pendingQueuedMessage != nil
                     ? "Message queued..."

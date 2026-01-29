@@ -2,9 +2,6 @@
 //  AgentEmptyState.swift
 //  osaurus
 //
-//  Empty state for Agent Mode - follows the same visual language as ChatEmptyState
-//  with agent-specific messaging.
-//
 
 import SwiftUI
 
@@ -15,9 +12,9 @@ struct AgentEmptyState: View {
     let activePersonaId: UUID
     let onOpenModelManager: () -> Void
     let onUseFoundation: (() -> Void)?
+    let onQuickAction: (String) -> Void
     let onSelectPersona: (UUID) -> Void
 
-    @StateObject private var modelManager = ModelManager.shared
     @State private var hasAppeared = false
     @State private var isVisible = false
     @Environment(\.theme) private var theme
@@ -26,23 +23,22 @@ struct AgentEmptyState: View {
         personas.first { $0.id == activePersonaId } ?? Persona.default
     }
 
+    private let quickActions = [
+        AgentQuickAction(icon: "globe", text: "Build a site", prompt: "Build a landing page for "),
+        AgentQuickAction(icon: "magnifyingglass", text: "Research a topic", prompt: "Research "),
+        AgentQuickAction(icon: "doc.text", text: "Write a blog post", prompt: "Write a blog post about "),
+        AgentQuickAction(icon: "folder", text: "Organize my files", prompt: "Help me organize "),
+    ]
+
     var body: some View {
         GeometryReader { geometry in
             ZStack {
-                // Ambient floating orbs background (same as ChatEmptyState)
                 AmbientOrbsView(isVisible: isVisible, hasAppeared: hasAppeared)
 
-                // Main content
                 ScrollView(.vertical, showsIndicators: false) {
                     VStack(spacing: 0) {
                         Spacer(minLength: 20)
-
-                        if hasModels {
-                            agentReadyState
-                        } else {
-                            noModelsState
-                        }
-
+                        if hasModels { readyState } else { noModelsState }
                         Spacer(minLength: 20)
                     }
                     .frame(maxWidth: .infinity, minHeight: geometry.size.height)
@@ -51,40 +47,33 @@ struct AgentEmptyState: View {
         }
         .onAppear {
             isVisible = true
-
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                withAnimation(theme.animationSlow()) {
-                    hasAppeared = true
-                }
+                withAnimation(theme.animationSlow()) { hasAppeared = true }
             }
         }
-        .onDisappear {
-            isVisible = false
-        }
+        .onDisappear { isVisible = false }
     }
 
-    // MARK: - Agent Ready State
+    // MARK: - Ready State
 
-    private var agentReadyState: some View {
+    private var readyState: some View {
         VStack(spacing: 10) {
-            // Hero Orb - same as ChatEmptyState for visual consistency
             AnimatedOrb(color: theme.accentColor, size: .medium, seed: activePersona.name)
                 .frame(width: 88, height: 88)
                 .opacity(hasAppeared ? 1 : 0)
                 .scaleEffect(hasAppeared ? 1 : 0.85)
-                .animation(theme.springAnimation().delay(0.0), value: hasAppeared)
+                .animation(theme.springAnimation(), value: hasAppeared)
 
-            // Title and description section
             VStack(spacing: 20) {
                 VStack(spacing: 8) {
-                    Text("Agent Mode")
+                    Text("Agent")
                         .font(theme.font(size: CGFloat(theme.titleSize) + 4, weight: .semibold))
                         .foregroundColor(theme.primaryText)
                         .opacity(hasAppeared ? 1 : 0)
                         .offset(y: hasAppeared ? 0 : 20)
                         .animation(theme.springAnimation().delay(0.1), value: hasAppeared)
 
-                    Text("Describe a task and let the agent handle it")
+                    Text("One goal. It handles the rest.")
                         .font(theme.font(size: CGFloat(theme.bodySize) + 2))
                         .foregroundColor(theme.secondaryText)
                         .opacity(hasAppeared ? 1 : 0)
@@ -92,70 +81,44 @@ struct AgentEmptyState: View {
                         .animation(theme.springAnimation().delay(0.17), value: hasAppeared)
                 }
 
-                // Persona selector - same style as ChatEmptyState
-                personaCard
+                PersonaPill(personas: personas, activePersonaId: activePersonaId, onSelectPersona: onSelectPersona)
                     .opacity(hasAppeared ? 1 : 0)
                     .offset(y: hasAppeared ? 0 : 12)
                     .scaleEffect(hasAppeared ? 1 : 0.97)
                     .animation(theme.springAnimation().delay(0.25), value: hasAppeared)
             }
 
-            // Subtle feature hints
-            featureHints
-                .opacity(hasAppeared ? 1 : 0)
-                .animation(theme.springAnimation().delay(0.35), value: hasAppeared)
+            quickActionsGrid
         }
         .padding(.horizontal, 40)
     }
 
-    // MARK: - Persona Pill (uses shared component)
+    // MARK: - Quick Actions
 
-    private var personaCard: some View {
-        PersonaPill(
-            personas: personas,
-            activePersonaId: activePersonaId,
-            onSelectPersona: onSelectPersona
-        )
-    }
-
-    // MARK: - Feature Hints (subtle, theme-appropriate)
-
-    private var featureHints: some View {
-        HStack(spacing: 24) {
-            featureHint(text: "Breaks down tasks")
-
-            Text("·")
-                .foregroundColor(theme.tertiaryText.opacity(0.5))
-
-            featureHint(text: "Executes step by step")
-
-            Text("·")
-                .foregroundColor(theme.tertiaryText.opacity(0.5))
-
-            featureHint(text: "Tracks progress")
+    private var quickActionsGrid: some View {
+        LazyVGrid(columns: [GridItem(.flexible(), spacing: 12), GridItem(.flexible(), spacing: 12)], spacing: 12) {
+            ForEach(Array(quickActions.enumerated()), id: \.element.id) { index, action in
+                QuickActionButton(action: action, onTap: onQuickAction)
+                    .opacity(hasAppeared ? 1 : 0)
+                    .offset(y: hasAppeared ? 0 : 15)
+                    .animation(theme.springAnimation().delay(0.35 + Double(index) * 0.05), value: hasAppeared)
+            }
         }
-        .padding(.top, 16)
-    }
-
-    private func featureHint(text: String) -> some View {
-        Text(text)
-            .font(theme.font(size: CGFloat(theme.captionSize), weight: .medium))
-            .foregroundColor(theme.tertiaryText)
+        .frame(maxWidth: 440)
     }
 
     // MARK: - No Models State
 
     private var noModelsState: some View {
         VStack(spacing: 28) {
-            // Use AnimatedOrb for consistency
             AnimatedOrb(color: theme.accentColor, size: .medium, seed: "agent")
                 .frame(width: 88, height: 88)
                 .opacity(hasAppeared ? 1 : 0)
                 .scaleEffect(hasAppeared ? 1 : 0.85)
-                .animation(theme.springAnimation().delay(0.0), value: hasAppeared)
+                .animation(theme.springAnimation(), value: hasAppeared)
 
             VStack(spacing: 12) {
-                Text("Agent Mode")
+                Text("Agent")
                     .font(theme.font(size: CGFloat(theme.titleSize) + 2, weight: .semibold))
                     .foregroundColor(theme.primaryText)
                     .opacity(hasAppeared ? 1 : 0)
@@ -195,8 +158,8 @@ struct AgentEmptyState: View {
             .scaleEffect(hasAppeared ? 1 : 0.95)
             .animation(theme.springAnimation().delay(0.25), value: hasAppeared)
 
-            if onUseFoundation != nil {
-                Button(action: { onUseFoundation?() }) {
+            if let useFoundation = onUseFoundation {
+                Button(action: useFoundation) {
                     Text("Use Apple Intelligence")
                         .font(theme.font(size: CGFloat(theme.captionSize), weight: .medium))
                         .foregroundColor(theme.accentColor)
@@ -207,5 +170,67 @@ struct AgentEmptyState: View {
             }
         }
         .padding(.horizontal, 40)
+    }
+}
+
+// MARK: - Supporting Types
+
+private struct AgentQuickAction: Identifiable {
+    let id = UUID()
+    let icon: String
+    let text: String
+    let prompt: String
+}
+
+private struct QuickActionButton: View {
+    let action: AgentQuickAction
+    let onTap: (String) -> Void
+
+    @State private var isHovered = false
+    @Environment(\.theme) private var theme
+
+    var body: some View {
+        Button {
+            onTap(action.prompt)
+        } label: {
+            HStack(spacing: 10) {
+                Image(systemName: action.icon)
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundColor(isHovered ? theme.accentColor : theme.secondaryText)
+                    .frame(width: 20)
+
+                Text(action.text)
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundColor(theme.primaryText)
+                    .lineLimit(1)
+
+                Spacer()
+
+                Image(systemName: "arrow.right")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundColor(theme.tertiaryText)
+                    .opacity(isHovered ? 1 : 0)
+                    .offset(x: isHovered ? 0 : -5)
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 14)
+            .background(
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .fill(
+                        isHovered
+                            ? theme.secondaryBackground : theme.secondaryBackground.opacity(theme.isDark ? 0.5 : 0.8)
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 12, style: .continuous)
+                            .strokeBorder(
+                                isHovered ? theme.primaryBorder : theme.primaryBorder.opacity(theme.isDark ? 0.3 : 0.5),
+                                lineWidth: 1
+                            )
+                    )
+            )
+        }
+        .buttonStyle(.plain)
+        .onHover { isHovered = $0 }
+        .animation(theme.animationQuick(), value: isHovered)
     }
 }
