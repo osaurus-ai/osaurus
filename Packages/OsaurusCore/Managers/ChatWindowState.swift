@@ -106,6 +106,7 @@ final class ChatWindowState: ObservableObject {
         refreshTheme()
         refreshSessions()
         refreshPersonaConfig()
+        PersonaManager.shared.setActivePersona(newPersonaId)
     }
 
     func startNewChat() {
