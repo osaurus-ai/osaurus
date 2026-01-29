@@ -78,7 +78,8 @@ struct AgentView: View {
                             windowId: windowState.windowId,
                             agentInputState: session.inputState,
                             pendingQueuedMessage: session.pendingQueuedMessage,
-                            onEndTask: { session.endTask() }
+                            onEndTask: { session.endTask() },
+                            cumulativeTokens: session.cumulativeTokens
                         )
                     }
                 }

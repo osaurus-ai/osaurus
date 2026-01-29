@@ -36,6 +36,8 @@ struct FloatingInputCard: View {
     var pendingQueuedMessage: String? = nil
     /// Callback to end the current task (agent mode)
     var onEndTask: (() -> Void)? = nil
+    /// Cumulative token usage for agent mode (nil = chat mode, non-nil = show cumulative usage)
+    var cumulativeTokens: Int? = nil
 
     // Observe managers for reactive updates
     @ObservedObject private var toolRegistry = ToolRegistry.shared
@@ -594,8 +596,8 @@ struct FloatingInputCard: View {
                 capabilitiesSelectorChip
             }
 
-            // Context size indicator (when there's context)
-            if displayContextTokens > 0 {
+            // Context size indicator (when there's context or cumulative tokens in agent mode)
+            if displayContextTokens > 0 || (cumulativeTokens ?? 0) > 0 {
                 contextIndicatorChip
             }
 
@@ -608,27 +610,44 @@ struct FloatingInputCard: View {
 
     // MARK: - Context Indicator
 
+    @ViewBuilder
     private var contextIndicatorChip: some View {
-        HStack(spacing: 4) {
-            if let maxCtx = maxContextTokens {
-                Text("~\(formatTokenCount(displayContextTokens)) / \(formatTokenCount(maxCtx))")
+        // In agent mode, show cumulative usage; in chat mode, show context estimate
+        if let cumulative = cumulativeTokens, agentInputState != nil {
+            // Agent mode: show cumulative tokens used
+            HStack(spacing: 4) {
+                Text("\(formatTokenCount(cumulative))")
                     .font(.system(size: CGFloat(theme.captionSize) - 1, weight: .medium, design: .monospaced))
-                    .foregroundColor(theme.tertiaryText)
-            } else {
-                Text("~\(formatTokenCount(displayContextTokens))")
-                    .font(.system(size: CGFloat(theme.captionSize) - 1, weight: .medium, design: .monospaced))
-                    .foregroundColor(theme.tertiaryText)
-            }
+                    .foregroundColor(theme.accentColor)
 
-            Text("tokens")
-                .font(.system(size: CGFloat(theme.captionSize) - 1, weight: .regular))
-                .foregroundColor(theme.tertiaryText.opacity(0.7))
+                Text("used")
+                    .font(.system(size: CGFloat(theme.captionSize) - 1, weight: .regular))
+                    .foregroundColor(theme.tertiaryText.opacity(0.7))
+            }
+            .help("Total tokens consumed: \(cumulative) (input + output across all API calls)")
+        } else {
+            // Chat mode: show context estimate
+            HStack(spacing: 4) {
+                if let maxCtx = maxContextTokens {
+                    Text("~\(formatTokenCount(displayContextTokens)) / \(formatTokenCount(maxCtx))")
+                        .font(.system(size: CGFloat(theme.captionSize) - 1, weight: .medium, design: .monospaced))
+                        .foregroundColor(theme.tertiaryText)
+                } else {
+                    Text("~\(formatTokenCount(displayContextTokens))")
+                        .font(.system(size: CGFloat(theme.captionSize) - 1, weight: .medium, design: .monospaced))
+                        .foregroundColor(theme.tertiaryText)
+                }
+
+                Text("tokens")
+                    .font(.system(size: CGFloat(theme.captionSize) - 1, weight: .regular))
+                    .foregroundColor(theme.tertiaryText.opacity(0.7))
+            }
+            .help(
+                maxContextTokens != nil
+                    ? "Estimated context: ~\(displayContextTokens) / \(maxContextTokens!) tokens"
+                    : "Estimated context: ~\(displayContextTokens) tokens (messages + tools + input)"
+            )
         }
-        .help(
-            maxContextTokens != nil
-                ? "Estimated context: ~\(displayContextTokens) / \(maxContextTokens!) tokens"
-                : "Estimated context: ~\(displayContextTokens) tokens (messages + tools + input)"
-        )
     }
 
     /// Format token count for compact display (e.g., "1.2k", "15k")

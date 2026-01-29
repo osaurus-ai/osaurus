@@ -78,12 +78,21 @@ public actor AgentExecutionEngine {
 
         let response = try await chatEngine.completeChat(request: request)
 
+        // Extract token usage from response
+        let inputTokens = response.usage.prompt_tokens
+        let outputTokens = response.usage.completion_tokens
+
         guard let content = response.choices.first?.message.content else {
             throw AgentExecutionError.failedToGeneratePlan("No response from model")
         }
 
         // Try to parse as the new format with clarification support
-        if let clarificationResult = parsePlanResponseWithClarification(from: content, issueId: issue.id) {
+        if let clarificationResult = parsePlanResponseWithClarification(
+            from: content,
+            issueId: issue.id,
+            inputTokens: inputTokens,
+            outputTokens: outputTokens
+        ) {
             return clarificationResult
         }
 
@@ -92,7 +101,12 @@ public actor AgentExecutionEngine {
 
         if steps.count > Self.maxToolCallsPerIssue {
             // Plan exceeds limit - return decomposition suggestion
-            return .needsDecomposition(steps: steps, suggestedChunks: chunkSteps(steps))
+            return .needsDecomposition(
+                steps: steps,
+                suggestedChunks: chunkSteps(steps),
+                inputTokens: inputTokens,
+                outputTokens: outputTokens
+            )
         }
 
         let plan = ExecutionPlan(
@@ -102,11 +116,16 @@ public actor AgentExecutionEngine {
         )
         currentPlan = plan
 
-        return .ready(plan)
+        return .ready(plan, inputTokens: inputTokens, outputTokens: outputTokens)
     }
 
     /// Parses plan response that may include clarification request
-    private func parsePlanResponseWithClarification(from content: String, issueId: String) -> PlanResult? {
+    private func parsePlanResponseWithClarification(
+        from content: String,
+        issueId: String,
+        inputTokens: Int,
+        outputTokens: Int
+    ) -> PlanResult? {
         // Try to extract JSON from content
         guard let jsonString = extractJSONObject(from: content),
             let data = jsonString.data(using: .utf8)
@@ -126,7 +145,9 @@ public actor AgentExecutionEngine {
                     question: clarification.question,
                     options: clarification.options,
                     context: clarification.context
-                )
+                ),
+                inputTokens: inputTokens,
+                outputTokens: outputTokens
             )
         }
 
@@ -144,7 +165,12 @@ public actor AgentExecutionEngine {
         }
 
         if steps.count > Self.maxToolCallsPerIssue {
-            return .needsDecomposition(steps: steps, suggestedChunks: chunkSteps(steps))
+            return .needsDecomposition(
+                steps: steps,
+                suggestedChunks: chunkSteps(steps),
+                inputTokens: inputTokens,
+                outputTokens: outputTokens
+            )
         }
 
         let plan = ExecutionPlan(
@@ -154,7 +180,7 @@ public actor AgentExecutionEngine {
         )
         currentPlan = plan
 
-        return .ready(plan)
+        return .ready(plan, inputTokens: inputTokens, outputTokens: outputTokens)
     }
 
     /// Builds the prompt for plan generation with ambiguity analysis
@@ -412,10 +438,13 @@ public actor AgentExecutionEngine {
         let stepPrompt = buildStepPrompt(step: step, stepIndex: stepIndex, totalSteps: plan.steps.count)
         messages.append(ChatMessage(role: "user", content: stepPrompt))
 
+        // Build full messages for token estimation
+        let fullMessages = [ChatMessage(role: "system", content: systemPrompt)] + messages
+
         // Create the request
         let request = ChatCompletionRequest(
             model: model ?? "default",
-            messages: [ChatMessage(role: "system", content: systemPrompt)] + messages,
+            messages: fullMessages,
             temperature: 0.3,
             max_tokens: 4096,
             stream: nil,
@@ -428,6 +457,9 @@ public actor AgentExecutionEngine {
             tool_choice: nil,
             session_id: nil
         )
+
+        // Estimate input tokens from messages (~4 chars per token)
+        let inputTokens = estimateInputTokens(fullMessages)
 
         // Stream the response
         var responseContent = ""
@@ -497,12 +529,17 @@ public actor AgentExecutionEngine {
             )
         }
 
+        // Estimate output tokens from response content (~4 chars per token)
+        let outputTokens = estimateOutputTokens(responseContent)
+
         return StepResult(
             stepIndex: stepIndex,
             responseContent: responseContent,
             toolCallResult: toolCallResult,
             isComplete: true,
-            remainingToolCalls: plan.maxToolCalls - plan.toolCallCount
+            remainingToolCalls: plan.maxToolCalls - plan.toolCallCount,
+            inputTokens: inputTokens,
+            outputTokens: outputTokens
         )
     }
 
@@ -572,6 +609,21 @@ public actor AgentExecutionEngine {
         }
     }
 
+    // MARK: - Token Estimation
+
+    /// Estimate input tokens from messages (rough heuristic: ~4 chars per token)
+    private func estimateInputTokens(_ messages: [ChatMessage]) -> Int {
+        let totalChars = messages.reduce(0) { sum, msg in
+            sum + (msg.content?.count ?? 0)
+        }
+        return max(1, totalChars / 4)
+    }
+
+    /// Estimate output tokens from response content (rough heuristic: ~4 chars per token)
+    private func estimateOutputTokens(_ content: String) -> Int {
+        return max(1, content.count / 4)
+    }
+
     // MARK: - Verification
 
     /// Verifies if the goal has been achieved
@@ -620,15 +672,23 @@ public actor AgentExecutionEngine {
 
         let response = try await chatEngine.completeChat(request: request)
 
+        // Extract token usage from response
+        let inputTokens = response.usage.prompt_tokens
+        let outputTokens = response.usage.completion_tokens
+
         guard let content = response.choices.first?.message.content else {
             throw AgentExecutionError.verificationFailed("No response from model")
         }
 
-        return parseVerificationResult(from: content)
+        return parseVerificationResult(from: content, inputTokens: inputTokens, outputTokens: outputTokens)
     }
 
     /// Parses the verification result from LLM response
-    private func parseVerificationResult(from content: String) -> VerificationResult {
+    private func parseVerificationResult(
+        from content: String,
+        inputTokens: Int,
+        outputTokens: Int
+    ) -> VerificationResult {
         let lines = content.components(separatedBy: .newlines)
 
         var status: VerificationStatus = .partial
@@ -665,7 +725,9 @@ public actor AgentExecutionEngine {
         return VerificationResult(
             status: status,
             summary: summary,
-            remainingWork: remaining
+            remainingWork: remaining,
+            inputTokens: inputTokens,
+            outputTokens: outputTokens
         )
     }
 
@@ -712,9 +774,9 @@ public actor AgentExecutionEngine {
 
 /// Result of plan generation
 public enum PlanResult: Sendable {
-    case ready(ExecutionPlan)
-    case needsDecomposition(steps: [PlanStep], suggestedChunks: [[PlanStep]])
-    case needsClarification(ClarificationRequest)
+    case ready(ExecutionPlan, inputTokens: Int, outputTokens: Int)
+    case needsDecomposition(steps: [PlanStep], suggestedChunks: [[PlanStep]], inputTokens: Int, outputTokens: Int)
+    case needsClarification(ClarificationRequest, inputTokens: Int, outputTokens: Int)
 }
 
 /// Result of executing a step
@@ -724,6 +786,10 @@ public struct StepResult: Sendable {
     public let toolCallResult: ToolCallResult?
     public let isComplete: Bool
     public let remainingToolCalls: Int
+    /// Estimated input tokens consumed by this step
+    public let inputTokens: Int
+    /// Estimated output tokens consumed by this step
+    public let outputTokens: Int
 }
 
 /// Result of a tool call
@@ -744,6 +810,10 @@ public struct VerificationResult: Sendable {
     public let status: VerificationStatus
     public let summary: String
     public let remainingWork: String?
+    /// Estimated input tokens consumed by verification
+    public let inputTokens: Int
+    /// Estimated output tokens consumed by verification
+    public let outputTokens: Int
 }
 
 // MARK: - Errors

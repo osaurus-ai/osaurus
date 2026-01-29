@@ -349,7 +349,10 @@ public actor AgentEngine {
         )
 
         switch planResult {
-        case .needsDecomposition(let steps, let chunks):
+        case .needsDecomposition(let steps, let chunks, let inputTokens, let outputTokens):
+            // Report token consumption for plan generation
+            await delegate?.agentEngine(self, didConsumeTokens: inputTokens, output: outputTokens, forIssue: issue)
+
             // Decompose the issue
             return try await decomposeIssue(
                 issue: issue,
@@ -357,7 +360,10 @@ public actor AgentEngine {
                 chunks: chunks
             )
 
-        case .needsClarification(let request):
+        case .needsClarification(let request, let inputTokens, let outputTokens):
+            // Report token consumption for plan generation
+            await delegate?.agentEngine(self, didConsumeTokens: inputTokens, output: outputTokens, forIssue: issue)
+
             // Store state for resuming after clarification
             awaitingClarification = AwaitingClarificationState(
                 issueId: issue.id,
@@ -397,7 +403,10 @@ public actor AgentEngine {
                 awaitingClarification: request
             )
 
-        case .ready(let plan):
+        case .ready(let plan, let inputTokens, let outputTokens):
+            // Report token consumption for plan generation
+            await delegate?.agentEngine(self, didConsumeTokens: inputTokens, output: outputTokens, forIssue: issue)
+
             // Log plan creation with full step details
             let planStepData = plan.steps.map { step in
                 EventPayload.PlanCreated.PlanStepData(
@@ -498,6 +507,14 @@ public actor AgentEngine {
                     model: model,
                     tools: tools,
                     toolOverrides: toolOverrides
+                )
+
+                // Report token consumption for step execution
+                await delegate?.agentEngine(
+                    self,
+                    didConsumeTokens: stepResult.inputTokens,
+                    output: stepResult.outputTokens,
+                    forIssue: issue
                 )
 
                 await delegate?.agentEngine(self, didCompleteStep: stepIndex, result: stepResult, forIssue: issue)
@@ -603,6 +620,14 @@ public actor AgentEngine {
             messages: messages,
             systemPrompt: systemPrompt,
             model: model
+        )
+
+        // Report token consumption for verification
+        await delegate?.agentEngine(
+            self,
+            didConsumeTokens: verification.inputTokens,
+            output: verification.outputTokens,
+            forIssue: issue
         )
 
         await delegate?.agentEngine(self, didVerifyGoal: verification, forIssue: issue)
@@ -899,6 +924,8 @@ public protocol AgentEngineDelegate: AnyObject {
     func agentEngine(_ engine: AgentEngine, willRetryIssue issue: Issue, attempt: Int, afterDelay: TimeInterval)
     func agentEngine(_ engine: AgentEngine, needsClarification request: ClarificationRequest, forIssue issue: Issue)
     func agentEngine(_ engine: AgentEngine, didInjectUserInput input: String, forIssue issue: Issue)
+    /// Called when tokens are consumed by an API call (for cumulative usage tracking)
+    func agentEngine(_ engine: AgentEngine, didConsumeTokens input: Int, output: Int, forIssue issue: Issue)
 }
 
 /// Default implementations for optional delegate methods
@@ -936,6 +963,7 @@ extension AgentEngineDelegate {
         forIssue issue: Issue
     ) {}
     public func agentEngine(_ engine: AgentEngine, didInjectUserInput input: String, forIssue issue: Issue) {}
+    public func agentEngine(_ engine: AgentEngine, didConsumeTokens input: Int, output: Int, forIssue issue: Issue) {}
 }
 
 // MARK: - Pending Execution Context

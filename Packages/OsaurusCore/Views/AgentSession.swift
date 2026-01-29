@@ -207,6 +207,19 @@ public final class AgentSession: ObservableObject {
         windowState?.session.estimatedContextTokens ?? 0
     }
 
+    // MARK: - Cumulative Token Usage
+
+    /// Cumulative input tokens consumed across all API calls in this task
+    @Published public var cumulativeInputTokens: Int = 0
+
+    /// Cumulative output tokens consumed across all API calls in this task
+    @Published public var cumulativeOutputTokens: Int = 0
+
+    /// Total cumulative tokens (input + output) for cost prediction
+    public var cumulativeTokens: Int {
+        cumulativeInputTokens + cumulativeOutputTokens
+    }
+
     /// Current input state - determines input behavior
     public var inputState: AgentInputState {
         if currentTask == nil {
@@ -304,6 +317,10 @@ public final class AgentSession: ObservableObject {
         artifacts = []
         finalArtifact = nil
 
+        // Reset cumulative token usage for new task
+        cumulativeInputTokens = 0
+        cumulativeOutputTokens = 0
+
         // Refresh UI
         await refreshIssues()
         windowState?.refreshAgentTasks()
@@ -345,6 +362,10 @@ public final class AgentSession: ObservableObject {
 
         // Load artifacts for the task
         loadArtifacts(forTask: task.id)
+
+        // Reset cumulative tokens when switching tasks (usage isn't persisted)
+        cumulativeInputTokens = 0
+        cumulativeOutputTokens = 0
 
         // Refresh issues (this also ensures an issue is selected)
         await refreshIssues()
@@ -966,5 +987,11 @@ extension AgentSession: AgentEngineDelegate {
         // Add user input turn to live execution
         liveExecutionTurns.append(ChatTurn(role: .user, content: "**[Context]** \(input)"))
         notifyIfSelected(issue.id)
+    }
+
+    public func agentEngine(_ engine: AgentEngine, didConsumeTokens input: Int, output: Int, forIssue issue: Issue) {
+        // Accumulate token usage for cost prediction
+        cumulativeInputTokens += input
+        cumulativeOutputTokens += output
     }
 }
