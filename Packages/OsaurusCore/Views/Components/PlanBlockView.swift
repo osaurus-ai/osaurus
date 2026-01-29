@@ -99,28 +99,28 @@ struct PlanBlockView: View {
         }
     }
 
+    private let progressBarWidth: CGFloat = 32
+
+    /// Progress badge showing completion status.
+    /// Uses fixedSize() to prevent layout compression when sidebar is expanded.
     private var progressBadge: some View {
         HStack(spacing: 4) {
             // Mini progress bar
-            GeometryReader { geo in
-                ZStack(alignment: .leading) {
-                    // Background track
-                    Capsule()
-                        .fill(theme.tertiaryBackground)
-
-                    // Progress fill
-                    Capsule()
-                        .fill(planColor)
-                        .frame(width: geo.size.width * progressPercentage)
-                }
+            ZStack(alignment: .leading) {
+                Capsule()
+                    .fill(theme.tertiaryBackground)
+                Capsule()
+                    .fill(planColor)
+                    .frame(width: progressBarWidth * progressPercentage)
             }
-            .frame(width: 32, height: 4)
+            .frame(width: progressBarWidth, height: 4)
 
             // Step count
             Text("\(completedSteps)/\(steps.count)")
                 .font(theme.font(size: CGFloat(theme.captionSize) - 2, weight: .medium))
                 .foregroundColor(theme.tertiaryText)
         }
+        .fixedSize()
         .padding(.horizontal, 8)
         .padding(.vertical, 4)
         .background(

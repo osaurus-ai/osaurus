@@ -86,6 +86,7 @@ struct AgentView: View {
                         )
                     }
                 }
+                .frame(width: mainWidth)
             }
         }
         .frame(minWidth: 800, idealWidth: 950)
@@ -358,6 +359,7 @@ struct AgentView: View {
                 collapsedProgressSidebar.transition(.move(edge: .trailing).combined(with: .opacity))
             }
         }
+        .frame(width: width)
         .animation(theme.animationQuick(), value: isProgressSidebarCollapsed)
         .onChange(of: isProgressSidebarCollapsed) { _, _ in
             MessageHeightCache.shared.clear()
