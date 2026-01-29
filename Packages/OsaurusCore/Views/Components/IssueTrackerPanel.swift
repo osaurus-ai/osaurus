@@ -34,16 +34,13 @@ struct IssueTrackerPanel: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            // Header
             headerView
 
-            // Scrollable issues list
             if issues.isEmpty && finalArtifact == nil {
                 emptyState
             } else {
                 ScrollView {
                     VStack(spacing: 0) {
-                        // Issues list
                         if !issues.isEmpty {
                             LazyVStack(spacing: 6) {
                                 ForEach(sortedIssues) { issue in
@@ -61,54 +58,55 @@ struct IssueTrackerPanel: View {
                             .padding(.vertical, 8)
                         }
 
-                        // Result section - show final artifact
-                        if let artifact = finalArtifact {
-                            resultSection(artifact: artifact)
-                        }
+                        if let artifact = finalArtifact { resultSection(artifact: artifact) }
 
-                        // Additional artifacts section
                         let additionalArtifacts = artifacts.filter { !$0.isFinalResult }
-                        if !additionalArtifacts.isEmpty {
-                            artifactsSection(artifacts: additionalArtifacts)
-                        }
+                        if !additionalArtifacts.isEmpty { artifactsSection(artifacts: additionalArtifacts) }
                     }
                 }
             }
         }
         .frame(maxHeight: .infinity)
-        .background(theme.primaryBackground.opacity(0.5))
-        .overlay(alignment: .leading) {
-            // Left border
-            Rectangle()
-                .fill(theme.primaryBorder.opacity(0.2))
-                .frame(width: 1)
+        .background(panelBackground)
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .strokeBorder(theme.primaryBorder.opacity(0.15), lineWidth: 1)
+        )
+        .shadow(color: theme.shadowColor.opacity(theme.shadowOpacity * 0.5), radius: 8, x: 0, y: 2)
+    }
+
+    @ViewBuilder
+    private var panelBackground: some View {
+        if theme.glassEnabled {
+            ZStack {
+                RoundedRectangle(cornerRadius: 12, style: .continuous).fill(.ultraThinMaterial)
+                RoundedRectangle(cornerRadius: 12, style: .continuous).fill(theme.primaryBackground.opacity(0.7))
+            }
+        } else {
+            RoundedRectangle(cornerRadius: 12, style: .continuous).fill(theme.secondaryBackground.opacity(0.95))
         }
     }
 
-    // MARK: - Result Section
+    // MARK: - Sections
+
+    private var sectionDivider: some View {
+        Rectangle()
+            .fill(theme.primaryBorder.opacity(0.2))
+            .frame(height: 1)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+    }
 
     private func resultSection(artifact: Artifact) -> some View {
         VStack(alignment: .leading, spacing: 0) {
-            // Divider
-            Rectangle()
-                .fill(theme.primaryBorder.opacity(0.2))
-                .frame(height: 1)
-                .padding(.horizontal, 12)
-                .padding(.vertical, 8)
+            sectionDivider
 
-            // Result header
             HStack(spacing: 8) {
-                Image(systemName: "doc.text.fill")
-                    .font(.system(size: 12))
-                    .foregroundColor(theme.successColor)
-
-                Text("Result")
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundColor(theme.primaryText)
-
+                Image(systemName: "doc.text.fill").font(.system(size: 12)).foregroundColor(theme.successColor)
+                Text("Result").font(.system(size: 13, weight: .semibold)).foregroundColor(theme.primaryText)
                 Spacer()
 
-                // Action buttons
                 HStack(spacing: 4) {
                     Button {
                         onArtifactView(artifact)
@@ -117,13 +115,9 @@ struct IssueTrackerPanel: View {
                             .font(.system(size: 10, weight: .medium))
                             .foregroundColor(theme.accentColor)
                             .frame(width: 24, height: 24)
-                            .background(
-                                RoundedRectangle(cornerRadius: 4)
-                                    .fill(theme.accentColor.opacity(0.1))
-                            )
+                            .background(RoundedRectangle(cornerRadius: 4).fill(theme.accentColor.opacity(0.1)))
                     }
-                    .buttonStyle(.plain)
-                    .help("View artifact")
+                    .buttonStyle(.plain).help("View artifact")
 
                     Button {
                         onArtifactDownload(artifact)
@@ -132,59 +126,32 @@ struct IssueTrackerPanel: View {
                             .font(.system(size: 10, weight: .medium))
                             .foregroundColor(theme.secondaryText)
                             .frame(width: 24, height: 24)
-                            .background(
-                                RoundedRectangle(cornerRadius: 4)
-                                    .fill(theme.tertiaryBackground.opacity(0.5))
-                            )
+                            .background(RoundedRectangle(cornerRadius: 4).fill(theme.tertiaryBackground.opacity(0.5)))
                     }
-                    .buttonStyle(.plain)
-                    .help("Download artifact")
+                    .buttonStyle(.plain).help("Download artifact")
                 }
             }
             .padding(.horizontal, 12)
             .padding(.bottom, 8)
 
-            // Content preview
-            ArtifactPreviewCard(
-                artifact: artifact,
-                onView: { onArtifactView(artifact) }
-            )
-            .padding(.horizontal, 12)
-            .padding(.bottom, 12)
+            ArtifactPreviewCard(artifact: artifact, onView: { onArtifactView(artifact) })
+                .padding(.horizontal, 12)
+                .padding(.bottom, 12)
         }
     }
 
-    // MARK: - Artifacts Section
-
     private func artifactsSection(artifacts: [Artifact]) -> some View {
         VStack(alignment: .leading, spacing: 0) {
-            // Divider
-            Rectangle()
-                .fill(theme.primaryBorder.opacity(0.2))
-                .frame(height: 1)
-                .padding(.horizontal, 12)
-                .padding(.vertical, 8)
+            sectionDivider
 
-            // Artifacts header
             HStack(spacing: 8) {
-                Image(systemName: "doc.on.doc")
-                    .font(.system(size: 11))
-                    .foregroundColor(theme.secondaryText)
-
-                Text("Artifacts")
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(theme.secondaryText)
-
-                Text("(\(artifacts.count))")
-                    .font(.system(size: 11))
-                    .foregroundColor(theme.tertiaryText)
-
+                Image(systemName: "doc.on.doc").font(.system(size: 11)).foregroundColor(theme.secondaryText)
+                Text("Artifacts").font(.system(size: 12, weight: .medium)).foregroundColor(theme.secondaryText)
+                Text("(\(artifacts.count))").font(.system(size: 11)).foregroundColor(theme.tertiaryText)
                 Spacer()
             }
             .padding(.horizontal, 12)
             .padding(.bottom, 8)
-
-            // Artifact list
             VStack(spacing: 6) {
                 ForEach(artifacts) { artifact in
                     ArtifactRow(
@@ -206,8 +173,8 @@ struct IssueTrackerPanel: View {
             Text("Progress")
                 .font(.system(size: 13, weight: .semibold))
                 .foregroundColor(theme.primaryText)
-
-            Spacer()
+                .lineLimit(1)
+                .fixedSize(horizontal: true, vertical: false)
 
             // Progress indicator
             if !issues.isEmpty {
@@ -230,6 +197,8 @@ struct IssueTrackerPanel: View {
                 )
             }
 
+            Spacer()
+
             // Collapse button
             Button {
                 withAnimation(.easeInOut(duration: 0.2)) {
@@ -245,9 +214,14 @@ struct IssueTrackerPanel: View {
             .buttonStyle(.plain)
             .help("Hide progress")
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 10)
-        .background(theme.secondaryBackground.opacity(0.3))
+        .padding(.horizontal, 14)
+        .padding(.vertical, 12)
+        .overlay(alignment: .bottom) {
+            // Subtle bottom divider
+            Rectangle()
+                .fill(theme.primaryBorder.opacity(0.1))
+                .frame(height: 1)
+        }
     }
 
     // MARK: - Empty State
@@ -573,32 +547,33 @@ private struct ArtifactRow: View {
 
                 Spacer()
 
-                // Actions on hover
-                if isHovered {
-                    HStack(spacing: 4) {
-                        Button(action: onView) {
-                            Image(systemName: "eye")
-                                .font(.system(size: 9))
-                                .foregroundColor(theme.accentColor)
-                                .frame(width: 20, height: 20)
-                                .background(Circle().fill(theme.primaryBackground))
-                                .overlay(Circle().stroke(theme.accentColor.opacity(0.3), lineWidth: 1))
-                        }
-                        .buttonStyle(.plain)
-                        .help("View")
-
-                        Button(action: onDownload) {
-                            Image(systemName: "arrow.down")
-                                .font(.system(size: 9))
-                                .foregroundColor(theme.secondaryText)
-                                .frame(width: 20, height: 20)
-                                .background(Circle().fill(theme.primaryBackground))
-                                .overlay(Circle().stroke(theme.primaryBorder.opacity(0.3), lineWidth: 1))
-                        }
-                        .buttonStyle(.plain)
-                        .help("Download")
+                // Action buttons - always rendered, opacity controlled by hover
+                // This prevents layout jiggle when hovering
+                HStack(spacing: 4) {
+                    Button(action: onView) {
+                        Image(systemName: "eye")
+                            .font(.system(size: 9))
+                            .foregroundColor(theme.accentColor)
+                            .frame(width: 20, height: 20)
+                            .background(Circle().fill(theme.primaryBackground))
+                            .overlay(Circle().stroke(theme.accentColor.opacity(0.3), lineWidth: 1))
                     }
+                    .buttonStyle(.plain)
+                    .help("View")
+
+                    Button(action: onDownload) {
+                        Image(systemName: "arrow.down")
+                            .font(.system(size: 9))
+                            .foregroundColor(theme.secondaryText)
+                            .frame(width: 20, height: 20)
+                            .background(Circle().fill(theme.primaryBackground))
+                            .overlay(Circle().stroke(theme.primaryBorder.opacity(0.3), lineWidth: 1))
+                    }
+                    .buttonStyle(.plain)
+                    .help("Download")
                 }
+                .opacity(isHovered ? 1 : 0)
+                .animation(.easeOut(duration: 0.15), value: isHovered)
             }
             .padding(.horizontal, 8)
             .padding(.vertical, 6)

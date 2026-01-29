@@ -33,7 +33,6 @@ struct MessageThreadView: View {
     var body: some View {
         ScrollViewReader { proxy in
             ScrollView {
-                // Use EquatableView to skip body evaluation when blocks haven't changed
                 EquatableView(
                     content: MessageBlocksList(
                         blocks: blocks,
@@ -45,20 +44,13 @@ struct MessageThreadView: View {
                     )
                 )
 
-                // Bottom padding for visual breathing room
                 Color.clear.frame(height: 16)
 
-                // Bottom anchor for scroll tracking
                 Color.clear
                     .frame(height: 1)
                     .id("BOTTOM")
                     .onAppear { onScrolledToBottom() }
-                    .onDisappear {
-                        // Only unpin if we're not streaming
-                        if !isStreaming {
-                            onScrolledAwayFromBottom()
-                        }
-                    }
+                    .onDisappear { if !isStreaming { onScrolledAwayFromBottom() } }
             }
             .scrollContentBackground(.hidden)
             .scrollIndicators(.visible)
@@ -93,8 +85,6 @@ private struct MessageBlocksList: View, Equatable {
     let onRegenerate: (UUID) -> Void
     var onClarificationSubmit: ((String) -> Void)?
 
-    // Custom Equatable - only compare blocks and width, not closures
-    // nonisolated to avoid actor isolation issues with SwiftUI views
     nonisolated static func == (lhs: MessageBlocksList, rhs: MessageBlocksList) -> Bool {
         lhs.blocks == rhs.blocks && lhs.width == rhs.width && lhs.personaName == rhs.personaName
     }
@@ -131,8 +121,6 @@ private struct ContentBlockRow: View, Equatable {
     let onRegenerate: (UUID) -> Void
     var onClarificationSubmit: ((String) -> Void)?
 
-    // Custom Equatable - only compare block, not closures
-    // nonisolated to avoid actor isolation issues with SwiftUI views
     nonisolated static func == (lhs: ContentBlockRow, rhs: ContentBlockRow) -> Bool {
         lhs.block == rhs.block && lhs.width == rhs.width && lhs.personaName == rhs.personaName
     }
@@ -146,7 +134,7 @@ private struct ContentBlockRow: View, Equatable {
             onRegenerate: onRegenerate,
             onClarificationSubmit: onClarificationSubmit
         )
-        .padding(.horizontal, 16)
+        .padding(.horizontal, 8)
     }
 }
 
@@ -170,7 +158,7 @@ struct ScrollToBottomButton: View {
                     .background(
                         Circle()
                             .fill(theme.secondaryBackground)
-                            .shadow(color: Color.black.opacity(0.2), radius: 8, x: 0, y: 2)
+                            .shadow(color: theme.shadowColor.opacity(0.2), radius: 8, x: 0, y: 2)
                     )
             }
             .buttonStyle(.plain)

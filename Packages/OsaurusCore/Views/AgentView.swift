@@ -16,14 +16,12 @@ struct AgentView: View {
     @State private var showSidebar: Bool = false
     @State private var isPinnedToBottom: Bool = true
 
-    // Progress sidebar state (right side)
     @State private var progressSidebarWidth: CGFloat = 280
     @State private var isProgressSidebarCollapsed: Bool = false
+    @State private var selectedArtifact: Artifact?
+
     private let minProgressSidebarWidth: CGFloat = 200
     private let maxProgressSidebarWidth: CGFloat = 400
-
-    // Artifact viewer state
-    @State private var selectedArtifact: Artifact?
 
     private var theme: ThemeProtocol { windowState.theme }
 
@@ -33,16 +31,11 @@ struct AgentView: View {
             let mainWidth = proxy.size.width - sidebarWidth
 
             HStack(alignment: .top, spacing: 0) {
-                // Sidebar - Task list
                 if showSidebar {
                     AgentTaskSidebar(
                         tasks: windowState.agentTasks,
                         currentTaskId: session.currentTask?.id,
-                        onSelect: { task in
-                            Task {
-                                await session.loadTask(task)
-                            }
-                        },
+                        onSelect: { task in Task { await session.loadTask(task) } },
                         onDelete: { taskId in
                             Task {
                                 try? await IssueManager.shared.deleteTask(taskId)
@@ -57,25 +50,17 @@ struct AgentView: View {
                     .transition(.move(edge: .leading))
                 }
 
-                // Main content
                 ZStack {
-                    // Background
                     agentBackground
 
                     VStack(spacing: 0) {
-                        // Header
                         agentHeader
 
-                        // Content
                         if session.currentTask == nil {
-                            // Empty state - no task selected
                             agentEmptyState
                         } else {
-                            // Task execution view
                             taskExecutionView(width: mainWidth)
                         }
-
-                        // Input card - reuse FloatingInputCard for consistency
                         FloatingInputCard(
                             text: $session.input,
                             selectedModel: $session.selectedModel,
@@ -312,8 +297,10 @@ struct AgentView: View {
     // MARK: - Task Execution View
 
     private func taskExecutionView(width: CGFloat) -> some View {
-        let collapsedWidth: CGFloat = 36
-        let sidebarWidth = isProgressSidebarCollapsed ? collapsedWidth : progressSidebarWidth
+        let collapsedWidth: CGFloat = 48
+        // Account for panel trailing padding (12px)
+        let expandedWidth = progressSidebarWidth + 12
+        let sidebarWidth = isProgressSidebarCollapsed ? collapsedWidth : expandedWidth
         let chatWidth = width - sidebarWidth
 
         return HStack(spacing: 0) {
@@ -326,29 +313,15 @@ struct AgentView: View {
                     // Selected issue but no blocks yet (loading or empty)
                     issueEmptyDetailView
                 } else {
-                    // No issue selected - show prompt
                     noIssueSelectedView
                 }
 
-                // Error message with retry button
-                if let error = session.errorMessage {
-                    errorView(error: error)
-                }
-
+                if let error = session.errorMessage { errorView(error: error) }
                 Spacer(minLength: 0)
             }
             .frame(maxWidth: .infinity)
 
-            // Resize handle + Progress sidebar (right side)
             if !isProgressSidebarCollapsed {
-                // Resize handle
-                ProgressSidebarResizeHandle(
-                    width: $progressSidebarWidth,
-                    minWidth: minProgressSidebarWidth,
-                    maxWidth: maxProgressSidebarWidth
-                )
-
-                // Progress sidebar
                 IssueTrackerPanel(
                     issues: session.issues,
                     activeIssueId: session.activeIssue?.id,
@@ -356,37 +329,30 @@ struct AgentView: View {
                     finalArtifact: session.finalArtifact,
                     artifacts: session.artifacts,
                     isCollapsed: $isProgressSidebarCollapsed,
-                    onIssueSelect: { issue in
-                        session.selectIssue(issue)
-                    },
-                    onIssueRun: { issue in
-                        Task {
-                            await session.executeIssue(issue)
-                        }
-                    },
-                    onIssueClose: { issueId in
-                        Task {
-                            await session.closeIssue(issueId, reason: "Manually closed")
-                        }
-                    },
-                    onArtifactView: { artifact in
-                        viewArtifact(artifact)
-                    },
-                    onArtifactDownload: { artifact in
-                        downloadArtifact(artifact)
-                    }
+                    onIssueSelect: { session.selectIssue($0) },
+                    onIssueRun: { issue in Task { await session.executeIssue(issue) } },
+                    onIssueClose: { issueId in Task { await session.closeIssue(issueId, reason: "Manually closed") } },
+                    onArtifactView: { viewArtifact($0) },
+                    onArtifactDownload: { downloadArtifact($0) }
                 )
                 .frame(width: progressSidebarWidth)
+                .padding(.vertical, 12)
+                .padding(.trailing, 12)
+                .overlay(alignment: .leading) {
+                    ProgressSidebarResizeHandle(
+                        width: $progressSidebarWidth,
+                        minWidth: minProgressSidebarWidth,
+                        maxWidth: maxProgressSidebarWidth
+                    )
+                    .padding(.vertical, 12)
+                }
                 .transition(.move(edge: .trailing).combined(with: .opacity))
             } else {
-                // Collapsed state - thin expand button
-                collapsedProgressSidebar
-                    .transition(.move(edge: .trailing).combined(with: .opacity))
+                collapsedProgressSidebar.transition(.move(edge: .trailing).combined(with: .opacity))
             }
         }
         .animation(theme.animationQuick(), value: isProgressSidebarCollapsed)
         .onChange(of: isProgressSidebarCollapsed) { _, _ in
-            // Clear height cache when sidebar state changes to prevent layout glitches
             MessageHeightCache.shared.clear()
         }
     }
@@ -404,6 +370,7 @@ struct AgentView: View {
                 .foregroundColor(theme.secondaryText)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .padding(.horizontal, contentHorizontalPadding)
     }
 
     // MARK: - Collapsed Progress Sidebar
@@ -418,22 +385,25 @@ struct AgentView: View {
                 Image(systemName: "sidebar.right")
                     .font(.system(size: 12, weight: .medium))
                     .foregroundColor(theme.tertiaryText)
-                    .frame(width: 24, height: 24)
+                    .frame(width: 28, height: 28)
+                    .background(
+                        RoundedRectangle(cornerRadius: 8, style: .continuous)
+                            .fill(theme.secondaryBackground.opacity(0.8))
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 8, style: .continuous)
+                            .strokeBorder(theme.primaryBorder.opacity(0.15), lineWidth: 1)
+                    )
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .help("Show progress")
-            .padding(.top, 10)
+            .padding(.top, 12)
 
             Spacer()
         }
-        .frame(width: 36)
-        .background(theme.primaryBackground.opacity(0.5))
-        .overlay(alignment: .leading) {
-            Rectangle()
-                .fill(theme.primaryBorder.opacity(0.2))
-                .frame(width: 1)
-        }
+        .frame(width: 48)
+        .padding(.trailing, 12)
     }
 
     // MARK: - Issue Detail View
@@ -441,10 +411,14 @@ struct AgentView: View {
     /// Maximum content width for chat readability
     private let maxChatContentWidth: CGFloat = 700
 
+    /// Consistent horizontal padding for content area (matches panel trailing padding)
+    private let contentHorizontalPadding: CGFloat = 12
+
     private func issueDetailView(width: CGFloat) -> some View {
         let personaName = windowState.cachedPersonaDisplayName
-        // Use available width minus padding, capped at max for readability
-        let contentWidth = min(width - 40, maxChatContentWidth)
+        // Calculate content width: available width minus padding, capped at max
+        let availableWidth = width - (contentHorizontalPadding * 2)
+        let contentWidth = min(availableWidth, maxChatContentWidth)
 
         return ZStack(alignment: .bottomTrailing) {
             MessageThreadView(
@@ -464,6 +438,7 @@ struct AgentView: View {
                     }
                 }
             )
+            .frame(maxWidth: contentWidth)
 
             // Scroll to bottom button
             ScrollToBottomButton(
@@ -472,10 +447,9 @@ struct AgentView: View {
                 onTap: { isPinnedToBottom = true }
             )
         }
-        .frame(maxWidth: contentWidth)
-        .frame(maxHeight: .infinity)
-        .padding(.horizontal, 20)
-        .padding(.top, 12)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .padding(.horizontal, contentHorizontalPadding)
+        .padding(.top, 8)
     }
 
     private var issueEmptyDetailView: some View {
@@ -493,10 +467,8 @@ struct AgentView: View {
                 .foregroundColor(theme.tertiaryText)
                 .multilineTextAlignment(.center)
         }
-        .frame(maxWidth: .infinity)
-        .padding(.vertical, 40)
-        .padding(.horizontal, 20)
-        .padding(.top, 12)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .padding(.horizontal, contentHorizontalPadding)
     }
 
     // MARK: - Error View
@@ -542,9 +514,9 @@ struct AgentView: View {
         .padding(12)
         .background(
             RoundedRectangle(cornerRadius: 8)
-                .fill(Color.red.opacity(0.1))
+                .fill(theme.errorColor.opacity(0.1))
         )
-        .padding(.horizontal, 20)
+        .padding(.horizontal, contentHorizontalPadding)
         .padding(.top, 12)
     }
 
@@ -576,13 +548,23 @@ private struct ProgressSidebarResizeHandle: View {
 
     @Environment(\.theme) private var theme: ThemeProtocol
     @State private var isHovered = false
+    @State private var isDragging = false
     @GestureState private var dragOffset: CGFloat = 0
 
     var body: some View {
+        // Invisible hit area that becomes visible on hover
         Rectangle()
-            .fill(isHovered ? theme.accentColor.opacity(0.5) : theme.primaryBorder.opacity(0.3))
-            .frame(width: isHovered ? 3 : 1)
-            .contentShape(Rectangle().inset(by: -6))
+            .fill(Color.clear)
+            .frame(width: 12)
+            .contentShape(Rectangle())
+            .overlay(
+                // Visual indicator only shown on hover/drag
+                RoundedRectangle(cornerRadius: 2)
+                    .fill(theme.accentColor.opacity(isHovered || isDragging ? 0.6 : 0))
+                    .frame(width: 4)
+                    .animation(.easeOut(duration: 0.15), value: isHovered)
+                    .animation(.easeOut(duration: 0.15), value: isDragging)
+            )
             .onHover { hovering in
                 isHovered = hovering
                 if hovering {
@@ -593,16 +575,16 @@ private struct ProgressSidebarResizeHandle: View {
             }
             .gesture(
                 DragGesture()
-                    .updating($dragOffset) { value, state, _ in
-                        state = value.translation.width
-                    }
                     .onChanged { value in
+                        isDragging = true
                         // Dragging left increases width, dragging right decreases
                         let newWidth = width - value.translation.width
                         width = min(maxWidth, max(minWidth, newWidth))
                     }
+                    .onEnded { _ in
+                        isDragging = false
+                    }
             )
-            .animation(theme.animationQuick(), value: isHovered)
     }
 }
 
@@ -619,113 +601,13 @@ struct ArtifactViewerSheet: View {
     @Environment(\.theme) private var theme: ThemeProtocol
     @State private var isCopied = false
     @State private var showRawSource = false
+    @State private var isHoveringCopy = false
+    @State private var isHoveringDownload = false
 
     var body: some View {
         VStack(spacing: 0) {
             // Header
-            HStack(spacing: 12) {
-                // File icon and name
-                HStack(spacing: 8) {
-                    Image(systemName: artifact.contentType == .markdown ? "doc.richtext" : "doc.text")
-                        .font(.system(size: 16))
-                        .foregroundColor(theme.accentColor)
-
-                    Text(artifact.filename)
-                        .font(.system(size: 14, weight: .semibold))
-                        .foregroundColor(theme.primaryText)
-                }
-
-                Spacer()
-
-                // View toggle (for markdown)
-                if artifact.contentType == .markdown {
-                    Picker("", selection: $showRawSource) {
-                        Text("Rendered").tag(false)
-                        Text("Source").tag(true)
-                    }
-                    .pickerStyle(.segmented)
-                    .frame(width: 160)
-                }
-
-                // Action buttons
-                HStack(spacing: 8) {
-                    // Copy button
-                    Button {
-                        copyToClipboard()
-                    } label: {
-                        HStack(spacing: 4) {
-                            Image(systemName: isCopied ? "checkmark" : "doc.on.doc")
-                                .font(.system(size: 11))
-                            Text(isCopied ? "Copied" : "Copy")
-                                .font(.system(size: 11, weight: .medium))
-                        }
-                        .foregroundColor(isCopied ? theme.successColor : theme.secondaryText)
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 6)
-                        .background(
-                            RoundedRectangle(cornerRadius: 6)
-                                .fill(theme.tertiaryBackground.opacity(0.5))
-                        )
-                    }
-                    .buttonStyle(.plain)
-
-                    // Download menu
-                    Menu {
-                        Button {
-                            onDownload()
-                        } label: {
-                            Label("Download as Markdown", systemImage: "doc.text")
-                        }
-
-                        if artifact.contentType == .markdown {
-                            Button {
-                                exportAsPDF()
-                            } label: {
-                                Label("Download as PDF", systemImage: "doc.richtext")
-                            }
-                        }
-                    } label: {
-                        HStack(spacing: 4) {
-                            Image(systemName: "arrow.down.circle")
-                                .font(.system(size: 11))
-                            Text("Download")
-                                .font(.system(size: 11, weight: .medium))
-                            Image(systemName: "chevron.down")
-                                .font(.system(size: 8, weight: .semibold))
-                        }
-                        .foregroundColor(theme.accentColor)
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 6)
-                        .background(
-                            RoundedRectangle(cornerRadius: 6)
-                                .fill(theme.accentColor.opacity(0.1))
-                        )
-                    }
-                    .menuStyle(.borderlessButton)
-                    .menuIndicator(.hidden)
-
-                    // Close button
-                    Button {
-                        onDismiss()
-                    } label: {
-                        Image(systemName: "xmark")
-                            .font(.system(size: 12, weight: .medium))
-                            .foregroundColor(theme.tertiaryText)
-                            .frame(width: 28, height: 28)
-                            .background(
-                                Circle()
-                                    .fill(theme.tertiaryBackground.opacity(0.5))
-                            )
-                    }
-                    .buttonStyle(.plain)
-                }
-            }
-            .padding(.horizontal, 20)
-            .padding(.vertical, 16)
-            .background(theme.secondaryBackground.opacity(0.5))
-
-            Divider()
-                .background(theme.primaryBorder.opacity(0.2))
+            sheetHeader
 
             // Content
             GeometryReader { geometry in
@@ -734,26 +616,239 @@ struct ArtifactViewerSheet: View {
                         // Rendered markdown view
                         MarkdownMessageView(
                             text: artifact.content,
-                            baseWidth: min(geometry.size.width - 80, 700)
+                            baseWidth: min(geometry.size.width - 80, 800)
                         )
-                        .padding(40)
+                        .padding(.horizontal, 32)
+                        .padding(.vertical, 24)
                         .frame(maxWidth: .infinity, alignment: .leading)
                     } else {
-                        // Raw source view
-                        Text(artifact.content)
-                            .font(.system(size: 13, design: .monospaced))
-                            .foregroundColor(theme.primaryText)
-                            .lineSpacing(4)
-                            .textSelection(.enabled)
-                            .frame(maxWidth: .infinity, alignment: .leading)
+                        // Raw source view with line numbers
+                        sourceCodeView
                             .padding(20)
                     }
                 }
+                .scrollIndicators(.automatic)
             }
         }
-        .frame(minWidth: 600, idealWidth: 900, maxWidth: 1200)
-        .frame(minHeight: 500, idealHeight: 700, maxHeight: 900)
-        .background(theme.primaryBackground)
+        .frame(minWidth: 750, idealWidth: 950, maxWidth: 1200)
+        .frame(minHeight: 550, idealHeight: 750, maxHeight: 900)
+        .background(sheetBackground)
+        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .strokeBorder(theme.primaryBorder.opacity(0.2), lineWidth: 1)
+        )
+        .shadow(color: theme.shadowColor.opacity(0.3), radius: 30, x: 0, y: 10)
+    }
+
+    // MARK: - Components
+
+    @ViewBuilder
+    private var sheetBackground: some View {
+        theme.primaryBackground.opacity(theme.glassEnabled ? 0.95 : 1.0)
+    }
+
+    private var sheetHeader: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 20) {
+                fileIconView
+                fileInfoView
+                Spacer(minLength: 20)
+                if artifact.contentType == .markdown { viewToggle.fixedSize() }
+                actionButtons.fixedSize()
+            }
+            .padding(.horizontal, 24)
+            .padding(.vertical, 18)
+
+            Rectangle().fill(theme.primaryBorder.opacity(0.1)).frame(height: 1)
+        }
+    }
+
+    private var fileIconView: some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(
+                    LinearGradient(
+                        colors: [theme.accentColor.opacity(0.2), theme.accentColor.opacity(0.1)],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    )
+                )
+                .frame(width: 40, height: 40)
+
+            Image(systemName: artifact.contentType == .markdown ? "doc.richtext" : "doc.text")
+                .font(.system(size: 18, weight: .medium))
+                .foregroundColor(theme.accentColor)
+        }
+    }
+
+    private var fileInfoView: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(artifact.filename)
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundColor(theme.primaryText)
+                .lineLimit(1)
+            Text(artifact.contentType == .markdown ? "Markdown Document" : "Text File")
+                .font(.system(size: 11))
+                .foregroundColor(theme.tertiaryText)
+        }
+    }
+
+    private var viewToggle: some View {
+        HStack(spacing: 2) {
+            toggleButton("Rendered", isSelected: !showRawSource) { showRawSource = false }
+            toggleButton("Source", isSelected: showRawSource) { showRawSource = true }
+        }
+        .padding(3)
+        .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(theme.tertiaryBackground.opacity(0.5)))
+    }
+
+    private func toggleButton(_ title: String, isSelected: Bool, action: @escaping () -> Void) -> some View {
+        Button {
+            withAnimation(.easeOut(duration: 0.2)) { action() }
+        } label: {
+            Text(title)
+                .font(.system(size: 11, weight: isSelected ? .semibold : .medium))
+                .foregroundColor(isSelected ? theme.primaryText : theme.tertiaryText)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 6)
+                .background(
+                    RoundedRectangle(cornerRadius: 6, style: .continuous)
+                        .fill(isSelected ? theme.secondaryBackground : Color.clear)
+                        .shadow(color: isSelected ? theme.shadowColor.opacity(0.1) : .clear, radius: 2, x: 0, y: 1)
+                )
+                .contentShape(RoundedRectangle(cornerRadius: 6))
+        }
+        .buttonStyle(.plain)
+    }
+
+    private var actionButtons: some View {
+        HStack(spacing: 10) {
+            copyButton; downloadButton; closeButton
+        }
+    }
+
+    private var copyButton: some View {
+        Button {
+            copyToClipboard()
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: isCopied ? "checkmark" : "doc.on.doc").font(.system(size: 12, weight: .medium))
+                Text(isCopied ? "Copied" : "Copy").font(.system(size: 11, weight: .medium))
+            }
+            .fixedSize(horizontal: true, vertical: false)
+            .foregroundColor(isCopied ? theme.successColor : (isHoveringCopy ? theme.primaryText : theme.secondaryText))
+            .padding(.horizontal, 10).padding(.vertical, 7)
+            .background(
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(
+                        isCopied
+                            ? theme.successColor.opacity(0.15)
+                            : theme.tertiaryBackground.opacity(isHoveringCopy ? 0.8 : 0.5)
+                    )
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .strokeBorder(theme.primaryBorder.opacity(isHoveringCopy ? 0.2 : 0.1), lineWidth: 1)
+            )
+        }
+        .buttonStyle(.plain).fixedSize()
+        .help("Copy content to clipboard")
+        .onHover { isHoveringCopy = $0 }
+        .animation(.easeOut(duration: 0.15), value: isHoveringCopy)
+        .animation(.easeOut(duration: 0.2), value: isCopied)
+    }
+
+    private var downloadButton: some View {
+        Menu {
+            Button {
+                onDownload()
+            } label: {
+                Label("Save as Markdown", systemImage: "doc.text")
+            }
+            if artifact.contentType == .markdown {
+                Button {
+                    exportAsPDF()
+                } label: {
+                    Label("Export as PDF", systemImage: "doc.richtext")
+                }
+            }
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: "arrow.down.to.line").font(.system(size: 12, weight: .medium))
+                Text("Download").font(.system(size: 11, weight: .medium))
+                Image(systemName: "chevron.down").font(.system(size: 8, weight: .bold))
+            }
+            .fixedSize(horizontal: true, vertical: false)
+            .foregroundColor(isHoveringDownload ? .white : theme.accentColor)
+            .padding(.horizontal, 10).padding(.vertical, 7)
+            .background(
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(isHoveringDownload ? theme.accentColor : theme.accentColor.opacity(0.12))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .strokeBorder(theme.accentColor.opacity(0.2), lineWidth: 1)
+            )
+        }
+        .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
+        .help("Download as Markdown or PDF")
+        .onHover { isHoveringDownload = $0 }
+        .animation(.easeOut(duration: 0.15), value: isHoveringDownload)
+    }
+
+    private var closeButton: some View {
+        Button {
+            onDismiss()
+        } label: {
+            Image(systemName: "xmark")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundColor(theme.tertiaryText)
+                .frame(width: 32, height: 32)
+                .background(Circle().fill(theme.tertiaryBackground.opacity(0.5)))
+                .overlay(Circle().strokeBorder(theme.primaryBorder.opacity(0.1), lineWidth: 1))
+        }
+        .buttonStyle(.plain)
+    }
+
+    private var sourceCodeView: some View {
+        let lines = artifact.content.components(separatedBy: "\n")
+        return HStack(alignment: .top, spacing: 0) {
+            // Line numbers
+            VStack(alignment: .trailing, spacing: 0) {
+                ForEach(Array(lines.enumerated()), id: \.offset) { index, _ in
+                    Text("\(index + 1)")
+                        .font(.system(size: 12, design: .monospaced))
+                        .foregroundColor(theme.tertiaryText.opacity(0.5))
+                        .frame(height: 20)
+                }
+            }
+            .padding(.horizontal, 12)
+            .background(theme.secondaryBackground.opacity(0.3))
+
+            Rectangle().fill(theme.primaryBorder.opacity(0.1)).frame(width: 1)
+
+            // Scrollable code content
+            ScrollView(.horizontal, showsIndicators: true) {
+                VStack(alignment: .leading, spacing: 0) {
+                    ForEach(Array(lines.enumerated()), id: \.offset) { _, line in
+                        Text(line.isEmpty ? " " : line)
+                            .font(.system(size: 12, design: .monospaced))
+                            .foregroundColor(theme.primaryText.opacity(0.9))
+                            .frame(height: 20, alignment: .leading)
+                            .fixedSize(horizontal: true, vertical: false)
+                    }
+                }
+                .padding(.horizontal, 16).padding(.vertical, 4)
+                .textSelection(.enabled)
+            }
+        }
+        .background(theme.codeBlockBackground.opacity(0.5))
+        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .strokeBorder(theme.primaryBorder.opacity(0.15), lineWidth: 1)
+        )
     }
 
     private func copyToClipboard() {
@@ -844,38 +939,44 @@ struct ArtifactViewerSheet: View {
         // Default paragraph style
         let paragraphStyle = NSMutableParagraphStyle()
         paragraphStyle.lineSpacing = 4
-        paragraphStyle.paragraphSpacing = 12
+        paragraphStyle.paragraphSpacing = 8
 
-        let defaultFont = NSFont.systemFont(ofSize: 12)
+        let defaultFont = NSFont.systemFont(ofSize: 11)
+        let boldFont = NSFont.boldSystemFont(ofSize: 11)
         let defaultAttrs: [NSAttributedString.Key: Any] = [
             .font: defaultFont,
             .foregroundColor: NSColor.black,
             .paragraphStyle: paragraphStyle,
         ]
 
-        let headingFont = NSFont.boldSystemFont(ofSize: 18)
-        let subheadingFont = NSFont.boldSystemFont(ofSize: 14)
-        let codeFont = NSFont.monospacedSystemFont(ofSize: 11, weight: .regular)
+        let h1Font = NSFont.boldSystemFont(ofSize: 20)
+        let h2Font = NSFont.boldSystemFont(ofSize: 16)
+        let h3Font = NSFont.boldSystemFont(ofSize: 13)
+        let codeFont = NSFont.monospacedSystemFont(ofSize: 10, weight: .regular)
 
         let lines = markdown.components(separatedBy: "\n")
         var inCodeBlock = false
         var codeBlockContent: [String] = []
+        var inTable = false
+        var tableRows: [[String]] = []
 
-        for line in lines {
+        for (index, line) in lines.enumerated() {
             let trimmed = line.trimmingCharacters(in: .whitespaces)
 
             // Handle code blocks
             if trimmed.hasPrefix("```") {
                 if inCodeBlock {
-                    // End code block
                     let codeText = codeBlockContent.joined(separator: "\n")
+                    let codeStyle = NSMutableParagraphStyle()
+                    codeStyle.lineSpacing = 2
+                    codeStyle.paragraphSpacing = 8
                     result.append(
                         NSAttributedString(
                             string: codeText + "\n\n",
                             attributes: [
                                 .font: codeFont,
                                 .foregroundColor: NSColor.darkGray,
-                                .paragraphStyle: paragraphStyle,
+                                .paragraphStyle: codeStyle,
                             ]
                         )
                     )
@@ -892,41 +993,84 @@ struct ArtifactViewerSheet: View {
                 continue
             }
 
+            // Handle tables
+            if trimmed.hasPrefix("|") && trimmed.hasSuffix("|") {
+                // Check if it's a separator row (|---|---|)
+                let isSeparator = trimmed.contains("---") || trimmed.contains(":-")
+                if isSeparator { continue }
+
+                // Parse table row
+                let cells =
+                    trimmed
+                    .trimmingCharacters(in: CharacterSet(charactersIn: "|"))
+                    .components(separatedBy: "|")
+                    .map { $0.trimmingCharacters(in: .whitespaces) }
+
+                if !inTable {
+                    inTable = true
+                    tableRows = []
+                }
+                tableRows.append(cells)
+                continue
+            } else if inTable {
+                // End of table - render it
+                renderTable(
+                    tableRows,
+                    to: result,
+                    headerFont: boldFont,
+                    bodyFont: defaultFont,
+                    paragraphStyle: paragraphStyle
+                )
+                tableRows = []
+                inTable = false
+            }
+
             // Headings
             if trimmed.hasPrefix("# ") {
                 let text = String(trimmed.dropFirst(2))
+                let headingStyle = NSMutableParagraphStyle()
+                headingStyle.paragraphSpacing = 12
+                headingStyle.paragraphSpacingBefore = index > 0 ? 16 : 0
                 result.append(
                     NSAttributedString(
                         string: text + "\n",
                         attributes: [
-                            .font: headingFont,
+                            .font: h1Font,
                             .foregroundColor: NSColor.black,
-                            .paragraphStyle: paragraphStyle,
+                            .paragraphStyle: headingStyle,
                         ]
                     )
                 )
             } else if trimmed.hasPrefix("## ") {
                 let text = String(trimmed.dropFirst(3))
+                let headingStyle = NSMutableParagraphStyle()
+                headingStyle.paragraphSpacing = 10
+                headingStyle.paragraphSpacingBefore = index > 0 ? 14 : 0
                 result.append(
                     NSAttributedString(
                         string: text + "\n",
                         attributes: [
-                            .font: subheadingFont,
+                            .font: h2Font,
                             .foregroundColor: NSColor.black,
-                            .paragraphStyle: paragraphStyle,
+                            .paragraphStyle: headingStyle,
                         ]
                     )
                 )
-            } else if trimmed.hasPrefix("### ") || trimmed.hasPrefix("#### ") {
-                let dropCount = trimmed.hasPrefix("### ") ? 4 : 5
+            } else if trimmed.hasPrefix("### ") || trimmed.hasPrefix("#### ") || trimmed.hasPrefix("##### ") {
+                var dropCount = 4
+                if trimmed.hasPrefix("#### ") { dropCount = 5 }
+                if trimmed.hasPrefix("##### ") { dropCount = 6 }
                 let text = String(trimmed.dropFirst(dropCount))
+                let headingStyle = NSMutableParagraphStyle()
+                headingStyle.paragraphSpacing = 8
+                headingStyle.paragraphSpacingBefore = index > 0 ? 10 : 0
                 result.append(
                     NSAttributedString(
                         string: text + "\n",
                         attributes: [
-                            .font: NSFont.boldSystemFont(ofSize: 12),
+                            .font: h3Font,
                             .foregroundColor: NSColor.black,
-                            .paragraphStyle: paragraphStyle,
+                            .paragraphStyle: headingStyle,
                         ]
                     )
                 )
@@ -934,28 +1078,195 @@ struct ArtifactViewerSheet: View {
             // List items
             else if trimmed.hasPrefix("- ") || trimmed.hasPrefix("* ") {
                 let text = String(trimmed.dropFirst(2))
-                result.append(NSAttributedString(string: "• " + text + "\n", attributes: defaultAttrs))
+                let listStyle = NSMutableParagraphStyle()
+                listStyle.lineSpacing = 3
+                listStyle.paragraphSpacing = 4
+                listStyle.headIndent = 20
+                listStyle.firstLineHeadIndent = 10
+                let formattedText = applyInlineFormatting(to: text, defaultFont: defaultFont, boldFont: boldFont)
+                let bulletAttr = NSMutableAttributedString(
+                    string: "•  ",
+                    attributes: [.font: defaultFont, .foregroundColor: NSColor.black]
+                )
+                bulletAttr.append(formattedText)
+                bulletAttr.append(NSAttributedString(string: "\n"))
+                bulletAttr.addAttribute(
+                    .paragraphStyle,
+                    value: listStyle,
+                    range: NSRange(location: 0, length: bulletAttr.length)
+                )
+                result.append(bulletAttr)
             }
             // Numbered lists
             else if let match = trimmed.range(of: #"^\d+\.\s"#, options: .regularExpression) {
                 let text = String(trimmed[match.upperBound...])
                 let number = String(trimmed[..<match.upperBound])
-                result.append(NSAttributedString(string: number + text + "\n", attributes: defaultAttrs))
+                let listStyle = NSMutableParagraphStyle()
+                listStyle.lineSpacing = 3
+                listStyle.paragraphSpacing = 4
+                listStyle.headIndent = 20
+                listStyle.firstLineHeadIndent = 10
+                let formattedText = applyInlineFormatting(to: text, defaultFont: defaultFont, boldFont: boldFont)
+                let numberAttr = NSMutableAttributedString(
+                    string: number,
+                    attributes: [.font: defaultFont, .foregroundColor: NSColor.black]
+                )
+                numberAttr.append(formattedText)
+                numberAttr.append(NSAttributedString(string: "\n"))
+                numberAttr.addAttribute(
+                    .paragraphStyle,
+                    value: listStyle,
+                    range: NSRange(location: 0, length: numberAttr.length)
+                )
+                result.append(numberAttr)
             }
             // Empty line
             else if trimmed.isEmpty {
                 result.append(NSAttributedString(string: "\n", attributes: defaultAttrs))
             }
-            // Regular text - strip markdown formatting
+            // Regular text with inline formatting
             else {
-                var text = trimmed
-                // Remove bold/italic markers for PDF
-                text = text.replacingOccurrences(of: "**", with: "")
-                text = text.replacingOccurrences(of: "__", with: "")
-                text = text.replacingOccurrences(of: "*", with: "")
-                text = text.replacingOccurrences(of: "_", with: "")
-                result.append(NSAttributedString(string: text + "\n", attributes: defaultAttrs))
+                let formattedText = applyInlineFormatting(to: trimmed, defaultFont: defaultFont, boldFont: boldFont)
+                formattedText.append(NSAttributedString(string: "\n"))
+                formattedText.addAttribute(
+                    .paragraphStyle,
+                    value: paragraphStyle,
+                    range: NSRange(location: 0, length: formattedText.length)
+                )
+                result.append(formattedText)
             }
+        }
+
+        // Handle remaining table if file ends with table
+        if inTable && !tableRows.isEmpty {
+            renderTable(
+                tableRows,
+                to: result,
+                headerFont: boldFont,
+                bodyFont: defaultFont,
+                paragraphStyle: paragraphStyle
+            )
+        }
+
+        return result
+    }
+
+    /// Render a markdown table as formatted text
+    private func renderTable(
+        _ rows: [[String]],
+        to result: NSMutableAttributedString,
+        headerFont: NSFont,
+        bodyFont: NSFont,
+        paragraphStyle: NSMutableParagraphStyle
+    ) {
+        guard !rows.isEmpty else { return }
+
+        let tableStyle = NSMutableParagraphStyle()
+        tableStyle.lineSpacing = 2
+        tableStyle.paragraphSpacing = 4
+
+        // Add some spacing before table
+        result.append(NSAttributedString(string: "\n", attributes: [.font: bodyFont]))
+
+        for (rowIndex, row) in rows.enumerated() {
+            let isHeader = rowIndex == 0
+            let font = isHeader ? headerFont : bodyFont
+
+            // Format row as tab-separated values
+            let rowText = row.map { cell in
+                // Clean up cell content - apply inline formatting
+                var cleanCell =
+                    cell
+                    .replacingOccurrences(of: "**", with: "")
+                    .replacingOccurrences(of: "__", with: "")
+                    .replacingOccurrences(of: "`", with: "")
+
+                // Handle markdown links: [text](url) -> text
+                if let linkRegex = try? NSRegularExpression(pattern: #"\[([^\]]+)\]\([^)]+\)"#, options: []) {
+                    cleanCell = linkRegex.stringByReplacingMatches(
+                        in: cleanCell,
+                        options: [],
+                        range: NSRange(cleanCell.startIndex..., in: cleanCell),
+                        withTemplate: "$1"
+                    )
+                }
+                return cleanCell
+            }.joined(separator: "    |    ")
+
+            let rowAttr = NSMutableAttributedString(
+                string: rowText + "\n",
+                attributes: [
+                    .font: font,
+                    .foregroundColor: NSColor.black,
+                    .paragraphStyle: tableStyle,
+                ]
+            )
+            result.append(rowAttr)
+
+            // Add underline after header
+            if isHeader {
+                let separator = String(repeating: "─", count: min(rowText.count, 60))
+                result.append(
+                    NSAttributedString(
+                        string: separator + "\n",
+                        attributes: [
+                            .font: bodyFont,
+                            .foregroundColor: NSColor.gray,
+                            .paragraphStyle: tableStyle,
+                        ]
+                    )
+                )
+            }
+        }
+
+        // Add spacing after table
+        result.append(NSAttributedString(string: "\n", attributes: [.font: bodyFont]))
+    }
+
+    /// Apply inline formatting (bold, italic, code, links) to text
+    private func applyInlineFormatting(to text: String, defaultFont: NSFont, boldFont: NSFont)
+        -> NSMutableAttributedString
+    {
+        var processedText = text
+
+        // Handle markdown links: [text](url) -> text
+        if let linkRegex = try? NSRegularExpression(pattern: #"\[([^\]]+)\]\([^)]+\)"#, options: []) {
+            processedText = linkRegex.stringByReplacingMatches(
+                in: processedText,
+                options: [],
+                range: NSRange(processedText.startIndex..., in: processedText),
+                withTemplate: "$1"
+            )
+        }
+
+        let result = NSMutableAttributedString()
+
+        // Simple bold detection: split by ** and alternate
+        let boldParts = processedText.components(separatedBy: "**")
+        for (index, part) in boldParts.enumerated() {
+            if part.isEmpty { continue }
+            let isBold = index % 2 == 1
+            let font = isBold ? boldFont : defaultFont
+            result.append(
+                NSAttributedString(
+                    string: part,
+                    attributes: [
+                        .font: font,
+                        .foregroundColor: NSColor.black,
+                    ]
+                )
+            )
+        }
+
+        // If no bold markers were found, just use the processed text
+        if boldParts.count <= 1 {
+            return NSMutableAttributedString(
+                string: processedText,
+                attributes: [
+                    .font: defaultFont,
+                    .foregroundColor: NSColor.black,
+                ]
+            )
         }
 
         return result
