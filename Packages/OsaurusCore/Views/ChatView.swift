@@ -1561,6 +1561,7 @@ struct ChatView: View {
 
             // Register close callback with ChatWindowManager
             ChatWindowManager.shared.setCloseCallback(for: windowState.windowId) { [weak windowState] in
+                windowState?.cleanup()
                 windowState?.session.save()
             }
         }

@@ -79,6 +79,8 @@ struct AgentView: View {
                             agentInputState: session.inputState,
                             pendingQueuedMessage: session.pendingQueuedMessage,
                             onEndTask: { session.endTask() },
+                            onResume: { Task { await session.resumeSelectedIssue() } },
+                            canResume: session.canResumeSelectedIssue,
                             cumulativeTokens: session.cumulativeTokens
                         )
                     }

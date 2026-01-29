@@ -10,9 +10,6 @@ import Foundation
 
 /// Main coordinator for agent execution
 public actor AgentEngine {
-    /// Shared singleton instance
-    public static let shared = AgentEngine()
-
     /// The execution engine
     private let executionEngine: AgentExecutionEngine
 
@@ -44,7 +41,7 @@ public actor AgentEngine {
     /// Flag to track if streaming callback is setup
     private var isStreamingSetup = false
 
-    private init() {
+    public init() {
         self.executionEngine = AgentExecutionEngine()
         self.discoveryDetector = DiscoveryDetector()
     }
@@ -97,6 +94,126 @@ public actor AgentEngine {
         }
     }
 
+    // MARK: - Resume State
+
+    /// State recovered from persisted events for resuming execution
+    private struct ResumeState {
+        /// Reconstructed messages from prior execution
+        let messages: [ChatMessage]
+        /// Reconstructed plan from persisted events
+        let plan: ExecutionPlan
+        /// Index of the first step to execute (0-based)
+        let startStepIndex: Int
+        /// Number of tool calls already made
+        let priorToolCallCount: Int
+    }
+
+    /// Attempts to recover execution state from persisted events
+    /// Returns nil if no resumable state exists (fresh execution)
+    private func recoverResumeState(for issue: Issue) -> ResumeState? {
+        // Only attempt resume for issues that were in progress
+        guard issue.status == .inProgress else { return nil }
+
+        // Load events for this issue
+        guard let events = try? IssueStore.getHistory(issueId: issue.id) else { return nil }
+
+        // Find plan creation event
+        guard let planEvent = events.first(where: { $0.eventType == .planCreated }),
+            let planPayload = planEvent.payload,
+            let planData = planPayload.data(using: .utf8),
+            let planCreated = try? JSONDecoder().decode(EventPayload.PlanCreated.self, from: planData)
+        else { return nil }
+
+        // Build plan steps from persisted data
+        let planSteps = planCreated.steps.map { stepData in
+            PlanStep(
+                stepNumber: stepData.stepNumber,
+                description: stepData.description,
+                toolName: stepData.toolName,
+                isComplete: false  // Will be marked complete as we process events
+            )
+        }
+
+        // Collect tool call events
+        let toolCallEvents = events.filter { $0.eventType == .toolCallExecuted }
+        guard !toolCallEvents.isEmpty else { return nil }  // No progress to resume from
+
+        // Rebuild messages from tool calls
+        var messages: [ChatMessage] = []
+
+        // Add prior context if available
+        if let context = issue.context {
+            messages.append(ChatMessage(role: "user", content: "[Prior Context]:\n\(context)"))
+        }
+
+        // Process each tool call event to rebuild conversation
+        var completedSteps = Set<Int>()
+        for event in toolCallEvents {
+            guard let payload = event.payload,
+                let data = payload.data(using: .utf8),
+                let toolCall = try? JSONDecoder().decode(EventPayload.ToolCall.self, from: data)
+            else { continue }
+
+            completedSteps.insert(toolCall.step)
+
+            // Generate a unique call ID for this historical tool call
+            let callId = "call_resume_\(toolCall.step)_\(UUID().uuidString.prefix(8))"
+
+            // Create assistant message with tool call
+            let assistantToolCall = ToolCall(
+                id: callId,
+                type: "function",
+                function: ToolCallFunction(
+                    name: toolCall.tool,
+                    arguments: toolCall.arguments ?? "{}"
+                )
+            )
+            messages.append(
+                ChatMessage(
+                    role: "assistant",
+                    content: nil,
+                    tool_calls: [assistantToolCall],
+                    tool_call_id: nil
+                )
+            )
+
+            // Create tool result message
+            messages.append(
+                ChatMessage(
+                    role: "tool",
+                    content: toolCall.result ?? "",
+                    tool_calls: nil,
+                    tool_call_id: callId
+                )
+            )
+        }
+
+        // Find the next step to execute (first incomplete step)
+        let maxCompletedStep = completedSteps.max() ?? -1
+        let startStepIndex = maxCompletedStep + 1
+
+        // If all steps are complete, no need to resume
+        guard startStepIndex < planSteps.count else { return nil }
+
+        // Mark completed steps in the plan
+        var resumePlan = ExecutionPlan(
+            issueId: issue.id,
+            steps: planSteps,
+            maxToolCalls: ExecutionPlan.defaultMaxToolCalls,
+            toolCallCount: toolCallEvents.count
+        )
+        for i in 0 ..< startStepIndex {
+            resumePlan.steps[i].isComplete = true
+        }
+
+        return ResumeState(
+            messages: messages,
+            plan: resumePlan,
+            startStepIndex: startStepIndex,
+            priorToolCallCount: toolCallEvents.count
+        )
+    }
+
     /// Sets the delegate for receiving execution events
     public nonisolated func setDelegate(_ delegate: AgentEngineDelegate?) {
         self.delegate = delegate
@@ -147,7 +264,7 @@ public actor AgentEngine {
         )
     }
 
-    /// Resumes execution of an existing issue
+    /// Resumes execution of an existing issue from where it left off
     func resume(
         issueId: String,
         model: String?,
@@ -168,7 +285,8 @@ public actor AgentEngine {
             model: model,
             systemPrompt: systemPrompt,
             tools: tools,
-            toolOverrides: toolOverrides
+            toolOverrides: toolOverrides,
+            attemptResume: true
         )
     }
 
@@ -261,7 +379,7 @@ public actor AgentEngine {
         }
 
         // Log the clarification response
-        try? IssueStore.createEvent(
+        _ = try? IssueStore.createEvent(
             IssueEvent.withPayload(
                 issueId: issueId,
                 eventType: .clarificationProvided,
@@ -317,12 +435,14 @@ public actor AgentEngine {
     // MARK: - Main Execution Flow
 
     /// Executes an issue through the complete agent flow
+    /// - Parameter attemptResume: If true, attempts to recover and resume from prior interrupted execution
     private func execute(
         issue: Issue,
         model: String?,
         systemPrompt: String,
         tools: [Tool],
-        toolOverrides: [String: Bool]?
+        toolOverrides: [String: Bool]?,
+        attemptResume: Bool = false
     ) async throws -> ExecutionResult {
         // Ensure streaming is setup before execution
         await ensureStreamingSetup()
@@ -335,7 +455,34 @@ public actor AgentEngine {
             currentIssueId = nil
         }
 
-        // Mark issue as in progress
+        // Check for resumable state from prior interrupted execution (only when explicitly requested)
+        if attemptResume, let resumeState = recoverResumeState(for: issue) {
+            // Resume from where we left off
+            await delegate?.agentEngine(self, didStartIssue: issue)
+            await delegate?.agentEngine(self, didCreatePlan: resumeState.plan, forIssue: issue)
+
+            // Log that we're resuming
+            _ = try? IssueStore.createEvent(
+                IssueEvent(
+                    issueId: issue.id,
+                    eventType: .executionStarted,
+                    payload: "{\"resumed\":true,\"fromStep\":\(resumeState.startStepIndex)}"
+                )
+            )
+
+            return try await executePlan(
+                plan: resumeState.plan,
+                issue: issue,
+                model: model,
+                systemPrompt: systemPrompt,
+                tools: tools,
+                toolOverrides: toolOverrides,
+                initialMessages: resumeState.messages,
+                startStepIndex: resumeState.startStepIndex
+            )
+        }
+
+        // Mark issue as in progress (fresh start)
         _ = await IssueManager.shared.startIssueSafe(issue.id)
 
         await delegate?.agentEngine(self, didStartIssue: issue)
@@ -380,7 +527,7 @@ public actor AgentEngine {
             )
 
             // Log clarification requested event
-            try? IssueStore.createEvent(
+            _ = try? IssueStore.createEvent(
                 IssueEvent.withPayload(
                     issueId: issue.id,
                     eventType: .clarificationRequested,
@@ -464,29 +611,43 @@ public actor AgentEngine {
     }
 
     /// Executes a plan step by step
+    /// - Parameters:
+    ///   - plan: The execution plan to run
+    ///   - issue: The issue being executed
+    ///   - model: Model to use
+    ///   - systemPrompt: System prompt
+    ///   - tools: Available tools
+    ///   - toolOverrides: Tool overrides
+    ///   - initialMessages: Pre-existing messages to start with (for resume)
+    ///   - startStepIndex: Step index to start from (for resume, 0 = start fresh)
     private func executePlan(
         plan: ExecutionPlan,
         issue: Issue,
         model: String?,
         systemPrompt: String,
         tools: [Tool],
-        toolOverrides: [String: Bool]?
+        toolOverrides: [String: Bool]?,
+        initialMessages: [ChatMessage] = [],
+        startStepIndex: Int = 0
     ) async throws -> ExecutionResult {
-        var messages: [ChatMessage] = []
+        var messages: [ChatMessage] = initialMessages
         var allDiscoveries: [Discovery] = []
         var generatedArtifacts: [Artifact] = []
         var finalArtifact: Artifact?
 
-        // Prepend prior context if available
-        if let context = issue.context {
+        // Prepend prior context if available (only if not resuming with existing messages)
+        if initialMessages.isEmpty, let context = issue.context {
             messages.append(ChatMessage(role: "user", content: "[Prior Context]:\n\(context)"))
         }
 
-        // Execute each step
-        for stepIndex in 0 ..< plan.steps.count {
+        // Execute each step (starting from startStepIndex for resume)
+        for stepIndex in startStepIndex ..< plan.steps.count {
             guard isExecuting else {
                 throw AgentExecutionError.executionCancelled
             }
+
+            // Check for task cancellation (e.g., window closed mid-execution)
+            try Task.checkCancellation()
 
             // Inject any queued user input before this step
             let queuedInputs = consumePendingInputs(for: issue.id)
@@ -533,10 +694,10 @@ public actor AgentEngine {
                             generatedArtifacts.append(artifact)
 
                             // Persist artifact to database
-                            try? IssueStore.createArtifact(artifact)
+                            _ = try? IssueStore.createArtifact(artifact)
 
                             // Log artifact event
-                            try? IssueStore.createEvent(
+                            _ = try? IssueStore.createEvent(
                                 IssueEvent.withPayload(
                                     issueId: issue.id,
                                     eventType: .artifactGenerated,
@@ -561,10 +722,10 @@ public actor AgentEngine {
                             generatedArtifacts.append(artifact)
 
                             // Persist artifact to database
-                            try? IssueStore.createArtifact(artifact)
+                            _ = try? IssueStore.createArtifact(artifact)
 
                             // Log artifact event
-                            try? IssueStore.createEvent(
+                            _ = try? IssueStore.createEvent(
                                 IssueEvent.withPayload(
                                     issueId: issue.id,
                                     eventType: .artifactGenerated,
@@ -828,10 +989,11 @@ public actor AgentEngine {
         var lastError: Error?
 
         for attempt in 0 ..< retryConfig.maxAttempts {
-            // Check for cancellation
+            // Check for cancellation (e.g., window closed)
             guard isExecuting || attempt == 0 else {
                 throw AgentEngineError.cancelled
             }
+            try Task.checkCancellation()
 
             // Wait before retry (skip delay on first attempt)
             if attempt > 0 {

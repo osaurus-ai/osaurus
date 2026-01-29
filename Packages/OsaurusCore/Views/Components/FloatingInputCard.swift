@@ -36,6 +36,10 @@ struct FloatingInputCard: View {
     var pendingQueuedMessage: String? = nil
     /// Callback to end the current task (agent mode)
     var onEndTask: (() -> Void)? = nil
+    /// Callback to resume an in-progress issue (agent mode)
+    var onResume: (() -> Void)? = nil
+    /// Whether there's an issue that can be resumed (agent mode)
+    var canResume: Bool = false
     /// Cumulative token usage for agent mode (nil = chat mode, non-nil = show cumulative usage)
     var cumulativeTokens: Int? = nil
 
@@ -1028,10 +1032,13 @@ struct FloatingInputCard: View {
                 queuedIndicator
             }
 
-            // Right side - Stop/End button + Send button
+            // Right side - Stop/Resume/End button + Send button
             HStack(spacing: 8) {
                 if isStreaming {
                     stopButton
+                } else if canResume {
+                    resumeButton
+                    endTaskButton
                 } else if agentInputState == .idle {
                     endTaskButton
                 }
@@ -1090,6 +1097,30 @@ struct FloatingInputCard: View {
             .padding(.horizontal, 12)
             .padding(.vertical, 8)
             .background(Color.red.opacity(0.9))
+            .clipShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .transition(.opacity.combined(with: .scale(scale: 0.95)))
+    }
+
+    private var resumeButton: some View {
+        Button(action: { onResume?() }) {
+            HStack(spacing: 4) {
+                Image(systemName: "play.fill")
+                    .font(.system(size: 9, weight: .bold))
+                Text("Resume")
+                    .font(.system(size: 11, weight: .medium))
+            }
+            .foregroundColor(.white)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            .background(
+                LinearGradient(
+                    colors: [theme.accentColor, theme.accentColor.opacity(0.85)],
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
+            )
             .clipShape(Capsule())
         }
         .buttonStyle(.plain)

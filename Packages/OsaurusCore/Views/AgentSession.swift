@@ -243,11 +243,15 @@ public final class AgentSession: ObservableObject {
 
     private var executionTask: Task<Void, Never>?
 
+    /// The agent engine instance for this session (each session owns its own engine)
+    private let engine: AgentEngine
+
     // MARK: - Initialization
 
     init(personaId: UUID, windowState: ChatWindowState? = nil) {
         self.personaId = personaId
         self.windowState = windowState
+        self.engine = AgentEngine()
 
         // Initialize model options from window state's session
         if let windowState = windowState {
@@ -261,13 +265,19 @@ public final class AgentSession: ObservableObject {
         }
     }
 
+    deinit {
+        executionTask?.cancel()
+        let engineToCancel = engine
+        Task { await engineToCancel.cancel() }
+    }
+
     private func initialize() async {
         do {
             try await IssueManager.shared.initialize()
             await IssueManager.shared.refreshTasks(personaId: personaId)
 
             // Set self as delegate on AgentEngine to receive updates
-            AgentEngine.shared.setDelegate(self)
+            engine.setDelegate(self)
         } catch {
             errorMessage = "Failed to initialize agent: \(error.localizedDescription)"
         }
@@ -294,7 +304,7 @@ public final class AgentSession: ObservableObject {
                 // Queue for injection at next step boundary
                 pendingQueuedMessage = query
                 if let issueId = activeIssue?.id {
-                    await AgentEngine.shared.queueInput(issueId: issueId, message: query)
+                    await engine.queueInput(issueId: issueId, message: query)
                 }
 
             case .idle:
@@ -400,6 +410,12 @@ public final class AgentSession: ObservableObject {
             return
         }
 
+        // Prioritize in-progress issues (interrupted executions that can be resumed)
+        if let inProgressIssue = issues.first(where: { $0.status == .inProgress }) {
+            selectIssue(inProgressIssue)
+            return
+        }
+
         // Select the most recent completed issue, or first issue
         if let completedIssue = issues.filter({ $0.status == .closed }).last {
             selectIssue(completedIssue)
@@ -438,11 +454,11 @@ public final class AgentSession: ObservableObject {
         let config = buildExecutionConfig()
         let tools = ToolRegistry.shared.specs(withOverrides: config.toolOverrides)
 
-        executionTask = Task {
+        executionTask = Task { [engine] in
             do {
                 let result =
                     if withRetry {
-                        try await AgentEngine.shared.executeWithRetry(
+                        try await engine.executeWithRetry(
                             issueId: issue.id,
                             model: config.model,
                             systemPrompt: config.systemPrompt,
@@ -450,7 +466,7 @@ public final class AgentSession: ObservableObject {
                             toolOverrides: config.toolOverrides
                         )
                     } else {
-                        try await AgentEngine.shared.resume(
+                        try await engine.resume(
                             issueId: issue.id,
                             model: config.model,
                             systemPrompt: config.systemPrompt,
@@ -552,7 +568,7 @@ public final class AgentSession: ObservableObject {
     public func stopExecution() {
         executionTask?.cancel()
         executionTask = nil
-        Task { await AgentEngine.shared.cancel() }
+        Task { [engine] in await engine.cancel() }
         finishExecution()
     }
 
@@ -572,7 +588,7 @@ public final class AgentSession: ObservableObject {
     public func endTask() {
         executionTask?.cancel()
         executionTask = nil
-        Task { await AgentEngine.shared.cancel() }
+        Task { [engine] in await engine.cancel() }
 
         currentTask = nil
         issues = []
@@ -655,7 +671,7 @@ public final class AgentSession: ObservableObject {
         isResumingFromClarification = true
 
         do {
-            let result = try await AgentEngine.shared.provideClarification(
+            let result = try await engine.provideClarification(
                 issueId: issueId,
                 response: response
             )
@@ -787,6 +803,35 @@ public final class AgentSession: ObservableObject {
     /// Number of blocked issues
     public var blockedIssueCount: Int {
         issues.filter { $0.status == .blocked }.count
+    }
+
+    /// Whether the selected issue can be resumed (in progress but not currently executing)
+    public var canResumeSelectedIssue: Bool {
+        !isExecuting && selectedIssue?.status == .inProgress
+    }
+
+    /// Resumes execution of the selected in-progress issue
+    public func resumeSelectedIssue() async {
+        guard canResumeSelectedIssue, let issue = selectedIssue else { return }
+
+        resetExecutionState(for: issue)
+        let config = buildExecutionConfig()
+        let tools = ToolRegistry.shared.specs(withOverrides: config.toolOverrides)
+
+        executionTask = Task {
+            do {
+                let result = try await engine.resume(
+                    issueId: issue.id,
+                    model: config.model,
+                    systemPrompt: config.systemPrompt,
+                    tools: tools,
+                    toolOverrides: config.toolOverrides
+                )
+                await MainActor.run { self.handleExecutionResult(result) }
+            } catch {
+                await MainActor.run { self.handleExecutionError(error, issue: issue) }
+            }
+        }
     }
 }
 
