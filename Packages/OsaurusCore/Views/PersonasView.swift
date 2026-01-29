@@ -60,13 +60,8 @@ struct PersonasView: View {
                             ForEach(Array(customPersonas.enumerated()), id: \.element.id) { index, persona in
                                 PersonaCard(
                                     persona: persona,
-                                    isActive: personaManager.activePersonaId == persona.id,
                                     animationDelay: Double(index) * 0.05,
                                     hasAppeared: hasAppeared,
-                                    onActivate: {
-                                        personaManager.setActivePersona(persona.id)
-                                        showSuccess("Activated \"\(persona.name)\"")
-                                    },
                                     onEdit: {
                                         editingPersona = persona
                                     },
@@ -496,10 +491,8 @@ private struct PersonaCard: View {
     @ObservedObject private var themeManager = ThemeManager.shared
 
     let persona: Persona
-    let isActive: Bool
     let animationDelay: Double
     let hasAppeared: Bool
-    let onActivate: () -> Void
     let onEdit: () -> Void
     let onDuplicate: () -> Void
     let onExport: () -> Void
@@ -561,19 +554,11 @@ private struct PersonaCard: View {
                 }
                 .frame(width: 36, height: 36)
 
-                // Name with active badge
-                HStack(spacing: 8) {
-                    Text(persona.name)
-                        .font(.system(size: 15, weight: .semibold))
-                        .foregroundColor(theme.primaryText)
-                        .lineLimit(1)
-
-                    if isActive {
-                        Image(systemName: "checkmark.circle.fill")
-                            .font(.system(size: 13))
-                            .foregroundColor(theme.successColor)
-                    }
-                }
+                // Name
+                Text(persona.name)
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundColor(theme.primaryText)
+                    .lineLimit(1)
 
                 Spacer(minLength: 8)
 
@@ -675,13 +660,10 @@ private struct PersonaCard: View {
                 .fill(theme.cardBackground)
                 .overlay(
                     RoundedRectangle(cornerRadius: 12)
-                        .stroke(
-                            isActive ? theme.accentColor.opacity(0.4) : theme.cardBorder,
-                            lineWidth: isActive ? 1.5 : 1
-                        )
+                        .stroke(theme.cardBorder, lineWidth: 1)
                 )
                 .shadow(
-                    color: isActive ? theme.accentColor.opacity(0.15) : Color.black.opacity(isHovered ? 0.08 : 0.04),
+                    color: Color.black.opacity(isHovered ? 0.08 : 0.04),
                     radius: isHovered ? 10 : 5,
                     x: 0,
                     y: isHovered ? 3 : 2
@@ -692,19 +674,8 @@ private struct PersonaCard: View {
         .opacity(hasAppeared ? 1 : 0)
         .offset(y: hasAppeared ? 0 : 20)
         .animation(.spring(response: 0.4, dampingFraction: 0.8).delay(animationDelay), value: hasAppeared)
-        .contentShape(Rectangle())
-        .onTapGesture {
-            if !isActive {
-                onActivate()
-            }
-        }
         .onHover { hovering in
             isHovered = hovering
-            if hovering && !isActive {
-                NSCursor.pointingHand.push()
-            } else {
-                NSCursor.pop()
-            }
         }
         .alert("Delete Persona", isPresented: $showDeleteConfirm) {
             Button("Cancel", role: .cancel) {}

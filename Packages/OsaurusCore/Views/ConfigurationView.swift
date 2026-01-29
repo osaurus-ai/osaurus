@@ -3,7 +3,6 @@ import SwiftUI
 // MARK: - Configuration View
 struct ConfigurationView: View {
     @ObservedObject private var themeManager = ThemeManager.shared
-    @ObservedObject private var personaManager = PersonaManager.shared
 
     /// Use computed property to always get the current theme from ThemeManager
     private var theme: ThemeProtocol { themeManager.currentTheme }
@@ -19,7 +18,6 @@ struct ConfigurationView: View {
 
     // Chat settings state
     @State private var tempChatHotkey: Hotkey? = nil
-    @State private var tempDefaultPersonaId: UUID = Persona.defaultId
     @State private var tempSystemPrompt: String = ""
     @State private var tempChatTemperature: String = ""
     @State private var tempChatMaxTokens: String = ""
@@ -78,7 +76,6 @@ struct ConfigurationView: View {
                             "Chat",
                             "Hotkey",
                             "Model",
-                            "Persona",
                             "System Prompt",
                             "Temperature",
                             "Max Tokens",
@@ -93,17 +90,6 @@ struct ConfigurationView: View {
                                     // Global Hotkey
                                     SettingsField(label: "Global Hotkey") {
                                         HotkeyRecorder(value: $tempChatHotkey)
-                                    }
-
-                                    // Default Persona
-                                    SettingsField(
-                                        label: "Default Persona",
-                                        hint: "Persona to use when opening chat"
-                                    ) {
-                                        DefaultPersonaPicker(
-                                            selection: $tempDefaultPersonaId,
-                                            personas: personaManager.personas
-                                        )
                                     }
 
                                     // System Prompt
@@ -521,7 +507,6 @@ struct ConfigurationView: View {
 
         let chat = ChatConfigurationStore.load()
         tempChatHotkey = chat.hotkey
-        tempDefaultPersonaId = personaManager.activePersonaId
         tempSystemPrompt = chat.systemPrompt
         tempChatTemperature = chat.temperature.map { String($0) } ?? ""
         tempChatMaxTokens = chat.maxTokens.map(String.init) ?? ""
@@ -574,7 +559,6 @@ struct ConfigurationView: View {
 
         // Chat settings - clear overrides to use defaults
         tempChatHotkey = chatDefaults.hotkey
-        tempDefaultPersonaId = Persona.defaultId
         tempSystemPrompt = ""
         tempChatTemperature = ""
         tempChatMaxTokens = ""
@@ -718,12 +702,6 @@ struct ConfigurationView: View {
             defaultModel: existingDefaultModel
         )
         ChatConfigurationStore.save(chatCfg)
-
-        // Save default persona setting
-        let previousPersonaId = personaManager.activePersonaId
-        if tempDefaultPersonaId != previousPersonaId {
-            personaManager.setActivePersona(tempDefaultPersonaId)
-        }
 
         let hotkeyChanged = previousChatCfg.hotkey != chatCfg.hotkey
 
@@ -1660,95 +1638,6 @@ private struct VoiceInputDevicePicker: View {
                     .font(.system(size: 13, weight: .medium))
                     .foregroundColor(themeManager.currentTheme.primaryText)
                     .lineLimit(1)
-
-                Spacer()
-
-                Image(systemName: "chevron.up.chevron.down")
-                    .font(.system(size: 10, weight: .medium))
-                    .foregroundColor(themeManager.currentTheme.tertiaryText)
-            }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 10)
-            .background(
-                RoundedRectangle(cornerRadius: 10)
-                    .fill(themeManager.currentTheme.inputBackground)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 10)
-                            .stroke(
-                                isHovered
-                                    ? themeManager.currentTheme.accentColor.opacity(0.5)
-                                    : themeManager.currentTheme.inputBorder,
-                                lineWidth: isHovered ? 1.5 : 1
-                            )
-                    )
-            )
-        }
-        .menuStyle(.borderlessButton)
-        .onHover { hovering in
-            withAnimation(.easeOut(duration: 0.15)) {
-                isHovered = hovering
-            }
-        }
-    }
-}
-
-// MARK: - Default Persona Picker
-
-private struct DefaultPersonaPicker: View {
-    @ObservedObject private var themeManager = ThemeManager.shared
-    @Binding var selection: UUID
-    let personas: [Persona]
-
-    @State private var isHovered = false
-
-    private var displayName: String {
-        if let persona = personas.first(where: { $0.id == selection }) {
-            return persona.name
-        }
-        return "Default"
-    }
-
-    /// Generate a consistent color based on persona name
-    private var personaColor: Color {
-        let hash = abs(displayName.hashValue)
-        let hue = Double(hash % 360) / 360.0
-        return Color(hue: hue, saturation: 0.6, brightness: 0.8)
-    }
-
-    var body: some View {
-        Menu {
-            ForEach(personas) { persona in
-                Button(action: { selection = persona.id }) {
-                    HStack {
-                        Text(persona.name)
-                        if persona.isBuiltIn {
-                            Text("Built-in")
-                                .foregroundColor(.secondary)
-                        }
-                        if selection == persona.id {
-                            Image(systemName: "checkmark")
-                        }
-                    }
-                }
-            }
-
-            Divider()
-
-            Button(action: {
-                AppDelegate.shared?.showManagementWindow(initialTab: .personas)
-            }) {
-                Label("Manage Personas", systemImage: "person.2.badge.gearshape")
-            }
-        } label: {
-            HStack(spacing: 10) {
-                // Persona icon
-                Image(systemName: "person.circle.fill")
-                    .font(.system(size: 16, weight: .medium))
-                    .foregroundColor(personaColor)
-
-                Text(displayName)
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundColor(themeManager.currentTheme.primaryText)
 
                 Spacer()
 
