@@ -147,7 +147,7 @@ struct ContentBlockView: View {
         case let .toolCallGroup(calls):
             GroupedToolCallsContainerView(calls: calls)
                 .padding(.top, 6)
-                .padding(.bottom, isLastInTurn ? 12 : 4)
+                .padding(.bottom, 16)
 
         case let .thinking(_, text, isStreaming):
             ThinkingBlockView(

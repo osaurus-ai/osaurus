@@ -8,6 +8,28 @@
 import AppKit
 import SwiftUI
 
+// MARK: - Typography Spacing Constants
+
+/// Line spacing within text blocks (space between lines of the same block)
+private enum LineSpacing {
+    static let paragraph: CGFloat = 7  // ~1.5 line height for body text
+    static let heading: CGFloat = 2  // Tighter for headings
+    static let blockquote: CGFloat = 5  // Slightly open feel
+    static let listItem: CGFloat = 6  // Good for multi-line items
+}
+
+/// Block spacing between different content blocks
+private enum BlockSpacing {
+    static let paragraphAfterOther: CGFloat = 14
+    static let headingH1H2AfterOther: CGFloat = 24
+    static let headingH3PlusAfterOther: CGFloat = 20
+    static let headingAfterHeading: CGFloat = 10
+    static let blockquoteAfterOther: CGFloat = 12
+    static let blockquoteAfterBlockquote: CGFloat = 4
+    static let listItemAfterOther: CGFloat = 10
+    static let listItemAfterListItem: CGFloat = 8
+}
+
 // MARK: - Text Block for Rendering
 
 /// Represents a text block to be rendered in NSTextView
@@ -300,7 +322,7 @@ struct SelectableTextView: NSViewRepresentable {
             let attrString = renderInlineMarkdown(text, fontSize: bodyFontSize, weight: .regular)
             applyParagraphStyle(
                 to: attrString,
-                lineSpacing: 5,
+                lineSpacing: LineSpacing.paragraph,
                 spacingBefore: isFirst ? 0 : spacingBefore(block: block, previousBlock: previousBlock)
             )
             result.append(attrString)
@@ -311,7 +333,7 @@ struct SelectableTextView: NSViewRepresentable {
             let attrString = renderInlineMarkdown(text, fontSize: fontSize, weight: weight)
             applyParagraphStyle(
                 to: attrString,
-                lineSpacing: 2,
+                lineSpacing: LineSpacing.heading,
                 spacingBefore: isFirst ? 0 : spacingBefore(block: block, previousBlock: previousBlock)
             )
             result.append(attrString)
@@ -326,7 +348,7 @@ struct SelectableTextView: NSViewRepresentable {
             )
             applyParagraphStyle(
                 to: attrString,
-                lineSpacing: 4,
+                lineSpacing: LineSpacing.blockquote,
                 spacingBefore: isFirst ? 0 : spacingBefore(block: block, previousBlock: previousBlock),
                 leftIndent: 16
             )
@@ -364,7 +386,7 @@ struct SelectableTextView: NSViewRepresentable {
             // Apply paragraph style with hanging indent, accounting for nesting level
             applyListParagraphStyle(
                 to: fullLine,
-                lineSpacing: 4,
+                lineSpacing: LineSpacing.listItem,
                 spacingBefore: isFirst ? 0 : spacingBefore(block: block, previousBlock: previousBlock),
                 bulletWidth: bulletWidth,
                 indentLevel: indentLevel
@@ -434,24 +456,24 @@ struct SelectableTextView: NSViewRepresentable {
         switch block {
         case .heading(let level, _):
             if case .heading = prev {
-                return 8
+                return BlockSpacing.headingAfterHeading
             }
-            return level <= 2 ? 20 : 16
+            return level <= 2 ? BlockSpacing.headingH1H2AfterOther : BlockSpacing.headingH3PlusAfterOther
 
         case .blockquote:
             if case .blockquote = prev {
-                return 4
+                return BlockSpacing.blockquoteAfterBlockquote
             }
-            return 12
+            return BlockSpacing.blockquoteAfterOther
 
         case .listItem:
             if case .listItem = prev {
-                return 6
+                return BlockSpacing.listItemAfterListItem
             }
-            return 10
+            return BlockSpacing.listItemAfterOther
 
         case .paragraph:
-            return 12
+            return BlockSpacing.paragraphAfterOther
         }
     }
 

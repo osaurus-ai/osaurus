@@ -9,6 +9,16 @@
 import AppKit
 import SwiftUI
 
+// MARK: - Layout Constants
+
+private enum ToolCallLayout {
+    static let rowVerticalPadding: CGFloat = 14
+    static let rowTrailingPadding: CGFloat = 16
+    static let rowLeadingPadding: CGFloat = 12
+    static let rowLeadingPaddingWithStrip: CGFloat = 14
+    static let expandedContentPadding: CGFloat = 12
+}
+
 // MARK: - JSON Formatting Utility
 
 /// Formats JSON on a background thread to avoid blocking UI
@@ -366,9 +376,12 @@ struct InlineToolCallView: View {
                         .animation(.spring(response: 0.3, dampingFraction: 0.7), value: isExpanded)
                         .animation(.easeOut(duration: 0.15), value: isHovered)
                 }
-                .padding(.leading, showAccentStrip ? 14 : 12)
-                .padding(.trailing, 12)
-                .padding(.vertical, 10)
+                .padding(
+                    .leading,
+                    showAccentStrip ? ToolCallLayout.rowLeadingPaddingWithStrip : ToolCallLayout.rowLeadingPadding
+                )
+                .padding(.trailing, ToolCallLayout.rowTrailingPadding)
+                .padding(.vertical, ToolCallLayout.rowVerticalPadding)
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
@@ -376,9 +389,12 @@ struct InlineToolCallView: View {
             // Expanded content with animation
             if isExpanded {
                 expandedContent
-                    .padding(.leading, showAccentStrip ? 14 : 12)
-                    .padding(.trailing, 12)
-                    .padding(.bottom, 12)
+                    .padding(
+                        .leading,
+                        showAccentStrip ? ToolCallLayout.rowLeadingPaddingWithStrip : ToolCallLayout.rowLeadingPadding
+                    )
+                    .padding(.trailing, ToolCallLayout.expandedContentPadding)
+                    .padding(.bottom, ToolCallLayout.expandedContentPadding)
                     .transition(.opacity.combined(with: .move(edge: .top)))
             }
         }
