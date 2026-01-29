@@ -20,6 +20,15 @@ final class ChatWindowState: ObservableObject {
     let session: ChatSession
     let foundationModelAvailable: Bool
 
+    // MARK: - Mode State
+
+    @Published var mode: ChatMode = .chat
+
+    // MARK: - Agent State
+
+    @Published var agentSession: AgentSession?
+    @Published private(set) var agentTasks: [AgentTask] = []
+
     // MARK: - Persona State
 
     @Published var personaId: UUID
@@ -77,6 +86,11 @@ final class ChatWindowState: ObservableObject {
         notificationObservers.forEach { NotificationCenter.default.removeObserver($0) }
     }
 
+    /// Stops any running agent execution - call when window is closing
+    func cleanup() {
+        agentSession?.stopExecution()
+    }
+
     // MARK: - API
 
     var activePersona: Persona { cachedActivePersona }
@@ -98,6 +112,43 @@ final class ChatWindowState: ObservableObject {
         if !session.turns.isEmpty { session.save() }
         session.reset(for: personaId)
         refreshSessions()
+    }
+
+    // MARK: - Mode Switching
+
+    func switchMode(to newMode: ChatMode) {
+        guard newMode != mode else { return }
+
+        // Save current chat if switching away from chat mode
+        if mode == .chat && !session.turns.isEmpty {
+            session.save()
+        }
+
+        mode = newMode
+
+        // Handle agent tool registration
+        if newMode == .agent {
+            // Register agent-specific tools
+            AgentToolManager.shared.registerTools()
+
+            // Initialize agent session if needed
+            if agentSession == nil {
+                agentSession = AgentSession(personaId: personaId, windowState: self)
+            }
+            refreshAgentTasks()
+        } else {
+            // Unregister agent-specific tools when leaving agent mode
+            AgentToolManager.shared.unregisterTools()
+        }
+    }
+
+    func refreshAgentTasks() {
+        do {
+            agentTasks = try IssueStore.listTasks(personaId: personaId)
+        } catch {
+            print("[ChatWindowState] Failed to refresh agent tasks: \(error)")
+            agentTasks = []
+        }
     }
 
     func loadSession(_ sessionData: ChatSessionData) {

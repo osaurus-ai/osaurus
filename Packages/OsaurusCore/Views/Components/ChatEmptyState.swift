@@ -19,7 +19,7 @@ struct ChatEmptyState: View {
     let onQuickAction: (String) -> Void
     let onSelectPersona: (UUID) -> Void
 
-    @StateObject private var modelManager = ModelManager.shared
+    @ObservedObject private var modelManager = ModelManager.shared
     @State private var glowIntensity: CGFloat = 0.6
     @State private var hasAppeared = false
     @State private var isVisible = false
@@ -265,114 +265,14 @@ struct ChatEmptyState: View {
         .padding(.horizontal, 40)
     }
 
-    // MARK: - Persona Card
-
-    @State private var isPersonaHovered = false
-
-    /// Get a preview of the persona's system prompt (truncated)
-    private var personaDescriptionPreview: String {
-        let systemPrompt = activePersona.systemPrompt
-        if systemPrompt.isEmpty {
-            return "A helpful AI assistant"
-        }
-        // Take first 80 characters and add ellipsis if truncated
-        let preview = String(systemPrompt.prefix(80))
-        return preview.count < systemPrompt.count ? "\(preview)..." : preview
-    }
+    // MARK: - Persona Card (uses shared component)
 
     private var personaCard: some View {
-        Menu {
-            ForEach(personas) { persona in
-                Button(action: { onSelectPersona(persona.id) }) {
-                    HStack {
-                        Text(persona.name)
-                        if persona.id == activePersonaId {
-                            Spacer()
-                            Image(systemName: "checkmark")
-                                .font(.system(size: 12, weight: .medium))
-                        }
-                    }
-                }
-            }
-
-            Divider()
-
-            Button(action: {
-                AppDelegate.shared?.showManagementWindow(initialTab: .personas)
-            }) {
-                Label("Manage Personas...", systemImage: "person.2.badge.gearshape")
-            }
-        } label: {
-            HStack(spacing: 14) {
-                // Persona avatar
-                ZStack {
-                    Circle()
-                        .fill(
-                            LinearGradient(
-                                colors: [
-                                    theme.accentColor.opacity(0.2),
-                                    theme.accentColor.opacity(0.1),
-                                ],
-                                startPoint: .topLeading,
-                                endPoint: .bottomTrailing
-                            )
-                        )
-                        .frame(width: 44, height: 44)
-
-                    Image(systemName: "person.fill")
-                        .font(.system(size: 18, weight: .medium))
-                        .foregroundColor(theme.accentColor)
-                }
-
-                // Persona info
-                VStack(alignment: .leading, spacing: 4) {
-                    HStack(spacing: 6) {
-                        Text(activePersona.name)
-                            .font(theme.font(size: CGFloat(theme.bodySize) + 1, weight: .semibold))
-                            .foregroundColor(theme.primaryText)
-
-                        Image(systemName: "chevron.down")
-                            .font(.system(size: 10, weight: .semibold))
-                            .foregroundColor(theme.tertiaryText)
-                    }
-
-                    Text(personaDescriptionPreview)
-                        .font(theme.font(size: CGFloat(theme.captionSize)))
-                        .foregroundColor(theme.secondaryText)
-                        .lineLimit(1)
-                }
-
-                Spacer(minLength: 0)
-            }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 12)
-            .frame(maxWidth: 320)
-            .background(
-                RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    .fill(theme.secondaryBackground.opacity(isPersonaHovered ? 0.9 : (theme.isDark ? 0.6 : 0.8)))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 14, style: .continuous)
-                            .strokeBorder(
-                                isPersonaHovered
-                                    ? theme.accentColor.opacity(0.3)
-                                    : theme.primaryBorder.opacity(theme.isDark ? 0.3 : 0.5),
-                                lineWidth: 1
-                            )
-                    )
-            )
-        }
-        .menuStyle(.borderlessButton)
-        .menuIndicator(.hidden)
-        .onHover { hovering in
-            withAnimation(theme.animationQuick()) {
-                isPersonaHovered = hovering
-            }
-            if hovering {
-                NSCursor.pointingHand.push()
-            } else {
-                NSCursor.pop()
-            }
-        }
+        PersonaPill(
+            personas: personas,
+            activePersonaId: activePersonaId,
+            onSelectPersona: onSelectPersona
+        )
     }
 
     // MARK: - Helpers
@@ -605,7 +505,7 @@ private struct AmbientOrb: Identifiable {
     let blurRadius: CGFloat
 }
 
-private struct AmbientOrbsView: View {
+struct AmbientOrbsView: View {
     let isVisible: Bool
     let hasAppeared: Bool
 

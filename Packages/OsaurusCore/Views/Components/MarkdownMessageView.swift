@@ -6,35 +6,11 @@
 //  Optimized for streaming responses with stable block identity
 //  Uses NSTextView for web-like text selection across blocks
 //
+//  Uses ThreadCache for unified height and markdown caching.
+//
 
 import AppKit
 import SwiftUI
-
-// MARK: - Markdown Cache
-
-final class MarkdownParseCache: @unchecked Sendable {
-    static let shared = MarkdownParseCache()
-
-    struct CachedResult {
-        let blocks: [MessageBlock]
-        let segments: [ContentSegment]
-    }
-
-    private let cache = NSCache<NSString, Wrapper>()
-
-    private class Wrapper {
-        let result: CachedResult
-        init(_ result: CachedResult) { self.result = result }
-    }
-
-    func get(for text: String) -> CachedResult? {
-        cache.object(forKey: text as NSString)?.result
-    }
-
-    func set(segments: [ContentSegment], blocks: [MessageBlock], for text: String) {
-        cache.setObject(Wrapper(CachedResult(blocks: blocks, segments: segments)), forKey: text as NSString)
-    }
-}
 
 struct MarkdownMessageView: View {
     let text: String
@@ -61,8 +37,8 @@ struct CachedHeightView<Content: View>: View {
     init(id: String, @ViewBuilder content: () -> Content) {
         self.id = id
         self.content = content()
-        // Synchronous read
-        if let h = MessageHeightCache.shared.height(for: id) {
+        // Synchronous read from ThreadCache
+        if let h = ThreadCache.shared.height(for: id) {
             _height = State(initialValue: h)
         }
     }
@@ -78,7 +54,7 @@ struct CachedHeightView<Content: View>: View {
                 // Only update if changed significantly
                 if let h = height, abs(h - newHeight) < 1 { return }
                 height = newHeight
-                MessageHeightCache.shared.setHeight(newHeight, for: id)
+                ThreadCache.shared.setHeight(newHeight, for: id)
             }
             // Use minHeight to allow growth but prevent collapse (stable recycling)
             .frame(minHeight: height, alignment: .top)
@@ -121,7 +97,7 @@ private struct MemoizedMarkdownView: View {
         self.isStreaming = isStreaming
 
         // Initialize from cache if available synchronously
-        if let cached = MarkdownParseCache.shared.get(for: text) {
+        if let cached = ThreadCache.shared.markdown(for: text) {
             _cachedSegments = State(initialValue: cached.segments)
             _cachedBlocks = State(initialValue: cached.blocks)
             _lastParsedText = State(initialValue: text)
@@ -188,7 +164,7 @@ private struct MemoizedMarkdownView: View {
                     .textSelection(.enabled)
                     // Apply cached height if available to prevent jump, but only if not streaming (content growing)
                     .frame(
-                        height: isStreaming ? nil : cacheKey.flatMap { MessageHeightCache.shared.height(for: $0) },
+                        height: isStreaming ? nil : cacheKey.flatMap { ThreadCache.shared.height(for: $0) },
                         alignment: .top
                     )
             } else {
@@ -269,7 +245,7 @@ private struct MemoizedMarkdownView: View {
                 lastStableIndex = max(0, newBlocks.count - 1)
 
                 // Update cache
-                MarkdownParseCache.shared.set(segments: newSegments, blocks: newBlocks, for: textSnapshot)
+                ThreadCache.shared.setMarkdown(blocks: newBlocks, segments: newSegments, for: textSnapshot)
             }
         }
     }
@@ -288,7 +264,7 @@ private struct MemoizedMarkdownView: View {
                 // Use cached height wrapper to provide SwiftUI with height hints
                 // This prevents expensive fixedSize layout calculations
                 let segmentCacheKey = cacheKey.map { "\($0)-\(segment.id)" }
-                let cachedHeight = segmentCacheKey.flatMap { MessageHeightCache.shared.height(for: $0) }
+                let cachedHeight = segmentCacheKey.flatMap { ThreadCache.shared.height(for: $0) }
                 let estimatedHeight = cachedHeight ?? Self.estimateTextGroupHeight(blocks: textBlocks)
 
                 SelectableTextView(

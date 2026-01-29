@@ -12,10 +12,10 @@ import SwiftUI
 
 struct TranscriptionModeSettingsTab: View {
     @Environment(\.theme) private var theme
-    @StateObject private var whisperService = WhisperKitService.shared
-    @StateObject private var modelManager = WhisperModelManager.shared
-    @StateObject private var keyboardService = KeyboardSimulationService.shared
-    @StateObject private var transcriptionService = TranscriptionModeService.shared
+    @ObservedObject private var whisperService = WhisperKitService.shared
+    @ObservedObject private var modelManager = WhisperModelManager.shared
+    @ObservedObject private var keyboardService = KeyboardSimulationService.shared
+    @ObservedObject private var transcriptionService = TranscriptionModeService.shared
 
     // Configuration state
     @State private var transcriptionEnabled: Bool = false

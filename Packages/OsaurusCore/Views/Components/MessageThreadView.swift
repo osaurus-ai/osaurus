@@ -2,151 +2,82 @@
 //  MessageThreadView.swift
 //  osaurus
 //
-//  Isolated message thread view to prevent cascading re-renders.
-//  Observes only the session data it needs, not all ChatView state.
+//  Renders the message thread with optimized block recycling.
+//  Uses ThreadCache for width-aware height caching.
 //
 
 import SwiftUI
 
-// MARK: - Message Thread View
-
-/// An isolated view for rendering the message thread.
-/// This prevents ChatView state changes (like isPinnedToBottom) from causing
-/// all ContentBlockViews to re-render.
 struct MessageThreadView: View {
     let blocks: [ContentBlock]
     let width: CGFloat
     let personaName: String
     let isStreaming: Bool
-    let turnsCount: Int
+    let scrollTrigger: Int
     let lastAssistantTurnId: UUID?
 
-    // Callbacks - excluded from Equatable comparison in child views
     let onCopy: (UUID) -> Void
     let onRegenerate: (UUID) -> Void
     let onScrolledToBottom: () -> Void
     let onScrolledAwayFromBottom: () -> Void
+    var onClarificationSubmit: ((String) -> Void)? = nil
 
     @Environment(\.theme) private var theme
+
+    private var contentWidth: CGFloat { max(100, width - 64) }
 
     var body: some View {
         ScrollViewReader { proxy in
             ScrollView {
-                // Use EquatableView to skip body evaluation when blocks haven't changed
-                EquatableView(
-                    content: MessageBlocksList(
-                        blocks: blocks,
-                        width: width,
-                        personaName: personaName,
-                        onCopy: onCopy,
-                        onRegenerate: onRegenerate
-                    )
-                )
+                LazyVStack(spacing: 0) {
+                    ForEach(blocks) { block in
+                        ContentBlockView(
+                            block: block,
+                            width: contentWidth,
+                            personaName: personaName,
+                            onCopy: onCopy,
+                            onRegenerate: onRegenerate,
+                            onClarificationSubmit: onClarificationSubmit
+                        )
+                        .equatable()
+                        .id(block.id)
+                        .padding(.horizontal, 8)
+                    }
+                }
+                .padding(.top, 8)
 
-                // Bottom padding for visual breathing room
                 Color.clear.frame(height: 16)
 
-                // Bottom anchor for scroll tracking
                 Color.clear
                     .frame(height: 1)
                     .id("BOTTOM")
                     .onAppear { onScrolledToBottom() }
-                    .onDisappear {
-                        // Only unpin if we're not streaming
-                        if !isStreaming {
-                            onScrolledAwayFromBottom()
-                        }
-                    }
+                    .onDisappear { if !isStreaming { onScrolledAwayFromBottom() } }
             }
             .scrollContentBackground(.hidden)
             .scrollIndicators(.visible)
-            .onChange(of: turnsCount) { _, _ in
+            .onChange(of: scrollTrigger) { _, _ in
                 scrollToResponseStart(proxy: proxy)
             }
         }
+        .onAppear {
+            ThreadCache.shared.setWidth(contentWidth)
+        }
+        .onChange(of: width) { _, _ in
+            ThreadCache.shared.setWidth(contentWidth)
+        }
     }
 
-    /// Scroll to the start of the assistant's response header
     private func scrollToResponseStart(proxy: ScrollViewProxy) {
         guard let turnId = lastAssistantTurnId else { return }
-        let headerId = "header-\(turnId.uuidString)"
-
         DispatchQueue.main.async {
             withAnimation(theme.animationQuick()) {
-                proxy.scrollTo(headerId, anchor: .top)
+                proxy.scrollTo("header-\(turnId.uuidString)", anchor: .top)
             }
         }
     }
 }
 
-// MARK: - Message Blocks List
-
-/// Isolated list view that only re-renders when blocks change.
-/// Uses Equatable conformance to prevent unnecessary updates.
-private struct MessageBlocksList: View, Equatable {
-    let blocks: [ContentBlock]
-    let width: CGFloat
-    let personaName: String
-    let onCopy: (UUID) -> Void
-    let onRegenerate: (UUID) -> Void
-
-    // Custom Equatable - only compare blocks and width, not closures
-    // nonisolated to avoid actor isolation issues with SwiftUI views
-    nonisolated static func == (lhs: MessageBlocksList, rhs: MessageBlocksList) -> Bool {
-        lhs.blocks == rhs.blocks && lhs.width == rhs.width && lhs.personaName == rhs.personaName
-    }
-
-    var body: some View {
-        LazyVStack(spacing: 0) {
-            ForEach(blocks) { block in
-                EquatableView(
-                    content: ContentBlockRow(
-                        block: block,
-                        width: width,
-                        personaName: personaName,
-                        onCopy: onCopy,
-                        onRegenerate: onRegenerate
-                    )
-                )
-                .id(block.id)
-            }
-        }
-        .padding(.top, 8)
-    }
-}
-
-// MARK: - Content Block Row
-
-/// Individual block row with Equatable conformance to prevent re-renders
-/// when the block hasn't changed.
-private struct ContentBlockRow: View, Equatable {
-    let block: ContentBlock
-    let width: CGFloat
-    let personaName: String
-    let onCopy: (UUID) -> Void
-    let onRegenerate: (UUID) -> Void
-
-    // Custom Equatable - only compare block, not closures
-    // nonisolated to avoid actor isolation issues with SwiftUI views
-    nonisolated static func == (lhs: ContentBlockRow, rhs: ContentBlockRow) -> Bool {
-        lhs.block == rhs.block && lhs.width == rhs.width && lhs.personaName == rhs.personaName
-    }
-
-    var body: some View {
-        ContentBlockView(
-            block: block,
-            width: width,
-            personaName: personaName,
-            onCopy: onCopy,
-            onRegenerate: onRegenerate
-        )
-        .padding(.horizontal, 16)
-    }
-}
-
-// MARK: - Scroll to Bottom Button
-
-/// Isolated scroll button that doesn't trigger re-renders of content blocks
 struct ScrollToBottomButton: View {
     let isPinnedToBottom: Bool
     let hasTurns: Bool
@@ -164,7 +95,7 @@ struct ScrollToBottomButton: View {
                     .background(
                         Circle()
                             .fill(theme.secondaryBackground)
-                            .shadow(color: Color.black.opacity(0.2), radius: 8, x: 0, y: 2)
+                            .shadow(color: theme.shadowColor.opacity(0.2), radius: 8, x: 0, y: 2)
                     )
             }
             .buttonStyle(.plain)

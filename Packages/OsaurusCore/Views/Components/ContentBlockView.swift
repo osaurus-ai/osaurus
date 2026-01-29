@@ -3,47 +3,32 @@
 //  osaurus
 //
 //  Renders a single content block in the flattened chat view.
-//  Optimized for LazyVStack recycling.
+//  Optimized for LazyVStack recycling with Equatable conformance.
 //
 
 import AppKit
 import SwiftUI
 
-struct ContentBlockView: View {
+struct ContentBlockView: View, Equatable {
     let block: ContentBlock
-    let width: CGFloat
+    let width: CGFloat  // Content width (already adjusted by parent)
     let personaName: String
     var onCopy: ((UUID) -> Void)?
     var onRegenerate: ((UUID) -> Void)?
+    var onClarificationSubmit: ((String) -> Void)?
+
+    nonisolated static func == (lhs: ContentBlockView, rhs: ContentBlockView) -> Bool {
+        lhs.block == rhs.block && lhs.width == rhs.width && lhs.personaName == rhs.personaName
+    }
 
     @Environment(\.theme) private var theme
 
-    // MARK: - Computed Properties
+    private var isUserMessage: Bool { block.role == .user }
+    private var isLastInTurn: Bool { block.position == .only || block.position == .last }
 
-    private var contentWidth: CGFloat {
-        max(100, width - 64)  // outer padding (32) + content padding (32)
-    }
-
-    private var isUserMessage: Bool {
-        block.role == .user
-    }
-
-    private var isLastInTurn: Bool {
-        block.position == .only || block.position == .last
-    }
-
-    // MARK: - Height Estimation
-
-    /// Provides SwiftUI with an estimated height hint to prevent expensive layout calculations.
-    /// Uses cached height if available, otherwise estimates based on block kind.
+    /// Height hint for SwiftUI to prevent expensive layout calculations
     private var estimatedMinHeight: CGFloat {
-        // Try cached height first (from previous renders)
-        if let cachedHeight = MessageHeightCache.shared.height(for: block.id) {
-            return cachedHeight
-        }
-
-        // Estimate based on block kind
-        return Self.estimateHeight(for: block.kind, width: contentWidth)
+        ThreadCache.shared.height(for: block.id) ?? Self.estimateHeight(for: block.kind, width: width)
     }
 
     /// Estimate height for a block kind (used when no cached height is available)
@@ -68,6 +53,15 @@ struct ContentBlockView: View {
             // Similar to paragraph but typically shorter
             let estimatedLines = max(1, CGFloat(text.count) / 80)
             return min(max(50, estimatedLines * 20 + 30), 300)
+
+        case let .plan(steps, _, _):
+            // Collapsed: ~50px, Expanded: ~50px header + ~44px per step
+            return CGFloat(50 + steps.count * 44)
+
+        case let .clarification(request):
+            // Header + question + options/input + button
+            let optionsCount = request.options?.count ?? 1
+            return CGFloat(100 + optionsCount * 48)
 
         case .image:
             return 170  // max image height + padding
@@ -122,7 +116,7 @@ struct ContentBlockView: View {
         case let .paragraph(_, text, isStreaming, _):
             MarkdownMessageView(
                 text: text,
-                baseWidth: contentWidth,
+                baseWidth: width,
                 cacheKey: block.id,
                 isStreaming: isStreaming
             )
@@ -137,17 +131,36 @@ struct ContentBlockView: View {
         case let .toolCallGroup(calls):
             GroupedToolCallsContainerView(calls: calls)
                 .padding(.top, 6)
-                .padding(.bottom, isLastInTurn ? 12 : 4)
+                .padding(.bottom, 16)
 
         case let .thinking(_, text, isStreaming):
             ThinkingBlockView(
                 thinking: text,
-                baseWidth: contentWidth,
+                baseWidth: width,
                 isStreaming: isStreaming,
                 thinkingLength: text.count
             )
             .padding(.top, 6)
             .padding(.bottom, isLastInTurn ? 16 : 6)
+
+        case let .plan(steps, currentStep, isStreaming):
+            PlanBlockView(
+                steps: steps,
+                currentStep: currentStep,
+                isStreaming: isStreaming
+            )
+            .padding(.top, 6)
+            .padding(.bottom, isLastInTurn ? 12 : 4)
+
+        case let .clarification(request):
+            ClarificationCardView(
+                request: request,
+                onSubmit: { response in
+                    onClarificationSubmit?(response)
+                }
+            )
+            .padding(.top, 6)
+            .padding(.bottom, isLastInTurn ? 12 : 4)
 
         case let .image(_, imageData):
             if let nsImage = NSImage(data: imageData) {

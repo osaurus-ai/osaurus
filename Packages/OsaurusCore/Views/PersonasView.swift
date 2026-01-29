@@ -11,8 +11,8 @@ import UniformTypeIdentifiers
 // MARK: - Personas View
 
 struct PersonasView: View {
-    @StateObject private var themeManager = ThemeManager.shared
-    @StateObject private var personaManager = PersonaManager.shared
+    @ObservedObject private var themeManager = ThemeManager.shared
+    @ObservedObject private var personaManager = PersonaManager.shared
 
     private var theme: ThemeProtocol { themeManager.currentTheme }
 
@@ -493,7 +493,7 @@ private struct PersonaUseCaseRow: View {
 
 private struct PersonaCard: View {
     @Environment(\.theme) private var theme
-    @StateObject private var themeManager = ThemeManager.shared
+    @ObservedObject private var themeManager = ThemeManager.shared
 
     let persona: Persona
     let isActive: Bool
@@ -932,7 +932,7 @@ private struct PersonaEditorSheet: View {
     }
 
     @Environment(\.theme) private var theme
-    @StateObject private var themeManager = ThemeManager.shared
+    @ObservedObject private var themeManager = ThemeManager.shared
 
     let mode: Mode
     let onSave: (Persona) -> Void
@@ -1540,7 +1540,7 @@ private struct PersonaEditorSheet: View {
 // MARK: - Editor Section
 
 private struct EditorSection<Content: View>: View {
-    @StateObject private var themeManager = ThemeManager.shared
+    @ObservedObject private var themeManager = ThemeManager.shared
 
     let title: String
     let icon: String
@@ -1577,7 +1577,7 @@ private struct EditorSection<Content: View>: View {
 // MARK: - Styled Text Field
 
 private struct StyledTextField: View {
-    @StateObject private var themeManager = ThemeManager.shared
+    @ObservedObject private var themeManager = ThemeManager.shared
 
     let placeholder: String
     @Binding var text: String
@@ -1640,7 +1640,7 @@ private struct StyledTextField: View {
 // MARK: - Theme Option Card
 
 private struct ThemeOptionCard: View {
-    @StateObject private var themeManager = ThemeManager.shared
+    @ObservedObject private var themeManager = ThemeManager.shared
 
     let name: String
     let colors: [Color]
@@ -1698,7 +1698,7 @@ private struct ThemeOptionCard: View {
 // MARK: - Tool Toggle Row
 
 private struct ToolToggleRow: View {
-    @StateObject private var themeManager = ThemeManager.shared
+    @ObservedObject private var themeManager = ThemeManager.shared
 
     let tool: ToolRegistry.ToolEntry
     let isEnabled: Bool
@@ -1775,7 +1775,7 @@ private struct ToolToggleRow: View {
 // MARK: - Skill Toggle Row
 
 private struct SkillToggleRow: View {
-    @StateObject private var themeManager = ThemeManager.shared
+    @ObservedObject private var themeManager = ThemeManager.shared
 
     let skill: Skill
     let isEnabled: Bool
@@ -1881,7 +1881,7 @@ private struct SkillToggleRow: View {
 // MARK: - Button Styles
 
 private struct PrimaryButtonStyle: ButtonStyle {
-    @StateObject private var themeManager = ThemeManager.shared
+    @ObservedObject private var themeManager = ThemeManager.shared
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
@@ -1898,7 +1898,7 @@ private struct PrimaryButtonStyle: ButtonStyle {
 }
 
 private struct SecondaryButtonStyle: ButtonStyle {
-    @StateObject private var themeManager = ThemeManager.shared
+    @ObservedObject private var themeManager = ThemeManager.shared
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label

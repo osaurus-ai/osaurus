@@ -30,6 +30,20 @@ struct FloatingInputCard: View {
     var personaId: UUID? = nil
     /// Window ID for targeted VAD notifications
     var windowId: UUID? = nil
+    /// Agent input state (nil = chat mode, non-nil = agent mode)
+    var agentInputState: AgentInputState? = nil
+    /// Queued message waiting to be injected (agent mode)
+    var pendingQueuedMessage: String? = nil
+    /// Callback to end the current task (agent mode)
+    var onEndTask: (() -> Void)? = nil
+    /// Callback to resume an in-progress issue (agent mode)
+    var onResume: (() -> Void)? = nil
+    /// Whether there's an issue that can be resumed (agent mode)
+    var canResume: Bool = false
+    /// Cumulative token usage for agent mode
+    var cumulativeTokens: Int? = nil
+    /// Hide context indicator in empty states
+    var hideContextIndicator: Bool = false
 
     // Observe managers for reactive updates
     @ObservedObject private var toolRegistry = ToolRegistry.shared
@@ -48,7 +62,7 @@ struct FloatingInputCard: View {
     @State private var cachedModelOptions: [ModelOption] = []
 
     // MARK: - Voice Input State
-    @StateObject private var whisperService = WhisperKitService.shared
+    @ObservedObject private var whisperService = WhisperKitService.shared
     @State private var voiceConfig = WhisperConfiguration.default
 
     // Pause detection state
@@ -82,7 +96,15 @@ struct FloatingInputCard: View {
     private var canSend: Bool {
         let hasText = !localText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         let hasImages = !pendingImages.isEmpty
-        return (hasText || hasImages) && !isStreaming
+        let hasContent = hasText || hasImages
+
+        // In agent mode, allow sending during streaming (will queue)
+        // but only if there isn't already a queued message
+        if agentInputState != nil && isStreaming {
+            return hasContent && pendingQueuedMessage == nil
+        }
+
+        return hasContent && !isStreaming
     }
 
     private var showPlaceholder: Bool {
@@ -580,8 +602,8 @@ struct FloatingInputCard: View {
                 capabilitiesSelectorChip
             }
 
-            // Context size indicator (when there's context)
-            if displayContextTokens > 0 {
+            // Context size indicator
+            if !hideContextIndicator && (displayContextTokens > 0 || (cumulativeTokens ?? 0) > 0) {
                 contextIndicatorChip
             }
 
@@ -594,27 +616,44 @@ struct FloatingInputCard: View {
 
     // MARK: - Context Indicator
 
+    @ViewBuilder
     private var contextIndicatorChip: some View {
-        HStack(spacing: 4) {
-            if let maxCtx = maxContextTokens {
-                Text("~\(formatTokenCount(displayContextTokens)) / \(formatTokenCount(maxCtx))")
+        // In agent mode, show cumulative usage; in chat mode, show context estimate
+        if let cumulative = cumulativeTokens, agentInputState != nil {
+            // Agent mode: show cumulative tokens used
+            HStack(spacing: 4) {
+                Text("\(formatTokenCount(cumulative))")
                     .font(.system(size: CGFloat(theme.captionSize) - 1, weight: .medium, design: .monospaced))
-                    .foregroundColor(theme.tertiaryText)
-            } else {
-                Text("~\(formatTokenCount(displayContextTokens))")
-                    .font(.system(size: CGFloat(theme.captionSize) - 1, weight: .medium, design: .monospaced))
-                    .foregroundColor(theme.tertiaryText)
-            }
+                    .foregroundColor(theme.accentColor)
 
-            Text("tokens")
-                .font(.system(size: CGFloat(theme.captionSize) - 1, weight: .regular))
-                .foregroundColor(theme.tertiaryText.opacity(0.7))
+                Text("used")
+                    .font(.system(size: CGFloat(theme.captionSize) - 1, weight: .regular))
+                    .foregroundColor(theme.tertiaryText.opacity(0.7))
+            }
+            .help("Total tokens consumed: \(cumulative) (input + output across all API calls)")
+        } else {
+            // Chat mode: show context estimate
+            HStack(spacing: 4) {
+                if let maxCtx = maxContextTokens {
+                    Text("~\(formatTokenCount(displayContextTokens)) / \(formatTokenCount(maxCtx))")
+                        .font(.system(size: CGFloat(theme.captionSize) - 1, weight: .medium, design: .monospaced))
+                        .foregroundColor(theme.tertiaryText)
+                } else {
+                    Text("~\(formatTokenCount(displayContextTokens))")
+                        .font(.system(size: CGFloat(theme.captionSize) - 1, weight: .medium, design: .monospaced))
+                        .foregroundColor(theme.tertiaryText)
+                }
+
+                Text("tokens")
+                    .font(.system(size: CGFloat(theme.captionSize) - 1, weight: .regular))
+                    .foregroundColor(theme.tertiaryText.opacity(0.7))
+            }
+            .help(
+                maxContextTokens != nil
+                    ? "Estimated context: ~\(displayContextTokens) / \(maxContextTokens!) tokens"
+                    : "Estimated context: ~\(displayContextTokens) tokens (messages + tools + input)"
+            )
         }
-        .help(
-            maxContextTokens != nil
-                ? "Estimated context: ~\(displayContextTokens) / \(maxContextTokens!) tokens"
-                : "Estimated context: ~\(displayContextTokens) tokens (messages + tools + input)"
-        )
     }
 
     /// Format token count for compact display (e.g., "1.2k", "15k")
@@ -724,9 +763,11 @@ struct FloatingInputCard: View {
         personaManager.effectiveSkillOverrides(for: effectivePersonaId)
     }
 
-    /// Count of enabled tools (with persona overrides applied)
+    /// Count of enabled tools (with persona overrides applied, excluding agent tools)
     private var enabledToolCount: Int {
-        toolRegistry.listTools(withOverrides: toolOverrides).filter { $0.enabled }.count
+        toolRegistry.listUserTools(withOverrides: toolOverrides)
+            .filter { $0.enabled }
+            .count
     }
 
     /// Count of enabled skills (with persona overrides applied)
@@ -914,6 +955,25 @@ struct FloatingInputCard: View {
         return true
     }
 
+    /// Dynamic placeholder text based on input state
+    private var placeholderText: String {
+        // Agent mode placeholders
+        if let state = agentInputState {
+            switch state {
+            case .noTask:
+                return "What do you want done?"
+            case .executing:
+                return pendingQueuedMessage != nil
+                    ? "Message queued..."
+                    : "Add context while it runs..."
+            case .idle:
+                return "What's next?"
+            }
+        }
+        // Chat mode placeholder
+        return supportsImages ? "Message or paste image..." : "Message..."
+    }
+
     private var textInputArea: some View {
         EditableTextView(
             text: $localText,
@@ -930,7 +990,7 @@ struct FloatingInputCard: View {
         .overlay(alignment: .topLeading) {
             // Placeholder - uses theme body size
             if showPlaceholder {
-                Text(supportsImages ? "Message or paste image..." : "Message...")
+                Text(placeholderText)
                     .font(.system(size: inputFontSize))
                     .foregroundColor(theme.placeholderText)
                     .padding(.leading, 6)
@@ -969,12 +1029,41 @@ struct FloatingInputCard: View {
 
             Spacer()
 
-            // Right side - Send/Stop button
-            actionButton
+            // Queued message indicator (agent mode only)
+            if pendingQueuedMessage != nil {
+                queuedIndicator
+            }
+
+            // Right side - Stop/Resume/End button + Send button
+            HStack(spacing: 8) {
+                if isStreaming {
+                    stopButton
+                } else if canResume {
+                    resumeButton
+                    endTaskButton
+                } else if agentInputState == .idle {
+                    endTaskButton
+                }
+                sendButton
+            }
         }
     }
 
-    // MARK: - Media Button
+    // MARK: - Action Buttons
+
+    private var queuedIndicator: some View {
+        HStack(spacing: 4) {
+            Image(systemName: "clock")
+                .font(.system(size: 10))
+            Text("Queued")
+                .font(.system(size: 10, weight: .medium))
+        }
+        .foregroundColor(theme.accentColor)
+        .padding(.horizontal, 8)
+        .padding(.vertical, 4)
+        .background(theme.accentColor.opacity(0.1))
+        .clipShape(Capsule())
+    }
 
     private var mediaButton: some View {
         Button(action: pickImage) {
@@ -997,58 +1086,96 @@ struct FloatingInputCard: View {
         .animation(.easeOut(duration: 0.1), value: pendingImages.count)
     }
 
-    // MARK: - Action Button
-
-    private var actionButton: some View {
-        Button(action: isStreaming ? onStop : syncAndSend) {
-            ZStack {
-                // Send icon - uses theme body size
-                Image(systemName: "arrow.up")
-                    .font(theme.font(size: CGFloat(theme.bodySize), weight: .semibold))
-                    .foregroundColor(isStreaming ? .white : theme.primaryBackground)
-                    .opacity(isStreaming ? 0 : 1)
-                    .scaleEffect(isStreaming ? 0.96 : 1)
-
-                // Stop icon
-                RoundedRectangle(cornerRadius: 3)
+    private var stopButton: some View {
+        Button(action: onStop) {
+            HStack(spacing: 4) {
+                RoundedRectangle(cornerRadius: 2)
                     .fill(.white)
-                    .frame(width: 10, height: 10)
-                    .opacity(isStreaming ? 1 : 0)
-                    .scaleEffect(isStreaming ? 1 : 0.96)
+                    .frame(width: 8, height: 8)
+                Text("Stop")
+                    .font(.system(size: 11, weight: .medium))
             }
-            .frame(width: 32, height: 32)
-            .background(buttonBackground)
-            .clipShape(Circle())
-            .shadow(
-                color: buttonShadowColor,
-                radius: 6,
-                x: 0,
-                y: 2
-            )
+            .foregroundColor(.white)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            .background(Color.red.opacity(0.9))
+            .clipShape(Capsule())
         }
         .buttonStyle(.plain)
-        .disabled(!canSend && !isStreaming)
-        .opacity(!canSend && !isStreaming ? 0.5 : 1)
-        .animation(.easeOut(duration: 0.15), value: isStreaming)
-        .animation(.easeOut(duration: 0.1), value: canSend)
+        .transition(.opacity.combined(with: .scale(scale: 0.95)))
     }
 
-    private var buttonBackground: some ShapeStyle {
-        if isStreaming {
-            return AnyShapeStyle(Color.red)
-        } else {
-            return AnyShapeStyle(
+    private var resumeButton: some View {
+        Button(action: { onResume?() }) {
+            HStack(spacing: 4) {
+                Image(systemName: "play.fill")
+                    .font(.system(size: 9, weight: .bold))
+                Text("Resume")
+                    .font(.system(size: 11, weight: .medium))
+            }
+            .foregroundColor(.white)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            .background(
                 LinearGradient(
                     colors: [theme.accentColor, theme.accentColor.opacity(0.85)],
                     startPoint: .top,
                     endPoint: .bottom
                 )
             )
+            .clipShape(Capsule())
         }
+        .buttonStyle(.plain)
+        .transition(.opacity.combined(with: .scale(scale: 0.95)))
     }
 
-    private var buttonShadowColor: Color {
-        isStreaming ? Color.red.opacity(0.4) : theme.accentColor.opacity(0.4)
+    private var endTaskButton: some View {
+        Button(action: { onEndTask?() }) {
+            HStack(spacing: 4) {
+                Image(systemName: "xmark")
+                    .font(.system(size: 9, weight: .bold))
+                Text("End")
+                    .font(.system(size: 11, weight: .medium))
+            }
+            .foregroundColor(theme.secondaryText)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            .background(theme.tertiaryBackground.opacity(0.8))
+            .clipShape(Capsule())
+            .overlay(
+                Capsule()
+                    .stroke(theme.primaryBorder.opacity(0.3), lineWidth: 1)
+            )
+        }
+        .buttonStyle(.plain)
+        .transition(.opacity.combined(with: .scale(scale: 0.95)))
+    }
+
+    private var sendButton: some View {
+        Button(action: syncAndSend) {
+            Image(systemName: "arrow.up")
+                .font(theme.font(size: CGFloat(theme.bodySize), weight: .semibold))
+                .foregroundColor(theme.primaryBackground)
+                .frame(width: 32, height: 32)
+                .background(
+                    LinearGradient(
+                        colors: [theme.accentColor, theme.accentColor.opacity(0.85)],
+                        startPoint: .top,
+                        endPoint: .bottom
+                    )
+                )
+                .clipShape(Circle())
+                .shadow(
+                    color: theme.accentColor.opacity(0.4),
+                    radius: 6,
+                    x: 0,
+                    y: 2
+                )
+        }
+        .buttonStyle(.plain)
+        .disabled(!canSend)
+        .opacity(canSend ? 1 : 0.5)
+        .animation(.easeOut(duration: 0.1), value: canSend)
     }
 
     // MARK: - Card Styling

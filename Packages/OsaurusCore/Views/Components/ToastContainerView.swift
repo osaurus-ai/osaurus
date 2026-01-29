@@ -28,7 +28,7 @@ final class ToastPassThroughView: NSView {
 
 /// Container that positions and animates toasts based on configuration
 public struct ToastContainerView: View {
-    @StateObject private var toastManager = ToastManager.shared
+    @ObservedObject private var toastManager = ToastManager.shared
     @Environment(\.theme) private var theme
 
     public init() {}
@@ -273,7 +273,7 @@ public final class ToastWindowController: NSObject {
 
 /// Content view for the toast overlay window
 struct ToastOverlayWindowContent: View {
-    @StateObject private var themeManager = ThemeManager.shared
+    @ObservedObject private var themeManager = ThemeManager.shared
 
     var body: some View {
         ToastContainerView()

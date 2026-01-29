@@ -140,6 +140,12 @@ final class ChatTurn: ObservableObject, Identifiable {
     var toolCallId: String? = nil
     /// Convenience map for UI to show tool results grouped under the assistant turn
     @Published var toolResults: [String: String] = [:]
+    /// Execution plan for agent mode (displayed as PlanBlockView)
+    var plan: ExecutionPlan? = nil
+    /// Current step index in the plan (for progress indication)
+    var currentPlanStep: Int? = nil
+    /// Pending clarification request for agent mode (displayed as ClarificationCardView)
+    var pendingClarification: ClarificationRequest? = nil
 
     // MARK: - Initializers
 

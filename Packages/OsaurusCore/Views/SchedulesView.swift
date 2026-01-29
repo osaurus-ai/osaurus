@@ -10,8 +10,8 @@ import SwiftUI
 // MARK: - Schedules View
 
 struct SchedulesView: View {
-    @StateObject private var themeManager = ThemeManager.shared
-    @StateObject private var scheduleManager = ScheduleManager.shared
+    @ObservedObject private var themeManager = ThemeManager.shared
+    @ObservedObject private var scheduleManager = ScheduleManager.shared
 
     private var theme: ThemeProtocol { themeManager.currentTheme }
 
@@ -353,7 +353,7 @@ private struct ScheduleUseCaseRow: View {
 
 private struct ScheduleCard: View {
     @Environment(\.theme) private var theme
-    @StateObject private var personaManager = PersonaManager.shared
+    @ObservedObject private var personaManager = PersonaManager.shared
 
     let schedule: Schedule
     let isRunning: Bool
@@ -1638,7 +1638,7 @@ private struct ScheduleEditorSheet: View {
     }
 
     @Environment(\.theme) private var theme
-    @StateObject private var personaManager = PersonaManager.shared
+    @ObservedObject private var personaManager = PersonaManager.shared
 
     let mode: Mode
     let onSave: (Schedule) -> Void

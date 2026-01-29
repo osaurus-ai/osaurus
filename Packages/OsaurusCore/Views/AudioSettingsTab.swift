@@ -12,10 +12,10 @@ import SwiftUI
 
 struct AudioSettingsTab: View {
     @Environment(\.theme) private var theme
-    @StateObject private var whisperService = WhisperKitService.shared
-    @StateObject private var modelManager = WhisperModelManager.shared
-    @StateObject private var audioInputManager = AudioInputManager.shared
-    @StateObject private var systemAudioManager = SystemAudioCaptureManager.shared
+    @ObservedObject private var whisperService = WhisperKitService.shared
+    @ObservedObject private var modelManager = WhisperModelManager.shared
+    @ObservedObject private var audioInputManager = AudioInputManager.shared
+    @ObservedObject private var systemAudioManager = SystemAudioCaptureManager.shared
 
     // Settings state
     @State private var languageHint: String = ""

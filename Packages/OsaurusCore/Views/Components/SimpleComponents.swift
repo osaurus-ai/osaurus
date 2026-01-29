@@ -474,7 +474,7 @@ private struct TabButton: View {
 // MARK: - System Resource Monitor
 struct SystemResourceMonitor: View {
     @Environment(\.theme) private var theme
-    @StateObject private var monitor = SystemMonitorService.shared
+    @ObservedObject private var monitor = SystemMonitorService.shared
     @State private var isHoveringCPU = false
     @State private var isHoveringRAM = false
     @State private var showResourcePopover = false

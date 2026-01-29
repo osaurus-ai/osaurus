@@ -117,7 +117,7 @@ enum ProviderPreset: String, CaseIterable, Identifiable {
 // MARK: - Main View
 
 struct RemoteProviderEditSheet: View {
-    @StateObject private var themeManager = ThemeManager.shared
+    @ObservedObject private var themeManager = ThemeManager.shared
     @Environment(\.dismiss) private var dismiss
 
     private var theme: ThemeProtocol { themeManager.currentTheme }
@@ -901,7 +901,7 @@ struct RemoteProviderEditSheet: View {
 // MARK: - Preset Pill
 
 private struct PresetPill: View {
-    @StateObject private var themeManager = ThemeManager.shared
+    @ObservedObject private var themeManager = ThemeManager.shared
     let preset: ProviderPreset
     let isSelected: Bool
     let action: () -> Void
@@ -972,7 +972,7 @@ private struct PresetPill: View {
 // MARK: - Compact Header Row
 
 private struct CompactHeaderRow: View {
-    @StateObject private var themeManager = ThemeManager.shared
+    @ObservedObject private var themeManager = ThemeManager.shared
     @Binding var header: RemoteProviderEditSheet.HeaderEntry
     let onDelete: () -> Void
 
@@ -1048,7 +1048,7 @@ private struct CompactHeaderRow: View {
 // MARK: - Provider TextField
 
 private struct ProviderTextField: View {
-    @StateObject private var themeManager = ThemeManager.shared
+    @ObservedObject private var themeManager = ThemeManager.shared
 
     let label: String
     let placeholder: String
@@ -1109,7 +1109,7 @@ private struct ProviderTextField: View {
 // MARK: - Provider Secure Field
 
 private struct ProviderSecureField: View {
-    @StateObject private var themeManager = ThemeManager.shared
+    @ObservedObject private var themeManager = ThemeManager.shared
 
     let placeholder: String
     @Binding var text: String

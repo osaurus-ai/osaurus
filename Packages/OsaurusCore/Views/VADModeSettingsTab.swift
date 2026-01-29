@@ -12,10 +12,10 @@ import SwiftUI
 
 struct VADModeSettingsTab: View {
     @Environment(\.theme) private var theme
-    @StateObject private var vadService = VADService.shared
-    @StateObject private var personaManager = PersonaManager.shared
-    @StateObject private var whisperService = WhisperKitService.shared
-    @StateObject private var modelManager = WhisperModelManager.shared
+    @ObservedObject private var vadService = VADService.shared
+    @ObservedObject private var personaManager = PersonaManager.shared
+    @ObservedObject private var whisperService = WhisperKitService.shared
+    @ObservedObject private var modelManager = WhisperModelManager.shared
 
     // Configuration state
     @State private var vadEnabled: Bool = false

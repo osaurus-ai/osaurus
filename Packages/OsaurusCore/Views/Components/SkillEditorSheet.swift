@@ -15,7 +15,7 @@ struct SkillEditorSheet: View {
         case edit(Skill)
     }
 
-    @StateObject private var themeManager = ThemeManager.shared
+    @ObservedObject private var themeManager = ThemeManager.shared
 
     let mode: Mode
     let onSave: (Skill) -> Void
@@ -475,7 +475,7 @@ struct SkillEditorSheet: View {
 // MARK: - Editor Section
 
 private struct SkillEditorSection<Content: View>: View {
-    @StateObject private var themeManager = ThemeManager.shared
+    @ObservedObject private var themeManager = ThemeManager.shared
 
     let title: String
     let icon: String
@@ -512,7 +512,7 @@ private struct SkillEditorSection<Content: View>: View {
 // MARK: - Styled Text Field
 
 private struct SkillStyledTextField: View {
-    @StateObject private var themeManager = ThemeManager.shared
+    @ObservedObject private var themeManager = ThemeManager.shared
 
     let placeholder: String
     @Binding var text: String
@@ -575,7 +575,7 @@ private struct SkillStyledTextField: View {
 // MARK: - Button Styles
 
 private struct SkillPrimaryButtonStyle: ButtonStyle {
-    @StateObject private var themeManager = ThemeManager.shared
+    @ObservedObject private var themeManager = ThemeManager.shared
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
@@ -592,7 +592,7 @@ private struct SkillPrimaryButtonStyle: ButtonStyle {
 }
 
 private struct SkillSecondaryButtonStyle: ButtonStyle {
-    @StateObject private var themeManager = ThemeManager.shared
+    @ObservedObject private var themeManager = ThemeManager.shared
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label

@@ -787,7 +787,7 @@ enum ThemedBackgroundStyle {
 // MARK: - Modifiers
 
 struct ThemedBackgroundModifier: ViewModifier {
-    @StateObject private var themeManager = ThemeManager.shared
+    @ObservedObject private var themeManager = ThemeManager.shared
     let style: ThemedBackgroundStyle
 
     func body(content: Content) -> some View {
@@ -809,7 +809,7 @@ struct ThemedBackgroundModifier: ViewModifier {
 }
 
 struct ThemedCardModifier: ViewModifier {
-    @StateObject private var themeManager = ThemeManager.shared
+    @ObservedObject private var themeManager = ThemeManager.shared
 
     func body(content: Content) -> some View {
         content

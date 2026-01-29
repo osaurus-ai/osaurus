@@ -2,8 +2,8 @@ import SwiftUI
 
 // MARK: - Configuration View
 struct ConfigurationView: View {
-    @StateObject private var themeManager = ThemeManager.shared
-    @StateObject private var personaManager = PersonaManager.shared
+    @ObservedObject private var themeManager = ThemeManager.shared
+    @ObservedObject private var personaManager = PersonaManager.shared
 
     /// Use computed property to always get the current theme from ThemeManager
     private var theme: ThemeProtocol { themeManager.currentTheme }
@@ -946,7 +946,7 @@ extension ConfigurationView {
 // MARK: - Toast Position Picker
 
 private struct ToastPositionPicker: View {
-    @StateObject private var themeManager = ThemeManager.shared
+    @ObservedObject private var themeManager = ThemeManager.shared
     @Binding var selection: ToastPosition
 
     @State private var isHovered = false
@@ -1016,7 +1016,7 @@ private struct ToastPositionPicker: View {
 // MARK: - Reusable Settings Components
 
 private struct SettingsSection<Content: View>: View {
-    @StateObject private var themeManager = ThemeManager.shared
+    @ObservedObject private var themeManager = ThemeManager.shared
 
     let title: String
     let icon: String
@@ -1051,7 +1051,7 @@ private struct SettingsSection<Content: View>: View {
 }
 
 private struct SettingsField<Content: View>: View {
-    @StateObject private var themeManager = ThemeManager.shared
+    @ObservedObject private var themeManager = ThemeManager.shared
 
     let label: String
     var hint: String? = nil
@@ -1075,7 +1075,7 @@ private struct SettingsField<Content: View>: View {
 }
 
 private struct SettingsSubsection<Content: View>: View {
-    @StateObject private var themeManager = ThemeManager.shared
+    @ObservedObject private var themeManager = ThemeManager.shared
 
     let label: String
     @ViewBuilder let content: () -> Content
@@ -1104,7 +1104,7 @@ private struct SettingsSubsection<Content: View>: View {
 // MARK: - Styled Settings Text Area
 
 private struct StyledSettingsTextArea: View {
-    @StateObject private var themeManager = ThemeManager.shared
+    @ObservedObject private var themeManager = ThemeManager.shared
 
     let label: String
     @Binding var text: String
@@ -1156,7 +1156,7 @@ private struct StyledSettingsTextArea: View {
 // MARK: - Styled Settings Text Field
 
 private struct StyledSettingsTextField: View {
-    @StateObject private var themeManager = ThemeManager.shared
+    @ObservedObject private var themeManager = ThemeManager.shared
 
     let label: String
     @Binding var text: String
@@ -1224,7 +1224,7 @@ private struct StyledSettingsTextField: View {
 }
 
 private struct SettingsToggle: View {
-    @StateObject private var themeManager = ThemeManager.shared
+    @ObservedObject private var themeManager = ThemeManager.shared
 
     let title: String
     let description: String
@@ -1260,7 +1260,7 @@ private struct SettingsToggle: View {
 }
 
 private struct SettingsDivider: View {
-    @StateObject private var themeManager = ThemeManager.shared
+    @ObservedObject private var themeManager = ThemeManager.shared
 
     var body: some View {
         Rectangle()
@@ -1270,7 +1270,7 @@ private struct SettingsDivider: View {
 }
 
 private struct SettingsButtonStyle: ButtonStyle {
-    @StateObject private var themeManager = ThemeManager.shared
+    @ObservedObject private var themeManager = ThemeManager.shared
     let isPrimary: Bool
 
     init(isPrimary: Bool = false) {
@@ -1300,9 +1300,9 @@ private struct SettingsButtonStyle: ButtonStyle {
 // MARK: - Voice Settings Section
 
 private struct VoiceSettingsSection: View {
-    @StateObject private var themeManager = ThemeManager.shared
-    @StateObject private var modelManager = WhisperModelManager.shared
-    @StateObject private var whisperService = WhisperKitService.shared
+    @ObservedObject private var themeManager = ThemeManager.shared
+    @ObservedObject private var modelManager = WhisperModelManager.shared
+    @ObservedObject private var whisperService = WhisperKitService.shared
 
     @State private var tempWordTimestamps: Bool = false
     @State private var hasLoadedConfig = false
@@ -1431,7 +1431,7 @@ private struct VoiceSettingsSection: View {
 // MARK: - Voice Settings Subsection
 
 private struct VoiceSettingsSubsection<Content: View>: View {
-    @StateObject private var themeManager = ThemeManager.shared
+    @ObservedObject private var themeManager = ThemeManager.shared
 
     let label: String
     @ViewBuilder let content: () -> Content
@@ -1459,7 +1459,7 @@ private struct VoiceSettingsSubsection<Content: View>: View {
 // MARK: - Voice Settings Text Field
 
 private struct VoiceSettingsTextField: View {
-    @StateObject private var themeManager = ThemeManager.shared
+    @ObservedObject private var themeManager = ThemeManager.shared
 
     let label: String
     @Binding var text: String
@@ -1528,7 +1528,7 @@ private struct VoiceSettingsTextField: View {
 // MARK: - Voice Model Picker
 
 private struct VoiceModelPicker: View {
-    @StateObject private var themeManager = ThemeManager.shared
+    @ObservedObject private var themeManager = ThemeManager.shared
     @Binding var selection: String
     let models: [WhisperModel]
 
@@ -1606,7 +1606,7 @@ private struct VoiceModelPicker: View {
 // MARK: - Voice Input Device Picker
 
 private struct VoiceInputDevicePicker: View {
-    @StateObject private var themeManager = ThemeManager.shared
+    @ObservedObject private var themeManager = ThemeManager.shared
     @Binding var selection: String?
     let devices: [AudioInputDevice]
 
@@ -1695,7 +1695,7 @@ private struct VoiceInputDevicePicker: View {
 // MARK: - Default Persona Picker
 
 private struct DefaultPersonaPicker: View {
-    @StateObject private var themeManager = ThemeManager.shared
+    @ObservedObject private var themeManager = ThemeManager.shared
     @Binding var selection: UUID
     let personas: [Persona]
 

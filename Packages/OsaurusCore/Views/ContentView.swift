@@ -10,7 +10,7 @@ import SwiftUI
 
 struct ContentView: View {
     @EnvironmentObject var server: ServerController
-    @StateObject private var themeManager = ThemeManager.shared
+    @ObservedObject private var themeManager = ThemeManager.shared
 
     /// Use computed property to always get the current theme from ThemeManager
     private var theme: ThemeProtocol { themeManager.currentTheme }
@@ -311,8 +311,8 @@ private struct BottomActionBar: View {
 // MARK: - VAD Toggle Button
 private struct VADToggleButton: View {
     @Environment(\.theme) private var theme
-    @StateObject private var vadService = VADService.shared
-    @StateObject private var whisperModelManager = WhisperModelManager.shared
+    @ObservedObject private var vadService = VADService.shared
+    @ObservedObject private var whisperModelManager = WhisperModelManager.shared
 
     @State private var isHovering = false
     @State private var pulseAnimation = false

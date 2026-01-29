@@ -49,13 +49,10 @@ final class ChatSession: ObservableObject {
     private var isDirty: Bool = false
 
     // MARK: - Memoization Cache
-    private var _cachedContentBlocks: [ContentBlock] = []
-    private var _lastTurnsCount: Int = 0
-    private var _lastTurnId: UUID?
-    private var _lastContentLength: Int = 0
-    private var _lastThinkingLength: Int = 0
+    private let blockMemoizer = BlockMemoizer()
     private var _cachedEstimatedTokens: Int = 0
     private var _tokenCacheValid: Bool = false
+    private var _lastTokenTurnsCount: Int = 0
 
     /// Callback when session needs to be saved (called after streaming completes)
     var onSessionChanged: (() -> Void)?
@@ -286,26 +283,9 @@ final class ChatSession: ObservableObject {
     /// Flattened content blocks for efficient LazyVStack rendering
     /// Each block is a paragraph, header, tool call, etc. that can be independently recycled
     ///
-    /// PERFORMANCE: During streaming, only regenerates blocks for the last turn instead of all blocks.
-    /// This reduces CPU usage from O(n) to O(1) per streaming update.
+    /// PERFORMANCE: Uses BlockMemoizer for incremental updates during streaming.
+    /// Only regenerates blocks for the last turn instead of all blocks (O(1) vs O(n)).
     var visibleBlocks: [ContentBlock] {
-        let currentCount = turns.count
-        let currentLastId = turns.last?.id
-        let currentContentLength = turns.last?.contentLength ?? 0
-        let currentThinkingLength = turns.last?.thinkingLength ?? 0
-
-        // Fast path: cache is completely valid
-        let cacheValid =
-            currentCount == _lastTurnsCount
-            && currentLastId == _lastTurnId
-            && currentContentLength == _lastContentLength
-            && currentThinkingLength == _lastThinkingLength
-            && !_cachedContentBlocks.isEmpty
-
-        if cacheValid {
-            return _cachedContentBlocks
-        }
-
         // Get persona name for assistant messages
         let persona = PersonaManager.shared.persona(for: personaId ?? Persona.defaultId)
         let displayName = persona?.isBuiltIn == true ? "Assistant" : (persona?.name ?? "Assistant")
@@ -313,74 +293,18 @@ final class ChatSession: ObservableObject {
         // Determine streaming turn ID
         let streamingTurnId = isStreaming ? turns.last?.id : nil
 
-        // Incremental update path: only content/thinking changed for the same last turn
-        // This is the hot path during streaming - avoid regenerating all blocks
-        let canIncrementalUpdate =
-            isStreaming
-            && currentCount == _lastTurnsCount
-            && currentLastId == _lastTurnId
-            && currentLastId != nil
-            && !_cachedContentBlocks.isEmpty
-            && (currentContentLength != _lastContentLength || currentThinkingLength != _lastThinkingLength)
-
-        let blocks: [ContentBlock]
-        if canIncrementalUpdate {
-            // INCREMENTAL UPDATE: Only regenerate blocks for the last turn
-            // Find where the last turn's blocks start (look for first block with last turn's ID)
-            let lastTurnId = currentLastId!
-            var prefixEndIndex = _cachedContentBlocks.count
-
-            // Find the first block belonging to the last turn
-            for (index, block) in _cachedContentBlocks.enumerated() {
-                if block.turnId == lastTurnId {
-                    prefixEndIndex = index
-                    break
-                }
-            }
-
-            // Keep blocks before the last turn
-            let prefixBlocks = Array(_cachedContentBlocks.prefix(prefixEndIndex))
-
-            // Regenerate only the last turn's blocks
-            // Find previous non-tool turn for correct header detection
-            // (tool turns are filtered in generateBlocks, so we must match that behavior)
-            let lastTurnBlocks = ContentBlock.generateBlocks(
-                from: [turns.last!],
-                streamingTurnId: streamingTurnId,
-                personaName: displayName,
-                previousTurn: turns.dropLast().last { $0.role != .tool }
-            )
-
-            blocks = prefixBlocks + lastTurnBlocks
-        } else {
-            // FULL REGENERATION: Turns changed or initial generation
-            blocks = ContentBlock.generateBlocks(
-                from: turns,
-                streamingTurnId: streamingTurnId,
-                personaName: displayName
-            )
-        }
-
-        // Update cache
-        _cachedContentBlocks = blocks
-        _lastTurnsCount = currentCount
-        _lastTurnId = currentLastId
-        _lastContentLength = currentContentLength
-        _lastThinkingLength = currentThinkingLength
-
-        let maxBlocksDuringStreaming = 80
-        if isStreaming && blocks.count > maxBlocksDuringStreaming {
-            return Array(blocks.suffix(maxBlocksDuringStreaming))
-        }
-
-        return blocks
+        return blockMemoizer.blocks(
+            from: turns,
+            streamingTurnId: streamingTurnId,
+            personaName: displayName
+        )
     }
 
     /// Estimated token count for current session context (rough heuristic: ~4 chars per token)
     /// Memoized - only recomputes when turns/tools change or streaming ends
     var estimatedContextTokens: Int {
         // Use cache if valid and not streaming (during streaming, estimate changes frequently)
-        if _tokenCacheValid && !isStreaming && turns.count == _lastTurnsCount {
+        if _tokenCacheValid && !isStreaming && turns.count == _lastTokenTurnsCount {
             return _cachedEstimatedTokens
         }
 
@@ -456,6 +380,7 @@ final class ChatSession: ObservableObject {
         // Update cache
         _cachedEstimatedTokens = total
         _tokenCacheValid = true
+        _lastTokenTurnsCount = turns.count
 
         return total
     }
@@ -505,11 +430,7 @@ final class ChatSession: ObservableObject {
         // Keep current personaId - don't reset when creating new chat within same persona
 
         // Clear caches
-        _cachedContentBlocks = []
-        _lastTurnsCount = 0
-        _lastTurnId = nil
-        _lastContentLength = 0
-        _lastThinkingLength = 0
+        blockMemoizer.clear()
         _tokenCacheValid = false
 
         // Apply model from persona or global config (don't auto-persist, it's already saved)
@@ -1324,7 +1245,7 @@ struct ChatView: View {
     // MARK: - Window State
 
     /// Per-window state container (isolates this window from shared singletons)
-    @StateObject private var windowState: ChatWindowState
+    @ObservedObject private var windowState: ChatWindowState
 
     // MARK: - Environment & State
 
@@ -1353,7 +1274,7 @@ struct ChatView: View {
 
     /// Multi-window initializer with window state
     init(windowState: ChatWindowState) {
-        _windowState = StateObject(wrappedValue: windowState)
+        _windowState = ObservedObject(wrappedValue: windowState)
         _observedSession = ObservedObject(wrappedValue: windowState.session)
     }
 
@@ -1369,7 +1290,7 @@ struct ChatView: View {
             personaId: personaId,
             sessionData: initialSessionData
         )
-        _windowState = StateObject(wrappedValue: state)
+        _windowState = ObservedObject(wrappedValue: state)
         _observedSession = ObservedObject(wrappedValue: state.session)
     }
 
@@ -1381,11 +1302,22 @@ struct ChatView: View {
             personaId: Persona.defaultId,
             sessionData: nil
         )
-        _windowState = StateObject(wrappedValue: state)
+        _windowState = ObservedObject(wrappedValue: state)
         _observedSession = ObservedObject(wrappedValue: state.session)
     }
 
     var body: some View {
+        // Switch between Chat and Agent modes
+        if windowState.mode == .agent, let agentSession = windowState.agentSession {
+            AgentView(windowState: windowState, session: agentSession)
+        } else {
+            chatModeContent
+        }
+    }
+
+    /// Chat mode content - the original ChatView implementation
+    @ViewBuilder
+    private var chatModeContent: some View {
         GeometryReader { proxy in
             let sidebarWidth: CGFloat = showSidebar ? 240 : 0
             let chatWidth = proxy.size.width - sidebarWidth
@@ -1550,6 +1482,7 @@ struct ChatView: View {
 
             // Register close callback with ChatWindowManager
             ChatWindowManager.shared.setCloseCallback(for: windowState.windowId) { [weak windowState] in
+                windowState?.cleanup()
                 windowState?.session.save()
             }
         }
@@ -1719,9 +1652,9 @@ struct ChatView: View {
 
             // Header content on top
             HStack(spacing: 12) {
-                // Sidebar toggle
+                // Sidebar toggle - far left
                 HeaderActionButton(
-                    icon: showSidebar ? "sidebar.left" : "sidebar.left",
+                    icon: "sidebar.left",
                     help: showSidebar ? "Hide sidebar" : "Show sidebar",
                     action: {
                         withAnimation(theme.animationQuick()) {
@@ -1730,22 +1663,14 @@ struct ChatView: View {
                     }
                 )
 
+                // Mode toggle - Agent mode (to the right of sidebar toggle)
+                ModeToggleButton(currentMode: .chat) {
+                    windowState.switchMode(to: .agent)
+                }
+
                 // Model indicator
                 if let model = session.selectedModel, session.modelOptions.count <= 1 {
-                    HStack(spacing: 6) {
-                        Circle()
-                            .fill(Color.green)
-                            .frame(width: 6, height: 6)
-                        Text(displayModelName(model))
-                            .font(.system(size: 12, weight: .medium))
-                            .foregroundColor(theme.secondaryText)
-                    }
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 5)
-                    .background(
-                        Capsule()
-                            .fill(theme.secondaryBackground.opacity(0.6))
-                    )
+                    ModeIndicatorBadge(style: .model(name: displayModelName(model)))
                 }
 
                 Spacer()
@@ -1799,7 +1724,7 @@ struct ChatView: View {
                 width: width,
                 personaName: displayName,
                 isStreaming: session.isStreaming,
-                turnsCount: session.turns.count,
+                scrollTrigger: session.turns.count,
                 lastAssistantTurnId: lastAssistantTurnId,
                 onCopy: copyTurnContent,
                 onRegenerate: regenerateTurn,
@@ -1949,131 +1874,8 @@ struct ChatView: View {
     }
 }
 
-// MARK: - Header Action Button
-
-private struct HeaderActionButton: View {
-    let icon: String
-    let help: String
-    let action: () -> Void
-
-    @State private var isHovered = false
-    @Environment(\.theme) private var theme
-
-    var body: some View {
-        Button(action: action) {
-            Image(systemName: icon)
-                .font(.system(size: 12, weight: .medium))
-                .foregroundColor(isHovered ? theme.primaryText : theme.secondaryText)
-                .frame(width: 28, height: 28)
-                .background(
-                    Circle()
-                        .fill(theme.secondaryBackground.opacity(isHovered ? 0.8 : 0.5))
-                )
-        }
-        .buttonStyle(.plain)
-        .onHover { hovering in
-            withAnimation(theme.animationQuick()) {
-                isHovered = hovering
-            }
-        }
-        .help(help)
-    }
-}
-
-// MARK: - Settings Button
-
-private struct SettingsButton: View {
-    let action: () -> Void
-
-    @State private var isHovered = false
-    @Environment(\.theme) private var theme
-
-    var body: some View {
-        Button(action: action) {
-            Image(systemName: "gearshape.fill")
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundColor(isHovered ? theme.primaryText : theme.secondaryText)
-                .frame(width: 28, height: 28)
-                .background(
-                    Circle()
-                        .fill(theme.secondaryBackground.opacity(isHovered ? 0.8 : 0.5))
-                )
-        }
-        .buttonStyle(.plain)
-        .onHover { hovering in
-            withAnimation(theme.animationQuick()) {
-                isHovered = hovering
-            }
-        }
-        .help("Settings")
-    }
-}
-
-// MARK: - Close Button
-
-private struct CloseButton: View {
-    let action: () -> Void
-
-    @State private var isHovered = false
-    @Environment(\.theme) private var theme
-
-    var body: some View {
-        Button(action: action) {
-            Image(systemName: "xmark")
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundColor(isHovered ? theme.primaryText : theme.secondaryText)
-                .frame(width: 28, height: 28)
-                .background(
-                    Circle()
-                        .fill(theme.secondaryBackground.opacity(isHovered ? 0.8 : 0.5))
-                )
-        }
-        .buttonStyle(.plain)
-        .onHover { hovering in
-            withAnimation(theme.animationQuick()) {
-                isHovered = hovering
-            }
-        }
-        .help("Close")
-    }
-}
-
-// MARK: - Pin Button
-
-private struct PinButton: View {
-    /// Window ID for this window
-    let windowId: UUID
-
-    @State private var isHovered = false
-    @State private var isPinned = false
-    @Environment(\.theme) private var theme
-
-    var body: some View {
-        Button {
-            isPinned.toggle()
-            // Set window level via ChatWindowManager
-            ChatWindowManager.shared.setWindowPinned(id: windowId, pinned: isPinned)
-        } label: {
-            Image(systemName: isPinned ? "pin.fill" : "pin")
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundColor(isPinned ? theme.accentColor : (isHovered ? theme.primaryText : theme.secondaryText))
-                .frame(width: 28, height: 28)
-                .background(
-                    Circle()
-                        .fill(theme.secondaryBackground.opacity(isHovered ? 0.8 : 0.5))
-                )
-                .rotationEffect(.degrees(isPinned ? 0 : 45))
-        }
-        .buttonStyle(.plain)
-        .onHover { hovering in
-            withAnimation(theme.animationQuick()) {
-                isHovered = hovering
-            }
-        }
-        .help(isPinned ? "Unpin from top" : "Pin to top")
-        .animation(theme.animationQuick(), value: isPinned)
-    }
-}
+// MARK: - Shared Header Components
+// HeaderActionButton, SettingsButton, CloseButton, PinButton are now in SharedHeaderComponents.swift
 
 // MARK: - Window Accessor Helper
 

@@ -134,7 +134,7 @@ private extension SidebarNavigation {
     }
 
     var searchField: some View {
-        SidebarSearchField(text: $searchText)
+        SettingsSidebarSearchField(text: $searchText)
             .padding(.bottom, 8)
     }
 
@@ -337,8 +337,8 @@ struct SidebarSectionHeader: View {
 
 // MARK: - Sidebar Search Field
 
-/// Search field component for the sidebar.
-struct SidebarSearchField: View {
+/// Search field component for the settings sidebar.
+private struct SettingsSidebarSearchField: View {
     @Environment(\.theme) private var theme
     @Binding var text: String
     @FocusState private var isFocused: Bool

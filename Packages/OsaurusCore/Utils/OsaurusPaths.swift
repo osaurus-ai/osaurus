@@ -97,6 +97,11 @@ public enum OsaurusPaths {
         appSupportRoot().appendingPathComponent("artifacts", isDirectory: true)
     }
 
+    /// Agent data directory
+    public static func agentData() -> URL {
+        appSupportRoot().appendingPathComponent("agent", isDirectory: true)
+    }
+
     // MARK: - Legacy Paths
 
     /// Legacy Tools directory
@@ -122,6 +127,7 @@ public enum OsaurusPaths {
     public static func mcpProviderConfigFile() -> URL { providers().appendingPathComponent("mcp.json") }
     public static func activePersonaFile() -> URL { personas().appendingPathComponent("active.txt") }
     public static func activeThemeFile() -> URL { themes().appendingPathComponent("active.json") }
+    public static func agentDatabaseFile() -> URL { agentData().appendingPathComponent("agent.db") }
 
     // MARK: - File Path Helpers
 
@@ -193,7 +199,7 @@ public enum OsaurusPaths {
         [
             config(), voiceConfig(), providers(), personas(), themes(),
             sessions(), schedules(), plugins(), pluginSpecs(), runtime(),
-            legacyTools(), legacyPluginSpecs(),
+            legacyTools(), legacyPluginSpecs(), agentData(),
         ].forEach { ensureExistsSilent($0) }
     }
 
