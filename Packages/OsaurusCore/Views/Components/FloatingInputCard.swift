@@ -965,9 +965,9 @@ struct FloatingInputCard: View {
             case .executing:
                 return pendingQueuedMessage != nil
                     ? "Message queued..."
-                    : "Type to add context (sent at next step)..."
+                    : "Add context while it runs..."
             case .idle:
-                return "Add follow-up request..."
+                return "What's next?"
             }
         }
         // Chat mode placeholder
