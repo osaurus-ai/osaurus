@@ -134,6 +134,7 @@ public final class AgentDatabase: @unchecked Sendable {
                     task_id TEXT NOT NULL,
                     title TEXT NOT NULL,
                     description TEXT,
+                    context TEXT,
                     status TEXT NOT NULL DEFAULT 'open',
                     priority INTEGER NOT NULL DEFAULT 2,
                     type TEXT NOT NULL DEFAULT 'task',

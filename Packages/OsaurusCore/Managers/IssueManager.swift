@@ -140,6 +140,7 @@ public final class IssueManager: ObservableObject {
         taskId: String,
         title: String,
         description: String? = nil,
+        context: String? = nil,
         priority: IssuePriority = .p2,
         type: IssueType = .task
     ) async throws -> Issue {
@@ -147,6 +148,7 @@ public final class IssueManager: ObservableObject {
             taskId: taskId,
             title: title,
             description: description,
+            context: context,
             priority: priority,
             type: type
         )
@@ -528,6 +530,7 @@ public final class IssueManager: ObservableObject {
         taskId: String,
         title: String,
         description: String? = nil,
+        context: String? = nil,
         priority: IssuePriority = .p2,
         type: IssueType = .task
     ) async -> Issue? {
@@ -536,6 +539,7 @@ public final class IssueManager: ObservableObject {
                 taskId: taskId,
                 title: title,
                 description: description,
+                context: context,
                 priority: priority,
                 type: type
             )

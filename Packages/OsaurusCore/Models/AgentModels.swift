@@ -108,6 +108,8 @@ public struct Issue: Identifiable, Codable, Sendable, Equatable {
     public var title: String
     /// Detailed description of the work
     public var description: String?
+    /// Conversation context from prior interactions
+    public var context: String?
     /// Current status
     public var status: IssueStatus
     /// Priority level
@@ -126,6 +128,7 @@ public struct Issue: Identifiable, Codable, Sendable, Equatable {
         taskId: String,
         title: String,
         description: String? = nil,
+        context: String? = nil,
         status: IssueStatus = .open,
         priority: IssuePriority = .p2,
         type: IssueType = .task,
@@ -137,6 +140,7 @@ public struct Issue: Identifiable, Codable, Sendable, Equatable {
         self.taskId = taskId
         self.title = title
         self.description = description
+        self.context = context
         self.status = status
         self.priority = priority
         self.type = type

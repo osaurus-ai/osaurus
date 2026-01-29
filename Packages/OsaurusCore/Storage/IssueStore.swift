@@ -19,8 +19,8 @@ public struct IssueStore {
     @discardableResult
     public static func createIssue(_ issue: Issue) throws -> Issue {
         let sql = """
-                INSERT INTO issues (id, task_id, title, description, status, priority, type, result, created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO issues (id, task_id, title, description, context, status, priority, type, result, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """
 
         try AgentDatabase.shared.prepareAndExecute(
@@ -30,12 +30,13 @@ public struct IssueStore {
                 AgentDatabase.bindText(stmt, index: 2, value: issue.taskId)
                 AgentDatabase.bindText(stmt, index: 3, value: issue.title)
                 AgentDatabase.bindText(stmt, index: 4, value: issue.description)
-                AgentDatabase.bindText(stmt, index: 5, value: issue.status.rawValue)
-                AgentDatabase.bindInt(stmt, index: 6, value: issue.priority.rawValue)
-                AgentDatabase.bindText(stmt, index: 7, value: issue.type.rawValue)
-                AgentDatabase.bindText(stmt, index: 8, value: issue.result)
-                AgentDatabase.bindDate(stmt, index: 9, value: issue.createdAt)
-                AgentDatabase.bindDate(stmt, index: 10, value: issue.updatedAt)
+                AgentDatabase.bindText(stmt, index: 5, value: issue.context)
+                AgentDatabase.bindText(stmt, index: 6, value: issue.status.rawValue)
+                AgentDatabase.bindInt(stmt, index: 7, value: issue.priority.rawValue)
+                AgentDatabase.bindText(stmt, index: 8, value: issue.type.rawValue)
+                AgentDatabase.bindText(stmt, index: 9, value: issue.result)
+                AgentDatabase.bindDate(stmt, index: 10, value: issue.createdAt)
+                AgentDatabase.bindDate(stmt, index: 11, value: issue.updatedAt)
             }
         ) { stmt in
             let result = sqlite3_step(stmt)
@@ -70,7 +71,7 @@ public struct IssueStore {
     public static func updateIssue(_ issue: Issue) throws {
         let sql = """
                 UPDATE issues
-                SET title = ?, description = ?, status = ?, priority = ?, type = ?, result = ?, updated_at = ?
+                SET title = ?, description = ?, context = ?, status = ?, priority = ?, type = ?, result = ?, updated_at = ?
                 WHERE id = ?
             """
 
@@ -79,12 +80,13 @@ public struct IssueStore {
             bind: { stmt in
                 AgentDatabase.bindText(stmt, index: 1, value: issue.title)
                 AgentDatabase.bindText(stmt, index: 2, value: issue.description)
-                AgentDatabase.bindText(stmt, index: 3, value: issue.status.rawValue)
-                AgentDatabase.bindInt(stmt, index: 4, value: issue.priority.rawValue)
-                AgentDatabase.bindText(stmt, index: 5, value: issue.type.rawValue)
-                AgentDatabase.bindText(stmt, index: 6, value: issue.result)
-                AgentDatabase.bindDate(stmt, index: 7, value: Date())
-                AgentDatabase.bindText(stmt, index: 8, value: issue.id)
+                AgentDatabase.bindText(stmt, index: 3, value: issue.context)
+                AgentDatabase.bindText(stmt, index: 4, value: issue.status.rawValue)
+                AgentDatabase.bindInt(stmt, index: 5, value: issue.priority.rawValue)
+                AgentDatabase.bindText(stmt, index: 6, value: issue.type.rawValue)
+                AgentDatabase.bindText(stmt, index: 7, value: issue.result)
+                AgentDatabase.bindDate(stmt, index: 8, value: Date())
+                AgentDatabase.bindText(stmt, index: 9, value: issue.id)
             }
         ) { stmt in
             let result = sqlite3_step(stmt)
@@ -567,23 +569,25 @@ public struct IssueStore {
         guard let id = AgentDatabase.getText(stmt, column: 0),
             let taskId = AgentDatabase.getText(stmt, column: 1),
             let title = AgentDatabase.getText(stmt, column: 2),
-            let statusRaw = AgentDatabase.getText(stmt, column: 4),
+            let statusRaw = AgentDatabase.getText(stmt, column: 5),
             let status = IssueStatus(rawValue: statusRaw),
-            let typeRaw = AgentDatabase.getText(stmt, column: 6),
+            let typeRaw = AgentDatabase.getText(stmt, column: 7),
             let type = IssueType(rawValue: typeRaw),
-            let createdAt = AgentDatabase.getDate(stmt, column: 8),
-            let updatedAt = AgentDatabase.getDate(stmt, column: 9)
+            let createdAt = AgentDatabase.getDate(stmt, column: 9),
+            let updatedAt = AgentDatabase.getDate(stmt, column: 10)
         else { return nil }
 
         let description = AgentDatabase.getText(stmt, column: 3)
-        let priority = IssuePriority(rawValue: AgentDatabase.getInt(stmt, column: 5)) ?? .p2
-        let result = AgentDatabase.getText(stmt, column: 7)
+        let context = AgentDatabase.getText(stmt, column: 4)
+        let priority = IssuePriority(rawValue: AgentDatabase.getInt(stmt, column: 6)) ?? .p2
+        let result = AgentDatabase.getText(stmt, column: 8)
 
         return Issue(
             id: id,
             taskId: taskId,
             title: title,
             description: description,
+            context: context,
             status: status,
             priority: priority,
             type: type,

@@ -112,6 +112,37 @@ public final class AgentSession: ObservableObject {
         }
     }
 
+    /// Builds context from completed issues and artifacts for follow-up issues
+    private func buildContextFromCompletedIssues(taskId: String) -> String? {
+        var parts: [String] = []
+
+        // Get recent completed issues (up to 3, chronological order)
+        if let issues = try? IssueStore.listIssues(forTask: taskId)
+            .filter({ $0.status == .closed })
+            .sorted(by: { $0.updatedAt > $1.updatedAt })
+            .prefix(3)
+            .reversed()
+        {
+            for issue in issues {
+                var part = "[Task]: \(issue.title)"
+                if let result = issue.result, !result.isEmpty {
+                    let truncated = result.count > 1500 ? String(result.prefix(1500)) + "..." : result
+                    part += "\n[Result]: \(truncated)"
+                }
+                parts.append(part)
+            }
+        }
+
+        // Include final artifact if available
+        if let artifact = try? IssueStore.getFinalArtifact(forTask: taskId) {
+            let content =
+                artifact.content.count > 2000 ? String(artifact.content.prefix(2000)) + "..." : artifact.content
+            parts.append("[Artifact - \(artifact.filename)]:\n\(content)")
+        }
+
+        return parts.isEmpty ? nil : parts.joined(separator: "\n\n")
+    }
+
     // MARK: - Execution State
 
     /// Whether execution is in progress
@@ -283,12 +314,16 @@ public final class AgentSession: ObservableObject {
 
     /// Adds a new issue to an existing task
     private func addIssueToTask(query: String, task: AgentTask) async throws {
-        // Create issue on the current task
+        // Build context from completed issues in this task
+        let context = buildContextFromCompletedIssues(taskId: task.id)
+
+        // Create issue on the current task with context
         guard
             let issue = await IssueManager.shared.createIssueSafe(
                 taskId: task.id,
                 title: query,
                 description: query,
+                context: context,
                 priority: .p2,
                 type: .task
             )

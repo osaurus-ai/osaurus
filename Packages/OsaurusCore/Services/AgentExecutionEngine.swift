@@ -165,10 +165,13 @@ public actor AgentExecutionEngine {
             toolList += "\n- `\(tool.function.name)`: \(desc)"
         }
 
+        // Include prior context if available
+        let contextSection = issue.context.map { "\n**Prior Context:**\n\($0)\n" } ?? ""
+
         return """
             I need to complete the following task:
 
-            **Title:** \(issue.title)\(issue.description.map { "\n**Description:** \($0)" } ?? "")
+            **Title:** \(issue.title)\(issue.description.map { "\n**Description:** \($0)" } ?? "")\(contextSection)
 
             Available tools:\(toolList)
 

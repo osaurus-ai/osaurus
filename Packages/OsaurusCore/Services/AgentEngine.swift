@@ -468,6 +468,11 @@ public actor AgentEngine {
         var generatedArtifacts: [Artifact] = []
         var finalArtifact: Artifact?
 
+        // Prepend prior context if available
+        if let context = issue.context {
+            messages.append(ChatMessage(role: "user", content: "[Prior Context]:\n\(context)"))
+        }
+
         // Execute each step
         for stepIndex in 0 ..< plan.steps.count {
             guard isExecuting else {
