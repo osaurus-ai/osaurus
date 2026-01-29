@@ -35,25 +35,71 @@ public final class AgentSession: ObservableObject {
     /// Turns for the selected issue (may be live or historical)
     private var selectedIssueTurns: [ChatTurn] = []
 
-    /// Trigger for UI updates when turns change
+    /// Trigger for UI updates when turns change (needed because turns arrays are not @Published)
     @Published private var turnsVersion: Int = 0
 
-    /// Content blocks for the selected issue - computed from selectedIssueTurns
-    /// Uses ContentBlock.generateBlocks() for consistent rendering with ChatView
+    /// Content blocks for the selected issue - computed from current turns
     var issueBlocks: [ContentBlock] {
-        // Use live data if viewing the active issue, otherwise use loaded turns
-        let turns: [ChatTurn]
-        if let activeId = activeIssue?.id, selectedIssueId == activeId {
-            turns = liveExecutionTurns
-        } else {
-            turns = selectedIssueTurns
-        }
         let isStreamingThisIssue = isExecuting && activeIssue?.id == selectedIssueId
         return ContentBlock.generateBlocks(
-            from: turns,
-            streamingTurnId: isStreamingThisIssue ? turns.last?.id : nil,
+            from: currentTurns,
+            streamingTurnId: isStreamingThisIssue ? currentTurns.last?.id : nil,
             personaName: windowState?.cachedPersonaDisplayName ?? "Agent"
         )
+    }
+
+    /// Returns the appropriate turns based on current state
+    private var currentTurns: [ChatTurn] {
+        // Use live data if viewing the actively executing issue
+        if let activeId = activeIssue?.id, selectedIssueId == activeId {
+            return liveExecutionTurns
+        }
+        return selectedIssueTurns
+    }
+
+    // MARK: - Turns Management
+
+    /// Preserves live execution turns to selected turns (call before clearing activeIssue)
+    private func preserveLiveExecutionTurns() {
+        selectedIssueTurns = liveExecutionTurns
+        notifyTurnsChanged()
+    }
+
+    /// Clears all turns state
+    private func clearTurns() {
+        liveExecutionTurns = []
+        selectedIssueTurns = []
+        notifyTurnsChanged()
+    }
+
+    /// Notifies observers that turns have changed
+    private func notifyTurnsChanged() {
+        turnsVersion += 1
+    }
+
+    /// Returns the last assistant turn, or creates one if needed
+    private func lastAssistantTurn() -> ChatTurn {
+        if let turn = liveExecutionTurns.last(where: { $0.role == .assistant }) {
+            return turn
+        }
+        let turn = ChatTurn(role: .assistant, content: "")
+        liveExecutionTurns.append(turn)
+        return turn
+    }
+
+    /// Appends content to the last assistant turn and notifies if viewing this issue
+    private func appendToAssistantTurn(_ content: String, forIssue issueId: String? = nil) {
+        let turn = lastAssistantTurn()
+        turn.appendContent(content)
+        turn.notifyContentChanged()
+        notifyIfSelected(issueId)
+    }
+
+    /// Notifies turns changed if the given issue is selected (or always if issueId is nil)
+    private func notifyIfSelected(_ issueId: String?) {
+        if issueId == nil || selectedIssueId == issueId {
+            notifyTurnsChanged()
+        }
     }
 
     // MARK: - Execution State
@@ -285,6 +331,40 @@ public final class AgentSession: ObservableObject {
     public func executeIssue(_ issue: Issue, withRetry: Bool = true) async {
         guard !isExecuting else { return }
 
+        resetExecutionState(for: issue)
+
+        let config = buildExecutionConfig()
+        let tools = ToolRegistry.shared.specs(withOverrides: config.toolOverrides)
+
+        executionTask = Task {
+            do {
+                let result =
+                    if withRetry {
+                        try await AgentEngine.shared.executeWithRetry(
+                            issueId: issue.id,
+                            model: config.model,
+                            systemPrompt: config.systemPrompt,
+                            tools: tools,
+                            toolOverrides: config.toolOverrides
+                        )
+                    } else {
+                        try await AgentEngine.shared.resume(
+                            issueId: issue.id,
+                            model: config.model,
+                            systemPrompt: config.systemPrompt,
+                            tools: tools,
+                            toolOverrides: config.toolOverrides
+                        )
+                    }
+                await MainActor.run { self.handleExecutionResult(result) }
+            } catch {
+                await MainActor.run { self.handleExecutionError(error, issue: issue) }
+            }
+        }
+    }
+
+    /// Resets execution state for a new issue
+    private func resetExecutionState(for issue: Issue) {
         isExecuting = true
         activeIssue = issue
         streamingContent = ""
@@ -293,74 +373,30 @@ public final class AgentSession: ObservableObject {
         isRetrying = false
         errorMessage = nil
         failedIssue = nil
+    }
 
-        // Get execution parameters
+    /// Builds execution configuration from current state
+    private func buildExecutionConfig() -> (model: String, systemPrompt: String, toolOverrides: [String: Bool]?) {
         let systemPrompt = windowState?.cachedSystemPrompt ?? ""
 
-        // Get the model - prefer selectedModel, fallback to persona's model, then window state's model
-        let model: String
-        if let selected = selectedModel, !selected.isEmpty {
-            model = selected
-        } else if let wsModel = windowState?.session.selectedModel, !wsModel.isEmpty {
-            model = wsModel
-        } else {
-            // Get from persona configuration
-            let persona = PersonaManager.shared.persona(for: personaId)
-            model = persona?.defaultModel ?? "default"
-        }
+        // Model priority: selectedModel > windowState model > persona default
+        let model =
+            if let selected = selectedModel, !selected.isEmpty {
+                selected
+            } else if let wsModel = windowState?.session.selectedModel, !wsModel.isEmpty {
+                wsModel
+            } else {
+                PersonaManager.shared.persona(for: personaId)?.defaultModel ?? "default"
+            }
 
-        // Get persona-specific tool overrides
         let toolOverrides = PersonaManager.shared.effectiveToolOverrides(for: personaId)
 
-        // Get tools with persona overrides applied
-        let tools = await MainActor.run {
-            ToolRegistry.shared.specs(withOverrides: toolOverrides)
-        }
-
-        executionTask = Task {
-            do {
-                let result: ExecutionResult
-                if withRetry {
-                    result = try await AgentEngine.shared.executeWithRetry(
-                        issueId: issue.id,
-                        model: model,
-                        systemPrompt: systemPrompt,
-                        tools: tools,
-                        toolOverrides: toolOverrides
-                    )
-                } else {
-                    result = try await AgentEngine.shared.resume(
-                        issueId: issue.id,
-                        model: model,
-                        systemPrompt: systemPrompt,
-                        tools: tools,
-                        toolOverrides: toolOverrides
-                    )
-                }
-
-                await MainActor.run {
-                    self.handleExecutionResult(result)
-                }
-            } catch {
-                await MainActor.run {
-                    self.handleExecutionError(error, issue: issue)
-                }
-            }
-        }
+        return (model, systemPrompt, toolOverrides)
     }
 
     /// Handles the result of an execution
     private func handleExecutionResult(_ result: ExecutionResult) {
-        // Copy live turns to selected turns before clearing active issue
-        // This ensures the execution history is still visible after completion
-        selectedIssueTurns = liveExecutionTurns
-
-        isExecuting = false
-        activeIssue = nil
-        currentPlan = nil
-        retryAttempt = 0
-        isRetrying = false
-        failedIssue = nil
+        finishExecution()
 
         if result.success {
             streamingContent = result.message
@@ -369,20 +405,14 @@ public final class AgentSession: ObservableObject {
             failedIssue = result.issue
         }
 
-        // Store the final artifact if present
+        // Store artifact if present
         if let artifact = result.artifact {
-            finalArtifact = artifact
-            if !artifacts.contains(where: { $0.id == artifact.id }) {
-                artifacts.append(artifact)
-            }
+            addArtifact(artifact, isFinal: true)
         }
 
-        // Refresh issues to show updated state
         Task {
             await refreshIssues()
             windowState?.refreshAgentTasks()
-
-            // Check if there are more issues to execute
             if result.success {
                 await executeNextIssue()
             }
@@ -391,47 +421,54 @@ public final class AgentSession: ObservableObject {
 
     /// Handles execution errors
     private func handleExecutionError(_ error: Error, issue: Issue) {
-        // Copy live turns to selected turns before clearing active issue
-        selectedIssueTurns = liveExecutionTurns
-
-        isExecuting = false
-        activeIssue = nil
-        isRetrying = false
-
-        // Check if error is retriable
-        let canRetry: Bool
-        if let agentError = error as? AgentEngineError {
-            canRetry = agentError.isRetriable
-        } else if let execError = error as? AgentExecutionError {
-            canRetry = execError.isRetriable
-        } else {
-            // Unknown errors might be retriable (network issues, etc.)
-            canRetry = true
-        }
-
+        finishExecution()
         errorMessage = error.localizedDescription
 
-        if canRetry {
+        if isRetriableError(error) {
             failedIssue = issue
         }
 
-        // Refresh issues to show updated state
-        Task {
-            await refreshIssues()
-        }
+        Task { await refreshIssues() }
     }
 
     /// Stops the current execution
     public func stopExecution() {
         executionTask?.cancel()
         executionTask = nil
+        Task { await AgentEngine.shared.cancel() }
+        finishExecution()
+    }
 
-        Task {
-            await AgentEngine.shared.cancel()
-        }
-
+    /// Cleans up execution state after completion/error/stop
+    private func finishExecution() {
+        preserveLiveExecutionTurns()
         isExecuting = false
         activeIssue = nil
+        currentPlan = nil
+        retryAttempt = 0
+        isRetrying = false
+        failedIssue = nil
+    }
+
+    /// Checks if an error can be retried
+    private func isRetriableError(_ error: Error) -> Bool {
+        if let agentError = error as? AgentEngineError {
+            return agentError.isRetriable
+        }
+        if let execError = error as? AgentExecutionError {
+            return execError.isRetriable
+        }
+        return true  // Unknown errors might be retriable
+    }
+
+    /// Adds an artifact to the collection
+    private func addArtifact(_ artifact: Artifact, isFinal: Bool) {
+        if !artifacts.contains(where: { $0.id == artifact.id }) {
+            artifacts.append(artifact)
+        }
+        if isFinal {
+            finalArtifact = artifact
+        }
     }
 
     // MARK: - Issue Actions
@@ -459,16 +496,15 @@ public final class AgentSession: ObservableObject {
         guard let issue = issue else {
             selectedIssueId = nil
             selectedIssueTurns = []
-            turnsVersion += 1
+            notifyTurnsChanged()
             return
         }
 
         selectedIssueId = issue.id
 
-        // If this issue is currently executing, use live data (issueBlocks handles this)
+        // If this issue is currently executing, use live data (currentTurns handles this)
         if activeIssue?.id == issue.id {
-            // Live execution - issueBlocks will use liveExecutionTurns
-            turnsVersion += 1
+            notifyTurnsChanged()
             return
         }
 
@@ -486,11 +522,10 @@ public final class AgentSession: ObservableObject {
                 issue: issue,
                 personaName: personaName
             )
-            turnsVersion += 1
+            notifyTurnsChanged()
         } catch {
-            // On error, show basic issue info
             selectedIssueTurns = []
-            turnsVersion += 1
+            notifyTurnsChanged()
             print("[AgentSession] Failed to load issue history: \(error)")
         }
     }
@@ -510,9 +545,7 @@ public final class AgentSession: ObservableObject {
     /// Clears the current issue selection
     public func clearSelection() {
         selectedIssueId = nil
-        selectedIssueTurns = []
-        liveExecutionTurns = []
-        turnsVersion += 1
+        clearTurns()
     }
 
     /// The currently selected issue object
@@ -550,56 +583,36 @@ public final class AgentSession: ObservableObject {
 
 extension AgentSession: AgentEngineDelegate {
     public func agentEngine(_ engine: AgentEngine, didStartIssue issue: Issue) {
-        self.activeIssue = issue
-        self.streamingContent = ""
+        activeIssue = issue
+        streamingContent = ""
 
-        // Update the issue status locally for immediate UI feedback
+        // Update local issue status for immediate UI feedback
         if let index = issues.firstIndex(where: { $0.id == issue.id }) {
-            var updatedIssue = issues[index]
-            updatedIssue.status = .inProgress
-            issues[index] = updatedIssue
+            var updated = issues[index]
+            updated.status = .inProgress
+            issues[index] = updated
         }
 
-        // Start fresh live execution turns
-        liveExecutionTurns = []
+        // Initialize turns with user request and empty assistant response
+        let displayContent = issue.description?.isEmpty == false ? issue.description! : issue.title
+        liveExecutionTurns = [
+            ChatTurn(role: .user, content: displayContent),
+            ChatTurn(role: .assistant, content: ""),
+        ]
 
-        // 1. Create user turn with issue context (shows as "task" from user)
-        // Use description if available (it's the full text), otherwise use title
-        let displayContent: String
-        if let description = issue.description, !description.isEmpty {
-            displayContent = description
-        } else {
-            displayContent = issue.title
-        }
-        let userTurn = ChatTurn(role: .user, content: displayContent)
-        liveExecutionTurns.append(userTurn)
-
-        // 2. Create assistant turn for plan and execution responses
-        let assistantTurn = ChatTurn(role: .assistant, content: "")
-        liveExecutionTurns.append(assistantTurn)
-
-        // Auto-select the executing issue
         selectedIssueId = issue.id
-        turnsVersion += 1
+        notifyTurnsChanged()
     }
 
-    public func agentEngine(
-        _ engine: AgentEngine,
-        didCreatePlan plan: ExecutionPlan,
-        forIssue issue: Issue
-    ) {
-        self.currentPlan = plan
+    public func agentEngine(_ engine: AgentEngine, didCreatePlan plan: ExecutionPlan, forIssue issue: Issue) {
+        currentPlan = plan
 
-        // Store plan on the current assistant turn for PlanBlockView rendering
-        if let assistantTurn = liveExecutionTurns.last(where: { $0.role == .assistant }) {
-            assistantTurn.plan = plan
-            assistantTurn.currentPlanStep = 0
-            assistantTurn.notifyContentChanged()
-        }
+        let turn = lastAssistantTurn()
+        turn.plan = plan
+        turn.currentPlanStep = 0
+        turn.notifyContentChanged()
 
-        if selectedIssueId == issue.id {
-            turnsVersion += 1
-        }
+        notifyIfSelected(issue.id)
     }
 
     public func agentEngine(
@@ -608,40 +621,23 @@ extension AgentSession: AgentEngineDelegate {
         step: PlanStep,
         forIssue issue: Issue
     ) {
-        self.currentStep = stepIndex
+        currentStep = stepIndex
 
-        // Update current step on the assistant turn for plan progress
-        if let assistantTurn = liveExecutionTurns.last(where: { $0.role == .assistant }) {
-            assistantTurn.currentPlanStep = stepIndex
-            assistantTurn.notifyContentChanged()
-        }
+        let turn = lastAssistantTurn()
+        turn.currentPlanStep = stepIndex
+        turn.notifyContentChanged()
 
-        if selectedIssueId == issue.id {
-            turnsVersion += 1
-        }
+        notifyIfSelected(issue.id)
     }
 
-    public func agentEngine(
-        _ engine: AgentEngine,
-        didReceiveStreamingDelta delta: String,
-        forStep stepIndex: Int
-    ) {
-        // Append streaming content - this is the main streaming path
-        self.streamingContent += delta
+    public func agentEngine(_ engine: AgentEngine, didReceiveStreamingDelta delta: String, forStep stepIndex: Int) {
+        streamingContent += delta
 
-        // Find the current assistant turn (might not be the last turn if tool turns were added)
-        if let assistantTurn = liveExecutionTurns.last(where: { $0.role == .assistant }) {
-            assistantTurn.appendContent(delta)
-            assistantTurn.notifyContentChanged()
-        } else {
-            // Create new assistant turn if none exists (shouldn't happen normally)
-            let turn = ChatTurn(role: .assistant, content: delta)
-            liveExecutionTurns.append(turn)
-        }
+        let turn = lastAssistantTurn()
+        turn.appendContent(delta)
+        turn.notifyContentChanged()
 
-        if let activeId = activeIssue?.id, selectedIssueId == activeId {
-            turnsVersion += 1
-        }
+        notifyIfSelected(activeIssue?.id)
     }
 
     public func agentEngine(
@@ -650,37 +646,23 @@ extension AgentSession: AgentEngineDelegate {
         result: StepResult,
         forIssue issue: Issue
     ) {
-        // Find or create the current assistant turn
-        var assistantTurn: ChatTurn
-        if let lastTurn = liveExecutionTurns.last, lastTurn.role == .assistant {
-            assistantTurn = lastTurn
-        } else if let lastAssistant = liveExecutionTurns.last(where: { $0.role == .assistant }) {
-            assistantTurn = lastAssistant
-        } else {
-            // Create new assistant turn if none exists
-            assistantTurn = ChatTurn(role: .assistant, content: "")
-            liveExecutionTurns.append(assistantTurn)
-        }
+        let assistantTurn = lastAssistantTurn()
 
-        // Add tool call if present - attach to the same assistant turn
+        // Attach tool call result if present
         if let toolCallResult = result.toolCallResult {
-            // Add tool call to current assistant turn
             if assistantTurn.toolCalls == nil {
                 assistantTurn.toolCalls = []
             }
             assistantTurn.toolCalls?.append(toolCallResult.toolCall)
             assistantTurn.toolResults[toolCallResult.toolCall.id] = toolCallResult.result
 
-            // Add a hidden tool turn for proper message flow (required for API)
+            // Add tool turn for API message flow
             let toolTurn = ChatTurn(role: .tool, content: toolCallResult.result)
             toolTurn.toolCallId = toolCallResult.toolCall.id
             liveExecutionTurns.append(toolTurn)
-
-            // Note: We do NOT create a new assistant turn here anymore.
-            // The existing assistant turn continues to accumulate content and tool calls.
         }
 
-        // Append response content if present
+        // Append response content
         if !result.responseContent.isEmpty {
             if assistantTurn.contentIsEmpty {
                 assistantTurn.content = result.responseContent
@@ -690,21 +672,13 @@ extension AgentSession: AgentEngineDelegate {
             assistantTurn.notifyContentChanged()
         }
 
-        // Update current step for plan progress tracking
-        self.currentStep = stepIndex + 1
-
-        if selectedIssueId == issue.id {
-            turnsVersion += 1
-        }
+        currentStep = stepIndex + 1
+        notifyIfSelected(issue.id)
     }
 
-    public func agentEngine(
-        _ engine: AgentEngine,
-        didEncounterError error: Error,
-        forStep stepIndex: Int,
-        issue: Issue
-    ) {
-        self.errorMessage = error.localizedDescription
+    public func agentEngine(_ engine: AgentEngine, didEncounterError error: Error, forStep stepIndex: Int, issue: Issue)
+    {
+        errorMessage = error.localizedDescription
     }
 
     public func agentEngine(
@@ -713,82 +687,42 @@ extension AgentSession: AgentEngineDelegate {
         forIssue issue: Issue
     ) {
         let emoji = verification.status == .achieved ? "✅" : "❌"
-        let verificationContent = "\n\n---\n\(emoji) **Result:** \(verification.summary)"
-        self.streamingContent += verificationContent
-
-        // Append to current turn
-        if let lastTurn = liveExecutionTurns.last, lastTurn.role == .assistant {
-            lastTurn.appendContent(verificationContent)
-            lastTurn.notifyContentChanged()
-        }
-
-        if selectedIssueId == issue.id {
-            turnsVersion += 1
-        }
+        let content = "\n\n---\n\(emoji) **Result:** \(verification.summary)"
+        streamingContent += content
+        appendToAssistantTurn(content, forIssue: issue.id)
     }
 
     public func agentEngine(_ engine: AgentEngine, didDecomposeIssue issue: Issue, into children: [Issue]) {
-        // Add decomposition info to content
-        let decomposeContent = "\n\n🔀 **Decomposed into \(children.count) sub-issues**"
-        if let lastTurn = liveExecutionTurns.last, lastTurn.role == .assistant {
-            lastTurn.appendContent(decomposeContent)
-            lastTurn.notifyContentChanged()
-        }
-        turnsVersion += 1
-
-        Task {
-            await self.refreshIssues()
-        }
+        appendToAssistantTurn("\n\n🔀 **Decomposed into \(children.count) sub-issues**")
+        Task { await refreshIssues() }
     }
 
     public func agentEngine(_ engine: AgentEngine, didGenerateArtifact artifact: Artifact, forIssue issue: Issue) {
-        // Ensure UI updates happen on main thread
         DispatchQueue.main.async { [weak self] in
-            guard let self = self else { return }
-
-            // Add to artifacts list
-            if !self.artifacts.contains(where: { $0.id == artifact.id }) {
-                self.artifacts.append(artifact)
+            guard let self else { return }
+            if !artifacts.contains(where: { $0.id == artifact.id }) {
+                artifacts.append(artifact)
             }
-
-            // Track final artifact
             if artifact.isFinalResult {
-                self.finalArtifact = artifact
+                finalArtifact = artifact
             }
         }
     }
 
     public func agentEngine(_ engine: AgentEngine, didCompleteIssue issue: Issue, success: Bool) {
-        // Consolidate content chunks for final storage
-        for turn in liveExecutionTurns where turn.role == .assistant {
-            turn.consolidateContent()
-        }
-
-        if selectedIssueId == issue.id {
-            turnsVersion += 1
-        }
-
-        Task {
-            await self.refreshIssues()
-        }
+        // Consolidate content chunks for storage
+        liveExecutionTurns.filter { $0.role == .assistant }.forEach { $0.consolidateContent() }
+        notifyIfSelected(issue.id)
+        Task { await refreshIssues() }
     }
 
     public func agentEngine(_ engine: AgentEngine, willRetryIssue issue: Issue, attempt: Int, afterDelay: TimeInterval)
     {
-        self.retryAttempt = attempt
-        self.isRetrying = true
+        retryAttempt = attempt
+        isRetrying = true
 
-        let retryContent = "\n\n⚠️ **Retrying...** (attempt \(attempt), waiting \(Int(afterDelay))s)\n"
-        self.streamingContent += retryContent
-
-        // Append to current turn
-        if let lastTurn = liveExecutionTurns.last, lastTurn.role == .assistant {
-            lastTurn.appendContent(retryContent)
-            lastTurn.notifyContentChanged()
-        }
-
-        if selectedIssueId == issue.id {
-            turnsVersion += 1
-        }
+        let content = "\n\n⚠️ **Retrying...** (attempt \(attempt), waiting \(Int(afterDelay))s)\n"
+        streamingContent += content
+        appendToAssistantTurn(content, forIssue: issue.id)
     }
 }
