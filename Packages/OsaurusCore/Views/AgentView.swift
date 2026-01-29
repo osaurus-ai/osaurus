@@ -361,9 +361,6 @@ struct AgentView: View {
         }
         .frame(width: width)
         .animation(theme.animationQuick(), value: isProgressSidebarCollapsed)
-        .onChange(of: isProgressSidebarCollapsed) { _, _ in
-            MessageHeightCache.shared.clear()
-        }
     }
 
     // MARK: - No Issue Selected View
@@ -435,7 +432,7 @@ struct AgentView: View {
                 width: contentWidth,
                 personaName: personaName,
                 isStreaming: session.isExecuting && session.activeIssue?.id == session.selectedIssueId,
-                turnsCount: session.issueBlocks.count,
+                scrollTrigger: session.issueTurnsCount,
                 lastAssistantTurnId: session.issueBlocks.last?.turnId,
                 onCopy: { _ in },
                 onRegenerate: { _ in },

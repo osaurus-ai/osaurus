@@ -368,13 +368,13 @@ extension ContentBlock {
     /// This runs in the background to avoid blocking the main thread.
     private static func precalculateHeightsInBackground(for blocks: [ContentBlock]) {
         // Only pre-calculate if there are uncached blocks
-        let uncachedBlocks = blocks.filter { MessageHeightCache.shared.height(for: $0.id) == nil }
+        let uncachedBlocks = blocks.filter { ThreadCache.shared.height(for: $0.id) == nil }
         guard !uncachedBlocks.isEmpty else { return }
 
         Task.detached(priority: .utility) {
             for block in uncachedBlocks {
                 let estimatedHeight = estimateBlockHeight(for: block.kind)
-                MessageHeightCache.shared.setHeight(estimatedHeight, for: block.id)
+                ThreadCache.shared.setHeight(estimatedHeight, for: block.id)
             }
         }
     }

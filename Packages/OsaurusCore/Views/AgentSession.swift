@@ -48,14 +48,33 @@ public final class AgentSession: ObservableObject {
     /// Trigger for UI updates when turns change (needed because turns arrays are not @Published)
     @Published private var turnsVersion: Int = 0
 
-    /// Content blocks for the selected issue - computed from current turns
+    // MARK: - Block Caching (Performance Optimization)
+
+    /// BlockMemoizer for incremental content block generation
+    private let blockMemoizer = BlockMemoizer()
+
+    /// Content blocks for the selected issue - computed from current turns with caching
+    ///
+    /// PERFORMANCE: Uses BlockMemoizer for incremental updates during streaming.
+    /// Only regenerates blocks for the last turn instead of all blocks (O(1) vs O(n)).
     var issueBlocks: [ContentBlock] {
         let isStreamingThisIssue = isExecuting && activeIssue?.id == selectedIssueId
-        return ContentBlock.generateBlocks(
+        let displayName = windowState?.cachedPersonaDisplayName ?? "Agent"
+        let streamingTurnId = isStreamingThisIssue ? currentTurns.last?.id : nil
+
+        return blockMemoizer.blocks(
             from: currentTurns,
-            streamingTurnId: isStreamingThisIssue ? currentTurns.last?.id : nil,
-            personaName: windowState?.cachedPersonaDisplayName ?? "Agent"
+            streamingTurnId: streamingTurnId,
+            personaName: displayName,
+            version: turnsVersion  // Ensures cache invalidation on issue switch
         )
+    }
+
+    /// The actual turn count for the selected issue (used for scroll triggers)
+    /// Unlike issueBlocks.count, this only changes when a new turn is added,
+    /// not when content within a turn is updated during streaming.
+    var issueTurnsCount: Int {
+        currentTurns.count
     }
 
     /// Returns the appropriate turns based on current state
@@ -75,11 +94,17 @@ public final class AgentSession: ObservableObject {
         notifyTurnsChanged()
     }
 
-    /// Clears all turns state
+    /// Clears all turns state and block cache
     private func clearTurns() {
         liveExecutionTurns = []
         selectedIssueTurns = []
+        clearBlockCache()
         notifyTurnsChanged()
+    }
+
+    /// Clears the block cache (call when switching issues or resetting)
+    private func clearBlockCache() {
+        blockMemoizer.clear()
     }
 
     /// Notifies observers that turns have changed
@@ -726,8 +751,14 @@ public final class AgentSession: ObservableObject {
         guard let issue = issue else {
             selectedIssueId = nil
             selectedIssueTurns = []
+            clearBlockCache()
             notifyTurnsChanged()
             return
+        }
+
+        // Clear cache when switching issues for clean regeneration
+        if selectedIssueId != issue.id {
+            clearBlockCache()
         }
 
         selectedIssueId = issue.id

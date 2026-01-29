@@ -64,7 +64,7 @@ struct SelectableTextView: NSViewRepresentable {
         init(cacheKey: String? = nil) {
             self.cacheKey = cacheKey
             // Initialize from cache if available
-            if let key = cacheKey, let cachedHeight = MessageHeightCache.shared.height(for: key) {
+            if let key = cacheKey, let cachedHeight = ThreadCache.shared.height(for: key) {
                 self.lastMeasuredHeight = cachedHeight
             }
         }
@@ -151,7 +151,7 @@ struct SelectableTextView: NSViewRepresentable {
 
                 // Cache the measured height for future view recycling
                 if let key = cacheKey {
-                    MessageHeightCache.shared.setHeight(measured, for: key)
+                    ThreadCache.shared.setHeight(measured, for: key)
                 }
             } else {
                 textView.updatePreferredSize(width: baseWidth, height: context.coordinator.lastMeasuredHeight)
@@ -762,8 +762,8 @@ struct SelectableTextViewSizer: View {
         self.baseWidth = baseWidth
         self.cacheKey = cacheKey
 
-        // Initialize height from cache if available, otherwise start at 0
-        if let key = cacheKey, let cachedHeight = MessageHeightCache.shared.height(for: key) {
+        // Initialize height from cache if available
+        if let key = cacheKey, let cachedHeight = ThreadCache.shared.height(for: key) {
             _height = State(initialValue: cachedHeight)
         } else {
             _height = State(initialValue: 0)
@@ -783,7 +783,7 @@ struct SelectableTextViewSizer: View {
                     height = newHeight
                     // Cache the measured height for future view recycling
                     if let key = cacheKey {
-                        MessageHeightCache.shared.setHeight(newHeight, for: key)
+                        ThreadCache.shared.setHeight(newHeight, for: key)
                     }
                 }
             }
