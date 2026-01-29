@@ -33,6 +33,7 @@ enum ContentBlockKind: Equatable {
     case toolCallGroup(calls: [ToolCallItem])
     case thinking(index: Int, text: String, isStreaming: Bool)
     case plan(steps: [PlanStep], currentStep: Int?, isStreaming: Bool)
+    case clarification(request: ClarificationRequest)
     case image(index: Int, imageData: Data)
     case typingIndicator
     case groupSpacer
@@ -66,6 +67,9 @@ enum ContentBlockKind: Equatable {
         case let (.plan(lSteps, lCurrent, lStream), .plan(rSteps, rCurrent, rStream)):
             return lSteps == rSteps && lCurrent == rCurrent && lStream == rStream
 
+        case let (.clarification(lRequest), .clarification(rRequest)):
+            return lRequest == rRequest
+
         case let (.image(lIdx, lData), .image(rIdx, rData)):
             return lIdx == rIdx && lData == rData
 
@@ -94,7 +98,8 @@ struct ContentBlock: Identifiable, Equatable {
         switch kind {
         case let .header(role, _, _): return role
         case let .paragraph(_, _, _, role): return role
-        case .toolCall, .toolCallGroup, .thinking, .plan, .typingIndicator, .groupSpacer: return .assistant
+        case .toolCall, .toolCallGroup, .thinking, .plan, .clarification, .typingIndicator, .groupSpacer:
+            return .assistant
         case .image: return .user
         }
     }
@@ -177,6 +182,17 @@ struct ContentBlock: Identifiable, Equatable {
             id: "plan-\(turnId.uuidString)",
             turnId: turnId,
             kind: .plan(steps: steps, currentStep: currentStep, isStreaming: isStreaming),
+            position: position
+        )
+    }
+
+    static func clarification(turnId: UUID, request: ClarificationRequest, position: BlockPosition)
+        -> ContentBlock
+    {
+        ContentBlock(
+            id: "clarification-\(turnId.uuidString)",
+            turnId: turnId,
+            kind: .clarification(request: request),
             position: position
         )
     }
@@ -280,6 +296,17 @@ extension ContentBlock {
                 )
             }
 
+            // Add clarification block if pending (agent mode)
+            if turn.role == .assistant, let clarification = turn.pendingClarification {
+                turnBlocks.append(
+                    .clarification(
+                        turnId: turn.id,
+                        request: clarification,
+                        position: .middle
+                    )
+                )
+            }
+
             if turn.role == .assistant && turn.hasThinking {
                 let paragraphs = splitIntoParagraphs(turn.thinking)
                 for (idx, text) in paragraphs.enumerated() {
@@ -377,6 +404,11 @@ extension ContentBlock {
         case let .plan(steps, _, _):
             // Collapsed: ~50px, Expanded: ~50px header + ~44px per step
             return CGFloat(50 + steps.count * 44)
+
+        case let .clarification(request):
+            // Base height + options count (if any)
+            let optionsCount = request.options?.count ?? 0
+            return CGFloat(120 + optionsCount * 44)
 
         case .image:
             return 170

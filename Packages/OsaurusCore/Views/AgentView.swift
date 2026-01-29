@@ -466,7 +466,12 @@ struct AgentView: View {
                 onCopy: { _ in },
                 onRegenerate: { _ in },
                 onScrolledToBottom: { isPinnedToBottom = true },
-                onScrolledAwayFromBottom: { isPinnedToBottom = false }
+                onScrolledAwayFromBottom: { isPinnedToBottom = false },
+                onClarificationSubmit: { response in
+                    Task {
+                        await session.submitClarification(response)
+                    }
+                }
             )
 
             // Scroll to bottom button

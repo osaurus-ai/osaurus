@@ -15,6 +15,7 @@ struct ContentBlockView: View {
     let personaName: String
     var onCopy: ((UUID) -> Void)?
     var onRegenerate: ((UUID) -> Void)?
+    var onClarificationSubmit: ((String) -> Void)?
 
     @Environment(\.theme) private var theme
 
@@ -72,6 +73,11 @@ struct ContentBlockView: View {
         case let .plan(steps, _, _):
             // Collapsed: ~50px, Expanded: ~50px header + ~44px per step
             return CGFloat(50 + steps.count * 44)
+
+        case let .clarification(request):
+            // Header + question + options/input + button
+            let optionsCount = request.options?.count ?? 1
+            return CGFloat(100 + optionsCount * 48)
 
         case .image:
             return 170  // max image height + padding
@@ -158,6 +164,16 @@ struct ContentBlockView: View {
                 steps: steps,
                 currentStep: currentStep,
                 isStreaming: isStreaming
+            )
+            .padding(.top, 6)
+            .padding(.bottom, isLastInTurn ? 12 : 4)
+
+        case let .clarification(request):
+            ClarificationCardView(
+                request: request,
+                onSubmit: { response in
+                    onClarificationSubmit?(response)
+                }
             )
             .padding(.top, 6)
             .padding(.bottom, isLastInTurn ? 12 : 4)

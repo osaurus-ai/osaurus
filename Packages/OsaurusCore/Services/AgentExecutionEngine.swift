@@ -82,7 +82,12 @@ public actor AgentExecutionEngine {
             throw AgentExecutionError.failedToGeneratePlan("No response from model")
         }
 
-        // Parse the plan from the response
+        // Try to parse as the new format with clarification support
+        if let clarificationResult = parsePlanResponseWithClarification(from: content, issueId: issue.id) {
+            return clarificationResult
+        }
+
+        // Fallback: Parse the plan from the response (legacy format)
         let steps = parsePlanSteps(from: content)
 
         if steps.count > Self.maxToolCallsPerIssue {
@@ -100,7 +105,59 @@ public actor AgentExecutionEngine {
         return .ready(plan)
     }
 
-    /// Builds the prompt for plan generation
+    /// Parses plan response that may include clarification request
+    private func parsePlanResponseWithClarification(from content: String, issueId: String) -> PlanResult? {
+        // Try to extract JSON from content
+        guard let jsonString = extractJSONObject(from: content),
+            let data = jsonString.data(using: .utf8)
+        else {
+            return nil
+        }
+
+        // Try to parse as the new format
+        guard let response = try? JSONDecoder().decode(JSONPlanResponse.self, from: data) else {
+            return nil
+        }
+
+        // Check if clarification is needed
+        if response.needs_clarification == true, let clarification = response.clarification {
+            return .needsClarification(
+                ClarificationRequest(
+                    question: clarification.question,
+                    options: clarification.options,
+                    context: clarification.context
+                )
+            )
+        }
+
+        // Parse steps if provided
+        guard let jsonSteps = response.steps, !jsonSteps.isEmpty else {
+            return nil
+        }
+
+        let steps = jsonSteps.enumerated().map { index, step in
+            PlanStep(
+                stepNumber: index + 1,
+                description: step.description,
+                toolName: step.tool
+            )
+        }
+
+        if steps.count > Self.maxToolCallsPerIssue {
+            return .needsDecomposition(steps: steps, suggestedChunks: chunkSteps(steps))
+        }
+
+        let plan = ExecutionPlan(
+            issueId: issueId,
+            steps: steps,
+            maxToolCalls: Self.maxToolCallsPerIssue
+        )
+        currentPlan = plan
+
+        return .ready(plan)
+    }
+
+    /// Builds the prompt for plan generation with ambiguity analysis
     private func buildPlanPrompt(for issue: Issue, tools: [Tool]) -> String {
         var toolList = ""
         for tool in tools {
@@ -115,20 +172,39 @@ public actor AgentExecutionEngine {
 
             Available tools:\(toolList)
 
-            Create a step-by-step plan to complete this task.
-            Each step should be a single, concrete action.
+            IMPORTANT: Before creating a plan, analyze if this task has critical ambiguities that would significantly affect the approach. Consider:
+            - Are there multiple valid interpretations that lead to very different outcomes?
+            - Is essential information missing that is required to proceed correctly?
+            - Are there implicit assumptions that need confirmation before proceeding?
+
+            Only request clarification for CRITICAL ambiguities that would lead to wrong results if assumed incorrectly. Do NOT ask for clarification on minor details or preferences.
+
+            Respond with valid JSON only, no markdown or extra text:
+
+            If clarification is needed:
+            {"needs_clarification": true, "clarification": {"question": "Clear, specific question", "options": ["Option 1", "Option 2"] or null, "context": "Brief explanation of why this is ambiguous"}}
+
+            If no clarification is needed, create a plan:
+            {"needs_clarification": false, "steps": [{"description": "what to do", "tool": "tool_name or null"}]}
+
             Maximum \(Self.maxToolCallsPerIssue) steps allowed.
-            If the task requires more steps, list all of them anyway.
-
-            IMPORTANT: Respond with valid JSON only, no markdown or extra text:
-            {"steps": [{"description": "what to do", "tool": "tool_name or null"}]}
-
-            Example:
-            {"steps": [{"description": "Read the config file", "tool": "read_file"}, {"description": "Update the setting", "tool": "write_file"}]}
             """
     }
 
-    /// JSON structure for plan parsing
+    /// JSON structure for plan parsing (with optional clarification)
+    private struct JSONPlanResponse: Codable {
+        let needs_clarification: Bool?
+        let clarification: JSONClarification?
+        let steps: [JSONPlanStep]?
+    }
+
+    private struct JSONClarification: Codable {
+        let question: String
+        let options: [String]?
+        let context: String?
+    }
+
+    /// Legacy JSON structure for backward compatibility
     private struct JSONPlan: Codable {
         let steps: [JSONPlanStep]
     }
@@ -635,6 +711,7 @@ public actor AgentExecutionEngine {
 public enum PlanResult: Sendable {
     case ready(ExecutionPlan)
     case needsDecomposition(steps: [PlanStep], suggestedChunks: [[PlanStep]])
+    case needsClarification(ClarificationRequest)
 }
 
 /// Result of executing a step

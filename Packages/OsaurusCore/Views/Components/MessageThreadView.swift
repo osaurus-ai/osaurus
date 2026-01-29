@@ -26,6 +26,7 @@ struct MessageThreadView: View {
     let onRegenerate: (UUID) -> Void
     let onScrolledToBottom: () -> Void
     let onScrolledAwayFromBottom: () -> Void
+    var onClarificationSubmit: ((String) -> Void)? = nil
 
     @Environment(\.theme) private var theme
 
@@ -39,7 +40,8 @@ struct MessageThreadView: View {
                         width: width,
                         personaName: personaName,
                         onCopy: onCopy,
-                        onRegenerate: onRegenerate
+                        onRegenerate: onRegenerate,
+                        onClarificationSubmit: onClarificationSubmit
                     )
                 )
 
@@ -89,6 +91,7 @@ private struct MessageBlocksList: View, Equatable {
     let personaName: String
     let onCopy: (UUID) -> Void
     let onRegenerate: (UUID) -> Void
+    var onClarificationSubmit: ((String) -> Void)?
 
     // Custom Equatable - only compare blocks and width, not closures
     // nonisolated to avoid actor isolation issues with SwiftUI views
@@ -105,7 +108,8 @@ private struct MessageBlocksList: View, Equatable {
                         width: width,
                         personaName: personaName,
                         onCopy: onCopy,
-                        onRegenerate: onRegenerate
+                        onRegenerate: onRegenerate,
+                        onClarificationSubmit: onClarificationSubmit
                     )
                 )
                 .id(block.id)
@@ -125,6 +129,7 @@ private struct ContentBlockRow: View, Equatable {
     let personaName: String
     let onCopy: (UUID) -> Void
     let onRegenerate: (UUID) -> Void
+    var onClarificationSubmit: ((String) -> Void)?
 
     // Custom Equatable - only compare block, not closures
     // nonisolated to avoid actor isolation issues with SwiftUI views
@@ -138,7 +143,8 @@ private struct ContentBlockRow: View, Equatable {
             width: width,
             personaName: personaName,
             onCopy: onCopy,
-            onRegenerate: onRegenerate
+            onRegenerate: onRegenerate,
+            onClarificationSubmit: onClarificationSubmit
         )
         .padding(.horizontal, 16)
     }

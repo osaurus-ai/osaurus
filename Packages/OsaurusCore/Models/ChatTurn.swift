@@ -144,6 +144,8 @@ final class ChatTurn: ObservableObject, Identifiable {
     var plan: ExecutionPlan? = nil
     /// Current step index in the plan (for progress indication)
     var currentPlanStep: Int? = nil
+    /// Pending clarification request for agent mode (displayed as ClarificationCardView)
+    var pendingClarification: ClarificationRequest? = nil
 
     // MARK: - Initializers
 

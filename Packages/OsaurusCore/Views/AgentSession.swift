@@ -128,6 +128,17 @@ public final class AgentSession: ObservableObject {
     /// Issue that failed and can be retried
     @Published public var failedIssue: Issue?
 
+    // MARK: - Clarification State
+
+    /// Pending clarification request (execution paused)
+    @Published public var pendingClarification: ClarificationRequest?
+
+    /// Issue ID awaiting clarification
+    @Published public var clarificationIssueId: String?
+
+    /// Flag indicating we're resuming from clarification (don't reset turns)
+    private var isResumingFromClarification: Bool = false
+
     // MARK: - Artifact State
 
     /// All artifacts generated during execution
@@ -373,6 +384,9 @@ public final class AgentSession: ObservableObject {
         isRetrying = false
         errorMessage = nil
         failedIssue = nil
+        pendingClarification = nil
+        clarificationIssueId = nil
+        isResumingFromClarification = false
     }
 
     /// Builds execution configuration from current state
@@ -396,6 +410,18 @@ public final class AgentSession: ObservableObject {
 
     /// Handles the result of an execution
     private func handleExecutionResult(_ result: ExecutionResult) {
+        // Check if we're awaiting clarification (don't finish execution yet)
+        if result.isAwaitingInput, let clarification = result.awaitingClarification {
+            // Clarification already handled by delegate, but ensure state is set
+            if pendingClarification == nil {
+                pendingClarification = clarification
+                clarificationIssueId = result.issue.id
+            }
+            // Don't finish execution - we're paused waiting for input
+            isExecuting = false
+            return
+        }
+
         finishExecution()
 
         if result.success {
@@ -486,6 +512,74 @@ public final class AgentSession: ObservableObject {
     /// Retries a failed issue
     public func retryIssue(_ issue: Issue) async {
         await executeIssue(issue)
+    }
+
+    // MARK: - Clarification
+
+    /// Whether there's a pending clarification
+    public var hasPendingClarification: Bool {
+        pendingClarification != nil
+    }
+
+    /// Submits a clarification response and resumes execution
+    public func submitClarification(_ response: String) async {
+        guard let issueId = clarificationIssueId, let request = pendingClarification else { return }
+
+        // Clear UI state and prepare for execution
+        clearClarificationState()
+        isExecuting = true
+        errorMessage = nil
+
+        // Update turns: remove empty assistant turn, add clarification exchange
+        removeEmptyAssistantTurn()
+        addClarificationTurns(question: request.question, response: response)
+
+        // Resume execution with the clarification context
+        isResumingFromClarification = true
+
+        do {
+            let result = try await AgentEngine.shared.provideClarification(
+                issueId: issueId,
+                response: response
+            )
+            handleExecutionResult(result)
+        } catch {
+            let fallbackIssue = activeIssue ?? issues.first { $0.id == issueId }
+            handleExecutionError(error, issue: fallbackIssue ?? Issue(taskId: "", title: ""))
+        }
+    }
+
+    /// Clears the clarification UI state
+    private func clearClarificationState() {
+        pendingClarification = nil
+        clarificationIssueId = nil
+    }
+
+    /// Removes the last assistant turn if it has no meaningful content
+    private func removeEmptyAssistantTurn() {
+        guard let index = liveExecutionTurns.lastIndex(where: { $0.role == .assistant }) else { return }
+
+        let turn = liveExecutionTurns[index]
+        turn.pendingClarification = nil
+
+        let hasContent =
+            !turn.contentIsEmpty
+            || turn.plan != nil
+            || !(turn.toolCalls?.isEmpty ?? true)
+            || !turn.thinkingIsEmpty
+
+        if hasContent {
+            turn.notifyContentChanged()
+        } else {
+            liveExecutionTurns.remove(at: index)
+        }
+    }
+
+    /// Adds clarification question and response as new turns
+    private func addClarificationTurns(question: String, response: String) {
+        liveExecutionTurns.append(ChatTurn(role: .user, content: "**\(question)**\n\n\(response)"))
+        liveExecutionTurns.append(ChatTurn(role: .assistant, content: ""))
+        notifyTurnsChanged()
     }
 
     // MARK: - Issue Selection & History
@@ -585,23 +679,51 @@ extension AgentSession: AgentEngineDelegate {
     public func agentEngine(_ engine: AgentEngine, didStartIssue issue: Issue) {
         activeIssue = issue
         streamingContent = ""
+        updateLocalIssueStatus(issue.id, to: .inProgress)
 
-        // Update local issue status for immediate UI feedback
-        if let index = issues.firstIndex(where: { $0.id == issue.id }) {
-            var updated = issues[index]
-            updated.status = .inProgress
-            issues[index] = updated
+        if isResumingFromClarification {
+            // Resuming after clarification - preserve existing turns
+            isResumingFromClarification = false
+            ensureAssistantTurnExists()
+        } else {
+            // Fresh start - initialize turns with user request
+            initializeTurns(for: issue)
         }
 
-        // Initialize turns with user request and empty assistant response
-        let displayContent = issue.description?.isEmpty == false ? issue.description! : issue.title
+        selectedIssueId = issue.id
+        notifyTurnsChanged()
+    }
+
+    /// Updates local issue status for immediate UI feedback
+    private func updateLocalIssueStatus(_ issueId: String, to status: IssueStatus) {
+        guard let index = issues.firstIndex(where: { $0.id == issueId }) else { return }
+        issues[index].status = status
+    }
+
+    /// Ensures an assistant turn exists for streaming response
+    private func ensureAssistantTurnExists() {
+        if liveExecutionTurns.last?.role != .assistant {
+            liveExecutionTurns.append(ChatTurn(role: .assistant, content: ""))
+        }
+    }
+
+    /// Initializes turns for a fresh issue execution
+    private func initializeTurns(for issue: Issue) {
+        let displayContent = issueDisplayContent(issue)
         liveExecutionTurns = [
             ChatTurn(role: .user, content: displayContent),
             ChatTurn(role: .assistant, content: ""),
         ]
+    }
 
-        selectedIssueId = issue.id
-        notifyTurnsChanged()
+    /// Gets display content for an issue, stripping internal context
+    private func issueDisplayContent(_ issue: Issue) -> String {
+        var content = issue.description?.isEmpty == false ? issue.description! : issue.title
+        // Strip [Clarification] context (used for LLM, not display)
+        if let range = content.range(of: "\n\n[Clarification]") {
+            content = String(content[..<range.lowerBound])
+        }
+        return content
     }
 
     public func agentEngine(_ engine: AgentEngine, didCreatePlan plan: ExecutionPlan, forIssue issue: Issue) {
@@ -724,5 +846,20 @@ extension AgentSession: AgentEngineDelegate {
         let content = "\n\n⚠️ **Retrying...** (attempt \(attempt), waiting \(Int(afterDelay))s)\n"
         streamingContent += content
         appendToAssistantTurn(content, forIssue: issue.id)
+    }
+
+    public func agentEngine(
+        _ engine: AgentEngine,
+        needsClarification request: ClarificationRequest,
+        forIssue issue: Issue
+    ) {
+        pendingClarification = request
+        clarificationIssueId = issue.id
+        isExecuting = false  // Pause while waiting for user input
+
+        let turn = lastAssistantTurn()
+        turn.pendingClarification = request
+        turn.notifyContentChanged()
+        notifyIfSelected(issue.id)
     }
 }

@@ -23,6 +23,12 @@ public actor AgentEngine {
     private var isExecuting = false
     private var currentIssueId: String?
 
+    /// State for issues awaiting clarification
+    private var awaitingClarification: AwaitingClarificationState?
+
+    /// Stored execution context for resuming after clarification
+    private var pendingExecutionContext: PendingExecutionContext?
+
     /// Error states by issue ID
     private var errorStates: [String: IssueErrorState] = [:]
 
@@ -201,7 +207,83 @@ public actor AgentEngine {
     public func cancel() async {
         isExecuting = false
         currentIssueId = nil
+        awaitingClarification = nil
+        pendingExecutionContext = nil
         await executionEngine.reset()
+    }
+
+    // MARK: - Clarification
+
+    /// Provides a clarification response and resumes execution
+    /// - Parameters:
+    ///   - issueId: The issue ID that was awaiting clarification
+    ///   - response: The user's response to the clarification question
+    /// - Returns: The execution result after resuming
+    public func provideClarification(
+        issueId: String,
+        response: String
+    ) async throws -> ExecutionResult {
+        // Verify we have a pending clarification for this issue
+        guard let awaiting = awaitingClarification, awaiting.issueId == issueId else {
+            throw AgentEngineError.noPendingClarification
+        }
+
+        guard let context = pendingExecutionContext else {
+            throw AgentEngineError.noPendingClarification
+        }
+
+        // Log the clarification response
+        try? IssueStore.createEvent(
+            IssueEvent.withPayload(
+                issueId: issueId,
+                eventType: .clarificationProvided,
+                payload: EventPayload.ClarificationProvided(
+                    question: awaiting.request.question,
+                    response: response
+                )
+            )
+        )
+
+        // Get and update the issue with clarification context
+        guard var issue = try IssueStore.getIssue(id: issueId) else {
+            throw AgentEngineError.issueNotFound(issueId)
+        }
+
+        // Append clarification to issue description for context
+        let clarificationContext = """
+
+            [Clarification]
+            Q: \(awaiting.request.question)
+            A: \(response)
+            """
+        issue.description = (issue.description ?? "") + clarificationContext
+        try IssueStore.updateIssue(issue)
+
+        // Clear awaiting state
+        awaitingClarification = nil
+        pendingExecutionContext = nil
+
+        // Re-run execution with enriched context
+        return try await execute(
+            issue: issue,
+            model: context.model,
+            systemPrompt: context.systemPrompt,
+            tools: context.tools,
+            toolOverrides: context.toolOverrides
+        )
+    }
+
+    /// Checks if there's a pending clarification for an issue
+    public func hasPendingClarification(for issueId: String) -> Bool {
+        awaitingClarification?.issueId == issueId
+    }
+
+    /// Gets the pending clarification request for an issue
+    public func getPendingClarification(for issueId: String) -> ClarificationRequest? {
+        guard let awaiting = awaitingClarification, awaiting.issueId == issueId else {
+            return nil
+        }
+        return awaiting.request
     }
 
     // MARK: - Main Execution Flow
@@ -245,6 +327,46 @@ public actor AgentEngine {
                 issue: issue,
                 steps: steps,
                 chunks: chunks
+            )
+
+        case .needsClarification(let request):
+            // Store state for resuming after clarification
+            awaitingClarification = AwaitingClarificationState(
+                issueId: issue.id,
+                request: request,
+                timestamp: Date()
+            )
+
+            // Store execution context for resuming
+            pendingExecutionContext = PendingExecutionContext(
+                model: model,
+                systemPrompt: systemPrompt,
+                tools: tools,
+                toolOverrides: toolOverrides
+            )
+
+            // Log clarification requested event
+            try? IssueStore.createEvent(
+                IssueEvent.withPayload(
+                    issueId: issue.id,
+                    eventType: .clarificationRequested,
+                    payload: EventPayload.ClarificationRequested(
+                        question: request.question,
+                        options: request.options,
+                        context: request.context
+                    )
+                )
+            )
+
+            // Notify delegate
+            await delegate?.agentEngine(self, needsClarification: request, forIssue: issue)
+
+            // Return result indicating we're awaiting input
+            return ExecutionResult(
+                issue: issue,
+                success: false,
+                message: "Awaiting clarification",
+                awaitingClarification: request
             )
 
         case .ready(let plan):
@@ -735,6 +857,7 @@ public protocol AgentEngineDelegate: AnyObject {
     func agentEngine(_ engine: AgentEngine, didGenerateArtifact artifact: Artifact, forIssue issue: Issue)
     func agentEngine(_ engine: AgentEngine, didCompleteIssue issue: Issue, success: Bool)
     func agentEngine(_ engine: AgentEngine, willRetryIssue issue: Issue, attempt: Int, afterDelay: TimeInterval)
+    func agentEngine(_ engine: AgentEngine, needsClarification request: ClarificationRequest, forIssue issue: Issue)
 }
 
 /// Default implementations for optional delegate methods
@@ -766,6 +889,21 @@ extension AgentEngineDelegate {
     public func agentEngine(_ engine: AgentEngine, didCompleteIssue issue: Issue, success: Bool) {}
     public func agentEngine(_ engine: AgentEngine, willRetryIssue issue: Issue, attempt: Int, afterDelay: TimeInterval)
     {}
+    public func agentEngine(
+        _ engine: AgentEngine,
+        needsClarification request: ClarificationRequest,
+        forIssue issue: Issue
+    ) {}
+}
+
+// MARK: - Pending Execution Context
+
+/// Stores execution parameters for resuming after clarification
+struct PendingExecutionContext {
+    let model: String?
+    let systemPrompt: String
+    let tools: [Tool]
+    let toolOverrides: [String: Bool]?
 }
 
 // MARK: - Errors
@@ -778,6 +916,7 @@ public enum AgentEngineError: Error, LocalizedError {
     case taskNotFound(String)
     case maxRetriesExceeded(underlying: Error, attempts: Int)
     case cancelled
+    case noPendingClarification
 
     public var errorDescription: String? {
         switch self {
@@ -793,13 +932,15 @@ public enum AgentEngineError: Error, LocalizedError {
             return "Failed after \(attempts) attempts: \(underlying.localizedDescription)"
         case .cancelled:
             return "Execution was cancelled"
+        case .noPendingClarification:
+            return "No pending clarification for this issue"
         }
     }
 
     /// Whether this error is retriable
     public var isRetriable: Bool {
         switch self {
-        case .alreadyExecuting, .cancelled:
+        case .alreadyExecuting, .cancelled, .noPendingClarification:
             return false
         case .issueNotFound, .noIssueCreated, .taskNotFound:
             return false
