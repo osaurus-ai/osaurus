@@ -474,50 +474,115 @@ struct AgentView: View {
     // MARK: - Error View
 
     private func errorView(error: String) -> some View {
-        VStack(spacing: 12) {
-            HStack {
-                Image(systemName: "exclamationmark.triangle.fill")
-                    .foregroundColor(.red)
-                Text(error)
-                    .font(.system(size: 13))
-                    .foregroundColor(.red)
-                Spacer()
+        let friendlyError = humanFriendlyError(error)
+
+        return HStack(spacing: 16) {
+            // Error icon
+            ZStack {
+                Circle()
+                    .fill(theme.errorColor.opacity(0.15))
+                    .frame(width: 40, height: 40)
+                Image(systemName: "exclamationmark.circle.fill")
+                    .font(.system(size: 20))
+                    .foregroundColor(theme.errorColor)
             }
 
-            if let failedIssue = session.failedIssue {
-                HStack(spacing: 12) {
-                    Button {
-                        Task {
-                            session.errorMessage = nil
-                            await session.executeIssue(failedIssue, withRetry: true)
-                        }
-                    } label: {
-                        Label("Retry", systemImage: "arrow.clockwise")
-                            .font(.system(size: 13, weight: .medium))
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .tint(.orange)
+            // Error content
+            VStack(alignment: .leading, spacing: 4) {
+                Text(friendlyError.title)
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundColor(theme.primaryText)
 
-                    Button {
+                Text(friendlyError.message)
+                    .font(.system(size: 12))
+                    .foregroundColor(theme.secondaryText)
+                    .lineLimit(2)
+            }
+
+            Spacer(minLength: 12)
+
+            // Action buttons
+            if session.failedIssue != nil {
+                Button {
+                    Task {
+                        let issue = session.failedIssue
                         session.errorMessage = nil
                         session.failedIssue = nil
-                    } label: {
-                        Text("Dismiss")
-                            .font(.system(size: 13, weight: .medium))
+                        if let issue { await session.executeIssue(issue, withRetry: true) }
                     }
-                    .buttonStyle(.bordered)
-
-                    Spacer()
+                } label: {
+                    HStack(spacing: 6) {
+                        Image(systemName: "arrow.clockwise")
+                            .font(.system(size: 11, weight: .semibold))
+                        Text("Retry")
+                            .font(.system(size: 12, weight: .semibold))
+                    }
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 8)
+                    .background(
+                        RoundedRectangle(cornerRadius: 8, style: .continuous)
+                            .fill(theme.accentColor)
+                    )
                 }
+                .buttonStyle(.plain)
             }
+
+            // Close button
+            Button {
+                session.errorMessage = nil
+                session.failedIssue = nil
+            } label: {
+                Image(systemName: "xmark")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundColor(theme.tertiaryText)
+                    .frame(width: 24, height: 24)
+                    .background(Circle().fill(theme.tertiaryBackground.opacity(0.5)))
+            }
+            .buttonStyle(.plain)
         }
-        .padding(12)
+        .padding(16)
         .background(
-            RoundedRectangle(cornerRadius: 8)
-                .fill(theme.errorColor.opacity(0.1))
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .fill(theme.secondaryBackground)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .strokeBorder(theme.errorColor.opacity(0.3), lineWidth: 1)
+                )
         )
         .padding(.horizontal, contentHorizontalPadding)
         .padding(.top, 12)
+    }
+
+    private func humanFriendlyError(_ error: String) -> (title: String, message: String) {
+        let lowercased = error.lowercased()
+
+        if lowercased.contains("javascript") || lowercased.contains("browser") {
+            return (
+                "Browser Error",
+                "Something went wrong while interacting with the browser. This might be a temporary issue."
+            )
+        } else if lowercased.contains("timeout") {
+            return ("Request Timed Out", "The operation took too long to complete. Please try again.")
+        } else if lowercased.contains("network") || lowercased.contains("connection") {
+            return ("Connection Issue", "Unable to connect to the service. Please check your internet connection.")
+        } else if lowercased.contains("rate limit") || lowercased.contains("too many") {
+            return ("Rate Limited", "Too many requests. Please wait a moment before trying again.")
+        } else if lowercased.contains("api") || lowercased.contains("unauthorized") || lowercased.contains("401") {
+            return ("Authentication Error", "There was an issue with the API credentials. Please check your settings.")
+        } else if lowercased.contains("cancelled") || lowercased.contains("canceled") {
+            return ("Task Cancelled", "The operation was stopped before it could complete.")
+        } else if lowercased.contains("not found") || lowercased.contains("404") {
+            return ("Not Found", "The requested resource could not be found.")
+        } else if lowercased.contains("server") || lowercased.contains("500") || lowercased.contains("502")
+            || lowercased.contains("503")
+        {
+            return ("Server Error", "The service is temporarily unavailable. Please try again later.")
+        } else {
+            // Generic fallback - show truncated original error
+            let truncated = error.count > 80 ? String(error.prefix(80)) + "..." : error
+            return ("Something Went Wrong", truncated)
+        }
     }
 
     // MARK: - Helpers
