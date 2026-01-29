@@ -471,15 +471,7 @@ public actor AgentExecutionEngine {
             )
         )
 
-        guard let resultString = result else {
-            throw NSError(
-                domain: "AgentExecutionEngine",
-                code: 1,
-                userInfo: [NSLocalizedDescriptionKey: "Tool execution failed"]
-            )
-        }
-
-        return ToolCallResult(toolCall: toolCall, result: resultString)
+        return ToolCallResult(toolCall: toolCall, result: result)
     }
 
     /// Helper to execute tool on MainActor
@@ -488,7 +480,7 @@ public actor AgentExecutionEngine {
         name: String,
         argumentsJSON: String,
         overrides: [String: Bool]?
-    ) async -> String? {
+    ) async -> String {
         do {
             return try await ToolRegistry.shared.execute(
                 name: name,
@@ -497,7 +489,7 @@ public actor AgentExecutionEngine {
             )
         } catch {
             print("[AgentExecutionEngine] Tool execution failed: \(error)")
-            return nil
+            return "[REJECTED] \(error.localizedDescription)"
         }
     }
 
