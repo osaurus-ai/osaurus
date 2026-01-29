@@ -14,10 +14,10 @@ struct ModelDownloadView: View {
     // MARK: - State Management
 
     /// Shared model manager for handling downloads and model state
-    @StateObject private var modelManager = ModelManager.shared
+    @ObservedObject private var modelManager = ModelManager.shared
 
     /// Theme manager for consistent UI styling
-    @StateObject private var themeManager = ThemeManager.shared
+    @ObservedObject private var themeManager = ThemeManager.shared
 
     /// Use computed property to always get the current theme from ThemeManager
     private var theme: ThemeProtocol { themeManager.currentTheme }

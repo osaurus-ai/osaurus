@@ -62,7 +62,7 @@ struct FloatingInputCard: View {
     @State private var cachedModelOptions: [ModelOption] = []
 
     // MARK: - Voice Input State
-    @StateObject private var whisperService = WhisperKitService.shared
+    @ObservedObject private var whisperService = WhisperKitService.shared
     @State private var voiceConfig = WhisperConfiguration.default
 
     // Pause detection state

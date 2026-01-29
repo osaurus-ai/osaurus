@@ -8,8 +8,8 @@
 import SwiftUI
 
 struct RemoteProvidersView: View {
-    @StateObject private var manager = RemoteProviderManager.shared
-    @StateObject private var themeManager = ThemeManager.shared
+    @ObservedObject private var manager = RemoteProviderManager.shared
+    @ObservedObject private var themeManager = ThemeManager.shared
 
     /// Use computed property to always get the current theme from ThemeManager
     private var theme: ThemeProtocol { themeManager.currentTheme }

@@ -30,7 +30,7 @@ struct Acknowledgement: Codable, Identifiable {
 // MARK: - View
 
 struct AcknowledgementsView: View {
-    @StateObject private var themeManager = ThemeManager.shared
+    @ObservedObject private var themeManager = ThemeManager.shared
     private var theme: ThemeProtocol { themeManager.currentTheme }
 
     @State private var acknowledgements: [Acknowledgement] = []

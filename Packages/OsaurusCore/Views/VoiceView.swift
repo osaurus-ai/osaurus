@@ -100,9 +100,9 @@ enum SupportedLanguage: CaseIterable {
 // MARK: - Voice View
 
 struct VoiceView: View {
-    @StateObject private var themeManager = ThemeManager.shared
-    @StateObject private var whisperService = WhisperKitService.shared
-    @StateObject private var modelManager = WhisperModelManager.shared
+    @ObservedObject private var themeManager = ThemeManager.shared
+    @ObservedObject private var whisperService = WhisperKitService.shared
+    @ObservedObject private var modelManager = WhisperModelManager.shared
 
     private var theme: ThemeProtocol { themeManager.currentTheme }
 
@@ -240,10 +240,10 @@ struct VoiceView: View {
 
 private struct VoiceMainTab: View {
     @Environment(\.theme) private var theme
-    @StateObject private var whisperService = WhisperKitService.shared
-    @StateObject private var modelManager = WhisperModelManager.shared
-    @StateObject private var audioInputManager = AudioInputManager.shared
-    @StateObject private var systemAudioManager = SystemAudioCaptureManager.shared
+    @ObservedObject private var whisperService = WhisperKitService.shared
+    @ObservedObject private var modelManager = WhisperModelManager.shared
+    @ObservedObject private var audioInputManager = AudioInputManager.shared
+    @ObservedObject private var systemAudioManager = SystemAudioCaptureManager.shared
 
     @State private var transcriptionText: String = ""
     @State private var errorMessage: String?
@@ -1307,7 +1307,7 @@ private struct PulseAnimation: ViewModifier {
 
 private struct VoiceModelsTab: View {
     @Environment(\.theme) private var theme
-    @StateObject private var modelManager = WhisperModelManager.shared
+    @ObservedObject private var modelManager = WhisperModelManager.shared
 
     @State private var searchText: String = ""
 
@@ -1383,7 +1383,7 @@ private struct VoiceModelsTab: View {
 
 private struct WhisperModelRow: View {
     @Environment(\.theme) private var theme
-    @StateObject private var modelManager = WhisperModelManager.shared
+    @ObservedObject private var modelManager = WhisperModelManager.shared
 
     let model: WhisperModel
 

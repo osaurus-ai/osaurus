@@ -12,8 +12,8 @@ import UniformTypeIdentifiers
 // MARK: - Skills View
 
 struct SkillsView: View {
-    @StateObject private var themeManager = ThemeManager.shared
-    @StateObject private var skillManager = SkillManager.shared
+    @ObservedObject private var themeManager = ThemeManager.shared
+    @ObservedObject private var skillManager = SkillManager.shared
 
     private var theme: ThemeProtocol { themeManager.currentTheme }
 

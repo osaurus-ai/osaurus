@@ -12,7 +12,7 @@ import OsaurusRepository
 import SwiftUI
 
 struct ToolsManagerView: View {
-    @StateObject private var themeManager = ThemeManager.shared
+    @ObservedObject private var themeManager = ThemeManager.shared
     @ObservedObject private var repoService = PluginRepositoryService.shared
     @ObservedObject private var providerManager = MCPProviderManager.shared
 

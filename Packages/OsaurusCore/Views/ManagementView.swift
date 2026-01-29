@@ -81,12 +81,12 @@ struct ManagementView: View {
 
     // MARK: State Objects
 
-    @StateObject private var themeManager = ThemeManager.shared
-    @StateObject private var repoService = PluginRepositoryService.shared
-    @StateObject private var remoteProviderManager = RemoteProviderManager.shared
-    @StateObject private var personaManager = PersonaManager.shared
-    @StateObject private var skillManager = SkillManager.shared
-    @StateObject private var scheduleManager = ScheduleManager.shared
+    @ObservedObject private var themeManager = ThemeManager.shared
+    @ObservedObject private var repoService = PluginRepositoryService.shared
+    @ObservedObject private var remoteProviderManager = RemoteProviderManager.shared
+    @ObservedObject private var personaManager = PersonaManager.shared
+    @ObservedObject private var skillManager = SkillManager.shared
+    @ObservedObject private var scheduleManager = ScheduleManager.shared
 
     @EnvironmentObject private var updater: UpdaterViewModel
 

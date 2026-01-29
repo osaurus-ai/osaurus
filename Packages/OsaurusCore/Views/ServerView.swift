@@ -10,7 +10,7 @@ import SwiftUI
 import UniformTypeIdentifiers
 
 struct ServerView: View {
-    @StateObject private var themeManager = ThemeManager.shared
+    @ObservedObject private var themeManager = ThemeManager.shared
     @EnvironmentObject var server: ServerController
 
     /// Use computed property to always get the current theme from ThemeManager
@@ -1085,7 +1085,7 @@ private struct EndpointRow: View {
 
 private struct TranscriptionTestRow: View {
     @Environment(\.theme) private var theme
-    @StateObject private var modelManager = WhisperModelManager.shared
+    @ObservedObject private var modelManager = WhisperModelManager.shared
 
     let endpoint: APIEndpoint
     let serverURL: String

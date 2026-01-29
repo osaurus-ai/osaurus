@@ -19,7 +19,7 @@ struct ChatSessionSidebar: View {
     var onOpenInNewWindow: ((ChatSessionData) -> Void)? = nil
 
     @Environment(\.theme) private var theme
-    @StateObject private var personaManager = PersonaManager.shared
+    @ObservedObject private var personaManager = PersonaManager.shared
     @State private var editingSessionId: UUID?
     @State private var editingTitle: String = ""
     @State private var searchQuery: String = ""

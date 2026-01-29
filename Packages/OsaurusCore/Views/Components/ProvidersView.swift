@@ -9,7 +9,7 @@ import SwiftUI
 
 struct ProvidersView: View {
     @Environment(\.theme) private var theme
-    @StateObject private var manager = MCPProviderManager.shared
+    @ObservedObject private var manager = MCPProviderManager.shared
     @State private var showAddSheet = false
     @State private var editingProvider: MCPProvider?
     @State private var hasAppeared = false
@@ -465,7 +465,7 @@ private struct ProviderCard: View {
 // MARK: - Provider Edit Sheet
 
 private struct ProviderEditSheet: View {
-    @StateObject private var themeManager = ThemeManager.shared
+    @ObservedObject private var themeManager = ThemeManager.shared
     @Environment(\.dismiss) private var dismiss
 
     let provider: MCPProvider?
@@ -972,7 +972,7 @@ extension ProviderEditSheet.TestResult {
 // MARK: - Header Row
 
 private struct HeaderRow: View {
-    @StateObject private var themeManager = ThemeManager.shared
+    @ObservedObject private var themeManager = ThemeManager.shared
     @Binding var header: ProviderEditSheet.HeaderEntry
     let onDelete: () -> Void
 
@@ -1108,7 +1108,7 @@ private struct HeaderRow: View {
 // MARK: - Styled Components
 
 private struct EditorCard<Content: View>: View {
-    @StateObject private var themeManager = ThemeManager.shared
+    @ObservedObject private var themeManager = ThemeManager.shared
     let title: String
     let icon: String
     @ViewBuilder let content: () -> Content
@@ -1141,7 +1141,7 @@ private struct EditorCard<Content: View>: View {
 }
 
 private struct MCPStyledTextField: View {
-    @StateObject private var themeManager = ThemeManager.shared
+    @ObservedObject private var themeManager = ThemeManager.shared
 
     let label: String
     let placeholder: String
@@ -1197,7 +1197,7 @@ private struct MCPStyledTextField: View {
 }
 
 private struct MCPStyledSecureField: View {
-    @StateObject private var themeManager = ThemeManager.shared
+    @ObservedObject private var themeManager = ThemeManager.shared
 
     let label: String
     let placeholder: String
@@ -1250,7 +1250,7 @@ private struct MCPStyledSecureField: View {
 }
 
 private struct MCPToggleRow: View {
-    @StateObject private var themeManager = ThemeManager.shared
+    @ObservedObject private var themeManager = ThemeManager.shared
 
     let title: String
     let description: String
@@ -1286,7 +1286,7 @@ private struct MCPToggleRow: View {
 }
 
 private struct MCPPrimaryButtonStyle: ButtonStyle {
-    @StateObject private var themeManager = ThemeManager.shared
+    @ObservedObject private var themeManager = ThemeManager.shared
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
@@ -1303,7 +1303,7 @@ private struct MCPPrimaryButtonStyle: ButtonStyle {
 }
 
 private struct MCPSecondaryButtonStyle: ButtonStyle {
-    @StateObject private var themeManager = ThemeManager.shared
+    @ObservedObject private var themeManager = ThemeManager.shared
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label

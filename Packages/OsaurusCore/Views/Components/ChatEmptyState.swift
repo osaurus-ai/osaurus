@@ -19,7 +19,7 @@ struct ChatEmptyState: View {
     let onQuickAction: (String) -> Void
     let onSelectPersona: (UUID) -> Void
 
-    @StateObject private var modelManager = ModelManager.shared
+    @ObservedObject private var modelManager = ModelManager.shared
     @State private var glowIntensity: CGFloat = 0.6
     @State private var hasAppeared = false
     @State private var isVisible = false

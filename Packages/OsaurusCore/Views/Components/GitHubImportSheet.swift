@@ -11,7 +11,7 @@ import SwiftUI
 
 struct GitHubImportSheet: View {
     @Environment(\.theme) private var theme
-    @StateObject private var gitHubService = GitHubSkillService.shared
+    @ObservedObject private var gitHubService = GitHubSkillService.shared
 
     let onImport: ([Skill]) -> Void
     let onCancel: () -> Void

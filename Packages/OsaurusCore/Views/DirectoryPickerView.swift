@@ -9,7 +9,7 @@ import SwiftUI
 
 /// View for selecting and managing the models directory
 struct DirectoryPickerView: View {
-    @StateObject private var directoryPicker = DirectoryPickerService.shared
+    @ObservedObject private var directoryPicker = DirectoryPickerService.shared
     @Environment(\.theme) private var theme
     @State private var showFilePicker = false
 

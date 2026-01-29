@@ -13,8 +13,8 @@ import SwiftUI
 struct ModelDetailView: View, Identifiable {
     // MARK: - Dependencies
 
-    @StateObject private var modelManager = ModelManager.shared
-    @StateObject private var themeManager = ThemeManager.shared
+    @ObservedObject private var modelManager = ModelManager.shared
+    @ObservedObject private var themeManager = ThemeManager.shared
     @Environment(\.dismiss) private var dismiss
 
     /// Use computed property to always get the current theme from ThemeManager

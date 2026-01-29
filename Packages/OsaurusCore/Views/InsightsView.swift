@@ -8,8 +8,8 @@
 import SwiftUI
 
 struct InsightsView: View {
-    @StateObject private var themeManager = ThemeManager.shared
-    @StateObject private var insightsService = InsightsService.shared
+    @ObservedObject private var themeManager = ThemeManager.shared
+    @ObservedObject private var insightsService = InsightsService.shared
 
     /// Use computed property to always get the current theme from ThemeManager
     private var theme: ThemeProtocol { themeManager.currentTheme }

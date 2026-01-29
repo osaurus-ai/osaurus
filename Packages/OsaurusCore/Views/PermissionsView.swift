@@ -10,7 +10,7 @@ import SwiftUI
 // MARK: - Permissions View
 
 struct PermissionsView: View {
-    @StateObject private var themeManager = ThemeManager.shared
+    @ObservedObject private var themeManager = ThemeManager.shared
     @ObservedObject private var permissionService = SystemPermissionService.shared
 
     private var theme: ThemeProtocol { themeManager.currentTheme }
@@ -102,7 +102,7 @@ struct PermissionsView: View {
 // MARK: - System Permission Row
 
 private struct SystemPermissionRow: View {
-    @StateObject private var themeManager = ThemeManager.shared
+    @ObservedObject private var themeManager = ThemeManager.shared
     @ObservedObject private var permissionService = SystemPermissionService.shared
     let permission: SystemPermission
 

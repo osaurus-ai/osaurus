@@ -1245,7 +1245,7 @@ struct ChatView: View {
     // MARK: - Window State
 
     /// Per-window state container (isolates this window from shared singletons)
-    @StateObject private var windowState: ChatWindowState
+    @ObservedObject private var windowState: ChatWindowState
 
     // MARK: - Environment & State
 
@@ -1274,7 +1274,7 @@ struct ChatView: View {
 
     /// Multi-window initializer with window state
     init(windowState: ChatWindowState) {
-        _windowState = StateObject(wrappedValue: windowState)
+        _windowState = ObservedObject(wrappedValue: windowState)
         _observedSession = ObservedObject(wrappedValue: windowState.session)
     }
 
@@ -1290,7 +1290,7 @@ struct ChatView: View {
             personaId: personaId,
             sessionData: initialSessionData
         )
-        _windowState = StateObject(wrappedValue: state)
+        _windowState = ObservedObject(wrappedValue: state)
         _observedSession = ObservedObject(wrappedValue: state.session)
     }
 
@@ -1302,7 +1302,7 @@ struct ChatView: View {
             personaId: Persona.defaultId,
             sessionData: nil
         )
-        _windowState = StateObject(wrappedValue: state)
+        _windowState = ObservedObject(wrappedValue: state)
         _observedSession = ObservedObject(wrappedValue: state.session)
     }
 

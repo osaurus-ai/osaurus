@@ -11,7 +11,7 @@ import SwiftUI
 // MARK: - Main View
 
 struct ToolSecretsSheet: View {
-    @StateObject private var themeManager = ThemeManager.shared
+    @ObservedObject private var themeManager = ThemeManager.shared
     @Environment(\.dismiss) private var dismiss
 
     private var theme: ThemeProtocol { themeManager.currentTheme }

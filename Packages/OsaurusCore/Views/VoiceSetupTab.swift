@@ -12,8 +12,8 @@ import SwiftUI
 
 struct VoiceSetupTab: View {
     @Environment(\.theme) private var theme
-    @StateObject private var whisperService = WhisperKitService.shared
-    @StateObject private var modelManager = WhisperModelManager.shared
+    @ObservedObject private var whisperService = WhisperKitService.shared
+    @ObservedObject private var modelManager = WhisperModelManager.shared
 
     /// Called when setup is complete
     var onComplete: (() -> Void)?
