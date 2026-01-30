@@ -303,6 +303,9 @@ public final class AgentSession: ObservableObject {
 
             // Set self as delegate on AgentEngine to receive updates
             engine.setDelegate(self)
+
+            // Refresh window state's task list now that database is ready
+            windowState?.refreshAgentTasks()
         } catch {
             errorMessage = "Failed to initialize agent: \(error.localizedDescription)"
         }
