@@ -113,10 +113,6 @@ struct CapabilitiesSelectorView: View {
         }
 
         cachedGroups = groups
-
-        if expandedGroups.isEmpty, let first = groups.first {
-            expandedGroups.insert(first.id)
-        }
     }
 
     private var filteredGroups: [ToolGroup] {
@@ -265,7 +261,6 @@ struct CapabilitiesSelectorView: View {
         .animation(.easeInOut(duration: 0.2), value: selectedTab)
         .onAppear { rebuildToolsCache() }
         .onReceive(toolRegistry.objectWillChange) { _ in
-            // Debounce slightly to let the change complete
             DispatchQueue.main.async { rebuildToolsCache() }
         }
         .onReceive(NotificationCenter.default.publisher(for: .toolsListChanged)) { _ in rebuildToolsCache() }
@@ -513,13 +508,17 @@ private struct GroupHeader: View {
             // All/None buttons (on hover)
             if isHovered {
                 HStack(spacing: 4) {
-                    Button { onEnableAll() } label: {
+                    Button {
+                        onEnableAll()
+                    } label: {
                         Text("All")
                             .font(.system(size: 9, weight: allEnabled ? .bold : .medium))
                             .foregroundColor(allEnabled ? theme.accentColor : theme.tertiaryText)
                     }
                     Text("/").font(.system(size: 9)).foregroundColor(theme.tertiaryText)
-                    Button { onDisableAll() } label: {
+                    Button {
+                        onDisableAll()
+                    } label: {
                         Text("None")
                             .font(.system(size: 9, weight: noneEnabled ? .bold : .medium))
                             .foregroundColor(noneEnabled ? theme.accentColor : theme.tertiaryText)
@@ -537,7 +536,9 @@ private struct GroupHeader: View {
                 .foregroundColor(group.enabledCount > 0 ? theme.accentColor : theme.tertiaryText)
                 .padding(.horizontal, 6)
                 .padding(.vertical, 2)
-                .background(Capsule().fill(group.enabledCount > 0 ? theme.accentColor.opacity(0.15) : theme.primaryBackground))
+                .background(
+                    Capsule().fill(group.enabledCount > 0 ? theme.accentColor.opacity(0.15) : theme.primaryBackground)
+                )
                 .onTapGesture { onToggle() }
         }
         .padding(.horizontal, 12)
@@ -581,8 +582,10 @@ private struct ToolRowItem: View {
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
-        .background(RoundedRectangle(cornerRadius: 8, style: .continuous)
-            .fill(isHovered ? theme.secondaryBackground.opacity(0.6) : Color.clear))
+        .background(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(isHovered ? theme.secondaryBackground.opacity(0.6) : Color.clear)
+        )
         .contentShape(Rectangle())
         .onHover { isHovered = $0 }
     }
@@ -648,8 +651,10 @@ private struct SkillRowItem: View {
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
-        .background(RoundedRectangle(cornerRadius: 8, style: .continuous)
-            .fill(isHovered ? theme.secondaryBackground.opacity(0.6) : Color.clear))
+        .background(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(isHovered ? theme.secondaryBackground.opacity(0.6) : Color.clear)
+        )
         .contentShape(Rectangle())
         .onHover { isHovered = $0 }
     }
