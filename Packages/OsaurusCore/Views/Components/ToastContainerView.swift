@@ -316,9 +316,9 @@ struct ToastOverlayWindowContent: View {
     var body: some View {
         ToastContainerView()
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .environment(\.theme, themeManager.currentTheme)
             .themedAlertScope(.toastOverlay)
             .overlay(ThemedAlertHost(scope: .toastOverlay))
+            .environment(\.theme, themeManager.currentTheme)
     }
 }
 
