@@ -429,22 +429,21 @@ private struct ThemedAlertModifier: ViewModifier {
     let presentationStyle: ThemedAlertPresentationStyle
 
     func body(content: Content) -> some View {
-        ZStack {
-            content
-
-            if isPresented {
-                ThemedAlertDialogContent(
-                    title: title,
-                    message: message,
-                    buttons: buttons,
-                    presentationStyle: presentationStyle,
-                    onDismiss: {
-                        isPresented = false
-                    }
-                )
-                .zIndex(1000)
+        content.overlay(
+            ZStack {
+                if isPresented {
+                    ThemedAlertDialogContent(
+                        title: title,
+                        message: message,
+                        buttons: buttons,
+                        presentationStyle: presentationStyle,
+                        onDismiss: {
+                            isPresented = false
+                        }
+                    )
+                }
             }
-        }
+        )
     }
 }
 
