@@ -6,7 +6,6 @@
 //  Provides access to all configuration panels: models, tools, themes, etc.
 //
 
-import AppKit
 import Foundation
 import OsaurusRepository
 import SwiftUI

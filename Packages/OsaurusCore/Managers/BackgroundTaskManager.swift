@@ -245,13 +245,15 @@ public final class BackgroundTaskManager: ObservableObject {
             state.appendActivity(kind: .info, title: "Plan", detail: "\(stepCount) steps")
 
         case .willExecuteStep(let index, let total, let description):
-            // Avoid redundancy: current step is already shown in the toast header + progress.
-            // Keep the mini-log for higher-signal events (tools/retries/clarifications/artifacts).
+            // Suppress unused variable warnings - parameters are intentionally not used here.
+            // Step info is already shown in the toast header + progress bar, so we skip
+            // redundant mini-log entries to keep the activity feed focused on high-signal events.
             _ = index; _ = total; _ = description
             return
 
         case .completedStep(let index, let total):
-            // Avoid redundancy: step completion is reflected via progress UI.
+            // Suppress unused variable warnings - parameters are intentionally not used here.
+            // Step completion is reflected via the progress bar UI, no need for mini-log entry.
             _ = index; _ = total
             return
 

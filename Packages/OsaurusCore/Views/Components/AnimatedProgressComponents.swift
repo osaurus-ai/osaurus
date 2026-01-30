@@ -232,8 +232,9 @@ struct PulsingStatusDot: View {
 
 // MARK: - Status Icon State
 
-/// State enum for morphing status icon
-enum StatusIconState {
+/// Represents the visual state of a morphing status icon.
+/// Used by `MorphingStatusIcon` to animate between different states.
+internal enum StatusIconState {
     case pending
     case active
     case completed
@@ -379,7 +380,7 @@ private struct CompletedCheckmarkIcon: View {
 // MARK: - Checkmark Shape
 
 /// Custom shape for animated checkmark drawing
-struct CheckmarkShape: Shape {
+private struct CheckmarkShape: Shape {
     func path(in rect: CGRect) -> Path {
         var path = Path()
 

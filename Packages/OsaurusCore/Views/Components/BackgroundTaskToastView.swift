@@ -205,62 +205,6 @@ struct BackgroundTaskToastView: View {
         }
     }
 
-    // MARK: - Plan Steps List
-
-    private func planStepsView(plan: ExecutionPlan) -> some View {
-        let currentStepIndex = taskState.currentPlanStep
-
-        return VStack(alignment: .leading, spacing: 4) {
-            ForEach(Array(plan.steps.prefix(5).enumerated()), id: \.element.stepNumber) { index, step in
-                let isComplete = index < currentStepIndex
-                let isCurrent = index == currentStepIndex
-                planStepRow(step, isComplete: isComplete, isCurrentStep: isCurrent)
-            }
-
-            // Show count if more steps
-            if plan.steps.count > 5 {
-                Text("+\(plan.steps.count - 5) more steps")
-                    .font(.system(size: 10))
-                    .foregroundColor(theme.tertiaryText)
-                    .padding(.leading, 20)
-            }
-        }
-    }
-
-    private func planStepRow(_ step: PlanStep, isComplete: Bool, isCurrentStep: Bool) -> some View {
-        HStack(spacing: 6) {
-            // Status icon
-            ZStack {
-                if isComplete {
-                    Image(systemName: "checkmark.circle.fill")
-                        .font(.system(size: 12))
-                        .foregroundColor(theme.successColor)
-                } else if isCurrentStep {
-                    ProgressView()
-                        .progressViewStyle(CircularProgressViewStyle(tint: accentColor))
-                        .scaleEffect(0.5)
-                        .frame(width: 12, height: 12)
-                } else {
-                    Circle()
-                        .strokeBorder(theme.tertiaryText.opacity(0.4), lineWidth: 1)
-                        .frame(width: 12, height: 12)
-                }
-            }
-            .frame(width: 14, height: 14)
-
-            // Description
-            Text(step.description)
-                .font(.system(size: 11, weight: isCurrentStep ? .medium : .regular))
-                .foregroundColor(
-                    isComplete ? theme.tertiaryText : (isCurrentStep ? theme.primaryText : theme.secondaryText)
-                )
-                .strikethrough(isComplete, color: theme.tertiaryText)
-                .lineLimit(1)
-
-            Spacer(minLength: 0)
-        }
-    }
-
     // MARK: - Activity Feed (Mini Log)
 
     private func activityFeedView(showTypingIndicator: Bool) -> some View {
@@ -647,28 +591,6 @@ struct BackgroundTaskToastView: View {
     }
 }
 
-// MARK: - Progress Styles
-
-private struct BackgroundTaskProgressStyle: ProgressViewStyle {
-    let color: Color
-
-    func makeBody(configuration: Configuration) -> some View {
-        GeometryReader { geometry in
-            ZStack(alignment: .leading) {
-                RoundedRectangle(cornerRadius: 2)
-                    .fill(color.opacity(0.2))
-                    .frame(height: 4)
-
-                RoundedRectangle(cornerRadius: 2)
-                    .fill(color)
-                    .frame(width: geometry.size.width * (configuration.fractionCompleted ?? 0), height: 4)
-                    .animation(.easeInOut(duration: 0.3), value: configuration.fractionCompleted)
-            }
-        }
-        .frame(height: 4)
-    }
-}
-
 // MARK: - Activity Row
 
 private struct ActivityRow: View {
@@ -708,38 +630,6 @@ private struct ActivityRow: View {
         case .success: return theme.successColor
         case .error: return theme.errorColor
         case .info: return theme.tertiaryText
-        }
-    }
-}
-
-/// Animated indeterminate progress indicator
-private struct IndeterminateProgressView: View {
-    let color: Color
-    @State private var animationOffset: CGFloat = 0
-
-    var body: some View {
-        GeometryReader { geometry in
-            ZStack(alignment: .leading) {
-                // Background track
-                RoundedRectangle(cornerRadius: 2)
-                    .fill(color.opacity(0.2))
-                    .frame(height: 4)
-
-                // Animated bar
-                RoundedRectangle(cornerRadius: 2)
-                    .fill(color)
-                    .frame(width: geometry.size.width * 0.3, height: 4)
-                    .offset(x: animationOffset * (geometry.size.width * 0.7))
-            }
-        }
-        .frame(height: 4)
-        .onAppear {
-            withAnimation(
-                .easeInOut(duration: 1.2)
-                    .repeatForever(autoreverses: true)
-            ) {
-                animationOffset = 1.0
-            }
         }
     }
 }

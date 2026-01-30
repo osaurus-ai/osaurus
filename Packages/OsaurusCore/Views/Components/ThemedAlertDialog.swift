@@ -42,21 +42,36 @@ public final class ThemedAlertCenter: ObservableObject {
     }
 }
 
+/// Defines the scope/context for themed alerts to prevent overlapping dialogs.
+/// Each scope can have at most one active alert at a time.
 public enum ThemedAlertScope: Hashable, Sendable {
+    /// Alert scoped to a specific chat window
     case chat(UUID)
+    /// Alert scoped to the management/settings view
     case management
+    /// Alert scoped to the main content area
     case content
+    /// Alert scoped to toast overlay panels
     case toastOverlay
+    /// Alert scoped to a specific tool permission dialog
     case toolPermission(UUID)
+    /// Fallback scope for unspecified contexts
     case unspecified
 }
 
+/// Represents a request to display a themed alert dialog.
+/// Contains all the information needed to render the alert including title, message, and buttons.
 public struct ThemedAlertRequest: Identifiable {
+    /// Unique identifier for this alert request
     public let id: UUID
+    /// The alert title displayed prominently
     public let title: String
+    /// Optional message displayed below the title
     public let message: String?
+    /// Button configurations for the alert actions
     public let buttons: [AlertButtonConfig]
 
+    /// Callback invoked when the alert is dismissed
     public let onDismiss: () -> Void
 
     public init(
@@ -118,7 +133,7 @@ public struct AlertButtonConfig {
 // MARK: - Themed Alert Dialog View
 
 /// A custom alert dialog with glass background and themed styling
-struct ThemedAlertDialogContent: View {
+private struct ThemedAlertDialogContent: View {
     @Environment(\.theme) private var theme
 
     let title: String
@@ -246,13 +261,13 @@ struct ThemedAlertDialogContent: View {
         Group {
             if buttons.count <= 2 {
                 HStack(spacing: 12) {
-                    ForEach(Array(buttons.enumerated()), id: \.offset) { idx, button in
+                    ForEach(Array(buttons.enumerated()), id: \.element.title) { idx, button in
                         alertButton(button, isPrimary: idx == primaryButtonIndex)
                     }
                 }
             } else {
                 VStack(spacing: 10) {
-                    ForEach(Array(buttons.enumerated()), id: \.offset) { idx, button in
+                    ForEach(Array(buttons.enumerated()), id: \.element.title) { idx, button in
                         alertButton(button, isPrimary: idx == primaryButtonIndex)
                     }
                 }
@@ -406,7 +421,7 @@ struct ThemedAlertDialogContent: View {
 // MARK: - View Modifier
 
 /// View modifier for presenting themed alert dialogs
-struct ThemedAlertModifier: ViewModifier {
+private struct ThemedAlertModifier: ViewModifier {
     let title: String
     @Binding var isPresented: Bool
     let message: String?
