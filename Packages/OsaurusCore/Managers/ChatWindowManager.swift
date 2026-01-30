@@ -122,8 +122,41 @@ public final class ChatWindowManager: NSObject, ObservableObject {
             return
         }
 
+        // Check if we should allow the close (may show background task dialog)
+        guard shouldAllowClose(id: id) else {
+            return
+        }
+
         // Close will trigger the delegate which handles cleanup
         window.close()
+    }
+
+    /// Check if window close should be allowed, showing background task dialog if needed
+    /// - Returns: true if close should proceed, false if cancelled
+    private func shouldAllowClose(id: UUID) -> Bool {
+        guard let windowState = windowStates[id] else { return true }
+
+        // If this window is already detached to background, allow close without prompts.
+        // This prevents duplicate confirmations when we detach and then programmatically close.
+        if BackgroundTaskManager.shared.isBackgroundTask(id) {
+            return true
+        }
+
+        // Check if there's a running agent task
+        let isAgentExecuting =
+            windowState.agentSession?.isExecuting == true
+            || windowState.agentSession?.hasPendingClarification == true
+
+        guard isAgentExecuting else {
+            // No running task, allow close
+            return true
+        }
+
+        // Present in-app themed confirmation via SwiftUI overlay (ChatView observes this)
+        if windowState.agentCloseConfirmation == nil {
+            windowState.agentCloseConfirmation = AgentCloseConfirmation()
+        }
+        return false
     }
 
     /// Show/focus a window by ID
@@ -250,6 +283,125 @@ public final class ChatWindowManager: NSObject, ObservableObject {
         print("[ChatWindowManager] Focused all \(windows.count) windows")
     }
 
+    // MARK: - Background Task Window Support
+
+    /// Create a window for viewing a background task
+    /// - Parameters:
+    ///   - backgroundId: The background task ID (original window ID)
+    ///   - session: The agent session from the background task
+    ///   - windowState: The window state from the background task
+    /// - Returns: The window ID (same as backgroundId)
+    @discardableResult
+    func createWindowForBackgroundTask(
+        backgroundId: UUID,
+        session: AgentSession,
+        windowState: ChatWindowState
+    ) -> UUID {
+        // Reuse the original window ID - windowState.windowId already matches
+        let windowId = backgroundId
+
+        let info = ChatWindowInfo(
+            id: windowId,
+            personaId: windowState.personaId,
+            sessionId: nil,
+            createdAt: Date()
+        )
+
+        windows[windowId] = info
+
+        // Create the actual NSWindow reusing the existing window state
+        // After restoration, this is a regular window - if user closes while
+        // task is running, it will be re-detached through normal flow
+        let window = createNSWindowForBackgroundTask(
+            windowId: windowId,
+            windowState: windowState
+        )
+
+        nsWindows[windowId] = window
+        windowStates[windowId] = windowState
+
+        // Show the window
+        showWindow(id: windowId)
+
+        print("[ChatWindowManager] Created window \(windowId) for background task \(backgroundId)")
+
+        return windowId
+    }
+
+    /// Create an NSWindow for viewing a background task (reuses existing window state)
+    private func createNSWindowForBackgroundTask(
+        windowId: UUID,
+        windowState: ChatWindowState
+    ) -> NSWindow {
+        // Create ChatView with the existing window state
+        let chatView = ChatView(windowState: windowState)
+            .environment(\.theme, windowState.theme)
+
+        let hostingController = NSHostingController(rootView: chatView)
+
+        // Calculate centered position on active screen
+        let defaultSize = NSSize(width: 800, height: 610)
+        let mouse = NSEvent.mouseLocation
+        let screen = NSScreen.screens.first { NSMouseInRect(mouse, $0.frame, false) } ?? NSScreen.main
+
+        let cascadeOffset = CGFloat(windows.count) * 25.0
+
+        let initialRect: NSRect
+        if let s = screen {
+            let vf = s.visibleFrame
+            let baseOrigin = NSPoint(
+                x: vf.midX - defaultSize.width / 2,
+                y: vf.midY - defaultSize.height / 2
+            )
+            var origin = NSPoint(
+                x: baseOrigin.x + cascadeOffset,
+                y: baseOrigin.y - cascadeOffset
+            )
+            if origin.x + defaultSize.width > vf.maxX {
+                origin.x = vf.minX + 50
+            }
+            if origin.y < vf.minY {
+                origin.y = vf.maxY - defaultSize.height - 50
+            }
+            initialRect = NSRect(origin: origin, size: defaultSize)
+        } else {
+            initialRect = NSRect(origin: .zero, size: defaultSize)
+        }
+
+        let panel = NSPanel(
+            contentRect: initialRect,
+            styleMask: [.titled, .closable, .resizable, .fullSizeContentView],
+            backing: .buffered,
+            defer: false
+        )
+
+        panel.isOpaque = false
+        panel.backgroundColor = .clear
+        panel.hasShadow = true
+        panel.animationBehavior = .none
+        panel.becomesKeyOnlyIfNeeded = false
+        panel.hidesOnDeactivate = false
+        panel.worksWhenModal = true
+        panel.isReleasedWhenClosed = false
+
+        panel.titleVisibility = .hidden
+        panel.titlebarAppearsTransparent = true
+        panel.isMovableByWindowBackground = false
+
+        panel.standardWindowButton(.closeButton)?.isHidden = true
+        panel.standardWindowButton(.miniaturizeButton)?.isHidden = true
+        panel.standardWindowButton(.zoomButton)?.isHidden = true
+
+        panel.contentViewController = hostingController
+        panel.setContentSize(defaultSize)
+
+        let delegate = ChatWindowDelegate(windowId: windowId, manager: self)
+        windowDelegates[windowId] = delegate
+        panel.delegate = delegate
+
+        return panel
+    }
+
     // MARK: - Private Helpers
 
     private func createNSWindow(
@@ -349,19 +501,39 @@ public final class ChatWindowManager: NSObject, ObservableObject {
         print("[ChatWindowManager] Window \(id) became key")
     }
 
+    // Called by delegate to determine if window should close (for Cmd+W, etc.)
+    fileprivate func windowShouldClose(id: UUID) -> Bool {
+        return shouldAllowClose(id: id)
+    }
+
     // Called by delegate when window will close
     fileprivate func windowWillClose(id: UUID) {
         print("[ChatWindowManager] Window \(id) will close")
 
-        // Invoke save callback before cleanup
-        if let callback = sessionCallbacks[id] {
-            callback()
+        // Check if this window was just detached to background mode
+        // In this case, we don't clean up the windowState as BackgroundTaskManager now owns it
+        let isDetachedToBackground = BackgroundTaskManager.shared.isBackgroundTask(id)
+
+        // Regular window cleanup
+        // Only invoke save callback and cleanup if NOT detached to background
+        // (background task needs the session to keep running)
+        if !isDetachedToBackground {
+            // Invoke save callback before cleanup
+            if let callback = sessionCallbacks[id] {
+                callback()
+            }
+            windowStates[id]?.cleanup()
         }
 
-        // Clean up
+        // Clean up local references
         sessionCallbacks.removeValue(forKey: id)
         windowDelegates.removeValue(forKey: id)
-        windowStates.removeValue(forKey: id)
+
+        // Only remove windowState if not detached to background
+        if !isDetachedToBackground {
+            windowStates.removeValue(forKey: id)
+        }
+
         nsWindows.removeValue(forKey: id)
         windows.removeValue(forKey: id)
 
@@ -373,7 +545,8 @@ public final class ChatWindowManager: NSObject, ObservableObject {
         // Post notification for VAD resume
         NotificationCenter.default.post(name: .chatViewClosed, object: id)
 
-        print("[ChatWindowManager] Window \(id) cleanup complete, remaining: \(windows.count)")
+        let msg = isDetachedToBackground ? " (detached to background)" : ""
+        print("[ChatWindowManager] Window \(id) cleanup complete\(msg), remaining: \(windows.count)")
     }
 }
 
@@ -392,6 +565,10 @@ private final class ChatWindowDelegate: NSObject, NSWindowDelegate {
 
     func windowDidBecomeKey(_ notification: Notification) {
         manager?.windowDidBecomeKey(id: windowId)
+    }
+
+    func windowShouldClose(_ sender: NSWindow) -> Bool {
+        return manager?.windowShouldClose(id: windowId) ?? true
     }
 
     func windowWillClose(_ notification: Notification) {

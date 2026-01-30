@@ -308,12 +308,13 @@ private struct ProviderCard: View {
                 hasAppeared = true
             }
         }
-        .alert("Delete Provider?", isPresented: $showDeleteConfirm) {
-            Button("Cancel", role: .cancel) {}
-            Button("Delete", role: .destructive) { onDelete() }
-        } message: {
-            Text("This will remove the provider and all its tools. This cannot be undone.")
-        }
+        .themedAlert(
+            "Delete Provider?",
+            isPresented: $showDeleteConfirm,
+            message: "This will remove the provider and all its tools. This cannot be undone.",
+            primaryButton: .destructive("Delete") { onDelete() },
+            secondaryButton: .cancel("Cancel")
+        )
     }
 
     private var statusColor: Color {

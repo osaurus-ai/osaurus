@@ -297,12 +297,13 @@ private struct ProviderCardView: View {
         .onHover { hovering in
             isHovered = hovering
         }
-        .alert("Delete Provider?", isPresented: $showDeleteConfirm) {
-            Button("Cancel", role: .cancel) {}
-            Button("Delete", role: .destructive) { onDelete() }
-        } message: {
-            Text("This will remove '\(provider.name)' and disconnect any active sessions.")
-        }
+        .themedAlert(
+            "Delete Provider?",
+            isPresented: $showDeleteConfirm,
+            message: "This will remove '\(provider.name)' and disconnect any active sessions.",
+            primaryButton: .destructive("Delete") { onDelete() },
+            secondaryButton: .cancel("Cancel")
+        )
     }
 
     @ViewBuilder

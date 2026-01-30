@@ -11,6 +11,13 @@ import Combine
 import Foundation
 import SwiftUI
 
+// MARK: - Close Confirmation
+
+@MainActor
+struct AgentCloseConfirmation: Identifiable {
+    let id = UUID()
+}
+
 /// Per-window state container for ChatView - each window creates its own instance
 @MainActor
 final class ChatWindowState: ObservableObject {
@@ -23,6 +30,9 @@ final class ChatWindowState: ObservableObject {
     // MARK: - Mode State
 
     @Published var mode: ChatMode = .chat
+
+    /// When non-nil, ChatView should present a close confirmation for active agent execution.
+    @Published var agentCloseConfirmation: AgentCloseConfirmation?
 
     // MARK: - Agent State
 

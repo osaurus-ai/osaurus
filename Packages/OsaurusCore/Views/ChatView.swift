@@ -6,7 +6,6 @@
 //
 
 import AppKit
-import Carbon.HIToolbox
 import Combine
 import SwiftUI
 
@@ -1307,12 +1306,50 @@ struct ChatView: View {
     }
 
     var body: some View {
-        // Switch between Chat and Agent modes
-        if windowState.mode == .agent, let agentSession = windowState.agentSession {
-            AgentView(windowState: windowState, session: agentSession)
-        } else {
-            chatModeContent
+        Group {
+            // Switch between Chat and Agent modes
+            if windowState.mode == .agent, let agentSession = windowState.agentSession {
+                AgentView(windowState: windowState, session: agentSession)
+            } else {
+                chatModeContent
+            }
         }
+        .themedAlert(
+            "Agent Task Running",
+            isPresented: agentCloseConfirmationPresented,
+            message:
+                "This agent task is still active. You can keep it running in the background (with a live toast), or stop it and close this window.",
+            buttons: [
+                .primary("Run in Background") {
+                    if let session = windowState.agentSession {
+                        BackgroundTaskManager.shared.detachWindow(
+                            windowState.windowId,
+                            session: session,
+                            windowState: windowState
+                        )
+                    }
+                    ChatWindowManager.shared.closeWindow(id: windowState.windowId)
+                },
+                .destructive("Stop Task & Close") {
+                    windowState.agentSession?.stopExecution()
+                    ChatWindowManager.shared.closeWindow(id: windowState.windowId)
+                },
+                .cancel("Cancel"),
+            ]
+        )
+        .themedAlertScope(.chat(windowState.windowId))
+        .overlay(ThemedAlertHost(scope: .chat(windowState.windowId)))
+    }
+
+    private var agentCloseConfirmationPresented: Binding<Bool> {
+        Binding(
+            get: { windowState.agentCloseConfirmation != nil },
+            set: { newValue in
+                if !newValue {
+                    windowState.agentCloseConfirmation = nil
+                }
+            }
+        )
     }
 
     /// Chat mode content - the original ChatView implementation

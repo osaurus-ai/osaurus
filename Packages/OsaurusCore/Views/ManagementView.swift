@@ -6,7 +6,6 @@
 //  Provides access to all configuration panels: models, tools, themes, etc.
 //
 
-import AppKit
 import Foundation
 import OsaurusRepository
 import SwiftUI
@@ -123,6 +122,8 @@ struct ManagementView: View {
             .background(theme.primaryBackground)
             .environment(\.theme, themeManager.currentTheme)
             .tint(theme.accentColor)
+            .themedAlertScope(.management)
+            .overlay(ThemedAlertHost(scope: .management))
             .onAppear(perform: handleAppear)
             .onChange(of: selectedTab) { handleTabChange(to: $1) }
             .onChange(of: searchText) { handleSearchChange(to: $1) }

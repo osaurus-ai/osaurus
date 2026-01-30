@@ -24,6 +24,8 @@ struct ToolPermissionView: View {
     @State private var copied = false
     @State private var showAlwaysAllowConfirm = false
     @State private var appeared = false
+    @State private var alertScopeId = UUID()
+    private var alertScope: ThemedAlertScope { .toolPermission(alertScopeId) }
 
     private var prettyArguments: String {
         guard let data = argumentsJSON.data(using: .utf8),
@@ -133,16 +135,16 @@ struct ToolPermissionView: View {
             }
         }
         .environment(\.theme, themeManager.currentTheme)
-        .alert("Always Allow \"\(toolName)\"?", isPresented: $showAlwaysAllowConfirm) {
-            Button("Cancel", role: .cancel) {}
-            Button("Always Allow") {
-                onAlwaysAllow()
-            }
-        } message: {
-            Text(
-                "This tool will be automatically allowed to run without prompting in the future. You can change this in the Tools settings."
-            )
-        }
+        .themedAlert(
+            "Always Allow \"\(toolName)\"?",
+            isPresented: $showAlwaysAllowConfirm,
+            message:
+                "This tool will be automatically allowed to run without prompting in the future. You can change this in the Tools settings.",
+            primaryButton: .primary("Always Allow") { onAlwaysAllow() },
+            secondaryButton: .cancel("Cancel")
+        )
+        .themedAlertScope(alertScope)
+        .overlay(ThemedAlertHost(scope: alertScope))
     }
 
     // MARK: - Header

@@ -56,14 +56,13 @@ struct InsightsView: View {
                 hasAppeared = true
             }
         }
-        .alert("Clear All Logs", isPresented: $showClearConfirmation) {
-            Button("Cancel", role: .cancel) {}
-            Button("Clear", role: .destructive) {
-                insightsService.clear()
-            }
-        } message: {
-            Text("Are you sure you want to clear all request logs? This action cannot be undone.")
-        }
+        .themedAlert(
+            "Clear All Logs",
+            isPresented: $showClearConfirmation,
+            message: "Are you sure you want to clear all request logs? This action cannot be undone.",
+            primaryButton: .destructive("Clear") { insightsService.clear() },
+            secondaryButton: .cancel("Cancel")
+        )
     }
 
     // MARK: - Header View

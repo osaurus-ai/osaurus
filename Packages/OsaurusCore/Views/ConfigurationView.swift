@@ -414,7 +414,7 @@ struct ConfigurationView: View {
             if let message = successMessage {
                 VStack {
                     Spacer()
-                    successToast(message)
+                    ThemedToastView(message, type: .success)
                         .transition(.move(edge: .bottom).combined(with: .opacity))
                         .padding(.bottom, 20)
                 }
@@ -433,35 +433,12 @@ struct ConfigurationView: View {
 
     // MARK: - Success Toast
 
-    private func successToast(_ message: String) -> some View {
-        HStack(spacing: 10) {
-            Image(systemName: "checkmark.circle.fill")
-                .font(.system(size: 16))
-                .foregroundColor(theme.successColor)
-
-            Text(message)
-                .font(.system(size: 13, weight: .medium))
-                .foregroundColor(theme.primaryText)
-        }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 12)
-        .background(
-            Capsule()
-                .fill(theme.cardBackground)
-                .shadow(color: Color.black.opacity(0.15), radius: 10, x: 0, y: 4)
-        )
-        .overlay(
-            Capsule()
-                .stroke(theme.successColor.opacity(0.3), lineWidth: 1)
-        )
-    }
-
     private func showSuccess(_ message: String) {
-        withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
+        withAnimation(theme.springAnimation()) {
             successMessage = message
         }
         DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
-            withAnimation(.easeOut(duration: 0.2)) {
+            withAnimation(theme.animationQuick()) {
                 successMessage = nil
             }
         }
