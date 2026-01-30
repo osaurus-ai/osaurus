@@ -73,7 +73,7 @@ struct SkillsView: View {
                 if let toast = toastMessage {
                     VStack {
                         Spacer()
-                        SkillsToastView(message: toast.text, isError: toast.isError)
+                        ThemedToastView(toast.text, type: toast.isError ? .error : .success)
                             .transition(.move(edge: .bottom).combined(with: .opacity))
                             .padding(.bottom, 20)
                     }
@@ -278,46 +278,14 @@ struct SkillsView: View {
     // MARK: - Toast Helper
 
     private func showToast(_ message: String, isError: Bool = false) {
-        withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
+        withAnimation(theme.springAnimation()) {
             toastMessage = (message, isError)
         }
         DispatchQueue.main.asyncAfter(deadline: .now() + (isError ? 3.5 : 2.5)) {
-            withAnimation(.easeOut(duration: 0.2)) {
+            withAnimation(theme.animationQuick()) {
                 toastMessage = nil
             }
         }
-    }
-}
-
-// MARK: - Toast View
-
-private struct SkillsToastView: View {
-    @Environment(\.theme) private var theme
-
-    let message: String
-    let isError: Bool
-
-    var body: some View {
-        HStack(spacing: 10) {
-            Image(systemName: isError ? "exclamationmark.circle.fill" : "checkmark.circle.fill")
-                .font(.system(size: 16))
-                .foregroundColor(isError ? theme.errorColor : theme.successColor)
-
-            Text(message)
-                .font(.system(size: 13, weight: .medium))
-                .foregroundColor(theme.primaryText)
-        }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 12)
-        .background(
-            Capsule()
-                .fill(theme.cardBackground)
-                .shadow(color: Color.black.opacity(0.15), radius: 10, x: 0, y: 4)
-        )
-        .overlay(
-            Capsule()
-                .stroke((isError ? theme.errorColor : theme.successColor).opacity(0.3), lineWidth: 1)
-        )
     }
 }
 

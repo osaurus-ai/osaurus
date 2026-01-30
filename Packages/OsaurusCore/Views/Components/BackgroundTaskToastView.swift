@@ -14,6 +14,7 @@ import SwiftUI
 struct BackgroundTaskToastView: View {
     @Environment(\.theme) private var theme
     @ObservedObject var taskState: BackgroundTaskState
+
     let onDismiss: () -> Void
     let onOpen: () -> Void
 
@@ -26,17 +27,12 @@ struct BackgroundTaskToastView: View {
             headerRow
             contentSection
         }
-        .background(toastBackground)
-        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-        .overlay(toastBorder)
-        .shadow(
-            color: theme.shadowColor.opacity(theme.shadowOpacity),
-            radius: isHovering ? 18 : 12,
-            x: 0,
-            y: isHovering ? 8 : 5
-        )
+        .background(ToastBackground(accentColor: accentColor))
+        .clipShape(RoundedRectangle(cornerRadius: ToastStyle.cornerRadius, style: .continuous))
+        .overlay(ToastBorder(accentColor: accentColor, isHovering: isHovering))
+        .toastShadow(theme: theme, isHovering: isHovering)
         .onHover { hovering in
-            withAnimation(.easeInOut(duration: 0.2)) {
+            withAnimation(theme.animationQuick()) {
                 isHovering = hovering
             }
         }
@@ -59,10 +55,8 @@ struct BackgroundTaskToastView: View {
 
     private var headerRow: some View {
         HStack(spacing: 10) {
-            // Status icon
             statusIcon
 
-            // Task title
             VStack(alignment: .leading, spacing: 2) {
                 Text(taskState.taskTitle)
                     .font(.system(size: 12.5, weight: .semibold))
@@ -76,16 +70,13 @@ struct BackgroundTaskToastView: View {
 
             Spacer(minLength: 4)
 
-            // Dismiss button
-            dismissButton
+            ToastDismissButton(isHovering: isHovering, action: handleDismiss)
         }
         .padding(.horizontal, 14)
         .padding(.top, 12)
         .padding(.bottom, 10)
         .contentShape(Rectangle())
-        .onTapGesture {
-            onOpen()
-        }
+        .onTapGesture { onOpen() }
     }
 
     private var statusIcon: some View {
@@ -94,47 +85,17 @@ struct BackgroundTaskToastView: View {
                 .fill(accentColor.opacity(theme.isDark ? 0.14 : 0.10))
                 .frame(width: 28, height: 28)
 
-            MorphingStatusIcon(
-                state: statusIconState,
-                accentColor: accentColor,
-                size: 14
-            )
+            MorphingStatusIcon(state: statusIconState, accentColor: accentColor, size: 14)
         }
     }
 
     private var statusIconState: StatusIconState {
         switch taskState.status {
-        case .running:
-            return .active
-        case .awaitingClarification:
-            return .pending
-        case .completed(let success, _):
-            return success ? .completed : .failed
-        case .cancelled:
-            return .failed
+        case .running: return .active
+        case .awaitingClarification: return .pending
+        case .completed(let success, _): return success ? .completed : .failed
+        case .cancelled: return .failed
         }
-    }
-
-    @ViewBuilder
-    private var dismissButton: some View {
-        Button {
-            handleDismiss()
-        } label: {
-            Image(systemName: "xmark")
-                .font(.system(size: 10, weight: .semibold))
-                .foregroundColor(theme.tertiaryText)
-                .frame(width: 20, height: 20)
-                .background(
-                    Circle()
-                        .fill(theme.tertiaryBackground.opacity(isHovering ? 0.9 : 0.6))
-                )
-                .overlay(
-                    Circle()
-                        .strokeBorder(theme.primaryBorder.opacity(isHovering ? 0.25 : 0.12), lineWidth: 1)
-                )
-        }
-        .buttonStyle(PlainButtonStyle())
-        .opacity(isHovering ? 1 : 0.6)
     }
 
     // MARK: - Content Section
@@ -159,14 +120,12 @@ struct BackgroundTaskToastView: View {
         VStack(alignment: .leading, spacing: 10) {
             runningHeaderRow
             runningProgressRow
-            activityFeedView(showTypingIndicator: true)
+            activityFeedView
         }
         .padding(.horizontal, 14)
         .padding(.bottom, 12)
         .contentShape(Rectangle())
-        .onTapGesture {
-            onOpen()
-        }
+        .onTapGesture { onOpen() }
     }
 
     private var runningHeaderRow: some View {
@@ -205,9 +164,9 @@ struct BackgroundTaskToastView: View {
         }
     }
 
-    // MARK: - Activity Feed (Mini Log)
+    // MARK: - Activity Feed
 
-    private func activityFeedView(showTypingIndicator: Bool) -> some View {
+    private var activityFeedView: some View {
         let maxLines = isHovering ? 6 : 3
         let items = collapsedActivityItems(maxLines: maxLines)
         let ids = items.map(\.id)
@@ -242,8 +201,6 @@ struct BackgroundTaskToastView: View {
     }
 
     private func activityOpacity(forRow index: Int) -> Double {
-        // Newest row should read as the “hero” line; older lines fade out quickly.
-        // Clamp so older lines remain legible but visually secondary.
         max(0.45, 1.0 - Double(index) * 0.16)
     }
 
@@ -254,7 +211,6 @@ struct BackgroundTaskToastView: View {
     }
 
     private func collapsedActivityItems(maxLines: Int) -> [CollapsedActivityItem] {
-        // Newest first (top of the mini-log)
         let recent = taskState.activityFeed.reversed()
         var out: [CollapsedActivityItem] = []
         out.reserveCapacity(maxLines)
@@ -271,7 +227,6 @@ struct BackgroundTaskToastView: View {
 
         for item in recent {
             if let currentItem = current {
-                // Collapse consecutive identical entries (common for repeated tool calls)
                 if currentItem.kind == item.kind, currentItem.title == item.title, currentItem.detail == item.detail {
                     currentCount += 1
                 } else {
@@ -284,16 +239,10 @@ struct BackgroundTaskToastView: View {
                 currentCount = 1
             }
 
-            if out.count >= maxLines {
-                break
-            }
+            if out.count >= maxLines { break }
         }
 
-        // Flush the last accumulator if we still have room
-        if out.count < maxLines {
-            flushCurrent()
-        }
-
+        if out.count < maxLines { flushCurrent() }
         return out
     }
 
@@ -301,10 +250,7 @@ struct BackgroundTaskToastView: View {
         ZStack {
             theme.secondaryBackground.opacity(theme.isDark ? 0.45 : 0.6)
             LinearGradient(
-                colors: [
-                    accentColor.opacity(theme.isDark ? 0.10 : 0.06),
-                    Color.clear,
-                ],
+                colors: [accentColor.opacity(theme.isDark ? 0.10 : 0.06), Color.clear],
                 startPoint: .topLeading,
                 endPoint: .bottomTrailing
             )
@@ -326,49 +272,21 @@ struct BackgroundTaskToastView: View {
                         .foregroundColor(theme.tertiaryText)
                 }
 
-                activityFeedView(showTypingIndicator: false)
+                activityFeedView
 
-                // Question
                 Text(clarification.question)
                     .font(.system(size: 12, weight: .medium))
                     .foregroundColor(theme.primaryText)
                     .lineLimit(3)
 
-                // Options or prompt to open window for text input
                 if let options = clarification.options, !options.isEmpty {
                     optionsView(options: options)
-
-                    // Submit button for options
                     HStack {
                         Spacer()
                         submitButton
                     }
                 } else {
-                    // For text input, prompt user to open the window
-                    // (Toast panel can't receive keyboard focus)
-                    Button {
-                        onOpen()
-                    } label: {
-                        HStack(spacing: 6) {
-                            Image(systemName: "keyboard")
-                                .font(.system(size: 11))
-                            Text("Click to respond")
-                                .font(.system(size: 11, weight: .medium))
-                        }
-                        .foregroundColor(theme.isDark ? theme.primaryBackground : .white)
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 8)
-                        .frame(maxWidth: .infinity)
-                        .background(
-                            RoundedRectangle(cornerRadius: 6, style: .continuous)
-                                .fill(accentColor)
-                        )
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 6, style: .continuous)
-                                .strokeBorder(accentColor.opacity(0.25), lineWidth: 1)
-                        )
-                    }
-                    .buttonStyle(.plain)
+                    respondButton
                 }
             }
             .padding(.horizontal, 14)
@@ -388,24 +306,18 @@ struct BackgroundTaskToastView: View {
         let isSelected = selectedOption == option
 
         return Button {
-            withAnimation(.easeInOut(duration: 0.15)) {
+            withAnimation(theme.animationQuick()) {
                 selectedOption = isSelected ? nil : option
             }
         } label: {
             HStack(spacing: 8) {
-                // Selection indicator
                 ZStack {
                     Circle()
-                        .strokeBorder(
-                            isSelected ? accentColor : theme.tertiaryText.opacity(0.4),
-                            lineWidth: 1.5
-                        )
+                        .strokeBorder(isSelected ? accentColor : theme.tertiaryText.opacity(0.4), lineWidth: 1.5)
                         .frame(width: 16, height: 16)
 
                     if isSelected {
-                        Circle()
-                            .fill(accentColor)
-                            .frame(width: 8, height: 8)
+                        Circle().fill(accentColor).frame(width: 8, height: 8)
                     }
                 }
 
@@ -438,7 +350,6 @@ struct BackgroundTaskToastView: View {
             HStack(spacing: 4) {
                 Text("Continue")
                     .font(.system(size: 11, weight: .semibold))
-
                 Image(systemName: "arrow.right")
                     .font(.system(size: 10, weight: .semibold))
             }
@@ -454,6 +365,29 @@ struct BackgroundTaskToastView: View {
         .disabled(!canSubmit)
     }
 
+    private var respondButton: some View {
+        Button {
+            onOpen()
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: "keyboard").font(.system(size: 11))
+                Text("Click to respond").font(.system(size: 11, weight: .medium))
+            }
+            .foregroundColor(theme.isDark ? theme.primaryBackground : .white)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            .frame(maxWidth: .infinity)
+            .background(RoundedRectangle(cornerRadius: 6, style: .continuous).fill(accentColor))
+            .overlay(
+                RoundedRectangle(cornerRadius: 6, style: .continuous).strokeBorder(
+                    accentColor.opacity(0.25),
+                    lineWidth: 1
+                )
+            )
+        }
+        .buttonStyle(.plain)
+    }
+
     // MARK: - Completed State
 
     private func completedContent(summary: String) -> some View {
@@ -463,28 +397,12 @@ struct BackgroundTaskToastView: View {
                 .foregroundColor(theme.secondaryText)
                 .lineLimit(2)
 
-            activityFeedView(showTypingIndicator: false)
+            activityFeedView
 
-            Button {
+            ToastActionButton(title: "View Details", accentColor: accentColor) {
                 onOpen()
-                // Finalize since user is viewing the completed task
                 BackgroundTaskManager.shared.finalizeTask(taskState.id)
-            } label: {
-                Text("View Details")
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundColor(accentColor)
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 6)
-                    .background(
-                        RoundedRectangle(cornerRadius: 6)
-                            .fill(accentColor.opacity(0.15))
-                    )
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 6)
-                            .strokeBorder(accentColor.opacity(0.2), lineWidth: 1)
-                    )
             }
-            .buttonStyle(.plain)
         }
         .padding(.horizontal, 14)
         .padding(.bottom, 12)
@@ -511,7 +429,7 @@ struct BackgroundTaskToastView: View {
                 .buttonStyle(.plain)
             }
 
-            activityFeedView(showTypingIndicator: false)
+            activityFeedView
         }
         .padding(.horizontal, 14)
         .padding(.bottom, 12)
@@ -520,73 +438,20 @@ struct BackgroundTaskToastView: View {
     // MARK: - Helpers
 
     private func handleDismiss() {
-        // If task is still active, show confirmation
         if taskState.status.isActive {
             showCancelConfirmation = true
         } else {
-            // Task is completed or cancelled, just dismiss and finalize
             BackgroundTaskManager.shared.finalizeTask(taskState.id)
             onDismiss()
         }
     }
 
-    private var toastBackground: some View {
-        ZStack {
-            if theme.glassEnabled {
-                Rectangle().fill(.ultraThinMaterial)
-            }
-
-            theme.cardBackground.opacity(theme.glassEnabled ? (theme.isDark ? 0.78 : 0.88) : 1.0)
-
-            LinearGradient(
-                colors: [
-                    accentColor.opacity(theme.isDark ? 0.08 : 0.05),
-                    Color.clear,
-                    theme.primaryBackground.opacity(theme.isDark ? 0.08 : 0.04),
-                ],
-                startPoint: .topLeading,
-                endPoint: .bottomTrailing
-            )
-        }
-    }
-
-    private var toastBorder: some View {
-        RoundedRectangle(cornerRadius: 14, style: .continuous)
-            .strokeBorder(
-                LinearGradient(
-                    colors: [
-                        theme.glassEdgeLight.opacity(theme.isDark ? 0.22 : 0.35),
-                        theme.primaryBorder.opacity(theme.isDark ? 0.18 : 0.28),
-                    ],
-                    startPoint: .topLeading,
-                    endPoint: .bottomTrailing
-                ),
-                lineWidth: 1
-            )
-            .overlay(
-                // subtle leading “energy” edge
-                RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    .strokeBorder(accentColor.opacity(isHovering ? 0.22 : 0.12), lineWidth: 1)
-                    .mask(
-                        LinearGradient(
-                            colors: [Color.white, Color.white.opacity(0)],
-                            startPoint: .leading,
-                            endPoint: .trailing
-                        )
-                    )
-            )
-    }
-
     private var accentColor: Color {
         switch taskState.status {
-        case .running:
-            return theme.accentColorLight
-        case .awaitingClarification:
-            return theme.warningColor
-        case .completed(let success, _):
-            return success ? theme.successColor : theme.errorColor
-        case .cancelled:
-            return theme.tertiaryText
+        case .running: return theme.accentColorLight
+        case .awaitingClarification: return theme.warningColor
+        case .completed(let success, _): return success ? theme.successColor : theme.errorColor
+        case .cancelled: return theme.tertiaryText
         }
     }
 }

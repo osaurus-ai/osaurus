@@ -13,6 +13,7 @@ import SwiftUI
 /// A single toast notification card
 struct ToastView: View {
     @Environment(\.theme) private var theme
+
     let toast: Toast
     let onDismiss: () -> Void
     let onAction: (() -> Void)?
@@ -26,50 +27,29 @@ struct ToastView: View {
     }
 
     var body: some View {
-        HStack(spacing: 0) {
-            // Type indicator bar
-            accentBar
+        HStack(alignment: .top, spacing: 12) {
+            leadingContent
 
-            // Content
-            HStack(alignment: .top, spacing: 12) {
-                // Avatar or icon
-                leadingContent
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(alignment: .top, spacing: 8) {
+                    textContent
+                    Spacer(minLength: 4)
+                    dismissButton
+                }
 
-                // Text content and action button stacked vertically
-                VStack(alignment: .leading, spacing: 8) {
-                    // Title and dismiss button row
-                    HStack(alignment: .top, spacing: 8) {
-                        textContent
-
-                        Spacer(minLength: 4)
-
-                        // Dismiss button
-                        dismissButton
-                    }
-
-                    // Action button below text content
-                    if let actionTitle = toast.effectiveActionTitle, hasAction {
-                        actionButton(title: actionTitle)
-                    }
+                if let actionTitle = toast.effectiveActionTitle, hasAction {
+                    actionButton(title: actionTitle)
                 }
             }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 14)
         }
-        .background(toastBackground)
-        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .stroke(theme.cardBorder, lineWidth: 1)
-        )
-        .shadow(
-            color: theme.shadowColor.opacity(theme.shadowOpacity),
-            radius: isHovering ? 12 : 8,
-            x: 0,
-            y: isHovering ? 4 : 2
-        )
+        .padding(.horizontal, 14)
+        .padding(.vertical, 12)
+        .background(ToastBackground(accentColor: accentColor))
+        .clipShape(RoundedRectangle(cornerRadius: ToastStyle.cornerRadius, style: .continuous))
+        .overlay(ToastBorder(accentColor: accentColor, isHovering: isHovering))
+        .toastShadow(theme: theme, isHovering: isHovering)
         .onHover { hovering in
-            withAnimation(.easeInOut(duration: 0.2)) {
+            withAnimation(theme.animationQuick()) {
                 isHovering = hovering
             }
         }
@@ -77,31 +57,18 @@ struct ToastView: View {
         .fixedSize(horizontal: false, vertical: true)
     }
 
-    // MARK: - Accent Bar
-
-    private var accentBar: some View {
-        Rectangle()
-            .fill(accentColor)
-            .frame(width: 4)
-    }
-
-    // MARK: - Leading Content (Icon or Avatar)
+    // MARK: - Leading Content
 
     @ViewBuilder
     private var leadingContent: some View {
         if let avatarImage = toast.avatarImage {
-            // Persona avatar
             Image(nsImage: avatarImage)
                 .resizable()
                 .aspectRatio(contentMode: .fill)
                 .frame(width: 36, height: 36)
                 .clipShape(Circle())
-                .overlay(
-                    Circle()
-                        .stroke(accentColor.opacity(0.5), lineWidth: 2)
-                )
+                .overlay(Circle().stroke(accentColor.opacity(0.5), lineWidth: 2))
         } else {
-            // Type icon
             iconView
         }
     }
@@ -110,17 +77,16 @@ struct ToastView: View {
     private var iconView: some View {
         ZStack {
             Circle()
-                .fill(accentColor.opacity(0.15))
-                .frame(width: 32, height: 32)
+                .fill(accentColor.opacity(theme.isDark ? 0.14 : 0.10))
+                .frame(width: 28, height: 28)
 
             if toast.type == .loading {
-                // Spinning indicator for loading
                 ProgressView()
                     .progressViewStyle(CircularProgressViewStyle(tint: accentColor))
-                    .scaleEffect(0.7)
+                    .scaleEffect(0.6)
             } else {
                 Image(systemName: toast.type.iconName)
-                    .font(.system(size: 16, weight: .semibold))
+                    .font(.system(size: 14, weight: .semibold))
                     .foregroundColor(accentColor)
             }
         }
@@ -142,7 +108,6 @@ struct ToastView: View {
                     .lineLimit(3)
             }
 
-            // Progress bar for loading toasts
             if toast.type == .loading, let progress = toast.progress {
                 ProgressView(value: progress)
                     .progressViewStyle(ToastProgressStyle(color: accentColor))
@@ -152,7 +117,7 @@ struct ToastView: View {
         }
     }
 
-    // MARK: - Action Button
+    // MARK: - Buttons
 
     @ViewBuilder
     private func actionButton(title: String) -> some View {
@@ -162,64 +127,33 @@ struct ToastView: View {
                 .foregroundColor(accentColor)
                 .padding(.horizontal, 12)
                 .padding(.vertical, 6)
-                .background(
-                    RoundedRectangle(cornerRadius: 6)
-                        .fill(accentColor.opacity(0.15))
-                )
-                .overlay(
-                    RoundedRectangle(cornerRadius: 6)
-                        .stroke(accentColor.opacity(0.3), lineWidth: 1)
-                )
+                .background(RoundedRectangle(cornerRadius: 6).fill(accentColor.opacity(0.15)))
+                .overlay(RoundedRectangle(cornerRadius: 6).stroke(accentColor.opacity(0.3), lineWidth: 1))
         }
-        .buttonStyle(PlainButtonStyle())
+        .buttonStyle(.plain)
     }
-
-    // MARK: - Dismiss Button
 
     @ViewBuilder
     private var dismissButton: some View {
         if isHovering || toast.type != .loading {
-            Button(action: onDismiss) {
-                Image(systemName: "xmark")
-                    .font(.system(size: 10, weight: .semibold))
-                    .foregroundColor(theme.tertiaryText)
-                    .frame(width: 18, height: 18)
-                    .background(
-                        Circle()
-                            .fill(theme.tertiaryBackground)
-                    )
-            }
-            .buttonStyle(PlainButtonStyle())
-            .opacity(isHovering ? 1 : 0.6)
-            .transition(.opacity)
+            ToastDismissButton(isHovering: isHovering, action: onDismiss)
+                .transition(.opacity)
         }
     }
 
-    /// Whether this toast has an action (either legacy or new style)
+    // MARK: - Helpers
+
     private var hasAction: Bool {
         toast.type == .action || toast.action != nil || toast.actionId != nil
     }
 
-    // MARK: - Background
-
-    private var toastBackground: some View {
-        theme.cardBackground
-    }
-
-    // MARK: - Accent Color
-
     private var accentColor: Color {
         switch toast.type {
-        case .success:
-            return theme.successColor
-        case .info:
-            return theme.infoColor
-        case .warning:
-            return theme.warningColor
-        case .error:
-            return theme.errorColor
-        case .action, .loading:
-            return theme.accentColor
+        case .success: return theme.successColor
+        case .info: return theme.infoColor
+        case .warning: return theme.warningColor
+        case .error: return theme.errorColor
+        case .action, .loading: return theme.accentColor
         }
     }
 }
