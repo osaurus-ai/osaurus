@@ -51,7 +51,7 @@ struct BackgroundTaskToastView: View {
                 onDismiss()
             },
             secondaryButton: .cancel("Keep Running"),
-            presentationStyle: .contained
+            presentationStyle: .window
         )
     }
 
