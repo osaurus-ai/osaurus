@@ -44,6 +44,7 @@ struct BackgroundTaskToastView: View {
             message: "The agent task is still running. Dismissing will cancel the task.",
             primaryButton: .destructive("Cancel Task") {
                 BackgroundTaskManager.shared.cancelTask(taskState.id)
+                onOpen()
                 onDismiss()
             },
             secondaryButton: .cancel("Keep Running"),
