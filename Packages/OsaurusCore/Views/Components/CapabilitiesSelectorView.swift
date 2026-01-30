@@ -2,20 +2,17 @@
 //  CapabilitiesSelectorView.swift
 //  osaurus
 //
-//  Unified capabilities selector showing tools and skills in a tabbed interface.
-//  Tools are grouped by plugin/MCP provider with collapsible sticky headers.
+//  Capabilities selector with tools grouped by plugin/provider and sticky headers.
 //
 
 import SwiftUI
 
-// MARK: - Capability Tab
+// MARK: - Types
 
 enum CapabilityTab: String, CaseIterable {
     case tools = "Tools"
     case skills = "Skills"
 }
-
-// MARK: - Tool Group
 
 private struct ToolGroup: Identifiable {
     enum Source: Hashable {
@@ -50,9 +47,7 @@ private struct ToolGroup: Identifiable {
         }
     }
 
-    var enabledCount: Int {
-        tools.filter { $0.enabled }.count
-    }
+    var enabledCount: Int { tools.filter { $0.enabled }.count }
 }
 
 // MARK: - Capabilities Selector View
@@ -60,22 +55,23 @@ private struct ToolGroup: Identifiable {
 struct CapabilitiesSelectorView: View {
     let personaId: UUID
 
+    @ObservedObject private var toolRegistry = ToolRegistry.shared
     @ObservedObject private var skillManager = SkillManager.shared
     @ObservedObject private var personaManager = PersonaManager.shared
 
     @State private var selectedTab: CapabilityTab = .tools
-    @State private var searchText: String = ""
+    @State private var searchText = ""
     @State private var expandedGroups: Set<String> = []
     @State private var cachedTools: [ToolRegistry.ToolEntry] = []
     @State private var cachedGroups: [ToolGroup] = []
 
     @Environment(\.theme) private var theme
 
-    // MARK: - Tool Data
+    // MARK: - Data
 
     private func rebuildToolsCache() {
         let overrides = personaManager.effectiveToolOverrides(for: personaId)
-        let tools = ToolRegistry.shared.listUserTools(withOverrides: overrides, excludeInternal: true)
+        let tools = toolRegistry.listUserTools(withOverrides: overrides, excludeInternal: true)
         cachedTools = tools
 
         var groups: [ToolGroup] = []
@@ -268,6 +264,10 @@ struct CapabilitiesSelectorView: View {
         )
         .animation(.easeInOut(duration: 0.2), value: selectedTab)
         .onAppear { rebuildToolsCache() }
+        .onReceive(toolRegistry.objectWillChange) { _ in
+            // Debounce slightly to let the change complete
+            DispatchQueue.main.async { rebuildToolsCache() }
+        }
         .onReceive(NotificationCenter.default.publisher(for: .toolsListChanged)) { _ in rebuildToolsCache() }
         .onReceive(NotificationCenter.default.publisher(for: .skillsListChanged)) { _ in rebuildToolsCache() }
     }
@@ -484,8 +484,12 @@ private struct GroupHeader: View {
     @State private var isHovered = false
     @Environment(\.theme) private var theme
 
+    private var allEnabled: Bool { group.enabledCount == group.tools.count }
+    private var noneEnabled: Bool { group.enabledCount == 0 }
+
     var body: some View {
-        Button(action: onToggle) {
+        HStack(spacing: 8) {
+            // Expand/collapse area
             HStack(spacing: 8) {
                 Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
                     .font(.system(size: 10, weight: .semibold))
@@ -500,51 +504,50 @@ private struct GroupHeader: View {
                     .font(.system(size: 12, weight: .semibold))
                     .foregroundColor(theme.primaryText)
                     .lineLimit(1)
-
-                Spacer()
-
-                if isHovered && isExpanded {
-                    HStack(spacing: 4) {
-                        Button(action: onEnableAll) {
-                            Text("All").font(.system(size: 9, weight: .medium)).foregroundColor(theme.accentColor)
-                        }.buttonStyle(.plain)
-                        Text("/").font(.system(size: 9)).foregroundColor(theme.tertiaryText)
-                        Button(action: onDisableAll) {
-                            Text("None").font(.system(size: 9, weight: .medium)).foregroundColor(theme.secondaryText)
-                        }.buttonStyle(.plain)
-                    }
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 2)
-                    .background(Capsule().fill(theme.secondaryBackground))
-                }
-
-                Text("\(group.enabledCount)/\(group.tools.count)")
-                    .font(.system(size: 10, weight: .medium))
-                    .foregroundColor(group.enabledCount > 0 ? theme.accentColor : theme.tertiaryText)
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 2)
-                    .background(
-                        Capsule().fill(
-                            group.enabledCount > 0 ? theme.accentColor.opacity(0.15) : theme.secondaryBackground
-                        )
-                    )
             }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 8)
-            .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(theme.primaryBackground))
-            .overlay(
-                RoundedRectangle(cornerRadius: 8, style: .continuous).fill(
-                    isHovered ? theme.secondaryBackground.opacity(0.4) : theme.secondaryBackground.opacity(0.2)
-                )
-            )
             .contentShape(Rectangle())
+            .onTapGesture { onToggle() }
+
+            Spacer()
+
+            // All/None buttons (on hover)
+            if isHovered {
+                HStack(spacing: 4) {
+                    Button { onEnableAll() } label: {
+                        Text("All")
+                            .font(.system(size: 9, weight: allEnabled ? .bold : .medium))
+                            .foregroundColor(allEnabled ? theme.accentColor : theme.tertiaryText)
+                    }
+                    Text("/").font(.system(size: 9)).foregroundColor(theme.tertiaryText)
+                    Button { onDisableAll() } label: {
+                        Text("None")
+                            .font(.system(size: 9, weight: noneEnabled ? .bold : .medium))
+                            .foregroundColor(noneEnabled ? theme.accentColor : theme.tertiaryText)
+                    }
+                }
+                .buttonStyle(.plain)
+                .padding(.horizontal, 6)
+                .padding(.vertical, 2)
+                .background(Capsule().fill(theme.primaryBackground))
+            }
+
+            // Count badge
+            Text("\(group.enabledCount)/\(group.tools.count)")
+                .font(.system(size: 10, weight: .medium))
+                .foregroundColor(group.enabledCount > 0 ? theme.accentColor : theme.tertiaryText)
+                .padding(.horizontal, 6)
+                .padding(.vertical, 2)
+                .background(Capsule().fill(group.enabledCount > 0 ? theme.accentColor.opacity(0.15) : theme.primaryBackground))
+                .onTapGesture { onToggle() }
         }
-        .buttonStyle(.plain)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 11)
+        .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(theme.secondaryBackground))
         .onHover { isHovered = $0 }
     }
 }
 
-// MARK: - Tool Row
+// MARK: - Row Items
 
 private struct ToolRowItem: View {
     let tool: ToolRegistry.ToolEntry
@@ -573,29 +576,25 @@ private struct ToolRowItem: View {
 
             Spacer()
 
-            HStack(spacing: 2) {
-                Text("~\(tool.catalogEntryTokens)")
-                    .font(.system(size: 10, weight: .medium, design: .monospaced))
-                Text("tokens")
-                    .font(.system(size: 9))
-                    .opacity(0.6)
-            }
-            .foregroundColor(theme.tertiaryText)
-            .help("Catalog: ~\(tool.catalogEntryTokens) tokens, Full: ~\(tool.estimatedTokens) tokens")
+            tokenBadge(tool.catalogEntryTokens)
+                .help("Catalog: ~\(tool.catalogEntryTokens), Full: ~\(tool.estimatedTokens) tokens")
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
-        .background(
-            RoundedRectangle(cornerRadius: 8, style: .continuous).fill(
-                isHovered ? theme.secondaryBackground.opacity(0.6) : Color.clear
-            )
-        )
+        .background(RoundedRectangle(cornerRadius: 8, style: .continuous)
+            .fill(isHovered ? theme.secondaryBackground.opacity(0.6) : Color.clear))
         .contentShape(Rectangle())
         .onHover { isHovered = $0 }
     }
-}
 
-// MARK: - Skill Row
+    private func tokenBadge(_ count: Int) -> some View {
+        HStack(spacing: 2) {
+            Text("~\(count)").font(.system(size: 10, weight: .medium, design: .monospaced))
+            Text("tokens").font(.system(size: 9)).opacity(0.6)
+        }
+        .foregroundColor(theme.tertiaryText)
+    }
+}
 
 private struct SkillRowItem: View {
     let skill: Skill
@@ -641,22 +640,16 @@ private struct SkillRowItem: View {
             Spacer()
 
             HStack(spacing: 2) {
-                Text("~\(estimatedTokens)")
-                    .font(.system(size: 10, weight: .medium, design: .monospaced))
-                Text("tokens")
-                    .font(.system(size: 9))
-                    .opacity(0.6)
+                Text("~\(estimatedTokens)").font(.system(size: 10, weight: .medium, design: .monospaced))
+                Text("tokens").font(.system(size: 9)).opacity(0.6)
             }
             .foregroundColor(theme.tertiaryText)
             .help("Catalog entry tokens")
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
-        .background(
-            RoundedRectangle(cornerRadius: 8, style: .continuous).fill(
-                isHovered ? theme.secondaryBackground.opacity(0.6) : Color.clear
-            )
-        )
+        .background(RoundedRectangle(cornerRadius: 8, style: .continuous)
+            .fill(isHovered ? theme.secondaryBackground.opacity(0.6) : Color.clear))
         .contentShape(Rectangle())
         .onHover { isHovered = $0 }
     }
