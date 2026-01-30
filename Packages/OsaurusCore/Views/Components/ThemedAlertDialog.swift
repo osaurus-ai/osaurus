@@ -148,15 +148,12 @@ private struct ThemedAlertDialogContent: View {
     var body: some View {
         ZStack {
             // Dimmed overlay
-            Color.black
-                .opacity(isAppearing ? 0.4 : 0)
+            overlayColor
+                .opacity(isAppearing ? overlayOpacity : 0)
                 .applyIf(presentationStyle == .window) { $0.ignoresSafeArea() }
                 .onTapGesture {
-                    // Dismiss on background tap if there's a cancel button
                     if let cancel = cancelButton {
-                        dismissWithAnimation {
-                            cancel.action()
-                        }
+                        dismissWithAnimation { cancel.action() }
                     }
                 }
 
@@ -167,10 +164,20 @@ private struct ThemedAlertDialogContent: View {
                 .offset(y: isAppearing ? 0 : 20)
         }
         .onAppear {
-            withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
+            withAnimation(theme.springAnimation()) {
                 isAppearing = true
             }
         }
+    }
+
+    // MARK: - Overlay Styling
+
+    private var overlayColor: Color {
+        theme.isDark ? .black : Color(white: 0.1)
+    }
+
+    private var overlayOpacity: Double {
+        theme.isDark ? 0.5 : 0.35
     }
 
     // MARK: - Dialog Content
@@ -281,23 +288,18 @@ private struct ThemedAlertDialogContent: View {
         let isDestructive = config.role == .destructive
 
         return Button {
-            dismissWithAnimation {
-                config.action()
-            }
+            dismissWithAnimation { config.action() }
         } label: {
             Text(config.title)
                 .font(.system(size: 13, weight: .semibold))
-                .foregroundColor(buttonTextColor(isPrimary: isPrimary, isDestructive: isDestructive))
+                .foregroundColor(buttonTextColor(isPrimary: isPrimary))
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 10)
                 .background(buttonBackground(isPrimary: isPrimary, isDestructive: isDestructive, isHovered: isHovered))
                 .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
                 .overlay(
                     RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .stroke(
-                            buttonBorderColor(isPrimary: isPrimary, isDestructive: isDestructive, isHovered: isHovered),
-                            lineWidth: 1
-                        )
+                        .stroke(buttonBorderColor(isPrimary: isPrimary, isHovered: isHovered), lineWidth: 1)
                 )
         }
         .buttonStyle(PlainButtonStyle())
@@ -312,33 +314,27 @@ private struct ThemedAlertDialogContent: View {
 
     private var dialogBackground: some View {
         ZStack {
-            // Base glass layer
+            ThemedGlassSurface(cornerRadius: 16)
             RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .fill(.ultraThinMaterial)
-
-            // Gradient overlay for depth
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .fill(
-                    LinearGradient(
-                        colors: [
-                            theme.cardBackground.opacity(theme.isDark ? 0.9 : 0.95),
-                            theme.cardBackground.opacity(theme.isDark ? 0.85 : 0.9),
-                        ],
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
-                    )
-                )
+                .fill(cardGradient)
         }
+    }
+
+    private var cardGradient: LinearGradient {
+        let topOpacity = theme.isDark ? 0.85 : 0.9
+        let bottomOpacity = theme.isDark ? 0.8 : 0.85
+        return LinearGradient(
+            colors: [theme.cardBackground.opacity(topOpacity), theme.cardBackground.opacity(bottomOpacity)],
+            startPoint: .topLeading,
+            endPoint: .bottomTrailing
+        )
     }
 
     private var dialogBorder: some View {
         RoundedRectangle(cornerRadius: 16, style: .continuous)
             .strokeBorder(
                 LinearGradient(
-                    colors: [
-                        theme.glassEdgeLight,
-                        theme.glassEdgeLight.opacity(0.3),
-                    ],
+                    colors: [theme.glassEdgeLight, theme.glassEdgeLight.opacity(0.3)],
                     startPoint: .topLeading,
                     endPoint: .bottomTrailing
                 ),
@@ -347,71 +343,51 @@ private struct ThemedAlertDialogContent: View {
     }
 
     private var iconName: String {
-        if hasDestructiveButton {
-            return "exclamationmark.triangle.fill"
-        }
-        return "questionmark.circle.fill"
+        hasDestructiveButton ? "exclamationmark.triangle.fill" : "questionmark.circle.fill"
     }
 
     private var iconBackgroundColor: Color {
-        if hasDestructiveButton {
-            return theme.warningColor
-        }
-        return theme.accentColor
+        hasDestructiveButton ? theme.warningColor : theme.accentColor
     }
 
     private var cancelButton: AlertButtonConfig? {
-        buttons.first(where: { $0.role == .cancel })
+        buttons.first { $0.role == .cancel }
     }
 
     private var primaryButtonIndex: Int {
-        if let idx = buttons.firstIndex(where: { $0.role == nil }) {
-            return idx
-        }
-        if let idx = buttons.firstIndex(where: { $0.role == .destructive }) {
-            return idx
-        }
-        return 0
+        buttons.firstIndex { $0.role == nil }
+            ?? buttons.firstIndex { $0.role == .destructive }
+            ?? 0
     }
 
     private var hasDestructiveButton: Bool {
-        buttons.contains(where: { $0.role == .destructive })
+        buttons.contains { $0.role == .destructive }
     }
 
-    private func buttonTextColor(isPrimary: Bool, isDestructive: Bool) -> Color {
-        if isPrimary {
-            if isDestructive {
-                return .white
-            }
-            return theme.isDark ? theme.primaryBackground : .white
-        }
-        return theme.primaryText
+    private func buttonTextColor(isPrimary: Bool) -> Color {
+        isPrimary ? (theme.isDark ? theme.primaryBackground : .white) : theme.primaryText
     }
 
     private func buttonBackground(isPrimary: Bool, isDestructive: Bool, isHovered: Bool) -> some ShapeStyle {
+        let hoverOpacity = isHovered ? 0.9 : 1.0
         if isPrimary {
-            if isDestructive {
-                return AnyShapeStyle(theme.errorColor.opacity(isHovered ? 0.9 : 1.0))
-            }
-            return AnyShapeStyle(theme.accentColor.opacity(isHovered ? 0.9 : 1.0))
+            let color = isDestructive ? theme.errorColor : theme.accentColor
+            return AnyShapeStyle(color.opacity(hoverOpacity))
         }
         return AnyShapeStyle(theme.tertiaryBackground.opacity(isHovered ? 0.8 : 0.5))
     }
 
-    private func buttonBorderColor(isPrimary: Bool, isDestructive: Bool, isHovered: Bool) -> Color {
-        if isPrimary {
-            return .clear
-        }
-        return isHovered ? theme.primaryBorder : theme.cardBorder
+    private func buttonBorderColor(isPrimary: Bool, isHovered: Bool) -> Color {
+        isPrimary ? .clear : (isHovered ? theme.primaryBorder : theme.cardBorder)
     }
 
     // MARK: - Dismiss Animation
 
     private func dismissWithAnimation(completion: @escaping () -> Void) {
-        withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+        withAnimation(theme.springAnimation(responseMultiplier: 0.8)) {
             isAppearing = false
         }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + theme.animationDurationMedium) {
             completion()
             onDismiss()
         }
