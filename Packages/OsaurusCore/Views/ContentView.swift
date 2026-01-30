@@ -48,11 +48,14 @@ struct ContentView: View {
         .onAppear {
             portString = String(server.port)
         }
-        .alert("Server Error", isPresented: $showError) {
-            Button("OK", role: .cancel) {}
-        } message: {
-            Text(server.lastErrorMessage ?? "An error occurred while managing the server.")
-        }
+        .themedAlert(
+            "Server Error",
+            isPresented: $showError,
+            message: server.lastErrorMessage ?? "An error occurred while managing the server.",
+            primaryButton: .primary("OK") {}
+        )
+        .themedAlertScope(.content)
+        .overlay(ThemedAlertHost(scope: .content))
 
     }
 

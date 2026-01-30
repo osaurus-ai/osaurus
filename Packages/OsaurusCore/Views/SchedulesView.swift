@@ -581,12 +581,13 @@ private struct ScheduleCard: View {
                 NSCursor.pop()
             }
         }
-        .alert("Delete Schedule", isPresented: $showDeleteConfirm) {
-            Button("Cancel", role: .cancel) {}
-            Button("Delete", role: .destructive, action: onDelete)
-        } message: {
-            Text("Are you sure you want to delete \"\(schedule.name)\"? This action cannot be undone.")
-        }
+        .themedAlert(
+            "Delete Schedule",
+            isPresented: $showDeleteConfirm,
+            message: "Are you sure you want to delete \"\(schedule.name)\"? This action cannot be undone.",
+            primaryButton: .destructive("Delete", action: onDelete),
+            secondaryButton: .cancel("Cancel")
+        )
     }
 
     // MARK: - Configuration Badges

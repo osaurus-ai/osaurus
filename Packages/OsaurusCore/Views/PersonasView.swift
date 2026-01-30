@@ -131,13 +131,17 @@ struct PersonasView: View {
         ) { result in
             handleImport(result)
         }
-        .alert("Import Error", isPresented: .constant(importError != nil)) {
-            Button("OK") { importError = nil }
-        } message: {
-            if let error = importError {
-                Text(error)
-            }
-        }
+        .themedAlert(
+            "Import Error",
+            isPresented: Binding(
+                get: { importError != nil },
+                set: { newValue in
+                    if !newValue { importError = nil }
+                }
+            ),
+            message: importError,
+            primaryButton: .primary("OK") { importError = nil }
+        )
         .onAppear {
             personaManager.refresh()
             withAnimation(.easeOut(duration: 0.25).delay(0.05)) {
@@ -677,12 +681,13 @@ private struct PersonaCard: View {
         .onHover { hovering in
             isHovered = hovering
         }
-        .alert("Delete Persona", isPresented: $showDeleteConfirm) {
-            Button("Cancel", role: .cancel) {}
-            Button("Delete", role: .destructive, action: onDelete)
-        } message: {
-            Text("Are you sure you want to delete \"\(persona.name)\"? This action cannot be undone.")
-        }
+        .themedAlert(
+            "Delete Persona",
+            isPresented: $showDeleteConfirm,
+            message: "Are you sure you want to delete \"\(persona.name)\"? This action cannot be undone.",
+            primaryButton: .destructive("Delete", action: onDelete),
+            secondaryButton: .cancel("Cancel")
+        )
     }
 
     // MARK: - Configuration Badges

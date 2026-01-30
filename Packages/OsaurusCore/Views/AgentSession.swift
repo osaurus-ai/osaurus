@@ -10,6 +10,21 @@ import Combine
 import Foundation
 import SwiftUI
 
+// MARK: - Agent Activity Events (for background toast mini-log)
+
+public enum AgentActivityEvent: Equatable, Sendable {
+    case startedIssue(title: String)
+    case planCreated(stepCount: Int)
+    case willExecuteStep(index: Int, total: Int?, description: String)
+    case completedStep(index: Int, total: Int?)
+    case toolExecuted(name: String)
+    case needsClarification
+    case injectedUserInput
+    case retrying(attempt: Int, waitSeconds: Int)
+    case generatedArtifact(filename: String, isFinal: Bool)
+    case completedIssue(success: Bool)
+}
+
 /// Input state for agent mode - determines input behavior and placeholder text
 public enum AgentInputState: Equatable {
     /// No active task - input creates new task
@@ -270,6 +285,18 @@ public final class AgentSession: ObservableObject {
 
     /// The agent engine instance for this session (each session owns its own engine)
     private let engine: AgentEngine
+
+    // MARK: - Activity Feed (for background task toasts)
+
+    private let activitySubject = PassthroughSubject<AgentActivityEvent, Never>()
+
+    public var activityPublisher: AnyPublisher<AgentActivityEvent, Never> {
+        activitySubject.eraseToAnyPublisher()
+    }
+
+    private func emitActivity(_ event: AgentActivityEvent) {
+        activitySubject.send(event)
+    }
 
     // MARK: - Initialization
 
@@ -890,6 +917,7 @@ extension AgentSession: AgentEngineDelegate {
         activeIssue = issue
         streamingContent = ""
         updateLocalIssueStatus(issue.id, to: .inProgress)
+        emitActivity(.startedIssue(title: issue.title))
 
         if isResumingFromClarification {
             // Resuming after clarification - preserve existing turns
@@ -938,6 +966,7 @@ extension AgentSession: AgentEngineDelegate {
 
     public func agentEngine(_ engine: AgentEngine, didCreatePlan plan: ExecutionPlan, forIssue issue: Issue) {
         currentPlan = plan
+        emitActivity(.planCreated(stepCount: plan.steps.count))
 
         let turn = lastAssistantTurn()
         turn.plan = plan
@@ -954,6 +983,7 @@ extension AgentSession: AgentEngineDelegate {
         forIssue issue: Issue
     ) {
         currentStep = stepIndex
+        emitActivity(.willExecuteStep(index: stepIndex, total: currentPlan?.steps.count, description: step.description))
 
         let turn = lastAssistantTurn()
         turn.currentPlanStep = stepIndex
@@ -982,6 +1012,7 @@ extension AgentSession: AgentEngineDelegate {
 
         // Attach tool call result if present
         if let toolCallResult = result.toolCallResult {
+            emitActivity(.toolExecuted(name: toolCallResult.toolCall.function.name))
             if assistantTurn.toolCalls == nil {
                 assistantTurn.toolCalls = []
             }
@@ -1005,6 +1036,7 @@ extension AgentSession: AgentEngineDelegate {
         }
 
         currentStep = stepIndex + 1
+        emitActivity(.completedStep(index: stepIndex, total: currentPlan?.steps.count))
         notifyIfSelected(issue.id)
     }
 
@@ -1039,11 +1071,14 @@ extension AgentSession: AgentEngineDelegate {
                 finalArtifact = artifact
             }
         }
+
+        emitActivity(.generatedArtifact(filename: artifact.filename, isFinal: artifact.isFinalResult))
     }
 
     public func agentEngine(_ engine: AgentEngine, didCompleteIssue issue: Issue, success: Bool) {
         // Consolidate content chunks for storage
         liveExecutionTurns.filter { $0.role == .assistant }.forEach { $0.consolidateContent() }
+        emitActivity(.completedIssue(success: success))
         notifyIfSelected(issue.id)
         Task { await refreshIssues() }
     }
@@ -1052,6 +1087,7 @@ extension AgentSession: AgentEngineDelegate {
     {
         retryAttempt = attempt
         isRetrying = true
+        emitActivity(.retrying(attempt: attempt, waitSeconds: Int(afterDelay)))
 
         let content = "\n\n⚠️ **Retrying...** (attempt \(attempt), waiting \(Int(afterDelay))s)\n"
         streamingContent += content
@@ -1066,6 +1102,7 @@ extension AgentSession: AgentEngineDelegate {
         pendingClarification = request
         clarificationIssueId = issue.id
         isExecuting = false  // Pause while waiting for user input
+        emitActivity(.needsClarification)
 
         let turn = lastAssistantTurn()
         turn.pendingClarification = request
@@ -1076,6 +1113,7 @@ extension AgentSession: AgentEngineDelegate {
     public func agentEngine(_ engine: AgentEngine, didInjectUserInput input: String, forIssue issue: Issue) {
         // Clear the pending queued message since it was injected
         pendingQueuedMessage = nil
+        emitActivity(.injectedUserInput)
 
         // Add user input turn to live execution
         liveExecutionTurns.append(ChatTurn(role: .user, content: "**[Context]** \(input)"))

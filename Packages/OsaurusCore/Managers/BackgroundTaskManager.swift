@@ -77,6 +77,9 @@ public final class BackgroundTaskManager: ObservableObject {
         // Setup consolidated observation
         observeTask(state, session: session)
 
+        // Seed the activity feed so the toast has immediate context
+        state.appendActivity(kind: .info, title: "Running in background")
+
         print("[BackgroundTaskManager] Detached window \(windowId) with task '\(currentTask.title)'")
         return state
     }
@@ -219,7 +222,57 @@ public final class BackgroundTaskManager: ObservableObject {
             }
             .store(in: &cancellables)
 
+        // Observe activity events for the toast mini-log
+        session.activityPublisher
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] event in
+                guard let self, let state = self.backgroundTasks[windowId] else { return }
+                self.recordActivityEvent(event, into: state)
+            }
+            .store(in: &cancellables)
+
         taskObservers[windowId] = cancellables
+    }
+
+    // MARK: - Private: Activity Event Mapping
+
+    private func recordActivityEvent(_ event: AgentActivityEvent, into state: BackgroundTaskState) {
+        switch event {
+        case .startedIssue(let title):
+            state.appendActivity(kind: .info, title: "Issue", detail: title)
+
+        case .planCreated(let stepCount):
+            state.appendActivity(kind: .info, title: "Plan", detail: "\(stepCount) steps")
+
+        case .willExecuteStep(let index, let total, let description):
+            // Avoid redundancy: current step is already shown in the toast header + progress.
+            // Keep the mini-log for higher-signal events (tools/retries/clarifications/artifacts).
+            _ = index; _ = total; _ = description
+            return
+
+        case .completedStep(let index, let total):
+            // Avoid redundancy: step completion is reflected via progress UI.
+            _ = index; _ = total
+            return
+
+        case .toolExecuted(let name):
+            state.appendActivity(kind: .tool, title: "Tool", detail: name)
+
+        case .needsClarification:
+            state.appendActivity(kind: .warning, title: "Needs input")
+
+        case .injectedUserInput:
+            state.appendActivity(kind: .info, title: "Context injected")
+
+        case .retrying(let attempt, let waitSeconds):
+            state.appendActivity(kind: .warning, title: "Retrying", detail: "Attempt \(attempt), wait \(waitSeconds)s")
+
+        case .generatedArtifact(let filename, let isFinal):
+            state.appendActivity(kind: .info, title: isFinal ? "Final artifact" : "Artifact", detail: filename)
+
+        case .completedIssue(let success):
+            state.appendActivity(kind: success ? .success : .error, title: success ? "Issue completed" : "Issue failed")
+        }
     }
 
     // MARK: - Private: State Update Handlers

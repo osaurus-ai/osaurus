@@ -136,6 +136,12 @@ public final class ChatWindowManager: NSObject, ObservableObject {
     private func shouldAllowClose(id: UUID) -> Bool {
         guard let windowState = windowStates[id] else { return true }
 
+        // If this window is already detached to background, allow close without prompts.
+        // This prevents duplicate confirmations when we detach and then programmatically close.
+        if BackgroundTaskManager.shared.isBackgroundTask(id) {
+            return true
+        }
+
         // Check if there's a running agent task
         let isAgentExecuting =
             windowState.agentSession?.isExecuting == true
@@ -146,27 +152,11 @@ public final class ChatWindowManager: NSObject, ObservableObject {
             return true
         }
 
-        // Show confirmation dialog
-        let alert = NSAlert()
-        alert.messageText = "Agent Task Running"
-        alert.informativeText =
-            "Would you like to run this task in the background? You can monitor its progress from the toast notification."
-        alert.alertStyle = .informational
-        alert.addButton(withTitle: "Run in Background")
-        alert.addButton(withTitle: "Cancel")
-
-        let response = alert.runModal()
-
-        if response == .alertFirstButtonReturn {
-            // User chose to run in background
-            if let session = windowState.agentSession {
-                BackgroundTaskManager.shared.detachWindow(id, session: session, windowState: windowState)
-            }
-            return true
-        } else {
-            // User cancelled, don't close
-            return false
+        // Present in-app themed confirmation via SwiftUI overlay (ChatView observes this)
+        if windowState.agentCloseConfirmation == nil {
+            windowState.agentCloseConfirmation = AgentCloseConfirmation()
         }
+        return false
     }
 
     /// Show/focus a window by ID

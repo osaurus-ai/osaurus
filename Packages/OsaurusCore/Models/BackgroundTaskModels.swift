@@ -6,6 +6,7 @@
 //  Used when agent tasks continue running after their window is closed.
 //
 
+import Combine
 import Foundation
 
 // MARK: - Background Task Status
@@ -60,6 +61,40 @@ public enum BackgroundTaskStatus: Equatable, Sendable {
     }
 }
 
+// MARK: - Background Task Activity Feed
+
+/// A single activity item shown in the background task toast mini-log.
+public struct BackgroundTaskActivityItem: Identifiable, Equatable, Sendable {
+    public enum Kind: Equatable, Sendable {
+        case info
+        case progress
+        case tool
+        case warning
+        case success
+        case error
+    }
+
+    public let id: UUID
+    public let date: Date
+    public let kind: Kind
+    public let title: String
+    public let detail: String?
+
+    public init(
+        id: UUID = UUID(),
+        date: Date = Date(),
+        kind: Kind,
+        title: String,
+        detail: String? = nil
+    ) {
+        self.id = id
+        self.date = date
+        self.kind = kind
+        self.title = title
+        self.detail = detail
+    }
+}
+
 // MARK: - Background Task State
 
 /// State of a task running in the background
@@ -108,8 +143,17 @@ public final class BackgroundTaskState: ObservableObject, Identifiable {
     /// Pending clarification request (when status is .awaitingClarification)
     @Published public var pendingClarification: ClarificationRequest?
 
+    /// Recent activity items used to drive the toast mini-log.
+    /// Bounded to avoid unbounded growth and excessive re-renders.
+    @Published public private(set) var activityFeed: [BackgroundTaskActivityItem] = []
+
+    /// Timestamp of the most recent activity item (for subtle “fresh update” animations).
+    @Published public private(set) var lastActivityAt: Date?
+
     /// When the background task was created
     public let createdAt: Date
+
+    private let maxActivityItems: Int = 40
 
     init(
         id: UUID,
@@ -134,5 +178,24 @@ public final class BackgroundTaskState: ObservableObject, Identifiable {
         self.currentStep = currentStep
         self.pendingClarification = pendingClarification
         self.createdAt = Date()
+    }
+
+    // MARK: - Activity Feed
+
+    public func appendActivity(_ item: BackgroundTaskActivityItem) {
+        // De-dupe exact repeats (common when multiple publishers update at once)
+        if let last = activityFeed.last, last.kind == item.kind, last.title == item.title, last.detail == item.detail {
+            return
+        }
+
+        activityFeed.append(item)
+        if activityFeed.count > maxActivityItems {
+            activityFeed.removeFirst(activityFeed.count - maxActivityItems)
+        }
+        lastActivityAt = item.date
+    }
+
+    public func appendActivity(kind: BackgroundTaskActivityItem.Kind, title: String, detail: String? = nil) {
+        appendActivity(.init(kind: kind, title: title, detail: detail))
     }
 }

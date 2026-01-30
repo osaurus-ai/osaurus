@@ -1279,11 +1279,12 @@ private struct InstalledPluginCard: View {
             updatePermissions()
             updateSecretsStatus()
         }
-        .alert("Error", isPresented: $showError) {
-            Button("OK", role: .cancel) {}
-        } message: {
-            Text(errorMessage ?? "Unknown error")
-        }
+        .themedAlert(
+            "Error",
+            isPresented: $showError,
+            message: errorMessage ?? "Unknown error",
+            primaryButton: .primary("OK") {}
+        )
         .sheet(isPresented: $showSecretsSheet) {
             ToolSecretsSheet(
                 pluginId: plugin.spec.plugin_id,
@@ -1760,11 +1761,12 @@ private struct PluginRow: View {
         .onHover { hovering in
             isHovering = hovering
         }
-        .alert("Installation Error", isPresented: $showError) {
-            Button("OK", role: .cancel) {}
-        } message: {
-            Text(errorMessage ?? "Unknown error")
-        }
+        .themedAlert(
+            "Installation Error",
+            isPresented: $showError,
+            message: errorMessage ?? "Unknown error",
+            primaryButton: .primary("OK") {}
+        )
     }
 
     private var cardBackground: some View {

@@ -142,18 +142,32 @@ struct ThemesView: View {
         ) { result in
             handleExport(result)
         }
-        .alert("Delete Theme", isPresented: $showDeleteConfirmation, presenting: themeToDelete) { themeToDeleteItem in
-            Button("Cancel", role: .cancel) {
+        .themedAlert(
+            "Delete Theme",
+            isPresented: Binding(
+                get: { showDeleteConfirmation && themeToDelete != nil },
+                set: { newValue in
+                    if !newValue {
+                        showDeleteConfirmation = false
+                        themeToDelete = nil
+                    }
+                }
+            ),
+            message: themeToDelete.map {
+                "Are you sure you want to delete \"\($0.metadata.name)\"? This action cannot be undone."
+            },
+            primaryButton: .destructive("Delete") {
+                if let theme = themeToDelete {
+                    performDelete(theme)
+                }
+                showDeleteConfirmation = false
+                themeToDelete = nil
+            },
+            secondaryButton: .cancel("Cancel") {
+                showDeleteConfirmation = false
                 themeToDelete = nil
             }
-            Button("Delete", role: .destructive) {
-                performDelete(themeToDeleteItem)
-            }
-        } message: { themeToDeleteItem in
-            Text(
-                "Are you sure you want to delete \"\(themeToDeleteItem.metadata.name)\"? This action cannot be undone."
-            )
-        }
+        )
     }
 
     // MARK: - Delete Helper

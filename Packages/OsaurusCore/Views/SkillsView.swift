@@ -820,12 +820,13 @@ private struct SkillRow: View {
         .opacity(hasAppeared ? 1 : 0)
         .offset(y: hasAppeared ? 0 : 10)
         .animation(.easeOut(duration: 0.25).delay(animationDelay), value: hasAppeared)
-        .alert("Delete Skill", isPresented: $showDeleteConfirm) {
-            Button("Cancel", role: .cancel) {}
-            Button("Delete", role: .destructive, action: onDelete)
-        } message: {
-            Text("Are you sure you want to delete \"\(skill.name)\"? This action cannot be undone.")
-        }
+        .themedAlert(
+            "Delete Skill",
+            isPresented: $showDeleteConfirm,
+            message: "Are you sure you want to delete \"\(skill.name)\"? This action cannot be undone.",
+            primaryButton: .destructive("Delete", action: onDelete),
+            secondaryButton: .cancel("Cancel")
+        )
     }
 
     private var cardBackground: some View {
