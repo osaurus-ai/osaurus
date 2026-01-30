@@ -1132,9 +1132,9 @@ struct FloatingInputCard: View {
     private var endTaskButton: some View {
         Button(action: { onEndTask?() }) {
             HStack(spacing: 4) {
-                Image(systemName: "xmark")
+                Image(systemName: "checkmark")
                     .font(.system(size: 9, weight: .bold))
-                Text("End")
+                Text("Done")
                     .font(.system(size: 11, weight: .medium))
             }
             .foregroundColor(theme.secondaryText)
