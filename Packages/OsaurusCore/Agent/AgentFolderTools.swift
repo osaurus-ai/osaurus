@@ -1271,7 +1271,7 @@ enum AgentFolderToolFactory {
     /// Build coding tools
     static func buildCodingTools(rootPath: URL) -> [OsaurusTool] {
         return [
-            AgentShellRunTool(rootPath: rootPath),
+            AgentShellRunTool(rootPath: rootPath)
         ]
     }
 

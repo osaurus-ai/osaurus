@@ -494,6 +494,7 @@ struct AgentView: View {
                 isStreaming: session.isExecuting && session.activeIssue?.id == session.selectedIssueId,
                 scrollTrigger: session.issueTurnsCount,
                 lastAssistantTurnId: session.issueBlocks.last?.turnId,
+                autoScrollEnabled: false,
                 onCopy: { _ in },
                 onRegenerate: { _ in },
                 onScrolledToBottom: { isPinnedToBottom = true },
