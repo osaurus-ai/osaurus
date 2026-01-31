@@ -436,55 +436,105 @@ struct AgentView: View {
                 .foregroundColor(theme.secondaryText)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .padding(.horizontal, contentHorizontalPadding)
+        .padding(.horizontal, Self.contentHorizontalPadding)
     }
 
     // MARK: - Collapsed Progress Sidebar
 
     private var collapsedProgressSidebar: some View {
-        VStack {
-            Button {
-                withAnimation(theme.animationQuick()) {
-                    isProgressSidebarCollapsed = false
+        CollapsedSidebarButton(onExpand: {
+            withAnimation(theme.animationQuick()) {
+                isProgressSidebarCollapsed = false
+            }
+        })
+        .padding(.top, 14)
+        .padding(.trailing, 14)
+        .frame(width: 48, alignment: .top)
+        .frame(maxHeight: .infinity, alignment: .top)
+    }
+}
+
+// MARK: - Collapsed Sidebar Button
+
+private struct CollapsedSidebarButton: View {
+    let onExpand: () -> Void
+
+    @Environment(\.theme) private var theme: ThemeProtocol
+    @State private var isHovered = false
+
+    var body: some View {
+        Button(action: onExpand) {
+            ZStack {
+                // Background with subtle glass effect
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .fill(theme.secondaryBackground.opacity(isHovered ? 0.95 : 0.8))
+
+                // Subtle accent gradient on hover
+                if isHovered {
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .fill(
+                            LinearGradient(
+                                colors: [
+                                    theme.accentColor.opacity(0.08),
+                                    Color.clear,
+                                ],
+                                startPoint: .topLeading,
+                                endPoint: .bottomTrailing
+                            )
+                        )
                 }
-            } label: {
+
                 Image(systemName: "sidebar.right")
                     .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(theme.tertiaryText)
-                    .frame(width: 28, height: 28)
-                    .background(
-                        RoundedRectangle(cornerRadius: 8, style: .continuous)
-                            .fill(theme.secondaryBackground.opacity(0.8))
-                    )
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 8, style: .continuous)
-                            .strokeBorder(theme.primaryBorder.opacity(0.15), lineWidth: 1)
-                    )
-                    .contentShape(Rectangle())
+                    .foregroundColor(isHovered ? theme.accentColor : theme.tertiaryText)
             }
-            .buttonStyle(.plain)
-            .help("Show progress")
-            .padding(.top, 12)
-
-            Spacer()
+            .frame(width: 32, height: 32)
+            .overlay(
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .strokeBorder(
+                        LinearGradient(
+                            colors: [
+                                theme.glassEdgeLight.opacity(isHovered ? 0.25 : 0.15),
+                                theme.primaryBorder.opacity(isHovered ? 0.2 : 0.1),
+                            ],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        ),
+                        lineWidth: 1
+                    )
+            )
+            .shadow(
+                color: isHovered ? theme.accentColor.opacity(0.15) : .clear,
+                radius: 8,
+                x: 0,
+                y: 2
+            )
         }
-        .frame(width: 48)
-        .padding(.trailing, 12)
+        .buttonStyle(.plain)
+        .onHover { hovering in
+            withAnimation(.easeOut(duration: 0.15)) {
+                isHovered = hovering
+            }
+        }
+        .help("Show progress")
     }
+}
+
+// MARK: - AgentView Issue Detail Extension
+
+extension AgentView {
+    // MARK: - Constants
+
+    private static let maxChatContentWidth: CGFloat = 700
+    private static let contentHorizontalPadding: CGFloat = 20
 
     // MARK: - Issue Detail View
-
-    /// Maximum content width for chat readability
-    private let maxChatContentWidth: CGFloat = 700
-
-    /// Consistent horizontal padding for content area (matches panel trailing padding)
-    private let contentHorizontalPadding: CGFloat = 12
 
     private func issueDetailView(width: CGFloat) -> some View {
         let personaName = windowState.cachedPersonaDisplayName
         // Calculate content width: available width minus padding, capped at max
-        let availableWidth = width - (contentHorizontalPadding * 2)
-        let contentWidth = min(availableWidth, maxChatContentWidth)
+        let availableWidth = width - (Self.contentHorizontalPadding * 2)
+        let contentWidth = min(availableWidth, Self.maxChatContentWidth)
 
         return ZStack(alignment: .bottomTrailing) {
             MessageThreadView(
@@ -515,8 +565,8 @@ struct AgentView: View {
             )
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .padding(.horizontal, contentHorizontalPadding)
-        .padding(.top, 8)
+        .padding(.horizontal, Self.contentHorizontalPadding)
+        .padding(.top, 16)
     }
 
     private var issueEmptyDetailView: some View {
@@ -535,7 +585,7 @@ struct AgentView: View {
                 .multilineTextAlignment(.center)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .padding(.horizontal, contentHorizontalPadding)
+        .padding(.horizontal, Self.contentHorizontalPadding)
     }
 
     // MARK: - Error View
@@ -617,7 +667,7 @@ struct AgentView: View {
                         .strokeBorder(theme.errorColor.opacity(0.3), lineWidth: 1)
                 )
         )
-        .padding(.horizontal, contentHorizontalPadding)
+        .padding(.horizontal, Self.contentHorizontalPadding)
         .padding(.top, 12)
     }
 

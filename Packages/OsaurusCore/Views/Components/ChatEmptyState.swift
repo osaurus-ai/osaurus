@@ -86,7 +86,7 @@ struct ChatEmptyState: View {
     // MARK: - Ready State (has models)
 
     private var readyState: some View {
-        VStack(spacing: 10) {
+        VStack(spacing: 14) {
             // Hero Orb - mesmerizing animated orb as the focal point
             AnimatedOrb(color: theme.accentColor, size: .medium, seed: activePersona.name)
                 .frame(width: 88, height: 88)
@@ -344,7 +344,7 @@ private struct QuickActionButton: View {
                     .offset(x: isHovered ? 0 : -5)
             }
             .padding(.horizontal, 16)
-            .padding(.vertical, 14)
+            .padding(.vertical, 16)
             .background(
                 RoundedRectangle(cornerRadius: 12, style: .continuous)
                     .fill(

@@ -49,7 +49,7 @@ struct IssueTrackerPanel: View {
                 ScrollView {
                     VStack(spacing: 0) {
                         if !issues.isEmpty {
-                            LazyVStack(spacing: 6) {
+                            LazyVStack(spacing: 8) {
                                 ForEach(sortedIssues) { issue in
                                     IssueRow(
                                         issue: issue,
@@ -62,7 +62,7 @@ struct IssueTrackerPanel: View {
                                 }
                             }
                             .padding(.horizontal, 12)
-                            .padding(.vertical, 8)
+                            .padding(.vertical, 10)
                         }
 
                         if let artifact = finalArtifact { resultSection(artifact: artifact) }
@@ -78,23 +78,51 @@ struct IssueTrackerPanel: View {
         .frame(maxHeight: .infinity)
         .background(panelBackground)
         .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .strokeBorder(theme.primaryBorder.opacity(0.15), lineWidth: 1)
-        )
+        .overlay(panelBorder)
         .shadow(color: theme.shadowColor.opacity(theme.shadowOpacity * 0.5), radius: 8, x: 0, y: 2)
     }
 
+    // MARK: - Panel Styling
+
     @ViewBuilder
     private var panelBackground: some View {
-        if theme.glassEnabled {
-            ZStack {
-                RoundedRectangle(cornerRadius: 12, style: .continuous).fill(.ultraThinMaterial)
-                RoundedRectangle(cornerRadius: 12, style: .continuous).fill(theme.primaryBackground.opacity(0.7))
+        ZStack {
+            // Layer 1: Glass material (if enabled)
+            if theme.glassEnabled {
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .fill(.ultraThinMaterial)
             }
-        } else {
-            RoundedRectangle(cornerRadius: 12, style: .continuous).fill(theme.secondaryBackground.opacity(0.95))
+
+            // Layer 2: Semi-transparent background
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .fill(theme.secondaryBackground.opacity(theme.isDark ? 0.75 : 0.85))
+
+            // Layer 3: Subtle accent gradient at top
+            LinearGradient(
+                colors: [
+                    theme.accentColor.opacity(theme.isDark ? 0.05 : 0.03),
+                    Color.clear,
+                ],
+                startPoint: .top,
+                endPoint: .center
+            )
+            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
         }
+    }
+
+    private var panelBorder: some View {
+        RoundedRectangle(cornerRadius: 12, style: .continuous)
+            .strokeBorder(
+                LinearGradient(
+                    colors: [
+                        theme.glassEdgeLight.opacity(theme.isDark ? 0.18 : 0.25),
+                        theme.primaryBorder.opacity(0.12),
+                    ],
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing
+                ),
+                lineWidth: 1
+            )
     }
 
     // MARK: - Sections
@@ -104,7 +132,7 @@ struct IssueTrackerPanel: View {
             .fill(theme.primaryBorder.opacity(0.2))
             .frame(height: 1)
             .padding(.horizontal, 12)
-            .padding(.vertical, 8)
+            .padding(.vertical, 12)
     }
 
     private func resultSection(artifact: Artifact) -> some View {
@@ -307,7 +335,7 @@ struct IssueTrackerPanel: View {
             .help("Hide progress")
         }
         .padding(.horizontal, 14)
-        .padding(.vertical, 12)
+        .padding(.vertical, 14)
         .overlay(alignment: .bottom) {
             // Subtle bottom divider
             Rectangle()
@@ -437,29 +465,33 @@ private struct IssueRow: View {
 
     // MARK: - Status Indicator
 
-    @ViewBuilder
     private var statusIndicator: some View {
+        MorphingStatusIcon(state: statusIconState, accentColor: statusIconColor, size: 14)
+    }
+
+    private var statusIconState: StatusIconState {
         switch issue.status {
         case .open:
-            Circle()
-                .stroke(theme.secondaryText.opacity(0.4), lineWidth: 1.5)
+            return .pending
         case .inProgress:
-            ZStack {
-                Circle()
-                    .stroke(theme.accentColor.opacity(0.2), lineWidth: 1.5)
-                Circle()
-                    .trim(from: 0, to: 0.65)
-                    .stroke(theme.accentColor, lineWidth: 1.5)
-                    .rotationEffect(.degrees(-90))
-            }
+            return isActive ? .active : .pending
         case .blocked:
-            Image(systemName: "pause.circle.fill")
-                .font(.system(size: 14))
-                .foregroundColor(theme.warningColor)
+            return .pending
         case .closed:
-            Image(systemName: "checkmark.circle.fill")
-                .font(.system(size: 14))
-                .foregroundColor(theme.successColor)
+            return .completed
+        }
+    }
+
+    private var statusIconColor: Color {
+        switch issue.status {
+        case .open:
+            return theme.tertiaryText
+        case .inProgress:
+            return theme.accentColor
+        case .blocked:
+            return theme.warningColor
+        case .closed:
+            return theme.successColor
         }
     }
 
