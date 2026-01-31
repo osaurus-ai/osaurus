@@ -15,6 +15,7 @@ struct MessageThreadView: View {
     let isStreaming: Bool
     let scrollTrigger: Int
     let lastAssistantTurnId: UUID?
+    var autoScrollEnabled: Bool = true
 
     let onCopy: (UUID) -> Void
     let onRegenerate: (UUID) -> Void
@@ -57,7 +58,9 @@ struct MessageThreadView: View {
             .scrollContentBackground(.hidden)
             .scrollIndicators(.visible)
             .onChange(of: scrollTrigger) { _, _ in
-                scrollToResponseStart(proxy: proxy)
+                if autoScrollEnabled {
+                    scrollToResponseStart(proxy: proxy)
+                }
             }
         }
         .onAppear {
