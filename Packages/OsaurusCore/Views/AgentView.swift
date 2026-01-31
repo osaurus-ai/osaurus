@@ -12,7 +12,6 @@ import UniformTypeIdentifiers
 struct AgentView: View {
     @ObservedObject var windowState: ChatWindowState
     @ObservedObject var session: AgentSession
-    @ObservedObject var folderContextService = AgentFolderContextService.shared
 
     @State private var showSidebar: Bool = false
     @State private var isPinnedToBottom: Bool = true
@@ -320,9 +319,6 @@ struct AgentView: View {
                     windowState.switchMode(to: .chat)
                 }
 
-                // Folder context button
-                folderContextButton
-
                 // Task title
                 if let task = session.currentTask {
                     Text(task.title)
@@ -337,72 +333,6 @@ struct AgentView: View {
             .padding(.trailing, 56)
         }
         .frame(height: 72)
-    }
-
-    // MARK: - Folder Context Button
-
-    private var folderContextButton: some View {
-        let hasFolder = folderContextService.hasActiveFolder
-
-        return Button(action: { Task { await folderContextService.selectFolder() } }) {
-            HStack(spacing: 6) {
-                Image(systemName: hasFolder ? "folder.fill" : "folder.badge.plus")
-                    .font(.system(size: 12))
-                    .foregroundColor(hasFolder ? theme.accentColor : theme.tertiaryText)
-
-                if let context = folderContextService.currentContext {
-                    Text(context.rootPath.lastPathComponent)
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundColor(theme.secondaryText)
-                        .lineLimit(1)
-
-                    if context.projectType != .unknown {
-                        Text(context.projectType.displayName)
-                            .font(.system(size: 10, weight: .medium))
-                            .foregroundColor(theme.tertiaryText)
-                            .padding(.horizontal, 6)
-                            .padding(.vertical, 2)
-                            .background(RoundedRectangle(cornerRadius: 4).fill(theme.secondaryBackground))
-                    }
-                } else {
-                    Text("Select Folder")
-                        .font(.system(size: 12))
-                        .foregroundColor(theme.tertiaryText)
-                }
-            }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 6)
-            .background(RoundedRectangle(cornerRadius: 8).fill(theme.secondaryBackground.opacity(0.6)))
-            .overlay(
-                RoundedRectangle(cornerRadius: 8)
-                    .strokeBorder(
-                        hasFolder ? theme.accentColor.opacity(0.3) : theme.primaryBorder.opacity(0.3),
-                        lineWidth: 1
-                    )
-            )
-        }
-        .buttonStyle(.plain)
-        .help(hasFolder ? "Change or clear working folder" : "Select a working folder")
-        .contextMenu {
-            if hasFolder {
-                Button {
-                    Task { await folderContextService.selectFolder() }
-                } label: {
-                    Label("Change Folder", systemImage: "folder.badge.gear")
-                }
-                Button {
-                    Task { await folderContextService.refreshContext() }
-                } label: {
-                    Label("Refresh Context", systemImage: "arrow.clockwise")
-                }
-                Divider()
-                Button(role: .destructive) {
-                    folderContextService.clearFolder()
-                } label: {
-                    Label("Clear Folder", systemImage: "folder.badge.minus")
-                }
-            }
-        }
     }
 
     // MARK: - Empty State

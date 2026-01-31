@@ -49,6 +49,7 @@ struct FloatingInputCard: View {
     @ObservedObject private var toolRegistry = ToolRegistry.shared
     @ObservedObject private var skillManager = SkillManager.shared
     @ObservedObject private var personaManager = PersonaManager.shared
+    @ObservedObject private var folderContextService = AgentFolderContextService.shared
 
     // Local state for text input to prevent parent re-renders on every keystroke
     @State private var localText: String = ""
@@ -602,6 +603,12 @@ struct FloatingInputCard: View {
                 capabilitiesSelectorChip
             }
 
+            // Folder context selector (agent mode only)
+            // Show if: has folder selected, OR in empty mode (can select folder)
+            if agentInputState != nil && (folderContextService.hasActiveFolder || isAgentEmptyMode) {
+                folderContextChip
+            }
+
             // Context size indicator
             if !hideContextIndicator && (displayContextTokens > 0 || (cumulativeTokens ?? 0) > 0) {
                 contextIndicatorChip
@@ -831,6 +838,115 @@ struct FloatingInputCard: View {
         .popover(isPresented: $showCapabilitiesPicker, arrowEdge: .top) {
             CapabilitiesSelectorView(personaId: effectivePersonaId)
         }
+    }
+
+    // MARK: - Folder Context Chip (Agent Mode)
+
+    /// Empty mode = no active task, folder can be changed
+    private var isAgentEmptyMode: Bool { hideContextIndicator }
+
+    private var folderContextChip: some View {
+        let hasFolder = folderContextService.hasActiveFolder
+        let canEdit = isAgentEmptyMode
+
+        return HStack(spacing: 4) {
+            if canEdit {
+                Button(action: { Task { await folderContextService.selectFolder() } }) {
+                    folderChipContent(hasFolder: hasFolder, canEdit: true)
+                }
+                .buttonStyle(.plain)
+                .help(hasFolder ? "Change working folder" : "Select a working folder")
+                .contextMenu {
+                    if hasFolder {
+                        Button {
+                            Task { await folderContextService.selectFolder() }
+                        } label: {
+                            Label("Change Folder", systemImage: "folder.badge.gear")
+                        }
+                        Button {
+                            Task { await folderContextService.refreshContext() }
+                        } label: {
+                            Label("Refresh Context", systemImage: "arrow.clockwise")
+                        }
+                        Divider()
+                        Button(role: .destructive) {
+                            folderContextService.clearFolder()
+                        } label: {
+                            Label("Clear Folder", systemImage: "folder.badge.minus")
+                        }
+                    }
+                }
+            } else {
+                folderChipContent(hasFolder: hasFolder, canEdit: false)
+                    .help("Folder is locked while task is running")
+            }
+
+            if hasFolder && canEdit {
+                Button {
+                    folderContextService.clearFolder()
+                } label: {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 8, weight: .bold))
+                        .foregroundColor(theme.tertiaryText)
+                        .frame(width: 18, height: 18)
+                        .background(Circle().fill(theme.secondaryBackground.opacity(0.8)))
+                        .overlay(Circle().strokeBorder(theme.primaryBorder.opacity(0.5), lineWidth: 1))
+                }
+                .buttonStyle(.plain)
+                .help("Clear folder selection")
+                .transition(.opacity.combined(with: .scale(scale: 0.8)))
+            }
+        }
+        .animation(.easeOut(duration: 0.15), value: hasFolder)
+        .animation(.easeOut(duration: 0.15), value: canEdit)
+    }
+
+    @ViewBuilder
+    private func folderChipContent(hasFolder: Bool, canEdit: Bool) -> some View {
+        HStack(spacing: 6) {
+            Image(systemName: hasFolder ? "folder.fill" : "folder.badge.plus")
+                .font(theme.font(size: CGFloat(theme.captionSize) - 2))
+                .foregroundColor(hasFolder ? theme.accentColor : theme.tertiaryText)
+                .opacity(canEdit ? 1.0 : 0.7)
+
+            if let context = folderContextService.currentContext {
+                Text(context.rootPath.lastPathComponent)
+                    .font(theme.font(size: CGFloat(theme.captionSize), weight: .medium))
+                    .foregroundColor(canEdit ? theme.secondaryText : theme.tertiaryText)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .frame(maxWidth: 140)
+
+                if context.projectType != .unknown {
+                    Text(context.projectType.displayName)
+                        .font(theme.font(size: CGFloat(theme.captionSize) - 3, weight: .semibold))
+                        .foregroundColor(theme.tertiaryText)
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 2)
+                        .background(Capsule().fill(theme.tertiaryBackground.opacity(0.6)))
+                }
+            } else if canEdit {
+                Text("Folder")
+                    .font(theme.font(size: CGFloat(theme.captionSize), weight: .medium))
+                    .foregroundColor(theme.tertiaryText)
+            }
+
+            if canEdit {
+                Image(systemName: "chevron.up.chevron.down")
+                    .font(theme.font(size: CGFloat(theme.captionSize) - 3, weight: .semibold))
+                    .foregroundColor(theme.tertiaryText)
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 6)
+        .background(
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .fill(theme.secondaryBackground.opacity(canEdit ? 0.8 : 0.5))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .strokeBorder(theme.primaryBorder.opacity(canEdit ? 0.5 : 0.3), lineWidth: 1)
+        )
     }
 
     private var keyboardHint: some View {
