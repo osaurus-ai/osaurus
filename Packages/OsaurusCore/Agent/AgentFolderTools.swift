@@ -255,7 +255,7 @@ struct AgentFileReadTool: OsaurusTool {
 
 // MARK: File Write Tool
 
-struct AgentFileWriteTool: OsaurusTool {
+struct AgentFileWriteTool: OsaurusTool, PermissionedTool {
     let name = "file_write"
     let description =
         "Create a new file or overwrite an existing file with the provided content. Parent directories will be created if they don't exist."
@@ -273,6 +273,9 @@ struct AgentFileWriteTool: OsaurusTool {
         ]),
         "required": .array([.string("path"), .string("content")]),
     ])
+
+    var requirements: [String] { [] }
+    var defaultPermissionPolicy: ToolPermissionPolicy { .auto }
 
     private let rootPath: URL
 
@@ -327,7 +330,7 @@ struct AgentFileWriteTool: OsaurusTool {
 
 // MARK: File Move Tool
 
-struct AgentFileMoveTool: OsaurusTool {
+struct AgentFileMoveTool: OsaurusTool, PermissionedTool {
     let name = "file_move"
     let description = "Move or rename a file or directory."
     let parameters: JSONValue? = .object([
@@ -344,6 +347,9 @@ struct AgentFileMoveTool: OsaurusTool {
         ]),
         "required": .array([.string("source"), .string("destination")]),
     ])
+
+    var requirements: [String] { [] }
+    var defaultPermissionPolicy: ToolPermissionPolicy { .auto }
 
     private let rootPath: URL
 
@@ -396,7 +402,7 @@ struct AgentFileMoveTool: OsaurusTool {
 
 // MARK: File Copy Tool
 
-struct AgentFileCopyTool: OsaurusTool {
+struct AgentFileCopyTool: OsaurusTool, PermissionedTool {
     let name = "file_copy"
     let description = "Copy a file or directory to a new location."
     let parameters: JSONValue? = .object([
@@ -413,6 +419,9 @@ struct AgentFileCopyTool: OsaurusTool {
         ]),
         "required": .array([.string("source"), .string("destination")]),
     ])
+
+    var requirements: [String] { [] }
+    var defaultPermissionPolicy: ToolPermissionPolicy { .auto }
 
     private let rootPath: URL
 
@@ -531,7 +540,7 @@ struct AgentFileDeleteTool: OsaurusTool, PermissionedTool {
 
 // MARK: Directory Create Tool
 
-struct AgentDirCreateTool: OsaurusTool {
+struct AgentDirCreateTool: OsaurusTool, PermissionedTool {
     let name = "dir_create"
     let description =
         "Create a new directory. Parent directories will be created if they don't exist."
@@ -545,6 +554,9 @@ struct AgentDirCreateTool: OsaurusTool {
         ]),
         "required": .array([.string("path")]),
     ])
+
+    var requirements: [String] { [] }
+    var defaultPermissionPolicy: ToolPermissionPolicy { .auto }
 
     private let rootPath: URL
 
@@ -670,7 +682,7 @@ struct AgentFileMetadataTool: OsaurusTool {
 
 // MARK: File Edit Tool
 
-struct AgentFileEditTool: OsaurusTool {
+struct AgentFileEditTool: OsaurusTool, PermissionedTool {
     let name = "file_edit"
     let description =
         "Edit a file by replacing specific text. Use old_string to identify the text to replace and new_string for the replacement. For surgical edits, include enough context in old_string to uniquely identify the location."
@@ -694,6 +706,9 @@ struct AgentFileEditTool: OsaurusTool {
         ]),
         "required": .array([.string("path"), .string("old_string"), .string("new_string")]),
     ])
+
+    var requirements: [String] { [] }
+    var defaultPermissionPolicy: ToolPermissionPolicy { .auto }
 
     private let rootPath: URL
 

@@ -402,6 +402,22 @@ struct ConfigurationView: View {
                                 }
                             }
                         }
+
+                        // MARK: - Agent Section
+                        if matchesSearch(
+                            "Agent",
+                            "Folder",
+                            "File",
+                            "Shell",
+                            "Git",
+                            "Permissions",
+                            "Write",
+                            "Delete",
+                            "Move",
+                            "Copy"
+                        ) {
+                            AgentSettingsSection()
+                        }
                     }
                     .padding(.horizontal, 24)
                     .padding(.vertical, 24)
@@ -1644,5 +1660,147 @@ private struct VoiceInputDevicePicker: View {
                 isHovered = hovering
             }
         }
+    }
+}
+
+// MARK: - Agent Settings Section
+
+private struct AgentSettingsSection: View {
+    @ObservedObject private var themeManager = ThemeManager.shared
+    @State private var refreshId = UUID()
+
+    // (name, display, desc, destructive, defaultPolicy)
+    private static let folderTools:
+        [(name: String, display: String, desc: String, destructive: Bool, defaultPolicy: ToolPermissionPolicy)] = [
+            ("file_write", "Write Files", "Create and modify files", false, .auto),
+            ("file_move", "Move Files", "Move files and directories", false, .auto),
+            ("file_copy", "Copy Files", "Copy files and directories", false, .auto),
+            ("file_delete", "Delete Files", "Delete files and directories", true, .ask),
+            ("dir_create", "Create Directories", "Create new directories", false, .auto),
+            ("file_edit", "Edit Files", "Edit file content with search/replace", false, .auto),
+            ("shell_run", "Run Shell Commands", "Execute shell commands in the folder", true, .ask),
+            ("git_commit", "Git Commit", "Commit changes to git repository", true, .ask),
+        ]
+
+    var body: some View {
+        SettingsSection(title: "Agent", icon: "cpu") {
+            VStack(alignment: .leading, spacing: 16) {
+                Text("Control how agent folder tools execute when working with folders in Agent mode.")
+                    .font(.system(size: 12))
+                    .foregroundColor(themeManager.currentTheme.secondaryText)
+
+                VStack(spacing: 0) {
+                    ForEach(Self.folderTools, id: \.name) { tool in
+                        AgentToolPermissionRow(
+                            name: tool.name,
+                            displayName: tool.display,
+                            description: tool.desc,
+                            isDestructive: tool.destructive,
+                            defaultPolicy: tool.defaultPolicy,
+                            onPolicyChange: { refreshId = UUID() }
+                        )
+                    }
+                }
+                .background(
+                    RoundedRectangle(cornerRadius: 10)
+                        .fill(themeManager.currentTheme.inputBackground)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 10)
+                                .stroke(themeManager.currentTheme.inputBorder, lineWidth: 1)
+                        )
+                )
+                .id(refreshId)
+
+                HStack {
+                    Spacer()
+                    Button(action: resetAllToDefault) {
+                        HStack(spacing: 6) {
+                            Image(systemName: "arrow.counterclockwise")
+                                .font(.system(size: 11))
+                            Text("Reset All to Default")
+                                .font(.system(size: 12, weight: .medium))
+                        }
+                    }
+                    .buttonStyle(SettingsButtonStyle())
+                    .help("Reset all agent tool permissions to default")
+                }
+            }
+        }
+    }
+
+    private func resetAllToDefault() {
+        for tool in Self.folderTools {
+            ToolRegistry.shared.clearPolicy(for: tool.name)
+        }
+        refreshId = UUID()
+    }
+}
+
+// MARK: - Agent Tool Permission Row
+
+private struct AgentToolPermissionRow: View {
+    @ObservedObject private var themeManager = ThemeManager.shared
+    @State private var isHovered = false
+
+    let name: String
+    let displayName: String
+    let description: String
+    let isDestructive: Bool
+    let defaultPolicy: ToolPermissionPolicy
+    let onPolicyChange: () -> Void
+
+    /// Returns the configured policy, or nil if using default
+    private var configuredPolicy: ToolPermissionPolicy? {
+        ToolConfigurationStore.load().policy[name]
+    }
+
+    /// Returns the effective policy (configured or default)
+    private var effectivePolicy: ToolPermissionPolicy {
+        configuredPolicy ?? defaultPolicy
+    }
+
+    var body: some View {
+        HStack(spacing: 12) {
+            if isDestructive {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .font(.system(size: 11))
+                    .foregroundColor(themeManager.currentTheme.warningColor)
+                    .frame(width: 16)
+            } else {
+                Color.clear.frame(width: 16)
+            }
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(displayName)
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundColor(themeManager.currentTheme.primaryText)
+                Text(description)
+                    .font(.system(size: 10))
+                    .foregroundColor(themeManager.currentTheme.tertiaryText)
+            }
+
+            Spacer()
+
+            Picker(
+                "",
+                selection: Binding(
+                    get: { effectivePolicy },
+                    set: { newValue in
+                        ToolRegistry.shared.setPolicy(newValue, for: name)
+                        onPolicyChange()
+                    }
+                )
+            ) {
+                Text("Auto").tag(ToolPermissionPolicy.auto)
+                Text("Ask").tag(ToolPermissionPolicy.ask)
+                Text("Deny").tag(ToolPermissionPolicy.deny)
+            }
+            .pickerStyle(.segmented)
+            .frame(width: 150)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .background(isHovered ? themeManager.currentTheme.tertiaryBackground.opacity(0.5) : Color.clear)
+        .onHover { isHovered = $0 }
     }
 }
