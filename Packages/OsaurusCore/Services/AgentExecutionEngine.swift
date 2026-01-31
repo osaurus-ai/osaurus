@@ -53,12 +53,14 @@ public actor AgentExecutionEngine {
     ///   - model: Model to use for generation
     ///   - tools: Available tool specifications
     ///   - skillCatalog: Available skills (names and descriptions only)
+    ///   - folderContext: Optional folder context for file operations
     func generatePlan(
         for issue: Issue,
         systemPrompt: String,
         model: String?,
         tools: [Tool],
-        skillCatalog: [CapabilityEntry] = []
+        skillCatalog: [CapabilityEntry] = [],
+        folderContext: AgentFolderContext? = nil
     ) async throws -> PlanResult {
         // Check if this issue has pre-selected capabilities from parent (decomposed task)
         let inheritedCapabilities = SelectedCapabilitiesContext.parse(from: issue.context)
@@ -66,7 +68,8 @@ public actor AgentExecutionEngine {
             for: issue,
             tools: tools,
             skillCatalog: skillCatalog,
-            inheritedCapabilities: inheritedCapabilities
+            inheritedCapabilities: inheritedCapabilities,
+            folderContext: folderContext
         )
 
         let messages: [ChatMessage] = [
@@ -216,11 +219,17 @@ public actor AgentExecutionEngine {
         for issue: Issue,
         tools: [Tool],
         skillCatalog: [CapabilityEntry],
-        inheritedCapabilities: SelectedCapabilitiesContext?
+        inheritedCapabilities: SelectedCapabilitiesContext?,
+        folderContext: AgentFolderContext? = nil
     ) -> String {
         // If this issue inherited capabilities from parent, skip capability selection
         if let inherited = inheritedCapabilities {
-            return buildPlanPromptWithInheritedCapabilities(for: issue, tools: tools, inherited: inherited)
+            return buildPlanPromptWithInheritedCapabilities(
+                for: issue,
+                tools: tools,
+                inherited: inherited,
+                folderContext: folderContext
+            )
         }
 
         // Build tool catalog
@@ -262,10 +271,13 @@ public actor AgentExecutionEngine {
             capabilitySection = ""
         }
 
+        // Build folder context section if active
+        let folderSection = buildFolderContextSection(from: folderContext)
+
         return """
             I need to complete the following task:
 
-            **Title:** \(issue.title)\(issue.description.map { "\n**Description:** \($0)" } ?? "")\(contextSection)\(capabilitySection)
+            **Title:** \(issue.title)\(issue.description.map { "\n**Description:** \($0)" } ?? "")\(contextSection)\(folderSection)\(capabilitySection)
 
             IMPORTANT: Before creating a plan, analyze if this task has critical ambiguities that would significantly affect the approach. Consider:
             - Are there multiple valid interpretations that lead to very different outcomes?
@@ -290,11 +302,41 @@ public actor AgentExecutionEngine {
             """
     }
 
+    /// Builds the folder context section for prompts when a folder is selected
+    private func buildFolderContextSection(from folderContext: AgentFolderContext?) -> String {
+        guard let folder = folderContext else {
+            return ""
+        }
+
+        var section = "\n## Working Directory\n"
+        section += "**Path:** \(folder.rootPath.path)\n"
+        section += "**Project Type:** \(folder.projectType.displayName)\n"
+
+        section += "\n**File Structure:**\n```\n\(folder.tree)```\n"
+
+        if let manifest = folder.manifest {
+            // Truncate manifest if too long for prompt
+            let truncatedManifest =
+                manifest.count > 2000 ? String(manifest.prefix(2000)) + "\n... (truncated)" : manifest
+            section += "\n**Manifest:**\n```\n\(truncatedManifest)\n```\n"
+        }
+
+        if let gitStatus = folder.gitStatus, !gitStatus.isEmpty {
+            section += "\n**Git Status:**\n```\n\(gitStatus)\n```\n"
+        }
+
+        section += "\n**File Tools Available:** Use file_read, file_write, file_edit, file_search, etc. to work with files.\n"
+        section += "Always read files before editing. Use relative paths from the working directory.\n"
+
+        return section
+    }
+
     /// Builds prompt for issues with inherited capabilities (from decomposed parent)
     private func buildPlanPromptWithInheritedCapabilities(
         for issue: Issue,
         tools: [Tool],
-        inherited: SelectedCapabilitiesContext
+        inherited: SelectedCapabilitiesContext,
+        folderContext: AgentFolderContext? = nil
     ) -> String {
         // Filter tools to only inherited ones
         let filteredTools = tools.filter { inherited.selectedTools.contains($0.function.name) }
@@ -314,6 +356,9 @@ public actor AgentExecutionEngine {
             contextSection = ""
         }
 
+        // Build folder context section if active
+        let folderSection = buildFolderContextSection(from: folderContext)
+
         let toolSection = toolList.isEmpty ? "" : "\nAvailable tools:\(toolList)"
         let skillSection =
             inherited.selectedSkills.isEmpty
@@ -322,7 +367,7 @@ public actor AgentExecutionEngine {
         return """
             I need to complete the following task:
 
-            **Title:** \(issue.title)\(issue.description.map { "\n**Description:** \($0)" } ?? "")\(contextSection)\(toolSection)\(skillSection)
+            **Title:** \(issue.title)\(issue.description.map { "\n**Description:** \($0)" } ?? "")\(contextSection)\(folderSection)\(toolSection)\(skillSection)
 
             Note: This is a subtask with pre-selected capabilities from the parent task.
 

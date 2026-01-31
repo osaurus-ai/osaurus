@@ -510,13 +510,17 @@ public actor AgentEngine {
 
         await delegate?.agentEngine(self, didStartIssue: issue)
 
+        // Get current folder context (if any) for injection into plan
+        let folderContext = await MainActor.run { AgentFolderContextService.shared.currentContext }
+
         // Generate plan with capability selection
         let planResult = try await executionEngine.generatePlan(
             for: issue,
             systemPrompt: systemPrompt,
             model: model,
             tools: tools,
-            skillCatalog: skillCatalog
+            skillCatalog: skillCatalog,
+            folderContext: folderContext
         )
 
         switch planResult {
