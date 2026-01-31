@@ -9,9 +9,10 @@ import Combine
 import Foundation
 import SwiftUI
 
-/// Notification posted when the active persona changes
+/// Notification posted when the active persona changes or a persona is updated
 extension Notification.Name {
     static let activePersonaChanged = Notification.Name("activePersonaChanged")
+    static let personaUpdated = Notification.Name("personaUpdated")
 }
 
 /// Manages all personas and the currently active persona
@@ -104,6 +105,7 @@ public final class PersonaManager: ObservableObject {
         updated.updatedAt = Date()
         PersonaStore.save(updated)
         refresh()
+        NotificationCenter.default.post(name: .personaUpdated, object: persona.id)
     }
 
     /// Delete a persona by ID

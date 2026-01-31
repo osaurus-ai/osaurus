@@ -463,6 +463,10 @@ struct CustomizableTheme: ThemeProtocol {
 
 // MARK: - Theme Manager
 
+extension Notification.Name {
+    static let globalThemeChanged = Notification.Name("globalThemeChanged")
+}
+
 @MainActor
 class ThemeManager: ObservableObject {
     static let shared = ThemeManager()
@@ -566,6 +570,7 @@ class ThemeManager: ObservableObject {
                 chatTheme = themeInstance
             }
         }
+        NotificationCenter.default.post(name: .globalThemeChanged, object: nil)
     }
 
     /// Apply a custom theme (global - affects both management and chat views)
@@ -589,6 +594,7 @@ class ThemeManager: ObservableObject {
             currentTheme = themeInstance
             chatTheme = themeInstance
         }
+        NotificationCenter.default.post(name: .globalThemeChanged, object: nil)
     }
 
     /// Clear custom theme and revert to system appearance (global - affects both management and chat views)
@@ -628,6 +634,7 @@ class ThemeManager: ObservableObject {
                 chatTheme = themeInstance
             }
         }
+        NotificationCenter.default.post(name: .globalThemeChanged, object: nil)
     }
 
     /// Refresh the list of installed themes
@@ -716,6 +723,7 @@ class ThemeManager: ObservableObject {
                 chatTheme = themeInstance
             }
         }
+        NotificationCenter.default.post(name: .globalThemeChanged, object: nil)
     }
 
     // MARK: - Chat Theme (Persona-specific)
