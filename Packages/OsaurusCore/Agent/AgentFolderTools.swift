@@ -1258,6 +1258,8 @@ enum AgentFolderToolFactory {
             AgentFileTreeTool(rootPath: rootPath),
             AgentFileReadTool(rootPath: rootPath),
             AgentFileWriteTool(rootPath: rootPath),
+            AgentFileEditTool(rootPath: rootPath),
+            AgentFileSearchTool(rootPath: rootPath),
             AgentFileMoveTool(rootPath: rootPath),
             AgentFileCopyTool(rootPath: rootPath),
             AgentFileDeleteTool(rootPath: rootPath),
@@ -1269,8 +1271,6 @@ enum AgentFolderToolFactory {
     /// Build coding tools
     static func buildCodingTools(rootPath: URL) -> [OsaurusTool] {
         return [
-            AgentFileEditTool(rootPath: rootPath),
-            AgentFileSearchTool(rootPath: rootPath),
             AgentShellRunTool(rootPath: rootPath),
         ]
     }
