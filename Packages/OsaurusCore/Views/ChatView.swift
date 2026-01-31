@@ -317,9 +317,12 @@ final class ChatSession: ObservableObject {
         }
 
         // Tool and skill tokens depend on two-phase loading state
-        // Two-phase is always active - select_capabilities is always available
         let toolOverrides = PersonaManager.shared.effectiveToolOverrides(for: effectiveId)
         let allTools = ToolRegistry.shared.listTools(withOverrides: toolOverrides)
+
+        // Check if there are any capabilities to select
+        let catalog = CapabilityCatalogBuilder.build(for: effectiveId)
+        let hasCapabilities = !catalog.isEmpty
 
         // Helper to check if tool is enabled
         func isEnabled(_ tool: ToolRegistry.ToolEntry) -> Bool {
@@ -328,14 +331,18 @@ final class ChatSession: ObservableObject {
         }
 
         if !capabilitiesSelected {
-            // Phase 1: Catalog entries + select_capabilities
+            // Phase 1: Catalog entries + select_capabilities (if catalog not empty)
             total += allTools.filter(isEnabled).reduce(0) { $0 + $1.catalogEntryTokens }
-            total += ToolRegistry.shared.estimatedTokens(for: "select_capabilities")
+            if hasCapabilities {
+                total += ToolRegistry.shared.estimatedTokens(for: "select_capabilities")
+            }
             total += CapabilityService.shared.estimateCatalogSkillTokens(for: effectiveId)
         } else {
             // Phase 2: Selected tools + select_capabilities + skill instructions
             total += selectedToolNames.reduce(0) { $0 + ToolRegistry.shared.estimatedTokens(for: $1) }
-            total += ToolRegistry.shared.estimatedTokens(for: "select_capabilities")
+            if hasCapabilities {
+                total += ToolRegistry.shared.estimatedTokens(for: "select_capabilities")
+            }
             if !selectedSkillInstructions.isEmpty {
                 total += max(1, selectedSkillInstructions.count / 4)
             }
@@ -731,23 +738,22 @@ final class ChatSession: ObservableObject {
     }
 
     /// Build tool specifications based on capability selection state
-    private func buildToolSpecs(needsSelection: Bool, overrides: [String: Bool]?) -> [Tool] {
+    private func buildToolSpecs(needsSelection: Bool, hasCapabilities: Bool, overrides: [String: Bool]?) -> [Tool] {
         if needsSelection {
             // Phase 1: Only select_capabilities available
             return ToolRegistry.shared.selectCapabilitiesSpec()
         } else if capabilitiesSelected && !selectedToolNames.isEmpty {
             // Phase 2: Selected tools + select_capabilities for adding more
             var toolNames = selectedToolNames
-            if !toolNames.contains("select_capabilities") {
+            if hasCapabilities && !toolNames.contains("select_capabilities") {
                 toolNames.append("select_capabilities")
             }
             return ToolRegistry.shared.specs(forTools: toolNames)
         } else {
-            // Default: All enabled tools + select_capabilities (always available)
+            // Default: All enabled tools + select_capabilities (if capabilities exist)
             var specs = ToolRegistry.shared.specs(withOverrides: overrides)
-            let selectCapSpec = ToolRegistry.shared.selectCapabilitiesSpec()
-            if !specs.contains(where: { $0.function.name == "select_capabilities" }) {
-                specs.append(contentsOf: selectCapSpec)
+            if hasCapabilities && !specs.contains(where: { $0.function.name == "select_capabilities" }) {
+                specs.append(contentsOf: ToolRegistry.shared.selectCapabilitiesSpec())
             }
             return specs
         }
@@ -810,8 +816,11 @@ final class ChatSession: ObservableObject {
                 // MARK: - Two-Phase Capability Selection
                 let effectivePersonaId = personaId ?? Persona.defaultId
                 let effectiveToolOverrides = PersonaManager.shared.effectiveToolOverrides(for: effectivePersonaId)
-                // Always use two-phase approach - select_capabilities is always available
-                let needsCapabilitySelection = !capabilitiesSelected
+                
+                // Check if there are any capabilities to select
+                let catalog = CapabilityCatalogBuilder.build(for: effectivePersonaId)
+                let hasCapabilities = !catalog.isEmpty
+                let needsCapabilitySelection = !capabilitiesSelected && hasCapabilities
 
                 let baseSystemPrompt = PersonaManager.shared.effectiveSystemPrompt(for: effectivePersonaId)
                     .trimmingCharacters(in: .whitespacesAndNewlines)
@@ -824,6 +833,7 @@ final class ChatSession: ObservableObject {
                 )
                 var toolSpecs = buildToolSpecs(
                     needsSelection: needsCapabilitySelection,
+                    hasCapabilities: hasCapabilities,
                     overrides: effectiveToolOverrides
                 )
 
@@ -1185,6 +1195,7 @@ final class ChatSession: ObservableObject {
                                 )
                                 toolSpecs = buildToolSpecs(
                                     needsSelection: false,
+                                    hasCapabilities: hasCapabilities,
                                     overrides: effectiveToolOverrides
                                 )
                             } else {
