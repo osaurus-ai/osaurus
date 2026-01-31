@@ -108,7 +108,7 @@ struct AgentView: View {
             )
             .environment(\.theme, windowState.theme)
         }
-        .onChange(of: session.currentTask?.id) { _ in
+        .onChange(of: session.currentTask?.id) {
             refreshFileOperations()
         }
         .onAppear {
