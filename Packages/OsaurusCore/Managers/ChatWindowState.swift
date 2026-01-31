@@ -196,7 +196,13 @@ final class ChatWindowState: ObservableObject {
     }
 
     func refreshTheme() {
-        theme = Self.loadTheme(for: personaId)
+        let newTheme = Self.loadTheme(for: personaId)
+        // Skip if theme ID is the same (avoid unnecessary background image decoding)
+        let oldThemeId = theme.customThemeConfig?.metadata.id
+        let newThemeId = newTheme.customThemeConfig?.metadata.id
+        guard oldThemeId != newThemeId else { return }
+
+        theme = newTheme
         decodeBackgroundImageAsync(themeConfig: theme.customThemeConfig)
     }
 
@@ -266,6 +272,31 @@ final class ChatWindowState: ObservableObject {
                 object: nil,
                 queue: .main
             ) { [weak self] _ in Task { @MainActor in self?.session.invalidateTokenCache() } }
+        )
+        // Refresh theme when global theme changes (only if persona uses global theme)
+        notificationObservers.append(
+            NotificationCenter.default.addObserver(
+                forName: .globalThemeChanged,
+                object: nil,
+                queue: .main
+            ) { [weak self] _ in
+                Task { @MainActor in
+                    if self?.themeId == nil { self?.refreshTheme() }
+                }
+            }
+        )
+        // Refresh theme when current persona is updated
+        notificationObservers.append(
+            NotificationCenter.default.addObserver(
+                forName: .personaUpdated,
+                object: nil,
+                queue: .main
+            ) { [weak self] notification in
+                let updatedId = notification.object as? UUID
+                Task { @MainActor in
+                    if let self, updatedId == self.personaId { self.refreshTheme() }
+                }
+            }
         )
     }
 }
