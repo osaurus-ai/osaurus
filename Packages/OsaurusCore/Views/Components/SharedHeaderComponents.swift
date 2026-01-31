@@ -21,18 +21,55 @@ struct HeaderActionButton: View {
 
     var body: some View {
         Button(action: action) {
-            Image(systemName: icon)
-                .font(.system(size: 12, weight: .medium))
-                .foregroundColor(isHovered ? theme.primaryText : theme.secondaryText)
-                .frame(width: 28, height: 28)
-                .background(
+            ZStack {
+                // Background
+                Circle()
+                    .fill(theme.secondaryBackground.opacity(isHovered ? 0.9 : 0.6))
+
+                // Subtle accent gradient on hover
+                if isHovered {
                     Circle()
-                        .fill(theme.secondaryBackground.opacity(isHovered ? 0.8 : 0.5))
-                )
+                        .fill(
+                            LinearGradient(
+                                colors: [
+                                    theme.accentColor.opacity(0.08),
+                                    Color.clear,
+                                ],
+                                startPoint: .topLeading,
+                                endPoint: .bottomTrailing
+                            )
+                        )
+                }
+
+                Image(systemName: icon)
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundColor(isHovered ? theme.accentColor : theme.secondaryText)
+            }
+            .frame(width: 30, height: 30)
+            .overlay(
+                Circle()
+                    .strokeBorder(
+                        LinearGradient(
+                            colors: [
+                                theme.glassEdgeLight.opacity(isHovered ? 0.2 : 0.1),
+                                theme.primaryBorder.opacity(isHovered ? 0.15 : 0.08),
+                            ],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        ),
+                        lineWidth: 1
+                    )
+            )
+            .shadow(
+                color: isHovered ? theme.accentColor.opacity(0.12) : .clear,
+                radius: 6,
+                x: 0,
+                y: 2
+            )
         }
         .buttonStyle(.plain)
         .onHover { hovering in
-            withAnimation(theme.animationQuick()) {
+            withAnimation(.easeOut(duration: 0.15)) {
                 isHovered = hovering
             }
         }
@@ -61,17 +98,42 @@ struct ModeToggleButton: View {
             }
             .padding(3)
             .background(
+                ZStack {
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .fill(theme.secondaryBackground.opacity(isHovered ? 0.9 : 0.7))
+
+                    // Subtle accent glow at top on hover
+                    if isHovered {
+                        LinearGradient(
+                            colors: [
+                                theme.accentColor.opacity(0.06),
+                                Color.clear,
+                            ],
+                            startPoint: .top,
+                            endPoint: .bottom
+                        )
+                        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                    }
+                }
+            )
+            .overlay(
                 RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .fill(theme.secondaryBackground.opacity(isHovered ? 0.9 : 0.7))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 10, style: .continuous)
-                            .strokeBorder(theme.primaryBorder.opacity(0.15), lineWidth: 1)
+                    .strokeBorder(
+                        LinearGradient(
+                            colors: [
+                                theme.glassEdgeLight.opacity(isHovered ? 0.18 : 0.12),
+                                theme.primaryBorder.opacity(isHovered ? 0.12 : 0.08),
+                            ],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        ),
+                        lineWidth: 1
                     )
             )
         }
         .buttonStyle(.plain)
         .onHover { isHovered = $0 }
-        .animation(theme.animationQuick(), value: isHovered)
+        .animation(.easeOut(duration: 0.15), value: isHovered)
         .help(currentMode == .chat ? "Switch to Agent mode" : "Switch to Chat mode")
     }
 
@@ -88,6 +150,10 @@ struct ModeToggleButton: View {
             if isSelected {
                 RoundedRectangle(cornerRadius: 7, style: .continuous)
                     .fill(theme.primaryBackground)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 7, style: .continuous)
+                            .strokeBorder(theme.primaryBorder.opacity(0.1), lineWidth: 1)
+                    )
                     .shadow(color: theme.shadowColor.opacity(0.1), radius: 2, x: 0, y: 1)
                     .matchedGeometryEffect(id: "modeIndicator", in: animation)
             }
@@ -152,27 +218,8 @@ extension ModeIndicatorBadge.Style {
 struct SettingsButton: View {
     let action: () -> Void
 
-    @State private var isHovered = false
-    @Environment(\.theme) private var theme
-
     var body: some View {
-        Button(action: action) {
-            Image(systemName: "gearshape.fill")
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundColor(isHovered ? theme.primaryText : theme.secondaryText)
-                .frame(width: 28, height: 28)
-                .background(
-                    Circle()
-                        .fill(theme.secondaryBackground.opacity(isHovered ? 0.8 : 0.5))
-                )
-        }
-        .buttonStyle(.plain)
-        .onHover { hovering in
-            withAnimation(theme.animationQuick()) {
-                isHovered = hovering
-            }
-        }
-        .help("Settings")
+        HeaderActionButton(icon: "gearshape.fill", help: "Settings", action: action)
     }
 }
 
@@ -186,18 +233,53 @@ struct CloseButton: View {
 
     var body: some View {
         Button(action: action) {
-            Image(systemName: "xmark")
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundColor(isHovered ? theme.primaryText : theme.secondaryText)
-                .frame(width: 28, height: 28)
-                .background(
+            ZStack {
+                Circle()
+                    .fill(theme.secondaryBackground.opacity(isHovered ? 0.9 : 0.6))
+
+                if isHovered {
                     Circle()
-                        .fill(theme.secondaryBackground.opacity(isHovered ? 0.8 : 0.5))
-                )
+                        .fill(
+                            LinearGradient(
+                                colors: [
+                                    Color.red.opacity(0.1),
+                                    Color.clear,
+                                ],
+                                startPoint: .topLeading,
+                                endPoint: .bottomTrailing
+                            )
+                        )
+                }
+
+                Image(systemName: "xmark")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundColor(isHovered ? Color.red.opacity(0.9) : theme.secondaryText)
+            }
+            .frame(width: 30, height: 30)
+            .overlay(
+                Circle()
+                    .strokeBorder(
+                        LinearGradient(
+                            colors: [
+                                theme.glassEdgeLight.opacity(isHovered ? 0.2 : 0.1),
+                                (isHovered ? Color.red : theme.primaryBorder).opacity(isHovered ? 0.2 : 0.08),
+                            ],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        ),
+                        lineWidth: 1
+                    )
+            )
+            .shadow(
+                color: isHovered ? Color.red.opacity(0.15) : .clear,
+                radius: 6,
+                x: 0,
+                y: 2
+            )
         }
         .buttonStyle(.plain)
         .onHover { hovering in
-            withAnimation(theme.animationQuick()) {
+            withAnimation(.easeOut(duration: 0.15)) {
                 isHovered = hovering
             }
         }
@@ -219,24 +301,61 @@ struct PinButton: View {
             isPinned.toggle()
             ChatWindowManager.shared.setWindowPinned(id: windowId, pinned: isPinned)
         } label: {
-            Image(systemName: isPinned ? "pin.fill" : "pin")
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundColor(isPinned ? theme.accentColor : (isHovered ? theme.primaryText : theme.secondaryText))
-                .frame(width: 28, height: 28)
-                .background(
+            ZStack {
+                Circle()
+                    .fill(theme.secondaryBackground.opacity(isHovered || isPinned ? 0.9 : 0.6))
+
+                if isHovered || isPinned {
                     Circle()
-                        .fill(theme.secondaryBackground.opacity(isHovered ? 0.8 : 0.5))
-                )
-                .rotationEffect(.degrees(isPinned ? 0 : 45))
+                        .fill(
+                            LinearGradient(
+                                colors: [
+                                    theme.accentColor.opacity(isPinned ? 0.12 : 0.08),
+                                    Color.clear,
+                                ],
+                                startPoint: .topLeading,
+                                endPoint: .bottomTrailing
+                            )
+                        )
+                }
+
+                Image(systemName: isPinned ? "pin.fill" : "pin")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundColor(isPinned || isHovered ? theme.accentColor : theme.secondaryText)
+                    .rotationEffect(.degrees(isPinned ? 0 : 45))
+            }
+            .frame(width: 30, height: 30)
+            .overlay(
+                Circle()
+                    .strokeBorder(
+                        LinearGradient(
+                            colors: [
+                                theme.glassEdgeLight.opacity(isHovered || isPinned ? 0.2 : 0.1),
+                                (isPinned ? theme.accentColor : theme.primaryBorder).opacity(
+                                    isHovered || isPinned ? 0.2 : 0.08
+                                ),
+                            ],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        ),
+                        lineWidth: 1
+                    )
+            )
+            .shadow(
+                color: isPinned || isHovered ? theme.accentColor.opacity(0.12) : .clear,
+                radius: 6,
+                x: 0,
+                y: 2
+            )
         }
         .buttonStyle(.plain)
         .onHover { hovering in
-            withAnimation(theme.animationQuick()) {
+            withAnimation(.easeOut(duration: 0.15)) {
                 isHovered = hovering
             }
         }
         .help(isPinned ? "Unpin from top" : "Pin to top")
-        .animation(theme.animationQuick(), value: isPinned)
+        .animation(theme.springAnimation(), value: isPinned)
     }
 }
 
@@ -282,7 +401,7 @@ struct PersonaPill: View {
             HStack(spacing: 6) {
                 Image(systemName: "person.fill")
                     .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(theme.secondaryText)
+                    .foregroundColor(isHovered ? theme.accentColor : theme.secondaryText)
 
                 Text(activePersona.name)
                     .font(theme.font(size: CGFloat(theme.bodySize), weight: .medium))
@@ -290,28 +409,55 @@ struct PersonaPill: View {
 
                 Image(systemName: "chevron.up.chevron.down")
                     .font(.system(size: 9, weight: .medium))
-                    .foregroundColor(theme.tertiaryText)
+                    .foregroundColor(isHovered ? theme.secondaryText : theme.tertiaryText)
             }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 7)
+            .padding(.horizontal, 14)
+            .padding(.vertical, 8)
             .background(
-                Capsule()
-                    .fill(theme.secondaryBackground.opacity(isHovered ? 0.9 : 0.6))
+                ZStack {
+                    Capsule()
+                        .fill(theme.secondaryBackground.opacity(isHovered ? 0.9 : 0.65))
+
+                    if isHovered {
+                        Capsule()
+                            .fill(
+                                LinearGradient(
+                                    colors: [
+                                        theme.accentColor.opacity(0.08),
+                                        Color.clear,
+                                    ],
+                                    startPoint: .topLeading,
+                                    endPoint: .bottomTrailing
+                                )
+                            )
+                    }
+                }
             )
             .overlay(
                 Capsule()
                     .strokeBorder(
-                        isHovered
-                            ? theme.accentColor.opacity(0.3)
-                            : theme.primaryBorder.opacity(0.3),
+                        LinearGradient(
+                            colors: [
+                                theme.glassEdgeLight.opacity(isHovered ? 0.2 : 0.12),
+                                (isHovered ? theme.accentColor : theme.primaryBorder).opacity(isHovered ? 0.25 : 0.15),
+                            ],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        ),
                         lineWidth: 1
                     )
+            )
+            .shadow(
+                color: isHovered ? theme.accentColor.opacity(0.1) : .clear,
+                radius: 6,
+                x: 0,
+                y: 2
             )
         }
         .menuStyle(.borderlessButton)
         .menuIndicator(.hidden)
         .onHover { hovering in
-            withAnimation(theme.animationQuick()) {
+            withAnimation(.easeOut(duration: 0.15)) {
                 isHovered = hovering
             }
         }

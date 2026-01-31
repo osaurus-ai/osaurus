@@ -684,7 +684,9 @@ struct FloatingInputCard: View {
     }
 
     private var modelSelectorChip: some View {
-        Button(action: { showModelPicker.toggle() }) {
+        SelectorChip(isActive: showModelPicker) {
+            showModelPicker.toggle()
+        } content: {
             HStack(spacing: 6) {
                 Circle()
                     .fill(Color.green)
@@ -728,18 +730,7 @@ struct FloatingInputCard: View {
                     .font(theme.font(size: CGFloat(theme.captionSize) - 3, weight: .semibold))
                     .foregroundColor(theme.tertiaryText)
             }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 6)
-            .background(
-                RoundedRectangle(cornerRadius: 18, style: .continuous)
-                    .fill(theme.secondaryBackground.opacity(0.8))
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 18, style: .continuous)
-                    .strokeBorder(theme.primaryBorder.opacity(0.5), lineWidth: 1)
-            )
         }
-        .buttonStyle(.plain)
         .popover(isPresented: $showModelPicker, arrowEdge: .top) {
             ModelPickerView(
                 options: cachedModelOptions,
@@ -809,7 +800,9 @@ struct FloatingInputCard: View {
     }
 
     private var capabilitiesSelectorChip: some View {
-        Button(action: { showCapabilitiesPicker.toggle() }) {
+        SelectorChip(isActive: showCapabilitiesPicker) {
+            showCapabilitiesPicker.toggle()
+        } content: {
             HStack(spacing: 6) {
                 Image(systemName: "sparkles")
                     .font(theme.font(size: CGFloat(theme.captionSize) - 2))
@@ -823,18 +816,7 @@ struct FloatingInputCard: View {
                     .font(theme.font(size: CGFloat(theme.captionSize) - 3, weight: .semibold))
                     .foregroundColor(theme.tertiaryText)
             }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 6)
-            .background(
-                RoundedRectangle(cornerRadius: 18, style: .continuous)
-                    .fill(theme.secondaryBackground.opacity(0.8))
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 18, style: .continuous)
-                    .strokeBorder(theme.primaryBorder.opacity(0.5), lineWidth: 1)
-            )
         }
-        .buttonStyle(.plain)
         .popover(isPresented: $showCapabilitiesPicker, arrowEdge: .top) {
             CapabilitiesSelectorView(personaId: effectivePersonaId)
         }
@@ -1001,24 +983,12 @@ struct FloatingInputCard: View {
     // MARK: - Voice Input Button
 
     private var voiceInputButton: some View {
-        Button(action: { startVoiceInput() }) {
-            Image(systemName: "mic.fill")
-                .font(theme.font(size: CGFloat(theme.captionSize), weight: .medium))
-                .foregroundColor(theme.secondaryText)
-                .frame(width: 32, height: 32)
-                .background(
-                    Circle()
-                        .fill(theme.tertiaryBackground.opacity(0.8))
-                )
-                .overlay(
-                    Circle()
-                        .stroke(theme.primaryBorder.opacity(0.2), lineWidth: 1)
-                )
-        }
-        .buttonStyle(.plain)
-        .help("Voice input (speak to type)")
+        InputActionButton(
+            icon: "mic.fill",
+            help: "Voice input (speak to type)",
+            action: { startVoiceInput() }
+        )
         .transition(.opacity.combined(with: .scale(scale: 0.96)))
-        .animation(.easeOut(duration: 0.1), value: isVoiceAvailable)
     }
 
     private func pickImage() {
@@ -1178,134 +1148,53 @@ struct FloatingInputCard: View {
     }
 
     private var mediaButton: some View {
-        Button(action: pickImage) {
-            Image(systemName: "photo.badge.plus")
-                .font(theme.font(size: CGFloat(theme.captionSize), weight: .medium))
-                .foregroundColor(theme.secondaryText)
-                .frame(width: 32, height: 32)
-                .background(
-                    Circle()
-                        .fill(theme.tertiaryBackground.opacity(0.8))
-                )
-                .overlay(
-                    Circle()
-                        .stroke(theme.primaryBorder.opacity(0.2), lineWidth: 1)
-                )
-        }
-        .buttonStyle(.plain)
-        .help("Attach image (or paste/drag)")
-        .scaleEffect(1.0)
-        .animation(.easeOut(duration: 0.1), value: pendingImages.count)
+        InputActionButton(
+            icon: "photo.badge.plus",
+            help: "Attach image (or paste/drag)",
+            action: pickImage
+        )
     }
 
     private var stopButton: some View {
-        Button(action: onStop) {
-            HStack(spacing: 4) {
-                RoundedRectangle(cornerRadius: 2)
-                    .fill(.white)
-                    .frame(width: 8, height: 8)
-                Text("Stop")
-                    .font(.system(size: 11, weight: .medium))
-            }
-            .foregroundColor(.white)
-            .padding(.horizontal, 12)
-            .padding(.vertical, 8)
-            .background(Color.red.opacity(0.9))
-            .clipShape(Capsule())
-        }
-        .buttonStyle(.plain)
-        .transition(.opacity.combined(with: .scale(scale: 0.95)))
+        StopButton(action: onStop)
     }
 
     private var resumeButton: some View {
-        Button(action: { onResume?() }) {
-            HStack(spacing: 4) {
-                Image(systemName: "play.fill")
-                    .font(.system(size: 9, weight: .bold))
-                Text("Resume")
-                    .font(.system(size: 11, weight: .medium))
-            }
-            .foregroundColor(.white)
-            .padding(.horizontal, 12)
-            .padding(.vertical, 8)
-            .background(
-                LinearGradient(
-                    colors: [theme.accentColor, theme.accentColor.opacity(0.85)],
-                    startPoint: .top,
-                    endPoint: .bottom
-                )
-            )
-            .clipShape(Capsule())
-        }
-        .buttonStyle(.plain)
-        .transition(.opacity.combined(with: .scale(scale: 0.95)))
+        ResumeButton(action: { onResume?() })
     }
 
     private var endTaskButton: some View {
-        Button(action: { onEndTask?() }) {
-            HStack(spacing: 4) {
-                Image(systemName: "checkmark")
-                    .font(.system(size: 9, weight: .bold))
-                Text("Done")
-                    .font(.system(size: 11, weight: .medium))
-            }
-            .foregroundColor(theme.secondaryText)
-            .padding(.horizontal, 12)
-            .padding(.vertical, 8)
-            .background(theme.tertiaryBackground.opacity(0.8))
-            .clipShape(Capsule())
-            .overlay(
-                Capsule()
-                    .stroke(theme.primaryBorder.opacity(0.3), lineWidth: 1)
-            )
-        }
-        .buttonStyle(.plain)
-        .transition(.opacity.combined(with: .scale(scale: 0.95)))
+        EndTaskButton(action: { onEndTask?() })
     }
 
     private var sendButton: some View {
-        Button(action: syncAndSend) {
-            Image(systemName: "arrow.up")
-                .font(theme.font(size: CGFloat(theme.bodySize), weight: .semibold))
-                .foregroundColor(theme.primaryBackground)
-                .frame(width: 32, height: 32)
-                .background(
-                    LinearGradient(
-                        colors: [theme.accentColor, theme.accentColor.opacity(0.85)],
-                        startPoint: .top,
-                        endPoint: .bottom
-                    )
-                )
-                .clipShape(Circle())
-                .shadow(
-                    color: theme.accentColor.opacity(0.4),
-                    radius: 6,
-                    x: 0,
-                    y: 2
-                )
-        }
-        .buttonStyle(.plain)
-        .disabled(!canSend)
-        .opacity(canSend ? 1 : 0.5)
-        .animation(.easeOut(duration: 0.1), value: canSend)
+        SendButton(canSend: canSend, action: syncAndSend)
     }
 
     // MARK: - Card Styling
 
     private var cardBackground: some View {
         ZStack {
-            // Base blur
-            if #available(macOS 13.0, *) {
+            // Layer 1: Glass material
+            if theme.glassEnabled {
                 RoundedRectangle(cornerRadius: 20, style: .continuous)
                     .fill(.ultraThinMaterial)
-            } else {
-                RoundedRectangle(cornerRadius: 20, style: .continuous)
-                    .fill(theme.primaryBackground.opacity(0.95))
             }
 
-            // Tint overlay - stronger in light mode for contrast
+            // Layer 2: Semi-transparent background
             RoundedRectangle(cornerRadius: 20, style: .continuous)
-                .fill(theme.primaryBackground.opacity(theme.isDark ? 0.6 : 0.85))
+                .fill(theme.primaryBackground.opacity(theme.isDark ? 0.7 : 0.88))
+
+            // Layer 3: Subtle accent gradient at top (enhanced when focused)
+            LinearGradient(
+                colors: [
+                    theme.accentColor.opacity(isFocused ? 0.08 : (theme.isDark ? 0.04 : 0.025)),
+                    Color.clear,
+                ],
+                startPoint: .top,
+                endPoint: .center
+            )
+            .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
         }
     }
 
@@ -1320,7 +1209,11 @@ struct FloatingInputCard: View {
         if isFocused {
             return AnyShapeStyle(
                 LinearGradient(
-                    colors: [theme.accentColor.opacity(0.6), theme.accentColor.opacity(0.2)],
+                    colors: [
+                        theme.accentColor.opacity(0.5),
+                        theme.accentColor.opacity(0.2),
+                        theme.glassEdgeLight.opacity(0.15),
+                    ],
                     startPoint: .topLeading,
                     endPoint: .bottomTrailing
                 )
@@ -1328,7 +1221,10 @@ struct FloatingInputCard: View {
         } else {
             return AnyShapeStyle(
                 LinearGradient(
-                    colors: [theme.glassEdgeLight, theme.glassEdgeLight.opacity(0.3)],
+                    colors: [
+                        theme.glassEdgeLight.opacity(theme.isDark ? 0.2 : 0.3),
+                        theme.primaryBorder.opacity(0.12),
+                    ],
                     startPoint: .topLeading,
                     endPoint: .bottomTrailing
                 )
@@ -1337,7 +1233,7 @@ struct FloatingInputCard: View {
     }
 
     private var shadowColor: Color {
-        isFocused ? theme.accentColor.opacity(0.15) : Color.black.opacity(0.15)
+        isFocused ? theme.accentColor.opacity(0.18) : theme.shadowColor.opacity(0.12)
     }
 }
 
@@ -1501,6 +1397,399 @@ extension NSImage {
             return nil
         }
         return bitmap.representation(using: .png, properties: [:])
+    }
+}
+
+// MARK: - Selector Chip
+
+/// Polished selector chip for model/capabilities pickers
+private struct SelectorChip<Content: View>: View {
+    let isActive: Bool
+    let action: () -> Void
+    @ViewBuilder let content: () -> Content
+
+    @State private var isHovered = false
+    @Environment(\.theme) private var theme
+
+    var body: some View {
+        Button(action: action) {
+            content()
+                .padding(.horizontal, 12)
+                .padding(.vertical, 6)
+                .background(chipBackground)
+                .clipShape(Capsule())
+                .overlay(chipBorder)
+                .shadow(
+                    color: isHovered || isActive ? theme.accentColor.opacity(0.1) : .clear,
+                    radius: 4,
+                    x: 0,
+                    y: 1
+                )
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering in
+            withAnimation(.easeOut(duration: 0.15)) {
+                isHovered = hovering
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var chipBackground: some View {
+        ZStack {
+            Capsule()
+                .fill(theme.secondaryBackground.opacity(isHovered || isActive ? 0.95 : 0.8))
+
+            if isHovered || isActive {
+                Capsule()
+                    .fill(
+                        LinearGradient(
+                            colors: [
+                                theme.accentColor.opacity(0.06),
+                                Color.clear,
+                            ],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        )
+                    )
+            }
+        }
+    }
+
+    private var chipBorder: some View {
+        Capsule()
+            .strokeBorder(
+                LinearGradient(
+                    colors: [
+                        theme.glassEdgeLight.opacity(isHovered || isActive ? 0.25 : 0.15),
+                        (isActive ? theme.accentColor : theme.primaryBorder).opacity(
+                            isHovered || isActive ? 0.2 : 0.12
+                        ),
+                    ],
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing
+                ),
+                lineWidth: 1
+            )
+    }
+}
+
+// MARK: - Input Action Button
+
+/// Polished circular action button for input card (media, voice, etc.)
+private struct InputActionButton: View {
+    let icon: String
+    let help: String
+    let action: () -> Void
+
+    @State private var isHovered = false
+    @Environment(\.theme) private var theme
+
+    var body: some View {
+        Button(action: action) {
+            ZStack {
+                Circle()
+                    .fill(theme.tertiaryBackground.opacity(isHovered ? 0.95 : 0.8))
+
+                if isHovered {
+                    Circle()
+                        .fill(
+                            LinearGradient(
+                                colors: [
+                                    theme.accentColor.opacity(0.1),
+                                    Color.clear,
+                                ],
+                                startPoint: .topLeading,
+                                endPoint: .bottomTrailing
+                            )
+                        )
+                }
+
+                Image(systemName: icon)
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundColor(isHovered ? theme.accentColor : theme.secondaryText)
+            }
+            .frame(width: 32, height: 32)
+            .overlay(
+                Circle()
+                    .strokeBorder(
+                        LinearGradient(
+                            colors: [
+                                theme.glassEdgeLight.opacity(isHovered ? 0.25 : 0.15),
+                                theme.primaryBorder.opacity(isHovered ? 0.2 : 0.1),
+                            ],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        ),
+                        lineWidth: 1
+                    )
+            )
+            .shadow(
+                color: isHovered ? theme.accentColor.opacity(0.15) : .clear,
+                radius: 6,
+                x: 0,
+                y: 2
+            )
+        }
+        .buttonStyle(.plain)
+        .help(help)
+        .onHover { hovering in
+            withAnimation(.easeOut(duration: 0.15)) {
+                isHovered = hovering
+            }
+        }
+    }
+}
+
+// MARK: - Send Button
+
+/// Polished send button with hover glow effect
+private struct SendButton: View {
+    let canSend: Bool
+    let action: () -> Void
+
+    @State private var isHovered = false
+    @Environment(\.theme) private var theme
+
+    var body: some View {
+        Button(action: action) {
+            ZStack {
+                // Background gradient
+                Circle()
+                    .fill(
+                        LinearGradient(
+                            colors: [
+                                theme.accentColor,
+                                theme.accentColor.opacity(0.85),
+                            ],
+                            startPoint: .top,
+                            endPoint: .bottom
+                        )
+                    )
+
+                // Brighter overlay on hover
+                if isHovered && canSend {
+                    Circle()
+                        .fill(Color.white.opacity(0.15))
+                }
+
+                Image(systemName: "arrow.up")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundColor(.white)
+            }
+            .frame(width: 32, height: 32)
+            .overlay(
+                Circle()
+                    .strokeBorder(
+                        LinearGradient(
+                            colors: [
+                                Color.white.opacity(isHovered ? 0.35 : 0.2),
+                                theme.accentColor.opacity(0.3),
+                            ],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        ),
+                        lineWidth: 1
+                    )
+            )
+            .shadow(
+                color: theme.accentColor.opacity(isHovered && canSend ? 0.5 : 0.35),
+                radius: isHovered && canSend ? 10 : 6,
+                x: 0,
+                y: isHovered && canSend ? 4 : 2
+            )
+        }
+        .buttonStyle(.plain)
+        .disabled(!canSend)
+        .opacity(canSend ? 1 : 0.5)
+        .onHover { hovering in
+            withAnimation(.easeOut(duration: 0.15)) {
+                isHovered = hovering
+            }
+        }
+        .animation(.easeOut(duration: 0.1), value: canSend)
+    }
+}
+
+// MARK: - Stop Button
+
+/// Polished stop button with red accent
+private struct StopButton: View {
+    let action: () -> Void
+
+    @State private var isHovered = false
+    @Environment(\.theme) private var theme
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 4) {
+                RoundedRectangle(cornerRadius: 2)
+                    .fill(.white)
+                    .frame(width: 8, height: 8)
+                Text("Stop")
+                    .font(.system(size: 11, weight: .medium))
+            }
+            .foregroundColor(.white)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            .background(
+                ZStack {
+                    Capsule()
+                        .fill(Color.red.opacity(isHovered ? 1.0 : 0.9))
+
+                    if isHovered {
+                        Capsule()
+                            .fill(Color.white.opacity(0.1))
+                    }
+                }
+            )
+            .overlay(
+                Capsule()
+                    .strokeBorder(Color.white.opacity(isHovered ? 0.3 : 0.15), lineWidth: 1)
+            )
+            .shadow(
+                color: Color.red.opacity(isHovered ? 0.4 : 0.25),
+                radius: isHovered ? 8 : 4,
+                x: 0,
+                y: 2
+            )
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering in
+            withAnimation(.easeOut(duration: 0.15)) {
+                isHovered = hovering
+            }
+        }
+        .transition(.opacity.combined(with: .scale(scale: 0.95)))
+    }
+}
+
+// MARK: - Resume Button
+
+/// Polished resume button with accent color
+private struct ResumeButton: View {
+    let action: () -> Void
+
+    @State private var isHovered = false
+    @Environment(\.theme) private var theme
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 4) {
+                Image(systemName: "play.fill")
+                    .font(.system(size: 9, weight: .bold))
+                Text("Resume")
+                    .font(.system(size: 11, weight: .medium))
+            }
+            .foregroundColor(.white)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            .background(
+                ZStack {
+                    Capsule()
+                        .fill(
+                            LinearGradient(
+                                colors: [theme.accentColor, theme.accentColor.opacity(0.85)],
+                                startPoint: .top,
+                                endPoint: .bottom
+                            )
+                        )
+
+                    if isHovered {
+                        Capsule()
+                            .fill(Color.white.opacity(0.12))
+                    }
+                }
+            )
+            .overlay(
+                Capsule()
+                    .strokeBorder(Color.white.opacity(isHovered ? 0.3 : 0.15), lineWidth: 1)
+            )
+            .shadow(
+                color: theme.accentColor.opacity(isHovered ? 0.45 : 0.3),
+                radius: isHovered ? 8 : 4,
+                x: 0,
+                y: 2
+            )
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering in
+            withAnimation(.easeOut(duration: 0.15)) {
+                isHovered = hovering
+            }
+        }
+        .transition(.opacity.combined(with: .scale(scale: 0.95)))
+    }
+}
+
+// MARK: - End Task Button
+
+/// Polished end task button with subtle styling
+private struct EndTaskButton: View {
+    let action: () -> Void
+
+    @State private var isHovered = false
+    @Environment(\.theme) private var theme
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 4) {
+                Image(systemName: "checkmark")
+                    .font(.system(size: 9, weight: .bold))
+                Text("Done")
+                    .font(.system(size: 11, weight: .medium))
+            }
+            .foregroundColor(isHovered ? theme.primaryText : theme.secondaryText)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            .background(
+                ZStack {
+                    Capsule()
+                        .fill(theme.tertiaryBackground.opacity(isHovered ? 0.95 : 0.8))
+
+                    if isHovered {
+                        Capsule()
+                            .fill(
+                                LinearGradient(
+                                    colors: [
+                                        theme.accentColor.opacity(0.08),
+                                        Color.clear,
+                                    ],
+                                    startPoint: .topLeading,
+                                    endPoint: .bottomTrailing
+                                )
+                            )
+                    }
+                }
+            )
+            .overlay(
+                Capsule()
+                    .strokeBorder(
+                        LinearGradient(
+                            colors: [
+                                theme.glassEdgeLight.opacity(isHovered ? 0.25 : 0.15),
+                                theme.primaryBorder.opacity(isHovered ? 0.2 : 0.15),
+                            ],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        ),
+                        lineWidth: 1
+                    )
+            )
+            .shadow(
+                color: isHovered ? theme.accentColor.opacity(0.1) : .clear,
+                radius: 4,
+                x: 0,
+                y: 1
+            )
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering in
+            withAnimation(.easeOut(duration: 0.15)) {
+                isHovered = hovering
+            }
+        }
+        .transition(.opacity.combined(with: .scale(scale: 0.95)))
     }
 }
 

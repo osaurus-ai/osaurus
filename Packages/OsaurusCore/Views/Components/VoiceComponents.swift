@@ -354,16 +354,36 @@ public struct TranscriptionPreviewView: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, 16)
-        .padding(.vertical, 12)
+        .padding(.vertical, 14)
         .background(
-            RoundedRectangle(cornerRadius: 12)
-                .fill(theme.inputBackground)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 12)
-                        .stroke(
-                            isTranscribing ? theme.accentColor.opacity(0.5) : theme.inputBorder,
-                            lineWidth: isTranscribing ? 2 : 1
+            ZStack {
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .fill(theme.inputBackground)
+
+                if isTranscribing {
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .fill(
+                            LinearGradient(
+                                colors: [theme.accentColor.opacity(0.05), Color.clear],
+                                startPoint: .top,
+                                endPoint: .bottom
+                            )
                         )
+                }
+            }
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .strokeBorder(
+                    LinearGradient(
+                        colors: [
+                            isTranscribing ? theme.accentColor.opacity(0.5) : theme.glassEdgeLight.opacity(0.15),
+                            isTranscribing ? theme.accentColor.opacity(0.2) : theme.inputBorder,
+                        ],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    ),
+                    lineWidth: isTranscribing ? 1.5 : 1
                 )
         )
     }
@@ -445,14 +465,38 @@ public struct VoiceStatusIndicator: View {
             }
         }
         .padding(.horizontal, compact ? 8 : 12)
-        .padding(.vertical, compact ? 6 : 6)
+        .padding(.vertical, compact ? 6 : 7)
         .background(
-            Capsule()
-                .fill(stateColor.opacity(0.1))
+            ZStack {
+                Capsule()
+                    .fill(stateColor.opacity(0.1))
+
+                // Subtle gradient for active states
+                if state == .listening || state == .processing {
+                    Capsule()
+                        .fill(
+                            LinearGradient(
+                                colors: [stateColor.opacity(0.08), Color.clear],
+                                startPoint: .topLeading,
+                                endPoint: .bottomTrailing
+                            )
+                        )
+                }
+            }
         )
         .overlay(
             Capsule()
-                .stroke(stateColor.opacity(0.3), lineWidth: 1)
+                .strokeBorder(
+                    LinearGradient(
+                        colors: [
+                            stateColor.opacity(0.4),
+                            stateColor.opacity(0.2),
+                        ],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    ),
+                    lineWidth: 1
+                )
         )
         .animation(.easeInOut(duration: 0.2), value: state)
     }
@@ -549,6 +593,7 @@ public struct CountdownRingButton: View {
                     Text("\(currentSecond)")
                         .font(.system(size: 14, weight: .semibold, design: .monospaced))
                         .foregroundColor(theme.primaryText)
+                        .contentTransition(.numericText())
                 }
 
                 // Label
@@ -569,19 +614,43 @@ public struct CountdownRingButton: View {
                     .foregroundColor(theme.tertiaryText)
                     .padding(8)
                     .background(
-                        Circle()
-                            .fill(theme.tertiaryBackground)
+                        ZStack {
+                            Circle()
+                                .fill(theme.tertiaryBackground)
+                            Circle()
+                                .strokeBorder(theme.primaryBorder.opacity(0.15), lineWidth: 1)
+                        }
                     )
             }
             .padding(14)
             .background(
-                RoundedRectangle(cornerRadius: 12)
-                    .fill(theme.cardBackground)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 12)
-                            .stroke(theme.accentColor.opacity(0.3), lineWidth: 1)
+                ZStack {
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .fill(theme.cardBackground.opacity(0.95))
+
+                    LinearGradient(
+                        colors: [theme.accentColor.opacity(0.06), Color.clear],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    )
+                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                }
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .strokeBorder(
+                        LinearGradient(
+                            colors: [
+                                theme.accentColor.opacity(0.4),
+                                theme.accentColor.opacity(0.15),
+                            ],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        ),
+                        lineWidth: 1
                     )
             )
+            .shadow(color: theme.accentColor.opacity(0.15), radius: 8, x: 0, y: 2)
         }
         .buttonStyle(.plain)
     }
@@ -658,11 +727,31 @@ public struct PauseDetectionRing: View {
                 .font(.system(size: 11))
                 .foregroundColor(theme.tertiaryText)
         }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 6)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 7)
         .background(
+            ZStack {
+                Capsule()
+                    .fill(theme.tertiaryBackground.opacity(0.5))
+
+                if isSpeaking {
+                    Capsule()
+                        .fill(
+                            LinearGradient(
+                                colors: [theme.accentColor.opacity(0.08), Color.clear],
+                                startPoint: .leading,
+                                endPoint: .trailing
+                            )
+                        )
+                }
+            }
+        )
+        .overlay(
             Capsule()
-                .fill(theme.tertiaryBackground.opacity(0.5))
+                .strokeBorder(
+                    isSpeaking ? theme.accentColor.opacity(0.2) : theme.primaryBorder.opacity(0.1),
+                    lineWidth: 1
+                )
         )
     }
 }
@@ -725,15 +814,33 @@ public struct SilenceTimeoutIndicator: View {
                     .font(.system(size: 9))
                 Text("Closing in \(Int(remainingTime))s")
                     .font(.system(size: 10, weight: .medium))
+                    .contentTransition(.numericText())
             }
             .foregroundColor(textColor)
-            .padding(.horizontal, 8)
-            .padding(.vertical, 4)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 5)
             .background(
-                Capsule()
-                    .fill(theme.tertiaryBackground.opacity(0.8))
+                ZStack {
+                    Capsule()
+                        .fill(theme.tertiaryBackground.opacity(0.8))
+
+                    if remainingTime < 10 {
+                        Capsule()
+                            .fill(
+                                LinearGradient(
+                                    colors: [textColor.opacity(0.1), Color.clear],
+                                    startPoint: .leading,
+                                    endPoint: .trailing
+                                )
+                            )
+                    }
+                }
             )
-            .transition(.opacity)
+            .overlay(
+                Capsule()
+                    .strokeBorder(textColor.opacity(0.2), lineWidth: 1)
+            )
+            .transition(.opacity.combined(with: .scale(scale: 0.95)))
             .animation(.easeInOut(duration: 0.2), value: shouldShow)
         }
     }
@@ -797,6 +904,7 @@ public struct CountdownTimerView: View {
                 Text("\(Int(ceil(remaining)))")
                     .font(.system(size: 12, weight: .bold, design: .monospaced))
                     .foregroundColor(theme.primaryText)
+                    .contentTransition(.numericText())
             }
 
             VStack(alignment: .leading, spacing: 2) {
@@ -821,13 +929,33 @@ public struct CountdownTimerView: View {
         }
         .padding(16)
         .background(
-            RoundedRectangle(cornerRadius: 16)
-                .fill(theme.cardBackground)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 16)
-                        .stroke(theme.accentColor.opacity(0.3), lineWidth: 2)
+            ZStack {
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    .fill(theme.cardBackground.opacity(0.95))
+
+                LinearGradient(
+                    colors: [theme.accentColor.opacity(0.06), Color.clear],
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing
+                )
+                .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+            }
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .strokeBorder(
+                    LinearGradient(
+                        colors: [
+                            theme.accentColor.opacity(0.4),
+                            theme.accentColor.opacity(0.15),
+                        ],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    ),
+                    lineWidth: 1.5
                 )
         )
+        .shadow(color: theme.accentColor.opacity(0.15), radius: 8, x: 0, y: 2)
     }
 }
 

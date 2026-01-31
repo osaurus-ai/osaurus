@@ -57,7 +57,7 @@ struct AgentEmptyState: View {
     // MARK: - Ready State
 
     private var readyState: some View {
-        VStack(spacing: 10) {
+        VStack(spacing: 14) {
             AnimatedOrb(color: theme.accentColor, size: .medium, seed: activePersona.name)
                 .frame(width: 88, height: 88)
                 .opacity(hasAppeared ? 1 : 0)
@@ -213,7 +213,7 @@ private struct QuickActionButton: View {
                     .offset(x: isHovered ? 0 : -5)
             }
             .padding(.horizontal, 16)
-            .padding(.vertical, 14)
+            .padding(.vertical, 16)
             .background(
                 RoundedRectangle(cornerRadius: 12, style: .continuous)
                     .fill(

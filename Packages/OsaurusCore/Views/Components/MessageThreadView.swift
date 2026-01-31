@@ -42,12 +42,12 @@ struct MessageThreadView: View {
                         )
                         .equatable()
                         .id(block.id)
-                        .padding(.horizontal, 8)
+                        .padding(.horizontal, 12)
                     }
                 }
                 .padding(.top, 8)
 
-                Color.clear.frame(height: 16)
+                Color.clear.frame(height: 24)
 
                 Color.clear
                     .frame(height: 1)

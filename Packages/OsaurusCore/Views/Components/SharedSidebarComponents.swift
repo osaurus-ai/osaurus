@@ -30,12 +30,31 @@ struct SidebarContainer<Content: View>: View {
         }
         .frame(width: SidebarMetrics.width, alignment: .top)
         .frame(maxHeight: .infinity, alignment: .top)
-        .background {
+        .background { sidebarBackground }
+    }
+
+    @ViewBuilder
+    private var sidebarBackground: some View {
+        ZStack {
+            // Layer 1: Glass material (if enabled)
             if theme.glassEnabled {
-                ThemedGlassSurface(cornerRadius: 0)
-            } else {
-                theme.secondaryBackground
+                Rectangle()
+                    .fill(.ultraThinMaterial)
             }
+
+            // Layer 2: Semi-transparent background
+            Rectangle()
+                .fill(theme.secondaryBackground.opacity(theme.isDark ? 0.8 : 0.9))
+
+            // Layer 3: Subtle accent gradient at top
+            LinearGradient(
+                colors: [
+                    theme.accentColor.opacity(theme.isDark ? 0.04 : 0.025),
+                    Color.clear,
+                ],
+                startPoint: .top,
+                endPoint: .center
+            )
         }
     }
 }
@@ -177,18 +196,25 @@ struct SidebarRowActionButton: View {
         Button(action: action) {
             Image(systemName: icon)
                 .font(.system(size: 12, weight: .semibold))
-                .foregroundColor(isHovered ? theme.primaryText : theme.secondaryText)
+                .foregroundColor(isHovered ? theme.accentColor : theme.secondaryText)
                 .frame(width: SidebarMetrics.actionButtonSize, height: SidebarMetrics.actionButtonSize)
                 .background(
                     RoundedRectangle(cornerRadius: SidebarMetrics.actionButtonCornerRadius, style: .continuous)
-                        .fill(isHovered ? theme.secondaryBackground : .clear)
+                        .fill(isHovered ? theme.accentColor.opacity(0.1) : .clear)
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: SidebarMetrics.actionButtonCornerRadius, style: .continuous)
+                        .strokeBorder(
+                            isHovered ? theme.accentColor.opacity(0.2) : .clear,
+                            lineWidth: 1
+                        )
                 )
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .help(help)
         .onHover { isHovered = $0 }
-        .animation(.easeInOut(duration: 0.15), value: isHovered)
+        .animation(.easeOut(duration: 0.15), value: isHovered)
     }
 }
 
@@ -202,16 +228,57 @@ struct SidebarRowBackground: View {
     @Environment(\.theme) private var theme
 
     var body: some View {
-        backgroundColor
+        ZStack {
+            // Background fill
+            RoundedRectangle(cornerRadius: SidebarMetrics.rowCornerRadius, style: .continuous)
+                .fill(backgroundColor)
+
+            // Selected state: subtle accent gradient
+            if isSelected {
+                RoundedRectangle(cornerRadius: SidebarMetrics.rowCornerRadius, style: .continuous)
+                    .fill(
+                        LinearGradient(
+                            colors: [
+                                theme.accentColor.opacity(0.08),
+                                Color.clear,
+                            ],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        )
+                    )
+            }
+        }
+        .overlay(borderOverlay)
     }
 
     private var backgroundColor: Color {
         if isSelected {
-            return theme.accentColor.opacity(0.15)
+            return theme.accentColor.opacity(0.12)
         } else if isHovered {
-            return theme.secondaryBackground.opacity(0.5)
+            return theme.secondaryBackground.opacity(0.6)
         }
         return .clear
+    }
+
+    @ViewBuilder
+    private var borderOverlay: some View {
+        if isSelected {
+            RoundedRectangle(cornerRadius: SidebarMetrics.rowCornerRadius, style: .continuous)
+                .strokeBorder(
+                    LinearGradient(
+                        colors: [
+                            theme.accentColor.opacity(0.25),
+                            theme.accentColor.opacity(0.1),
+                        ],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    ),
+                    lineWidth: 1
+                )
+        } else if isHovered {
+            RoundedRectangle(cornerRadius: SidebarMetrics.rowCornerRadius, style: .continuous)
+                .strokeBorder(theme.primaryBorder.opacity(0.15), lineWidth: 1)
+        }
     }
 }
 

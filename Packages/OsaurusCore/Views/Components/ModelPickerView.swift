@@ -48,16 +48,52 @@ struct ModelPickerView: View {
             }
         }
         .frame(width: 360, height: min(CGFloat(options.count * 52 + 140), 450))
-        .background(
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .fill(theme.primaryBackground)
-                .shadow(color: .black.opacity(0.2), radius: 16, x: 0, y: 8)
-        )
+        .background(popoverBackground)
         .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-        .overlay(
+        .overlay(popoverBorder)
+        .shadow(color: theme.shadowColor.opacity(0.25), radius: 20, x: 0, y: 10)
+    }
+
+    // MARK: - Background & Border
+
+    private var popoverBackground: some View {
+        ZStack {
+            // Layer 1: Glass material
+            if theme.glassEnabled {
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .fill(.ultraThinMaterial)
+            }
+
+            // Layer 2: Semi-transparent background
             RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .strokeBorder(theme.primaryBorder.opacity(0.3), lineWidth: 0.5)
-        )
+                .fill(theme.primaryBackground.opacity(theme.isDark ? 0.85 : 0.92))
+
+            // Layer 3: Subtle accent gradient at top
+            LinearGradient(
+                colors: [
+                    theme.accentColor.opacity(theme.isDark ? 0.06 : 0.04),
+                    Color.clear,
+                ],
+                startPoint: .top,
+                endPoint: .center
+            )
+            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        }
+    }
+
+    private var popoverBorder: some View {
+        RoundedRectangle(cornerRadius: 12, style: .continuous)
+            .strokeBorder(
+                LinearGradient(
+                    colors: [
+                        theme.glassEdgeLight.opacity(0.2),
+                        theme.primaryBorder.opacity(0.15),
+                    ],
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing
+                ),
+                lineWidth: 1
+            )
     }
 
     // MARK: - Header
@@ -104,11 +140,13 @@ struct ModelPickerView: View {
                         .foregroundColor(theme.tertiaryText)
                 }
                 .buttonStyle(.plain)
+                .transition(.opacity.combined(with: .scale(scale: 0.8)))
             }
         }
         .padding(.horizontal, 12)
-        .padding(.vertical, 8)
-        .background(theme.secondaryBackground.opacity(0.5))
+        .padding(.vertical, 10)
+        .background(theme.secondaryBackground.opacity(theme.isDark ? 0.4 : 0.5))
+        .animation(.easeOut(duration: 0.15), value: searchText.isEmpty)
     }
 
     // MARK: - Empty State
@@ -171,8 +209,20 @@ struct ModelPickerView: View {
             Spacer()
         }
         .padding(.horizontal, 12)
-        .padding(.vertical, 8)
-        .background(theme.primaryBackground.opacity(0.98))
+        .padding(.vertical, 10)
+        .background(
+            ZStack {
+                theme.primaryBackground.opacity(theme.isDark ? 0.95 : 0.98)
+                LinearGradient(
+                    colors: [
+                        theme.accentColor.opacity(0.03),
+                        Color.clear,
+                    ],
+                    startPoint: .leading,
+                    endPoint: .trailing
+                )
+            }
+        )
     }
 
     @ViewBuilder
@@ -215,6 +265,7 @@ private struct ModelRowItem: View {
                         .frame(width: 8, height: 8)
                 }
             }
+            .animation(.easeOut(duration: 0.15), value: isSelected)
 
             // Model info
             VStack(alignment: .leading, spacing: 3) {
@@ -253,22 +304,70 @@ private struct ModelRowItem: View {
                 Image(systemName: "checkmark")
                     .font(.system(size: 11, weight: .bold))
                     .foregroundColor(theme.accentColor)
+                    .transition(.scale.combined(with: .opacity))
             }
         }
         .padding(.horizontal, 12)
-        .padding(.vertical, 8)
-        .background(
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .fill(isHovered || isSelected ? theme.secondaryBackground.opacity(0.6) : Color.clear)
-        )
+        .padding(.vertical, 10)
+        .background(rowBackground)
+        .overlay(rowBorder)
         .contentShape(Rectangle())
         .onTapGesture {
             onSelect()
         }
         .onHover { hovering in
-            withAnimation(.easeInOut(duration: 0.1)) {
+            withAnimation(.easeOut(duration: 0.15)) {
                 isHovered = hovering
             }
+        }
+        .animation(.easeOut(duration: 0.15), value: isSelected)
+    }
+
+    private var rowBackground: some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(backgroundColor)
+
+            if isSelected {
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(
+                        LinearGradient(
+                            colors: [
+                                theme.accentColor.opacity(0.1),
+                                Color.clear,
+                            ],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        )
+                    )
+            }
+        }
+    }
+
+    private var backgroundColor: Color {
+        if isSelected {
+            return theme.accentColor.opacity(0.12)
+        } else if isHovered {
+            return theme.secondaryBackground.opacity(0.7)
+        }
+        return .clear
+    }
+
+    @ViewBuilder
+    private var rowBorder: some View {
+        if isSelected || isHovered {
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .strokeBorder(
+                    LinearGradient(
+                        colors: [
+                            isSelected ? theme.accentColor.opacity(0.3) : theme.glassEdgeLight.opacity(0.15),
+                            isSelected ? theme.accentColor.opacity(0.1) : theme.primaryBorder.opacity(0.1),
+                        ],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    ),
+                    lineWidth: 1
+                )
         }
     }
 }

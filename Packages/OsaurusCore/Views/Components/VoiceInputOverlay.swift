@@ -140,8 +140,12 @@ public struct VoiceInputOverlay: View {
                             .foregroundColor(theme.tertiaryText)
                             .padding(8)
                             .background(
-                                Circle()
-                                    .fill(theme.tertiaryBackground)
+                                ZStack {
+                                    Circle()
+                                        .fill(theme.tertiaryBackground)
+                                    Circle()
+                                        .strokeBorder(theme.primaryBorder.opacity(0.15), lineWidth: 1)
+                                }
                             )
                     }
                     .buttonStyle(.plain)
@@ -161,9 +165,9 @@ public struct VoiceInputOverlay: View {
             .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
             .overlay(
                 RoundedRectangle(cornerRadius: 16, style: .continuous)
-                    .stroke(borderColor, lineWidth: 1)
+                    .strokeBorder(borderColor, lineWidth: 1)
             )
-            .shadow(color: shadowColor, radius: 12, x: 0, y: 4)
+            .shadow(color: shadowColor, radius: 16, x: 0, y: 6)
         }
         .padding(.horizontal, 20)
         .padding(.bottom, 20)
@@ -251,8 +255,12 @@ public struct VoiceInputOverlay: View {
                     .padding(.horizontal, 14)
                     .padding(.vertical, 8)
                     .background(
-                        RoundedRectangle(cornerRadius: 8)
-                            .fill(theme.tertiaryBackground)
+                        ZStack {
+                            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                .fill(theme.tertiaryBackground)
+                            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                .strokeBorder(theme.primaryBorder.opacity(0.15), lineWidth: 1)
+                        }
                     )
                 }
                 .buttonStyle(.plain)
@@ -298,32 +306,67 @@ public struct VoiceInputOverlay: View {
 
     private var overlayBackground: some View {
         ZStack {
-            // Frosted glass effect
-            if #available(macOS 13.0, *) {
+            // Layer 1: Glass material
+            if theme.glassEnabled {
                 RoundedRectangle(cornerRadius: 16, style: .continuous)
                     .fill(.ultraThinMaterial)
-            } else {
-                RoundedRectangle(cornerRadius: 16, style: .continuous)
-                    .fill(theme.cardBackground.opacity(0.95))
             }
 
-            // Tint overlay
+            // Layer 2: Semi-transparent card background
             RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .fill(theme.cardBackground.opacity(0.8))
+                .fill(theme.cardBackground.opacity(theme.isDark ? 0.85 : 0.92))
+
+            // Layer 3: State-based accent gradient
+            LinearGradient(
+                colors: [stateAccentColor.opacity(theme.isDark ? 0.08 : 0.05), Color.clear],
+                startPoint: .top,
+                endPoint: .center
+            )
+            .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
         }
     }
 
-    private var borderColor: Color {
+    private var stateAccentColor: Color {
         switch state {
-        case .recording: return theme.cardBorder
-        case .paused: return theme.accentColor.opacity(0.3)
-        case .sending: return theme.successColor.opacity(0.3)
-        default: return theme.cardBorder
+        case .recording: return theme.accentColor
+        case .paused: return theme.accentColor
+        case .sending: return theme.successColor
+        default: return theme.accentColor
         }
+    }
+
+    private var borderColor: LinearGradient {
+        let primaryColor: Color
+        let secondaryColor: Color
+
+        switch state {
+        case .recording:
+            primaryColor = theme.glassEdgeLight.opacity(0.2)
+            secondaryColor = theme.cardBorder
+        case .paused:
+            primaryColor = theme.accentColor.opacity(0.4)
+            secondaryColor = theme.accentColor.opacity(0.15)
+        case .sending:
+            primaryColor = theme.successColor.opacity(0.4)
+            secondaryColor = theme.successColor.opacity(0.15)
+        default:
+            primaryColor = theme.glassEdgeLight.opacity(0.15)
+            secondaryColor = theme.cardBorder
+        }
+
+        return LinearGradient(
+            colors: [primaryColor, secondaryColor],
+            startPoint: .topLeading,
+            endPoint: .bottomTrailing
+        )
     }
 
     private var shadowColor: Color {
-        Color.black.opacity(0.1)
+        switch state {
+        case .paused: return theme.accentColor.opacity(0.15)
+        case .sending: return theme.successColor.opacity(0.15)
+        default: return theme.shadowColor.opacity(0.12)
+        }
     }
 
     // MARK: - Actions
