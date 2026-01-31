@@ -248,16 +248,10 @@ struct CapabilitiesSelectorView: View {
             }
         }
         .frame(width: 420, height: min(CGFloat(totalCount * 48 + 200), 540))
-        .background(
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .fill(theme.primaryBackground)
-                .shadow(color: .black.opacity(0.2), radius: 16, x: 0, y: 8)
-        )
+        .background(popoverBackground)
         .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .strokeBorder(theme.primaryBorder.opacity(0.3), lineWidth: 0.5)
-        )
+        .overlay(popoverBorder)
+        .shadow(color: theme.shadowColor.opacity(0.25), radius: 20, x: 0, y: 10)
         .animation(.easeInOut(duration: 0.2), value: selectedTab)
         .onAppear { rebuildToolsCache() }
         .onReceive(toolRegistry.objectWillChange) { _ in
@@ -265,6 +259,48 @@ struct CapabilitiesSelectorView: View {
         }
         .onReceive(NotificationCenter.default.publisher(for: .toolsListChanged)) { _ in rebuildToolsCache() }
         .onReceive(NotificationCenter.default.publisher(for: .skillsListChanged)) { _ in rebuildToolsCache() }
+    }
+
+    // MARK: - Background & Border
+
+    private var popoverBackground: some View {
+        ZStack {
+            // Layer 1: Glass material
+            if theme.glassEnabled {
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .fill(.ultraThinMaterial)
+            }
+
+            // Layer 2: Semi-transparent background
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .fill(theme.primaryBackground.opacity(theme.isDark ? 0.85 : 0.92))
+
+            // Layer 3: Subtle accent gradient at top
+            LinearGradient(
+                colors: [
+                    theme.accentColor.opacity(theme.isDark ? 0.06 : 0.04),
+                    Color.clear,
+                ],
+                startPoint: .top,
+                endPoint: .center
+            )
+            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        }
+    }
+
+    private var popoverBorder: some View {
+        RoundedRectangle(cornerRadius: 12, style: .continuous)
+            .strokeBorder(
+                LinearGradient(
+                    colors: [
+                        theme.glassEdgeLight.opacity(0.2),
+                        theme.primaryBorder.opacity(0.15),
+                    ],
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing
+                ),
+                lineWidth: 1
+            )
     }
 
     // MARK: - Header
@@ -322,60 +358,44 @@ struct CapabilitiesSelectorView: View {
                         .padding(.vertical, 8)
                         .contentShape(Rectangle())
                         .background(
-                            RoundedRectangle(cornerRadius: 6, style: .continuous)
-                                .fill(selectedTab == tab ? theme.secondaryBackground : Color.clear)
+                            ZStack {
+                                if selectedTab == tab {
+                                    RoundedRectangle(cornerRadius: 6, style: .continuous)
+                                        .fill(theme.secondaryBackground)
+                                    RoundedRectangle(cornerRadius: 6, style: .continuous)
+                                        .strokeBorder(theme.primaryBorder.opacity(0.12), lineWidth: 1)
+                                }
+                            }
+                        )
+                        .shadow(
+                            color: selectedTab == tab ? theme.shadowColor.opacity(0.08) : .clear,
+                            radius: 2,
+                            x: 0,
+                            y: 1
                         )
                     }
                     .buttonStyle(.plain)
                 }
             }
             .padding(3)
-            .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(theme.primaryBorder.opacity(0.15)))
+            .background(
+                ZStack {
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .fill(theme.secondaryBackground.opacity(theme.isDark ? 0.4 : 0.5))
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .strokeBorder(theme.primaryBorder.opacity(0.1), lineWidth: 1)
+                }
+            )
 
             // Actions
             HStack(spacing: 8) {
-                Button(action: enableAll) {
-                    Text("Enable All")
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundColor(theme.primaryText)
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 5)
-                        .background(
-                            RoundedRectangle(cornerRadius: 6, style: .continuous).fill(theme.secondaryBackground)
-                        )
-                }
-                .buttonStyle(.plain)
-
-                Button(action: disableAll) {
-                    Text("Disable All")
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundColor(theme.primaryText)
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 5)
-                        .background(
-                            RoundedRectangle(cornerRadius: 6, style: .continuous).fill(theme.secondaryBackground)
-                        )
-                }
-                .buttonStyle(.plain)
+                CapabilityActionButton(title: "Enable All", action: enableAll)
+                CapabilityActionButton(title: "Disable All", action: disableAll)
 
                 Spacer()
 
-                Button(action: openManagement) {
-                    HStack(spacing: 4) {
-                        Image(systemName: "gearshape").font(.system(size: 10))
-                        Text("Manage").font(.system(size: 11, weight: .medium))
-                    }
-                    .foregroundColor(theme.secondaryText)
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 5)
-                    .background(
-                        RoundedRectangle(cornerRadius: 6, style: .continuous).fill(
-                            theme.secondaryBackground.opacity(0.5)
-                        )
-                    )
-                }
-                .buttonStyle(.plain)
-                .help("Open \(selectedTab == .tools ? "Tools" : "Skills") management")
+                CapabilityActionButton(title: "Manage", icon: "gearshape", isSecondary: true, action: openManagement)
+                    .help("Open \(selectedTab == .tools ? "Tools" : "Skills") management")
             }
         }
         .padding(.horizontal, 14)
@@ -407,11 +427,13 @@ struct CapabilitiesSelectorView: View {
                         .foregroundColor(theme.tertiaryText)
                 }
                 .buttonStyle(.plain)
+                .transition(.opacity.combined(with: .scale(scale: 0.8)))
             }
         }
         .padding(.horizontal, 12)
-        .padding(.vertical, 8)
-        .background(theme.secondaryBackground.opacity(0.5))
+        .padding(.vertical, 10)
+        .background(theme.secondaryBackground.opacity(theme.isDark ? 0.4 : 0.5))
+        .animation(.easeOut(duration: 0.15), value: searchText.isEmpty)
     }
 
     // MARK: - Empty State
@@ -490,10 +512,11 @@ private struct GroupHeader: View {
                     .font(.system(size: 10, weight: .semibold))
                     .foregroundColor(theme.tertiaryText)
                     .frame(width: 12)
+                    .rotationEffect(.degrees(isExpanded ? 0 : 0))
 
                 Image(systemName: group.icon)
                     .font(.system(size: 11))
-                    .foregroundColor(theme.secondaryText)
+                    .foregroundColor(isHovered ? theme.accentColor : theme.secondaryText)
 
                 Text(group.displayName)
                     .font(.system(size: 12, weight: .semibold))
@@ -525,26 +548,74 @@ private struct GroupHeader: View {
                     }
                 }
                 .buttonStyle(.plain)
-                .padding(.horizontal, 6)
-                .padding(.vertical, 2)
-                .background(Capsule().fill(theme.primaryBackground))
+                .padding(.horizontal, 8)
+                .padding(.vertical, 3)
+                .background(
+                    Capsule()
+                        .fill(theme.primaryBackground)
+                        .overlay(
+                            Capsule()
+                                .strokeBorder(theme.primaryBorder.opacity(0.15), lineWidth: 1)
+                        )
+                )
+                .transition(.opacity.combined(with: .scale(scale: 0.9)))
             }
 
             // Count badge
             Text("\(group.enabledCount)/\(group.tools.count)")
                 .font(.system(size: 10, weight: .medium))
                 .foregroundColor(group.enabledCount > 0 ? theme.accentColor : theme.tertiaryText)
-                .padding(.horizontal, 6)
-                .padding(.vertical, 2)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 3)
                 .background(
-                    Capsule().fill(group.enabledCount > 0 ? theme.accentColor.opacity(0.15) : theme.primaryBackground)
+                    Capsule()
+                        .fill(group.enabledCount > 0 ? theme.accentColor.opacity(0.15) : theme.primaryBackground)
+                        .overlay(
+                            Capsule()
+                                .strokeBorder(
+                                    group.enabledCount > 0
+                                        ? theme.accentColor.opacity(0.2) : theme.primaryBorder.opacity(0.1),
+                                    lineWidth: 1
+                                )
+                        )
                 )
                 .onTapGesture { onToggle() }
         }
         .padding(.horizontal, 12)
-        .padding(.vertical, 11)
-        .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(theme.secondaryBackground))
-        .onHover { isHovered = $0 }
+        .padding(.vertical, 12)
+        .background(
+            ZStack {
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(theme.secondaryBackground.opacity(isHovered ? 1.0 : 0.9))
+
+                if isHovered {
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .fill(
+                            LinearGradient(
+                                colors: [
+                                    theme.accentColor.opacity(0.05),
+                                    Color.clear,
+                                ],
+                                startPoint: .leading,
+                                endPoint: .trailing
+                            )
+                        )
+                }
+            }
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .strokeBorder(
+                    isHovered ? theme.accentColor.opacity(0.15) : theme.primaryBorder.opacity(0.08),
+                    lineWidth: 1
+                )
+        )
+        .onHover { hovering in
+            withAnimation(.easeOut(duration: 0.15)) {
+                isHovered = hovering
+            }
+        }
+        .animation(.easeOut(duration: 0.15), value: isExpanded)
     }
 }
 
@@ -581,13 +652,54 @@ private struct ToolRowItem: View {
                 .help("Catalog: ~\(tool.catalogEntryTokens), Full: ~\(tool.estimatedTokens) tokens")
         }
         .padding(.horizontal, 12)
-        .padding(.vertical, 8)
-        .background(
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .fill(isHovered ? theme.secondaryBackground.opacity(0.6) : Color.clear)
-        )
+        .padding(.vertical, 10)
+        .background(rowBackground)
+        .overlay(rowBorder)
         .contentShape(Rectangle())
-        .onHover { isHovered = $0 }
+        .onHover { hovering in
+            withAnimation(.easeOut(duration: 0.15)) {
+                isHovered = hovering
+            }
+        }
+    }
+
+    private var rowBackground: some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(isHovered ? theme.secondaryBackground.opacity(0.7) : Color.clear)
+
+            if isHovered && tool.enabled {
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(
+                        LinearGradient(
+                            colors: [
+                                theme.accentColor.opacity(0.06),
+                                Color.clear,
+                            ],
+                            startPoint: .leading,
+                            endPoint: .trailing
+                        )
+                    )
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var rowBorder: some View {
+        if isHovered {
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .strokeBorder(
+                    LinearGradient(
+                        colors: [
+                            theme.glassEdgeLight.opacity(0.12),
+                            theme.primaryBorder.opacity(0.08),
+                        ],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    ),
+                    lineWidth: 1
+                )
+        }
     }
 
     private func tokenBadge(_ count: Int) -> some View {
@@ -596,6 +708,12 @@ private struct ToolRowItem: View {
             Text("tokens").font(.system(size: 9)).opacity(0.6)
         }
         .foregroundColor(theme.tertiaryText)
+        .padding(.horizontal, 6)
+        .padding(.vertical, 2)
+        .background(
+            Capsule()
+                .fill(theme.secondaryBackground.opacity(0.5))
+        )
     }
 }
 
@@ -629,9 +747,16 @@ private struct SkillRowItem: View {
                         Text("Built-in")
                             .font(.system(size: 8, weight: .medium))
                             .foregroundColor(theme.secondaryText)
-                            .padding(.horizontal, 4)
-                            .padding(.vertical, 1)
-                            .background(Capsule().fill(theme.secondaryBackground))
+                            .padding(.horizontal, 5)
+                            .padding(.vertical, 2)
+                            .background(
+                                Capsule()
+                                    .fill(theme.secondaryBackground)
+                                    .overlay(
+                                        Capsule()
+                                            .strokeBorder(theme.primaryBorder.opacity(0.1), lineWidth: 1)
+                                    )
+                            )
                     }
                 }
                 Text(skill.description)
@@ -647,16 +772,142 @@ private struct SkillRowItem: View {
                 Text("tokens").font(.system(size: 9)).opacity(0.6)
             }
             .foregroundColor(theme.tertiaryText)
+            .padding(.horizontal, 6)
+            .padding(.vertical, 2)
+            .background(
+                Capsule()
+                    .fill(theme.secondaryBackground.opacity(0.5))
+            )
             .help("Catalog entry tokens")
         }
         .padding(.horizontal, 12)
-        .padding(.vertical, 8)
-        .background(
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .fill(isHovered ? theme.secondaryBackground.opacity(0.6) : Color.clear)
-        )
+        .padding(.vertical, 10)
+        .background(rowBackground)
+        .overlay(rowBorder)
         .contentShape(Rectangle())
-        .onHover { isHovered = $0 }
+        .onHover { hovering in
+            withAnimation(.easeOut(duration: 0.15)) {
+                isHovered = hovering
+            }
+        }
+    }
+
+    private var rowBackground: some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(isHovered ? theme.secondaryBackground.opacity(0.7) : Color.clear)
+
+            if isHovered && isEnabled {
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(
+                        LinearGradient(
+                            colors: [
+                                theme.accentColor.opacity(0.06),
+                                Color.clear,
+                            ],
+                            startPoint: .leading,
+                            endPoint: .trailing
+                        )
+                    )
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var rowBorder: some View {
+        if isHovered {
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .strokeBorder(
+                    LinearGradient(
+                        colors: [
+                            theme.glassEdgeLight.opacity(0.12),
+                            theme.primaryBorder.opacity(0.08),
+                        ],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    ),
+                    lineWidth: 1
+                )
+        }
+    }
+}
+
+// MARK: - Action Button
+
+private struct CapabilityActionButton: View {
+    let title: String
+    var icon: String? = nil
+    var isSecondary: Bool = false
+    let action: () -> Void
+
+    @State private var isHovered = false
+    @Environment(\.theme) private var theme
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 4) {
+                if let icon = icon {
+                    Image(systemName: icon)
+                        .font(.system(size: 10))
+                }
+                Text(title)
+                    .font(.system(size: 11, weight: .medium))
+            }
+            .foregroundColor(foregroundColor)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
+            .background(buttonBackground)
+            .overlay(buttonBorder)
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering in
+            withAnimation(.easeOut(duration: 0.15)) {
+                isHovered = hovering
+            }
+        }
+    }
+
+    private var foregroundColor: Color {
+        if isSecondary {
+            return isHovered ? theme.accentColor : theme.secondaryText
+        }
+        return isHovered ? theme.accentColor : theme.primaryText
+    }
+
+    private var buttonBackground: some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                .fill(theme.secondaryBackground.opacity(isSecondary ? 0.5 : (isHovered ? 0.95 : 0.8)))
+
+            if isHovered {
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .fill(
+                        LinearGradient(
+                            colors: [
+                                theme.accentColor.opacity(0.08),
+                                Color.clear,
+                            ],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        )
+                    )
+            }
+        }
+    }
+
+    private var buttonBorder: some View {
+        RoundedRectangle(cornerRadius: 6, style: .continuous)
+            .strokeBorder(
+                LinearGradient(
+                    colors: [
+                        theme.glassEdgeLight.opacity(isHovered ? 0.2 : 0.1),
+                        theme.primaryBorder.opacity(isHovered ? 0.15 : 0.08),
+                    ],
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing
+                ),
+                lineWidth: 1
+            )
     }
 }
 
