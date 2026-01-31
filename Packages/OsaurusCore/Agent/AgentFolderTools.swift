@@ -531,10 +531,17 @@ struct AgentFileDeleteTool: OsaurusTool, PermissionedTool {
             )
         }
 
-        try FileManager.default.removeItem(at: fileURL)
+        // Binary/large files can't be undone, so move to Trash for recovery
+        let useTrash = !isDirectory.boolValue && previousContent == nil
+        if useTrash {
+            try FileManager.default.trashItem(at: fileURL, resultingItemURL: nil)
+        } else {
+            try FileManager.default.removeItem(at: fileURL)
+        }
 
         let itemType = isDirectory.boolValue ? "directory" : "file"
-        return "Deleted \(itemType): \(relativePath)"
+        let suffix = useTrash ? " (moved to Trash)" : ""
+        return "Deleted \(itemType): \(relativePath)\(suffix)"
     }
 }
 
