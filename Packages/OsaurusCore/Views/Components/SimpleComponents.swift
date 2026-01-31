@@ -305,32 +305,55 @@ struct StatusBadge: View {
 
     var body: some View {
         HStack(spacing: 6) {
-            Circle()
-                .fill(color)
-                .frame(width: 8, height: 8)
-                .overlay(
-                    Circle()
-                        .stroke(color.opacity(0.3), lineWidth: 3)
-                        .scaleEffect(isAnimating ? 2.0 : 1.0)
-                        .opacity(isAnimating ? 0 : 1)
-                        .animation(
-                            isAnimating ? .easeInOut(duration: 1.5).repeatForever(autoreverses: true) : .default,
-                            value: isAnimating
-                        )
-                )
+            ZStack {
+                // Pulse ring
+                Circle()
+                    .stroke(color.opacity(0.3), lineWidth: 2)
+                    .frame(width: 12, height: 12)
+                    .scaleEffect(isAnimating ? 1.6 : 1.0)
+                    .opacity(isAnimating ? 0 : 0.6)
+                    .animation(
+                        isAnimating ? .easeOut(duration: 1.2).repeatForever(autoreverses: false) : .default,
+                        value: isAnimating
+                    )
+
+                // Core dot
+                Circle()
+                    .fill(color)
+                    .frame(width: 8, height: 8)
+                    .shadow(color: color.opacity(0.4), radius: 2, x: 0, y: 0)
+            }
 
             Text(status)
-                .font(.system(size: 12, weight: .medium))
+                .font(.system(size: 11, weight: .medium))
                 .foregroundColor(color)
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 6)
         .background(
+            ZStack {
+                Capsule()
+                    .fill(theme.cardBackground.opacity(0.9))
+
+                Capsule()
+                    .fill(
+                        LinearGradient(
+                            colors: [color.opacity(0.08), Color.clear],
+                            startPoint: .leading,
+                            endPoint: .trailing
+                        )
+                    )
+            }
+        )
+        .overlay(
             Capsule()
-                .fill(theme.cardBackground)
-                .overlay(
-                    Capsule()
-                        .stroke(color.opacity(0.3), lineWidth: 1)
+                .strokeBorder(
+                    LinearGradient(
+                        colors: [color.opacity(0.4), color.opacity(0.15)],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    ),
+                    lineWidth: 1
                 )
         )
     }
@@ -477,7 +500,9 @@ struct SystemResourceMonitor: View {
     @ObservedObject private var monitor = SystemMonitorService.shared
     @State private var isHoveringCPU = false
     @State private var isHoveringRAM = false
+    @State private var isHoveringModels = false
     @State private var showResourcePopover = false
+    @State private var cachedModelCount: Int = 0
 
     var body: some View {
         HStack(spacing: 12) {
@@ -494,6 +519,7 @@ struct SystemResourceMonitor: View {
                     Text("\(Int(monitor.cpuUsage))%")
                         .font(.system(size: 11, weight: .semibold, design: .monospaced))
                         .foregroundColor(colorForUsage(monitor.cpuUsage))
+                        .contentTransition(.numericText())
                 }
 
                 ProgressView(value: monitor.cpuUsage / 100.0)
@@ -509,18 +535,19 @@ struct SystemResourceMonitor: View {
                                 Text("\(String(format: "%.1f", monitor.cpuUsage))%")
                                     .font(.system(size: 10, weight: .medium, design: .monospaced))
                                     .foregroundColor(theme.primaryText)
-                                    .padding(.horizontal, 6)
-                                    .padding(.vertical, 2)
+                                    .padding(.horizontal, 8)
+                                    .padding(.vertical, 4)
                                     .background(
-                                        RoundedRectangle(cornerRadius: 4)
-                                            .fill(theme.cardBackground)
-                                            .overlay(
-                                                RoundedRectangle(cornerRadius: 4)
-                                                    .stroke(theme.cardBorder, lineWidth: 1)
-                                            )
-                                            .shadow(radius: 2)
+                                        ZStack {
+                                            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                                                .fill(theme.cardBackground.opacity(0.95))
+                                            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                                                .strokeBorder(theme.glassEdgeLight.opacity(0.15), lineWidth: 1)
+                                        }
+                                        .shadow(color: theme.shadowColor.opacity(0.15), radius: 4, x: 0, y: 2)
                                     )
                                     .offset(y: -20)
+                                    .transition(.opacity.combined(with: .scale(scale: 0.9)))
                             }
                         }
                     )
@@ -536,10 +563,48 @@ struct SystemResourceMonitor: View {
                     Text("RAM")
                         .font(.system(size: 11, weight: .medium))
                         .foregroundColor(theme.secondaryText)
+
+                    // Models indicator button
+                    Button(action: { showResourcePopover.toggle() }) {
+                        HStack(spacing: 2) {
+                            Image(systemName: "cube.box")
+                                .font(.system(size: 9, weight: .medium))
+
+                            if cachedModelCount > 0 {
+                                Text("\(cachedModelCount)")
+                                    .font(.system(size: 9, weight: .semibold, design: .monospaced))
+                                    .contentTransition(.numericText())
+                            }
+                        }
+                        .foregroundColor(isHoveringModels ? theme.accentColor : theme.tertiaryText)
+                        .padding(.horizontal, 4)
+                        .padding(.vertical, 2)
+                        .background(
+                            Capsule()
+                                .fill(isHoveringModels ? theme.accentColor.opacity(0.12) : Color.clear)
+                        )
+                        .overlay(
+                            Capsule()
+                                .strokeBorder(
+                                    isHoveringModels ? theme.accentColor.opacity(0.3) : Color.clear,
+                                    lineWidth: 1
+                                )
+                        )
+                    }
+                    .buttonStyle(PlainButtonStyle())
+                    .onHover { hovering in
+                        withAnimation(.easeOut(duration: 0.15)) {
+                            isHoveringModels = hovering
+                        }
+                    }
+                    .help("Loaded Models\(cachedModelCount > 0 ? " (\(cachedModelCount))" : "")")
+
                     Spacer()
+
                     Text("\(Int(monitor.memoryUsage))%")
                         .font(.system(size: 11, weight: .semibold, design: .monospaced))
                         .foregroundColor(colorForUsage(monitor.memoryUsage))
+                        .contentTransition(.numericText())
                 }
 
                 ProgressView(value: monitor.memoryUsage / 100.0)
@@ -559,45 +624,79 @@ struct SystemResourceMonitor: View {
                                 )
                                 .font(.system(size: 10, weight: .medium, design: .monospaced))
                                 .foregroundColor(theme.primaryText)
-                                .padding(.horizontal, 6)
-                                .padding(.vertical, 2)
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 4)
                                 .background(
-                                    RoundedRectangle(cornerRadius: 4)
-                                        .fill(theme.cardBackground)
-                                        .overlay(
-                                            RoundedRectangle(cornerRadius: 4)
-                                                .stroke(theme.cardBorder, lineWidth: 1)
-                                        )
-                                        .shadow(radius: 2)
+                                    ZStack {
+                                        RoundedRectangle(cornerRadius: 6, style: .continuous)
+                                            .fill(theme.cardBackground.opacity(0.95))
+                                        RoundedRectangle(cornerRadius: 6, style: .continuous)
+                                            .strokeBorder(theme.glassEdgeLight.opacity(0.15), lineWidth: 1)
+                                    }
+                                    .shadow(color: theme.shadowColor.opacity(0.15), radius: 4, x: 0, y: 2)
                                 )
                                 .offset(y: -20)
+                                .transition(.opacity.combined(with: .scale(scale: 0.9)))
                             }
                         }
                     )
             }
             .frame(minWidth: 50)
         }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 6)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
         .background(
-            RoundedRectangle(cornerRadius: 8)
-                .fill(theme.secondaryBackground)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 8)
-                        .stroke(theme.cardBorder, lineWidth: 1)
+            ZStack {
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(theme.secondaryBackground.opacity(0.8))
+
+                // Subtle accent gradient at top
+                LinearGradient(
+                    colors: [theme.accentColor.opacity(0.03), Color.clear],
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
+                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+            }
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .strokeBorder(
+                    LinearGradient(
+                        colors: [
+                            theme.glassEdgeLight.opacity(0.12),
+                            theme.cardBorder.opacity(0.8),
+                        ],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    ),
+                    lineWidth: 1
                 )
         )
-        .contentShape(Rectangle())
-        .onTapGesture { showResourcePopover.toggle() }
+        .onAppear {
+            Task { await refreshModelCount() }
+        }
+        .onChange(of: showResourcePopover) { _, isShowing in
+            if !isShowing {
+                // Refresh count when popover closes
+                Task { await refreshModelCount() }
+            }
+        }
         .popover(
             isPresented: $showResourcePopover,
             attachmentAnchor: .point(.bottom),
             arrowEdge: .top
         ) {
-            ModelCacheInspectorView()
-                .frame(minWidth: 280)
-                .padding(12)
+            ModelCacheInspectorView(onRefresh: {
+                Task { await refreshModelCount() }
+            })
+            .frame(minWidth: 300)
+            .padding(14)
         }
+    }
+
+    private func refreshModelCount() async {
+        cachedModelCount = await MLXService.shared.cachedRuntimeSummaries().count
     }
 
     private func colorForUsage(_ usage: Double) -> Color {

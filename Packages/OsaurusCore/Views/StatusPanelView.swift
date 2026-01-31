@@ -1,14 +1,15 @@
 //
-//  ContentView.swift
+//  StatusPanelView.swift
 //  osaurus
 //
-//  Created by Terence on 8/17/25.
+//  The main status panel shown in the menu bar. Displays server status,
+//  system resources, and quick actions for accessing AI chat and settings.
 //
 
 import AppKit
 import SwiftUI
 
-struct ContentView: View {
+struct StatusPanelView: View {
     @EnvironmentObject var server: ServerController
     @ObservedObject private var themeManager = ThemeManager.shared
 
@@ -220,23 +221,42 @@ private struct TopStatusHeader: View {
 
 // MARK: - Status Dot (Simple indicator)
 private struct StatusDot: View {
+    @Environment(\.theme) private var theme
     let color: Color
     let isAnimating: Bool
 
     var body: some View {
-        Circle()
-            .fill(color)
-            .frame(width: 10, height: 10)
-            .overlay(
-                Circle()
-                    .stroke(color.opacity(0.3), lineWidth: 3)
-                    .scaleEffect(isAnimating ? 2.0 : 1.0)
-                    .opacity(isAnimating ? 0 : 1)
-                    .animation(
-                        isAnimating ? .easeInOut(duration: 1.5).repeatForever(autoreverses: true) : .default,
-                        value: isAnimating
+        ZStack {
+            // Glow ring
+            Circle()
+                .fill(color.opacity(0.2))
+                .frame(width: 16, height: 16)
+                .blur(radius: 2)
+
+            // Pulse animation
+            Circle()
+                .stroke(color.opacity(0.3), lineWidth: 2)
+                .frame(width: 14, height: 14)
+                .scaleEffect(isAnimating ? 1.8 : 1.0)
+                .opacity(isAnimating ? 0 : 0.6)
+                .animation(
+                    isAnimating ? .easeOut(duration: 1.2).repeatForever(autoreverses: false) : .default,
+                    value: isAnimating
+                )
+
+            // Core dot
+            Circle()
+                .fill(
+                    RadialGradient(
+                        colors: [color, color.opacity(0.8)],
+                        center: .center,
+                        startRadius: 0,
+                        endRadius: 5
                     )
-            )
+                )
+                .frame(width: 10, height: 10)
+                .shadow(color: color.opacity(0.5), radius: 3, x: 0, y: 0)
+        }
     }
 }
 
@@ -245,7 +265,7 @@ private struct RetryButton: View {
     @Environment(\.theme) private var theme
     let action: () -> Void
 
-    @State private var isHovering = false
+    @State private var isHovered = false
 
     var body: some View {
         Button(action: action) {
@@ -259,14 +279,39 @@ private struct RetryButton: View {
             .padding(.horizontal, 10)
             .padding(.vertical, 5)
             .background(
-                RoundedRectangle(cornerRadius: 5)
-                    .fill(theme.errorColor)
+                ZStack {
+                    RoundedRectangle(cornerRadius: 6, style: .continuous)
+                        .fill(theme.errorColor)
+
+                    if isHovered {
+                        RoundedRectangle(cornerRadius: 6, style: .continuous)
+                            .fill(Color.white.opacity(0.15))
+                    }
+                }
             )
-            .opacity(isHovering ? 0.85 : 1.0)
+            .overlay(
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .strokeBorder(
+                        LinearGradient(
+                            colors: [Color.white.opacity(isHovered ? 0.3 : 0.2), theme.errorColor.opacity(0.3)],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        ),
+                        lineWidth: 1
+                    )
+            )
+            .shadow(
+                color: theme.errorColor.opacity(isHovered ? 0.4 : 0.25),
+                radius: isHovered ? 6 : 3,
+                x: 0,
+                y: 2
+            )
         }
         .buttonStyle(PlainButtonStyle())
         .onHover { hovering in
-            isHovering = hovering
+            withAnimation(.easeOut(duration: 0.15)) {
+                isHovered = hovering
+            }
         }
     }
 }
@@ -317,7 +362,6 @@ private struct VADToggleButton: View {
     @ObservedObject private var vadService = VADService.shared
     @ObservedObject private var whisperModelManager = WhisperModelManager.shared
 
-    @State private var isHovering = false
     @State private var pulseAnimation = false
 
     /// Whether VAD can be toggled (requirements met)
@@ -393,19 +437,50 @@ private struct VADToggleButton: View {
 
     var body: some View {
         Button(action: toggleVAD) {
-            Image(systemName: isActive ? "waveform.circle.fill" : "waveform.circle")
-                .font(.system(size: 14))
-                .foregroundColor(iconColor)
-                .scaleEffect(pulseAnimation && vadService.state == .listening ? 1.08 : 1.0)
-                .frame(width: 28, height: 28)
-                .background(
+            ZStack {
+                // Background
+                Circle()
+                    .fill(isActive ? iconColor.opacity(0.15) : theme.buttonBackground)
+
+                // Accent gradient when active
+                if isActive {
                     Circle()
-                        .fill(isActive ? iconColor.opacity(0.15) : theme.buttonBackground)
-                        .overlay(
-                            Circle()
-                                .stroke(isActive ? iconColor.opacity(0.3) : theme.buttonBorder, lineWidth: 1)
+                        .fill(
+                            LinearGradient(
+                                colors: [iconColor.opacity(0.15), Color.clear],
+                                startPoint: .topLeading,
+                                endPoint: .bottomTrailing
+                            )
                         )
-                )
+                }
+
+                // Icon
+                Image(systemName: isActive ? "waveform.circle.fill" : "waveform.circle")
+                    .font(.system(size: 14))
+                    .foregroundColor(iconColor)
+                    .scaleEffect(pulseAnimation && vadService.state == .listening ? 1.08 : 1.0)
+            }
+            .frame(width: 28, height: 28)
+            .overlay(
+                Circle()
+                    .strokeBorder(
+                        LinearGradient(
+                            colors: [
+                                isActive ? iconColor.opacity(0.4) : theme.glassEdgeLight.opacity(0.15),
+                                isActive ? iconColor.opacity(0.2) : theme.buttonBorder,
+                            ],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        ),
+                        lineWidth: 1
+                    )
+            )
+            .shadow(
+                color: isActive ? iconColor.opacity(0.3) : .clear,
+                radius: 4,
+                x: 0,
+                y: 1
+            )
         }
         .buttonStyle(PlainButtonStyle())
         .disabled(!canToggleVAD || !isVADConfigured)
@@ -467,7 +542,7 @@ private struct AskAIButton: View {
     @Environment(\.theme) private var theme
     let action: () -> Void
 
-    @State private var isHovering = false
+    @State private var isHovered = false
     @State private var isPressed = false
 
     var body: some View {
@@ -476,24 +551,53 @@ private struct AskAIButton: View {
                 .font(.system(size: 13, weight: .semibold))
                 .foregroundColor(.white)
                 .padding(.horizontal, 14)
-                .padding(.vertical, 6)
+                .padding(.vertical, 7)
                 .background(
-                    RoundedRectangle(cornerRadius: 6)
-                        .fill(theme.accentColor)
+                    ZStack {
+                        // Base gradient
+                        RoundedRectangle(cornerRadius: 8, style: .continuous)
+                            .fill(
+                                LinearGradient(
+                                    colors: [theme.accentColor, theme.accentColor.opacity(0.85)],
+                                    startPoint: .top,
+                                    endPoint: .bottom
+                                )
+                            )
+
+                        // Hover highlight
+                        if isHovered {
+                            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                .fill(Color.white.opacity(0.12))
+                        }
+                    }
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .strokeBorder(
+                            LinearGradient(
+                                colors: [
+                                    Color.white.opacity(isHovered ? 0.35 : 0.2),
+                                    theme.accentColor.opacity(0.3),
+                                ],
+                                startPoint: .topLeading,
+                                endPoint: .bottomTrailing
+                            ),
+                            lineWidth: 1
+                        )
                 )
                 .shadow(
-                    color: theme.accentColor.opacity(isHovering ? 0.4 : 0.2),
-                    radius: isHovering ? 6 : 3,
+                    color: theme.accentColor.opacity(isHovered ? 0.5 : 0.3),
+                    radius: isHovered ? 10 : 5,
                     x: 0,
-                    y: 2
+                    y: isHovered ? 4 : 2
                 )
         }
         .buttonStyle(PlainButtonStyle())
         .scaleEffect(isPressed ? 0.96 : 1.0)
-        .animation(.easeInOut(duration: 0.1), value: isPressed)
-        .animation(.easeInOut(duration: 0.2), value: isHovering)
+        .animation(.easeOut(duration: 0.1), value: isPressed)
+        .animation(.easeOut(duration: 0.15), value: isHovered)
         .onHover { hovering in
-            isHovering = hovering
+            isHovered = hovering
         }
         .onLongPressGesture(
             minimumDuration: .infinity,
@@ -508,6 +612,6 @@ private struct AskAIButton: View {
 }
 
 #Preview {
-    ContentView()
+    StatusPanelView()
         .environmentObject(ServerController())
 }
