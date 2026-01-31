@@ -15,6 +15,9 @@ private struct LocalModelRef {
 
 actor MLXService: ToolCapableService {
 
+    /// Shared instance for convenience (actor is stateless, delegates to ModelRuntime.shared)
+    static let shared = MLXService()
+
     nonisolated var id: String { "mlx" }
 
     // MARK: - Availability / Routing

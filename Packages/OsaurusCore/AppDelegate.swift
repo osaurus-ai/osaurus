@@ -533,12 +533,12 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
         popover.delegate = self
 
         let themeManager = ThemeManager.shared
-        let contentView = ContentView()
+        let statusPanel = StatusPanelView()
             .environmentObject(serverController)
             .environment(\.theme, themeManager.currentTheme)
             .environmentObject(updater)
 
-        popover.contentViewController = NSHostingController(rootView: contentView)
+        popover.contentViewController = NSHostingController(rootView: statusPanel)
         self.popover = popover
 
         popover.show(relativeTo: statusButton.bounds, of: statusButton, preferredEdge: .minY)
