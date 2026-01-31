@@ -655,10 +655,11 @@ public actor AgentExecutionEngine {
             plan.toolCallCount += 1
             currentPlan = plan
 
-            // Execute the tool
+            // Execute the tool with issue context for file operation logging
             let toolResult = try await executeToolCall(
                 toolInvocation,
-                overrides: toolOverrides
+                overrides: toolOverrides,
+                issueId: issue.id
             )
 
             toolCallResult = toolResult
@@ -744,16 +745,18 @@ public actor AgentExecutionEngine {
     /// Executes a tool call
     private func executeToolCall(
         _ invocation: ServiceToolInvocation,
-        overrides: [String: Bool]?
+        overrides: [String: Bool]?,
+        issueId: String
     ) async throws -> ToolCallResult {
         let callId =
             invocation.toolCallId ?? "call_\(UUID().uuidString.replacingOccurrences(of: "-", with: "").prefix(24))"
 
-        // ToolRegistry.execute is @MainActor async, so call directly
+        // Execute tool with issue context for file operation logging
         let result = await executeToolOnMainActor(
             name: invocation.toolName,
             argumentsJSON: invocation.jsonArguments,
-            overrides: overrides
+            overrides: overrides,
+            issueId: issueId
         )
 
         let toolCall = ToolCall(
@@ -768,19 +771,23 @@ public actor AgentExecutionEngine {
         return ToolCallResult(toolCall: toolCall, result: result)
     }
 
-    /// Helper to execute tool on MainActor
+    /// Helper to execute tool on MainActor with issue context
     @MainActor
     private func executeToolOnMainActor(
         name: String,
         argumentsJSON: String,
-        overrides: [String: Bool]?
+        overrides: [String: Bool]?,
+        issueId: String
     ) async -> String {
         do {
-            return try await ToolRegistry.shared.execute(
-                name: name,
-                argumentsJSON: argumentsJSON,
-                overrides: overrides
-            )
+            // Wrap with execution context so folder tools can log operations
+            return try await AgentExecutionContext.$currentIssueId.withValue(issueId) {
+                try await ToolRegistry.shared.execute(
+                    name: name,
+                    argumentsJSON: argumentsJSON,
+                    overrides: overrides
+                )
+            }
         } catch {
             print("[AgentExecutionEngine] Tool execution failed: \(error)")
             return "[REJECTED] \(error.localizedDescription)"

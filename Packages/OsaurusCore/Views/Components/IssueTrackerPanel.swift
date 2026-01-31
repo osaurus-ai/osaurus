@@ -17,6 +17,8 @@ struct IssueTrackerPanel: View {
     let finalArtifact: Artifact?
     /// All generated artifacts
     let artifacts: [Artifact]
+    /// File operations for undo tracking
+    let fileOperations: [AgentFileOperation]
     /// Binding to control collapse state
     @Binding var isCollapsed: Bool
     /// Called when user clicks to view an issue's details
@@ -29,6 +31,10 @@ struct IssueTrackerPanel: View {
     let onArtifactView: (Artifact) -> Void
     /// Called when user wants to download an artifact
     let onArtifactDownload: (Artifact) -> Void
+    /// Called when user wants to undo a file operation
+    let onUndoOperation: (UUID) -> Void
+    /// Called when user wants to undo all file operations
+    let onUndoAllOperations: () -> Void
 
     @Environment(\.theme) private var theme: ThemeProtocol
 
@@ -62,6 +68,8 @@ struct IssueTrackerPanel: View {
 
                         let additionalArtifacts = artifacts.filter { !$0.isFinalResult }
                         if !additionalArtifacts.isEmpty { artifactsSection(artifacts: additionalArtifacts) }
+
+                        if !fileOperations.isEmpty { changedFilesSection }
                     }
                 }
             }
@@ -164,6 +172,73 @@ struct IssueTrackerPanel: View {
             .padding(.horizontal, 12)
             .padding(.bottom, 12)
         }
+    }
+
+    // MARK: - Changed Files Section
+
+    private var changedFilesSection: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            sectionDivider
+
+            HStack(spacing: 8) {
+                Image(systemName: "doc.badge.clock")
+                    .font(.system(size: 11))
+                    .foregroundColor(theme.warningColor)
+                Text("Changed Files")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundColor(theme.secondaryText)
+                Text("(\(fileOperations.count))")
+                    .font(.system(size: 11))
+                    .foregroundColor(theme.tertiaryText)
+                Spacer()
+
+                // Undo All button
+                Button {
+                    onUndoAllOperations()
+                } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: "arrow.uturn.backward")
+                            .font(.system(size: 9, weight: .medium))
+                        Text("Undo All")
+                            .font(.system(size: 10, weight: .medium))
+                    }
+                    .foregroundColor(theme.warningColor)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(
+                        RoundedRectangle(cornerRadius: 4)
+                            .fill(theme.warningColor.opacity(0.1))
+                    )
+                }
+                .buttonStyle(.plain)
+                .help("Undo all file changes")
+            }
+            .padding(.horizontal, 12)
+            .padding(.bottom, 8)
+
+            VStack(spacing: 4) {
+                ForEach(groupedOperations, id: \.path) { group in
+                    FileOperationRow(
+                        operation: group.latestOperation,
+                        operationCount: group.operations.count,
+                        onUndo: { onUndoOperation(group.latestOperation.id) }
+                    )
+                }
+            }
+            .padding(.horizontal, 12)
+            .padding(.bottom, 12)
+        }
+    }
+
+    /// Group operations by path, showing the latest operation for each file
+    private var groupedOperations: [FileOperationGroup] {
+        var groups: [String: [AgentFileOperation]] = [:]
+        for op in fileOperations {
+            groups[op.path, default: []].append(op)
+        }
+        return groups.map { path, ops in
+            FileOperationGroup(path: path, operations: ops.sorted { $0.timestamp < $1.timestamp })
+        }.sorted { $0.latestOperation.timestamp > $1.latestOperation.timestamp }
     }
 
     // MARK: - Header
@@ -584,5 +659,91 @@ private struct ArtifactRow: View {
         }
         .buttonStyle(.plain)
         .onHover { isHovered = $0 }
+    }
+}
+
+// MARK: - File Operation Group
+
+private struct FileOperationGroup {
+    let path: String
+    let operations: [AgentFileOperation]
+
+    var latestOperation: AgentFileOperation {
+        operations.last!
+    }
+}
+
+// MARK: - File Operation Row
+
+private struct FileOperationRow: View {
+    let operation: AgentFileOperation
+    let operationCount: Int
+    let onUndo: () -> Void
+
+    @Environment(\.theme) private var theme: ThemeProtocol
+    @State private var isHovered = false
+
+    var body: some View {
+        HStack(spacing: 8) {
+            // Operation type icon
+            Image(systemName: operation.type.iconName)
+                .font(.system(size: 10))
+                .foregroundColor(iconColor)
+                .frame(width: 16, height: 16)
+
+            // Filename and path
+            VStack(alignment: .leading, spacing: 1) {
+                Text(operation.filename)
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundColor(theme.primaryText)
+                    .lineLimit(1)
+
+                if operationCount > 1 {
+                    Text("\(operationCount) changes")
+                        .font(.system(size: 9))
+                        .foregroundColor(theme.tertiaryText)
+                } else {
+                    Text(operation.type.displayName)
+                        .font(.system(size: 9))
+                        .foregroundColor(theme.tertiaryText)
+                }
+            }
+
+            Spacer()
+
+            // Undo button (visible on hover)
+            Button(action: onUndo) {
+                Image(systemName: "arrow.uturn.backward")
+                    .font(.system(size: 9, weight: .medium))
+                    .foregroundColor(theme.warningColor)
+                    .frame(width: 20, height: 20)
+                    .background(Circle().fill(theme.primaryBackground))
+                    .overlay(Circle().stroke(theme.warningColor.opacity(0.3), lineWidth: 1))
+            }
+            .buttonStyle(.plain)
+            .help("Undo this change")
+            .opacity(isHovered ? 1 : 0)
+            .animation(.easeOut(duration: 0.15), value: isHovered)
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 6)
+        .background(
+            RoundedRectangle(cornerRadius: 6)
+                .fill(isHovered ? theme.tertiaryBackground.opacity(0.4) : Color.clear)
+        )
+        .onHover { isHovered = $0 }
+    }
+
+    private var iconColor: Color {
+        switch operation.type {
+        case .create, .dirCreate:
+            return theme.successColor
+        case .write:
+            return theme.accentColor
+        case .move, .copy:
+            return theme.secondaryText
+        case .delete:
+            return theme.errorColor
+        }
     }
 }

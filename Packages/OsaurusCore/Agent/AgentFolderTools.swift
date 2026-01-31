@@ -292,6 +292,22 @@ struct AgentFileWriteTool: OsaurusTool {
 
         let fileURL = try AgentFolderToolHelpers.resolvePath(relativePath, rootPath: rootPath)
 
+        // Capture previous state for undo
+        let existed = FileManager.default.fileExists(atPath: fileURL.path)
+        let previousContent = existed ? try? String(contentsOf: fileURL, encoding: .utf8) : nil
+
+        // Log operation before executing
+        if let issueId = AgentExecutionContext.currentIssueId {
+            await AgentFileOperationLog.shared.log(
+                AgentFileOperation(
+                    type: existed ? .write : .create,
+                    path: relativePath,
+                    previousContent: previousContent,
+                    issueId: issueId
+                )
+            )
+        }
+
         // Create parent directories if needed
         let parentDir = fileURL.deletingLastPathComponent()
         try FileManager.default.createDirectory(
@@ -301,7 +317,6 @@ struct AgentFileWriteTool: OsaurusTool {
         )
 
         // Write content
-        let existed = FileManager.default.fileExists(atPath: fileURL.path)
         try content.write(to: fileURL, atomically: true, encoding: .utf8)
 
         let lineCount = content.components(separatedBy: .newlines).count
@@ -351,6 +366,18 @@ struct AgentFileMoveTool: OsaurusTool {
 
         guard FileManager.default.fileExists(atPath: sourceURL.path) else {
             throw AgentFolderToolError.fileNotFound(sourcePath)
+        }
+
+        // Log operation before executing
+        if let issueId = AgentExecutionContext.currentIssueId {
+            await AgentFileOperationLog.shared.log(
+                AgentFileOperation(
+                    type: .move,
+                    path: sourcePath,
+                    destinationPath: destPath,
+                    issueId: issueId
+                )
+            )
         }
 
         // Create parent directories if needed
@@ -410,6 +437,18 @@ struct AgentFileCopyTool: OsaurusTool {
             throw AgentFolderToolError.fileNotFound(sourcePath)
         }
 
+        // Log operation before executing
+        if let issueId = AgentExecutionContext.currentIssueId {
+            await AgentFileOperationLog.shared.log(
+                AgentFileOperation(
+                    type: .copy,
+                    path: sourcePath,
+                    destinationPath: destPath,
+                    issueId: issueId
+                )
+            )
+        }
+
         // Create parent directories if needed
         let parentDir = destURL.deletingLastPathComponent()
         try FileManager.default.createDirectory(
@@ -465,6 +504,24 @@ struct AgentFileDeleteTool: OsaurusTool, PermissionedTool {
         var isDirectory: ObjCBool = false
         FileManager.default.fileExists(atPath: fileURL.path, isDirectory: &isDirectory)
 
+        // Capture previous content for undo (text files only)
+        var previousContent: String?
+        if !isDirectory.boolValue {
+            previousContent = try? String(contentsOf: fileURL, encoding: .utf8)
+        }
+
+        // Log operation before executing
+        if let issueId = AgentExecutionContext.currentIssueId {
+            await AgentFileOperationLog.shared.log(
+                AgentFileOperation(
+                    type: .delete,
+                    path: relativePath,
+                    previousContent: previousContent,
+                    issueId: issueId
+                )
+            )
+        }
+
         try FileManager.default.removeItem(at: fileURL)
 
         let itemType = isDirectory.boolValue ? "directory" : "file"
@@ -506,6 +563,17 @@ struct AgentDirCreateTool: OsaurusTool {
 
         if FileManager.default.fileExists(atPath: dirURL.path) {
             return "Directory already exists: \(relativePath)"
+        }
+
+        // Log operation before executing
+        if let issueId = AgentExecutionContext.currentIssueId {
+            await AgentFileOperationLog.shared.log(
+                AgentFileOperation(
+                    type: .dirCreate,
+                    path: relativePath,
+                    issueId: issueId
+                )
+            )
         }
 
         try FileManager.default.createDirectory(
