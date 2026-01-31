@@ -17,8 +17,6 @@ struct ToolPermissionView: View {
     let onAlwaysAllow: () -> Void
 
     @ObservedObject private var themeManager = ThemeManager.shared
-
-    /// Use computed property to always get the current theme from ThemeManager
     private var theme: ThemeProtocol { themeManager.currentTheme }
 
     @State private var copied = false
@@ -26,6 +24,16 @@ struct ToolPermissionView: View {
     @State private var appeared = false
     @State private var alertScopeId = UUID()
     private var alertScope: ThemedAlertScope { .toolPermission(alertScopeId) }
+
+    private var cardGradient: LinearGradient {
+        let topOpacity = theme.isDark ? 0.85 : 0.9
+        let bottomOpacity = theme.isDark ? 0.8 : 0.85
+        return LinearGradient(
+            colors: [theme.cardBackground.opacity(topOpacity), theme.cardBackground.opacity(bottomOpacity)],
+            startPoint: .topLeading,
+            endPoint: .bottomTrailing
+        )
+    }
 
     private var prettyArguments: String {
         guard let data = argumentsJSON.data(using: .utf8),
@@ -54,82 +62,73 @@ struct ToolPermissionView: View {
 
     var body: some View {
         ZStack {
-            // Glass background with enhanced overlay
-            GlassSurface(cornerRadius: 24, material: .hudWindow)
-                .allowsHitTesting(false)
-
-            // Subtle gradient overlay for depth
-            RoundedRectangle(cornerRadius: 24)
-                .fill(
-                    LinearGradient(
-                        colors: [
-                            theme.accentColor.opacity(0.03),
-                            Color.clear,
-                        ],
-                        startPoint: .top,
-                        endPoint: .center
-                    )
-                )
-                .allowsHitTesting(false)
+            ThemedGlassSurface(cornerRadius: 16)
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .fill(cardGradient)
 
             VStack(spacing: 0) {
-                // Header with warning icon and title
                 header
-                    .padding(.top, 28)
-                    .padding(.horizontal, 28)
+                    .padding(.top, 24)
+                    .padding(.horizontal, 24)
                     .opacity(appeared ? 1 : 0)
                     .offset(y: appeared ? 0 : -8)
 
-                // Description
                 if !description.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                     Text(description)
-                        .font(theme.font(size: 13, weight: .regular))
-                        .foregroundColor(theme.primaryText.opacity(0.8))
+                        .font(.system(size: 13))
+                        .foregroundColor(theme.secondaryText)
                         .multilineTextAlignment(.center)
                         .lineSpacing(2)
-                        .padding(.top, 12)
-                        .padding(.horizontal, 32)
+                        .padding(.top, 8)
+                        .padding(.horizontal, 24)
+                        .fixedSize(horizontal: false, vertical: true)
                         .opacity(appeared ? 1 : 0)
                         .offset(y: appeared ? 0 : -4)
                 }
 
-                // JSON arguments code block (only show if there are arguments)
                 if hasArguments {
                     argumentsBlock
-                        .padding(.top, 18)
+                        .padding(.top, 12)
                         .padding(.horizontal, 24)
                         .opacity(appeared ? 1 : 0)
                         .offset(y: appeared ? 0 : 4)
                 }
 
-                // Action buttons
+                Rectangle()
+                    .fill(theme.primaryBorder.opacity(0.3))
+                    .frame(height: 1)
+                    .padding(.top, 16)
+                    .opacity(appeared ? 1 : 0)
+
                 actionButtons
-                    .padding(.top, 22)
-                    .padding(.bottom, 24)
+                    .padding(.top, 16)
+                    .padding(.bottom, 16)
                     .padding(.horizontal, 24)
                     .opacity(appeared ? 1 : 0)
                     .offset(y: appeared ? 0 : 8)
             }
         }
-        .frame(width: 460)
+        .frame(width: 380)
         .fixedSize(horizontal: true, vertical: true)
-        .clipShape(RoundedRectangle(cornerRadius: 24))
+        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
         .overlay(
-            RoundedRectangle(cornerRadius: 24)
-                .stroke(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .strokeBorder(
                     LinearGradient(
-                        colors: [
-                            Color.white.opacity(0.15),
-                            Color.white.opacity(0.05),
-                        ],
+                        colors: [theme.glassEdgeLight, theme.glassEdgeLight.opacity(0.3)],
                         startPoint: .topLeading,
                         endPoint: .bottomTrailing
                     ),
                     lineWidth: 1
                 )
         )
+        .shadow(
+            color: theme.shadowColor.opacity(theme.shadowOpacity * 2),
+            radius: 24,
+            x: 0,
+            y: 12
+        )
         .onAppear {
-            // Entrance animation
             withAnimation(theme.springAnimation(responseMultiplier: 1.25).delay(0.05)) {
                 appeared = true
             }
@@ -150,161 +149,69 @@ struct ToolPermissionView: View {
     // MARK: - Header
 
     private var header: some View {
-        VStack(spacing: 14) {
-            // Calm icon with soft blue treatment
+        VStack(spacing: 12) {
             ZStack {
-                // Subtle outer glow
                 Circle()
-                    .fill(
-                        RadialGradient(
-                            colors: [
-                                theme.accentColor.opacity(0.12),
-                                theme.accentColor.opacity(0.03),
-                                Color.clear,
-                            ],
-                            center: .center,
-                            startRadius: 20,
-                            endRadius: 40
-                        )
-                    )
-                    .frame(width: 72, height: 72)
+                    .fill(theme.accentColor.opacity(0.15))
+                    .frame(width: 48, height: 48)
 
-                // Inner filled circle
                 Circle()
-                    .fill(
-                        LinearGradient(
-                            colors: [
-                                theme.accentColor.opacity(0.15),
-                                theme.accentColor.opacity(0.08),
-                            ],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        )
-                    )
-                    .frame(width: 52, height: 52)
+                    .stroke(theme.accentColor.opacity(0.3), lineWidth: 2)
+                    .frame(width: 48, height: 48)
+                    .scaleEffect(appeared ? 1.2 : 1)
+                    .opacity(appeared ? 0 : 0.8)
+                    .animation(.easeOut(duration: 1.5).repeatForever(autoreverses: false), value: appeared)
 
-                // Border ring
-                Circle()
-                    .stroke(
-                        LinearGradient(
-                            colors: [
-                                theme.accentColor.opacity(0.35),
-                                theme.accentColor.opacity(0.15),
-                            ],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        ),
-                        lineWidth: 1
-                    )
-                    .frame(width: 52, height: 52)
-
-                // Icon - neutral terminal icon
                 Image(systemName: "terminal.fill")
-                    .font(.system(size: 22, weight: .medium))
-                    .foregroundStyle(
-                        LinearGradient(
-                            colors: [
-                                theme.accentColor,
-                                theme.accentColor.opacity(0.8),
-                            ],
-                            startPoint: .top,
-                            endPoint: .bottom
-                        )
-                    )
+                    .font(.system(size: 20, weight: .semibold))
+                    .foregroundColor(theme.accentColor)
             }
 
-            // Title
-            VStack(spacing: 6) {
-                Text("APPROVE ACTION")
-                    .font(theme.font(size: 10, weight: .semibold))
-                    .foregroundColor(theme.secondaryText)
-                    .tracking(1.5)
-
-                Text(toolName)
-                    .font(theme.font(size: 17, weight: .semibold))
-                    .foregroundColor(theme.primaryText)
-            }
+            Text(toolName)
+                .font(.system(size: 16, weight: .semibold))
+                .foregroundColor(theme.primaryText)
+                .multilineTextAlignment(.center)
         }
     }
 
     // MARK: - Arguments Block
 
     private var argumentsBlock: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 8) {
             HStack {
-                HStack(spacing: 6) {
-                    Image(systemName: "curlybraces")
-                        .font(theme.font(size: 10, weight: .medium))
-                        .foregroundColor(theme.tertiaryText)
-
-                    Text("ARGUMENTS")
-                        .font(theme.font(size: 10, weight: .semibold))
-                        .foregroundColor(theme.tertiaryText)
-                        .tracking(0.8)
-                }
+                Label("Arguments", systemImage: "curlybraces")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundColor(theme.secondaryText)
 
                 Spacer()
 
-                // Copy button with refined styling
                 Button(action: copyArguments) {
-                    HStack(spacing: 5) {
-                        Image(systemName: copied ? "checkmark" : "doc.on.doc")
-                            .font(theme.font(size: 9, weight: .semibold))
-                        Text(copied ? "Copied" : "Copy")
-                            .font(theme.font(size: 10, weight: .medium))
-                    }
-                    .foregroundColor(copied ? theme.successColor : theme.secondaryText)
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 5)
-                    .background(
-                        Capsule()
-                            .fill(theme.tertiaryBackground.opacity(0.8))
-                    )
-                    .overlay(
-                        Capsule()
-                            .stroke(
-                                copied ? theme.successColor.opacity(0.3) : theme.primaryBorder.opacity(0.5),
-                                lineWidth: 0.5
-                            )
-                    )
+                    Label(copied ? "Copied" : "Copy", systemImage: copied ? "checkmark" : "doc.on.doc")
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundColor(copied ? theme.successColor : theme.secondaryText)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .background(Capsule().fill(theme.tertiaryBackground.opacity(0.6)))
                 }
-                .buttonStyle(PlainButtonStyle())
-                .contentShape(Capsule())
+                .buttonStyle(.plain)
             }
 
-            // Code block with enhanced styling
             ScrollView([.vertical, .horizontal], showsIndicators: true) {
                 Text(prettyArguments)
                     .font(theme.monoFont(size: 11.5))
                     .foregroundColor(theme.primaryText.opacity(0.9))
                     .textSelection(.enabled)
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 12)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 10)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
-            .frame(maxHeight: 180)
-            .background(
-                RoundedRectangle(cornerRadius: 12)
-                    .fill(theme.codeBlockBackground)
-            )
+            .frame(maxHeight: 160)
+            .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(theme.codeBlockBackground))
             .overlay(
-                RoundedRectangle(cornerRadius: 12)
-                    .stroke(theme.primaryBorder.opacity(0.6), lineWidth: 1)
-            )
-            .overlay(
-                // Subtle inner shadow at top
-                RoundedRectangle(cornerRadius: 12)
-                    .fill(
-                        LinearGradient(
-                            colors: [
-                                Color.black.opacity(0.05),
-                                Color.clear,
-                            ],
-                            startPoint: .top,
-                            endPoint: .center
-                        )
-                    )
-                    .allowsHitTesting(false)
+                RoundedRectangle(cornerRadius: 8, style: .continuous).stroke(
+                    theme.primaryBorder.opacity(0.6),
+                    lineWidth: 1
+                )
             )
         }
     }
@@ -314,7 +221,6 @@ struct ToolPermissionView: View {
     private var actionButtons: some View {
         VStack(spacing: 14) {
             HStack(spacing: 12) {
-                // Deny button (secondary)
                 PermissionButton(
                     title: "Deny",
                     shortcutHint: "esc",
@@ -323,8 +229,6 @@ struct ToolPermissionView: View {
                     color: theme.errorColor,
                     action: onDeny
                 )
-
-                // Allow button (primary)
                 PermissionButton(
                     title: "Allow",
                     shortcutHint: "return",
@@ -334,25 +238,17 @@ struct ToolPermissionView: View {
                     action: onAllow
                 )
             }
-
-            // Always Allow button (tertiary)
             AlwaysAllowButton(action: { showAlwaysAllowConfirm = true })
         }
     }
 
-    // MARK: - Actions
-
     private func copyArguments() {
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(prettyArguments, forType: .string)
-        withAnimation(theme.animationQuick()) {
-            copied = true
-        }
+        withAnimation(theme.animationQuick()) { copied = true }
         Task { @MainActor in
             try? await Task.sleep(nanoseconds: 2_000_000_000)
-            withAnimation(theme.animationQuick()) {
-                copied = false
-            }
+            withAnimation(theme.animationQuick()) { copied = false }
         }
     }
 }
@@ -368,100 +264,34 @@ private struct PermissionButton: View {
     let action: () -> Void
 
     @Environment(\.theme) private var theme
-    @State private var isPressed = false
     @State private var isHovering = false
-
-    // Color for button text - full opacity for better visibility
-    private var displayColor: Color {
-        return color
-    }
 
     var body: some View {
         Button(action: action) {
             VStack(spacing: 4) {
-                HStack(spacing: 6) {
-                    Image(systemName: icon)
-                        .font(theme.font(size: 13, weight: isPrimary ? .semibold : .medium))
-                    Text(title)
-                        .font(theme.font(size: 13, weight: isPrimary ? .semibold : .medium))
-                }
-                .foregroundColor(isPrimary ? .white : displayColor)
-
-                // Keyboard shortcut hint
-                KeyboardShortcutBadge(shortcut: shortcutHint, isPrimary: isPrimary, color: displayColor)
+                Label(title, systemImage: icon)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundColor(isPrimary ? (theme.isDark ? theme.primaryBackground : .white) : theme.primaryText)
+                KeyboardShortcutBadge(shortcut: shortcutHint, isPrimary: isPrimary)
             }
             .frame(maxWidth: .infinity)
-            .padding(.vertical, 12)
+            .padding(.vertical, 10)
             .background(
-                Group {
-                    if isPrimary {
-                        RoundedRectangle(cornerRadius: 12)
-                            .fill(
-                                LinearGradient(
-                                    colors: [
-                                        color,
-                                        color.opacity(0.85),
-                                    ],
-                                    startPoint: .top,
-                                    endPoint: .bottom
-                                )
-                            )
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 12)
-                                    .stroke(
-                                        LinearGradient(
-                                            colors: [
-                                                Color.white.opacity(0.25),
-                                                Color.white.opacity(0.05),
-                                            ],
-                                            startPoint: .top,
-                                            endPoint: .bottom
-                                        ),
-                                        lineWidth: 1
-                                    )
-                            )
-                    } else {
-                        // Visible tinted background for deny button
-                        RoundedRectangle(cornerRadius: 12)
-                            .fill(color.opacity(isHovering ? 0.18 : 0.12))
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 12)
-                                    .stroke(
-                                        color.opacity(isPressed ? 0.6 : (isHovering ? 0.5 : 0.4)),
-                                        lineWidth: 1.5
-                                    )
-                            )
-                    }
-                }
+                isPrimary
+                    ? color.opacity(isHovering ? 0.9 : 1.0) : theme.tertiaryBackground.opacity(isHovering ? 0.8 : 0.5)
             )
-            .shadow(
-                color: isPrimary
-                    ? color.opacity(isHovering ? 0.3 : 0.2) : Color.clear,
-                radius: isHovering ? 10 : 5,
-                x: 0,
-                y: isHovering ? 3 : 1
+            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 8, style: .continuous).stroke(
+                    isPrimary ? .clear : (isHovering ? theme.primaryBorder : theme.cardBorder),
+                    lineWidth: 1
+                )
             )
         }
-        .buttonStyle(PlainButtonStyle())
-        .scaleEffect(isPressed ? 0.98 : 1.0)
-        .animation(theme.springAnimation(responseMultiplier: 0.6, dampingMultiplier: 0.9), value: isPressed)
-        .animation(theme.animationQuick(), value: isHovering)
-        .onHover { hovering in
-            isHovering = hovering
-            if hovering {
-                NSCursor.pointingHand.push()
-            } else {
-                NSCursor.pop()
-            }
-        }
-        .onLongPressGesture(
-            minimumDuration: .infinity,
-            maximumDistance: .infinity,
-            pressing: { pressing in
-                isPressed = pressing
-            },
-            perform: {}
-        )
+        .buttonStyle(.plain)
+        .scaleEffect(isHovering ? 1.02 : 1.0)
+        .animation(.easeInOut(duration: 0.15), value: isHovering)
+        .onHover { isHovering = $0 }
     }
 }
 
@@ -470,19 +300,18 @@ private struct PermissionButton: View {
 private struct KeyboardShortcutBadge: View {
     let shortcut: String
     let isPrimary: Bool
-    let color: Color
 
     @Environment(\.theme) private var theme
 
     var body: some View {
         Text(shortcut)
-            .font(theme.font(size: 9, weight: .medium))
-            .foregroundColor(isPrimary ? Color.white.opacity(0.7) : color.opacity(0.6))
+            .font(.system(size: 9, weight: .medium))
+            .foregroundColor(isPrimary ? Color.white.opacity(0.7) : theme.secondaryText.opacity(0.7))
             .padding(.horizontal, 6)
             .padding(.vertical, 2)
             .background(
                 Capsule()
-                    .fill(isPrimary ? Color.white.opacity(0.15) : color.opacity(0.1))
+                    .fill(isPrimary ? Color.white.opacity(0.15) : theme.tertiaryBackground.opacity(0.5))
             )
     }
 }
@@ -497,31 +326,17 @@ private struct AlwaysAllowButton: View {
 
     var body: some View {
         Button(action: action) {
-            HStack(spacing: 4) {
-                Image(systemName: "checkmark.circle")
-                    .font(theme.font(size: 11, weight: .medium))
-                Text("Always Allow")
-                    .font(theme.font(size: 12, weight: .medium))
-            }
-            .foregroundColor(isHovered ? theme.primaryText : theme.secondaryText)
-            .padding(.horizontal, 12)
-            .padding(.vertical, 6)
-            .background(
-                Capsule()
-                    .fill(theme.secondaryBackground.opacity(isHovered ? 0.8 : 0.5))
-            )
+            Label("Always Allow", systemImage: "checkmark.circle")
+                .font(.system(size: 12, weight: .medium))
+                .foregroundColor(isHovered ? theme.primaryText : theme.secondaryText)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 6)
+                .background(Capsule().fill(theme.tertiaryBackground.opacity(isHovered ? 0.8 : 0.5)))
         }
-        .buttonStyle(PlainButtonStyle())
-        .onHover { hovering in
-            withAnimation(theme.animationQuick()) {
-                isHovered = hovering
-            }
-            if hovering {
-                NSCursor.pointingHand.push()
-            } else {
-                NSCursor.pop()
-            }
-        }
+        .buttonStyle(.plain)
+        .scaleEffect(isHovered ? 1.02 : 1.0)
+        .animation(.easeInOut(duration: 0.15), value: isHovered)
+        .onHover { isHovered = $0 }
     }
 }
 
