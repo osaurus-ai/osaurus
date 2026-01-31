@@ -915,7 +915,6 @@ struct FloatingInputCard: View {
                     .foregroundColor(canEdit ? theme.secondaryText : theme.tertiaryText)
                     .lineLimit(1)
                     .truncationMode(.tail)
-                    .frame(maxWidth: 100)
 
                 if context.projectType != .unknown {
                     Text(context.projectType.displayName)
