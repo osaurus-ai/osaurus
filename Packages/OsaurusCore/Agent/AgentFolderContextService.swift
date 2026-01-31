@@ -62,11 +62,7 @@ public final class AgentFolderContextService: ObservableObject {
             // Save bookmark to UserDefaults
             UserDefaults.standard.set(bookmarkData, forKey: bookmarkKey)
 
-            // Start accessing the new resource
-            guard url.startAccessingSecurityScopedResource() else {
-                print("[AgentFolderContextService] Failed to start accessing security-scoped resource")
-                return nil
-            }
+            guard url.startAccessingSecurityScopedResource() else { return nil }
 
             securityScopedResource = url
 
@@ -81,7 +77,6 @@ public final class AgentFolderContextService: ObservableObject {
             return context
 
         } catch {
-            print("[AgentFolderContextService] Failed to create security-scoped bookmark: \(error)")
             return nil
         }
     }
@@ -154,27 +149,19 @@ public final class AgentFolderContextService: ObservableObject {
                 return
             }
 
-            // Start accessing the security-scoped resource
-            guard url.startAccessingSecurityScopedResource() else {
-                print("[AgentFolderContextService] Failed to start accessing security-scoped resource")
-                return
-            }
+            guard url.startAccessingSecurityScopedResource() else { return }
 
             securityScopedResource = url
 
-            // Build context asynchronously
+            // Build context asynchronously (already on MainActor)
             Task {
                 let context = await buildContext(from: url)
-                await MainActor.run {
-                    self.currentContext = context
-                    self.hasActiveFolder = true
-                    // Register tools for the restored folder
-                    AgentToolManager.shared.registerFolderTools(for: context)
-                }
+                self.currentContext = context
+                self.hasActiveFolder = true
+                AgentToolManager.shared.registerFolderTools(for: context)
             }
 
         } catch {
-            print("[AgentFolderContextService] Failed to resolve security-scoped bookmark: \(error)")
             UserDefaults.standard.removeObject(forKey: bookmarkKey)
         }
     }
@@ -364,7 +351,6 @@ public final class AgentFolderContextService: ObservableObject {
             }
             return content
         } catch {
-            print("[AgentFolderContextService] Failed to read manifest: \(error)")
             return nil
         }
     }
@@ -394,7 +380,8 @@ public final class AgentFolderContextService: ObservableObject {
 
             let data = pipe.fileHandleForReading.readDataToEndOfFile()
             let output = String(data: data, encoding: .utf8)?.trimmingCharacters(
-                in: .whitespacesAndNewlines)
+                in: .whitespacesAndNewlines
+            )
 
             // Truncate if too long
             if let output = output, output.count > 2000 {
@@ -403,7 +390,6 @@ public final class AgentFolderContextService: ObservableObject {
 
             return output
         } catch {
-            print("[AgentFolderContextService] Failed to get git status: \(error)")
             return nil
         }
     }

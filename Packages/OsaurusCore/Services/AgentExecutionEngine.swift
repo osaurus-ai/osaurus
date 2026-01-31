@@ -325,7 +325,8 @@ public actor AgentExecutionEngine {
             section += "\n**Git Status:**\n```\n\(gitStatus)\n```\n"
         }
 
-        section += "\n**File Tools Available:** Use file_read, file_write, file_edit, file_search, etc. to work with files.\n"
+        section +=
+            "\n**File Tools Available:** Use file_read, file_write, file_edit, file_search, etc. to work with files.\n"
         section += "Always read files before editing. Use relative paths from the working directory.\n"
 
         return section

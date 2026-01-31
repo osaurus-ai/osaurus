@@ -468,17 +468,12 @@ public final class AgentToolManager {
             ToolRegistry.shared.register(tool)
             ToolRegistry.shared.setEnabled(true, for: tool.name)
         }
-
-        print("[AgentToolManager] Registered \(folderTools.count) folder tools for \(context.rootPath.lastPathComponent)")
     }
 
     /// Unregister all folder tools
     /// Called by AgentFolderContextService when folder is cleared
     public func unregisterFolderTools() {
         guard !_folderToolNames.isEmpty else { return }
-
-        print("[AgentToolManager] Unregistering \(_folderToolNames.count) folder tools")
-
         ToolRegistry.shared.unregister(names: _folderToolNames)
         folderTools = []
         _folderToolNames = []
