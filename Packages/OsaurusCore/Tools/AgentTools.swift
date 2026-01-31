@@ -339,6 +339,17 @@ public final class AgentToolManager {
     /// Previous enabled state for each tool (to restore on unregister)
     private var previousEnabledState: [String: Bool] = [:]
 
+    // MARK: - Folder Tools
+
+    /// Folder tools (created dynamically based on folder context)
+    private var folderTools: [OsaurusTool] = []
+
+    /// Names of currently registered folder tools
+    private var _folderToolNames: [String] = []
+
+    /// Current folder context (if any)
+    private var currentFolderContext: AgentFolderContext?
+
     private init() {}
 
     /// Whether agent tools are currently registered
@@ -346,9 +357,19 @@ public final class AgentToolManager {
         referenceCount > 0
     }
 
-    /// Returns the names of all agent tools
+    /// Returns the names of all agent tools (excluding folder tools)
     public var toolNames: [String] {
         tools.map { $0.name }
+    }
+
+    /// Returns the names of currently registered folder tools
+    public var folderToolNames: [String] {
+        _folderToolNames
+    }
+
+    /// Whether folder tools are currently registered
+    public var hasFolderTools: Bool {
+        currentFolderContext != nil
     }
 
     /// Registers agent-specific tools with the tool registry and enables them
@@ -394,6 +415,9 @@ public final class AgentToolManager {
 
         // Unregister the tools
         ToolRegistry.shared.unregister(names: toolNames)
+
+        // Also unregister folder tools if any
+        unregisterFolderTools()
     }
 
     /// Force unregisters all agent tools regardless of reference count
@@ -410,5 +434,49 @@ public final class AgentToolManager {
         previousEnabledState.removeAll()
         ToolRegistry.shared.unregister(names: toolNames)
         referenceCount = 0
+
+        // Also unregister folder tools
+        unregisterFolderTools()
+    }
+
+    // MARK: - Folder Tool Registration
+
+    /// Register folder-specific tools for the given context
+    /// Called by AgentFolderContextService when folder is selected
+    public func registerFolderTools(for context: AgentFolderContext) {
+        // Unregister any existing folder tools first
+        unregisterFolderTools()
+
+        currentFolderContext = context
+
+        // Build core tools (always)
+        folderTools = AgentFolderToolFactory.buildCoreTools(rootPath: context.rootPath)
+
+        // Add coding tools if known project type
+        if context.projectType != .unknown {
+            folderTools += AgentFolderToolFactory.buildCodingTools(rootPath: context.rootPath)
+        }
+
+        // Add git tools if git repo
+        if context.isGitRepo {
+            folderTools += AgentFolderToolFactory.buildGitTools(rootPath: context.rootPath)
+        }
+
+        // Register and enable all folder tools
+        _folderToolNames = folderTools.map { $0.name }
+        for tool in folderTools {
+            ToolRegistry.shared.register(tool)
+            ToolRegistry.shared.setEnabled(true, for: tool.name)
+        }
+    }
+
+    /// Unregister all folder tools
+    /// Called by AgentFolderContextService when folder is cleared
+    public func unregisterFolderTools() {
+        guard !_folderToolNames.isEmpty else { return }
+        ToolRegistry.shared.unregister(names: _folderToolNames)
+        folderTools = []
+        _folderToolNames = []
+        currentFolderContext = nil
     }
 }

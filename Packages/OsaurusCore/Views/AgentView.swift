@@ -19,6 +19,7 @@ struct AgentView: View {
     @State private var progressSidebarWidth: CGFloat = 280
     @State private var isProgressSidebarCollapsed: Bool = false
     @State private var selectedArtifact: Artifact?
+    @State private var fileOperations: [AgentFileOperation] = []
 
     private let minProgressSidebarWidth: CGFloat = 200
     private let maxProgressSidebarWidth: CGFloat = 400
@@ -106,6 +107,15 @@ struct AgentView: View {
             )
             .environment(\.theme, windowState.theme)
         }
+        .onChange(of: session.currentTask?.id) {
+            refreshFileOperations()
+        }
+        .onAppear {
+            refreshFileOperations()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .agentFileOperationsDidChange)) { _ in
+            refreshFileOperations()
+        }
     }
 
     // MARK: - Artifact Actions
@@ -129,6 +139,53 @@ struct AgentView: View {
                 try artifact.content.write(to: url, atomically: true, encoding: .utf8)
             } catch {
                 print("[AgentView] Failed to save artifact: \(error)")
+            }
+        }
+    }
+
+    // MARK: - File Operations Undo
+
+    private func refreshFileOperations() {
+        guard session.currentTask != nil else {
+            fileOperations = []
+            return
+        }
+
+        Task { @MainActor in
+            // Collect operations from all issues in the current task
+            var allOperations: [AgentFileOperation] = []
+            for issue in session.issues {
+                let ops = await AgentFileOperationLog.shared.operations(for: issue.id)
+                allOperations.append(contentsOf: ops)
+            }
+            // Sort by timestamp (most recent first for display)
+            fileOperations = allOperations.sorted { $0.timestamp > $1.timestamp }
+        }
+    }
+
+    private func undoFileOperation(_ operationId: UUID) {
+        Task {
+            // Find which issue this operation belongs to
+            for issue in session.issues {
+                do {
+                    if let _ = try await AgentFileOperationLog.shared.undo(
+                        issueId: issue.id,
+                        operationId: operationId
+                    ) {
+                        return  // Notification will trigger refresh
+                    }
+                } catch {
+                    // Operation not in this issue, continue searching
+                    continue
+                }
+            }
+        }
+    }
+
+    private func undoAllFileOperations() {
+        Task {
+            for issue in session.issues {
+                _ = try? await AgentFileOperationLog.shared.undoAll(issueId: issue.id)
             }
         }
     }
@@ -336,12 +393,15 @@ struct AgentView: View {
                     selectedIssueId: session.selectedIssueId,
                     finalArtifact: session.finalArtifact,
                     artifacts: session.artifacts,
+                    fileOperations: fileOperations,
                     isCollapsed: $isProgressSidebarCollapsed,
                     onIssueSelect: { session.selectIssue($0) },
                     onIssueRun: { issue in Task { await session.executeIssue(issue) } },
                     onIssueClose: { issueId in Task { await session.closeIssue(issueId, reason: "Manually closed") } },
                     onArtifactView: { viewArtifact($0) },
-                    onArtifactDownload: { downloadArtifact($0) }
+                    onArtifactDownload: { downloadArtifact($0) },
+                    onUndoOperation: { operationId in undoFileOperation(operationId) },
+                    onUndoAllOperations: { undoAllFileOperations() }
                 )
                 .frame(width: progressSidebarWidth)
                 .padding(.vertical, 12)

@@ -493,6 +493,12 @@ public actor AgentEngine {
                 selectedSkills: resumeState.plan.selectedSkills
             )
 
+            // Set up file operation log with root path for undo support (if folder context active)
+            let folderContext = await MainActor.run { AgentFolderContextService.shared.currentContext }
+            if let rootPath = folderContext?.rootPath {
+                await AgentFileOperationLog.shared.setRootPath(rootPath)
+            }
+
             return try await executePlan(
                 plan: resumeState.plan,
                 issue: issue,
@@ -510,13 +516,17 @@ public actor AgentEngine {
 
         await delegate?.agentEngine(self, didStartIssue: issue)
 
+        // Get current folder context (if any) for injection into plan
+        let folderContext = await MainActor.run { AgentFolderContextService.shared.currentContext }
+
         // Generate plan with capability selection
         let planResult = try await executionEngine.generatePlan(
             for: issue,
             systemPrompt: systemPrompt,
             model: model,
             tools: tools,
-            skillCatalog: skillCatalog
+            skillCatalog: skillCatalog,
+            folderContext: folderContext
         )
 
         switch planResult {
@@ -620,6 +630,11 @@ public actor AgentEngine {
                 base: systemPrompt,
                 selectedSkills: plan.selectedSkills
             )
+
+            // Set up file operation log with root path for undo support
+            if let rootPath = folderContext?.rootPath {
+                await AgentFileOperationLog.shared.setRootPath(rootPath)
+            }
 
             // Execute the plan with filtered tools and enhanced prompt
             return try await executePlan(

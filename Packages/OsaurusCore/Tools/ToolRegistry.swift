@@ -368,6 +368,12 @@ final class ToolRegistry: ObservableObject {
         Set(AgentToolManager.shared.toolNames)
     }
 
+    /// Folder tool names that should be excluded from user-facing tool lists.
+    /// These tools are automatically managed based on folder selection.
+    static var folderToolNames: Set<String> {
+        Set(AgentToolManager.shared.folderToolNames)
+    }
+
     /// List tools excluding agent-specific and optionally internal tools.
     /// Use this for user-facing tool lists and counts.
     ///
@@ -382,6 +388,8 @@ final class ToolRegistry: ObservableObject {
         var tools = listTools(withOverrides: overrides)
         // Always exclude agent tools from user-facing lists
         tools = tools.filter { !Self.agentToolNames.contains($0.name) }
+        // Always exclude folder tools from user-facing lists (they're auto-managed)
+        tools = tools.filter { !Self.folderToolNames.contains($0.name) }
         // Optionally exclude internal tools
         if excludeInternal {
             tools = tools.filter { $0.name != "select_capabilities" }

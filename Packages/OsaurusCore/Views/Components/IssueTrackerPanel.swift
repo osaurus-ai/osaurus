@@ -5,6 +5,7 @@
 //  Sidebar panel displaying issues for the current agent task with status indicators.
 //
 
+import AppKit
 import SwiftUI
 
 struct IssueTrackerPanel: View {
@@ -17,6 +18,8 @@ struct IssueTrackerPanel: View {
     let finalArtifact: Artifact?
     /// All generated artifacts
     let artifacts: [Artifact]
+    /// File operations for undo tracking
+    let fileOperations: [AgentFileOperation]
     /// Binding to control collapse state
     @Binding var isCollapsed: Bool
     /// Called when user clicks to view an issue's details
@@ -29,6 +32,10 @@ struct IssueTrackerPanel: View {
     let onArtifactView: (Artifact) -> Void
     /// Called when user wants to download an artifact
     let onArtifactDownload: (Artifact) -> Void
+    /// Called when user wants to undo a file operation
+    let onUndoOperation: (UUID) -> Void
+    /// Called when user wants to undo all file operations
+    let onUndoAllOperations: () -> Void
 
     @Environment(\.theme) private var theme: ThemeProtocol
 
@@ -62,6 +69,8 @@ struct IssueTrackerPanel: View {
 
                         let additionalArtifacts = artifacts.filter { !$0.isFinalResult }
                         if !additionalArtifacts.isEmpty { artifactsSection(artifacts: additionalArtifacts) }
+
+                        if !fileOperations.isEmpty { changedFilesSection }
                     }
                 }
             }
@@ -164,6 +173,89 @@ struct IssueTrackerPanel: View {
             .padding(.horizontal, 12)
             .padding(.bottom, 12)
         }
+    }
+
+    // MARK: - Changed Files Section
+
+    private var changedFilesSection: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            sectionDivider
+
+            HStack(spacing: 8) {
+                // Section icon with subtle background
+                ZStack {
+                    RoundedRectangle(cornerRadius: 4, style: .continuous)
+                        .fill(theme.accentColor.opacity(0.1))
+                        .frame(width: 20, height: 20)
+                    Image(systemName: "doc.badge.clock")
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundColor(theme.accentColor)
+                }
+
+                Text("Changed Files")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundColor(theme.primaryText)
+
+                Text("\(fileOperations.count)")
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundColor(theme.secondaryText)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(Capsule().fill(theme.tertiaryBackground.opacity(0.6)))
+
+                Spacer()
+
+                // Undo All button
+                Button {
+                    onUndoAllOperations()
+                } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: "arrow.uturn.backward")
+                            .font(.system(size: 9, weight: .semibold))
+                        Text("Undo All")
+                            .font(.system(size: 10, weight: .medium))
+                    }
+                    .foregroundColor(theme.warningColor)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 5)
+                    .background(
+                        RoundedRectangle(cornerRadius: 6, style: .continuous)
+                            .fill(theme.warningColor.opacity(0.1))
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 6, style: .continuous)
+                            .strokeBorder(theme.warningColor.opacity(0.2), lineWidth: 1)
+                    )
+                }
+                .buttonStyle(.plain)
+                .help("Undo all file changes")
+            }
+            .padding(.horizontal, 12)
+            .padding(.bottom, 10)
+
+            VStack(spacing: 6) {
+                ForEach(groupedOperations, id: \.path) { group in
+                    FileOperationRow(
+                        operation: group.latestOperation,
+                        operationCount: group.operations.count,
+                        onUndo: { onUndoOperation(group.latestOperation.id) }
+                    )
+                }
+            }
+            .padding(.horizontal, 12)
+            .padding(.bottom, 12)
+        }
+    }
+
+    /// Group operations by path, showing the latest operation for each file
+    private var groupedOperations: [FileOperationGroup] {
+        var groups: [String: [AgentFileOperation]] = [:]
+        for op in fileOperations {
+            groups[op.path, default: []].append(op)
+        }
+        return groups.map { path, ops in
+            FileOperationGroup(path: path, operations: ops.sorted { $0.timestamp < $1.timestamp })
+        }.sorted { $0.latestOperation.timestamp > $1.latestOperation.timestamp }
     }
 
     // MARK: - Header
@@ -584,5 +676,214 @@ private struct ArtifactRow: View {
         }
         .buttonStyle(.plain)
         .onHover { isHovered = $0 }
+    }
+}
+
+// MARK: - File Operation Group
+
+private struct FileOperationGroup {
+    let path: String
+    let operations: [AgentFileOperation]
+
+    var latestOperation: AgentFileOperation {
+        operations.last!
+    }
+}
+
+// MARK: - File Operation Row
+
+private struct FileOperationRow: View {
+    let operation: AgentFileOperation
+    let operationCount: Int
+    let onUndo: () -> Void
+
+    @Environment(\.theme) private var theme: ThemeProtocol
+    @State private var isHovered = false
+
+    private var fileExtension: String? {
+        let ext = (operation.path as NSString).pathExtension
+        return ext.isEmpty ? nil : ext.lowercased()
+    }
+
+    private var fullURL: URL? {
+        AgentFolderContextService.shared.currentContext?.rootPath.appendingPathComponent(operation.path)
+    }
+
+    private var fileExists: Bool {
+        guard let url = fullURL else { return false }
+        return FileManager.default.fileExists(atPath: url.path)
+    }
+
+    private var isClickable: Bool {
+        operation.type != .delete && fileExists
+    }
+
+    var body: some View {
+        HStack(spacing: 0) {
+            // Colored left accent bar
+            RoundedRectangle(cornerRadius: 2)
+                .fill(iconColor)
+                .frame(width: 3)
+                .padding(.vertical, 4)
+
+            HStack(spacing: 10) {
+                // Operation type icon with background
+                ZStack {
+                    RoundedRectangle(cornerRadius: 5, style: .continuous)
+                        .fill(iconColor.opacity(0.12))
+                        .frame(width: 24, height: 24)
+                    Image(systemName: operation.type.iconName)
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundColor(iconColor)
+                }
+
+                // Filename and info
+                VStack(alignment: .leading, spacing: 2) {
+                    HStack(spacing: 6) {
+                        Text(operation.filename)
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundColor(isClickable ? theme.primaryText : theme.secondaryText)
+                            .lineLimit(1)
+
+                        // File extension badge
+                        if let ext = fileExtension {
+                            Text(ext)
+                                .font(.system(size: 8, weight: .semibold))
+                                .foregroundColor(theme.tertiaryText)
+                                .padding(.horizontal, 4)
+                                .padding(.vertical, 1)
+                                .background(
+                                    Capsule()
+                                        .fill(theme.tertiaryBackground.opacity(0.6))
+                                )
+                        }
+                    }
+
+                    HStack(spacing: 4) {
+                        Text(operation.type.displayName)
+                            .font(.system(size: 9, weight: .medium))
+                            .foregroundColor(iconColor.opacity(0.8))
+
+                        if operationCount > 1 {
+                            Text("•")
+                                .font(.system(size: 8))
+                                .foregroundColor(theme.tertiaryText)
+                            Text("\(operationCount) changes")
+                                .font(.system(size: 9))
+                                .foregroundColor(theme.tertiaryText)
+                        }
+                    }
+                }
+
+                Spacer()
+
+                // Action buttons (visible on hover)
+                HStack(spacing: 6) {
+                    // Open/Reveal button
+                    if isClickable {
+                        Button(action: openFile) {
+                            Image(systemName: "arrow.up.forward.square")
+                                .font(.system(size: 10, weight: .medium))
+                                .foregroundColor(theme.accentColor)
+                                .frame(width: 22, height: 22)
+                                .background(
+                                    RoundedRectangle(cornerRadius: 5, style: .continuous)
+                                        .fill(theme.accentColor.opacity(0.1))
+                                )
+                        }
+                        .buttonStyle(.plain)
+                        .help("Open file")
+                    }
+
+                    // Undo button
+                    Button(action: onUndo) {
+                        Image(systemName: "arrow.uturn.backward")
+                            .font(.system(size: 9, weight: .semibold))
+                            .foregroundColor(theme.warningColor)
+                            .frame(width: 22, height: 22)
+                            .background(
+                                RoundedRectangle(cornerRadius: 5, style: .continuous)
+                                    .fill(theme.warningColor.opacity(0.1))
+                            )
+                    }
+                    .buttonStyle(.plain)
+                    .help("Undo this change")
+                }
+                .opacity(isHovered ? 1 : 0)
+                .animation(.easeOut(duration: 0.15), value: isHovered)
+            }
+            .padding(.leading, 8)
+            .padding(.trailing, 10)
+            .padding(.vertical, 8)
+        }
+        .background(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(isHovered ? theme.tertiaryBackground.opacity(0.5) : theme.tertiaryBackground.opacity(0.25))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .strokeBorder(isHovered ? theme.primaryBorder.opacity(0.15) : Color.clear, lineWidth: 1)
+        )
+        .contentShape(Rectangle())
+        .onHover { hovering in
+            isHovered = hovering
+            if hovering && isClickable {
+                NSCursor.pointingHand.push()
+            } else if !hovering {
+                NSCursor.pop()
+            }
+        }
+        .onTapGesture {
+            if isClickable {
+                openFile()
+            }
+        }
+        .contextMenu {
+            if isClickable {
+                Button {
+                    openFile()
+                } label: {
+                    Label("Open File", systemImage: "arrow.up.forward.square")
+                }
+                Button {
+                    revealInFinder()
+                } label: {
+                    Label("Reveal in Finder", systemImage: "folder")
+                }
+                Divider()
+            }
+            Button {
+                onUndo()
+            } label: {
+                Label("Undo Change", systemImage: "arrow.uturn.backward")
+            }
+        }
+    }
+
+    private var iconColor: Color {
+        switch operation.type {
+        case .create, .dirCreate:
+            return theme.successColor
+        case .write:
+            return theme.accentColor
+        case .move, .copy:
+            return theme.secondaryText
+        case .delete:
+            return theme.errorColor
+        }
+    }
+
+    // MARK: - Actions
+
+    private func openFile() {
+        guard let url = fullURL, fileExists else { return }
+        NSWorkspace.shared.open(url)
+    }
+
+    private func revealInFinder() {
+        guard let url = fullURL,
+            let rootPath = AgentFolderContextService.shared.currentContext?.rootPath
+        else { return }
+        NSWorkspace.shared.selectFile(url.path, inFileViewerRootedAtPath: rootPath.path)
     }
 }
