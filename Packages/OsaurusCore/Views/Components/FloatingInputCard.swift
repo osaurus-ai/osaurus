@@ -888,7 +888,7 @@ struct FloatingInputCard: View {
                     Image(systemName: "xmark")
                         .font(.system(size: 8, weight: .bold))
                         .foregroundColor(theme.tertiaryText)
-                        .frame(width: 18, height: 18)
+                        .frame(width: 16, height: 16)
                         .background(Circle().fill(theme.secondaryBackground.opacity(0.8)))
                         .overlay(Circle().strokeBorder(theme.primaryBorder.opacity(0.5), lineWidth: 1))
                 }
@@ -903,7 +903,7 @@ struct FloatingInputCard: View {
 
     @ViewBuilder
     private func folderChipContent(hasFolder: Bool, canEdit: Bool) -> some View {
-        HStack(spacing: 6) {
+        HStack(spacing: 5) {
             Image(systemName: hasFolder ? "folder.fill" : "folder.badge.plus")
                 .font(theme.font(size: CGFloat(theme.captionSize) - 2))
                 .foregroundColor(hasFolder ? theme.accentColor : theme.tertiaryText)
@@ -914,16 +914,13 @@ struct FloatingInputCard: View {
                     .font(theme.font(size: CGFloat(theme.captionSize), weight: .medium))
                     .foregroundColor(canEdit ? theme.secondaryText : theme.tertiaryText)
                     .lineLimit(1)
-                    .truncationMode(.middle)
-                    .frame(maxWidth: 140)
+                    .truncationMode(.tail)
+                    .frame(maxWidth: 100)
 
                 if context.projectType != .unknown {
                     Text(context.projectType.displayName)
-                        .font(theme.font(size: CGFloat(theme.captionSize) - 3, weight: .semibold))
+                        .font(theme.font(size: CGFloat(theme.captionSize) - 2, weight: .medium))
                         .foregroundColor(theme.tertiaryText)
-                        .padding(.horizontal, 5)
-                        .padding(.vertical, 2)
-                        .background(Capsule().fill(theme.tertiaryBackground.opacity(0.6)))
                 }
             } else if canEdit {
                 Text("Folder")
@@ -937,7 +934,7 @@ struct FloatingInputCard: View {
                     .foregroundColor(theme.tertiaryText)
             }
         }
-        .padding(.horizontal, 12)
+        .padding(.horizontal, 10)
         .padding(.vertical, 6)
         .background(
             RoundedRectangle(cornerRadius: 18, style: .continuous)
