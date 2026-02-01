@@ -85,6 +85,10 @@ public struct OnboardingView: View {
                 onSelectAPI: {
                     selectedPath = .apiProvider
                     navigateTo(.apiSetup, direction: .forward)
+                },
+                onSelectFoundation: {
+                    selectedPath = .appleFoundation
+                    navigateTo(.complete, direction: .forward)
                 }
             )
 
