@@ -733,7 +733,8 @@ extension ModelManager {
             name: friendlyName(from: "mlx-community/gemma-3n-E4B-it-lm-4bit"),
             description: "Google's latest efficient model. Fast, smart, and runs great on any Mac.",
             downloadURL: "https://huggingface.co/mlx-community/gemma-3n-E4B-it-lm-4bit",
-            isTopSuggestion: true
+            isTopSuggestion: true,
+            downloadSizeBytes: 3_900_000_000
         ),
 
         MLXModel(
@@ -741,7 +742,8 @@ extension ModelManager {
             name: friendlyName(from: "mlx-community/Qwen3-4B-4bit"),
             description: "Alibaba's compact powerhouse. Excellent reasoning in a lightweight package.",
             downloadURL: "https://huggingface.co/mlx-community/Qwen3-4B-4bit",
-            isTopSuggestion: true
+            isTopSuggestion: true,
+            downloadSizeBytes: 2_500_000_000
         ),
 
         MLXModel(
@@ -749,7 +751,8 @@ extension ModelManager {
             name: friendlyName(from: "mlx-community/Qwen3-VL-4B-Instruct-8bit"),
             description: "See and understand images. Best vision model for most users.",
             downloadURL: "https://huggingface.co/mlx-community/Qwen3-VL-4B-Instruct-8bit",
-            isTopSuggestion: true
+            isTopSuggestion: true,
+            downloadSizeBytes: 8_500_000_000
         ),
 
         // MARK: Coding Models

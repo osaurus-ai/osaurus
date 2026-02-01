@@ -17,6 +17,9 @@ struct MLXModel: Identifiable, Codable {
     /// Whether this model should appear at the top of the suggested models list
     let isTopSuggestion: Bool
 
+    /// Approximate download size in bytes (optional, for display purposes)
+    let downloadSizeBytes: Int64?
+
     // Capture the models root directory at initialization time to avoid
     // relying on a mutable global during tests or concurrent execution.
     private let rootDirectory: URL
@@ -27,6 +30,7 @@ struct MLXModel: Identifiable, Codable {
         description: String,
         downloadURL: String,
         isTopSuggestion: Bool = false,
+        downloadSizeBytes: Int64? = nil,
         rootDirectory: URL? = nil
     ) {
         self.id = id
@@ -34,7 +38,18 @@ struct MLXModel: Identifiable, Codable {
         self.description = description
         self.downloadURL = downloadURL
         self.isTopSuggestion = isTopSuggestion
+        self.downloadSizeBytes = downloadSizeBytes
         self.rootDirectory = rootDirectory ?? DirectoryPickerService.effectiveModelsDirectory()
+    }
+
+    /// Formatted download size string (e.g., "3.9 GB")
+    var formattedDownloadSize: String? {
+        guard let bytes = downloadSizeBytes else { return nil }
+        let formatter = ByteCountFormatter()
+        formatter.countStyle = .file
+        formatter.allowedUnits = [.useGB, .useMB]
+        formatter.includesUnit = true
+        return formatter.string(fromByteCount: bytes)
     }
 
     /// Local directory where this model should be stored

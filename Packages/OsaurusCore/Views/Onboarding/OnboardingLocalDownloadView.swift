@@ -2,7 +2,7 @@
 //  OnboardingLocalDownloadView.swift
 //  osaurus
 //
-//  Local model download view with shimmer progress bar and ambient background.
+//  Local model selection and download view with shimmer progress bar.
 //
 
 import SwiftUI
@@ -10,23 +10,25 @@ import SwiftUI
 struct OnboardingLocalDownloadView: View {
     let onComplete: () -> Void
     let onSkip: () -> Void
+    let onBack: () -> Void
 
     @Environment(\.theme) private var theme
     @ObservedObject private var modelManager = ModelManager.shared
 
     @State private var hasAppeared = false
-    @State private var downloadStarted = false
+    @State private var downloadViewAppeared = false
+    @State private var selectedModel: MLXModel? = nil
+    @State private var hasStartedDownload = false
     @State private var showError = false
     @State private var errorMessage = ""
 
-    /// Default recommended model for onboarding
-    private var defaultModel: MLXModel? {
-        modelManager.suggestedModels.first(where: { $0.isTopSuggestion })
-            ?? modelManager.suggestedModels.first
+    /// Top suggested models to display for selection
+    private var topSuggestedModels: [MLXModel] {
+        modelManager.suggestedModels.filter { $0.isTopSuggestion }
     }
 
     private var downloadProgress: Double {
-        guard let model = defaultModel else { return 0 }
+        guard let model = selectedModel else { return 0 }
         if case .downloading(let progress) = modelManager.downloadStates[model.id] {
             return progress
         }
@@ -34,7 +36,7 @@ struct OnboardingLocalDownloadView: View {
     }
 
     private var downloadState: DownloadState {
-        guard let model = defaultModel else { return .notStarted }
+        guard let model = selectedModel else { return .notStarted }
         return modelManager.downloadStates[model.id] ?? .notStarted
     }
 
@@ -67,7 +69,7 @@ struct OnboardingLocalDownloadView: View {
     }
 
     private var progressText: String {
-        guard let model = defaultModel else { return "" }
+        guard let model = selectedModel else { return "" }
 
         if let metrics = modelManager.downloadMetrics[model.id] {
             var parts: [String] = []
@@ -98,109 +100,11 @@ struct OnboardingLocalDownloadView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            Spacer().frame(height: 60)
-
-            // Headline
-            Text(isCompleted ? "Download complete" : "Downloading your local model...")
-                .font(theme.font(size: 26, weight: .semibold))
-                .foregroundColor(theme.primaryText)
-                .multilineTextAlignment(.center)
-                .fixedSize(horizontal: false, vertical: true)
-                .opacity(hasAppeared ? 1 : 0)
-                .offset(y: hasAppeared ? 0 : 20)
-                .animation(theme.springAnimation().delay(0.1), value: hasAppeared)
-
-            Spacer().frame(height: 16)
-
-            // Model name
-            if let model = defaultModel {
-                Text(model.name)
-                    .font(theme.font(size: 15, weight: .medium))
-                    .foregroundColor(theme.secondaryText)
-                    .opacity(hasAppeared ? 1 : 0)
-                    .animation(theme.springAnimation().delay(0.15), value: hasAppeared)
+            if hasStartedDownload {
+                downloadView
+            } else {
+                selectionView
             }
-
-            Spacer().frame(height: 40)
-
-            // Progress section
-            VStack(spacing: 24) {
-                if isCompleted {
-                    // Completion indicator with glow
-                    ZStack {
-                        Circle()
-                            .fill(theme.successColor)
-                            .blur(radius: 20)
-                            .frame(width: 60, height: 60)
-                            .opacity(0.5)
-
-                        Circle()
-                            .fill(theme.successColor)
-                            .frame(width: 80, height: 80)
-
-                        Image(systemName: "checkmark")
-                            .font(.system(size: 36, weight: .bold))
-                            .foregroundColor(.white)
-                    }
-                    .transition(.scale.combined(with: .opacity))
-                } else {
-                    // Shimmer progress bar
-                    OnboardingShimmerBar(progress: downloadProgress, color: theme.accentColor, height: 8)
-                        .padding(.horizontal, 60)
-
-                    // Progress text
-                    Text(progressText)
-                        .font(theme.font(size: 13))
-                        .foregroundColor(theme.tertiaryText)
-                        .animation(.easeInOut(duration: 0.2), value: progressText)
-                }
-            }
-            .frame(height: 100)
-            .opacity(hasAppeared ? 1 : 0)
-            .animation(theme.springAnimation().delay(0.2), value: hasAppeared)
-
-            Spacer().frame(height: 36)
-
-            // Info text
-            VStack(spacing: 16) {
-                Text("This runs on your Mac's chip. No data leaves your computer.")
-                    .font(theme.font(size: 15))
-                    .foregroundColor(theme.secondaryText)
-                    .multilineTextAlignment(.center)
-                    .fixedSize(horizontal: false, vertical: true)
-
-                if isDownloading {
-                    Text(
-                        "Osaurus can also control your Calendar, Messages, Notes, and more — all with your permission."
-                    )
-                    .font(theme.font(size: 14))
-                    .foregroundColor(theme.tertiaryText)
-                    .multilineTextAlignment(.center)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .lineSpacing(3)
-                }
-            }
-            .padding(.horizontal, 50)
-            .opacity(hasAppeared ? 1 : 0)
-            .animation(theme.springAnimation().delay(0.3), value: hasAppeared)
-
-            Spacer()
-
-            // Action buttons
-            VStack(spacing: 12) {
-                if isCompleted {
-                    OnboardingPrimaryButton(title: "Continue", action: onComplete)
-                        .frame(width: 200)
-                } else if isDownloading {
-                    OnboardingTextButton(title: "Skip for now") {
-                        onSkip()
-                    }
-                }
-            }
-            .opacity(hasAppeared ? 1 : 0)
-            .animation(theme.springAnimation().delay(0.4), value: hasAppeared)
-
-            Spacer().frame(height: 50)
         }
         .padding(.horizontal, 20)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -210,13 +114,15 @@ struct OnboardingLocalDownloadView: View {
                     hasAppeared = true
                 }
             }
-            startDownload()
+            // Pre-select the first top suggestion if available
+            if selectedModel == nil, let first = topSuggestedModels.first {
+                selectedModel = first
+            }
         }
         .onChange(of: isCompleted) { _, completed in
-            if completed {
-                DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
-                    onComplete()
-                }
+            // Only auto-complete if we're in the download phase - go directly to "You're all set"
+            if completed && hasStartedDownload {
+                onComplete()
             }
         }
         .onChange(of: isFailed) { _, failed in
@@ -237,9 +143,158 @@ struct OnboardingLocalDownloadView: View {
         }
     }
 
+    // MARK: - Selection View
+
+    private var selectionView: some View {
+        VStack(spacing: 0) {
+            Spacer().frame(height: 45)
+
+            // Headline
+            Text("Choose a local model")
+                .font(theme.font(size: 22, weight: .semibold))
+                .foregroundColor(theme.primaryText)
+                .multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
+                .opacity(hasAppeared ? 1 : 0)
+                .offset(y: hasAppeared ? 0 : 20)
+                .animation(.easeOut(duration: 0.5).delay(0.1), value: hasAppeared)
+
+            Spacer().frame(height: 24)
+
+            // Model cards
+            ScrollView {
+                VStack(spacing: 10) {
+                    ForEach(topSuggestedModels) { model in
+                        ModelSelectionCard(
+                            model: model,
+                            isSelected: selectedModel?.id == model.id
+                        ) {
+                            withAnimation(.easeOut(duration: 0.2)) {
+                                selectedModel = model
+                            }
+                        }
+                        .opacity(hasAppeared ? 1 : 0)
+                        .offset(y: hasAppeared ? 0 : 15)
+                        .animation(
+                            .easeOut(duration: 0.5).delay(
+                                0.15 + Double(topSuggestedModels.firstIndex(where: { $0.id == model.id }) ?? 0) * 0.07
+                            ),
+                            value: hasAppeared
+                        )
+                    }
+                }
+                .padding(.horizontal, 15)
+            }
+            .frame(maxHeight: 260)
+
+            Spacer().frame(height: 16)
+
+            // Info text
+            Text("Runs entirely on your Mac. No data leaves your computer.")
+                .font(theme.font(size: 14))
+                .foregroundColor(theme.secondaryText)
+                .multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.horizontal, 30)
+                .opacity(hasAppeared ? 1 : 0)
+                .animation(.easeOut(duration: 0.5).delay(0.35), value: hasAppeared)
+
+            Spacer()
+
+            // Action buttons
+            VStack(spacing: 14) {
+                OnboardingShimmerButton(
+                    title: "Start Download",
+                    action: {
+                        withAnimation(.easeInOut(duration: 0.3)) {
+                            hasStartedDownload = true
+                        }
+                        startDownload()
+                    },
+                    isEnabled: selectedModel != nil
+                )
+                .frame(width: 200)
+
+                OnboardingTextButton(title: "Use an AI provider instead") {
+                    onBack()
+                }
+            }
+            .opacity(hasAppeared ? 1 : 0)
+            .animation(.easeOut(duration: 0.5).delay(0.4), value: hasAppeared)
+
+            Spacer().frame(height: 40)
+        }
+    }
+
+    // MARK: - Download View
+
+    private var downloadView: some View {
+        VStack(spacing: 0) {
+            Spacer().frame(height: 60)
+
+            // Headline
+            Text("Almost ready...")
+                .font(theme.font(size: 24, weight: .semibold))
+                .foregroundColor(theme.primaryText)
+                .multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
+                .opacity(downloadViewAppeared ? 1 : 0)
+                .offset(y: downloadViewAppeared ? 0 : 20)
+
+            Spacer().frame(height: 40)
+
+            // Progress section
+            VStack(spacing: 24) {
+                // Shimmer progress bar
+                OnboardingShimmerBar(progress: downloadProgress, color: theme.accentColor, height: 8)
+                    .padding(.horizontal, 60)
+
+                // Progress text
+                Text(progressText)
+                    .font(theme.font(size: 13))
+                    .foregroundColor(theme.tertiaryText)
+                    .animation(.easeInOut(duration: 0.2), value: progressText)
+            }
+            .frame(height: 100)
+            .opacity(downloadViewAppeared ? 1 : 0)
+
+            Spacer().frame(height: 36)
+
+            // Info text
+            Text(
+                "Once this finishes, you'll have an AI running entirely on your Mac — no account, no cloud, no data leaving your machine."
+            )
+            .font(theme.font(size: 13))
+            .foregroundColor(theme.secondaryText)
+            .multilineTextAlignment(.center)
+            .lineSpacing(4)
+            .fixedSize(horizontal: false, vertical: true)
+            .padding(.horizontal, 40)
+            .opacity(downloadViewAppeared ? 1 : 0)
+
+            Spacer()
+
+            // Action button
+            OnboardingTextButton(title: isDownloading ? "Continue" : "Download later") {
+                onSkip()
+            }
+            .opacity(downloadViewAppeared ? 1 : 0)
+
+            Spacer().frame(height: 50)
+        }
+        .onAppear {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                withAnimation(.easeOut(duration: 0.4)) {
+                    downloadViewAppeared = true
+                }
+            }
+        }
+    }
+
+    // MARK: - Private Methods
+
     private func startDownload() {
-        guard !downloadStarted, let model = defaultModel else { return }
-        downloadStarted = true
+        guard let model = selectedModel else { return }
         modelManager.downloadModel(model)
     }
 
@@ -252,6 +307,108 @@ struct OnboardingLocalDownloadView: View {
     }
 }
 
+// MARK: - Model Selection Card
+
+private struct ModelSelectionCard: View {
+    let model: MLXModel
+    let isSelected: Bool
+    let action: () -> Void
+
+    @Environment(\.theme) private var theme
+    @State private var isHovered = false
+
+    var body: some View {
+        Button(action: action) {
+            OnboardingGlassCard(isSelected: isSelected) {
+                HStack(spacing: 14) {
+                    // Icon with model type indicator
+                    ZStack {
+                        if isSelected {
+                            Circle()
+                                .fill(theme.accentColor)
+                                .blur(radius: 8)
+                                .frame(width: 36, height: 36)
+                        }
+
+                        Circle()
+                            .fill(isSelected ? theme.accentColor : theme.cardBackground)
+                            .frame(width: 44, height: 44)
+
+                        Image(systemName: model.modelType == .vlm ? "eye" : "cpu")
+                            .font(.system(size: 18, weight: .medium))
+                            .foregroundColor(isSelected ? .white : theme.secondaryText)
+                    }
+
+                    // Text content
+                    VStack(alignment: .leading, spacing: 3) {
+                        HStack(spacing: 8) {
+                            Text(model.name)
+                                .font(theme.font(size: 14, weight: .semibold))
+                                .foregroundColor(theme.primaryText)
+                                .lineLimit(1)
+
+                            // Badges
+                            HStack(spacing: 4) {
+                                if let size = model.formattedDownloadSize {
+                                    BadgeView(text: size)
+                                }
+                                BadgeView(text: model.modelType.rawValue)
+                            }
+                        }
+
+                        Text(model.description)
+                            .font(theme.font(size: 12))
+                            .foregroundColor(theme.secondaryText)
+                            .lineLimit(2)
+                            .lineSpacing(1)
+                    }
+
+                    Spacer(minLength: 8)
+
+                    // Selection indicator
+                    ZStack {
+                        Circle()
+                            .strokeBorder(
+                                isSelected ? theme.accentColor : theme.primaryBorder,
+                                lineWidth: isSelected ? 6 : 1.5
+                            )
+                            .frame(width: 20, height: 20)
+
+                        if isSelected {
+                            Circle()
+                                .fill(Color.white)
+                                .frame(width: 7, height: 7)
+                        }
+                    }
+                }
+                .padding(.horizontal, 14)
+                .padding(.vertical, 12)
+            }
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+// MARK: - Badge View
+
+private struct BadgeView: View {
+    let text: String
+
+    @Environment(\.theme) private var theme
+
+    var body: some View {
+        Text(text)
+            .font(theme.font(size: 10, weight: .medium))
+            .foregroundColor(theme.tertiaryText)
+            .padding(.horizontal, 6)
+            .padding(.vertical, 2)
+            .background(
+                RoundedRectangle(cornerRadius: 4, style: .continuous)
+                    .fill(theme.secondaryBackground)
+            )
+    }
+}
+
 // MARK: - Preview
 
 #if DEBUG
@@ -259,9 +416,10 @@ struct OnboardingLocalDownloadView: View {
         static var previews: some View {
             OnboardingLocalDownloadView(
                 onComplete: {},
-                onSkip: {}
+                onSkip: {},
+                onBack: {}
             )
-            .frame(width: 580, height: 680)
+            .frame(width: OnboardingLayout.windowWidth, height: OnboardingLayout.windowHeight)
         }
     }
 #endif

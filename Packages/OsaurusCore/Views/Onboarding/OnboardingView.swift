@@ -95,6 +95,9 @@ public struct OnboardingView: View {
                 },
                 onSkip: {
                     navigateTo(.complete, direction: .forward)
+                },
+                onBack: {
+                    navigateTo(.choosePath, direction: .backward)
                 }
             )
 

@@ -22,7 +22,7 @@ enum OnboardingSetupPath: String, CaseIterable {
 
     var description: String {
         switch self {
-        case .local: return "Runs entirely on your Mac. No account needed. ~1.5GB download."
+        case .local: return "Runs entirely on your Mac. No account needed."
         case .apiProvider: return "Use OpenAI, Anthropic, xAI, or another provider you trust. Requires an API key."
         }
     }

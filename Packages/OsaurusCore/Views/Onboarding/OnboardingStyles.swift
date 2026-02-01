@@ -493,15 +493,14 @@ struct OnboardingShimmerBar: View {
                     .clipShape(RoundedRectangle(cornerRadius: height / 2))
                     .animation(.spring(response: 0.4, dampingFraction: 0.8), value: progress)
 
-                // Glow at progress edge
-                if progress > 0 && progress < 1 {
-                    Circle()
-                        .fill(color)
-                        .frame(width: height * 2.5, height: height * 2.5)
-                        .blur(radius: 6)
-                        .opacity(0.6)
-                        .offset(x: max(0, geometry.size.width * progress - height))
-                }
+                // Glow at progress edge (animated smoothly)
+                Circle()
+                    .fill(color)
+                    .frame(width: height * 2.5, height: height * 2.5)
+                    .blur(radius: 6)
+                    .opacity(progress > 0 && progress < 1 ? 0.6 : 0)
+                    .offset(x: max(0, geometry.size.width * progress - height))
+                    .animation(.spring(response: 0.4, dampingFraction: 0.8), value: progress)
             }
         }
         .frame(height: height)
