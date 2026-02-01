@@ -25,16 +25,16 @@ enum OnboardingProviderOption: String, CaseIterable, Identifiable {
         case .anthropic: return "Anthropic"
         case .openai: return "OpenAI"
         case .xai: return "xAI"
-        case .other: return "Other provider..."
+        case .other: return "Any OpenAI-compatible API"
         }
     }
 
     var description: String {
         switch self {
         case .anthropic: return "Claude models"
-        case .openai: return "GPT-4o, o1, etc."
+        case .openai: return "ChatGPT models"
         case .xai: return "Grok models"
-        case .other: return "Custom endpoint"
+        case .other: return "OpenRouter, MiniMax, etc."
         }
     }
 
@@ -77,12 +77,13 @@ enum OnboardingProviderOption: String, CaseIterable, Identifiable {
 
 struct OnboardingAPISetupView: View {
     let onComplete: () -> Void
-    let onSkip: () -> Void
+    let onUseLocalModel: () -> Void
 
     @Environment(\.theme) private var theme
     @State private var selectedProvider: OnboardingProviderOption? = nil
     @State private var apiKey: String = ""
     @State private var isTesting = false
+    @State private var isSaving = false
     @State private var testResult: TestResult? = nil
     @State private var hasAppeared = false
 
@@ -112,6 +113,24 @@ struct OnboardingAPISetupView: View {
             return true
         }
         return false
+    }
+
+    private var buttonState: OnboardingButtonState {
+        if isTesting || isSaving {
+            return .loading
+        }
+        switch testResult {
+        case .success:
+            return .success
+        case .error(let message):
+            return .error(message)
+        case nil:
+            return .idle
+        }
+    }
+
+    private var buttonLoadingTitle: String {
+        isSaving ? "Connecting..." : "Testing..."
     }
 
     var body: some View {
@@ -170,7 +189,7 @@ struct OnboardingAPISetupView: View {
             Spacer().frame(height: 28)
 
             // Footer
-            Text("Your API key stays on your Mac. Osaurus never sees it.")
+            Text("Your key never leaves your device.")
                 .font(theme.font(size: 13))
                 .foregroundColor(theme.tertiaryText)
                 .opacity(hasAppeared ? 1 : 0)
@@ -179,7 +198,7 @@ struct OnboardingAPISetupView: View {
             Spacer()
 
             // Skip option
-            OnboardingTextButton(title: "Skip for now", action: onSkip)
+            OnboardingTextButton(title: "Use a local model instead", action: onUseLocalModel)
                 .opacity(hasAppeared ? 1 : 0)
                 .animation(theme.springAnimation().delay(0.45), value: hasAppeared)
 
@@ -209,16 +228,11 @@ struct OnboardingAPISetupView: View {
             Spacer().frame(height: 36)
 
             // API Key field
-            VStack(alignment: .leading, spacing: 10) {
-                OnboardingSecureField(placeholder: "sk-...", text: $apiKey, label: "API Key")
-                    .onChange(of: apiKey) { _, _ in
-                        testResult = nil
-                    }
-
-                // Test result indicator
-                testResultView
-            }
-            .padding(.horizontal, 40)
+            OnboardingSecureField(placeholder: "sk-...", text: $apiKey, label: "API Key")
+                .onChange(of: apiKey) { _, _ in
+                    testResult = nil
+                }
+                .padding(.horizontal, 40)
 
             Spacer().frame(height: 28)
 
@@ -258,74 +272,78 @@ struct OnboardingAPISetupView: View {
                     .foregroundColor(theme.primaryText)
                     .multilineTextAlignment(.center)
 
-                Spacer().frame(height: 32)
+                Spacer().frame(height: 28)
 
-                // Connection fields
-                VStack(spacing: 20) {
-                    // Name field
-                    OnboardingTextField(
-                        label: "Name",
-                        placeholder: "e.g. My Provider",
-                        text: $customName
-                    )
-
-                    // Protocol and Host row
-                    HStack(spacing: 12) {
-                        // Protocol toggle
-                        VStack(alignment: .leading, spacing: 6) {
-                            Text("PROTOCOL")
-                                .font(theme.font(size: 10, weight: .bold))
-                                .foregroundColor(theme.tertiaryText)
-                                .tracking(0.5)
-
-                            OnboardingProtocolToggle(selection: $customProtocol)
-                        }
-                        .frame(width: 130)
-
-                        // Host field
+                // Connection fields in glass card
+                OnboardingGlassCard {
+                    VStack(spacing: 16) {
+                        // Name field
                         OnboardingTextField(
-                            label: "Host",
-                            placeholder: "api.example.com",
-                            text: $customHost,
-                            isMonospaced: true
+                            label: "Name",
+                            placeholder: "e.g. My Provider",
+                            text: $customName
                         )
-                    }
 
-                    // Port and Base Path row
-                    HStack(spacing: 12) {
-                        OnboardingTextField(
-                            label: "Port",
-                            placeholder: customProtocol == .https ? "443" : "80",
-                            text: $customPort,
-                            isMonospaced: true
-                        )
-                        .frame(width: 100)
+                        // Protocol and Host row
+                        HStack(spacing: 12) {
+                            // Protocol toggle
+                            VStack(alignment: .leading, spacing: 6) {
+                                Text("PROTOCOL")
+                                    .font(theme.font(size: 10, weight: .bold))
+                                    .foregroundColor(theme.tertiaryText)
+                                    .tracking(0.5)
 
-                        OnboardingTextField(
-                            label: "Base Path",
-                            placeholder: "/v1",
-                            text: $customBasePath,
-                            isMonospaced: true
-                        )
-                    }
+                                OnboardingProtocolToggle(selection: $customProtocol)
+                                    .frame(height: 40)
+                            }
+                            .frame(width: 130)
 
-                    // Endpoint preview
-                    if !customHost.isEmpty {
-                        endpointPreview
-                    }
-
-                    // API Key
-                    OnboardingSecureField(placeholder: "sk-...", text: $apiKey, label: "API Key")
-                        .onChange(of: apiKey) { _, _ in
-                            testResult = nil
+                            // Host field
+                            OnboardingTextField(
+                                label: "Host",
+                                placeholder: "api.example.com",
+                                text: $customHost,
+                                isMonospaced: true
+                            )
                         }
 
-                    // Test result indicator
-                    testResultView
+                        // Port and Base Path row
+                        HStack(spacing: 12) {
+                            OnboardingTextField(
+                                label: "Port",
+                                placeholder: customProtocol == .https ? "443" : "80",
+                                text: $customPort,
+                                isMonospaced: true
+                            )
+                            .frame(width: 100)
+
+                            OnboardingTextField(
+                                label: "Base Path",
+                                placeholder: "/v1",
+                                text: $customBasePath,
+                                isMonospaced: true
+                            )
+                        }
+
+                        // Endpoint preview
+                        if !customHost.isEmpty {
+                            endpointPreview
+                        }
+                    }
+                    .padding(18)
                 }
                 .padding(.horizontal, 40)
 
-                Spacer().frame(height: 32)
+                Spacer().frame(height: 16)
+
+                // API Key (outside card for visual separation)
+                OnboardingSecureField(placeholder: "sk-...", text: $apiKey, label: "API Key")
+                    .onChange(of: apiKey) { _, _ in
+                        testResult = nil
+                    }
+                    .padding(.horizontal, 40)
+
+                Spacer().frame(height: 28)
 
                 // Action buttons
                 actionButtons
@@ -363,29 +381,6 @@ struct OnboardingAPISetupView: View {
             .buttonStyle(.plain)
 
             Spacer()
-        }
-    }
-
-    @ViewBuilder
-    private var testResultView: some View {
-        if let result = testResult {
-            HStack(spacing: 8) {
-                switch result {
-                case .success:
-                    Image(systemName: "checkmark.circle.fill")
-                        .foregroundColor(theme.successColor)
-                    Text("Connection successful")
-                        .foregroundColor(theme.successColor)
-                case .error(let message):
-                    Image(systemName: "xmark.circle.fill")
-                        .foregroundColor(theme.errorColor)
-                    Text(message)
-                        .foregroundColor(theme.errorColor)
-                        .lineLimit(2)
-                }
-            }
-            .font(theme.font(size: 13))
-            .transition(.opacity.combined(with: .move(edge: .top)))
         }
     }
 
@@ -459,62 +454,71 @@ struct OnboardingAPISetupView: View {
 
     private var actionButtons: some View {
         VStack(spacing: 12) {
-            if isSuccess {
-                OnboardingPrimaryButton(
-                    title: "Continue",
-                    action: {
+            OnboardingStatefulButton(
+                state: buttonState,
+                idleTitle: "Test Connection",
+                loadingTitle: buttonLoadingTitle,
+                successTitle: "Continue",
+                errorTitle: "Try Again",
+                action: {
+                    if isSuccess {
                         saveProviderAndContinue()
+                    } else {
+                        testConnection()
                     }
-                )
-            } else {
-                OnboardingPrimaryButton(
-                    title: isTesting ? "Testing..." : "Test Connection",
-                    action: testConnection,
-                    isEnabled: canTest && !isTesting
-                )
-            }
+                },
+                isEnabled: canTest
+            )
 
-            OnboardingTextButton(title: "Skip for now", action: onSkip)
+            OnboardingTextButton(title: "Use a local model instead", action: onUseLocalModel)
         }
     }
 
     // MARK: - Actions
 
+    /// Builds provider configuration from current state
+    private func buildProviderConfig() -> (
+        name: String, host: String, port: Int?, basePath: String, providerType: RemoteProviderType,
+        providerProtocol: RemoteProviderProtocol
+    )? {
+        guard let provider = selectedProvider else { return nil }
+
+        if provider == .other {
+            return (
+                name: customName.isEmpty ? "Custom Provider" : customName,
+                host: customHost,
+                port: customPort.isEmpty ? nil : Int(customPort),
+                basePath: customBasePath.isEmpty ? "/v1" : customBasePath,
+                providerType: .openai,
+                providerProtocol: customProtocol
+            )
+        } else {
+            return (
+                name: provider.name,
+                host: provider.host,
+                port: nil,
+                basePath: "/v1",
+                providerType: provider.providerType,
+                providerProtocol: .https
+            )
+        }
+    }
+
     private func testConnection() {
-        guard let provider = selectedProvider else { return }
+        guard let config = buildProviderConfig() else { return }
 
         isTesting = true
         testResult = nil
 
-        let host: String
-        let port: Int?
-        let basePath: String
-        let providerType: RemoteProviderType
-        let providerProtocol: RemoteProviderProtocol
-
-        if provider == .other {
-            host = customHost
-            port = customPort.isEmpty ? nil : Int(customPort)
-            basePath = customBasePath.isEmpty ? "/v1" : customBasePath
-            providerType = .openai
-            providerProtocol = customProtocol
-        } else {
-            host = provider.host
-            port = nil
-            basePath = "/v1"
-            providerType = provider.providerType
-            providerProtocol = .https
-        }
-
         Task {
             do {
-                let _ = try await RemoteProviderManager.shared.testConnection(
-                    host: host,
-                    providerProtocol: providerProtocol,
-                    port: port,
-                    basePath: basePath,
+                _ = try await RemoteProviderManager.shared.testConnection(
+                    host: config.host,
+                    providerProtocol: config.providerProtocol,
+                    port: config.port,
+                    basePath: config.basePath,
                     authType: .apiKey,
-                    providerType: providerType,
+                    providerType: config.providerType,
                     apiKey: apiKey,
                     headers: [:]
                 )
@@ -537,40 +541,19 @@ struct OnboardingAPISetupView: View {
     }
 
     private func saveProviderAndContinue() {
-        guard let provider = selectedProvider else { return }
+        guard let config = buildProviderConfig() else { return }
 
-        let name: String
-        let host: String
-        let port: Int?
-        let basePath: String
-        let providerType: RemoteProviderType
-        let providerProtocol: RemoteProviderProtocol
-
-        if provider == .other {
-            name = customName.isEmpty ? "Custom Provider" : customName
-            host = customHost
-            port = customPort.isEmpty ? nil : Int(customPort)
-            basePath = customBasePath.isEmpty ? "/v1" : customBasePath
-            providerType = .openai
-            providerProtocol = customProtocol
-        } else {
-            name = provider.name
-            host = provider.host
-            port = nil
-            basePath = "/v1"
-            providerType = provider.providerType
-            providerProtocol = .https
-        }
+        isSaving = true
 
         let remoteProvider = RemoteProvider(
-            name: name,
-            host: host,
-            providerProtocol: providerProtocol,
-            port: port,
-            basePath: basePath,
+            name: config.name,
+            host: config.host,
+            providerProtocol: config.providerProtocol,
+            port: config.port,
+            basePath: config.basePath,
             customHeaders: [:],
             authType: .apiKey,
-            providerType: providerType,
+            providerType: config.providerType,
             enabled: true,
             autoConnect: true,
             timeout: 60
@@ -578,13 +561,19 @@ struct OnboardingAPISetupView: View {
 
         RemoteProviderManager.shared.addProvider(remoteProvider, apiKey: apiKey)
 
-        onComplete()
+        Task {
+            try? await RemoteProviderManager.shared.connect(providerId: remoteProvider.id)
+            await MainActor.run {
+                isSaving = false
+                onComplete()
+            }
+        }
     }
 }
 
 // MARK: - Protocol Toggle
 
-struct OnboardingProtocolToggle: View {
+private struct OnboardingProtocolToggle: View {
     @Binding var selection: RemoteProviderProtocol
 
     @Environment(\.theme) private var theme
@@ -613,8 +602,8 @@ struct OnboardingProtocolToggle: View {
             Text(label)
                 .font(theme.font(size: 11, weight: .semibold))
                 .foregroundColor(selection == proto ? .white : theme.secondaryText)
-                .padding(.horizontal, 12)
-                .padding(.vertical, 8)
+                .frame(maxWidth: .infinity)
+                .frame(height: 38)
                 .background(
                     RoundedRectangle(cornerRadius: 6)
                         .fill(selection == proto ? theme.accentColor : Color.clear)
@@ -708,7 +697,7 @@ private struct HelpStep: View {
         static var previews: some View {
             OnboardingAPISetupView(
                 onComplete: {},
-                onSkip: {}
+                onUseLocalModel: {}
             )
             .frame(width: 580, height: 700)
         }

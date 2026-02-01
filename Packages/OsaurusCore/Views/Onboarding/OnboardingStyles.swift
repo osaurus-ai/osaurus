@@ -71,6 +71,111 @@ struct OnboardingPrimaryButton: View {
     }
 }
 
+// MARK: - Onboarding Stateful Button
+
+/// Button state for connection testing
+enum OnboardingButtonState: Equatable {
+    case idle
+    case loading
+    case success
+    case error(String)
+
+    static func == (lhs: OnboardingButtonState, rhs: OnboardingButtonState) -> Bool {
+        switch (lhs, rhs) {
+        case (.idle, .idle), (.loading, .loading), (.success, .success):
+            return true
+        case (.error(let lMsg), .error(let rMsg)):
+            return lMsg == rMsg
+        default:
+            return false
+        }
+    }
+}
+
+/// Stateful button that reflects connection test results
+struct OnboardingStatefulButton: View {
+    let state: OnboardingButtonState
+    let idleTitle: String
+    let loadingTitle: String
+    let successTitle: String
+    let errorTitle: String
+    let action: () -> Void
+    var isEnabled: Bool = true
+
+    @Environment(\.theme) private var theme
+    @State private var isHovered = false
+
+    private var currentTitle: String {
+        switch state {
+        case .idle: return idleTitle
+        case .loading: return loadingTitle
+        case .success: return successTitle
+        case .error: return errorTitle
+        }
+    }
+
+    private var backgroundColor: Color {
+        switch state {
+        case .idle: return theme.accentColor
+        case .loading: return theme.accentColor
+        case .success: return theme.successColor
+        case .error: return theme.errorColor
+        }
+    }
+
+    private var iconName: String? {
+        switch state {
+        case .idle: return nil
+        case .loading: return nil
+        case .success: return "checkmark"
+        case .error: return "arrow.clockwise"
+        }
+    }
+
+    private var shouldDisable: Bool {
+        !isEnabled || state == .loading
+    }
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 8) {
+                if state == .loading {
+                    ProgressView()
+                        .progressViewStyle(CircularProgressViewStyle(tint: theme.isDark ? theme.primaryText : .white))
+                        .scaleEffect(0.8)
+                } else if let icon = iconName {
+                    Image(systemName: icon)
+                        .font(.system(size: 13, weight: .semibold))
+                }
+
+                Text(currentTitle)
+                    .font(theme.font(size: 15, weight: .semibold))
+            }
+            .foregroundColor(theme.isDark ? theme.primaryText : .white)
+            .frame(maxWidth: .infinity)
+            .frame(height: OnboardingLayout.buttonHeight)
+            .background(
+                RoundedRectangle(cornerRadius: OnboardingLayout.buttonCornerRadius, style: .continuous)
+                    .fill(shouldDisable ? theme.tertiaryText : backgroundColor)
+            )
+            .shadow(
+                color: !shouldDisable && isHovered ? backgroundColor.opacity(0.4) : .clear,
+                radius: 12,
+                y: 4
+            )
+            .scaleEffect(isHovered && !shouldDisable ? 1.02 : 1.0)
+        }
+        .buttonStyle(.plain)
+        .disabled(shouldDisable)
+        .onHover { hovering in
+            withAnimation(theme.animationQuick()) {
+                isHovered = hovering
+            }
+        }
+        .animation(theme.springAnimation(), value: state)
+    }
+}
+
 // MARK: - Onboarding Shimmer Button
 
 /// Futuristic button with animated shimmer effect

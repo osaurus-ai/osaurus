@@ -11,6 +11,7 @@ struct OnboardingLocalDownloadView: View {
     let onComplete: () -> Void
     let onSkip: () -> Void
     let onBack: () -> Void
+    let onUseAPIProvider: () -> Void
 
     @Environment(\.theme) private var theme
     @ObservedObject private var modelManager = ModelManager.shared
@@ -216,7 +217,7 @@ struct OnboardingLocalDownloadView: View {
                 .frame(width: 200)
 
                 OnboardingTextButton(title: "Use an AI provider instead") {
-                    onBack()
+                    onUseAPIProvider()
                 }
             }
             .opacity(hasAppeared ? 1 : 0)
@@ -417,7 +418,8 @@ private struct BadgeView: View {
             OnboardingLocalDownloadView(
                 onComplete: {},
                 onSkip: {},
-                onBack: {}
+                onBack: {},
+                onUseAPIProvider: {}
             )
             .frame(width: OnboardingLayout.windowWidth, height: OnboardingLayout.windowHeight)
         }

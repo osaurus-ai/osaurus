@@ -98,6 +98,9 @@ public struct OnboardingView: View {
                 },
                 onBack: {
                     navigateTo(.choosePath, direction: .backward)
+                },
+                onUseAPIProvider: {
+                    navigateTo(.apiSetup, direction: .forward)
                 }
             )
 
@@ -106,8 +109,8 @@ public struct OnboardingView: View {
                 onComplete: {
                     navigateTo(.complete, direction: .forward)
                 },
-                onSkip: {
-                    navigateTo(.complete, direction: .forward)
+                onUseLocalModel: {
+                    navigateTo(.localDownload, direction: .forward)
                 }
             )
 
