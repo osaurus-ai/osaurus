@@ -7,34 +7,105 @@
 
 import SwiftUI
 
-// MARK: - Constants
+// MARK: - Sidebar Style Constants
 
-private enum SidebarMetrics {
+/// Centralized styling constants for sidebar components (similar to ToastStyle).
+enum SidebarStyle {
+    // MARK: Layout
     static let width: CGFloat = 240
-    static let searchFieldCornerRadius: CGFloat = 8
+    static let cornerRadius: CGFloat = 14
     static let rowCornerRadius: CGFloat = 8
+    static let searchFieldCornerRadius: CGFloat = 8
     static let actionButtonSize: CGFloat = 24
     static let actionButtonCornerRadius: CGFloat = 5
+
+    // MARK: Glass Background
+    static let glassOpacityDark: Double = 0.82
+    static let glassOpacityLight: Double = 0.90
+
+    // MARK: Accent Gradient
+    static let accentGradientOpacityDark: Double = 0.06
+    static let accentGradientOpacityLight: Double = 0.04
+
+    // MARK: Border
+    static let edgeLightOpacityDark: Double = 0.18
+    static let edgeLightOpacityLight: Double = 0.28
+    static let borderOpacityDark: Double = 0.14
+    static let borderOpacityLight: Double = 0.22
+
+    // MARK: Accent Edge
+    static let accentEdgeHoverOpacity: Double = 0.18
+    static let accentEdgeNormalOpacity: Double = 0.10
 }
 
 // MARK: - Sidebar Container
 
 /// Container with consistent sidebar styling and glass background support.
+/// Supports edge-attached mode for seamless integration with parent views.
 struct SidebarContainer<Content: View>: View {
+    /// The edge this sidebar is attached to (affects corner radius)
+    let attachedEdge: Edge?
+
     @ViewBuilder let content: () -> Content
     @Environment(\.theme) private var theme
+
+    init(attachedEdge: Edge? = nil, @ViewBuilder content: @escaping () -> Content) {
+        self.attachedEdge = attachedEdge
+        self.content = content
+    }
 
     var body: some View {
         VStack(spacing: 0) {
             content()
         }
-        .frame(width: SidebarMetrics.width, alignment: .top)
+        .frame(width: SidebarStyle.width, alignment: .top)
         .frame(maxHeight: .infinity, alignment: .top)
-        .background { sidebarBackground }
+        .background { SidebarBackground() }
+        .clipShape(containerShape)
+        .overlay(SidebarBorder(attachedEdge: attachedEdge))
     }
 
-    @ViewBuilder
-    private var sidebarBackground: some View {
+    private var containerShape: UnevenRoundedRectangle {
+        let radius = SidebarStyle.cornerRadius
+        switch attachedEdge {
+        case .leading:
+            // Attached to leading edge - round only leading corners
+            return UnevenRoundedRectangle(
+                topLeadingRadius: radius,
+                bottomLeadingRadius: radius,
+                bottomTrailingRadius: 0,
+                topTrailingRadius: 0,
+                style: .continuous
+            )
+        case .trailing:
+            // Attached to trailing edge - round only trailing corners
+            return UnevenRoundedRectangle(
+                topLeadingRadius: 0,
+                bottomLeadingRadius: 0,
+                bottomTrailingRadius: radius,
+                topTrailingRadius: radius,
+                style: .continuous
+            )
+        case .top, .bottom, .none:
+            // Not attached or attached to top/bottom - round all corners
+            return UnevenRoundedRectangle(
+                topLeadingRadius: radius,
+                bottomLeadingRadius: radius,
+                bottomTrailingRadius: radius,
+                topTrailingRadius: radius,
+                style: .continuous
+            )
+        }
+    }
+}
+
+// MARK: - Sidebar Background
+
+/// Glass-based background for sidebar with accent gradient (similar to ToastBackground).
+struct SidebarBackground: View {
+    @Environment(\.theme) private var theme
+
+    var body: some View {
         ZStack {
             // Layer 1: Glass material (if enabled)
             if theme.glassEnabled {
@@ -42,20 +113,104 @@ struct SidebarContainer<Content: View>: View {
                     .fill(.ultraThinMaterial)
             }
 
-            // Layer 2: Semi-transparent background
-            Rectangle()
-                .fill(theme.secondaryBackground.opacity(theme.isDark ? 0.8 : 0.9))
+            // Layer 2: Semi-transparent card background
+            theme.cardBackground.opacity(
+                theme.glassEnabled
+                    ? (theme.isDark ? SidebarStyle.glassOpacityDark : SidebarStyle.glassOpacityLight)
+                    : 1.0
+            )
 
-            // Layer 3: Subtle accent gradient at top
+            // Layer 3: Accent gradient for visual polish
             LinearGradient(
                 colors: [
-                    theme.accentColor.opacity(theme.isDark ? 0.04 : 0.025),
+                    theme.accentColor.opacity(
+                        theme.isDark ? SidebarStyle.accentGradientOpacityDark : SidebarStyle.accentGradientOpacityLight
+                    ),
                     Color.clear,
+                    theme.primaryBackground.opacity(theme.isDark ? 0.06 : 0.03),
                 ],
-                startPoint: .top,
-                endPoint: .center
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
             )
         }
+    }
+}
+
+// MARK: - Sidebar Border
+
+/// Gradient border with accent edge highlight for sidebar (similar to ToastBorder)
+struct SidebarBorder: View {
+    @Environment(\.theme) private var theme
+
+    let attachedEdge: Edge?
+
+    init(attachedEdge: Edge? = nil) {
+        self.attachedEdge = attachedEdge
+    }
+
+    var body: some View {
+        borderShape
+            .strokeBorder(
+                LinearGradient(
+                    colors: [
+                        theme.glassEdgeLight.opacity(
+                            theme.isDark ? SidebarStyle.edgeLightOpacityDark : SidebarStyle.edgeLightOpacityLight
+                        ),
+                        theme.primaryBorder.opacity(
+                            theme.isDark ? SidebarStyle.borderOpacityDark : SidebarStyle.borderOpacityLight
+                        ),
+                    ],
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing
+                ),
+                lineWidth: 1
+            )
+            .overlay(accentEdge)
+    }
+
+    private var borderShape: UnevenRoundedRectangle {
+        let radius = SidebarStyle.cornerRadius
+        switch attachedEdge {
+        case .leading:
+            return UnevenRoundedRectangle(
+                topLeadingRadius: radius,
+                bottomLeadingRadius: radius,
+                bottomTrailingRadius: 0,
+                topTrailingRadius: 0,
+                style: .continuous
+            )
+        case .trailing:
+            return UnevenRoundedRectangle(
+                topLeadingRadius: 0,
+                bottomLeadingRadius: 0,
+                bottomTrailingRadius: radius,
+                topTrailingRadius: radius,
+                style: .continuous
+            )
+        case .top, .bottom, .none:
+            return UnevenRoundedRectangle(
+                topLeadingRadius: radius,
+                bottomLeadingRadius: radius,
+                bottomTrailingRadius: radius,
+                topTrailingRadius: radius,
+                style: .continuous
+            )
+        }
+    }
+
+    private var accentEdge: some View {
+        borderShape
+            .strokeBorder(
+                theme.accentColor.opacity(SidebarStyle.accentEdgeNormalOpacity),
+                lineWidth: 1
+            )
+            .mask(
+                LinearGradient(
+                    colors: [Color.white, Color.white.opacity(0)],
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
+            )
     }
 }
 
@@ -122,12 +277,12 @@ struct SidebarSearchField: View {
     }
 
     private var fieldBackground: some View {
-        RoundedRectangle(cornerRadius: SidebarMetrics.searchFieldCornerRadius, style: .continuous)
+        RoundedRectangle(cornerRadius: SidebarStyle.searchFieldCornerRadius, style: .continuous)
             .fill(theme.isDark ? theme.primaryBackground.opacity(0.5) : theme.tertiaryBackground.opacity(0.8))
     }
 
     private var focusBorder: some View {
-        RoundedRectangle(cornerRadius: SidebarMetrics.searchFieldCornerRadius, style: .continuous)
+        RoundedRectangle(cornerRadius: SidebarStyle.searchFieldCornerRadius, style: .continuous)
             .stroke(isFocused.wrappedValue ? theme.accentColor.opacity(0.3) : .clear, lineWidth: 1)
     }
 }
@@ -197,13 +352,13 @@ struct SidebarRowActionButton: View {
             Image(systemName: icon)
                 .font(.system(size: 12, weight: .semibold))
                 .foregroundColor(isHovered ? theme.accentColor : theme.secondaryText)
-                .frame(width: SidebarMetrics.actionButtonSize, height: SidebarMetrics.actionButtonSize)
+                .frame(width: SidebarStyle.actionButtonSize, height: SidebarStyle.actionButtonSize)
                 .background(
-                    RoundedRectangle(cornerRadius: SidebarMetrics.actionButtonCornerRadius, style: .continuous)
+                    RoundedRectangle(cornerRadius: SidebarStyle.actionButtonCornerRadius, style: .continuous)
                         .fill(isHovered ? theme.accentColor.opacity(0.1) : .clear)
                 )
                 .overlay(
-                    RoundedRectangle(cornerRadius: SidebarMetrics.actionButtonCornerRadius, style: .continuous)
+                    RoundedRectangle(cornerRadius: SidebarStyle.actionButtonCornerRadius, style: .continuous)
                         .strokeBorder(
                             isHovered ? theme.accentColor.opacity(0.2) : .clear,
                             lineWidth: 1
@@ -220,26 +375,42 @@ struct SidebarRowActionButton: View {
 
 // MARK: - Sidebar Row Background
 
-/// Consistent row background based on selection and hover state.
+/// Enhanced row background with glass effects and gradient borders (similar to ToastBackground styling).
 struct SidebarRowBackground: View {
     let isSelected: Bool
     let isHovered: Bool
 
     @Environment(\.theme) private var theme
 
+    private var cornerRadius: CGFloat { SidebarStyle.rowCornerRadius }
+
     var body: some View {
         ZStack {
-            // Background fill
-            RoundedRectangle(cornerRadius: SidebarMetrics.rowCornerRadius, style: .continuous)
-                .fill(backgroundColor)
+            // Layer 1: Background fill with glass effect
+            if isSelected || isHovered {
+                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                    .fill(backgroundColor)
+            }
 
-            // Selected state: subtle accent gradient
+            // Layer 2: Accent gradient overlay for selected/hovered states
             if isSelected {
-                RoundedRectangle(cornerRadius: SidebarMetrics.rowCornerRadius, style: .continuous)
+                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
                     .fill(
                         LinearGradient(
                             colors: [
-                                theme.accentColor.opacity(0.08),
+                                theme.accentColor.opacity(theme.isDark ? 0.12 : 0.08),
+                                theme.accentColor.opacity(theme.isDark ? 0.04 : 0.02),
+                            ],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        )
+                    )
+            } else if isHovered {
+                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                    .fill(
+                        LinearGradient(
+                            colors: [
+                                theme.primaryBackground.opacity(theme.isDark ? 0.08 : 0.04),
                                 Color.clear,
                             ],
                             startPoint: .topLeading,
@@ -253,9 +424,9 @@ struct SidebarRowBackground: View {
 
     private var backgroundColor: Color {
         if isSelected {
-            return theme.accentColor.opacity(0.12)
+            return theme.accentColor.opacity(theme.isDark ? 0.15 : 0.12)
         } else if isHovered {
-            return theme.secondaryBackground.opacity(0.6)
+            return theme.secondaryBackground.opacity(theme.isDark ? 0.5 : 0.6)
         }
         return .clear
     }
@@ -263,22 +434,50 @@ struct SidebarRowBackground: View {
     @ViewBuilder
     private var borderOverlay: some View {
         if isSelected {
-            RoundedRectangle(cornerRadius: SidebarMetrics.rowCornerRadius, style: .continuous)
+            // Selected state: gradient border with accent highlight
+            RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
                 .strokeBorder(
                     LinearGradient(
                         colors: [
-                            theme.accentColor.opacity(0.25),
-                            theme.accentColor.opacity(0.1),
+                            theme.accentColor.opacity(theme.isDark ? 0.35 : 0.28),
+                            theme.accentColor.opacity(theme.isDark ? 0.15 : 0.12),
                         ],
                         startPoint: .topLeading,
                         endPoint: .bottomTrailing
                     ),
                     lineWidth: 1
                 )
+                .overlay(selectedAccentEdge)
         } else if isHovered {
-            RoundedRectangle(cornerRadius: SidebarMetrics.rowCornerRadius, style: .continuous)
-                .strokeBorder(theme.primaryBorder.opacity(0.15), lineWidth: 1)
+            // Hovered state: subtle gradient border
+            RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                .strokeBorder(
+                    LinearGradient(
+                        colors: [
+                            theme.glassEdgeLight.opacity(theme.isDark ? 0.12 : 0.18),
+                            theme.primaryBorder.opacity(theme.isDark ? 0.08 : 0.12),
+                        ],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    ),
+                    lineWidth: 1
+                )
         }
+    }
+
+    private var selectedAccentEdge: some View {
+        RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+            .strokeBorder(
+                theme.accentColor.opacity(SidebarStyle.accentEdgeHoverOpacity),
+                lineWidth: 1
+            )
+            .mask(
+                LinearGradient(
+                    colors: [Color.white, Color.white.opacity(0)],
+                    startPoint: .leading,
+                    endPoint: .trailing
+                )
+            )
     }
 }
 
