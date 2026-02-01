@@ -156,6 +156,15 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
 
         // Initialize ScheduleManager to start scheduled tasks
         _ = ScheduleManager.shared
+
+        // Show onboarding for first-time users
+        if OnboardingService.shared.shouldShowOnboarding {
+            // Slight delay to let the app finish launching
+            Task { @MainActor in
+                try? await Task.sleep(nanoseconds: 300_000_000)  // 300ms
+                showOnboardingWindow()
+            }
+        }
     }
 
     // MARK: - VAD Service
@@ -775,6 +784,68 @@ extension AppDelegate {
         window.isReleasedWhenClosed = false
 
         Self.acknowledgementsWindow = window
+
+        window.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+    }
+}
+
+// MARK: - Onboarding Window
+extension AppDelegate {
+    private static var onboardingWindow: NSWindow?
+
+    @MainActor public func showOnboardingWindow() {
+        // Reuse existing window if already open
+        if let existingWindow = Self.onboardingWindow, existingWindow.isVisible {
+            existingWindow.makeKeyAndOrderFront(nil)
+            NSApp.activate(ignoringOtherApps: true)
+            return
+        }
+
+        let themeManager = ThemeManager.shared
+        let contentView = OnboardingView {
+            // Close the onboarding window when complete
+            Self.onboardingWindow?.close()
+            Self.onboardingWindow = nil
+        }
+        .environment(\.theme, themeManager.currentTheme)
+
+        // Use NSHostingView directly in an NSView container to avoid auto-sizing issues
+        let windowWidth: CGFloat = 500
+        let windowHeight: CGFloat = 560
+
+        let hostingView = NSHostingView(rootView: contentView)
+        hostingView.translatesAutoresizingMaskIntoConstraints = false
+
+        let containerView = NSView(frame: NSRect(x: 0, y: 0, width: windowWidth, height: windowHeight))
+        containerView.addSubview(hostingView)
+
+        NSLayoutConstraint.activate([
+            hostingView.leadingAnchor.constraint(equalTo: containerView.leadingAnchor),
+            hostingView.trailingAnchor.constraint(equalTo: containerView.trailingAnchor),
+            hostingView.topAnchor.constraint(equalTo: containerView.topAnchor),
+            hostingView.bottomAnchor.constraint(equalTo: containerView.bottomAnchor),
+        ])
+
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: windowWidth, height: windowHeight),
+            styleMask: [.titled, .closable, .fullSizeContentView],
+            backing: .buffered,
+            defer: false
+        )
+        window.title = ""
+        window.contentView = containerView
+        window.center()
+        window.isReleasedWhenClosed = false
+        window.titlebarAppearsTransparent = true
+        window.titleVisibility = .hidden
+        window.standardWindowButton(.closeButton)?.isHidden = true
+        window.standardWindowButton(.miniaturizeButton)?.isHidden = true
+        window.standardWindowButton(.zoomButton)?.isHidden = true
+        window.backgroundColor = NSColor(themeManager.currentTheme.primaryBackground)
+        window.isMovableByWindowBackground = true
+
+        Self.onboardingWindow = window
 
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
