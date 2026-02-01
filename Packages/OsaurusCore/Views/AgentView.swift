@@ -48,7 +48,7 @@ struct AgentView: View {
                             }
                         }
                     )
-                    .transition(.move(edge: .leading))
+                    .transition(.move(edge: .leading).combined(with: .opacity))
                 }
 
                 ZStack {
@@ -96,7 +96,7 @@ struct AgentView: View {
             windowControls
         }
         .ignoresSafeArea()
-        .animation(theme.animationQuick(), value: showSidebar)
+        .animation(theme.springAnimation(responseMultiplier: 0.9), value: showSidebar)
         .environment(\.theme, windowState.theme)
         .tint(theme.accentColor)
         .sheet(item: $selectedArtifact) { artifact in

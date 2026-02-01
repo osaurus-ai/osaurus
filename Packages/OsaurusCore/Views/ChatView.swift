@@ -816,7 +816,7 @@ final class ChatSession: ObservableObject {
                 // MARK: - Two-Phase Capability Selection
                 let effectivePersonaId = personaId ?? Persona.defaultId
                 let effectiveToolOverrides = PersonaManager.shared.effectiveToolOverrides(for: effectivePersonaId)
-                
+
                 // Check if there are any capabilities to select
                 let catalog = CapabilityCatalogBuilder.build(for: effectivePersonaId)
                 let hasCapabilities = !catalog.isEmpty
@@ -1408,7 +1408,7 @@ struct ChatView: View {
                     .frame(width: 240, alignment: .top)
                     .frame(maxHeight: .infinity, alignment: .top)
                     .zIndex(1)
-                    .transition(.move(edge: .leading))
+                    .transition(.move(edge: .leading).combined(with: .opacity))
                 }
 
                 // Main chat area
@@ -1508,7 +1508,7 @@ struct ChatView: View {
         }
         .ignoresSafeArea()
         .animation(theme.animationMedium(), value: session.turns.isEmpty)
-        .animation(theme.animationQuick(), value: showSidebar)
+        .animation(theme.springAnimation(responseMultiplier: 0.9), value: showSidebar)
         .background(WindowAccessor(window: $hostWindow))
         .onReceive(NotificationCenter.default.publisher(for: .chatOverlayActivated)) { _ in
             // Lightweight state updates only - refreshAll() removed to prevent excessive re-renders

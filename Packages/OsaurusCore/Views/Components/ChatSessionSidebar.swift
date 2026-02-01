@@ -37,7 +37,7 @@ struct ChatSessionSidebar: View {
     }
 
     var body: some View {
-        SidebarContainer {
+        SidebarContainer(attachedEdge: .leading) {
             // Header with New Chat button
             sidebarHeader
 
@@ -213,9 +213,9 @@ private struct SessionRow: View {
                 .padding(.horizontal, 10)
                 .padding(.vertical, 8)
                 .background(SidebarRowBackground(isSelected: isSelected, isHovered: isHovered))
-                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                .clipShape(RoundedRectangle(cornerRadius: SidebarStyle.rowCornerRadius, style: .continuous))
         } else {
-            HStack(spacing: 8) {
+            HStack(spacing: 10) {
                 // Persona indicator
                 if isDefaultPersona {
                     defaultPersonaIndicator
@@ -256,16 +256,17 @@ private struct SessionRow: View {
             .padding(.horizontal, 10)
             .padding(.vertical, 8)
             .background(SidebarRowBackground(isSelected: isSelected, isHovered: isHovered))
-            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-            .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .clipShape(RoundedRectangle(cornerRadius: SidebarStyle.rowCornerRadius, style: .continuous))
+            .contentShape(RoundedRectangle(cornerRadius: SidebarStyle.rowCornerRadius, style: .continuous))
             .onTapGesture {
                 onSelect()
             }
             .onHover { hovering in
-                withAnimation(theme.animationQuick()) {
+                withAnimation(theme.springAnimation(responseMultiplier: 0.8)) {
                     isHovered = hovering
                 }
             }
+            .animation(theme.springAnimation(responseMultiplier: 0.8), value: isSelected)
             .contextMenu {
                 if let openInNewWindow = onOpenInNewWindow {
                     Button {
@@ -283,28 +284,30 @@ private struct SessionRow: View {
 
     /// Default persona indicator with person icon
     private var defaultPersonaIndicator: some View {
-        Image(systemName: "person.fill")
-            .font(.system(size: 9, weight: .medium))
-            .foregroundColor(theme.secondaryText.opacity(0.8))
-            .frame(width: 18, height: 18)
-            .background(
-                Circle()
-                    .fill(theme.secondaryText.opacity(0.1))
-            )
-            .help("Default")
+        ZStack {
+            Circle()
+                .fill(theme.secondaryText.opacity(theme.isDark ? 0.12 : 0.08))
+                .frame(width: 24, height: 24)
+
+            Image(systemName: "person.fill")
+                .font(.system(size: 10, weight: .medium))
+                .foregroundColor(theme.secondaryText.opacity(0.8))
+        }
+        .help("Default")
     }
 
     @ViewBuilder
     private func personaIndicatorView(_ persona: Persona) -> some View {
-        Text(persona.name.prefix(1).uppercased())
-            .font(.system(size: 9, weight: .bold, design: .rounded))
-            .foregroundColor(personaColor)
-            .frame(width: 18, height: 18)
-            .background(
-                Circle()
-                    .fill(personaColor.opacity(0.15))
-            )
-            .help(persona.name)
+        ZStack {
+            Circle()
+                .fill(personaColor.opacity(theme.isDark ? 0.14 : 0.10))
+                .frame(width: 24, height: 24)
+
+            Text(persona.name.prefix(1).uppercased())
+                .font(.system(size: 10, weight: .bold, design: .rounded))
+                .foregroundColor(personaColor)
+        }
+        .help(persona.name)
     }
 
     private var editingView: some View {

@@ -20,7 +20,7 @@ struct AgentTaskSidebar: View {
     @FocusState private var isSearchFocused: Bool
 
     var body: some View {
-        SidebarContainer {
+        SidebarContainer(attachedEdge: .leading) {
             // Header
             sidebarHeader
 
@@ -109,7 +109,9 @@ struct AgentTaskSidebar: View {
                         onDelete: { onDelete(task.id) }
                     )
                     .onHover { hovering in
-                        hoveredTaskId = hovering ? task.id : nil
+                        withAnimation(theme.springAnimation(responseMultiplier: 0.8)) {
+                            hoveredTaskId = hovering ? task.id : nil
+                        }
                     }
                 }
             }
@@ -144,9 +146,9 @@ private struct TaskRow: View {
     @Environment(\.theme) private var theme: ThemeProtocol
 
     var body: some View {
-        HStack(spacing: 8) {
-            // Status indicator
-            statusIndicator
+        HStack(spacing: 10) {
+            // Morphing status icon with accent background
+            statusIconView
 
             // Content
             VStack(alignment: .leading, spacing: 2) {
@@ -175,8 +177,8 @@ private struct TaskRow: View {
         .padding(.horizontal, 10)
         .padding(.vertical, 8)
         .background(SidebarRowBackground(isSelected: isSelected, isHovered: isHovered))
-        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-        .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .clipShape(RoundedRectangle(cornerRadius: SidebarStyle.rowCornerRadius, style: .continuous))
+        .contentShape(RoundedRectangle(cornerRadius: SidebarStyle.rowCornerRadius, style: .continuous))
         .onTapGesture {
             onSelect()
         }
@@ -185,20 +187,34 @@ private struct TaskRow: View {
                 onDelete()
             }
         }
+        .animation(theme.springAnimation(responseMultiplier: 0.8), value: isHovered)
+        .animation(theme.springAnimation(responseMultiplier: 0.8), value: isSelected)
     }
 
-    // MARK: - Status Indicator
+    // MARK: - Status Icon
 
-    private var statusIndicator: some View {
-        Circle()
-            .fill(statusColor)
-            .frame(width: 8, height: 8)
+    private var statusIconView: some View {
+        ZStack {
+            Circle()
+                .fill(statusColor.opacity(theme.isDark ? 0.14 : 0.10))
+                .frame(width: 24, height: 24)
+
+            MorphingStatusIcon(state: statusIconState, accentColor: statusColor, size: 12)
+        }
+    }
+
+    private var statusIconState: StatusIconState {
+        switch task.status {
+        case .active: return .active
+        case .completed: return .completed
+        case .cancelled: return .failed
+        }
     }
 
     private var statusColor: Color {
         switch task.status {
         case .active: return theme.accentColor
-        case .completed: return .green
+        case .completed: return theme.successColor
         case .cancelled: return theme.tertiaryText
         }
     }
