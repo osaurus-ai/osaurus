@@ -1442,7 +1442,8 @@ struct ChatView: View {
                                     },
                                     onSelectPersona: { newPersonaId in
                                         windowState.switchPersona(to: newPersonaId)
-                                    }
+                                    },
+                                    onOpenOnboarding: nil
                                 )
                                 .transition(.opacity.combined(with: .scale(scale: 0.98)))
                             } else {
@@ -1486,6 +1487,14 @@ struct ChatView: View {
                                 onQuickAction: { _ in },
                                 onSelectPersona: { newPersonaId in
                                     windowState.switchPersona(to: newPersonaId)
+                                },
+                                onOpenOnboarding: {
+                                    // Reset onboarding so it shows the full flow
+                                    OnboardingService.shared.resetOnboarding()
+                                    // Close this window so user can focus on onboarding
+                                    ChatWindowManager.shared.closeWindow(id: windowState.windowId)
+                                    // Show onboarding window
+                                    AppDelegate.shared?.showOnboardingWindow()
                                 }
                             )
                         }
@@ -1712,7 +1721,7 @@ struct ChatView: View {
                 )
 
                 // Mode toggle - Agent mode (to the right of sidebar toggle)
-                ModeToggleButton(currentMode: .chat) {
+                ModeToggleButton(currentMode: .chat, isDisabled: !session.hasAnyModel) {
                     windowState.switchMode(to: .agent)
                 }
 
