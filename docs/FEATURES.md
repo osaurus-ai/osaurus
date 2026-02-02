@@ -103,7 +103,7 @@ Canonical reference for all Osaurus features, their status, and documentation.
 │  └── HTTPHandler (OpenAI/Anthropic/Ollama API handlers)                  │
 ├─────────────────────────────────────────────────────────────────────────┤
 │  CLI (OsaurusCLI Package)                                                │
-│  └── Commands: serve, stop, status, ui, list, run, mcp, tools            │
+│  └── Commands: serve, stop, status, ui, list, show, run, mcp, tools, version │
 └─────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -144,10 +144,10 @@ Canonical reference for all Osaurus features, their status, and documentation.
 **Presets:**
 | Preset | Host | Default Port | Auth |
 |--------|------|--------------|------|
+| Anthropic | api.anthropic.com | 443 (HTTPS) | API Key |
 | OpenAI | api.openai.com | 443 (HTTPS) | API Key |
+| xAI | api.x.ai | 443 (HTTPS) | API Key |
 | OpenRouter | openrouter.ai | 443 (HTTPS) | API Key |
-| Ollama | localhost | 11434 | None |
-| LM Studio | localhost | 1234 | None |
 | Custom | (user-defined) | (user-defined) | Optional |
 
 ---
@@ -426,21 +426,22 @@ Canonical reference for all Osaurus features, their status, and documentation.
 
 **Available Tools:**
 
-| Tool          | Description                                    |
-| ------------- | ---------------------------------------------- |
-| `file_tree`   | List directory structure with filtering        |
-| `file_read`   | Read file contents (supports line ranges)      |
-| `file_write`  | Create or overwrite files                      |
-| `file_edit`   | Surgical text replacement within files         |
-| `file_search` | Search for text patterns across files          |
-| `file_move`   | Move or rename files                           |
-| `file_copy`   | Duplicate files                                |
-| `file_delete` | Remove files                                   |
-| `dir_create`  | Create directories                             |
-| `shell_run`   | Execute shell commands (requires permission)   |
-| `git_status`  | Show repository status                         |
-| `git_diff`    | Display file differences                       |
-| `git_commit`  | Stage and commit changes (requires permission) |
+| Tool            | Description                                    |
+| --------------- | ---------------------------------------------- |
+| `file_tree`     | List directory structure with filtering        |
+| `file_read`     | Read file contents (supports line ranges)      |
+| `file_write`    | Create or overwrite files                      |
+| `file_edit`     | Surgical text replacement within files         |
+| `file_search`   | Search for text patterns across files          |
+| `file_move`     | Move or rename files                           |
+| `file_copy`     | Duplicate files                                |
+| `file_delete`   | Remove files                                   |
+| `file_metadata` | Get file information (size, dates, etc.)       |
+| `dir_create`    | Create directories                             |
+| `shell_run`     | Execute shell commands (requires permission)   |
+| `git_status`    | Show repository status                         |
+| `git_diff`      | Display file differences                       |
+| `git_commit`    | Stage and commit changes (requires permission) |
 
 **Workflow:**
 

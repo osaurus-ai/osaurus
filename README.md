@@ -117,7 +117,7 @@ Add to your MCP client configuration (e.g., Cursor, Claude Desktop):
 
 Open the Management window (`⌘ Shift M`) → **Providers** → **Add Provider**.
 
-Choose from presets (OpenAI, Ollama, LM Studio, OpenRouter) or configure a custom endpoint.
+Choose from presets (Anthropic, OpenAI, xAI, OpenRouter) or configure a custom endpoint.
 
 ---
 
@@ -145,10 +145,9 @@ Connect to remote APIs to access cloud models alongside local ones.
 
 - **Anthropic** — Claude models with native API support
 - **OpenAI** — GPT-4o, o1, and other OpenAI models
+- **xAI** — Grok models
 - **OpenRouter** — Access multiple providers through one API
-- **Ollama** — Connect to a local or remote Ollama instance
-- **LM Studio** — Use LM Studio as a backend
-- **Custom** — Any OpenAI-compatible endpoint
+- **Custom** — Any OpenAI-compatible endpoint (Ollama, LM Studio, etc.)
 
 Features:
 
@@ -396,9 +395,11 @@ See [Voice Input Guide](docs/VOICE_INPUT.md) for details.
 | `osaurus status`         | Check server status                          |
 | `osaurus ui`             | Open the menu bar UI                         |
 | `osaurus list`           | List downloaded models                       |
+| `osaurus show <model>`   | Show metadata for a model                    |
 | `osaurus run <model>`    | Interactive chat with a model                |
 | `osaurus mcp`            | Start MCP stdio transport                    |
 | `osaurus tools <cmd>`    | Manage plugins (install, list, search, etc.) |
+| `osaurus version`        | Show version                                 |
 
 **Tip:** Set `OSU_PORT` to override the default port.
 
