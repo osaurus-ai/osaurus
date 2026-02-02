@@ -13,7 +13,6 @@ struct AgentView: View {
     @ObservedObject var windowState: ChatWindowState
     @ObservedObject var session: AgentSession
 
-    @State private var showSidebar: Bool = false
     @State private var isPinnedToBottom: Bool = true
 
     @State private var progressSidebarWidth: CGFloat = 280
@@ -28,11 +27,11 @@ struct AgentView: View {
 
     var body: some View {
         GeometryReader { proxy in
-            let sidebarWidth: CGFloat = showSidebar ? 240 : 0
+            let sidebarWidth: CGFloat = windowState.showSidebar ? 240 : 0
             let mainWidth = proxy.size.width - sidebarWidth
 
             HStack(alignment: .top, spacing: 0) {
-                if showSidebar {
+                if windowState.showSidebar {
                     AgentTaskSidebar(
                         tasks: windowState.agentTasks,
                         currentTaskId: session.currentTask?.id,
@@ -96,7 +95,7 @@ struct AgentView: View {
             windowControls
         }
         .ignoresSafeArea()
-        .animation(theme.springAnimation(responseMultiplier: 0.9), value: showSidebar)
+        .animation(theme.springAnimation(responseMultiplier: 0.9), value: windowState.showSidebar)
         .environment(\.theme, windowState.theme)
         .tint(theme.accentColor)
         .sheet(item: $selectedArtifact) { artifact in
@@ -220,8 +219,8 @@ struct AgentView: View {
             if theme.glassEnabled {
                 ThemedGlassSurface(
                     cornerRadius: 24,
-                    topLeadingRadius: showSidebar ? 0 : nil,
-                    bottomLeadingRadius: showSidebar ? 0 : nil
+                    topLeadingRadius: windowState.showSidebar ? 0 : nil,
+                    bottomLeadingRadius: windowState.showSidebar ? 0 : nil
                 )
                 .allowsHitTesting(false)
 
@@ -251,8 +250,8 @@ struct AgentView: View {
 
     private var backgroundShape: UnevenRoundedRectangle {
         UnevenRoundedRectangle(
-            topLeadingRadius: showSidebar ? 0 : 24,
-            bottomLeadingRadius: showSidebar ? 0 : 24,
+            topLeadingRadius: windowState.showSidebar ? 0 : 24,
+            bottomLeadingRadius: windowState.showSidebar ? 0 : 24,
             bottomTrailingRadius: 24,
             topTrailingRadius: 24,
             style: .continuous
@@ -306,10 +305,10 @@ struct AgentView: View {
                 // Sidebar toggle - far left
                 HeaderActionButton(
                     icon: "sidebar.left",
-                    help: showSidebar ? "Hide sidebar" : "Show sidebar",
+                    help: windowState.showSidebar ? "Hide sidebar" : "Show sidebar",
                     action: {
                         withAnimation(theme.animationQuick()) {
-                            showSidebar.toggle()
+                            windowState.showSidebar.toggle()
                         }
                     }
                 )

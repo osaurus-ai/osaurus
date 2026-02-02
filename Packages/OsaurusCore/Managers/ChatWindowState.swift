@@ -30,6 +30,7 @@ final class ChatWindowState: ObservableObject {
     // MARK: - Mode State
 
     @Published var mode: ChatMode = .chat
+    @Published var showSidebar: Bool = false
 
     /// When non-nil, ChatView should present a close confirmation for active agent execution.
     @Published var agentCloseConfirmation: AgentCloseConfirmation?
