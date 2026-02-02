@@ -729,21 +729,21 @@ extension ModelManager {
         // MARK: Top Picks
 
         MLXModel(
-            id: "mlx-community/gemma-3n-E4B-it-lm-4bit",
-            name: friendlyName(from: "mlx-community/gemma-3n-E4B-it-lm-4bit"),
-            description: "Google's latest efficient model. Fast, smart, and runs great on any Mac.",
-            downloadURL: "https://huggingface.co/mlx-community/gemma-3n-E4B-it-lm-4bit",
+            id: "LiquidAI/LFM2.5-1.2B-Thinking-MLX-8bit",
+            name: friendlyName(from: "LiquidAI/LFM2.5-1.2B-Thinking-MLX-8bit"),
+            description: "Reasoning model with chain-of-thought. 128K context, runs on any Mac.",
+            downloadURL: "https://huggingface.co/LiquidAI/LFM2.5-1.2B-Thinking-MLX-8bit",
             isTopSuggestion: true,
-            downloadSizeBytes: 3_900_000_000
+            downloadSizeBytes: 1_240_000_000
         ),
 
         MLXModel(
-            id: "mlx-community/Qwen3-4B-4bit",
-            name: friendlyName(from: "mlx-community/Qwen3-4B-4bit"),
-            description: "Alibaba's compact powerhouse. Excellent reasoning in a lightweight package.",
-            downloadURL: "https://huggingface.co/mlx-community/Qwen3-4B-4bit",
+            id: "mlx-community/Qwen3-8B-4bit",
+            name: friendlyName(from: "mlx-community/Qwen3-8B-4bit"),
+            description: "Alibaba's powerful 8B model. Excellent reasoning and conversation.",
+            downloadURL: "https://huggingface.co/mlx-community/Qwen3-8B-4bit",
             isTopSuggestion: true,
-            downloadSizeBytes: 2_500_000_000
+            downloadSizeBytes: 4_610_000_000
         ),
 
         MLXModel(
@@ -825,6 +825,20 @@ extension ModelManager {
             name: friendlyName(from: "LiquidAI/LFM2.5-1.2B-Instruct-MLX-8bit"),
             description: "Liquid AI's efficient 1.2B model. 128K context with 10 language support.",
             downloadURL: "https://huggingface.co/LiquidAI/LFM2.5-1.2B-Instruct-MLX-8bit"
+        ),
+
+        MLXModel(
+            id: "mlx-community/gemma-3n-E4B-it-lm-4bit",
+            name: friendlyName(from: "mlx-community/gemma-3n-E4B-it-lm-4bit"),
+            description: "Google's latest efficient model. Fast, smart, and runs great on any Mac.",
+            downloadURL: "https://huggingface.co/mlx-community/gemma-3n-E4B-it-lm-4bit"
+        ),
+
+        MLXModel(
+            id: "mlx-community/Qwen3-4B-4bit",
+            name: friendlyName(from: "mlx-community/Qwen3-4B-4bit"),
+            description: "Alibaba's compact powerhouse. Excellent reasoning in a lightweight package.",
+            downloadURL: "https://huggingface.co/mlx-community/Qwen3-4B-4bit"
         ),
 
         MLXModel(
