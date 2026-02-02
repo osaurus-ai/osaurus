@@ -324,6 +324,12 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
 
     public func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
         Task { @MainActor in
+            // Show onboarding if not completed (mandatory step)
+            if OnboardingService.shared.shouldShowOnboarding {
+                self.showOnboardingWindow()
+                return
+            }
+
             if ChatWindowManager.shared.windowCount > 0 {
                 // Focus existing windows
                 ChatWindowManager.shared.focusAllWindows()
@@ -803,10 +809,12 @@ extension AppDelegate {
         }
 
         let themeManager = ThemeManager.shared
-        let contentView = OnboardingView {
+        let contentView = OnboardingView { [weak self] in
             // Close the onboarding window when complete
             Self.onboardingWindow?.close()
             Self.onboardingWindow = nil
+            // Open ChatView after onboarding completes
+            self?.showChatOverlay()
         }
         .environment(\.theme, themeManager.currentTheme)
 
