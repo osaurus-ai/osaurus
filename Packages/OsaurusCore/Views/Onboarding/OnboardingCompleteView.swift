@@ -10,6 +10,7 @@ import SwiftUI
 struct OnboardingCompleteView: View {
     let onWalkthrough: () -> Void
     let onSkip: () -> Void
+    let onSettings: () -> Void
 
     @Environment(\.theme) private var theme
     @State private var hasAppeared = false
@@ -45,7 +46,7 @@ struct OnboardingCompleteView: View {
             Spacer().frame(height: 20)
 
             // Headline
-            Text("You're all set")
+            Text("Ready to go")
                 .font(theme.font(size: 24, weight: .semibold))
                 .foregroundColor(theme.primaryText)
                 .multilineTextAlignment(.center)
@@ -53,24 +54,13 @@ struct OnboardingCompleteView: View {
                 .offset(y: hasAppeared ? 0 : 20)
                 .animation(.easeOut(duration: 0.6).delay(0.1), value: hasAppeared)
 
-            Spacer().frame(height: 10)
-
-            // Body
-            Text("Osaurus is ready to use.")
-                .font(theme.font(size: 14))
-                .foregroundColor(theme.secondaryText)
-                .multilineTextAlignment(.center)
-                .opacity(hasAppeared ? 1 : 0)
-                .offset(y: hasAppeared ? 0 : 15)
-                .animation(.easeOut(duration: 0.6).delay(0.15), value: hasAppeared)
-
             Spacer().frame(height: 35)
 
             // Options
             VStack(spacing: 12) {
                 CompleteOptionCard(
                     title: "Quick walkthrough",
-                    description: "Learn the basics in 2 minutes",
+                    description: "See what Osaurus can do",
                     icon: "play.circle",
                     action: onWalkthrough
                 )
@@ -79,7 +69,17 @@ struct OnboardingCompleteView: View {
                 .animation(.easeOut(duration: 0.5).delay(0.2), value: hasAppeared)
 
                 CompleteOptionCard(
-                    title: "Skip, I'll explore",
+                    title: "Customize",
+                    description: "Permissions, providers, appearance",
+                    icon: "gearshape",
+                    action: onSettings
+                )
+                .opacity(hasAppeared ? 1 : 0)
+                .offset(y: hasAppeared ? 0 : 15)
+                .animation(.easeOut(duration: 0.5).delay(0.2), value: hasAppeared)
+
+                CompleteOptionCard(
+                    title: "Jump in",
                     description: "",
                     icon: "arrow.right.circle",
                     isSecondary: true,
@@ -172,7 +172,8 @@ private struct CompleteOptionCard: View {
         static var previews: some View {
             OnboardingCompleteView(
                 onWalkthrough: {},
-                onSkip: {}
+                onSkip: {},
+                onSettings: {}
             )
             .frame(width: OnboardingLayout.windowWidth, height: OnboardingLayout.windowHeight)
         }

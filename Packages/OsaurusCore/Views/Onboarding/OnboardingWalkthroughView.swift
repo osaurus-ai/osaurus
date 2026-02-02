@@ -57,6 +57,7 @@ struct OnboardingWalkthroughView: View {
     @State private var currentStep = 0
     @State private var hasAppeared = false
     @State private var navigationDirection: NavigationDirection = .forward
+    @State private var isCardHovered = false
 
     private var totalSteps: Int {
         WalkthroughStepType.allCases.count
@@ -72,31 +73,50 @@ struct OnboardingWalkthroughView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            Spacer().frame(height: 30)
+            Spacer().frame(height: 24)
 
-            // Step indicator (clickable)
+            // Step indicator (clickable pill style)
             stepIndicator
                 .opacity(hasAppeared ? 1 : 0)
                 .animation(.easeOut(duration: 0.5).delay(0.1), value: hasAppeared)
 
-            Spacer().frame(height: 6)
+            Spacer().frame(height: 20)
 
-            // Step label
-            Text("Step \(currentStep + 1) of \(totalSteps)")
-                .font(theme.font(size: 12, weight: .medium))
-                .foregroundColor(theme.tertiaryText)
+            // Content card with glass styling
+            contentCard
                 .opacity(hasAppeared ? 1 : 0)
                 .animation(.easeOut(duration: 0.5).delay(0.15), value: hasAppeared)
 
-            Spacer().frame(height: 20)
+            Spacer()
+                .frame(minHeight: 24)
 
+            // Navigation buttons (fixed layout)
+            navigationButtons
+                .opacity(hasAppeared ? 1 : 0)
+                .animation(.easeOut(duration: 0.5).delay(0.35), value: hasAppeared)
+
+            Spacer().frame(height: 36)
+        }
+        .padding(.horizontal, 24)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .onAppear {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                withAnimation {
+                    hasAppeared = true
+                }
+            }
+        }
+    }
+
+    // MARK: - Content Card
+
+    private var contentCard: some View {
+        VStack(spacing: 0) {
             // Illustration
             illustrationView
                 .frame(height: 140)
                 .id("illustration-\(currentStep)")
                 .transition(slideTransition)
-                .opacity(hasAppeared ? 1 : 0)
-                .animation(.easeOut(duration: 0.5).delay(0.2), value: hasAppeared)
 
             Spacer().frame(height: 24)
 
@@ -107,10 +127,8 @@ struct OnboardingWalkthroughView: View {
                 .multilineTextAlignment(.center)
                 .id("title-\(currentStep)")
                 .transition(slideTransition)
-                .opacity(hasAppeared ? 1 : 0)
-                .animation(.easeOut(duration: 0.5).delay(0.25), value: hasAppeared)
 
-            Spacer().frame(height: 14)
+            Spacer().frame(height: 12)
 
             // Body
             Text(step.body)
@@ -119,31 +137,85 @@ struct OnboardingWalkthroughView: View {
                 .multilineTextAlignment(.center)
                 .lineSpacing(5)
                 .fixedSize(horizontal: false, vertical: true)
-                .padding(.horizontal, 40)
                 .id("body-\(currentStep)")
                 .transition(slideTransition)
-                .opacity(hasAppeared ? 1 : 0)
-                .animation(.easeOut(duration: 0.5).delay(0.3), value: hasAppeared)
-
-            Spacer()
-                .frame(minHeight: 20)
-
-            // Navigation buttons (fixed layout)
-            navigationButtons
-                .opacity(hasAppeared ? 1 : 0)
-                .animation(.easeOut(duration: 0.5).delay(0.35), value: hasAppeared)
-
-            Spacer().frame(height: 40)
         }
-        .padding(.horizontal, 20)
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .onAppear {
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                withAnimation {
-                    hasAppeared = true
-                }
+        .padding(.horizontal, 32)
+        .padding(.vertical, 28)
+        .frame(maxWidth: .infinity)
+        .background(cardBackground)
+        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .overlay(cardBorder)
+        .shadow(
+            color: theme.shadowColor.opacity(theme.shadowOpacity * (isCardHovered ? 1.2 : 0.8)),
+            radius: isCardHovered ? 20 : 12,
+            x: 0,
+            y: isCardHovered ? 8 : 4
+        )
+        .scaleEffect(isCardHovered ? 1.005 : 1.0)
+        .animation(theme.animationQuick(), value: isCardHovered)
+        .onHover { hovering in
+            isCardHovered = hovering
+        }
+    }
+
+    // MARK: - Card Background
+
+    private var cardBackground: some View {
+        ZStack {
+            if theme.glassEnabled {
+                Rectangle().fill(.ultraThinMaterial)
             }
+
+            theme.cardBackground.opacity(
+                theme.glassEnabled
+                    ? (theme.isDark ? 0.78 : 0.88)
+                    : 1.0
+            )
+
+            LinearGradient(
+                colors: [
+                    theme.accentColor.opacity(theme.isDark ? 0.06 : 0.04),
+                    Color.clear,
+                    theme.primaryBackground.opacity(theme.isDark ? 0.06 : 0.03),
+                ],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            )
         }
+    }
+
+    // MARK: - Card Border
+
+    private var cardBorder: some View {
+        RoundedRectangle(cornerRadius: 16, style: .continuous)
+            .strokeBorder(
+                LinearGradient(
+                    colors: [
+                        theme.glassEdgeLight.opacity(theme.isDark ? 0.22 : 0.35),
+                        theme.primaryBorder.opacity(theme.isDark ? 0.15 : 0.25),
+                    ],
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing
+                ),
+                lineWidth: 1
+            )
+            .overlay(accentEdge)
+    }
+
+    private var accentEdge: some View {
+        RoundedRectangle(cornerRadius: 16, style: .continuous)
+            .strokeBorder(
+                theme.accentColor.opacity(isCardHovered ? 0.18 : 0.08),
+                lineWidth: 1
+            )
+            .mask(
+                LinearGradient(
+                    colors: [Color.white, Color.white.opacity(0)],
+                    startPoint: .leading,
+                    endPoint: .trailing
+                )
+            )
     }
 
     // MARK: - Slide Transition
@@ -159,17 +231,16 @@ struct OnboardingWalkthroughView: View {
         )
     }
 
-    // MARK: - Step Indicator (Clickable)
+    // MARK: - Step Indicator (Pill Style)
 
     private var stepIndicator: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: 6) {
             ForEach(0 ..< totalSteps, id: \.self) { stepIndex in
-                Circle()
-                    .fill(stepIndex == currentStep ? theme.accentColor : theme.primaryBorder)
-                    .frame(width: 8, height: 8)
-                    .scaleEffect(stepIndex == currentStep ? 1.2 : 1.0)
+                Capsule()
+                    .fill(stepIndex == currentStep ? theme.accentColor : theme.primaryBorder.opacity(0.5))
+                    .frame(width: stepIndex == currentStep ? 24 : 8, height: 6)
                     .animation(theme.springAnimation(), value: currentStep)
-                    .contentShape(Circle().scale(2.5))
+                    .contentShape(Rectangle().inset(by: -8))
                     .onTapGesture {
                         navigateTo(stepIndex)
                     }
@@ -197,26 +268,28 @@ struct OnboardingWalkthroughView: View {
 
     private var navigationButtons: some View {
         HStack(spacing: 12) {
-            // Back button - always present, invisible on first step
-            OnboardingSecondaryButton(title: "Back") {
-                navigateTo(currentStep - 1)
+            // Back button - only rendered when not on first step
+            if currentStep > 0 {
+                OnboardingSecondaryButton(title: "Back") {
+                    navigateTo(currentStep - 1)
+                }
+                .frame(width: 120)
+                .transition(.opacity.combined(with: .scale(scale: 0.9)))
             }
-            .frame(width: 100)
-            .opacity(currentStep > 0 ? 1 : 0)
-            .disabled(currentStep == 0)
 
             // Forward button
-            if isLastStep {
-                OnboardingShimmerButton(title: "Start using Osaurus") {
-                    onComplete()
+            Group {
+                if isLastStep {
+                    OnboardingShimmerButton(title: "Start using Osaurus") {
+                        onComplete()
+                    }
+                } else {
+                    OnboardingPrimaryButton(title: "Next") {
+                        navigateTo(currentStep + 1)
+                    }
                 }
-                .frame(width: 200)
-            } else {
-                OnboardingPrimaryButton(title: "Next") {
-                    navigateTo(currentStep + 1)
-                }
-                .frame(width: 100)
             }
+            .frame(width: 180)
         }
     }
 

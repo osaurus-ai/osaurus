@@ -229,6 +229,14 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
             object: nil
         )
 
+        // Listen for requests to show management window
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleShowManagement(_:)),
+            name: NSNotification.Name("ShowManagement"),
+            object: nil
+        )
+
         // Listen for chat view closed to resume VAD
         NotificationCenter.default.addObserver(
             self,
@@ -313,6 +321,12 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
     @objc private func handleShowVoiceSettings(_ notification: Notification) {
         Task { @MainActor in
             showManagementWindow(initialTab: .voice)
+        }
+    }
+
+    @objc private func handleShowManagement(_ notification: Notification) {
+        Task { @MainActor in
+            showManagementWindow()
         }
     }
 

@@ -122,6 +122,10 @@ public struct OnboardingView: View {
                 },
                 onSkip: {
                     finishOnboarding()
+                },
+                onSettings: {
+                    finishOnboarding()
+                    NotificationCenter.default.post(name: NSNotification.Name("ShowManagement"), object: nil)
                 }
             )
 
