@@ -55,7 +55,7 @@ public struct OnboardingView: View {
             VStack(spacing: 0) {
                 HStack(spacing: 0) {
                     Spacer()
-                    OnboardingCloseButton(action: onComplete)
+                    OnboardingCloseButton(action: finishOnboarding)
                         .padding(.top, 14)
                         .padding(.trailing, 14)
                 }
@@ -102,9 +102,6 @@ public struct OnboardingView: View {
                 },
                 onBack: {
                     navigateTo(.choosePath, direction: .backward)
-                },
-                onUseAPIProvider: {
-                    navigateTo(.apiSetup, direction: .forward)
                 }
             )
 
@@ -113,8 +110,8 @@ public struct OnboardingView: View {
                 onComplete: {
                     navigateTo(.complete, direction: .forward)
                 },
-                onUseLocalModel: {
-                    navigateTo(.localDownload, direction: .forward)
+                onBack: {
+                    navigateTo(.choosePath, direction: .backward)
                 }
             )
 

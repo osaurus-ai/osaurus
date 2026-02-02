@@ -11,7 +11,6 @@ struct OnboardingLocalDownloadView: View {
     let onComplete: () -> Void
     let onSkip: () -> Void
     let onBack: () -> Void
-    let onUseAPIProvider: () -> Void
 
     @Environment(\.theme) private var theme
     @ObservedObject private var modelManager = ModelManager.shared
@@ -148,7 +147,15 @@ struct OnboardingLocalDownloadView: View {
 
     private var selectionView: some View {
         VStack(spacing: 0) {
-            Spacer().frame(height: 45)
+            Spacer().frame(height: 30)
+
+            // Back button
+            backButton
+                .padding(.horizontal, 15)
+                .opacity(hasAppeared ? 1 : 0)
+                .animation(.easeOut(duration: 0.5).delay(0.05), value: hasAppeared)
+
+            Spacer().frame(height: 20)
 
             // Headline
             Text("Choose a local model")
@@ -202,24 +209,23 @@ struct OnboardingLocalDownloadView: View {
 
             Spacer()
 
-            // Action buttons
-            VStack(spacing: 14) {
-                OnboardingShimmerButton(
-                    title: "Start Download",
-                    action: {
+            // Action button
+            OnboardingShimmerButton(
+                title: selectedModel?.isDownloaded == true ? "Continue" : "Start Download",
+                action: {
+                    if selectedModel?.isDownloaded == true {
+                        // Model already downloaded, skip to completion
+                        onComplete()
+                    } else {
                         withAnimation(.easeInOut(duration: 0.3)) {
                             hasStartedDownload = true
                         }
                         startDownload()
-                    },
-                    isEnabled: selectedModel != nil
-                )
-                .frame(width: 200)
-
-                OnboardingTextButton(title: "Use an AI provider instead") {
-                    onUseAPIProvider()
-                }
-            }
+                    }
+                },
+                isEnabled: selectedModel != nil
+            )
+            .frame(width: 200)
             .opacity(hasAppeared ? 1 : 0)
             .animation(.easeOut(duration: 0.5).delay(0.4), value: hasAppeared)
 
@@ -292,6 +298,31 @@ struct OnboardingLocalDownloadView: View {
         }
     }
 
+    // MARK: - Back Button
+
+    private var backButton: some View {
+        HStack {
+            Button {
+                onBack()
+            } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: "chevron.left")
+                        .font(.system(size: 12, weight: .semibold))
+                    Text("Back")
+                        .font(theme.font(size: 13, weight: .medium))
+                }
+                .foregroundColor(theme.secondaryText)
+                .padding(.vertical, 8)
+                .padding(.horizontal, 12)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+
+            Spacer()
+        }
+        .padding(.leading, -12)
+    }
+
     // MARK: - Private Methods
 
     private func startDownload() {
@@ -350,7 +381,9 @@ private struct ModelSelectionCard: View {
 
                             // Badges
                             HStack(spacing: 4) {
-                                if let size = model.formattedDownloadSize {
+                                if model.isDownloaded {
+                                    DownloadedBadgeView()
+                                } else if let size = model.formattedDownloadSize {
                                     BadgeView(text: size)
                                 }
                                 BadgeView(text: model.modelType.rawValue)
@@ -410,6 +443,28 @@ private struct BadgeView: View {
     }
 }
 
+// MARK: - Downloaded Badge View
+
+private struct DownloadedBadgeView: View {
+    @Environment(\.theme) private var theme
+
+    var body: some View {
+        HStack(spacing: 3) {
+            Image(systemName: "checkmark.circle.fill")
+                .font(.system(size: 9, weight: .medium))
+            Text("Downloaded")
+                .font(theme.font(size: 10, weight: .medium))
+        }
+        .foregroundColor(.green)
+        .padding(.horizontal, 6)
+        .padding(.vertical, 2)
+        .background(
+            RoundedRectangle(cornerRadius: 4, style: .continuous)
+                .fill(Color.green.opacity(0.15))
+        )
+    }
+}
+
 // MARK: - Preview
 
 #if DEBUG
@@ -418,8 +473,7 @@ private struct BadgeView: View {
             OnboardingLocalDownloadView(
                 onComplete: {},
                 onSkip: {},
-                onBack: {},
-                onUseAPIProvider: {}
+                onBack: {}
             )
             .frame(width: OnboardingLayout.windowWidth, height: OnboardingLayout.windowHeight)
         }

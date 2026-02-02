@@ -77,7 +77,7 @@ enum OnboardingProviderOption: String, CaseIterable, Identifiable {
 
 struct OnboardingAPISetupView: View {
     let onComplete: () -> Void
-    let onUseLocalModel: () -> Void
+    let onBack: () -> Void
 
     @Environment(\.theme) private var theme
     @State private var selectedProvider: OnboardingProviderOption? = nil
@@ -157,7 +157,15 @@ struct OnboardingAPISetupView: View {
 
     private var providerSelectionView: some View {
         VStack(spacing: 0) {
-            Spacer().frame(height: 60)
+            Spacer().frame(height: 30)
+
+            // Back button
+            providerSelectionBackButton
+                .padding(.horizontal, 40)
+                .opacity(hasAppeared ? 1 : 0)
+                .animation(theme.springAnimation().delay(0.05), value: hasAppeared)
+
+            Spacer().frame(height: 20)
 
             // Headline
             Text("Connect a provider")
@@ -196,13 +204,6 @@ struct OnboardingAPISetupView: View {
                 .animation(theme.springAnimation().delay(0.4), value: hasAppeared)
 
             Spacer()
-
-            // Skip option
-            OnboardingTextButton(title: "Use a local model instead", action: onUseLocalModel)
-                .opacity(hasAppeared ? 1 : 0)
-                .animation(theme.springAnimation().delay(0.45), value: hasAppeared)
-
-            Spacer().frame(height: 50)
         }
         .padding(.horizontal, 20)
     }
@@ -357,6 +358,31 @@ struct OnboardingAPISetupView: View {
 
     // MARK: - Shared Components
 
+    /// Back button for provider selection view - goes back to choose path
+    private var providerSelectionBackButton: some View {
+        HStack {
+            Button {
+                onBack()
+            } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: "chevron.left")
+                        .font(.system(size: 12, weight: .semibold))
+                    Text("Back")
+                        .font(theme.font(size: 13, weight: .medium))
+                }
+                .foregroundColor(theme.secondaryText)
+                .padding(.vertical, 8)
+                .padding(.horizontal, 12)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+
+            Spacer()
+        }
+        .padding(.leading, -12)
+    }
+
+    /// Back button for API key/custom provider views - goes back to provider selection
     private var backButton: some View {
         HStack {
             Button {
@@ -377,11 +403,15 @@ struct OnboardingAPISetupView: View {
                         .font(theme.font(size: 13, weight: .medium))
                 }
                 .foregroundColor(theme.secondaryText)
+                .padding(.vertical, 8)
+                .padding(.horizontal, 12)
+                .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
 
             Spacer()
         }
+        .padding(.leading, -12)
     }
 
     private var endpointPreview: some View {
@@ -453,25 +483,21 @@ struct OnboardingAPISetupView: View {
     }
 
     private var actionButtons: some View {
-        VStack(spacing: 12) {
-            OnboardingStatefulButton(
-                state: buttonState,
-                idleTitle: "Test Connection",
-                loadingTitle: buttonLoadingTitle,
-                successTitle: "Continue",
-                errorTitle: "Try Again",
-                action: {
-                    if isSuccess {
-                        saveProviderAndContinue()
-                    } else {
-                        testConnection()
-                    }
-                },
-                isEnabled: canTest
-            )
-
-            OnboardingTextButton(title: "Use a local model instead", action: onUseLocalModel)
-        }
+        OnboardingStatefulButton(
+            state: buttonState,
+            idleTitle: "Test Connection",
+            loadingTitle: buttonLoadingTitle,
+            successTitle: "Continue",
+            errorTitle: "Try Again",
+            action: {
+                if isSuccess {
+                    saveProviderAndContinue()
+                } else {
+                    testConnection()
+                }
+            },
+            isEnabled: canTest
+        )
     }
 
     // MARK: - Actions
@@ -697,7 +723,7 @@ private struct HelpStep: View {
         static var previews: some View {
             OnboardingAPISetupView(
                 onComplete: {},
-                onUseLocalModel: {}
+                onBack: {}
             )
             .frame(width: 580, height: 700)
         }
