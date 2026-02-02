@@ -51,6 +51,7 @@ Osaurus is the AI edge runtime for macOS. It brings together:
 - **Personas** — Create custom AI assistants with unique prompts, tools, and visual themes
 - **Skills** — Import reusable AI capabilities from GitHub or files ([Agent Skills](https://agentskills.io/) compatible)
 - **Schedules** — Automate recurring AI tasks with timed execution
+- **Agents** — Autonomous task execution with issue tracking, parallel tasks, and file operations
 - **Multi-Window Chat** — Multiple independent chat windows with per-window personas
 - **Developer Tools** — Built-in insights and server explorer for debugging
 - **Voice Input** — Speech-to-text using WhisperKit with real-time on-device transcription
@@ -60,27 +61,28 @@ Osaurus is the AI edge runtime for macOS. It brings together:
 
 ### Highlights
 
-| Feature                  | Description                                                     |
-| ------------------------ | --------------------------------------------------------------- |
-| **Local LLM Server**     | Run Llama, Qwen, Gemma, Mistral, and more locally               |
-| **Remote Providers**     | Anthropic, OpenAI, OpenRouter, Ollama, LM Studio, or custom     |
-| **OpenAI Compatible**    | `/v1/chat/completions` with streaming and tool calling          |
-| **Anthropic Compatible** | `/messages` endpoint for Claude Code and Anthropic SDK clients  |
-| **Open Responses**       | `/responses` endpoint for multi-provider interoperability       |
-| **MCP Server**           | Connect to Cursor, Claude Desktop, and other MCP clients        |
-| **Remote MCP Providers** | Aggregate tools from external MCP servers                       |
-| **Tools & Plugins**      | Browser automation, file system, git, web search, and more      |
+| Feature                  | Description                                                            |
+| ------------------------ | ---------------------------------------------------------------------- |
+| **Local LLM Server**     | Run Llama, Qwen, Gemma, Mistral, and more locally                      |
+| **Remote Providers**     | Anthropic, OpenAI, OpenRouter, Ollama, LM Studio, or custom            |
+| **OpenAI Compatible**    | `/v1/chat/completions` with streaming and tool calling                 |
+| **Anthropic Compatible** | `/messages` endpoint for Claude Code and Anthropic SDK clients         |
+| **Open Responses**       | `/responses` endpoint for multi-provider interoperability              |
+| **MCP Server**           | Connect to Cursor, Claude Desktop, and other MCP clients               |
+| **Remote MCP Providers** | Aggregate tools from external MCP servers                              |
+| **Tools & Plugins**      | Browser automation, file system, git, web search, and more             |
 | **Skills**               | Import AI capabilities from GitHub or files, with smart context saving |
-| **Personas**             | Custom AI assistants with unique prompts, tools, and themes     |
-| **Schedules**            | Automate AI tasks with daily, weekly, monthly, or yearly runs   |
-| **Custom Themes**        | Create, import, and export themes with full color customization |
-| **Developer Tools**      | Request insights, API explorer, and live endpoint testing       |
-| **Multi-Window Chat**    | Multiple independent chat windows with per-window personas      |
-| **Menu Bar Chat**        | Chat overlay with session history, context tracking (`⌘;`)      |
-| **Voice Input**          | Speech-to-text with WhisperKit, real-time transcription         |
-| **VAD Mode**             | Always-on listening with wake-word persona activation           |
-| **Transcription Mode**   | Global hotkey to dictate into any focused text field            |
-| **Model Manager**        | Download and manage models from Hugging Face                    |
+| **Personas**             | Custom AI assistants with unique prompts, tools, and themes            |
+| **Schedules**            | Automate AI tasks with daily, weekly, monthly, or yearly runs          |
+| **Agents**               | Autonomous multi-step task execution with parallel task support        |
+| **Custom Themes**        | Create, import, and export themes with full color customization        |
+| **Developer Tools**      | Request insights, API explorer, and live endpoint testing              |
+| **Multi-Window Chat**    | Multiple independent chat windows with per-window personas             |
+| **Menu Bar Chat**        | Chat overlay with session history, context tracking (`⌘;`)             |
+| **Voice Input**          | Speech-to-text with WhisperKit, real-time transcription                |
+| **VAD Mode**             | Always-on listening with wake-word persona activation                  |
+| **Transcription Mode**   | Global hotkey to dictate into any focused text field                   |
+| **Model Manager**        | Download and manage models from Hugging Face                           |
 
 ---
 
@@ -271,6 +273,32 @@ Automate recurring AI tasks that run at specified intervals.
 
 Access via Management window (`⌘ Shift M`) → **Schedules**.
 
+### Agents
+
+Execute complex, multi-step tasks autonomously with built-in issue tracking and planning.
+
+**Features:**
+
+- **Issue Tracking** — Tasks broken into issues with status, priority, and dependencies
+- **Parallel Tasks** — Run multiple agent tasks simultaneously for increased productivity
+- **Execution Planning** — AI generates step-by-step plans (max 10 steps per issue)
+- **Working Directory** — Select a folder for file operations with project detection
+- **File Operations** — Read, write, edit, search files with undo support
+- **Discovery** — Automatically detects errors, TODOs, and prerequisites
+- **Clarification** — Agent pauses to ask when tasks are ambiguous
+- **Background Execution** — Tasks continue running after closing the window
+
+**Use Cases:**
+
+- Build features across multiple files
+- Refactor codebases with tracked changes
+- Debug issues with systematic investigation
+- Research and documentation tasks
+
+Access via Chat window → **Agent Mode** tab.
+
+See [Agents Guide](docs/AGENTS.md) for details.
+
 ### Multi-Window Chat
 
 Work with multiple independent chat windows, each with its own persona and session.
@@ -382,13 +410,13 @@ Base URL: `http://127.0.0.1:1337` (or your configured port)
 
 | Endpoint                    | Description                         |
 | --------------------------- | ----------------------------------- |
-| `GET /health`               | Server health                          |
-| `GET /v1/models`            | List models (OpenAI format)            |
-| `GET /v1/tags`              | List models (Ollama format)            |
-| `POST /v1/chat/completions` | Chat completions (OpenAI format)       |
-| `POST /messages`            | Chat completions (Anthropic format)    |
-| `POST /v1/responses`        | Responses (Open Responses format)      |
-| `POST /chat`                | Chat (Ollama format, NDJSON)           |
+| `GET /health`               | Server health                       |
+| `GET /v1/models`            | List models (OpenAI format)         |
+| `GET /v1/tags`              | List models (Ollama format)         |
+| `POST /v1/chat/completions` | Chat completions (OpenAI format)    |
+| `POST /messages`            | Chat completions (Anthropic format) |
+| `POST /v1/responses`        | Responses (Open Responses format)   |
+| `POST /chat`                | Chat (Ollama format, NDJSON)        |
 
 All endpoints support `/v1`, `/api`, and `/v1/api` prefixes.
 

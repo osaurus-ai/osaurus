@@ -8,32 +8,33 @@ Canonical reference for all Osaurus features, their status, and documentation.
 
 ## Feature Matrix
 
-| Feature                          | Status    | README Section     | Documentation                 | Code Location                                                                    |
-| -------------------------------- | --------- | ------------------ | ----------------------------- | -------------------------------------------------------------------------------- |
-| Local LLM Server (MLX)           | Stable    | "Key Features"     | OpenAI_API_GUIDE.md           | Services/MLXService.swift, Services/ModelRuntime/                                |
-| Remote Providers                 | Stable    | "Key Features"     | REMOTE_PROVIDERS.md           | Services/RemoteProviderManager.swift, Services/RemoteProviderService.swift       |
-| Remote MCP Providers             | Stable    | "Key Features"     | REMOTE_MCP_PROVIDERS.md       | Services/MCPProviderManager.swift, Tools/MCPProviderTool.swift                   |
-| MCP Server                       | Stable    | "MCP Server"       | (in README)                   | Networking/OsaurusServer.swift, Services/MCPServerManager.swift                  |
-| Tools & Plugins                  | Stable    | "Tools & Plugins"  | PLUGIN_AUTHORING.md           | Tools/, Managers/PluginManager.swift                                             |
+| Feature                          | Status    | README Section     | Documentation                 | Code Location                                                                         |
+| -------------------------------- | --------- | ------------------ | ----------------------------- | ------------------------------------------------------------------------------------- |
+| Local LLM Server (MLX)           | Stable    | "Key Features"     | OpenAI_API_GUIDE.md           | Services/MLXService.swift, Services/ModelRuntime/                                     |
+| Remote Providers                 | Stable    | "Key Features"     | REMOTE_PROVIDERS.md           | Services/RemoteProviderManager.swift, Services/RemoteProviderService.swift            |
+| Remote MCP Providers             | Stable    | "Key Features"     | REMOTE_MCP_PROVIDERS.md       | Services/MCPProviderManager.swift, Tools/MCPProviderTool.swift                        |
+| MCP Server                       | Stable    | "MCP Server"       | (in README)                   | Networking/OsaurusServer.swift, Services/MCPServerManager.swift                       |
+| Tools & Plugins                  | Stable    | "Tools & Plugins"  | PLUGIN_AUTHORING.md           | Tools/, Managers/PluginManager.swift                                                  |
 | Skills                           | Stable    | "Skills"           | SKILLS.md                     | Managers/SkillManager.swift, Views/SkillsView.swift, Services/CapabilityService.swift |
-| Personas                         | Stable    | "Personas"         | (in README)                   | Managers/PersonaManager.swift, Models/Persona.swift, Views/PersonasView.swift    |
-| Schedules                        | Stable    | "Schedules"        | (in README)                   | Managers/ScheduleManager.swift, Models/Schedule.swift, Views/SchedulesView.swift |
-| Developer Tools: Insights        | Stable    | "Developer Tools"  | DEVELOPER_TOOLS.md            | Views/InsightsView.swift, Services/InsightsService.swift                         |
-| Developer Tools: Server Explorer | Stable    | "Developer Tools"  | DEVELOPER_TOOLS.md            | Views/ServerView.swift                                                           |
-| Apple Foundation Models          | macOS 26+ | "What is Osaurus?" | (in README)                   | Services/FoundationModelService.swift                                            |
-| Menu Bar Chat                    | Stable    | "Highlights"       | (in README)                   | Views/ChatView.swift, Views/ChatOverlayView.swift                                |
-| Chat Session Management          | Stable    | "Highlights"       | (in README)                   | Managers/ChatSessionsManager.swift, Models/ChatSessionData.swift                 |
-| Custom Themes                    | Stable    | "Highlights"       | (in README)                   | Views/ThemesView.swift, Views/Components/ThemeEditorView.swift                   |
-| Model Manager                    | Stable    | "Highlights"       | (in README)                   | Views/ModelDownloadView.swift, Services/HuggingFaceService.swift                 |
-| Shared Configuration             | Stable    | -                  | SHARED_CONFIGURATION_GUIDE.md | Services/SharedConfigurationService.swift                                        |
-| OpenAI API Compatibility         | Stable    | "API Endpoints"    | OpenAI_API_GUIDE.md           | Networking/HTTPHandler.swift, Models/OpenAIAPI.swift                             |
-| Anthropic API Compatibility      | Stable    | "API Endpoints"    | (in README)                   | Networking/HTTPHandler.swift, Models/AnthropicAPI.swift                          |
-| Open Responses API               | Stable    | "API Endpoints"    | OpenAI_API_GUIDE.md           | Networking/HTTPHandler.swift, Models/OpenResponsesAPI.swift                      |
-| Ollama API Compatibility         | Stable    | "API Endpoints"    | (in README)                   | Networking/HTTPHandler.swift                                                     |
-| Voice Input (WhisperKit)         | Stable    | "Voice Input"      | VOICE_INPUT.md                | Services/WhisperKitService.swift, Managers/WhisperModelManager.swift             |
-| VAD Mode                         | Stable    | "Voice Input"      | VOICE_INPUT.md                | Services/VADService.swift, Views/ContentView.swift (VAD controls)                |
-| Transcription Mode               | Stable    | "Voice Input"      | VOICE_INPUT.md                | Services/TranscriptionModeService.swift, Views/TranscriptionOverlayView.swift    |
-| CLI                              | Stable    | "CLI Reference"    | (in README)                   | Packages/OsaurusCLI/                                                             |
+| Personas                         | Stable    | "Personas"         | (in README)                   | Managers/PersonaManager.swift, Models/Persona.swift, Views/PersonasView.swift         |
+| Schedules                        | Stable    | "Schedules"        | (in README)                   | Managers/ScheduleManager.swift, Models/Schedule.swift, Views/SchedulesView.swift      |
+| Agents                           | Stable    | "Agents"           | AGENTS.md                     | Agent/, Services/AgentEngine.swift, Views/AgentView.swift                             |
+| Developer Tools: Insights        | Stable    | "Developer Tools"  | DEVELOPER_TOOLS.md            | Views/InsightsView.swift, Services/InsightsService.swift                              |
+| Developer Tools: Server Explorer | Stable    | "Developer Tools"  | DEVELOPER_TOOLS.md            | Views/ServerView.swift                                                                |
+| Apple Foundation Models          | macOS 26+ | "What is Osaurus?" | (in README)                   | Services/FoundationModelService.swift                                                 |
+| Menu Bar Chat                    | Stable    | "Highlights"       | (in README)                   | Views/ChatView.swift, Views/ChatOverlayView.swift                                     |
+| Chat Session Management          | Stable    | "Highlights"       | (in README)                   | Managers/ChatSessionsManager.swift, Models/ChatSessionData.swift                      |
+| Custom Themes                    | Stable    | "Highlights"       | (in README)                   | Views/ThemesView.swift, Views/Components/ThemeEditorView.swift                        |
+| Model Manager                    | Stable    | "Highlights"       | (in README)                   | Views/ModelDownloadView.swift, Services/HuggingFaceService.swift                      |
+| Shared Configuration             | Stable    | -                  | SHARED_CONFIGURATION_GUIDE.md | Services/SharedConfigurationService.swift                                             |
+| OpenAI API Compatibility         | Stable    | "API Endpoints"    | OpenAI_API_GUIDE.md           | Networking/HTTPHandler.swift, Models/OpenAIAPI.swift                                  |
+| Anthropic API Compatibility      | Stable    | "API Endpoints"    | (in README)                   | Networking/HTTPHandler.swift, Models/AnthropicAPI.swift                               |
+| Open Responses API               | Stable    | "API Endpoints"    | OpenAI_API_GUIDE.md           | Networking/HTTPHandler.swift, Models/OpenResponsesAPI.swift                           |
+| Ollama API Compatibility         | Stable    | "API Endpoints"    | (in README)                   | Networking/HTTPHandler.swift                                                          |
+| Voice Input (WhisperKit)         | Stable    | "Voice Input"      | VOICE_INPUT.md                | Services/WhisperKitService.swift, Managers/WhisperModelManager.swift                  |
+| VAD Mode                         | Stable    | "Voice Input"      | VOICE_INPUT.md                | Services/VADService.swift, Views/ContentView.swift (VAD controls)                     |
+| Transcription Mode               | Stable    | "Voice Input"      | VOICE_INPUT.md                | Services/TranscriptionModeService.swift, Views/TranscriptionOverlayView.swift         |
+| CLI                              | Stable    | "CLI Reference"    | (in README)                   | Packages/OsaurusCLI/                                                                  |
 
 ---
 
@@ -46,6 +47,7 @@ Canonical reference for all Osaurus features, their status, and documentation.
 │  Views Layer                                                             │
 │  ├── ContentView (Menu Bar)                                              │
 │  ├── ChatOverlayView (Global Hotkey Chat)                                │
+│  ├── AgentView (Agent Mode)                                              │
 │  ├── ManagementView                                                      │
 │  │   ├── ModelDownloadView (Models)                                      │
 │  │   ├── RemoteProvidersView (Providers)                                 │
@@ -80,6 +82,10 @@ Canonical reference for all Osaurus features, their status, and documentation.
 │  │   └── GitHubSkillService (GitHub import)                              │
 │  ├── Scheduling                                                          │
 │  │   └── ScheduleManager (Schedule lifecycle and execution)              │
+│  ├── Agents                                                              │
+│  │   ├── AgentEngine (Task execution coordinator)                        │
+│  │   ├── AgentExecutionEngine (Plan generation and execution)            │
+│  │   └── IssueManager (Issue lifecycle management)                       │
 │  ├── Voice/Audio                                                         │
 │  │   ├── WhisperKitService (Speech-to-text transcription)                │
 │  │   ├── WhisperModelManager (Whisper model downloads)                   │
@@ -260,16 +266,16 @@ Canonical reference for all Osaurus features, their status, and documentation.
 
 **Streaming Events:**
 
-| Event | Description |
-|-------|-------------|
-| `response.created` | Response object created |
-| `response.in_progress` | Generation started |
-| `response.output_item.added` | New output item (message or function call) |
-| `response.output_text.delta` | Text content delta |
-| `response.output_text.done` | Text content completed |
-| `response.function_call_arguments.delta` | Function arguments delta |
-| `response.output_item.done` | Output item completed |
-| `response.completed` | Response finished |
+| Event                                    | Description                                |
+| ---------------------------------------- | ------------------------------------------ |
+| `response.created`                       | Response object created                    |
+| `response.in_progress`                   | Generation started                         |
+| `response.output_item.added`             | New output item (message or function call) |
+| `response.output_text.delta`             | Text content delta                         |
+| `response.output_text.done`              | Text content completed                     |
+| `response.function_call_arguments.delta` | Function arguments delta                   |
+| `response.output_item.done`              | Output item completed                      |
+| `response.completed`                     | Response finished                          |
 
 ---
 
@@ -375,6 +381,81 @@ Canonical reference for all Osaurus features, their status, and documentation.
 
 ---
 
+### Agents
+
+**Purpose:** Execute complex, multi-step tasks autonomously with built-in issue tracking, planning, and file operations.
+
+**Components:**
+
+- `Agent/AgentFolderContext.swift` — Folder context models and project detection
+- `Agent/AgentFolderContextService.swift` — Folder selection and security-scoped bookmarks
+- `Agent/AgentFolderTools.swift` — File and shell operation tools
+- `Agent/AgentFileOperation.swift` — File operation models
+- `Agent/AgentFileOperationLog.swift` — Operation logging with undo support
+- `Models/AgentModels.swift` — Core data models (Issue, AgentTask, ExecutionPlan, etc.)
+- `Services/AgentEngine.swift` — Main task execution coordinator
+- `Services/AgentExecutionEngine.swift` — Plan generation and step execution
+- `Managers/IssueManager.swift` — Issue lifecycle and dependency management
+- `Storage/AgentDatabase.swift` — SQLite storage for issues, tasks, and events
+- `Tools/AgentTools.swift` — Agent-specific tools (submit_plan, report_discovery, complete_task)
+- `Views/AgentView.swift` — Main Agent Mode UI
+- `Views/AgentSession.swift` — Observable session state manager
+
+**Features:**
+
+- **Issue Tracking** — Tasks broken into issues with status, priority, type, and dependencies
+- **Parallel Tasks** — Run multiple agent tasks simultaneously for increased productivity
+- **Execution Planning** — AI generates step-by-step plans (max 10 tool calls per issue)
+- **Working Directory** — Select a folder for file operations with project type detection
+- **File Operations** — Read, write, edit, search, move, copy, delete files with undo support
+- **Discovery** — Automatic detection of errors, TODOs, and prerequisites during execution
+- **Clarification** — Agent pauses to ask when tasks are ambiguous
+- **Background Execution** — Tasks continue running after closing the window
+- **Token Usage Tracking** — Monitor cumulative input/output tokens per task
+
+**Issue Properties:**
+
+| Property      | Description                                     |
+| ------------- | ----------------------------------------------- |
+| `status`      | `open`, `in_progress`, `blocked`, `closed`      |
+| `priority`    | P0 (critical), P1 (high), P2 (medium), P3 (low) |
+| `type`        | `task`, `bug`, `discovery`                      |
+| `title`       | Brief description of the work                   |
+| `description` | Detailed explanation and context                |
+| `result`      | Outcome after completion                        |
+
+**Available Tools:**
+
+| Tool          | Description                                    |
+| ------------- | ---------------------------------------------- |
+| `file_tree`   | List directory structure with filtering        |
+| `file_read`   | Read file contents (supports line ranges)      |
+| `file_write`  | Create or overwrite files                      |
+| `file_edit`   | Surgical text replacement within files         |
+| `file_search` | Search for text patterns across files          |
+| `file_move`   | Move or rename files                           |
+| `file_copy`   | Duplicate files                                |
+| `file_delete` | Remove files                                   |
+| `dir_create`  | Create directories                             |
+| `shell_run`   | Execute shell commands (requires permission)   |
+| `git_status`  | Show repository status                         |
+| `git_diff`    | Display file differences                       |
+| `git_commit`  | Stage and commit changes (requires permission) |
+
+**Workflow:**
+
+1. User input creates a task with an initial issue
+2. Agent generates an execution plan (max 10 steps)
+3. Steps are executed sequentially, calling tools as needed
+4. Discovery detects errors, TODOs, or prerequisites during execution
+5. Verification checks if goal achieved after steps complete
+6. Large tasks are automatically decomposed into subtasks
+7. Clarification pauses execution when task is ambiguous
+
+**Storage:** `~/.osaurus/agent/agent.db` (SQLite)
+
+---
+
 ### Chat Session Management
 
 **Purpose:** Persist and manage chat conversations with per-session configuration.
@@ -460,16 +541,16 @@ A context optimization system that reduces token usage by ~80%:
 
 **Skill Properties:**
 
-| Property       | Description                      |
-| -------------- | -------------------------------- |
-| `name`         | Display name (required)          |
-| `description`  | Brief description                |
-| `instructions` | Full AI instructions (markdown)  |
+| Property       | Description                        |
+| -------------- | ---------------------------------- |
+| `name`         | Display name (required)            |
+| `description`  | Brief description                  |
+| `instructions` | Full AI instructions (markdown)    |
 | `category`     | Optional category for organization |
-| `version`      | Skill version                    |
-| `author`       | Skill author                     |
-| `references/`  | Text files loaded into context   |
-| `assets/`      | Supporting files                 |
+| `version`      | Skill version                      |
+| `author`       | Skill author                       |
+| `references/`  | Text files loaded into context     |
+| `assets/`      | Supporting files                   |
 
 **Storage:** `~/.osaurus/skills/{skill-name}/SKILL.md`
 
@@ -610,6 +691,7 @@ A context optimization system that reduces token usage by ~80%:
 | -------------------------------------------------------------- | ------------------------------------------------- |
 | [README.md](../README.md)                                      | Project overview, quick start, feature highlights |
 | [FEATURES.md](FEATURES.md)                                     | Feature inventory and architecture (this file)    |
+| [AGENTS.md](AGENTS.md)                                         | Agents and autonomous task execution guide        |
 | [REMOTE_PROVIDERS.md](REMOTE_PROVIDERS.md)                     | Remote provider setup and configuration           |
 | [REMOTE_MCP_PROVIDERS.md](REMOTE_MCP_PROVIDERS.md)             | Remote MCP provider setup                         |
 | [DEVELOPER_TOOLS.md](DEVELOPER_TOOLS.md)                       | Insights and Server Explorer guide                |
