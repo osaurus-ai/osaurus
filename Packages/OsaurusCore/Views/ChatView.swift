@@ -1266,7 +1266,6 @@ struct ChatView: View {
     @State private var hostWindow: NSWindow?
     @State private var keyMonitor: Any?
     @State private var isHeaderHovered: Bool = false
-    @State private var showSidebar: Bool = false
 
     /// Convenience accessor for the window's theme
     private var theme: ThemeProtocol { windowState.theme }
@@ -1367,12 +1366,12 @@ struct ChatView: View {
     @ViewBuilder
     private var chatModeContent: some View {
         GeometryReader { proxy in
-            let sidebarWidth: CGFloat = showSidebar ? 240 : 0
+            let sidebarWidth: CGFloat = windowState.showSidebar ? 240 : 0
             let chatWidth = proxy.size.width - sidebarWidth
 
             HStack(alignment: .top, spacing: 0) {
                 // Sidebar
-                if showSidebar {
+                if windowState.showSidebar {
                     VStack(alignment: .leading, spacing: 0) {
                         ChatSessionSidebar(
                             sessions: windowState.filteredSessions,
@@ -1517,7 +1516,7 @@ struct ChatView: View {
         }
         .ignoresSafeArea()
         .animation(theme.animationMedium(), value: session.turns.isEmpty)
-        .animation(theme.springAnimation(responseMultiplier: 0.9), value: showSidebar)
+        .animation(theme.springAnimation(responseMultiplier: 0.9), value: windowState.showSidebar)
         .background(WindowAccessor(window: $hostWindow))
         .onReceive(NotificationCenter.default.publisher(for: .chatOverlayActivated)) { _ in
             // Lightweight state updates only - refreshAll() removed to prevent excessive re-renders
@@ -1565,8 +1564,8 @@ struct ChatView: View {
             if theme.glassEnabled {
                 ThemedGlassSurface(
                     cornerRadius: 24,
-                    topLeadingRadius: showSidebar ? 0 : nil,
-                    bottomLeadingRadius: showSidebar ? 0 : nil
+                    topLeadingRadius: windowState.showSidebar ? 0 : nil,
+                    bottomLeadingRadius: windowState.showSidebar ? 0 : nil
                 )
                 .allowsHitTesting(false)
 
@@ -1598,8 +1597,8 @@ struct ChatView: View {
 
     private var backgroundShape: UnevenRoundedRectangle {
         UnevenRoundedRectangle(
-            topLeadingRadius: showSidebar ? 0 : 24,
-            bottomLeadingRadius: showSidebar ? 0 : 24,
+            topLeadingRadius: windowState.showSidebar ? 0 : 24,
+            bottomLeadingRadius: windowState.showSidebar ? 0 : 24,
             bottomTrailingRadius: 24,
             topTrailingRadius: 24,
             style: .continuous
@@ -1712,10 +1711,10 @@ struct ChatView: View {
                 // Sidebar toggle - far left
                 HeaderActionButton(
                     icon: "sidebar.left",
-                    help: showSidebar ? "Hide sidebar" : "Show sidebar",
+                    help: windowState.showSidebar ? "Hide sidebar" : "Show sidebar",
                     action: {
                         withAnimation(theme.animationQuick()) {
-                            showSidebar.toggle()
+                            windowState.showSidebar.toggle()
                         }
                     }
                 )
