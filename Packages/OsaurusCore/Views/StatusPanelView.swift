@@ -342,56 +342,15 @@ private struct BottomActionBar: View {
                     AppDelegate.shared?.showManagementWindow()
                 }
 
-                HelpButton()
+                CircularIconButton(systemName: "questionmark.circle", help: "Documentation") {
+                    if let url = URL(string: "https://docs.osaurus.ai/") {
+                        NSWorkspace.shared.open(url)
+                    }
+                }
 
                 CircularIconButton(systemName: "power", help: "Quit") {
                     NSApp.terminate(nil)
                 }
-            }
-        }
-    }
-}
-
-// MARK: - Help Button
-private struct HelpButton: View {
-    @Environment(\.theme) private var theme
-    @State private var isHovered = false
-
-    var body: some View {
-        Button {
-            if let url = URL(string: "https://docs.osaurus.ai/") {
-                NSWorkspace.shared.open(url)
-            }
-        } label: {
-            ZStack {
-                Circle()
-                    .fill(theme.buttonBackground.opacity(isHovered ? 0.95 : 0.8))
-
-                if isHovered {
-                    Circle()
-                        .fill(
-                            LinearGradient(
-                                colors: [theme.accentColor.opacity(0.1), Color.clear],
-                                startPoint: .topLeading,
-                                endPoint: .bottomTrailing
-                            )
-                        )
-                }
-
-                Circle()
-                    .strokeBorder(theme.primaryBorder.opacity(isHovered ? 0.25 : 0.15), lineWidth: 1)
-
-                Image(systemName: "questionmark.circle")
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundColor(isHovered ? theme.accentColor : theme.secondaryText)
-            }
-            .frame(width: 28, height: 28)
-        }
-        .buttonStyle(.plain)
-        .help("Documentation")
-        .onHover { hovering in
-            withAnimation(.easeOut(duration: 0.15)) {
-                isHovered = hovering
             }
         }
     }
