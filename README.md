@@ -144,7 +144,7 @@ Connect to remote APIs to access cloud models alongside local ones.
 **Supported presets:**
 
 - **Anthropic** — Claude models with native API support
-- **OpenAI** — GPT-4o, o1, and other OpenAI models
+- **OpenAI** — ChatGPT models
 - **xAI** — Grok models
 - **OpenRouter** — Access multiple providers through one API
 - **Custom** — Any OpenAI-compatible endpoint (Ollama, LM Studio, etc.)

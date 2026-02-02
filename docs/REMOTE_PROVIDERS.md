@@ -8,7 +8,7 @@ Remote Providers allow you to connect Osaurus to external APIs (OpenAI, Anthropi
 
 With Remote Providers, you can:
 
-- Access cloud models (GPT-4o, Claude via OpenRouter, etc.) through Osaurus
+- Access cloud models (ChatGPT, Claude via OpenRouter, etc.) through Osaurus
 - Use multiple inference backends simultaneously
 - Switch between local and remote models seamlessly
 - Keep API keys secure in the macOS Keychain
@@ -163,7 +163,7 @@ Base Path: /v1
 Auth: API Key (get from platform.openai.com)
 ```
 
-Models available: `gpt-4o`, `gpt-4o-mini`, `o1-preview`, `o1-mini`, etc.
+Models available: All ChatGPT models via the OpenAI API.
 
 ### OpenRouter
 
