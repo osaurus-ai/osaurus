@@ -842,13 +842,6 @@ extension ModelManager {
         ),
 
         MLXModel(
-            id: "mlx-community/LFM2-2.6B-4bit",
-            name: friendlyName(from: "mlx-community/LFM2-2.6B-4bit"),
-            description: "Liquid AI's 2.6B conversational model. Great for edge deployments.",
-            downloadURL: "https://huggingface.co/mlx-community/LFM2-2.6B-4bit"
-        ),
-
-        MLXModel(
             id: "mlx-community/Granite-4.0-H-Tiny-4bit-DWQ",
             name: friendlyName(from: "mlx-community/Granite-4.0-H-Tiny-4bit-DWQ"),
             description: "IBM's tiny hybrid MoE. Ultra-efficient at just 1B parameters.",
@@ -874,13 +867,6 @@ extension ModelManager {
             name: friendlyName(from: "mlx-community/gemma-3-27b-it-qat-4bit"),
             description: "Largest Gemma 3. Excellent reasoning and nuanced responses.",
             downloadURL: "https://huggingface.co/mlx-community/gemma-3-27b-it-qat-4bit"
-        ),
-
-        MLXModel(
-            id: "mlx-community/Llama-3.2-1B-Instruct-4bit",
-            name: friendlyName(from: "mlx-community/Llama-3.2-1B-Instruct-4bit"),
-            description: "Meta's tiniest Llama. Lightning fast for simple tasks.",
-            downloadURL: "https://huggingface.co/mlx-community/Llama-3.2-1B-Instruct-4bit"
         ),
 
         MLXModel(
