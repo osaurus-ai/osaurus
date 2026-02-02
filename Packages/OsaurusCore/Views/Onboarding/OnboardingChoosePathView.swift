@@ -75,7 +75,7 @@ struct OnboardingChoosePathView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            Spacer().frame(height: 45)
+            Spacer().frame(height: OnboardingStyle.headerTopPadding + 15)
 
             // Headline
             Text("How do you want to power Osaurus?")
@@ -85,7 +85,7 @@ struct OnboardingChoosePathView: View {
                 .fixedSize(horizontal: false, vertical: true)
                 .opacity(hasAppeared ? 1 : 0)
                 .offset(y: hasAppeared ? 0 : 20)
-                .animation(.easeOut(duration: 0.5).delay(0.1), value: hasAppeared)
+                .animation(theme.springAnimation().delay(0.1), value: hasAppeared)
 
             Spacer().frame(height: 30)
 
@@ -99,13 +99,13 @@ struct OnboardingChoosePathView: View {
                         description: OnboardingSetupPath.appleFoundation.description,
                         isSelected: selectedPath == .appleFoundation
                     ) {
-                        withAnimation(.easeOut(duration: 0.2)) {
+                        withAnimation(theme.animationQuick()) {
                             selectedPath = .appleFoundation
                         }
                     }
                     .opacity(hasAppeared ? 1 : 0)
                     .offset(y: hasAppeared ? 0 : 15)
-                    .animation(.easeOut(duration: 0.5).delay(0.17), value: hasAppeared)
+                    .animation(theme.springAnimation().delay(0.17), value: hasAppeared)
                 }
 
                 OnboardingOptionCard(
@@ -114,13 +114,13 @@ struct OnboardingChoosePathView: View {
                     description: OnboardingSetupPath.local.description,
                     isSelected: selectedPath == .local
                 ) {
-                    withAnimation(.easeOut(duration: 0.2)) {
+                    withAnimation(theme.animationQuick()) {
                         selectedPath = .local
                     }
                 }
                 .opacity(hasAppeared ? 1 : 0)
                 .offset(y: hasAppeared ? 0 : 15)
-                .animation(.easeOut(duration: 0.5).delay(foundationAvailable ? 0.24 : 0.17), value: hasAppeared)
+                .animation(theme.springAnimation().delay(foundationAvailable ? 0.24 : 0.17), value: hasAppeared)
 
                 OnboardingOptionCard(
                     icon: OnboardingSetupPath.apiProvider.icon,
@@ -128,15 +128,15 @@ struct OnboardingChoosePathView: View {
                     description: OnboardingSetupPath.apiProvider.description,
                     isSelected: selectedPath == .apiProvider
                 ) {
-                    withAnimation(.easeOut(duration: 0.2)) {
+                    withAnimation(theme.animationQuick()) {
                         selectedPath = .apiProvider
                     }
                 }
                 .opacity(hasAppeared ? 1 : 0)
                 .offset(y: hasAppeared ? 0 : 15)
-                .animation(.easeOut(duration: 0.5).delay(foundationAvailable ? 0.31 : 0.24), value: hasAppeared)
+                .animation(theme.springAnimation().delay(foundationAvailable ? 0.31 : 0.24), value: hasAppeared)
             }
-            .padding(.horizontal, 35)
+            .padding(.horizontal, OnboardingStyle.backButtonHorizontalPadding)
 
             Spacer().frame(height: 18)
 
@@ -170,7 +170,7 @@ struct OnboardingChoosePathView: View {
                 .background(theme.primaryBackground)
             }
             .opacity(hasAppeared ? 1 : 0)
-            .animation(.easeOut(duration: 0.5).delay(foundationAvailable ? 0.38 : 0.32), value: hasAppeared)
+            .animation(theme.springAnimation().delay(foundationAvailable ? 0.38 : 0.32), value: hasAppeared)
 
             Spacer()
                 .frame(minHeight: 20)
@@ -195,9 +195,9 @@ struct OnboardingChoosePathView: View {
             .frame(width: 180)
             .opacity(hasAppeared ? 1 : 0)
             .offset(y: hasAppeared ? 0 : 15)
-            .animation(.easeOut(duration: 0.5).delay(foundationAvailable ? 0.47 : 0.4), value: hasAppeared)
+            .animation(theme.springAnimation().delay(foundationAvailable ? 0.47 : 0.4), value: hasAppeared)
 
-            Spacer().frame(height: 40)
+            Spacer().frame(height: OnboardingStyle.bottomButtonPadding)
         }
         .padding(.horizontal, 16)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -206,7 +206,7 @@ struct OnboardingChoosePathView: View {
             if foundationAvailable {
                 selectedPath = .appleFoundation
             }
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+            DispatchQueue.main.asyncAfter(deadline: .now() + OnboardingStyle.appearDelay) {
                 withAnimation {
                     hasAppeared = true
                 }

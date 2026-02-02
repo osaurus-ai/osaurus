@@ -18,7 +18,7 @@ struct OnboardingCompleteView: View {
     var body: some View {
         VStack(spacing: 0) {
             Spacer()
-                .frame(minHeight: 30, maxHeight: 45)
+                .frame(minHeight: OnboardingStyle.headerTopPadding, maxHeight: OnboardingStyle.headerTopPadding + 15)
 
             // Celebration orb (same size as welcome orb)
             ZStack {
@@ -41,7 +41,7 @@ struct OnboardingCompleteView: View {
             }
             .opacity(hasAppeared ? 1 : 0)
             .scaleEffect(hasAppeared ? 1 : 0.6)
-            .animation(.easeOut(duration: 0.8), value: hasAppeared)
+            .animation(theme.springAnimation(), value: hasAppeared)
 
             Spacer().frame(height: 20)
 
@@ -52,7 +52,7 @@ struct OnboardingCompleteView: View {
                 .multilineTextAlignment(.center)
                 .opacity(hasAppeared ? 1 : 0)
                 .offset(y: hasAppeared ? 0 : 20)
-                .animation(.easeOut(duration: 0.6).delay(0.1), value: hasAppeared)
+                .animation(theme.springAnimation().delay(0.1), value: hasAppeared)
 
             Spacer().frame(height: 35)
 
@@ -66,7 +66,7 @@ struct OnboardingCompleteView: View {
                 )
                 .opacity(hasAppeared ? 1 : 0)
                 .offset(y: hasAppeared ? 0 : 15)
-                .animation(.easeOut(duration: 0.5).delay(0.2), value: hasAppeared)
+                .animation(theme.springAnimation().delay(0.2), value: hasAppeared)
 
                 CompleteOptionCard(
                     title: "Customize",
@@ -76,7 +76,7 @@ struct OnboardingCompleteView: View {
                 )
                 .opacity(hasAppeared ? 1 : 0)
                 .offset(y: hasAppeared ? 0 : 15)
-                .animation(.easeOut(duration: 0.5).delay(0.2), value: hasAppeared)
+                .animation(theme.springAnimation().delay(0.25), value: hasAppeared)
 
                 CompleteOptionCard(
                     title: "Jump in",
@@ -87,17 +87,17 @@ struct OnboardingCompleteView: View {
                 )
                 .opacity(hasAppeared ? 1 : 0)
                 .offset(y: hasAppeared ? 0 : 15)
-                .animation(.easeOut(duration: 0.5).delay(0.25), value: hasAppeared)
+                .animation(theme.springAnimation().delay(0.3), value: hasAppeared)
             }
-            .padding(.horizontal, 40)
+            .padding(.horizontal, OnboardingStyle.backButtonHorizontalPadding + 5)
 
             Spacer()
-                .frame(minHeight: 30)
+                .frame(minHeight: OnboardingStyle.bottomButtonPadding)
         }
         .padding(.horizontal, 16)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .onAppear {
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+            DispatchQueue.main.asyncAfter(deadline: .now() + OnboardingStyle.appearDelay) {
                 hasAppeared = true
             }
         }
@@ -158,7 +158,7 @@ private struct CompleteOptionCard: View {
         .buttonStyle(.plain)
         .scaleEffect(isHovered ? 1.02 : 1.0)
         .onHover { hovering in
-            withAnimation(.easeOut(duration: 0.15)) {
+            withAnimation(theme.animationQuick()) {
                 isHovered = hovering
             }
         }

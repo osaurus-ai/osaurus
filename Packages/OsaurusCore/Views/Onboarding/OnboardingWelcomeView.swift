@@ -80,11 +80,11 @@ struct OnboardingWelcomeView: View {
                         .frame(width: 160)
                         .opacity(buttonVisible ? 1 : 0)
                         .scaleEffect(buttonVisible ? 1 : 0.9)
-                        .animation(.easeOut(duration: 0.5), value: buttonVisible)
+                        .animation(theme.springAnimation(), value: buttonVisible)
 
                     Spacer()
                 }
-                .padding(.horizontal, 40)
+                .padding(.horizontal, OnboardingStyle.backButtonHorizontalPadding + 5)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)

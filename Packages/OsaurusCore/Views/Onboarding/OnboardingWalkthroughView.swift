@@ -78,14 +78,14 @@ struct OnboardingWalkthroughView: View {
             // Step indicator (clickable pill style)
             stepIndicator
                 .opacity(hasAppeared ? 1 : 0)
-                .animation(.easeOut(duration: 0.5).delay(0.1), value: hasAppeared)
+                .animation(theme.springAnimation().delay(0.1), value: hasAppeared)
 
             Spacer().frame(height: 20)
 
             // Content card with glass styling
             contentCard
                 .opacity(hasAppeared ? 1 : 0)
-                .animation(.easeOut(duration: 0.5).delay(0.15), value: hasAppeared)
+                .animation(theme.springAnimation().delay(0.15), value: hasAppeared)
 
             Spacer()
                 .frame(minHeight: 24)
@@ -93,14 +93,14 @@ struct OnboardingWalkthroughView: View {
             // Navigation buttons (fixed layout)
             navigationButtons
                 .opacity(hasAppeared ? 1 : 0)
-                .animation(.easeOut(duration: 0.5).delay(0.35), value: hasAppeared)
+                .animation(theme.springAnimation().delay(0.35), value: hasAppeared)
 
-            Spacer().frame(height: 36)
+            Spacer().frame(height: OnboardingStyle.bottomButtonPadding)
         }
         .padding(.horizontal, 24)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .onAppear {
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+            DispatchQueue.main.asyncAfter(deadline: .now() + OnboardingStyle.appearDelay) {
                 withAnimation {
                     hasAppeared = true
                 }
@@ -300,7 +300,7 @@ struct OnboardingWalkthroughView: View {
 
         navigationDirection = stepIndex > currentStep ? .forward : .backward
 
-        withAnimation(.easeInOut(duration: 0.35)) {
+        withAnimation(theme.springAnimation(responseMultiplier: 0.8)) {
             currentStep = stepIndex
         }
     }

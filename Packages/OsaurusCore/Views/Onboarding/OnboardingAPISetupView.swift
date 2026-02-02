@@ -134,18 +134,22 @@ struct OnboardingAPISetupView: View {
     }
 
     var body: some View {
-        VStack(spacing: 0) {
+        ZStack {
             if selectedProvider == nil {
                 providerSelectionView
+                    .transition(nestedTransition)
             } else if selectedProvider == .other {
                 customProviderEntryView
+                    .transition(nestedTransition)
             } else {
                 apiKeyEntryView
+                    .transition(nestedTransition)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .animation(theme.springAnimation(responseMultiplier: 0.8), value: selectedProvider)
         .onAppear {
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+            DispatchQueue.main.asyncAfter(deadline: .now() + OnboardingStyle.appearDelay) {
                 withAnimation {
                     hasAppeared = true
                 }
@@ -153,15 +157,27 @@ struct OnboardingAPISetupView: View {
         }
     }
 
+    /// Nested screen transition (consistent with main onboarding)
+    private var nestedTransition: AnyTransition {
+        .asymmetric(
+            insertion: .opacity
+                .combined(with: .offset(x: 30))
+                .combined(with: .scale(scale: 0.98)),
+            removal: .opacity
+                .combined(with: .offset(x: -30))
+                .combined(with: .scale(scale: 0.98))
+        )
+    }
+
     // MARK: - Provider Selection View
 
     private var providerSelectionView: some View {
         VStack(spacing: 0) {
-            Spacer().frame(height: 30)
+            Spacer().frame(height: OnboardingStyle.headerTopPadding)
 
             // Back button
-            providerSelectionBackButton
-                .padding(.horizontal, 40)
+            OnboardingBackButton(action: onBack)
+                .padding(.horizontal, OnboardingStyle.backButtonHorizontalPadding)
                 .opacity(hasAppeared ? 1 : 0)
                 .animation(theme.springAnimation().delay(0.05), value: hasAppeared)
 
@@ -183,7 +199,7 @@ struct OnboardingAPISetupView: View {
             VStack(spacing: 12) {
                 ForEach(Array(OnboardingProviderOption.allCases.enumerated()), id: \.element.id) { index, provider in
                     ProviderCard(provider: provider) {
-                        withAnimation(theme.springAnimation()) {
+                        withAnimation(theme.springAnimation(responseMultiplier: 0.8)) {
                             selectedProvider = provider
                         }
                     }
@@ -192,7 +208,7 @@ struct OnboardingAPISetupView: View {
                     .animation(theme.springAnimation().delay(0.17 + Double(index) * 0.05), value: hasAppeared)
                 }
             }
-            .padding(.horizontal, 40)
+            .padding(.horizontal, OnboardingStyle.backButtonHorizontalPadding + 5)
 
             Spacer().frame(height: 28)
 
@@ -212,11 +228,11 @@ struct OnboardingAPISetupView: View {
 
     private var apiKeyEntryView: some View {
         VStack(spacing: 0) {
-            Spacer().frame(height: 30)
+            Spacer().frame(height: OnboardingStyle.headerTopPadding)
 
-            // Back button
+            // Back button (custom - resets state)
             backButton
-                .padding(.horizontal, 40)
+                .padding(.horizontal, OnboardingStyle.backButtonHorizontalPadding)
 
             Spacer().frame(height: 30)
 
@@ -233,14 +249,14 @@ struct OnboardingAPISetupView: View {
                 .onChange(of: apiKey) { _, _ in
                     testResult = nil
                 }
-                .padding(.horizontal, 40)
+                .padding(.horizontal, OnboardingStyle.backButtonHorizontalPadding + 5)
 
             Spacer().frame(height: 28)
 
             // Help section
             if let provider = selectedProvider, provider != .other {
                 helpSection(for: provider)
-                    .padding(.horizontal, 40)
+                    .padding(.horizontal, OnboardingStyle.backButtonHorizontalPadding + 5)
             }
 
             Spacer()
@@ -249,7 +265,7 @@ struct OnboardingAPISetupView: View {
             actionButtons
                 .frame(width: 200)
 
-            Spacer().frame(height: 50)
+            Spacer().frame(height: OnboardingStyle.bottomButtonPadding)
         }
         .padding(.horizontal, 20)
     }
@@ -259,11 +275,11 @@ struct OnboardingAPISetupView: View {
     private var customProviderEntryView: some View {
         ScrollView(.vertical, showsIndicators: false) {
             VStack(spacing: 0) {
-                Spacer().frame(height: 30)
+                Spacer().frame(height: OnboardingStyle.headerTopPadding)
 
-                // Back button
+                // Back button (custom - resets state)
                 backButton
-                    .padding(.horizontal, 40)
+                    .padding(.horizontal, OnboardingStyle.backButtonHorizontalPadding)
 
                 Spacer().frame(height: 24)
 
@@ -333,7 +349,7 @@ struct OnboardingAPISetupView: View {
                     }
                     .padding(18)
                 }
-                .padding(.horizontal, 40)
+                .padding(.horizontal, OnboardingStyle.backButtonHorizontalPadding + 5)
 
                 Spacer().frame(height: 16)
 
@@ -342,7 +358,7 @@ struct OnboardingAPISetupView: View {
                     .onChange(of: apiKey) { _, _ in
                         testResult = nil
                     }
-                    .padding(.horizontal, 40)
+                    .padding(.horizontal, OnboardingStyle.backButtonHorizontalPadding + 5)
 
                 Spacer().frame(height: 28)
 
@@ -350,7 +366,7 @@ struct OnboardingAPISetupView: View {
                 actionButtons
                     .frame(width: 200)
 
-                Spacer().frame(height: 50)
+                Spacer().frame(height: OnboardingStyle.bottomButtonPadding)
             }
         }
         .padding(.horizontal, 20)
@@ -358,60 +374,19 @@ struct OnboardingAPISetupView: View {
 
     // MARK: - Shared Components
 
-    /// Back button for provider selection view - goes back to choose path
-    private var providerSelectionBackButton: some View {
-        HStack {
-            Button {
-                onBack()
-            } label: {
-                HStack(spacing: 6) {
-                    Image(systemName: "chevron.left")
-                        .font(.system(size: 12, weight: .semibold))
-                    Text("Back")
-                        .font(theme.font(size: 13, weight: .medium))
-                }
-                .foregroundColor(theme.secondaryText)
-                .padding(.vertical, 8)
-                .padding(.horizontal, 12)
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-
-            Spacer()
-        }
-        .padding(.leading, -12)
-    }
-
-    /// Back button for API key/custom provider views - goes back to provider selection
+    /// Back button for API key/custom provider views - goes back to provider selection (with state reset)
     private var backButton: some View {
-        HStack {
-            Button {
-                withAnimation(theme.springAnimation()) {
-                    selectedProvider = nil
-                    apiKey = ""
-                    testResult = nil
-                    customName = ""
-                    customHost = ""
-                    customPort = ""
-                    customBasePath = "/v1"
-                }
-            } label: {
-                HStack(spacing: 6) {
-                    Image(systemName: "chevron.left")
-                        .font(.system(size: 12, weight: .semibold))
-                    Text("Back")
-                        .font(theme.font(size: 13, weight: .medium))
-                }
-                .foregroundColor(theme.secondaryText)
-                .padding(.vertical, 8)
-                .padding(.horizontal, 12)
-                .contentShape(Rectangle())
+        OnboardingBackButton {
+            withAnimation(theme.springAnimation(responseMultiplier: 0.8)) {
+                selectedProvider = nil
+                apiKey = ""
+                testResult = nil
+                customName = ""
+                customHost = ""
+                customPort = ""
+                customBasePath = "/v1"
             }
-            .buttonStyle(.plain)
-
-            Spacer()
         }
-        .padding(.leading, -12)
     }
 
     private var endpointPreview: some View {

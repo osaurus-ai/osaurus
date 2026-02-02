@@ -32,9 +32,46 @@ enum OnboardingLayout {
     static let buttonHeight: CGFloat = 44
 }
 
+// MARK: - Onboarding Style Constants
+
+/// Centralized styling constants for onboarding (similar to ToastStyle)
+enum OnboardingStyle {
+    // MARK: Animation
+    static let appearDelay: Double = 0.1
+
+    // MARK: Layout
+    static let bottomButtonPadding: CGFloat = 40
+    static let headerTopPadding: CGFloat = 30
+    static let backButtonHorizontalPadding: CGFloat = 35
+
+    // MARK: Glass Background
+    static let glassOpacityDark: Double = 0.78
+    static let glassOpacityLight: Double = 0.88
+
+    // MARK: Accent Gradient
+    static let accentGradientOpacityDark: Double = 0.08
+    static let accentGradientOpacityLight: Double = 0.05
+
+    // MARK: Border
+    static let edgeLightOpacityDark: Double = 0.22
+    static let edgeLightOpacityLight: Double = 0.35
+    static let borderOpacityDark: Double = 0.18
+    static let borderOpacityLight: Double = 0.28
+
+    // MARK: Accent Edge
+    static let accentEdgeHoverOpacity: Double = 0.18
+    static let accentEdgeNormalOpacity: Double = 0.10
+
+    // MARK: Button Glow
+    static let buttonGlowRadiusNormal: CGFloat = 12
+    static let buttonGlowRadiusHover: CGFloat = 16
+    static let buttonGlowOpacityNormal: Double = 0.25
+    static let buttonGlowOpacityHover: Double = 0.4
+}
+
 // MARK: - Onboarding Primary Button
 
-/// Primary action button for onboarding
+/// Primary action button for onboarding with depth and polish
 struct OnboardingPrimaryButton: View {
     let title: String
     let action: () -> Void
@@ -43,23 +80,78 @@ struct OnboardingPrimaryButton: View {
     @Environment(\.theme) private var theme
     @State private var isHovered = false
 
+    private var buttonColor: Color {
+        isEnabled ? theme.accentColor : theme.tertiaryText
+    }
+
     var body: some View {
         Button(action: action) {
-            Text(title)
-                .font(theme.font(size: 15, weight: .semibold))
-                .foregroundColor(theme.isDark ? theme.primaryText : .white)
-                .frame(maxWidth: .infinity)
-                .frame(height: OnboardingLayout.buttonHeight)
-                .background(
-                    RoundedRectangle(cornerRadius: OnboardingLayout.buttonCornerRadius, style: .continuous)
-                        .fill(isEnabled ? theme.accentColor : theme.tertiaryText)
-                )
-                .shadow(
-                    color: isEnabled && isHovered ? theme.accentColor.opacity(0.4) : .clear,
-                    radius: 12,
-                    y: 4
-                )
-                .scaleEffect(isHovered && isEnabled ? 1.02 : 1.0)
+            ZStack {
+                // Subtle glow behind button (always present, intensifies on hover)
+                RoundedRectangle(cornerRadius: OnboardingLayout.buttonCornerRadius, style: .continuous)
+                    .fill(buttonColor)
+                    .blur(
+                        radius: isHovered
+                            ? OnboardingStyle.buttonGlowRadiusHover
+                            : OnboardingStyle.buttonGlowRadiusNormal
+                    )
+                    .opacity(
+                        isEnabled
+                            ? (isHovered
+                                ? OnboardingStyle.buttonGlowOpacityHover : OnboardingStyle.buttonGlowOpacityNormal)
+                            : 0
+                    )
+
+                // Main button with inner gradient for depth
+                RoundedRectangle(cornerRadius: OnboardingLayout.buttonCornerRadius, style: .continuous)
+                    .fill(
+                        LinearGradient(
+                            colors: [
+                                buttonColor.opacity(1.0),
+                                buttonColor,
+                                buttonColor.opacity(0.85),
+                            ],
+                            startPoint: .top,
+                            endPoint: .bottom
+                        )
+                    )
+
+                // Inner highlight at top edge
+                RoundedRectangle(cornerRadius: OnboardingLayout.buttonCornerRadius, style: .continuous)
+                    .fill(
+                        LinearGradient(
+                            colors: [
+                                Color.white.opacity(isEnabled ? 0.2 : 0.1),
+                                Color.clear,
+                            ],
+                            startPoint: .top,
+                            endPoint: .center
+                        )
+                    )
+
+                // Gradient border for dimension
+                RoundedRectangle(cornerRadius: OnboardingLayout.buttonCornerRadius, style: .continuous)
+                    .strokeBorder(
+                        LinearGradient(
+                            colors: [
+                                Color.white.opacity(0.25),
+                                Color.white.opacity(0.1),
+                                Color.black.opacity(0.1),
+                            ],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        ),
+                        lineWidth: 1
+                    )
+
+                // Text
+                Text(title)
+                    .font(theme.font(size: 15, weight: .semibold))
+                    .foregroundColor(theme.isDark ? theme.primaryText : .white)
+            }
+            .frame(maxWidth: .infinity)
+            .frame(height: OnboardingLayout.buttonHeight)
+            .scaleEffect(isHovered && isEnabled ? 1.02 : 1.0)
         }
         .buttonStyle(.plain)
         .disabled(!isEnabled)
@@ -92,7 +184,7 @@ enum OnboardingButtonState: Equatable {
     }
 }
 
-/// Stateful button that reflects connection test results
+/// Stateful button that reflects connection test results with depth and polish
 struct OnboardingStatefulButton: View {
     let state: OnboardingButtonState
     let idleTitle: String
@@ -136,33 +228,90 @@ struct OnboardingStatefulButton: View {
         !isEnabled || state == .loading
     }
 
+    private var buttonColor: Color {
+        shouldDisable ? theme.tertiaryText : backgroundColor
+    }
+
     var body: some View {
         Button(action: action) {
-            HStack(spacing: 8) {
-                if state == .loading {
-                    ProgressView()
-                        .progressViewStyle(CircularProgressViewStyle(tint: theme.isDark ? theme.primaryText : .white))
-                        .scaleEffect(0.8)
-                } else if let icon = iconName {
-                    Image(systemName: icon)
-                        .font(.system(size: 13, weight: .semibold))
-                }
+            ZStack {
+                // Subtle glow behind button
+                RoundedRectangle(cornerRadius: OnboardingLayout.buttonCornerRadius, style: .continuous)
+                    .fill(buttonColor)
+                    .blur(
+                        radius: isHovered
+                            ? OnboardingStyle.buttonGlowRadiusHover
+                            : OnboardingStyle.buttonGlowRadiusNormal
+                    )
+                    .opacity(
+                        !shouldDisable
+                            ? (isHovered
+                                ? OnboardingStyle.buttonGlowOpacityHover : OnboardingStyle.buttonGlowOpacityNormal)
+                            : 0
+                    )
 
-                Text(currentTitle)
-                    .font(theme.font(size: 15, weight: .semibold))
+                // Main button with inner gradient for depth
+                RoundedRectangle(cornerRadius: OnboardingLayout.buttonCornerRadius, style: .continuous)
+                    .fill(
+                        LinearGradient(
+                            colors: [
+                                buttonColor.opacity(1.0),
+                                buttonColor,
+                                buttonColor.opacity(0.85),
+                            ],
+                            startPoint: .top,
+                            endPoint: .bottom
+                        )
+                    )
+
+                // Inner highlight at top edge
+                RoundedRectangle(cornerRadius: OnboardingLayout.buttonCornerRadius, style: .continuous)
+                    .fill(
+                        LinearGradient(
+                            colors: [
+                                Color.white.opacity(!shouldDisable ? 0.2 : 0.1),
+                                Color.clear,
+                            ],
+                            startPoint: .top,
+                            endPoint: .center
+                        )
+                    )
+
+                // Gradient border for dimension
+                RoundedRectangle(cornerRadius: OnboardingLayout.buttonCornerRadius, style: .continuous)
+                    .strokeBorder(
+                        LinearGradient(
+                            colors: [
+                                Color.white.opacity(0.25),
+                                Color.white.opacity(0.1),
+                                Color.black.opacity(0.1),
+                            ],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        ),
+                        lineWidth: 1
+                    )
+
+                // Content
+                HStack(spacing: 8) {
+                    if state == .loading {
+                        ProgressView()
+                            .progressViewStyle(
+                                CircularProgressViewStyle(tint: theme.isDark ? theme.primaryText : .white)
+                            )
+                            .scaleEffect(0.8)
+                    } else if let icon = iconName {
+                        Image(systemName: icon)
+                            .font(.system(size: 13, weight: .semibold))
+                    }
+
+                    Text(currentTitle)
+                        .font(theme.font(size: 15, weight: .semibold))
+                }
+                .foregroundColor(theme.isDark ? theme.primaryText : .white)
             }
-            .foregroundColor(theme.isDark ? theme.primaryText : .white)
             .frame(maxWidth: .infinity)
             .frame(height: OnboardingLayout.buttonHeight)
-            .background(
-                RoundedRectangle(cornerRadius: OnboardingLayout.buttonCornerRadius, style: .continuous)
-                    .fill(shouldDisable ? theme.tertiaryText : backgroundColor)
-            )
-            .shadow(
-                color: !shouldDisable && isHovered ? backgroundColor.opacity(0.4) : .clear,
-                radius: 12,
-                y: 4
-            )
             .scaleEffect(isHovered && !shouldDisable ? 1.02 : 1.0)
         }
         .buttonStyle(.plain)
@@ -178,7 +327,7 @@ struct OnboardingStatefulButton: View {
 
 // MARK: - Onboarding Shimmer Button
 
-/// Futuristic button with animated shimmer effect
+/// Polished button with animated shimmer effect
 struct OnboardingShimmerButton: View {
     let title: String
     let action: () -> Void
@@ -186,32 +335,59 @@ struct OnboardingShimmerButton: View {
 
     @Environment(\.theme) private var theme
     @State private var isHovered = false
-    @State private var shimmerPhase: CGFloat = -0.5
+    @State private var shimmerPhase: CGFloat = -0.3
+
+    private var buttonColor: Color {
+        isEnabled ? theme.accentColor : theme.tertiaryText
+    }
 
     var body: some View {
         Button(action: action) {
             ZStack {
-                // Glow behind button
+                // Enhanced glow behind button
                 RoundedRectangle(cornerRadius: OnboardingLayout.buttonCornerRadius, style: .continuous)
-                    .fill(theme.accentColor)
-                    .blur(radius: isHovered ? 20 : 16)
-                    .opacity(isHovered ? 0.5 : 0.35)
-                    .scaleEffect(isHovered ? 1.05 : 1.0)
+                    .fill(buttonColor)
+                    .blur(radius: isHovered ? 18 : 14)
+                    .opacity(isEnabled ? (isHovered ? 0.5 : 0.35) : 0)
+                    .scaleEffect(isHovered ? 1.03 : 1.0)
 
-                // Button background with shimmer
+                // Main button with inner gradient for depth
                 RoundedRectangle(cornerRadius: OnboardingLayout.buttonCornerRadius, style: .continuous)
-                    .fill(theme.accentColor)
+                    .fill(
+                        LinearGradient(
+                            colors: [
+                                buttonColor.opacity(1.0),
+                                buttonColor,
+                                buttonColor.opacity(0.85),
+                            ],
+                            startPoint: .top,
+                            endPoint: .bottom
+                        )
+                    )
                     .overlay(shimmerOverlay)
                     .clipShape(RoundedRectangle(cornerRadius: OnboardingLayout.buttonCornerRadius, style: .continuous))
 
-                // Border gradient
+                // Inner highlight at top edge
+                RoundedRectangle(cornerRadius: OnboardingLayout.buttonCornerRadius, style: .continuous)
+                    .fill(
+                        LinearGradient(
+                            colors: [
+                                Color.white.opacity(isEnabled ? 0.2 : 0.1),
+                                Color.clear,
+                            ],
+                            startPoint: .top,
+                            endPoint: .center
+                        )
+                    )
+
+                // Enhanced gradient border
                 RoundedRectangle(cornerRadius: OnboardingLayout.buttonCornerRadius, style: .continuous)
                     .strokeBorder(
                         LinearGradient(
                             colors: [
-                                Color.white.opacity(0.3),
-                                Color.white.opacity(0.1),
-                                Color.white.opacity(0.0),
+                                Color.white.opacity(0.35),
+                                Color.white.opacity(0.15),
+                                Color.black.opacity(0.05),
                             ],
                             startPoint: .topLeading,
                             endPoint: .bottomTrailing
@@ -224,13 +400,14 @@ struct OnboardingShimmerButton: View {
                     .font(theme.font(size: 15, weight: .semibold))
                     .foregroundColor(theme.isDark ? theme.primaryText : .white)
             }
+            .frame(maxWidth: .infinity)
             .frame(height: OnboardingLayout.buttonHeight)
-            .scaleEffect(isHovered ? 1.03 : 1.0)
+            .scaleEffect(isHovered && isEnabled ? 1.02 : 1.0)
         }
         .buttonStyle(.plain)
         .disabled(!isEnabled)
         .onHover { hovering in
-            withAnimation(.easeOut(duration: 0.2)) {
+            withAnimation(theme.animationQuick()) {
                 isHovered = hovering
             }
         }
@@ -244,32 +421,32 @@ struct OnboardingShimmerButton: View {
             LinearGradient(
                 colors: [
                     Color.white.opacity(0),
-                    Color.white.opacity(0.25),
+                    Color.white.opacity(0.35),
                     Color.white.opacity(0),
                 ],
                 startPoint: .leading,
                 endPoint: .trailing
             )
-            .frame(width: geometry.size.width * 0.6)
+            .frame(width: 40)  // Fixed narrow width for crisp shimmer
             .offset(x: shimmerPhase * geometry.size.width)
-            .blur(radius: 2)
+            .blur(radius: 1)
         }
         .clipped()
     }
 
     private func startShimmerAnimation() {
         withAnimation(
-            .easeInOut(duration: 2.5)
+            .easeInOut(duration: 1.8)  // Faster, smoother animation
                 .repeatForever(autoreverses: false)
         ) {
-            shimmerPhase = 1.5
+            shimmerPhase = 1.3
         }
     }
 }
 
 // MARK: - Onboarding Secondary Button
 
-/// Secondary action button for onboarding (outlined style)
+/// Secondary action button for onboarding with glass effect and gradient border
 struct OnboardingSecondaryButton: View {
     let title: String
     let action: () -> Void
@@ -279,27 +456,62 @@ struct OnboardingSecondaryButton: View {
 
     var body: some View {
         Button(action: action) {
-            Text(title)
-                .font(theme.font(size: 15, weight: .semibold))
-                .foregroundColor(theme.primaryText)
-                .frame(maxWidth: .infinity)
-                .frame(height: OnboardingLayout.buttonHeight)
-                .background(
+            ZStack {
+                // Glass background layer
+                if theme.glassEnabled {
                     RoundedRectangle(cornerRadius: OnboardingLayout.buttonCornerRadius, style: .continuous)
-                        .fill(isHovered ? theme.cardBackground : theme.primaryBackground.opacity(0.5))
-                )
-                .overlay(
-                    RoundedRectangle(cornerRadius: OnboardingLayout.buttonCornerRadius, style: .continuous)
-                        .strokeBorder(
-                            isHovered ? theme.accentColor.opacity(0.5) : theme.primaryBorder,
-                            lineWidth: 1
+                        .fill(.ultraThinMaterial)
+                }
+
+                // Background fill
+                RoundedRectangle(cornerRadius: OnboardingLayout.buttonCornerRadius, style: .continuous)
+                    .fill(
+                        isHovered
+                            ? theme.cardBackground.opacity(theme.glassEnabled ? 0.9 : 1.0)
+                            : theme.cardBackground.opacity(theme.glassEnabled ? 0.6 : 0.8)
+                    )
+
+                // Subtle accent gradient on hover
+                RoundedRectangle(cornerRadius: OnboardingLayout.buttonCornerRadius, style: .continuous)
+                    .fill(
+                        LinearGradient(
+                            colors: [
+                                theme.accentColor.opacity(isHovered ? 0.08 : 0.03),
+                                Color.clear,
+                            ],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
                         )
-                )
-                .scaleEffect(isHovered ? 1.02 : 1.0)
+                    )
+
+                // Gradient border (like ToastBorder)
+                RoundedRectangle(cornerRadius: OnboardingLayout.buttonCornerRadius, style: .continuous)
+                    .strokeBorder(
+                        LinearGradient(
+                            colors: [
+                                isHovered
+                                    ? theme.accentColor.opacity(0.5)
+                                    : theme.glassEdgeLight.opacity(theme.isDark ? 0.25 : 0.35),
+                                theme.primaryBorder.opacity(theme.isDark ? 0.3 : 0.4),
+                            ],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        ),
+                        lineWidth: 1
+                    )
+
+                // Text
+                Text(title)
+                    .font(theme.font(size: 15, weight: .semibold))
+                    .foregroundColor(theme.primaryText)
+            }
+            .frame(maxWidth: .infinity)
+            .frame(height: OnboardingLayout.buttonHeight)
+            .scaleEffect(isHovered ? 1.02 : 1.0)
         }
         .buttonStyle(.plain)
         .onHover { hovering in
-            withAnimation(.easeOut(duration: 0.15)) {
+            withAnimation(theme.animationQuick()) {
                 isHovered = hovering
             }
         }
@@ -329,6 +541,46 @@ struct OnboardingTextButton: View {
                 isHovered = hovering
             }
         }
+    }
+}
+
+// MARK: - Onboarding Back Button
+
+/// Reusable back button with consistent styling across onboarding views
+struct OnboardingBackButton: View {
+    let action: () -> Void
+
+    @Environment(\.theme) private var theme
+    @State private var isHovered = false
+
+    var body: some View {
+        HStack {
+            Button(action: action) {
+                HStack(spacing: 6) {
+                    Image(systemName: "chevron.left")
+                        .font(.system(size: 12, weight: .semibold))
+                    Text("Back")
+                        .font(theme.font(size: 13, weight: .medium))
+                }
+                .foregroundColor(isHovered ? theme.accentColor : theme.secondaryText)
+                .padding(.vertical, 8)
+                .padding(.horizontal, 12)
+                .background(
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .fill(isHovered ? theme.cardBackground.opacity(0.6) : Color.clear)
+                )
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .onHover { hovering in
+                withAnimation(theme.animationQuick()) {
+                    isHovered = hovering
+                }
+            }
+
+            Spacer()
+        }
+        .padding(.leading, -12)
     }
 }
 
@@ -491,7 +743,7 @@ struct OnboardingStepIndicator: View {
 
 // MARK: - Glass Card
 
-/// Glass card with gradient border for onboarding options
+/// Glass card with gradient border and accent edge for onboarding options
 struct OnboardingGlassCard<Content: View>: View {
     let isSelected: Bool
     let content: Content
@@ -528,12 +780,20 @@ struct OnboardingGlassCard<Content: View>: View {
                 Rectangle().fill(.ultraThinMaterial)
             }
 
-            theme.cardBackground.opacity(theme.glassEnabled ? 0.85 : 1.0)
+            theme.cardBackground.opacity(
+                theme.glassEnabled
+                    ? (theme.isDark ? OnboardingStyle.glassOpacityDark : OnboardingStyle.glassOpacityLight)
+                    : 1.0
+            )
 
             // Subtle accent gradient
             LinearGradient(
                 colors: [
-                    theme.accentColor.opacity(theme.isDark ? 0.08 : 0.04),
+                    theme.accentColor.opacity(
+                        theme.isDark
+                            ? OnboardingStyle.accentGradientOpacityDark
+                            : OnboardingStyle.accentGradientOpacityLight
+                    ),
                     Color.clear,
                 ],
                 startPoint: .topLeading,
@@ -549,15 +809,46 @@ struct OnboardingGlassCard<Content: View>: View {
                     colors: [
                         isSelected
                             ? theme.accentColor
-                            : (isHovered ? theme.accentColor.opacity(0.4) : theme.glassEdgeLight.opacity(0.3)),
+                            : (isHovered
+                                ? theme.accentColor.opacity(0.4)
+                                : theme.glassEdgeLight.opacity(
+                                    theme.isDark
+                                        ? OnboardingStyle.edgeLightOpacityDark
+                                        : OnboardingStyle.edgeLightOpacityLight
+                                )),
                         isSelected
                             ? theme.accentColor.opacity(0.6)
-                            : theme.primaryBorder.opacity(0.4),
+                            : theme.primaryBorder.opacity(
+                                theme.isDark
+                                    ? OnboardingStyle.borderOpacityDark
+                                    : OnboardingStyle.borderOpacityLight
+                            ),
                     ],
                     startPoint: .topLeading,
                     endPoint: .bottomTrailing
                 ),
                 lineWidth: isSelected ? 2 : 1
+            )
+            .overlay(accentEdge)
+    }
+
+    /// Accent edge highlight (like ToastBorder)
+    private var accentEdge: some View {
+        RoundedRectangle(cornerRadius: OnboardingLayout.cornerRadius, style: .continuous)
+            .strokeBorder(
+                theme.accentColor.opacity(
+                    isHovered || isSelected
+                        ? OnboardingStyle.accentEdgeHoverOpacity
+                        : OnboardingStyle.accentEdgeNormalOpacity
+                ),
+                lineWidth: 1
+            )
+            .mask(
+                LinearGradient(
+                    colors: [Color.white, Color.white.opacity(0)],
+                    startPoint: .leading,
+                    endPoint: .trailing
+                )
             )
     }
 }

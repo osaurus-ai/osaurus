@@ -196,7 +196,7 @@ public struct OnboardingView: View {
 
     private func navigateTo(_ step: OnboardingStep, direction: NavigationDirection) {
         navigationDirection = direction
-        withAnimation(.easeInOut(duration: 0.4)) {
+        withAnimation(theme.springAnimation(responseMultiplier: 0.8)) {
             currentStep = step
         }
     }

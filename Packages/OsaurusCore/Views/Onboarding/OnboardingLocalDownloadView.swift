@@ -99,17 +99,20 @@ struct OnboardingLocalDownloadView: View {
     }
 
     var body: some View {
-        VStack(spacing: 0) {
+        ZStack {
             if hasStartedDownload {
                 downloadView
+                    .transition(nestedTransition)
             } else {
                 selectionView
+                    .transition(nestedTransition)
             }
         }
         .padding(.horizontal, 20)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .animation(theme.springAnimation(responseMultiplier: 0.8), value: hasStartedDownload)
         .onAppear {
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+            DispatchQueue.main.asyncAfter(deadline: .now() + OnboardingStyle.appearDelay) {
                 withAnimation {
                     hasAppeared = true
                 }
@@ -143,17 +146,29 @@ struct OnboardingLocalDownloadView: View {
         }
     }
 
+    /// Nested screen transition (consistent with main onboarding)
+    private var nestedTransition: AnyTransition {
+        .asymmetric(
+            insertion: .opacity
+                .combined(with: .offset(x: 30))
+                .combined(with: .scale(scale: 0.98)),
+            removal: .opacity
+                .combined(with: .offset(x: -30))
+                .combined(with: .scale(scale: 0.98))
+        )
+    }
+
     // MARK: - Selection View
 
     private var selectionView: some View {
         VStack(spacing: 0) {
-            Spacer().frame(height: 30)
+            Spacer().frame(height: OnboardingStyle.headerTopPadding)
 
             // Back button
-            backButton
-                .padding(.horizontal, 15)
+            OnboardingBackButton(action: onBack)
+                .padding(.horizontal, OnboardingStyle.backButtonHorizontalPadding)
                 .opacity(hasAppeared ? 1 : 0)
-                .animation(.easeOut(duration: 0.5).delay(0.05), value: hasAppeared)
+                .animation(theme.springAnimation().delay(0.05), value: hasAppeared)
 
             Spacer().frame(height: 20)
 
@@ -165,7 +180,7 @@ struct OnboardingLocalDownloadView: View {
                 .fixedSize(horizontal: false, vertical: true)
                 .opacity(hasAppeared ? 1 : 0)
                 .offset(y: hasAppeared ? 0 : 20)
-                .animation(.easeOut(duration: 0.5).delay(0.1), value: hasAppeared)
+                .animation(theme.springAnimation().delay(0.1), value: hasAppeared)
 
             Spacer().frame(height: 24)
 
@@ -177,14 +192,14 @@ struct OnboardingLocalDownloadView: View {
                             model: model,
                             isSelected: selectedModel?.id == model.id
                         ) {
-                            withAnimation(.easeOut(duration: 0.2)) {
+                            withAnimation(theme.animationQuick()) {
                                 selectedModel = model
                             }
                         }
                         .opacity(hasAppeared ? 1 : 0)
                         .offset(y: hasAppeared ? 0 : 15)
                         .animation(
-                            .easeOut(duration: 0.5).delay(
+                            theme.springAnimation().delay(
                                 0.15 + Double(topSuggestedModels.firstIndex(where: { $0.id == model.id }) ?? 0) * 0.07
                             ),
                             value: hasAppeared
@@ -205,7 +220,7 @@ struct OnboardingLocalDownloadView: View {
                 .fixedSize(horizontal: false, vertical: true)
                 .padding(.horizontal, 30)
                 .opacity(hasAppeared ? 1 : 0)
-                .animation(.easeOut(duration: 0.5).delay(0.35), value: hasAppeared)
+                .animation(theme.springAnimation().delay(0.35), value: hasAppeared)
 
             Spacer()
 
@@ -217,7 +232,7 @@ struct OnboardingLocalDownloadView: View {
                         // Model already downloaded, skip to completion
                         onComplete()
                     } else {
-                        withAnimation(.easeInOut(duration: 0.3)) {
+                        withAnimation(theme.springAnimation(responseMultiplier: 0.8)) {
                             hasStartedDownload = true
                         }
                         startDownload()
@@ -227,9 +242,9 @@ struct OnboardingLocalDownloadView: View {
             )
             .frame(width: 200)
             .opacity(hasAppeared ? 1 : 0)
-            .animation(.easeOut(duration: 0.5).delay(0.4), value: hasAppeared)
+            .animation(theme.springAnimation().delay(0.4), value: hasAppeared)
 
-            Spacer().frame(height: 40)
+            Spacer().frame(height: OnboardingStyle.bottomButtonPadding)
         }
     }
 
@@ -247,6 +262,7 @@ struct OnboardingLocalDownloadView: View {
                 .fixedSize(horizontal: false, vertical: true)
                 .opacity(downloadViewAppeared ? 1 : 0)
                 .offset(y: downloadViewAppeared ? 0 : 20)
+                .animation(theme.springAnimation(), value: downloadViewAppeared)
 
             Spacer().frame(height: 40)
 
@@ -260,10 +276,11 @@ struct OnboardingLocalDownloadView: View {
                 Text(progressText)
                     .font(theme.font(size: 13))
                     .foregroundColor(theme.tertiaryText)
-                    .animation(.easeInOut(duration: 0.2), value: progressText)
+                    .animation(theme.animationQuick(), value: progressText)
             }
             .frame(height: 100)
             .opacity(downloadViewAppeared ? 1 : 0)
+            .animation(theme.springAnimation().delay(0.1), value: downloadViewAppeared)
 
             Spacer().frame(height: 36)
 
@@ -278,6 +295,7 @@ struct OnboardingLocalDownloadView: View {
             .fixedSize(horizontal: false, vertical: true)
             .padding(.horizontal, 40)
             .opacity(downloadViewAppeared ? 1 : 0)
+            .animation(theme.springAnimation().delay(0.15), value: downloadViewAppeared)
 
             Spacer()
 
@@ -286,41 +304,17 @@ struct OnboardingLocalDownloadView: View {
                 onSkip()
             }
             .opacity(downloadViewAppeared ? 1 : 0)
+            .animation(theme.springAnimation().delay(0.2), value: downloadViewAppeared)
 
-            Spacer().frame(height: 50)
+            Spacer().frame(height: OnboardingStyle.bottomButtonPadding)
         }
         .onAppear {
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
-                withAnimation(.easeOut(duration: 0.4)) {
+            DispatchQueue.main.asyncAfter(deadline: .now() + OnboardingStyle.appearDelay) {
+                withAnimation(theme.springAnimation()) {
                     downloadViewAppeared = true
                 }
             }
         }
-    }
-
-    // MARK: - Back Button
-
-    private var backButton: some View {
-        HStack {
-            Button {
-                onBack()
-            } label: {
-                HStack(spacing: 6) {
-                    Image(systemName: "chevron.left")
-                        .font(.system(size: 12, weight: .semibold))
-                    Text("Back")
-                        .font(theme.font(size: 13, weight: .medium))
-                }
-                .foregroundColor(theme.secondaryText)
-                .padding(.vertical, 8)
-                .padding(.horizontal, 12)
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-
-            Spacer()
-        }
-        .padding(.leading, -12)
     }
 
     // MARK: - Private Methods
