@@ -66,7 +66,7 @@ public struct CapabilityCatalog: Sendable {
         sections.append("# Available Capabilities")
         sections.append("")
         sections.append(
-            "You have access to tools and skills. Before responding, call `select_capabilities` to choose which ones you need for this conversation."
+            "You have access to tools and skills. For tasks requiring tools or specialized guidance, call `select_capabilities` to choose the relevant capabilities. For simple informational queries, respond directly without selection."
         )
         sections.append("")
 
@@ -87,6 +87,12 @@ public struct CapabilityCatalog: Sendable {
             }
             sections.append("")
         }
+
+        sections.append("### Selection Tips")
+        sections.append("- Select tools you'll actually call, not all related tools")
+        sections.append("- Select skills that provide domain expertise for the task")
+        sections.append("- Fewer selections = faster execution and lower token usage")
+        sections.append("")
 
         return sections.joined(separator: "\n")
     }

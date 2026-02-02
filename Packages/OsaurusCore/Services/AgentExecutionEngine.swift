@@ -964,6 +964,18 @@ public actor AgentExecutionEngine {
         3. Report what was done after each step
         4. Note any discoveries or issues encountered
 
+        ## Asking for Clarification
+
+        Request clarification when:
+        - The task has multiple valid interpretations with significantly different outcomes
+        - Critical information is missing (e.g., file paths, configuration values)
+        - The scope is unclear (e.g., "update the tests" - which tests?)
+
+        Do NOT ask for clarification when:
+        - You can make a reasonable assumption and note it in the plan
+        - The ambiguity is minor and won't affect the outcome
+        - The information can be discovered during execution (e.g., by reading files)
+
         ## Constraints
 
         - Maximum \(Self.maxToolCallsPerIssue) tool calls per task

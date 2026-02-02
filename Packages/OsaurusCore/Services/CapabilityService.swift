@@ -42,7 +42,8 @@ public final class CapabilityService {
         }
 
         enhanced += "# Active Skills\n\n"
-        enhanced += "The following skills provide specialized guidance for this conversation:\n\n"
+        enhanced += "Apply the following skill guidance contextually based on the task. "
+        enhanced += "If multiple skills are relevant, synthesize their guidance coherently.\n\n"
 
         for skill in enabledSkills {
             enhanced += "## \(skill.name)\n"
@@ -240,8 +241,9 @@ public final class CapabilityService {
 
         1. **Planning Phase**: When given a task, first create a step-by-step plan
            - Each step should be concrete and actionable
-           - Maximum 10 steps per execution cycle
-           - If a task requires more steps, it will be decomposed into subtasks
+           - Maximum 10 tool calls per task execution
+           - Steps that don't require tools don't count toward this limit
+           - If a task requires more tool calls, it will be decomposed into subtasks
 
         2. **Execution Phase**: Execute each step methodically
            - Use available tools to accomplish tasks
@@ -265,6 +267,20 @@ public final class CapabilityService {
         - Report discoveries so they can be tracked
         - Stay focused on the current issue
         - If stuck, explain what's blocking progress
+
+        ## File Operations
+
+        - Always use `file_read` before `file_edit` to understand current content
+        - Use `file_search` to find the right files before modifying
+        - Prefer `file_edit` over `file_write` for existing files to preserve content
+        - Verify changes with `file_read` after significant edits
+
+        ## Error Handling
+
+        - If a tool call fails, analyze the error before retrying
+        - For file operations: always read before writing to avoid overwrites
+        - For rate limits: pause execution and inform the user
+        - For permission errors: note the blocker and skip to the next step
 
         ## Bounded Context
 
