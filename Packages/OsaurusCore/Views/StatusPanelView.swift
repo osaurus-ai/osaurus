@@ -342,7 +342,7 @@ private struct BottomActionBar: View {
                     AppDelegate.shared?.showManagementWindow()
                 }
 
-                HelpMenuButton()
+                HelpButton()
 
                 CircularIconButton(systemName: "power", help: "Quit") {
                     NSApp.terminate(nil)
@@ -352,28 +352,15 @@ private struct BottomActionBar: View {
     }
 }
 
-// MARK: - Help Menu Button
-private struct HelpMenuButton: View {
+// MARK: - Help Button
+private struct HelpButton: View {
     @Environment(\.theme) private var theme
     @State private var isHovered = false
 
     var body: some View {
-        Menu {
-            Button {
-                if let url = URL(string: "https://docs.osaurus.ai/") {
-                    NSWorkspace.shared.open(url)
-                }
-            } label: {
-                Label("Documentation", systemImage: "book")
-            }
-
-            Divider()
-
-            Button {
-                OnboardingService.shared.resetOnboarding()
-                AppDelegate.shared?.showOnboardingWindow()
-            } label: {
-                Label("Run Setup Again", systemImage: "arrow.counterclockwise")
+        Button {
+            if let url = URL(string: "https://docs.osaurus.ai/") {
+                NSWorkspace.shared.open(url)
             }
         } label: {
             ZStack {
@@ -400,10 +387,8 @@ private struct HelpMenuButton: View {
             }
             .frame(width: 28, height: 28)
         }
-        .menuStyle(.borderlessButton)
-        .menuIndicator(.hidden)
-        .fixedSize()
-        .help("Help")
+        .buttonStyle(.plain)
+        .help("Documentation")
         .onHover { hovering in
             withAnimation(.easeOut(duration: 0.15)) {
                 isHovered = hovering

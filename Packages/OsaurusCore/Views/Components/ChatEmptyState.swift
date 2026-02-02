@@ -18,21 +18,14 @@ struct ChatEmptyState: View {
     let onUseFoundation: (() -> Void)?
     let onQuickAction: (String) -> Void
     let onSelectPersona: (UUID) -> Void
+    let onOpenOnboarding: (() -> Void)?
 
-    @ObservedObject private var modelManager = ModelManager.shared
-    @State private var glowIntensity: CGFloat = 0.6
     @State private var hasAppeared = false
     @State private var isVisible = false
     @Environment(\.theme) private var theme
-    @Environment(\.colorScheme) private var colorScheme
 
     private var activePersona: Persona {
         personas.first { $0.id == activePersonaId } ?? Persona.default
-    }
-
-    /// Top suggested models to display in empty state
-    private var topSuggestions: [MLXModel] {
-        modelManager.suggestedModels.filter { $0.isTopSuggestion }
     }
 
     private let quickActions = [
@@ -73,13 +66,12 @@ struct ChatEmptyState: View {
                 withAnimation(theme.animationSlow()) {
                     hasAppeared = true
                 }
-                startGradientAnimation()
             }
         }
         .onDisappear {
             // Stop animations when view is hidden
             isVisible = false
-            stopGradientAnimation()
+            hasAppeared = false
         }
     }
 
@@ -151,116 +143,41 @@ struct ChatEmptyState: View {
     // MARK: - No Models State
 
     private var noModelsState: some View {
-        VStack(spacing: 28) {
-            // Glowing icon
-            ZStack {
-                // Outer glow
-                Circle()
-                    .fill(theme.accentColor)
-                    .frame(width: 80, height: 80)
-                    .blur(radius: 20)
-                    .opacity(glowIntensity * 0.3)
+        VStack(spacing: 14) {
+            // Hero Orb - consistent with ready state
+            AnimatedOrb(color: theme.accentColor, size: .medium, seed: "welcome")
+                .frame(width: 88, height: 88)
+                .opacity(hasAppeared ? 1 : 0)
+                .scaleEffect(hasAppeared ? 1 : 0.85)
+                .animation(theme.springAnimation().delay(0.0), value: hasAppeared)
 
-                // Inner glow
-                Circle()
-                    .fill(theme.accentColor)
-                    .frame(width: 80, height: 80)
-                    .blur(radius: 10)
-                    .opacity(glowIntensity * 0.2)
-
-                // Base circle
-                Circle()
-                    .fill(theme.secondaryBackground)
-                    .frame(width: 80, height: 80)
-
-                // Icon
-                Image(systemName: "sparkles")
-                    .font(.system(size: 32, weight: .medium))
-                    .foregroundStyle(
-                        LinearGradient(
-                            colors: [theme.accentColor, theme.accentColor.opacity(0.7)],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        )
-                    )
-            }
-            .opacity(hasAppeared ? 1 : 0)
-            .scaleEffect(hasAppeared ? 1 : 0.8)
-            .animation(theme.springAnimation().delay(0.1), value: hasAppeared)
-
-            // Title and description - uses theme typography
+            // Welcome text - staggered entrance
             VStack(spacing: 8) {
-                Text("Get started with a model")
-                    .font(theme.font(size: CGFloat(theme.headingSize) + 4, weight: .semibold))
+                Text("One more step")
+                    .font(theme.font(size: CGFloat(theme.titleSize) + 4, weight: .semibold))
                     .foregroundColor(theme.primaryText)
+                    .opacity(hasAppeared ? 1 : 0)
+                    .offset(y: hasAppeared ? 0 : 20)
+                    .animation(theme.springAnimation().delay(0.1), value: hasAppeared)
 
-                Text("Download a recommended model to start chatting")
-                    .font(theme.font(size: CGFloat(theme.bodySize)))
+                Text("Osaurus needs an AI to work — either a cloud provider or a local model.")
+                    .font(theme.font(size: CGFloat(theme.bodySize) + 2))
                     .foregroundColor(theme.secondaryText)
                     .multilineTextAlignment(.center)
-            }
-            .opacity(hasAppeared ? 1 : 0)
-            .offset(y: hasAppeared ? 0 : 10)
-            .animation(theme.springAnimation().delay(0.15), value: hasAppeared)
-
-            // Top suggested model cards
-            VStack(spacing: 12) {
-                ForEach(Array(topSuggestions.enumerated()), id: \.element.id) { index, model in
-                    SuggestedModelCard(
-                        model: model,
-                        onDownload: onOpenModelManager
-                    )
                     .opacity(hasAppeared ? 1 : 0)
                     .offset(y: hasAppeared ? 0 : 15)
-                    .animation(theme.springAnimation().delay(0.25 + Double(index) * 0.08), value: hasAppeared)
-                }
+                    .animation(theme.springAnimation().delay(0.17), value: hasAppeared)
             }
+            .frame(maxWidth: 340)
 
-            // Secondary actions - uses theme caption size
-            HStack(spacing: 16) {
-                Button(action: onOpenModelManager) {
-                    HStack(spacing: 5) {
-                        Image(systemName: "square.grid.2x2")
-                            .font(theme.font(size: CGFloat(theme.captionSize) - 1))
-                        Text("Browse all models")
-                    }
-                    .font(theme.font(size: CGFloat(theme.captionSize) + 1, weight: .medium))
-                    .foregroundColor(theme.secondaryText)
-                }
-                .buttonStyle(.plain)
-                .onHover { hovering in
-                    if hovering {
-                        NSCursor.pointingHand.push()
-                    } else {
-                        NSCursor.pop()
-                    }
-                }
-
-                if let useFoundation = onUseFoundation {
-                    Text("·")
-                        .foregroundColor(theme.tertiaryText)
-
-                    Button(action: useFoundation) {
-                        HStack(spacing: 5) {
-                            Image(systemName: "cpu")
-                                .font(theme.font(size: CGFloat(theme.captionSize) - 1))
-                            Text("Use Apple Foundation")
-                        }
-                        .font(theme.font(size: CGFloat(theme.captionSize) + 1, weight: .medium))
-                        .foregroundColor(theme.secondaryText)
-                    }
-                    .buttonStyle(.plain)
-                    .onHover { hovering in
-                        if hovering {
-                            NSCursor.pointingHand.push()
-                        } else {
-                            NSCursor.pop()
-                        }
-                    }
-                }
+            // Get Started button
+            GetStartedButton {
+                onOpenOnboarding?()
             }
             .opacity(hasAppeared ? 1 : 0)
-            .animation(.easeOut(duration: 0.4).delay(0.5), value: hasAppeared)
+            .offset(y: hasAppeared ? 0 : 12)
+            .scaleEffect(hasAppeared ? 1 : 0.97)
+            .animation(theme.springAnimation().delay(0.25), value: hasAppeared)
         }
         .padding(.horizontal, 40)
     }
@@ -286,22 +203,6 @@ struct ChatEmptyState: View {
         default: return "Hello"
         }
     }
-
-    private func startGradientAnimation() {
-        guard isVisible else { return }
-        // Glow pulse animation - subtle breathing effect
-        withAnimation(.easeInOut(duration: 1.5).repeatForever(autoreverses: true)) {
-            glowIntensity = 1.0
-        }
-    }
-
-    private func stopGradientAnimation() {
-        // Reset animation values without animation to stop the repeating animations
-        withAnimation(.linear(duration: 0)) {
-            glowIntensity = 0.6
-        }
-        hasAppeared = false
-    }
 }
 
 // MARK: - Quick Action Model
@@ -321,7 +222,6 @@ private struct QuickActionButton: View {
 
     @State private var isHovered = false
     @Environment(\.theme) private var theme
-    @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
         Button(action: { onTap(action.prompt) }) {
@@ -372,123 +272,55 @@ private struct QuickActionButton: View {
     }
 }
 
-// MARK: - Suggested Model Card
+// MARK: - Get Started Button
 
-private struct SuggestedModelCard: View {
-    let model: MLXModel
-    let onDownload: () -> Void
+private struct GetStartedButton: View {
+    let action: () -> Void
 
     @State private var isHovered = false
     @Environment(\.theme) private var theme
-    @Environment(\.colorScheme) private var colorScheme
-
-    private var isVLM: Bool {
-        model.isLikelyVLM
-    }
-
-    private var modelTypeIcon: String {
-        isVLM ? "eye" : "text.bubble"
-    }
-
-    private var modelTypeLabel: String {
-        isVLM ? "Vision" : "Text"
-    }
 
     var body: some View {
-        Button(action: onDownload) {
-            HStack(spacing: 16) {
-                // Model icon with gradient background
-                ZStack {
-                    RoundedRectangle(cornerRadius: 12, style: .continuous)
-                        .fill(
-                            LinearGradient(
-                                colors: [
-                                    theme.accentColor.opacity(0.2),
-                                    theme.accentColor.opacity(0.1),
-                                ],
-                                startPoint: .topLeading,
-                                endPoint: .bottomTrailing
-                            )
-                        )
-                        .frame(width: 48, height: 48)
+        Button(action: action) {
+            HStack(spacing: 8) {
+                Text("Finish setup")
+                    .font(.system(size: 14, weight: .semibold))
 
-                    Image(systemName: "cube.fill")
-                        .font(.system(size: 20, weight: .medium))
-                        .foregroundColor(theme.accentColor)
-                }
-
-                // Model info
-                VStack(alignment: .leading, spacing: 4) {
-                    HStack(spacing: 8) {
-                        Text(model.name)
-                            .font(.system(size: 15, weight: .semibold))
-                            .foregroundColor(theme.primaryText)
-                            .lineLimit(1)
-
-                        // Model type badge
-                        HStack(spacing: 3) {
-                            Image(systemName: modelTypeIcon)
-                                .font(.system(size: 8, weight: .semibold))
-                            Text(modelTypeLabel)
-                                .font(.system(size: 10, weight: .semibold))
-                        }
-                        .foregroundColor(isVLM ? .purple : theme.accentColor)
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 2)
-                        .background(
-                            Capsule()
-                                .fill((isVLM ? Color.purple : theme.accentColor).opacity(0.12))
-                        )
-
-                        // Quantization badge if available
-                        if let quant = model.quantization {
-                            Text(quant)
-                                .font(.system(size: 10, weight: .medium))
-                                .foregroundColor(theme.secondaryText)
-                                .padding(.horizontal, 6)
-                                .padding(.vertical, 2)
-                                .background(
-                                    Capsule()
-                                        .fill(theme.tertiaryBackground)
-                                )
-                        }
-                    }
-
-                    Text(model.description)
-                        .font(.system(size: 12))
-                        .foregroundColor(theme.secondaryText)
-                        .lineLimit(1)
-                }
-
-                Spacer()
-
-                // Download button
-                Image(systemName: "arrow.down.circle.fill")
-                    .font(.system(size: 24))
-                    .foregroundColor(isHovered ? theme.accentColor : theme.secondaryText)
+                Image(systemName: "arrow.right")
+                    .font(.system(size: 12, weight: .semibold))
+                    .offset(x: isHovered ? 2 : 0)
             }
-            .padding(16)
+            .foregroundColor(.white)
+            .padding(.horizontal, 24)
+            .padding(.vertical, 12)
             .background(
-                RoundedRectangle(cornerRadius: 16, style: .continuous)
-                    .fill(theme.secondaryBackground.opacity(isHovered ? 0.8 : (theme.isDark ? 0.5 : 0.8)))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 16, style: .continuous)
-                            .strokeBorder(
-                                isHovered
-                                    ? theme.accentColor.opacity(0.3)
-                                    : theme.primaryBorder.opacity(theme.isDark ? 0.3 : 0.5),
-                                lineWidth: 1
-                            )
+                Capsule()
+                    .fill(
+                        LinearGradient(
+                            colors: [
+                                theme.accentColor,
+                                theme.accentColor.opacity(0.85),
+                            ],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        )
+                    )
+                    .shadow(
+                        color: theme.accentColor.opacity(isHovered ? 0.4 : 0.2),
+                        radius: isHovered ? 12 : 8,
+                        x: 0,
+                        y: 4
                     )
             )
+            .scaleEffect(isHovered ? 1.02 : 1.0)
         }
         .buttonStyle(.plain)
+        .padding(.top, 8)
         .onHover { hovering in
             withAnimation(theme.animationQuick()) {
                 isHovered = hovering
             }
         }
-        .frame(maxWidth: 520)
     }
 }
 
@@ -618,7 +450,8 @@ struct AmbientOrbsView: View {
                     onOpenModelManager: {},
                     onUseFoundation: {},
                     onQuickAction: { _ in },
-                    onSelectPersona: { _ in }
+                    onSelectPersona: { _ in },
+                    onOpenOnboarding: nil
                 )
             }
             .frame(width: 700, height: 600)
@@ -633,7 +466,8 @@ struct AmbientOrbsView: View {
                     onOpenModelManager: {},
                     onUseFoundation: {},
                     onQuickAction: { _ in },
-                    onSelectPersona: { _ in }
+                    onSelectPersona: { _ in },
+                    onOpenOnboarding: {}
                 )
             }
             .frame(width: 700, height: 600)

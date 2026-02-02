@@ -84,6 +84,7 @@ struct ModeToggleButton: View {
     enum Mode { case chat, agent }
 
     let currentMode: Mode
+    var isDisabled: Bool = false
     let action: () -> Void
 
     @State private var isHovered = false
@@ -132,9 +133,15 @@ struct ModeToggleButton: View {
             )
         }
         .buttonStyle(.plain)
-        .onHover { isHovered = $0 }
+        .onHover { isHovered = isDisabled ? false : $0 }
         .animation(.easeOut(duration: 0.15), value: isHovered)
-        .help(currentMode == .chat ? "Switch to Agent mode" : "Switch to Chat mode")
+        .opacity(isDisabled ? 0.4 : 1.0)
+        .disabled(isDisabled)
+        .help(
+            isDisabled
+                ? "Set up a model to use Agent mode"
+                : (currentMode == .chat ? "Switch to Agent mode" : "Switch to Chat mode")
+        )
     }
 
     @ViewBuilder
