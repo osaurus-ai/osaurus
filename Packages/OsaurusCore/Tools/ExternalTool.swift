@@ -41,7 +41,9 @@ final class ExternalTool: OsaurusTool, PermissionedTool, @unchecked Sendable {
     func execute(argumentsJSON: String) async throws -> String {
         // Inject secrets into the payload if the plugin has secrets configured
         let payloadWithSecrets = injectSecrets(into: argumentsJSON)
-        return try plugin.invoke(type: "tool", id: toolId, payload: payloadWithSecrets)
+        // Inject folder context so plugins can resolve relative paths
+        let payloadWithContext = await injectFolderContext(into: payloadWithSecrets)
+        return try plugin.invoke(type: "tool", id: toolId, payload: payloadWithContext)
     }
 
     /// Injects plugin secrets into the tool payload under the `_secrets` key
@@ -61,6 +63,40 @@ final class ExternalTool: OsaurusTool, PermissionedTool, @unchecked Sendable {
 
         // Add secrets under the `_secrets` key
         payloadDict["_secrets"] = secrets
+
+        // Re-serialize to JSON
+        guard let modifiedData = try? JSONSerialization.data(withJSONObject: payloadDict),
+            let modifiedPayload = String(data: modifiedData, encoding: .utf8)
+        else {
+            return payload
+        }
+
+        return modifiedPayload
+    }
+
+    /// Injects folder context into the tool payload under the `_context` key
+    /// - Parameter payload: Original JSON payload
+    /// - Returns: Payload with folder context injected, or original payload if no folder context active
+    private func injectFolderContext(into payload: String) async -> String {
+        // Access the folder context service on the main actor
+        let rootPath: URL? = await MainActor.run {
+            AgentFolderContextService.shared.currentContext?.rootPath
+        }
+
+        guard let rootPath = rootPath else { return payload }
+
+        // Parse the original payload
+        guard let payloadData = payload.data(using: .utf8),
+            var payloadDict = try? JSONSerialization.jsonObject(with: payloadData) as? [String: Any]
+        else {
+            // If payload isn't a valid JSON object, return as-is
+            return payload
+        }
+
+        // Add context under the `_context` key
+        payloadDict["_context"] = [
+            "working_directory": rootPath.path
+        ]
 
         // Re-serialize to JSON
         guard let modifiedData = try? JSONSerialization.data(withJSONObject: payloadDict),
