@@ -132,7 +132,7 @@ struct AgentFileTreeTool: OsaurusTool {
     }
 
     private func buildTree(_ url: URL, maxDepth: Int) -> String {
-        var result = "\(url.lastPathComponent)/\n"
+        var result = "./\n"
         var fileCount = 0
         let maxFiles = 300
         let ignorePatterns = AgentFolderToolHelpers.detectProjectType(rootPath).ignorePatterns

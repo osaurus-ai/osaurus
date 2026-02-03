@@ -276,7 +276,7 @@ public final class AgentFolderContextService: ObservableObject {
             }
         }
 
-        result = "\(url.lastPathComponent)/\n"
+        result = "./\n"
         traverse(url, depth: 1, prefix: "")
 
         return result
