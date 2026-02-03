@@ -753,7 +753,7 @@ public actor AgentExecutionEngine {
             invocation.toolCallId ?? "call_\(UUID().uuidString.replacingOccurrences(of: "-", with: "").prefix(24))"
 
         // Execute tool with issue context for file operation logging
-        let result = await executeToolOnMainActor(
+        let result = await executeToolInBackground(
             name: invocation.toolName,
             argumentsJSON: invocation.jsonArguments,
             overrides: overrides,
@@ -772,9 +772,8 @@ public actor AgentExecutionEngine {
         return ToolCallResult(toolCall: toolCall, result: result)
     }
 
-    /// Helper to execute tool on MainActor with issue context
-    @MainActor
-    private func executeToolOnMainActor(
+    /// Helper to execute tool in background with issue context
+    private func executeToolInBackground(
         name: String,
         argumentsJSON: String,
         overrides: [String: Bool]?,

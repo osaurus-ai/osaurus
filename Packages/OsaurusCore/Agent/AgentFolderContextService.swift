@@ -96,7 +96,7 @@ public final class AgentFolderContextService: ObservableObject {
         let tree = buildFileTree(url, options: options)
         let manifest = readManifest(url, projectType: projectType)
         let isGitRepo = checkIsGitRepo(url)
-        let gitStatus = isGitRepo ? getGitStatus(url) : nil
+        let gitStatus = isGitRepo ? await getGitStatus(url) : nil
 
         return AgentFolderContext(
             rootPath: url,
@@ -364,31 +364,19 @@ public final class AgentFolderContextService: ObservableObject {
             && isDirectory.boolValue
     }
 
-    private func getGitStatus(_ url: URL) -> String? {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
-        process.arguments = ["status", "--short", "--branch"]
-        process.currentDirectoryURL = url
-
-        let pipe = Pipe()
-        process.standardOutput = pipe
-        process.standardError = pipe
-
+    private func getGitStatus(_ url: URL) async -> String? {
         do {
-            try process.run()
-            process.waitUntilExit()
-
-            let data = pipe.fileHandleForReading.readDataToEndOfFile()
-            let output = String(data: data, encoding: .utf8)?.trimmingCharacters(
-                in: .whitespacesAndNewlines
+            let (output, _) = try await AgentFolderToolHelpers.runGitCommand(
+                arguments: ["status", "--short", "--branch"],
+                in: url
             )
 
             // Truncate if too long
-            if let output = output, output.count > 2000 {
+            if output.count > 2000 {
                 return String(output.prefix(2000)) + "\n... (truncated)"
             }
 
-            return output
+            return output.isEmpty ? nil : output
         } catch {
             return nil
         }
