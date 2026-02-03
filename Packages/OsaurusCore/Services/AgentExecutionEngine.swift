@@ -612,91 +612,90 @@ public actor AgentExecutionEngine {
 
         let step = plan.steps[stepIndex]
 
-        // Build the step execution prompt
+        // Add step prompt to messages
         let stepPrompt = buildStepPrompt(step: step, stepIndex: stepIndex, totalSteps: plan.steps.count)
         messages.append(ChatMessage(role: "user", content: stepPrompt))
 
-        // Build full messages for token estimation
-        let fullMessages = [ChatMessage(role: "system", content: systemPrompt)] + messages
+        // Track totals across multiple tool calls
+        var totalInputTokens = 0
+        var totalOutputTokens = 0
+        var allResponseContent = ""
+        var lastToolCallResult: ToolCallResult?
 
-        // Create the request
-        let request = ChatCompletionRequest(
-            model: model ?? "default",
-            messages: fullMessages,
-            temperature: 0.3,
-            max_tokens: 4096,
-            stream: nil,
-            top_p: nil,
-            frequency_penalty: nil,
-            presence_penalty: nil,
-            stop: nil,
-            n: nil,
-            tools: tools,
-            tool_choice: nil,
-            session_id: nil
-        )
+        // Execute step - may involve multiple tool calls until expected tool is called
+        let maxToolCallsPerStep = 5
+        var toolCallsInStep = 0
 
-        // Estimate input tokens from messages (~4 chars per token)
-        let inputTokens = estimateInputTokens(fullMessages)
+        while toolCallsInStep < maxToolCallsPerStep && !plan.isAtLimit {
+            // Build request with current messages
+            let currentMessages = [ChatMessage(role: "system", content: systemPrompt)] + messages
+            totalInputTokens += estimateInputTokens(currentMessages)
 
-        // Stream the response
-        var responseContent = ""
-        var toolCallResult: ToolCallResult?
-
-        do {
-            let stream = try await chatEngine.streamChat(request: request)
-
-            for try await delta in stream {
-                responseContent += delta
-                await notifyDelta(delta, forStep: stepIndex)
-            }
-        } catch let toolInvocation as ServiceToolInvocation {
-            // Tool call detected - handle via StepResult.toolCallResult for UI rendering
-            plan.toolCallCount += 1
-            currentPlan = plan
-
-            // Execute the tool with issue context for file operation logging
-            let toolResult = try await executeToolCall(
-                toolInvocation,
-                overrides: toolOverrides,
-                issueId: issue.id
+            let request = ChatCompletionRequest(
+                model: model ?? "default",
+                messages: currentMessages,
+                temperature: 0.3,
+                max_tokens: 4096,
+                stream: nil,
+                top_p: nil,
+                frequency_penalty: nil,
+                presence_penalty: nil,
+                stop: nil,
+                n: nil,
+                tools: tools,
+                tool_choice: nil,
+                session_id: nil
             )
 
-            toolCallResult = toolResult
+            // Stream response
+            var responseContent = ""
+            var toolInvoked: ServiceToolInvocation?
 
-            // Log the tool call event with full details
+            do {
+                let stream = try await chatEngine.streamChat(request: request)
+                for try await delta in stream {
+                    responseContent += delta
+                    await notifyDelta(delta, forStep: stepIndex)
+                }
+            } catch let invocation as ServiceToolInvocation {
+                toolInvoked = invocation
+            }
+
+            allResponseContent += responseContent
+            totalOutputTokens += estimateOutputTokens(responseContent)
+
+            // Add text response to conversation
+            if !responseContent.isEmpty {
+                messages.append(ChatMessage(role: "assistant", content: responseContent))
+            }
+
+            // No tool called = step complete
+            guard let invocation = toolInvoked else { break }
+
+            // Execute the tool
+            plan.toolCallCount += 1
+            toolCallsInStep += 1
+            currentPlan = plan
+
+            let toolResult = try await executeToolCall(invocation, overrides: toolOverrides, issueId: issue.id)
+            lastToolCallResult = toolResult
+
+            // Log and add to conversation
             _ = try? IssueStore.createEvent(
                 IssueEvent.withPayload(
                     issueId: issue.id,
                     eventType: .toolCallExecuted,
                     payload: EventPayload.ToolCall(
-                        tool: toolInvocation.toolName,
+                        tool: invocation.toolName,
                         step: stepIndex,
-                        arguments: toolInvocation.jsonArguments,
+                        arguments: invocation.jsonArguments,
                         result: toolResult.result
                     )
                 )
             )
-        }
 
-        // Mark step as complete
-        plan.steps[stepIndex].isComplete = true
-        currentPlan = plan
-
-        // Add assistant response to messages
-        if !responseContent.isEmpty {
-            messages.append(ChatMessage(role: "assistant", content: responseContent))
-        }
-
-        // Add tool result to messages if applicable
-        if let toolResult = toolCallResult {
             messages.append(
-                ChatMessage(
-                    role: "assistant",
-                    content: nil,
-                    tool_calls: [toolResult.toolCall],
-                    tool_call_id: nil
-                )
+                ChatMessage(role: "assistant", content: nil, tool_calls: [toolResult.toolCall], tool_call_id: nil)
             )
             messages.append(
                 ChatMessage(
@@ -706,38 +705,40 @@ public actor AgentExecutionEngine {
                     tool_call_id: toolResult.toolCall.id
                 )
             )
+
+            // Step complete if expected tool was called (or no specific tool expected)
+            if step.toolName == nil || invocation.toolName == step.toolName {
+                break
+            }
         }
 
-        // Estimate output tokens from response content (~4 chars per token)
-        let outputTokens = estimateOutputTokens(responseContent)
+        plan.steps[stepIndex].isComplete = true
+        currentPlan = plan
 
         return StepResult(
             stepIndex: stepIndex,
-            responseContent: responseContent,
-            toolCallResult: toolCallResult,
+            responseContent: allResponseContent,
+            toolCallResult: lastToolCallResult,
             isComplete: true,
             remainingToolCalls: plan.maxToolCalls - plan.toolCallCount,
-            inputTokens: inputTokens,
-            outputTokens: outputTokens
+            inputTokens: totalInputTokens,
+            outputTokens: totalOutputTokens
         )
     }
 
     /// Builds the prompt for executing a specific step
     private func buildStepPrompt(step: PlanStep, stepIndex: Int, totalSteps: Int) -> String {
-        var prompt = "Execute this step: \(step.description)"
+        var prompt = "Execute step \(stepIndex + 1)/\(totalSteps): \(step.description)"
 
         if let toolName = step.toolName {
-            prompt += "\n\nYou should use the `\(toolName)` tool to complete this step."
+            prompt += "\n\nUse the `\(toolName)` tool to complete this step."
+
+            if toolName == "batch" {
+                prompt += " Format: {\"operations\": [{\"tool\": \"...\", \"args\": {...}}, ...]}"
+            }
         }
 
-        // Add tool usage reminder to encourage actual tool invocation
-        prompt += """
-
-
-            IMPORTANT: When you need to perform an action (read files, search, execute commands, etc.), you MUST invoke the appropriate tool. Do not just describe what you would do - actually call the tool to perform the action.
-
-            Provide a concise response after completing the action.
-            """
+        prompt += "\n\nCall the tool now."
 
         return prompt
     }

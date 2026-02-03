@@ -13,8 +13,7 @@ import Foundation
 /// Tool for executing multiple operations in a single call
 struct AgentBatchTool: OsaurusTool {
     let name = "batch"
-    let description =
-        "Execute multiple tool operations in sequence (max 30). Continues on error and reports results for all operations."
+    let description = "Execute multiple tool operations in sequence (max 30). Continues on error and reports results."
 
     let parameters: JSONValue? = .object([
         "type": .string("object"),
@@ -184,11 +183,18 @@ struct AgentBatchTool: OsaurusTool {
             )
         }
 
-        // Check if approval was denied for this tool
-        if let info = await ToolRegistry.shared.policyInfo(for: op.tool),
-            info.effectivePolicy == .ask,
-            !approvedTools.contains(op.tool)
-        {
+        // Check tool policy and registration
+        guard let info = await ToolRegistry.shared.policyInfo(for: op.tool) else {
+            return Result(
+                index: op.index,
+                tool: op.tool,
+                success: false,
+                message: "Tool '\(op.tool)' is not registered"
+            )
+        }
+
+        // Check if approval was denied for .ask policy tools
+        if info.effectivePolicy == .ask, !approvedTools.contains(op.tool) {
             return Result(
                 index: op.index,
                 tool: op.tool,
@@ -197,13 +203,24 @@ struct AgentBatchTool: OsaurusTool {
             )
         }
 
-        // Execute the tool
+        // Check if tool is explicitly denied
+        if info.effectivePolicy == .deny {
+            return Result(
+                index: op.index,
+                tool: op.tool,
+                success: false,
+                message: "Tool '\(op.tool)' is denied by policy"
+            )
+        }
+
+        // Execute the tool - always pass override to bypass config check for batch operations
+        // This ensures folder tools work even if not explicitly enabled in persisted config
         do {
             let output = try await AgentExecutionContext.$currentBatchId.withValue(batchId) {
                 try await ToolRegistry.shared.execute(
                     name: op.tool,
                     argumentsJSON: op.argsJSON,
-                    overrides: approvedTools.contains(op.tool) ? [op.tool: true] : nil
+                    overrides: [op.tool: true]  // Always enable for batch execution
                 )
             }
 
@@ -230,7 +247,15 @@ struct AgentBatchTool: OsaurusTool {
         let succeeded = results.filter(\.success).count
         let failed = results.count - succeeded
 
-        var lines = ["Batch complete: \(succeeded) succeeded, \(failed) failed", ""]
+        // Make failures more prominent so the agent recognizes the batch didn't work
+        var lines: [String]
+        if failed > 0 && succeeded == 0 {
+            lines = ["ERROR: Batch failed - all \(failed) operation(s) failed", ""]
+        } else if failed > 0 {
+            lines = ["WARNING: Batch partial - \(succeeded) succeeded, \(failed) failed", ""]
+        } else {
+            lines = ["Batch complete: \(succeeded) succeeded", ""]
+        }
 
         for result in results {
             let icon = result.success ? "✓" : "✗"
