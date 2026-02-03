@@ -11,4 +11,7 @@ import Foundation
 public enum AgentExecutionContext {
     /// The current issue ID being executed (available during tool calls)
     @TaskLocal public static var currentIssueId: String?
+
+    /// The current batch ID for grouped operations (nil for non-batch operations)
+    @TaskLocal public static var currentBatchId: UUID?
 }

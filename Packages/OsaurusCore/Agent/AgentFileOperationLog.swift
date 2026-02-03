@@ -196,6 +196,39 @@ public actor AgentFileOperationLog {
         return operation
     }
 
+    /// Undo all operations for a specific batch (in reverse order)
+    /// Continues on error, returning only successfully undone operations
+    @discardableResult
+    public func undoBatch(issueId: String, batchId: UUID) throws -> [AgentFileOperation] {
+        guard var issueOps = operations[issueId] else {
+            return []
+        }
+
+        let batchOps = issueOps.filter { $0.batchId == batchId }
+        guard !batchOps.isEmpty else { return [] }
+
+        var undone: [AgentFileOperation] = []
+
+        // Undo in reverse order
+        for operation in batchOps.reversed() {
+            do {
+                try performUndo(operation)
+                undone.append(operation)
+            } catch {
+                // Continue undoing remaining operations even if one fails
+                continue
+            }
+        }
+
+        // Remove undone operations from the list
+        let undoneIds = Set(undone.map { $0.id })
+        issueOps.removeAll { undoneIds.contains($0.id) }
+        operations[issueId] = issueOps
+
+        notifyChange()
+        return undone
+    }
+
     // MARK: - Cleanup
 
     /// Clear all operations for an issue

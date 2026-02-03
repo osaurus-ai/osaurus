@@ -30,6 +30,7 @@ public struct AgentFileOperation: Codable, Sendable, Identifiable {
     public let previousContent: String?  // For write/delete (to restore)
     public let timestamp: Date
     public let issueId: String
+    public let batchId: UUID?  // For batch operations (nil for non-batch)
 
     public init(
         id: UUID = UUID(),
@@ -38,7 +39,8 @@ public struct AgentFileOperation: Codable, Sendable, Identifiable {
         destinationPath: String? = nil,
         previousContent: String? = nil,
         timestamp: Date = Date(),
-        issueId: String
+        issueId: String,
+        batchId: UUID? = nil
     ) {
         self.id = id
         self.type = type
@@ -47,6 +49,7 @@ public struct AgentFileOperation: Codable, Sendable, Identifiable {
         self.previousContent = previousContent
         self.timestamp = timestamp
         self.issueId = issueId
+        self.batchId = batchId
     }
 }
 
