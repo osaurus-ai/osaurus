@@ -32,7 +32,7 @@ public struct ToolsCreate {
 
     private static func createSwiftPlugin(name: String) {
         let fm = FileManager.default
-        let root = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+        let root = URL(fileURLWithPath: fm.currentDirectoryPath)
         let dir = root.appendingPathComponent(name, isDirectory: true)
         let sources = dir.appendingPathComponent("Sources", isDirectory: true)
         // Use plugin name as module name to avoid duplicate Objective-C class names across plugins
@@ -69,7 +69,16 @@ public struct ToolsCreate {
         let pluginSwift = """
             import Foundation
 
-            // MARK: - Minimal tool implementation
+            // MARK: - Osaurus Injected Context
+            
+            /// Folder context injected by Osaurus when a working directory is selected.
+            /// Use this to resolve relative file paths in your tools.
+            private struct FolderContext: Decodable {
+                let working_directory: String
+            }
+
+            // MARK: - Tool Implementation
+            
             private struct HelloTool {
                 let name = "hello_world"
                 let description = "Return a friendly greeting"
@@ -78,8 +87,8 @@ public struct ToolsCreate {
                 func run(args: String) -> String {
                     struct Args: Decodable {
                         let name: String
-                        // Secrets are automatically injected by Osaurus under the _secrets key
-                        let _secrets: [String: String]?
+                        let _secrets: [String: String]?   // Secrets injected by Osaurus
+                        let _context: FolderContext?      // Folder context injected by Osaurus
                     }
                     guard let data = args.data(using: .utf8),
                           let input = try? JSONDecoder().decode(Args.self, from: data)
@@ -89,6 +98,11 @@ public struct ToolsCreate {
                     
                     // Example: Access a configured secret (if your plugin declares secrets in manifest)
                     // let apiKey = input._secrets?["api_key"] ?? "no-key"
+                    
+                    // Example: Resolve a relative path using the working directory
+                    // if let workingDir = input._context?.working_directory {
+                    //     let absolutePath = "\\(workingDir)/\\(relativePath)"
+                    // }
                     
                     return "{\\"message\\": \\"Hello, \\(input.name)!\\"}"
                 }
@@ -155,6 +169,7 @@ public struct ToolsCreate {
                     //     {"id": "api_key", "label": "API Key", "description": "Your API key", "required": true, "url": "https://example.com/api"}
                     //   ],
                     // Secrets are injected into tool payloads under the "_secrets" key.
+                    // Folder context (working_directory) is injected under the "_context" key when active.
                     let manifest = \"\"\"
                     {
                       "plugin_id": "dev.example.\(name)",
@@ -221,6 +236,9 @@ public struct ToolsCreate {
             on:
               push:
                 tags: ['v*', '[0-9]+.[0-9]+.[0-9]+']
+
+            permissions:
+              contents: write
 
             jobs:
               release:
@@ -297,7 +315,7 @@ public struct ToolsCreate {
 
     private static func createRustPlugin(name: String) {
         let fm = FileManager.default
-        let root = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+        let root = URL(fileURLWithPath: fm.currentDirectoryPath)
         let dir = root.appendingPathComponent(name, isDirectory: true)
         try? fm.createDirectory(at: dir, withIntermediateDirectories: true)
         let readme = """
@@ -592,6 +610,122 @@ public struct ToolsCreate {
             - A "Needs API Key" badge appears if required secrets are missing
             - Users can edit secrets anytime via the plugin menu
             - Secrets are stored securely in the macOS Keychain
+
+            ## Using Folder Context (Working Directory)
+
+            When a user has a working directory selected in Agent Mode, Osaurus automatically injects the folder context into tool payloads. This allows your plugin to resolve relative file paths.
+
+            ### Automatic Injection
+
+            When a folder context is active, every tool invocation receives a `_context` object:
+
+            ```json
+            {
+              "input_path": "Screenshots/image.png",
+              "_context": {
+                "working_directory": "/Users/foo/project"
+              }
+            }
+            ```
+
+            ### Accessing Folder Context in Your Tool
+
+            \(isSwift ? """
+            ```swift
+            private struct MyFileTool {
+                let name = "process_file"
+                
+                struct FolderContext: Decodable {
+                    let working_directory: String
+                }
+                
+                struct Args: Decodable {
+                    let path: String
+                    let _context: FolderContext?  // Folder context injected by Osaurus
+                }
+                
+                func run(args: String) -> String {
+                    guard let data = args.data(using: .utf8),
+                          let input = try? JSONDecoder().decode(Args.self, from: data)
+                    else {
+                        return "{\\"error\\": \\"Invalid arguments\\"}"
+                    }
+                    
+                    // Resolve relative path using working directory
+                    let absolutePath: String
+                    if let workingDir = input._context?.working_directory {
+                        absolutePath = "\\(workingDir)/\\(input.path)"
+                    } else {
+                        // No folder context - assume absolute path or return error
+                        absolutePath = input.path
+                    }
+                    
+                    // SECURITY: Validate path stays within working directory
+                    if let workingDir = input._context?.working_directory {
+                        let resolvedPath = URL(fileURLWithPath: absolutePath).standardized.path
+                        guard resolvedPath.hasPrefix(workingDir) else {
+                            return "{\\"error\\": \\"Path outside working directory\\"}"
+                        }
+                    }
+                    
+                    // Process the file at absolutePath...
+                    return "{\\"success\\": true}"
+                }
+            }
+            ```
+            """ : """
+            ```rust
+            fn run(&self, args: &str) -> String {
+                #[derive(Deserialize)]
+                struct FolderContext {
+                    working_directory: String,
+                }
+                
+                #[derive(Deserialize)]
+                struct Args {
+                    path: String,
+                    _context: Option<FolderContext>,
+                }
+                
+                let input: Args = match serde_json::from_str(args) {
+                    Ok(v) => v,
+                    Err(_) => return r#"{"error": "Invalid arguments"}"#.to_string(),
+                };
+                
+                // Resolve relative path
+                let absolute_path = match &input._context {
+                    Some(ctx) => format!("{}/{}", ctx.working_directory, input.path),
+                    None => input.path.clone(),
+                };
+                
+                // SECURITY: Validate path stays within working directory
+                if let Some(ctx) = &input._context {
+                    let resolved = std::path::Path::new(&absolute_path).canonicalize();
+                    if let Ok(resolved) = resolved {
+                        if !resolved.starts_with(&ctx.working_directory) {
+                            return r#"{"error": "Path outside working directory"}"#.to_string();
+                        }
+                    }
+                }
+                
+                // Process the file...
+                r#"{"success": true}"#.to_string()
+            }
+            ```
+            """)
+
+            ### Security Considerations
+
+            - **Always validate paths** stay within `working_directory` to prevent directory traversal
+            - The LLM is instructed to use relative paths for file operations
+            - Reject paths that attempt to escape (e.g., `../../../etc/passwd`)
+            - If `_context` is absent, decide whether to require it or accept absolute paths
+
+            ### Context Fields
+
+            | Field | Type | Description |
+            |-------|------|-------------|
+            | `working_directory` | string | Absolute path to the user's selected folder |
 
             ## Porting Existing Tools
 

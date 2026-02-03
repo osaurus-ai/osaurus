@@ -225,13 +225,13 @@ Plugins that require API keys or other credentials can declare them in the manif
 
 **Secret Specification Fields:**
 
-| Field         | Type    | Required | Description                                                      |
-| ------------- | ------- | -------- | ---------------------------------------------------------------- |
-| `id`          | string  | Yes      | Unique identifier for the secret (e.g., `"api_key"`)             |
-| `label`       | string  | Yes      | Human-readable label shown in the UI                             |
-| `description` | string  | No       | Rich text description (supports markdown links)                  |
-| `required`    | boolean | Yes      | Whether the secret is required for the plugin to function        |
-| `url`         | string  | No       | URL to the settings page where users can obtain the secret       |
+| Field         | Type    | Required | Description                                                |
+| ------------- | ------- | -------- | ---------------------------------------------------------- |
+| `id`          | string  | Yes      | Unique identifier for the secret (e.g., `"api_key"`)       |
+| `label`       | string  | Yes      | Human-readable label shown in the UI                       |
+| `description` | string  | No       | Rich text description (supports markdown links)            |
+| `required`    | boolean | Yes      | Whether the secret is required for the plugin to function  |
+| `url`         | string  | No       | URL to the settings page where users can obtain the secret |
 
 **Accessing Secrets in Tools:**
 
@@ -240,24 +240,24 @@ When a tool is invoked, Osaurus automatically injects configured secrets into th
 ```swift
 private struct WeatherTool {
     let name = "get_weather"
-    
+
     struct Args: Decodable {
         let location: String
         let _secrets: [String: String]?  // Secrets are injected here
     }
-    
+
     func run(args: String) -> String {
         guard let data = args.data(using: .utf8),
               let input = try? JSONDecoder().decode(Args.self, from: data)
         else {
             return "{\"error\": \"Invalid arguments\"}"
         }
-        
+
         // Get the API key from secrets
         guard let apiKey = input._secrets?["api_key"] else {
             return "{\"error\": \"API key not configured. Please configure secrets in Osaurus settings.\"}"
         }
-        
+
         // Use the API key
         let result = fetchWeather(location: input.location, apiKey: apiKey)
         return "{\"weather\": \"\(result)\"}"
@@ -273,6 +273,83 @@ private struct WeatherTool {
 4. Secrets are stored securely in the macOS Keychain
 5. Secrets are automatically cleaned up when the plugin is uninstalled
 
+### Folder Context
+
+When a user has a working directory selected in Agent Mode, Osaurus automatically injects the folder context into tool payloads. This allows plugins to resolve relative paths provided by the LLM.
+
+**Automatic Injection:**
+
+When a folder context is active, every tool invocation receives a `_context` object:
+
+```json
+{
+  "input_path": "Screenshots/image.png",
+  "output_format": "jpg",
+  "_context": {
+    "working_directory": "/Users/foo/project"
+  }
+}
+```
+
+**Using Folder Context in Tools:**
+
+```swift
+private struct ImageTool {
+    let name = "convert_image"
+
+    struct Args: Decodable {
+        let input_path: String
+        let output_format: String
+        let _context: FolderContext?
+    }
+
+    struct FolderContext: Decodable {
+        let working_directory: String
+    }
+
+    func run(args: String) -> String {
+        guard let data = args.data(using: .utf8),
+              let input = try? JSONDecoder().decode(Args.self, from: data)
+        else {
+            return "{\"error\": \"Invalid arguments\"}"
+        }
+
+        // Resolve relative path using working directory
+        let inputPath: String
+        if let workingDir = input._context?.working_directory {
+            inputPath = "\(workingDir)/\(input.input_path)"
+        } else {
+            // No folder context - assume absolute path
+            inputPath = input.input_path
+        }
+
+        // Validate path stays within working directory (security)
+        if let workingDir = input._context?.working_directory {
+            let resolvedPath = URL(fileURLWithPath: inputPath).standardized.path
+            guard resolvedPath.hasPrefix(workingDir) else {
+                return "{\"error\": \"Path outside working directory\"}"
+            }
+        }
+
+        // Process the file...
+        return "{\"success\": true}"
+    }
+}
+```
+
+**Security Considerations:**
+
+- Always validate that resolved paths stay within `working_directory`
+- The LLM is instructed to use relative paths for file operations
+- Plugins should reject paths that attempt directory traversal (e.g., `../`)
+- If `_context` is absent, the plugin should handle absolute paths or return an error
+
+**Context Fields:**
+
+| Field               | Type   | Description                                 |
+| ------------------- | ------ | ------------------------------------------- |
+| `working_directory` | string | Absolute path to the user's selected folder |
+
 ### Invocation
 
 When Osaurus needs to execute a capability, it calls `invoke`:
@@ -281,6 +358,7 @@ When Osaurus needs to execute a capability, it calls `invoke`:
 - `id`: e.g. `"echo_tool"`
 - `payload`: JSON string arguments (e.g. `{"message": "hello"}`)
   - If the plugin has secrets configured, they are injected under the `_secrets` key
+  - If a folder context is active, it is injected under the `_context` key
 
 The plugin returns a JSON string response (allocated; host frees it).
 
