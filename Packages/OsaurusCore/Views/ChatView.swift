@@ -222,6 +222,13 @@ final class ChatSession: ObservableObject {
         }
     }
 
+    /// Invalidate model cache to force rediscovery
+    /// Call this when models change outside of normal notification flow (e.g., after onboarding)
+    public static func invalidateModelCache() {
+        cacheValid = false
+        cachedModelOptions = nil
+    }
+
     func refreshModelOptions() async {
         let newOptions = await Self.buildModelOptions()
 
@@ -1488,7 +1495,15 @@ struct ChatView: View {
                                     windowState.switchPersona(to: newPersonaId)
                                 },
                                 onOpenOnboarding: {
-                                    // Reset onboarding so it shows the full flow
+                                    // If onboarding was already completed, just refresh models
+                                    // Don't reset onboarding - the user just finished it
+                                    if !OnboardingService.shared.shouldShowOnboarding {
+                                        Task { @MainActor in
+                                            await session.refreshModelOptions()
+                                        }
+                                        return
+                                    }
+                                    // Only reset for users who never completed onboarding
                                     OnboardingService.shared.resetOnboarding()
                                     // Close this window so user can focus on onboarding
                                     ChatWindowManager.shared.closeWindow(id: windowState.windowId)

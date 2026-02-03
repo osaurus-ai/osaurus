@@ -827,6 +827,9 @@ extension AppDelegate {
             // Close the onboarding window when complete
             Self.onboardingWindow?.close()
             Self.onboardingWindow = nil
+            // Invalidate model cache so fresh models are discovered
+            // This ensures any models downloaded during onboarding are visible
+            ChatSession.invalidateModelCache()
             // Open ChatView after onboarding completes
             self?.showChatOverlay()
         }
