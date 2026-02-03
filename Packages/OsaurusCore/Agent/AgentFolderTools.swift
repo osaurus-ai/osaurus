@@ -81,6 +81,43 @@ enum AgentFolderToolHelpers {
     static func shouldIgnore(_ name: String, patterns: [String]) -> Bool {
         patterns.contains { matchesPattern(name, pattern: $0) }
     }
+
+    /// Run a process and wait for completion asynchronously without blocking the main thread.
+    /// The termination handler is set before running to avoid race conditions.
+    static func runProcessAsync(_ process: Process) async throws {
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            process.terminationHandler = { _ in
+                continuation.resume()
+            }
+            do {
+                try process.run()
+            } catch {
+                continuation.resume(throwing: error)
+            }
+        }
+    }
+
+    /// Run a git command and return the output
+    static func runGitCommand(
+        arguments: [String],
+        in directory: URL
+    ) async throws -> (output: String, exitCode: Int32) {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
+        process.arguments = arguments
+        process.currentDirectoryURL = directory
+
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        process.standardError = pipe
+
+        try await runProcessAsync(process)
+
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        let output = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+
+        return (output, process.terminationStatus)
+    }
 }
 
 // MARK: - Core Tools
@@ -978,8 +1015,7 @@ struct AgentShellRunTool: OsaurusTool, PermissionedTool {
         }
 
         do {
-            try process.run()
-            process.waitUntilExit()
+            try await AgentFolderToolHelpers.runProcessAsync(process)
         } catch {
             throw AgentFolderToolError.operationFailed("Failed to execute command: \(error)")
         }
@@ -1040,27 +1076,12 @@ struct AgentGitStatusTool: OsaurusTool {
     }
 
     func execute(argumentsJSON: String) async throws -> String {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
-        process.arguments = ["status"]
-        process.currentDirectoryURL = rootPath
+        let (output, exitCode) = try await AgentFolderToolHelpers.runGitCommand(
+            arguments: ["status"],
+            in: rootPath
+        )
 
-        let pipe = Pipe()
-        process.standardOutput = pipe
-        process.standardError = pipe
-
-        do {
-            try process.run()
-            process.waitUntilExit()
-        } catch {
-            throw AgentFolderToolError.operationFailed("Failed to run git status: \(error)")
-        }
-
-        let data = pipe.fileHandleForReading.readDataToEndOfFile()
-        let output =
-            String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-
-        if process.terminationStatus != 0 {
+        if exitCode != 0 {
             throw AgentFolderToolError.operationFailed("git status failed: \(output)")
         }
 
@@ -1107,47 +1128,22 @@ struct AgentGitDiffTool: OsaurusTool {
         let commit = args["commit"] as? String
 
         var arguments = ["diff"]
+        if staged { arguments.append("--cached") }
+        if let commit = commit { arguments.append(commit) }
+        if let filePath = filePath { arguments.append(contentsOf: ["--", filePath]) }
 
-        if staged {
-            arguments.append("--cached")
-        }
+        let (output, exitCode) = try await AgentFolderToolHelpers.runGitCommand(
+            arguments: arguments,
+            in: rootPath
+        )
 
-        if let commit = commit {
-            arguments.append(commit)
-        }
-
-        if let filePath = filePath {
-            arguments.append("--")
-            arguments.append(filePath)
-        }
-
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
-        process.arguments = arguments
-        process.currentDirectoryURL = rootPath
-
-        let pipe = Pipe()
-        process.standardOutput = pipe
-        process.standardError = pipe
-
-        do {
-            try process.run()
-            process.waitUntilExit()
-        } catch {
-            throw AgentFolderToolError.operationFailed("Failed to run git diff: \(error)")
-        }
-
-        let data = pipe.fileHandleForReading.readDataToEndOfFile()
-        var output =
-            String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-
-        if process.terminationStatus != 0 {
+        if exitCode != 0 {
             throw AgentFolderToolError.operationFailed("git diff failed: \(output)")
         }
 
         // Truncate if too long
         if output.count > 20000 {
-            output = String(output.prefix(20000)) + "\n... (diff truncated)"
+            return String(output.prefix(20000)) + "\n... (diff truncated)"
         }
 
         return output.isEmpty ? "No differences" : output
@@ -1199,57 +1195,30 @@ struct AgentGitCommitTool: OsaurusTool, PermissionedTool {
         let files = args["files"] as? [String]
 
         // Stage files
-        let stageProcess = Process()
-        stageProcess.executableURL = URL(fileURLWithPath: "/usr/bin/git")
-        stageProcess.currentDirectoryURL = rootPath
+        let stageArgs = (files != nil && !files!.isEmpty) ? ["add"] + files! : ["add", "-A"]
+        let (stageOutput, stageExitCode) = try await AgentFolderToolHelpers.runGitCommand(
+            arguments: stageArgs,
+            in: rootPath
+        )
 
-        if let files = files, !files.isEmpty {
-            stageProcess.arguments = ["add"] + files
-        } else {
-            stageProcess.arguments = ["add", "-A"]
-        }
-
-        let stagePipe = Pipe()
-        stageProcess.standardOutput = stagePipe
-        stageProcess.standardError = stagePipe
-
-        try stageProcess.run()
-        stageProcess.waitUntilExit()
-
-        if stageProcess.terminationStatus != 0 {
-            let stageOutput =
-                String(
-                    data: stagePipe.fileHandleForReading.readDataToEndOfFile(),
-                    encoding: .utf8
-                ) ?? ""
+        if stageExitCode != 0 {
             throw AgentFolderToolError.operationFailed("git add failed: \(stageOutput)")
         }
 
         // Commit
-        let commitProcess = Process()
-        commitProcess.executableURL = URL(fileURLWithPath: "/usr/bin/git")
-        commitProcess.arguments = ["commit", "-m", message]
-        commitProcess.currentDirectoryURL = rootPath
+        let (commitOutput, commitExitCode) = try await AgentFolderToolHelpers.runGitCommand(
+            arguments: ["commit", "-m", message],
+            in: rootPath
+        )
 
-        let commitPipe = Pipe()
-        commitProcess.standardOutput = commitPipe
-        commitProcess.standardError = commitPipe
-
-        try commitProcess.run()
-        commitProcess.waitUntilExit()
-
-        let commitOutput =
-            String(data: commitPipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)
-            ?? ""
-
-        if commitProcess.terminationStatus != 0 {
+        if commitExitCode != 0 {
             if commitOutput.contains("nothing to commit") {
                 return "Nothing to commit"
             }
             throw AgentFolderToolError.operationFailed("git commit failed: \(commitOutput)")
         }
 
-        return "Committed successfully:\n\(commitOutput.trimmingCharacters(in: .whitespacesAndNewlines))"
+        return "Committed successfully:\n\(commitOutput)"
     }
 }
 
