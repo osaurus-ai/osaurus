@@ -70,7 +70,7 @@ public struct ToolsCreate {
             import Foundation
 
             // MARK: - Osaurus Injected Context
-            
+
             /// Folder context injected by Osaurus when a working directory is selected.
             /// Use this to resolve relative file paths in your tools.
             private struct FolderContext: Decodable {
@@ -78,7 +78,7 @@ public struct ToolsCreate {
             }
 
             // MARK: - Tool Implementation
-            
+
             private struct HelloTool {
                 let name = "hello_world"
                 let description = "Return a friendly greeting"
