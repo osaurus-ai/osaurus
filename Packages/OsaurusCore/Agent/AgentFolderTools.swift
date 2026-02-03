@@ -306,7 +306,8 @@ struct AgentFileWriteTool: OsaurusTool, PermissionedTool {
                     type: existed ? .write : .create,
                     path: relativePath,
                     previousContent: previousContent,
-                    issueId: issueId
+                    issueId: issueId,
+                    batchId: AgentExecutionContext.currentBatchId
                 )
             )
         }
@@ -381,7 +382,8 @@ struct AgentFileMoveTool: OsaurusTool, PermissionedTool {
                     type: .move,
                     path: sourcePath,
                     destinationPath: destPath,
-                    issueId: issueId
+                    issueId: issueId,
+                    batchId: AgentExecutionContext.currentBatchId
                 )
             )
         }
@@ -453,7 +455,8 @@ struct AgentFileCopyTool: OsaurusTool, PermissionedTool {
                     type: .copy,
                     path: sourcePath,
                     destinationPath: destPath,
-                    issueId: issueId
+                    issueId: issueId,
+                    batchId: AgentExecutionContext.currentBatchId
                 )
             )
         }
@@ -526,7 +529,8 @@ struct AgentFileDeleteTool: OsaurusTool, PermissionedTool {
                     type: .delete,
                     path: relativePath,
                     previousContent: previousContent,
-                    issueId: issueId
+                    issueId: issueId,
+                    batchId: AgentExecutionContext.currentBatchId
                 )
             )
         }
@@ -590,7 +594,8 @@ struct AgentDirCreateTool: OsaurusTool, PermissionedTool {
                 AgentFileOperation(
                     type: .dirCreate,
                     path: relativePath,
-                    issueId: issueId
+                    issueId: issueId,
+                    batchId: AgentExecutionContext.currentBatchId
                 )
             )
         }
@@ -1265,6 +1270,7 @@ enum AgentFolderToolFactory {
             AgentFileDeleteTool(rootPath: rootPath),
             AgentDirCreateTool(rootPath: rootPath),
             AgentFileMetadataTool(rootPath: rootPath),
+            AgentBatchTool(rootPath: rootPath),
         ]
     }
 
@@ -1290,6 +1296,7 @@ enum AgentFolderToolFactory {
             // Core
             "file_tree", "file_read", "file_write", "file_move",
             "file_copy", "file_delete", "dir_create", "file_metadata",
+            "batch",
             // Coding
             "file_edit", "file_search", "shell_run",
             // Git
