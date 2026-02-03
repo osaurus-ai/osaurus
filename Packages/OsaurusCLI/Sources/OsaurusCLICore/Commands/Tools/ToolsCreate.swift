@@ -32,7 +32,7 @@ public struct ToolsCreate {
 
     private static func createSwiftPlugin(name: String) {
         let fm = FileManager.default
-        let root = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+        let root = URL(fileURLWithPath: fm.currentDirectoryPath)
         let dir = root.appendingPathComponent(name, isDirectory: true)
         let sources = dir.appendingPathComponent("Sources", isDirectory: true)
         // Use plugin name as module name to avoid duplicate Objective-C class names across plugins
@@ -69,24 +69,26 @@ public struct ToolsCreate {
         let pluginSwift = """
             import Foundation
 
-            // MARK: - Minimal tool implementation
+            // MARK: - Osaurus Injected Context
+            
+            /// Folder context injected by Osaurus when a working directory is selected.
+            /// Use this to resolve relative file paths in your tools.
+            private struct FolderContext: Decodable {
+                let working_directory: String
+            }
+
+            // MARK: - Tool Implementation
+            
             private struct HelloTool {
                 let name = "hello_world"
                 let description = "Return a friendly greeting"
                 let parameters = "{\\"type\\":\\"object\\",\\"properties\\":{\\"name\\":{\\"type\\":\\"string\\"}},\\"required\\":[\\"name\\"]}"
                 
-                // Folder context injected by Osaurus when a working directory is selected
-                struct FolderContext: Decodable {
-                    let working_directory: String
-                }
-                
                 func run(args: String) -> String {
                     struct Args: Decodable {
                         let name: String
-                        // Secrets are automatically injected by Osaurus under the _secrets key
-                        let _secrets: [String: String]?
-                        // Folder context is injected under the _context key when a working directory is selected
-                        let _context: FolderContext?
+                        let _secrets: [String: String]?   // Secrets injected by Osaurus
+                        let _context: FolderContext?      // Folder context injected by Osaurus
                     }
                     guard let data = args.data(using: .utf8),
                           let input = try? JSONDecoder().decode(Args.self, from: data)
@@ -313,7 +315,7 @@ public struct ToolsCreate {
 
     private static func createRustPlugin(name: String) {
         let fm = FileManager.default
-        let root = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+        let root = URL(fileURLWithPath: fm.currentDirectoryPath)
         let dir = root.appendingPathComponent(name, isDirectory: true)
         try? fm.createDirectory(at: dir, withIntermediateDirectories: true)
         let readme = """
