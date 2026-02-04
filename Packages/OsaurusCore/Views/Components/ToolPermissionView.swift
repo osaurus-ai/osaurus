@@ -26,10 +26,8 @@ struct ToolPermissionView: View {
     private var alertScope: ThemedAlertScope { .toolPermission(alertScopeId) }
 
     private var cardGradient: LinearGradient {
-        let topOpacity = theme.isDark ? 0.85 : 0.9
-        let bottomOpacity = theme.isDark ? 0.8 : 0.85
-        return LinearGradient(
-            colors: [theme.cardBackground.opacity(topOpacity), theme.cardBackground.opacity(bottomOpacity)],
+        LinearGradient(
+            colors: [theme.cardBackground, theme.cardBackground.opacity(0.95)],
             startPoint: .topLeading,
             endPoint: .bottomTrailing
         )
@@ -62,7 +60,6 @@ struct ToolPermissionView: View {
 
     var body: some View {
         ZStack {
-            ThemedGlassSurface(cornerRadius: 16)
             RoundedRectangle(cornerRadius: 16, style: .continuous)
                 .fill(cardGradient)
 
@@ -150,22 +147,14 @@ struct ToolPermissionView: View {
 
     private var header: some View {
         VStack(spacing: 12) {
-            ZStack {
-                Circle()
-                    .fill(theme.accentColor.opacity(0.15))
-                    .frame(width: 48, height: 48)
-
-                Circle()
-                    .stroke(theme.accentColor.opacity(0.3), lineWidth: 2)
-                    .frame(width: 48, height: 48)
-                    .scaleEffect(appeared ? 1.2 : 1)
-                    .opacity(appeared ? 0 : 0.8)
-                    .animation(.easeOut(duration: 1.5).repeatForever(autoreverses: false), value: appeared)
-
-                Image(systemName: "terminal.fill")
-                    .font(.system(size: 20, weight: .semibold))
-                    .foregroundColor(theme.accentColor)
-            }
+            Circle()
+                .fill(theme.accentColor.opacity(0.15))
+                .frame(width: 48, height: 48)
+                .overlay(
+                    Image(systemName: "terminal.fill")
+                        .font(.system(size: 20, weight: .semibold))
+                        .foregroundColor(theme.accentColor)
+                )
 
             Text(toolName)
                 .font(.system(size: 16, weight: .semibold))

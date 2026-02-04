@@ -144,6 +144,13 @@ struct AgentBatchTool: OsaurusTool {
 
         guard !toolCounts.isEmpty else { return [] }
 
+        // If batch tool is set to auto, skip approval dialog
+        if let batchInfo = await ToolRegistry.shared.policyInfo(for: "batch"),
+            batchInfo.effectivePolicy == .auto
+        {
+            return Set(toolCounts.keys)
+        }
+
         // Build approval description
         var lines = ["Batch contains operations requiring approval:"]
         for (tool, count) in toolCounts.sorted(by: { $0.key < $1.key }) {
