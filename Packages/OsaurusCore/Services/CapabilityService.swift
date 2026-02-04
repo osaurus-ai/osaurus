@@ -270,8 +270,9 @@ public final class CapabilityService {
 
         ## File Operations
 
+        - Use `file_tree` to list directory contents before bulk operations
         - Always use `file_read` before `file_edit` to understand current content
-        - Use `file_search` to find the right files before modifying
+        - Use `file_search` to find files by content pattern
         - Prefer `file_edit` over `file_write` for existing files to preserve content
         - Verify changes with `file_read` after significant edits
 
