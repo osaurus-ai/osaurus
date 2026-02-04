@@ -479,16 +479,11 @@ public actor AgentEngine {
                 )
             )
 
-            // Filter tools to only those selected during planning (same as fresh execution)
-            let filteredTools: [Tool]
-            if resumeState.plan.selectedTools.isEmpty {
-                filteredTools = []
-            } else {
-                filteredTools = tools.filter { resumeState.plan.selectedTools.contains($0.function.name) }
-            }
+            // Filter tools to only those selected during planning
+            let filteredTools = filterTools(tools, selectedTools: resumeState.plan.selectedTools)
 
             // Build enhanced system prompt with selected skill instructions
-            let executionSystemPrompt = await buildExecutionSystemPrompt(
+            var executionSystemPrompt = await buildExecutionSystemPrompt(
                 base: systemPrompt,
                 selectedSkills: resumeState.plan.selectedSkills
             )
@@ -497,6 +492,11 @@ public actor AgentEngine {
             let folderContext = await MainActor.run { AgentFolderContextService.shared.currentContext }
             if let rootPath = folderContext?.rootPath {
                 await AgentFileOperationLog.shared.setRootPath(rootPath)
+            }
+
+            // Inject folder context into system prompt so model knows available files
+            if let folder = folderContext {
+                executionSystemPrompt += buildFolderContextForSystemPrompt(folder)
             }
 
             return try await executePlan(
@@ -617,16 +617,10 @@ public actor AgentEngine {
             await delegate?.agentEngine(self, didCreatePlan: plan, forIssue: issue)
 
             // Filter tools to only those selected during planning
-            // If no tools were selected, pass empty array (respect the agent's choice)
-            let filteredTools: [Tool]
-            if plan.selectedTools.isEmpty {
-                filteredTools = []
-            } else {
-                filteredTools = tools.filter { plan.selectedTools.contains($0.function.name) }
-            }
+            let filteredTools = filterTools(tools, selectedTools: plan.selectedTools)
 
             // Build enhanced system prompt with selected skill instructions
-            let executionSystemPrompt = await buildExecutionSystemPrompt(
+            var executionSystemPrompt = await buildExecutionSystemPrompt(
                 base: systemPrompt,
                 selectedSkills: plan.selectedSkills
             )
@@ -634,6 +628,11 @@ public actor AgentEngine {
             // Set up file operation log with root path for undo support
             if let rootPath = folderContext?.rootPath {
                 await AgentFileOperationLog.shared.setRootPath(rootPath)
+            }
+
+            // Inject folder context into system prompt so model knows available files
+            if let folder = folderContext {
+                executionSystemPrompt += buildFolderContextForSystemPrompt(folder)
             }
 
             // Execute the plan with filtered tools and enhanced prompt
@@ -1054,6 +1053,26 @@ public actor AgentEngine {
         return enhanced.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
+    /// Builds folder context section for injection into execution system prompt
+    private func buildFolderContextForSystemPrompt(_ folder: AgentFolderContext) -> String {
+        """
+
+        # Working Directory
+
+        Path: \(folder.rootPath.path)
+
+        ## Available Files
+        ```
+        \(folder.tree)
+        ```
+
+        ## File Operation Rules
+        - Use the exact file names shown above
+        - The `batch` tool has a maximum of 30 operations per call
+        - For more than 30 files, use multiple batch calls
+        """
+    }
+
     // MARK: - Description Sanitization
 
     /// Sanitizes text by collapsing whitespace and truncating to max length
@@ -1171,6 +1190,25 @@ public actor AgentEngine {
             canRetry: false
         )
         throw finalError
+    }
+
+    // MARK: - Tool Filtering
+
+    /// Filters tools to only those selected during planning, always including file_tree for discovery
+    private func filterTools(_ tools: [Tool], selectedTools: [String]) -> [Tool] {
+        var filtered: [Tool] =
+            selectedTools.isEmpty
+            ? []
+            : tools.filter { selectedTools.contains($0.function.name) }
+
+        // Always include file_tree for discovery (even if not explicitly selected)
+        if let fileTreeTool = tools.first(where: { $0.function.name == "file_tree" }),
+            !filtered.contains(where: { $0.function.name == "file_tree" })
+        {
+            filtered.append(fileTreeTool)
+        }
+
+        return filtered
     }
 
     // MARK: - State
