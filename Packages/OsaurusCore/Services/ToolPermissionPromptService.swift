@@ -65,7 +65,7 @@ enum ToolPermissionPromptService {
             // Create custom panel with a temporary rect (will be repositioned after content is set)
             let panel = NSPanel(
                 contentRect: NSRect(x: 0, y: 0, width: 480, height: 300),
-                styleMask: [.titled, .fullSizeContentView],
+                styleMask: [.fullSizeContentView],
                 backing: .buffered,
                 defer: false
             )
@@ -74,12 +74,7 @@ enum ToolPermissionPromptService {
             panel.hasShadow = true
             panel.level = .modalPanel
             panel.hidesOnDeactivate = false
-            panel.titleVisibility = .hidden
-            panel.titlebarAppearsTransparent = true
             panel.isMovableByWindowBackground = true
-            panel.standardWindowButton(.closeButton)?.isHidden = true
-            panel.standardWindowButton(.miniaturizeButton)?.isHidden = true
-            panel.standardWindowButton(.zoomButton)?.isHidden = true
             panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
             panel.animationBehavior = .alertPanel
             panel.contentViewController = hostingController
