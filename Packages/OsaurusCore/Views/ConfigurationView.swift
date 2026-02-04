@@ -1680,6 +1680,7 @@ private struct AgentSettingsSection: View {
             ("file_edit", "Edit Files", "Edit file content with search/replace", false, .auto),
             ("shell_run", "Run Shell Commands", "Execute shell commands in the folder", true, .ask),
             ("git_commit", "Git Commit", "Commit changes to git repository", true, .ask),
+            ("batch", "Batch Operations", "Execute multiple tool operations in sequence", false, .ask),
         ]
 
     var body: some View {
