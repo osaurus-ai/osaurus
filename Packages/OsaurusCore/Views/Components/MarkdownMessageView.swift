@@ -2,11 +2,9 @@
 //  MarkdownMessageView.swift
 //  osaurus
 //
-//  Renders markdown text with proper typography, code blocks, images, and more
-//  Optimized for streaming responses with stable block identity
-//  Uses NSTextView for web-like text selection across blocks
-//
-//  Uses ThreadCache for unified height and markdown caching.
+//  Renders markdown text with proper typography, code blocks, images, and more.
+//  Optimized for streaming responses with stable block identity.
+//  Uses NSTextView for web-like text selection across blocks.
 //
 
 import AppKit
@@ -26,49 +24,29 @@ struct MarkdownMessageView: View {
     }
 }
 
-// MARK: - Cached Height Wrapper
+// MARK: - Height Reporter
 
-struct CachedHeightView<Content: View>: View {
-    let id: String
-    let content: Content
+/// Reports measured height to ThreadCache so ContentBlockView can provide
+/// height hints for LazyVStack recycling of off-screen items.
+private struct HeightReporter: ViewModifier {
+    let cacheKey: String?
 
-    @State private var height: CGFloat?
-
-    init(id: String, @ViewBuilder content: () -> Content) {
-        self.id = id
-        self.content = content()
-        // Synchronous read from ThreadCache
-        if let h = ThreadCache.shared.height(for: id) {
-            _height = State(initialValue: h)
-        }
-    }
-
-    var body: some View {
-        // If the cache no longer validates this entry (e.g. width changed),
-        // don't constrain to the stale @State value — let the view re-measure naturally.
-        let validHeight = ThreadCache.shared.height(for: id) != nil ? height : nil
-
+    func body(content: Content) -> some View {
         content
+            .fixedSize(horizontal: false, vertical: true)
             .background(
                 GeometryReader { geo in
-                    Color.clear.preference(key: HeightKey.self, value: geo.size.height)
+                    Color.clear
+                        .onAppear { report(geo.size.height) }
+                        .onChange(of: geo.size.height) { _, h in report(h) }
                 }
             )
-            .onPreferenceChange(HeightKey.self) { newHeight in
-                // Only update if changed significantly
-                if let h = height, abs(h - newHeight) < 1 { return }
-                height = newHeight
-                ThreadCache.shared.setHeight(newHeight, for: id)
-            }
-            // Use minHeight to allow growth but prevent collapse (stable recycling)
-            .frame(minHeight: validHeight, alignment: .top)
     }
-}
 
-private struct HeightKey: PreferenceKey {
-    static let defaultValue: CGFloat = 0
-    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
-        value = nextValue()
+    private func report(_ height: CGFloat) {
+        if let key = cacheKey {
+            ThreadCache.shared.setHeight(height, for: key)
+        }
     }
 }
 
@@ -83,15 +61,11 @@ private struct MemoizedMarkdownView: View {
 
     @Environment(\.theme) private var theme
 
-    // Memoized segments - only recomputed when text changes via .onChange
     @State private var cachedSegments: [ContentSegment] = []
     @State private var lastParsedText: String = ""
-    // Cache for parsing
     @State private var cachedBlocks: [MessageBlock] = []
     @State private var lastStableIndex: Int = 0
-    // Track current parsing task to allow cancellation
     @State private var currentParseTask: Task<Void, Never>?
-    // Track last parse request time for adaptive debouncing
     @State private var lastParseRequestTime: Date = .distantPast
 
     init(text: String, baseWidth: CGFloat, cacheKey: String?, isStreaming: Bool) {
@@ -126,8 +100,7 @@ private struct MemoizedMarkdownView: View {
         }
     }
 
-    /// Estimate height for a text group based on block content
-    /// Used when no cached height is available to provide SwiftUI with a size hint
+    /// Estimate height for a text group (used as minHeight before NSTextView measures itself).
     static func estimateTextGroupHeight(blocks: [SelectableTextBlock]) -> CGFloat {
         var totalHeight: CGFloat = 0
 
@@ -161,16 +134,11 @@ private struct MemoizedMarkdownView: View {
     var body: some View {
         Group {
             if cachedSegments.isEmpty && !text.isEmpty {
-                // Fallback: show raw text while waiting for first parse
+                // Fallback while waiting for first parse
                 Text(text)
                     .font(Typography.body(baseWidth, theme: theme))
                     .foregroundColor(theme.primaryText)
                     .textSelection(.enabled)
-                    // Apply cached height if available to prevent jump, but only if not streaming (content growing)
-                    .frame(
-                        height: isStreaming ? nil : cacheKey.flatMap { ThreadCache.shared.height(for: $0) },
-                        alignment: .top
-                    )
             } else {
                 VStack(alignment: .leading, spacing: 0) {
                     ForEach(Array(cachedSegments.enumerated()), id: \.element.id) { index, segment in
@@ -263,13 +231,13 @@ private struct MemoizedMarkdownView: View {
                     .frame(height: segment.spacingBefore)
             }
 
+            let segmentCacheKey = cacheKey.map { "\($0)-\(segment.id)" }
+
             switch segment.kind {
             case .textGroup(let textBlocks):
-                // Use cached height wrapper to provide SwiftUI with height hints
-                // This prevents expensive fixedSize layout calculations
-                let segmentCacheKey = cacheKey.map { "\($0)-\(segment.id)" }
+                // minHeight prevents collapse before intrinsicContentSize is set.
                 let cachedHeight = segmentCacheKey.flatMap { ThreadCache.shared.height(for: $0) }
-                let estimatedHeight = cachedHeight ?? Self.estimateTextGroupHeight(blocks: textBlocks)
+                let minHeight = cachedHeight ?? Self.estimateTextGroupHeight(blocks: textBlocks)
 
                 SelectableTextView(
                     blocks: textBlocks,
@@ -277,47 +245,23 @@ private struct MemoizedMarkdownView: View {
                     theme: theme,
                     cacheKey: segmentCacheKey
                 )
-                // Use minHeight with cached/estimated value instead of fixedSize to prevent
-                // expensive layout calculations that can freeze the UI during streaming.
-                .frame(minWidth: baseWidth, maxWidth: baseWidth, minHeight: estimatedHeight, alignment: .leading)
+                .frame(minWidth: baseWidth, maxWidth: baseWidth, minHeight: minHeight, alignment: .leading)
 
             case .codeBlock(let code, let lang):
-                if let key = cacheKey {
-                    CachedHeightView(id: "\(key)-\(segment.id)") {
-                        CodeBlockView(code: code, language: lang, baseWidth: baseWidth)
-                    }
-                } else {
-                    CodeBlockView(code: code, language: lang, baseWidth: baseWidth)
-                }
+                CodeBlockView(code: code, language: lang, baseWidth: baseWidth)
+                    .modifier(HeightReporter(cacheKey: segmentCacheKey))
 
             case .image(let url, let altText):
-                if let key = cacheKey {
-                    CachedHeightView(id: "\(key)-\(segment.id)") {
-                        MarkdownImageView(urlString: url, altText: altText, baseWidth: baseWidth)
-                    }
-                } else {
-                    MarkdownImageView(urlString: url, altText: altText, baseWidth: baseWidth)
-                }
+                MarkdownImageView(urlString: url, altText: altText, baseWidth: baseWidth)
+                    .modifier(HeightReporter(cacheKey: segmentCacheKey))
 
             case .horizontalRule:
-                if let key = cacheKey {
-                    CachedHeightView(id: "\(key)-\(segment.id)") {
-                        HorizontalRuleView()
-                    }
-                } else {
-                    HorizontalRuleView()
-                }
+                HorizontalRuleView()
+                    .modifier(HeightReporter(cacheKey: segmentCacheKey))
 
             case .table(let headers, let rows):
-                if let key = cacheKey {
-                    CachedHeightView(id: "\(key)-\(segment.id)") {
-                        TableView(headers: headers, rows: rows, baseWidth: baseWidth)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                } else {
-                    TableView(headers: headers, rows: rows, baseWidth: baseWidth)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
+                TableView(headers: headers, rows: rows, baseWidth: baseWidth)
+                    .modifier(HeightReporter(cacheKey: segmentCacheKey))
             }
         }
     }

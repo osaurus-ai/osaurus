@@ -271,7 +271,7 @@ struct SelectableTextView: NSViewRepresentable {
 
     // MARK: - Attributed String Building
 
-    private func buildAttributedString(coordinator: Coordinator? = nil) -> NSMutableAttributedString {
+    private func buildAttributedString(coordinator: Coordinator) -> NSMutableAttributedString {
         let result = NSMutableAttributedString()
         let scale = Typography.scale(for: baseWidth)
         let bodyFontSize = CGFloat(theme.bodySize) * scale
@@ -301,9 +301,7 @@ struct SelectableTextView: NSViewRepresentable {
             lengths.append(blockLen)
         }
 
-        if let coord = coordinator {
-            coord.blockLengths = lengths
-        }
+        coordinator.blockLengths = lengths
 
         return result
     }
@@ -746,87 +744,3 @@ final class SelectableNSTextView: NSTextView {
     }
 }
 
-// MARK: - SwiftUI Sizing
-
-struct SelectableTextViewSizer: View {
-    let blocks: [SelectableTextBlock]
-    let baseWidth: CGFloat
-    /// Optional cache key (turn ID) for persisting measured height across view recycling
-    let cacheKey: String?
-
-    @Environment(\.theme) private var theme
-    @State private var height: CGFloat
-
-    init(blocks: [SelectableTextBlock], baseWidth: CGFloat, cacheKey: String? = nil) {
-        self.blocks = blocks
-        self.baseWidth = baseWidth
-        self.cacheKey = cacheKey
-
-        // Initialize height from cache if available
-        if let key = cacheKey, let cachedHeight = ThreadCache.shared.height(for: key) {
-            _height = State(initialValue: cachedHeight)
-        } else {
-            _height = State(initialValue: 0)
-        }
-    }
-
-    var body: some View {
-        // If the cache no longer validates this entry (e.g. width changed),
-        // fall back to a small minimum so the view re-measures at the new width.
-        let cacheValid = cacheKey.flatMap { ThreadCache.shared.height(for: $0) } != nil
-        let effectiveHeight = cacheValid ? height : 0
-
-        SelectableTextView(blocks: blocks, baseWidth: baseWidth, theme: theme)
-            .frame(width: baseWidth, height: max(20, effectiveHeight), alignment: .leading)
-            .background(
-                GeometryReader { geo in
-                    Color.clear.preference(key: TextHeightPreferenceKey.self, value: geo.size.height)
-                }
-            )
-            .onPreferenceChange(TextHeightPreferenceKey.self) { newHeight in
-                if newHeight > 0 && newHeight != height {
-                    height = newHeight
-                    // Cache the measured height for future view recycling
-                    if let key = cacheKey {
-                        ThreadCache.shared.setHeight(newHeight, for: key)
-                    }
-                }
-            }
-    }
-}
-
-private struct TextHeightPreferenceKey: PreferenceKey {
-    static let defaultValue: CGFloat = 0
-    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
-        value = max(value, nextValue())
-    }
-}
-
-// MARK: - Height Calculator
-
-extension SelectableTextView {
-    /// Calculate the height needed for the text blocks
-    static func calculateHeight(
-        blocks: [SelectableTextBlock],
-        baseWidth: CGFloat,
-        theme: ThemeProtocol
-    ) -> CGFloat {
-        let view = SelectableTextView(blocks: blocks, baseWidth: baseWidth, theme: theme)
-        let attrString = view.buildAttributedString()
-
-        // Create a temporary text container to measure
-        let textStorage = NSTextStorage(attributedString: attrString)
-        let textContainer = NSTextContainer(size: NSSize(width: baseWidth, height: CGFloat.greatestFiniteMagnitude))
-        let layoutManager = NSLayoutManager()
-
-        textContainer.lineFragmentPadding = 0
-        layoutManager.addTextContainer(textContainer)
-        textStorage.addLayoutManager(layoutManager)
-
-        layoutManager.ensureLayout(for: textContainer)
-        let usedRect = layoutManager.usedRect(for: textContainer)
-
-        // Add small buffer to prevent clipping
-        return ceil(usedRect.height) + 4
-    }
-}

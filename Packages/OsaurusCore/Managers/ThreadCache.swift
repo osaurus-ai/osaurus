@@ -3,7 +3,7 @@
 //  osaurus
 //
 //  Unified cache for message thread rendering.
-//  Handles heights, parsed markdown, and width-aware invalidation.
+//  Handles heights and parsed markdown caching.
 //
 
 import Foundation
@@ -21,67 +21,29 @@ private final class ParsedMarkdownWrapper: NSObject {
 
 /// Unified cache for message thread rendering.
 ///
-/// Uses a version-based approach for width changes: instead of clearing all
-/// cached heights at once (which causes every visible block to recalculate
-/// simultaneously), a version counter is incremented. Stale-version entries
-/// are treated as cache misses so blocks re-measure gradually as they render.
+/// Height cache uses NSCache for automatic memory-pressure eviction.
+/// Width invalidation is handled by the view layer calling `invalidateHeights()`
+/// when the container width changes significantly.
 final class ThreadCache: @unchecked Sendable {
     static let shared = ThreadCache()
 
-    private let lock = NSLock()
-    private var currentWidth: CGFloat = 0
-    private let widthThreshold: CGFloat = 20
-    private var heights: [String: (height: CGFloat, version: Int)] = [:]
-    private var widthVersion: Int = 0
-    private let maxHeights = 500
+    private let heights = NSCache<NSString, NSNumber>()
     private let markdownCache = NSCache<NSString, ParsedMarkdownWrapper>()
-
-    // MARK: - Width
-
-    /// Update layout width - increments version on significant change so stale
-    /// heights are lazily invalidated on next read rather than all at once.
-    func setWidth(_ width: CGFloat) {
-        lock.lock()
-        defer { lock.unlock() }
-        if currentWidth > 0 && abs(width - currentWidth) > widthThreshold {
-            widthVersion += 1
-        }
-        currentWidth = width
-    }
 
     // MARK: - Heights
 
     func height(for key: String) -> CGFloat? {
-        lock.lock()
-        defer { lock.unlock() }
-        guard let entry = heights[key], entry.version == widthVersion else {
-            return nil
-        }
-        return entry.height
+        guard let number = heights.object(forKey: key as NSString) else { return nil }
+        return CGFloat(number.doubleValue)
     }
 
     func setHeight(_ height: CGFloat, for key: String) {
-        lock.lock()
-        defer { lock.unlock() }
-        if heights.count >= maxHeights {
-            evictEntries()
-        }
-        heights[key] = (height: height, version: widthVersion)
+        heights.setObject(NSNumber(value: Double(height)), forKey: key as NSString)
     }
 
-    /// Evicts stale-version entries first; falls back to arbitrary eviction.
-    private func evictEntries() {
-        let evictCount = maxHeights / 5
-        let staleKeys = heights.keys.filter { heights[$0]?.version != widthVersion }
-        if !staleKeys.isEmpty {
-            for evictKey in staleKeys.prefix(evictCount) {
-                heights.removeValue(forKey: evictKey)
-            }
-        } else {
-            for evictKey in heights.keys.prefix(evictCount) {
-                heights.removeValue(forKey: evictKey)
-            }
-        }
+    /// Invalidate all cached heights (e.g. on significant width change).
+    func invalidateHeights() {
+        heights.removeAllObjects()
     }
 
     // MARK: - Markdown
@@ -98,11 +60,7 @@ final class ThreadCache: @unchecked Sendable {
     // MARK: - Clear
 
     func clear() {
-        lock.lock()
-        defer { lock.unlock() }
-        heights.removeAll()
-        widthVersion = 0
+        heights.removeAllObjects()
         markdownCache.removeAllObjects()
-        currentWidth = 0
     }
 }
