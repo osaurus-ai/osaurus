@@ -419,9 +419,11 @@ private struct IssueRow: View {
 
             // Content
             VStack(alignment: .leading, spacing: 3) {
-                // Priority + status label
+                // Type + status label
                 HStack(spacing: 6) {
-                    priorityBadge
+                    if issue.type != .task {
+                        typeBadge
+                    }
 
                     if isActive {
                         Text("Running")
@@ -495,26 +497,25 @@ private struct IssueRow: View {
         }
     }
 
-    // MARK: - Priority Badge
+    // MARK: - Type Badge
 
-    private var priorityBadge: some View {
-        Text(issue.priority.shortName)
+    private var typeBadge: some View {
+        Text(issue.type.displayName)
             .font(.system(size: 9, weight: .semibold))
-            .foregroundColor(priorityColor)
+            .foregroundColor(typeColor)
             .padding(.horizontal, 5)
             .padding(.vertical, 2)
             .background(
                 Capsule()
-                    .fill(priorityColor.opacity(0.12))
+                    .fill(typeColor.opacity(0.12))
             )
     }
 
-    private var priorityColor: Color {
-        switch issue.priority {
-        case .p0: return theme.errorColor
-        case .p1: return theme.warningColor
-        case .p2: return theme.accentColor
-        case .p3: return theme.secondaryText
+    private var typeColor: Color {
+        switch issue.type {
+        case .bug: return theme.errorColor
+        case .discovery: return theme.warningColor
+        case .task: return theme.secondaryText
         }
     }
 
