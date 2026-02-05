@@ -381,7 +381,9 @@ public struct CreateIssueTool: OsaurusTool {
             throw NSError(
                 domain: "AgentTools",
                 code: 5,
-                userInfo: [NSLocalizedDescriptionKey: "Invalid issue format. Required: title (string), description (string)"]
+                userInfo: [
+                    NSLocalizedDescriptionKey: "Invalid issue format. Required: title (string), description (string)"
+                ]
             )
         }
 
@@ -465,7 +467,7 @@ public struct RequestClarificationTool: OsaurusTool {
             "options": .object([
                 "type": .string("array"),
                 "items": .object([
-                    "type": .string("string"),
+                    "type": .string("string")
                 ]),
                 "description": .string("Optional predefined choices for the user to select from"),
             ]),
@@ -502,7 +504,8 @@ public struct RequestClarificationTool: OsaurusTool {
             """
 
         if let opts = options, !opts.isEmpty {
-            response += "\nOptions:\n" + opts.enumerated().map { "  \($0.offset + 1). \($0.element)" }.joined(separator: "\n")
+            response +=
+                "\nOptions:\n" + opts.enumerated().map { "  \($0.offset + 1). \($0.element)" }.joined(separator: "\n")
         }
 
         if let ctx = context, !ctx.isEmpty {

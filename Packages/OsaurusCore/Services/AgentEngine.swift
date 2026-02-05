@@ -522,7 +522,8 @@ public actor AgentEngine {
 
         case .iterationLimitReached(let totalIterations, let totalToolCalls):
             // Generate a summary of what was accomplished
-            let summary = "Execution paused after \(totalIterations) iterations and \(totalToolCalls) tool calls. Task may require continuation."
+            let summary =
+                "Execution paused after \(totalIterations) iterations and \(totalToolCalls) tool calls. Task may require continuation."
 
             // Close issue as partial success
             _ = await IssueManager.shared.closeIssueSafe(issue.id, result: "Partial: \(summary)")
@@ -683,7 +684,13 @@ public protocol AgentEngineDelegate: AnyObject {
     // Reasoning loop events (new)
     func agentEngine(_ engine: AgentEngine, didStartIteration iteration: Int, forIssue issue: Issue)
     func agentEngine(_ engine: AgentEngine, didReceiveStreamingDelta delta: String, forStep stepIndex: Int)
-    func agentEngine(_ engine: AgentEngine, didCallTool toolName: String, withArguments args: String, result: String, forIssue issue: Issue)
+    func agentEngine(
+        _ engine: AgentEngine,
+        didCallTool toolName: String,
+        withArguments args: String,
+        result: String,
+        forIssue issue: Issue
+    )
     func agentEngine(_ engine: AgentEngine, didUpdateStatus status: String, forIssue issue: Issue)
 
     // Clarification
@@ -719,11 +726,21 @@ extension AgentEngineDelegate {
     // Reasoning loop events
     public func agentEngine(_ engine: AgentEngine, didStartIteration iteration: Int, forIssue issue: Issue) {}
     public func agentEngine(_ engine: AgentEngine, didReceiveStreamingDelta delta: String, forStep stepIndex: Int) {}
-    public func agentEngine(_ engine: AgentEngine, didCallTool toolName: String, withArguments args: String, result: String, forIssue issue: Issue) {}
+    public func agentEngine(
+        _ engine: AgentEngine,
+        didCallTool toolName: String,
+        withArguments args: String,
+        result: String,
+        forIssue issue: Issue
+    ) {}
     public func agentEngine(_ engine: AgentEngine, didUpdateStatus status: String, forIssue issue: Issue) {}
 
     // Clarification
-    public func agentEngine(_ engine: AgentEngine, needsClarification request: ClarificationRequest, forIssue issue: Issue) {}
+    public func agentEngine(
+        _ engine: AgentEngine,
+        needsClarification request: ClarificationRequest,
+        forIssue issue: Issue
+    ) {}
 
     // Artifacts
     public func agentEngine(_ engine: AgentEngine, didGenerateArtifact artifact: Artifact, forIssue issue: Issue) {}
@@ -735,14 +752,30 @@ extension AgentEngineDelegate {
     public func agentEngine(_ engine: AgentEngine, didInjectUserInput input: String, forIssue issue: Issue) {}
 
     // Retry
-    public func agentEngine(_ engine: AgentEngine, willRetryIssue issue: Issue, attempt: Int, afterDelay: TimeInterval) {}
+    public func agentEngine(_ engine: AgentEngine, willRetryIssue issue: Issue, attempt: Int, afterDelay: TimeInterval)
+    {}
 
     // DEPRECATED: Plan-based methods
     public func agentEngine(_ engine: AgentEngine, didCreatePlan plan: ExecutionPlan, forIssue issue: Issue) {}
-    public func agentEngine(_ engine: AgentEngine, willExecuteStep stepIndex: Int, step: PlanStep, forIssue issue: Issue) {}
-    public func agentEngine(_ engine: AgentEngine, didCompleteStep stepIndex: Int, result: StepResult, forIssue issue: Issue) {}
-    public func agentEngine(_ engine: AgentEngine, didEncounterError error: Error, forStep stepIndex: Int, issue: Issue) {}
-    public func agentEngine(_ engine: AgentEngine, didVerifyGoal verification: VerificationResult, forIssue issue: Issue) {}
+    public func agentEngine(
+        _ engine: AgentEngine,
+        willExecuteStep stepIndex: Int,
+        step: PlanStep,
+        forIssue issue: Issue
+    ) {}
+    public func agentEngine(
+        _ engine: AgentEngine,
+        didCompleteStep stepIndex: Int,
+        result: StepResult,
+        forIssue issue: Issue
+    ) {}
+    public func agentEngine(_ engine: AgentEngine, didEncounterError error: Error, forStep stepIndex: Int, issue: Issue)
+    {}
+    public func agentEngine(
+        _ engine: AgentEngine,
+        didVerifyGoal verification: VerificationResult,
+        forIssue issue: Issue
+    ) {}
     public func agentEngine(_ engine: AgentEngine, didDecomposeIssue issue: Issue, into children: [Issue]) {}
 }
 

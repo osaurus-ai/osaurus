@@ -62,6 +62,23 @@ final class ChatTurn: ObservableObject, Identifiable {
         objectWillChange.send()
     }
 
+    /// Trims leaked function-call JSON patterns from the end of content.
+    /// Call this when a tool call arrives to clean up any text that leaked before detection.
+    /// - Parameter toolName: The name of the tool being called, used to detect leaked JSON
+    func trimTrailingFunctionCallLeakage(toolName: String) {
+        guard !contentIsEmpty else { return }
+
+        let originalContent = content
+        let cleanedContent = StringCleaning.stripFunctionCallLeakage(originalContent, toolName: toolName)
+
+        // Update content if modified
+        if cleanedContent != originalContent {
+            contentChunks = cleanedContent.isEmpty ? [] : [cleanedContent]
+            _contentLength = cleanedContent.count
+            _cachedContent = cleanedContent
+        }
+    }
+
     // MARK: - Thinking with lazy joining
 
     /// Internal storage for thinking chunks - O(1) append

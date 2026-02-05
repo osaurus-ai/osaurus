@@ -383,7 +383,13 @@ public enum EventPayload {
         public let arguments: String?
         public let result: String?
         public let success: Bool
-        public init(toolName: String, iteration: Int, arguments: String? = nil, result: String? = nil, success: Bool = true) {
+        public init(
+            toolName: String,
+            iteration: Int,
+            arguments: String? = nil,
+            result: String? = nil,
+            success: Bool = true
+        ) {
             self.toolName = toolName
             self.iteration = iteration
             self.arguments = arguments

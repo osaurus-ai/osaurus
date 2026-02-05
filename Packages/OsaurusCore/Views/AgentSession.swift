@@ -1159,6 +1159,10 @@ extension AgentSession: AgentEngineDelegate {
 
         let assistantTurn = lastAssistantTurn()
 
+        // Clean up any leaked function-call JSON from the assistant turn's content
+        // This handles cases where raw function call text was streamed before detection
+        assistantTurn.trimTrailingFunctionCallLeakage(toolName: toolName)
+
         // Create a tool call object for the UI
         let callId = "call_\(UUID().uuidString.prefix(24))"
         let toolCall = ToolCall(

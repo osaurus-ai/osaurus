@@ -270,14 +270,22 @@ public actor AgentExecutionEngine {
             let result = try await executeToolCall(invocation, overrides: toolOverrides, issueId: issue.id)
             await onToolCall(invocation.toolName, invocation.jsonArguments, result.result)
 
+            // Clean response content - strip any leaked function-call JSON patterns
+            let cleanedContent = StringCleaning.stripFunctionCallLeakage(responseContent, toolName: invocation.toolName)
+
             // Append tool call + result to conversation
-            if responseContent.isEmpty {
+            if cleanedContent.isEmpty {
                 messages.append(
                     ChatMessage(role: "assistant", content: nil, tool_calls: [result.toolCall], tool_call_id: nil)
                 )
             } else {
                 messages.append(
-                    ChatMessage(role: "assistant", content: responseContent, tool_calls: [result.toolCall], tool_call_id: nil)
+                    ChatMessage(
+                        role: "assistant",
+                        content: cleanedContent,
+                        tool_calls: [result.toolCall],
+                        tool_call_id: nil
+                    )
                 )
             }
             messages.append(
@@ -329,12 +337,12 @@ public actor AgentExecutionEngine {
     private func parseGeneratedArtifact(from result: String, taskId: String) -> Artifact? {
         // Look for the artifact markers
         guard let startRange = result.range(of: "---GENERATED_ARTIFACT_START---\n"),
-              let endRange = result.range(of: "\n---GENERATED_ARTIFACT_END---")
+            let endRange = result.range(of: "\n---GENERATED_ARTIFACT_END---")
         else {
             return nil
         }
 
-        let fullContent = String(result[startRange.upperBound..<endRange.lowerBound])
+        let fullContent = String(result[startRange.upperBound ..< endRange.lowerBound])
 
         // First line is JSON metadata, rest is content
         let lines = fullContent.components(separatedBy: "\n")
@@ -344,8 +352,8 @@ public actor AgentExecutionEngine {
 
         // Parse metadata
         guard let metadataData = metadataLine.data(using: .utf8),
-              let metadata = try? JSONSerialization.jsonObject(with: metadataData) as? [String: String],
-              let filename = metadata["filename"]
+            let metadata = try? JSONSerialization.jsonObject(with: metadataData) as? [String: String],
+            let filename = metadata["filename"]
         else {
             return nil
         }
@@ -384,46 +392,46 @@ public actor AgentExecutionEngine {
         prompt += """
 
 
-        # Agent Mode
+            # Agent Mode
 
-        You are executing a task for the user. Your goal:
+            You are executing a task for the user. Your goal:
 
-        **\(issue.title)**
-        \(issue.description ?? "")
+            **\(issue.title)**
+            \(issue.description ?? "")
 
-        ## How to Work
+            ## How to Work
 
-        - You have tools available. Use them to accomplish the goal.
-        - Work step by step. After each tool call, assess what you learned and decide the next action.
-        - You do NOT need to plan everything upfront. Explore, read, understand, then act.
-        - If you discover additional work needed, use `create_issue` to track it.
-        - When the task is complete, use `complete_task` with a summary of what you accomplished.
-        - If the task is ambiguous and you cannot make a reasonable assumption, use `request_clarification`.
+            - You have tools available. Use them to accomplish the goal.
+            - Work step by step. After each tool call, assess what you learned and decide the next action.
+            - You do NOT need to plan everything upfront. Explore, read, understand, then act.
+            - If you discover additional work needed, use `create_issue` to track it.
+            - When the task is complete, use `complete_task` with a summary of what you accomplished.
+            - If the task is ambiguous and you cannot make a reasonable assumption, use `request_clarification`.
 
-        ## Important Guidelines
+            ## Important Guidelines
 
-        - Always read/explore before modifying. Don't guess at file contents or project structure.
-        - For coding tasks: write code, then verify it works if possible.
-        - If something fails, analyze the error and try a different approach. Don't repeat the same action.
-        - Keep the user's original request in mind at all times. Every action should serve the goal.
-        - When creating follow-up issues, write detailed descriptions with full context about what you learned.
+            - Always read/explore before modifying. Don't guess at file contents or project structure.
+            - For coding tasks: write code, then verify it works if possible.
+            - If something fails, analyze the error and try a different approach. Don't repeat the same action.
+            - Keep the user's original request in mind at all times. Every action should serve the goal.
+            - When creating follow-up issues, write detailed descriptions with full context about what you learned.
 
-        ## Communication Style
+            ## Communication Style
 
-        - Before calling tools, briefly explain what you are about to do and why.
-        - After receiving tool results, summarize what you learned before proceeding.
-        - Use concise natural language (not code or JSON) when explaining your actions.
-        - The user sees your text responses in real time, so keep them informed of progress.
+            - Before calling tools, briefly explain what you are about to do and why.
+            - After receiving tool results, summarize what you learned before proceeding.
+            - Use concise natural language (not code or JSON) when explaining your actions.
+            - The user sees your text responses in real time, so keep them informed of progress.
 
-        ## Completion
+            ## Completion
 
-        When the goal is fully achieved, call `complete_task` with:
-        - A summary of what was accomplished
-        - Any artifacts produced (optional)
+            When the goal is fully achieved, call `complete_task` with:
+            - A summary of what was accomplished
+            - Any artifacts produced (optional)
 
-        Do NOT call complete_task until you have actually done the work and verified it.
+            Do NOT call complete_task until you have actually done the work and verified it.
 
-        """
+            """
 
         // Add folder context if available
         if let folder = folderContext {
@@ -449,7 +457,7 @@ public actor AgentExecutionEngine {
             "THE TASK IS COMPLETE",
             "THE TASK HAS BEEN COMPLETED",
             "ALL DONE",
-            "FINISHED SUCCESSFULLY"
+            "FINISHED SUCCESSFULLY",
         ]
         return completionPhrases.contains { upperContent.contains($0) }
     }
@@ -488,7 +496,7 @@ public actor AgentExecutionEngine {
         }
 
         guard let data = jsonArgs.data(using: .utf8),
-              let args = try? JSONDecoder().decode(CompleteTaskArgs.self, from: data)
+            let args = try? JSONDecoder().decode(CompleteTaskArgs.self, from: data)
         else {
             return ("Task completed", nil)
         }
@@ -496,10 +504,11 @@ public actor AgentExecutionEngine {
         var artifact: Artifact? = nil
         if let rawContent = args.artifact, !rawContent.isEmpty {
             // Unescape literal \n and \t sequences that models sometimes send
-            let content = rawContent
+            let content =
+                rawContent
                 .replacingOccurrences(of: "\\n", with: "\n")
                 .replacingOccurrences(of: "\\t", with: "\t")
-            
+
             artifact = Artifact(
                 taskId: taskId,
                 filename: "result.md",
@@ -521,7 +530,7 @@ public actor AgentExecutionEngine {
         }
 
         guard let data = jsonArgs.data(using: .utf8),
-              let args = try? JSONDecoder().decode(ClarificationArgs.self, from: data)
+            let args = try? JSONDecoder().decode(ClarificationArgs.self, from: data)
         else {
             return ClarificationRequest(question: "Could you please clarify your request?")
         }
@@ -532,6 +541,7 @@ public actor AgentExecutionEngine {
             context: args.context
         )
     }
+
 }
 
 // MARK: - Supporting Types
