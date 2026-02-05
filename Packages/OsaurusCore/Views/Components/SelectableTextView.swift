@@ -743,4 +743,3 @@ final class SelectableNSTextView: NSTextView {
         super.mouseDown(with: event)
     }
 }
-
