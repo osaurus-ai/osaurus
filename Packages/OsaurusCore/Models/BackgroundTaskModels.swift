@@ -6,7 +6,6 @@
 //  Used when agent tasks continue running after their window is closed.
 //
 
-import Combine
 import Foundation
 
 // MARK: - Background Task Status
@@ -134,11 +133,14 @@ public final class BackgroundTaskState: ObservableObject, Identifiable {
     /// ID of the currently active issue
     @Published public var activeIssueId: String?
 
-    /// Current execution plan with steps
+    /// Current execution plan with steps (deprecated: kept for backward compatibility)
     @Published public var currentPlan: ExecutionPlan?
 
-    /// Current step index being executed (0-based)
+    /// Current step index being executed (0-based, deprecated: kept for backward compatibility)
     @Published public var currentPlanStep: Int = 0
+
+    /// Current reasoning loop state (iteration progress, tool usage, etc.)
+    @Published public var loopState: LoopState?
 
     /// Pending clarification request (when status is .awaitingClarification)
     @Published public var pendingClarification: ClarificationRequest?

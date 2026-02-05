@@ -1144,7 +1144,11 @@ extension AgentSession: AgentEngineDelegate {
     public func agentEngine(_ engine: AgentEngine, didStartIteration iteration: Int, forIssue issue: Issue) {
         // Update current iteration for progress tracking
         currentStep = iteration
-        emitActivity(.willExecuteStep(index: iteration, total: nil, description: "Iteration \(iteration)"))
+        loopState?.iteration = iteration
+        loopState?.isGenerating = true
+        emitActivity(
+            .willExecuteStep(index: iteration, total: loopState?.maxIterations, description: "Iteration \(iteration)")
+        )
         notifyIfSelected(issue.id)
     }
 
@@ -1155,6 +1159,12 @@ extension AgentSession: AgentEngineDelegate {
         result: String,
         forIssue issue: Issue
     ) {
+        // Update loop state with tool call info
+        loopState?.toolCallCount += 1
+        if let ls = loopState, !ls.toolsUsed.contains(toolName) {
+            loopState?.toolsUsed.append(toolName)
+        }
+
         emitActivity(.toolExecuted(name: toolName))
 
         let assistantTurn = lastAssistantTurn()
@@ -1191,8 +1201,8 @@ extension AgentSession: AgentEngineDelegate {
     }
 
     public func agentEngine(_ engine: AgentEngine, didUpdateStatus status: String, forIssue issue: Issue) {
-        // Status updates can be logged or displayed in the UI
-        // For now, we just emit an activity event
-        emitActivity(.willExecuteStep(index: currentStep, total: nil, description: status))
+        // Update loop state with status message
+        loopState?.statusMessage = status
+        emitActivity(.willExecuteStep(index: currentStep, total: loopState?.maxIterations, description: status))
     }
 }

@@ -138,7 +138,16 @@ struct BackgroundTaskToastView: View {
 
             Spacer(minLength: 8)
 
-            if let plan = taskState.currentPlan, !plan.steps.isEmpty {
+            if let ls = taskState.loopState, ls.iteration > 0 {
+                // Reasoning loop: show iteration counter
+                AnimatedStepCounter(
+                    current: ls.iteration,
+                    total: ls.maxIterations,
+                    color: accentColor
+                )
+                .fixedSize()
+            } else if let plan = taskState.currentPlan, !plan.steps.isEmpty {
+                // Legacy plan: show step counter
                 AnimatedStepCounter(
                     current: min(taskState.currentPlanStep + 1, plan.steps.count),
                     total: plan.steps.count,
