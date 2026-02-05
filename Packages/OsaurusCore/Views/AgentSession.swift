@@ -1060,7 +1060,7 @@ extension AgentSession: AgentEngineDelegate {
         cumulativeOutputTokens += output
     }
 
-    // MARK: - Reasoning Loop Delegate Methods (New)
+    // MARK: - Reasoning Loop Delegate Methods
 
     public func agentEngine(_ engine: AgentEngine, didStartIteration iteration: Int, forIssue issue: Issue) {
         // Update current iteration for progress tracking
@@ -1070,6 +1070,16 @@ extension AgentSession: AgentEngineDelegate {
         emitActivity(
             .willExecuteStep(index: iteration, total: loopState?.maxIterations, description: "Iteration \(iteration)")
         )
+
+        // Start a fresh assistant turn when the previous one already has content or
+        // tool calls. This preserves chronological ordering so text and tool calls
+        // from each iteration appear in sequence.
+        if let prev = liveExecutionTurns.last(where: { $0.role == .assistant }),
+            !prev.contentIsEmpty || !(prev.toolCalls?.isEmpty ?? true)
+        {
+            liveExecutionTurns.append(ChatTurn(role: .assistant, content: ""))
+        }
+
         notifyIfSelected(issue.id)
     }
 

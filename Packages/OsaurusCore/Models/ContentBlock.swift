@@ -329,64 +329,7 @@ extension ContentBlock {
             previousTurnId = turn.id
         }
 
-        // Pre-calculate heights for uncached blocks in background
-        // This helps SwiftUI avoid expensive layout calculations on first render
-        precalculateHeightsInBackground(for: blocks)
-
         return blocks
-    }
-
-    /// Pre-calculate and cache estimated heights for blocks that don't have cached heights.
-    /// This runs in the background to avoid blocking the main thread.
-    private static func precalculateHeightsInBackground(for blocks: [ContentBlock]) {
-        // Only pre-calculate if there are uncached blocks
-        let uncachedBlocks = blocks.filter { ThreadCache.shared.height(for: $0.id) == nil }
-        guard !uncachedBlocks.isEmpty else { return }
-
-        Task.detached(priority: .utility) {
-            for block in uncachedBlocks {
-                let estimatedHeight = estimateBlockHeight(for: block.kind)
-                ThreadCache.shared.setHeight(estimatedHeight, for: block.id)
-            }
-        }
-    }
-
-    /// Estimate height for a block kind (used for pre-calculation)
-    private static func estimateBlockHeight(for kind: ContentBlockKind) -> CGFloat {
-        switch kind {
-        case .header:
-            return 48
-
-        case let .paragraph(_, text, _, _):
-            // Estimate: ~80 chars per line, ~22px per line, plus padding
-            let estimatedLines = max(1, CGFloat(text.count) / 80)
-            return min(max(40, estimatedLines * 22 + 24), 500)
-
-        case .toolCall:
-            return 60
-
-        case .toolCallGroup(let calls):
-            // Each collapsed tool call row is ~40px
-            return CGFloat(calls.count * 40)
-
-        case let .thinking(_, text, _):
-            let estimatedLines = max(1, CGFloat(text.count) / 80)
-            return min(max(50, estimatedLines * 20 + 30), 300)
-
-        case let .clarification(request):
-            // Base height + options count (if any)
-            let optionsCount = request.options?.count ?? 0
-            return CGFloat(120 + optionsCount * 44)
-
-        case .image:
-            return 170
-
-        case .typingIndicator:
-            return 48
-
-        case .groupSpacer:
-            return 16
-        }
     }
 
     private static func assignPositions(to blocks: [ContentBlock]) -> [ContentBlock] {

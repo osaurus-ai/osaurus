@@ -26,9 +26,24 @@ struct ContentBlockView: View, Equatable {
     private var isUserMessage: Bool { block.role == .user }
     private var isLastInTurn: Bool { block.position == .only || block.position == .last }
 
-    /// Height hint for SwiftUI to prevent expensive layout calculations
+    /// Whether this block is currently receiving streaming content
+    private var isBlockStreaming: Bool {
+        switch block.kind {
+        case let .paragraph(_, _, isStreaming, _): return isStreaming
+        case let .thinking(_, _, isStreaming): return isStreaming
+        case .typingIndicator: return true
+        default: return false
+        }
+    }
+
+    /// Height hint for SwiftUI to prevent expensive layout calculations.
+    /// During streaming, uses a live estimate based on current text length instead
+    /// of the cached height (which may be stale from an earlier, shorter render).
     private var estimatedMinHeight: CGFloat {
-        ThreadCache.shared.height(for: block.id) ?? Self.estimateHeight(for: block.kind, width: width)
+        if isBlockStreaming {
+            return Self.estimateHeight(for: block.kind, width: width)
+        }
+        return ThreadCache.shared.height(for: block.id) ?? Self.estimateHeight(for: block.kind, width: width)
     }
 
     /// Estimate height for a block kind (used when no cached height is available)
