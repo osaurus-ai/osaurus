@@ -32,7 +32,6 @@ enum ContentBlockKind: Equatable {
     case toolCall(call: ToolCall, result: String?)
     case toolCallGroup(calls: [ToolCallItem])
     case thinking(index: Int, text: String, isStreaming: Bool)
-    case plan(steps: [PlanStep], currentStep: Int?, isStreaming: Bool)
     case clarification(request: ClarificationRequest)
     case image(index: Int, imageData: Data)
     case typingIndicator
@@ -63,9 +62,6 @@ enum ContentBlockKind: Equatable {
             guard lIdx == rIdx && lStream == rStream else { return false }
             guard lText.count == rText.count else { return false }
             return lText == rText
-
-        case let (.plan(lSteps, lCurrent, lStream), .plan(rSteps, rCurrent, rStream)):
-            return lSteps == rSteps && lCurrent == rCurrent && lStream == rStream
 
         case let (.clarification(lRequest), .clarification(rRequest)):
             return lRequest == rRequest
@@ -98,7 +94,7 @@ struct ContentBlock: Identifiable, Equatable {
         switch kind {
         case let .header(role, _, _): return role
         case let .paragraph(_, _, _, role): return role
-        case .toolCall, .toolCallGroup, .thinking, .plan, .clarification, .typingIndicator, .groupSpacer:
+        case .toolCall, .toolCallGroup, .thinking, .clarification, .typingIndicator, .groupSpacer:
             return .assistant
         case .image: return .user
         }
@@ -171,17 +167,6 @@ struct ContentBlock: Identifiable, Equatable {
             id: "think-\(turnId.uuidString)-\(index)",
             turnId: turnId,
             kind: .thinking(index: index, text: text, isStreaming: isStreaming),
-            position: position
-        )
-    }
-
-    static func plan(turnId: UUID, steps: [PlanStep], currentStep: Int?, isStreaming: Bool, position: BlockPosition)
-        -> ContentBlock
-    {
-        ContentBlock(
-            id: "plan-\(turnId.uuidString)",
-            turnId: turnId,
-            kind: .plan(steps: steps, currentStep: currentStep, isStreaming: isStreaming),
             position: position
         )
     }
@@ -283,19 +268,6 @@ extension ContentBlock {
                 turnBlocks.append(.image(turnId: turn.id, index: idx, imageData: imageData, position: .middle))
             }
 
-            // Add plan block if present (agent mode)
-            if turn.role == .assistant, let plan = turn.plan, !plan.steps.isEmpty {
-                turnBlocks.append(
-                    .plan(
-                        turnId: turn.id,
-                        steps: plan.steps,
-                        currentStep: turn.currentPlanStep,
-                        isStreaming: isStreaming,
-                        position: .middle
-                    )
-                )
-            }
-
             // Add clarification block if pending (agent mode)
             if turn.role == .assistant, let clarification = turn.pendingClarification {
                 turnBlocks.append(
@@ -357,68 +329,7 @@ extension ContentBlock {
             previousTurnId = turn.id
         }
 
-        // Pre-calculate heights for uncached blocks in background
-        // This helps SwiftUI avoid expensive layout calculations on first render
-        precalculateHeightsInBackground(for: blocks)
-
         return blocks
-    }
-
-    /// Pre-calculate and cache estimated heights for blocks that don't have cached heights.
-    /// This runs in the background to avoid blocking the main thread.
-    private static func precalculateHeightsInBackground(for blocks: [ContentBlock]) {
-        // Only pre-calculate if there are uncached blocks
-        let uncachedBlocks = blocks.filter { ThreadCache.shared.height(for: $0.id) == nil }
-        guard !uncachedBlocks.isEmpty else { return }
-
-        Task.detached(priority: .utility) {
-            for block in uncachedBlocks {
-                let estimatedHeight = estimateBlockHeight(for: block.kind)
-                ThreadCache.shared.setHeight(estimatedHeight, for: block.id)
-            }
-        }
-    }
-
-    /// Estimate height for a block kind (used for pre-calculation)
-    private static func estimateBlockHeight(for kind: ContentBlockKind) -> CGFloat {
-        switch kind {
-        case .header:
-            return 48
-
-        case let .paragraph(_, text, _, _):
-            // Estimate: ~80 chars per line, ~22px per line, plus padding
-            let estimatedLines = max(1, CGFloat(text.count) / 80)
-            return min(max(40, estimatedLines * 22 + 24), 500)
-
-        case .toolCall:
-            return 60
-
-        case .toolCallGroup(let calls):
-            // Each collapsed tool call row is ~40px
-            return CGFloat(calls.count * 40)
-
-        case let .thinking(_, text, _):
-            let estimatedLines = max(1, CGFloat(text.count) / 80)
-            return min(max(50, estimatedLines * 20 + 30), 300)
-
-        case let .plan(steps, _, _):
-            // Collapsed: ~50px, Expanded: ~50px header + ~44px per step
-            return CGFloat(50 + steps.count * 44)
-
-        case let .clarification(request):
-            // Base height + options count (if any)
-            let optionsCount = request.options?.count ?? 0
-            return CGFloat(120 + optionsCount * 44)
-
-        case .image:
-            return 170
-
-        case .typingIndicator:
-            return 48
-
-        case .groupSpacer:
-            return 16
-        }
     }
 
     private static func assignPositions(to blocks: [ContentBlock]) -> [ContentBlock] {

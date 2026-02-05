@@ -44,6 +44,10 @@ struct CachedHeightView<Content: View>: View {
     }
 
     var body: some View {
+        // If the cache no longer validates this entry (e.g. width changed),
+        // don't constrain to the stale @State value — let the view re-measure naturally.
+        let validHeight = ThreadCache.shared.height(for: id) != nil ? height : nil
+
         content
             .background(
                 GeometryReader { geo in
@@ -57,7 +61,7 @@ struct CachedHeightView<Content: View>: View {
                 ThreadCache.shared.setHeight(newHeight, for: id)
             }
             // Use minHeight to allow growth but prevent collapse (stable recycling)
-            .frame(minHeight: height, alignment: .top)
+            .frame(minHeight: validHeight, alignment: .top)
     }
 }
 

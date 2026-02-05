@@ -587,6 +587,137 @@ public final class IssueManager: ObservableObject {
             try await decomposeIssue(issueId, into: children)
         } ?? []
     }
+
+    // MARK: - Context-Rich Issue Creation
+
+    /// Creates a new issue with full handoff context from a parent issue
+    /// Used by the create_issue meta-tool to pass rich context to follow-up work
+    /// - Parameters:
+    ///   - context: The handoff context with all relevant information
+    ///   - sourceIssueId: The parent/source issue to link from
+    /// - Returns: The newly created issue
+    public func createIssueWithContext(_ context: HandoffContext, sourceIssueId: String) async throws -> Issue {
+        // Get the source issue to inherit task and link
+        guard let sourceIssue = try IssueStore.getIssue(id: sourceIssueId) else {
+            throw IssueManagerError.issueNotFound(sourceIssueId)
+        }
+
+        // Build rich context string from handoff
+        let contextString = context.buildContextString()
+
+        // Create the new issue
+        let issue = try await createIssue(
+            taskId: sourceIssue.taskId,
+            title: context.title,
+            description: context.description,
+            context: contextString,
+            priority: context.priority ?? sourceIssue.priority,
+            type: context.type ?? .task
+        )
+
+        // Link to source issue if this is discovered work
+        if context.isDiscoveredWork {
+            try await linkDiscovery(sourceIssueId: sourceIssueId, discoveredIssueId: issue.id)
+        } else {
+            // Link as child for planned follow-up work
+            try await addChildIssue(parentId: sourceIssueId, childId: issue.id)
+        }
+
+        // Log the discovered event if applicable
+        if context.isDiscoveredWork {
+            try IssueStore.createEvent(
+                IssueEvent.withPayload(
+                    issueId: issue.id,
+                    eventType: .discovered,
+                    payload: ["source": sourceIssueId, "reason": context.reason ?? "follow-up work"]
+                )
+            )
+        }
+
+        await loadIssues(forTask: sourceIssue.taskId)
+
+        return issue
+    }
+
+    /// Safe version of createIssueWithContext that doesn't throw
+    public func createIssueWithContextSafe(_ context: HandoffContext, sourceIssueId: String) async -> Issue? {
+        await safe("createIssueWithContext") {
+            try await createIssueWithContext(context, sourceIssueId: sourceIssueId)
+        }
+    }
+}
+
+// MARK: - Handoff Context
+
+/// Context for handing off discovered or follow-up work to a new issue
+/// This enables rich context passing from parent to child issues in the reasoning loop
+public struct HandoffContext: Codable, Sendable {
+    /// Title for the new issue
+    public let title: String
+    /// Full description of the work
+    public let description: String?
+    /// Why this work was discovered/needed
+    public let reason: String?
+    /// What was learned that's relevant to this work
+    public let learnings: [String]?
+    /// Key files or paths that are relevant
+    public let relevantFiles: [String]?
+    /// Any constraints or requirements
+    public let constraints: [String]?
+    /// Suggested priority (inherits from parent if nil)
+    public let priority: IssuePriority?
+    /// Issue type (defaults to .task if nil)
+    public let type: IssueType?
+    /// Whether this is discovered work (true) or planned follow-up (false)
+    public let isDiscoveredWork: Bool
+
+    public init(
+        title: String,
+        description: String? = nil,
+        reason: String? = nil,
+        learnings: [String]? = nil,
+        relevantFiles: [String]? = nil,
+        constraints: [String]? = nil,
+        priority: IssuePriority? = nil,
+        type: IssueType? = nil,
+        isDiscoveredWork: Bool = true
+    ) {
+        self.title = title
+        self.description = description
+        self.reason = reason
+        self.learnings = learnings
+        self.relevantFiles = relevantFiles
+        self.constraints = constraints
+        self.priority = priority
+        self.type = type
+        self.isDiscoveredWork = isDiscoveredWork
+    }
+
+    /// Builds a rich context string for the new issue
+    func buildContextString() -> String? {
+        var parts: [String] = []
+
+        if let reason = reason, !reason.isEmpty {
+            parts.append("**Why:** \(reason)")
+        }
+
+        if let learnings = learnings, !learnings.isEmpty {
+            let learningsText = learnings.map { "- \($0)" }.joined(separator: "\n")
+            parts.append("**What we learned:**\n\(learningsText)")
+        }
+
+        if let files = relevantFiles, !files.isEmpty {
+            let filesText = files.map { "- `\($0)`" }.joined(separator: "\n")
+            parts.append("**Relevant files:**\n\(filesText)")
+        }
+
+        if let constraints = constraints, !constraints.isEmpty {
+            let constraintsText = constraints.map { "- \($0)" }.joined(separator: "\n")
+            parts.append("**Constraints:**\n\(constraintsText)")
+        }
+
+        return parts.isEmpty ? nil : parts.joined(separator: "\n\n")
+    }
 }
 
 // MARK: - Errors

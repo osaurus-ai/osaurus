@@ -409,21 +409,9 @@ public actor RemoteProviderService: ToolCapableService {
                                     } else {
                                         // OpenAI format
                                         let chunk = try JSONDecoder().decode(ChatCompletionChunk.self, from: jsonData)
-                                        if let delta = chunk.choices.first?.delta.content, !delta.isEmpty {
-                                            // Check stop sequences
-                                            var output = delta
-                                            for seq in stopSequences {
-                                                if let range = output.range(of: seq) {
-                                                    output = String(output[..<range.lowerBound])
-                                                    continuation.yield(output)
-                                                    continuation.finish()
-                                                    return
-                                                }
-                                            }
-                                            continuation.yield(output)
-                                        }
 
-                                        // Accumulate tool calls by index
+                                        // Accumulate tool calls by index FIRST (before yielding content)
+                                        // This ensures we detect tool calls before deciding to yield content
                                         if let toolCalls = chunk.choices.first?.delta.tool_calls {
                                             for toolCall in toolCalls {
                                                 let idx = toolCall.index ?? 0
@@ -441,6 +429,24 @@ public actor RemoteProviderService: ToolCapableService {
                                                 }
                                                 accumulatedToolCalls[idx] = current
                                             }
+                                        }
+
+                                        // Only yield content if no tool calls have been detected
+                                        // This prevents function-call JSON from leaking into the chat UI
+                                        if accumulatedToolCalls.isEmpty,
+                                            let delta = chunk.choices.first?.delta.content, !delta.isEmpty
+                                        {
+                                            // Check stop sequences
+                                            var output = delta
+                                            for seq in stopSequences {
+                                                if let range = output.range(of: seq) {
+                                                    output = String(output[..<range.lowerBound])
+                                                    continuation.yield(output)
+                                                    continuation.finish()
+                                                    return
+                                                }
+                                            }
+                                            continuation.yield(output)
                                         }
 
                                         // Check for finish reason - emit tool calls if we have any
@@ -846,21 +852,8 @@ public actor RemoteProviderService: ToolCapableService {
                                         // OpenAI format
                                         let chunk = try JSONDecoder().decode(ChatCompletionChunk.self, from: jsonData)
 
-                                        // Handle content delta
-                                        if let delta = chunk.choices.first?.delta.content, !delta.isEmpty {
-                                            var output = delta
-                                            for seq in stopSequences {
-                                                if let range = output.range(of: seq) {
-                                                    output = String(output[..<range.lowerBound])
-                                                    continuation.yield(output)
-                                                    continuation.finish()
-                                                    return
-                                                }
-                                            }
-                                            continuation.yield(output)
-                                        }
-
-                                        // Handle tool call deltas - track by index for multiple parallel tool calls
+                                        // Handle tool call deltas FIRST - track by index for multiple parallel tool calls
+                                        // This ensures we detect tool calls before deciding to yield content
                                         if let toolCalls = chunk.choices.first?.delta.tool_calls {
                                             for toolCall in toolCalls {
                                                 let idx = toolCall.index ?? 0
@@ -880,6 +873,23 @@ public actor RemoteProviderService: ToolCapableService {
                                                 }
                                                 accumulatedToolCalls[idx] = current
                                             }
+                                        }
+
+                                        // Only yield content if no tool calls have been detected
+                                        // This prevents function-call JSON from leaking into the chat UI
+                                        if accumulatedToolCalls.isEmpty,
+                                            let delta = chunk.choices.first?.delta.content, !delta.isEmpty
+                                        {
+                                            var output = delta
+                                            for seq in stopSequences {
+                                                if let range = output.range(of: seq) {
+                                                    output = String(output[..<range.lowerBound])
+                                                    continuation.yield(output)
+                                                    continuation.finish()
+                                                    return
+                                                }
+                                            }
+                                            continuation.yield(output)
                                         }
 
                                         // Check finish reason - handle various formats from different providers

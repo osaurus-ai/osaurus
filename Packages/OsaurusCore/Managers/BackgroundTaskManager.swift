@@ -158,8 +158,7 @@ public final class BackgroundTaskManager: ObservableObject {
         // Copy additional state
         state.issues = session.issues
         state.activeIssueId = session.activeIssue?.id
-        state.currentPlan = session.currentPlan
-        state.currentPlanStep = session.currentStep
+        state.loopState = session.loopState
 
         return state
     }
@@ -195,19 +194,17 @@ public final class BackgroundTaskManager: ObservableObject {
         }
         .store(in: &cancellables)
 
-        // Combine progress-related publishers
-        Publishers.CombineLatest3(
+        // Combine progress-related publishers (loop state + issues)
+        Publishers.CombineLatest(
             session.$issues,
-            session.$currentPlan,
-            session.$currentStep
+            session.$loopState
         )
         .receive(on: DispatchQueue.main)
-        .sink { [weak self] issues, plan, stepIndex in
+        .sink { [weak self] issues, loopState in
             self?.handleProgressChange(
                 windowId: windowId,
                 issues: issues,
-                plan: plan,
-                stepIndex: stepIndex,
+                loopState: loopState,
                 session: session
             )
         }
@@ -241,20 +238,12 @@ public final class BackgroundTaskManager: ObservableObject {
         case .startedIssue(let title):
             state.appendActivity(kind: .info, title: "Issue", detail: title)
 
-        case .planCreated(let stepCount):
-            state.appendActivity(kind: .info, title: "Plan", detail: "\(stepCount) steps")
-
-        case .willExecuteStep(let index, let total, let description):
-            // Suppress unused variable warnings - parameters are intentionally not used here.
-            // Step info is already shown in the toast header + progress bar, so we skip
-            // redundant mini-log entries to keep the activity feed focused on high-signal events.
-            _ = index; _ = total; _ = description
+        case .willExecuteStep:
+            // Step info is shown in the toast header + progress bar; skip mini-log entry
             return
 
-        case .completedStep(let index, let total):
-            // Suppress unused variable warnings - parameters are intentionally not used here.
-            // Step completion is reflected via the progress bar UI, no need for mini-log entry.
-            _ = index; _ = total
+        case .completedStep:
+            // Step completion is reflected via the progress bar; skip mini-log entry
             return
 
         case .toolExecuted(let name):
@@ -310,22 +299,19 @@ public final class BackgroundTaskManager: ObservableObject {
     private func handleProgressChange(
         windowId: UUID,
         issues: [Issue],
-        plan: ExecutionPlan?,
-        stepIndex: Int,
+        loopState: LoopState?,
         session: AgentSession
     ) {
         guard let state = backgroundTasks[windowId] else { return }
 
         // Update raw state
         state.issues = issues
-        state.currentPlan = plan
-        state.currentPlanStep = stepIndex
+        state.loopState = loopState
 
         // Calculate and update progress
         let newProgress = calculateProgress(
             issues: issues,
-            plan: plan,
-            stepIndex: stepIndex,
+            loopState: loopState,
             isExecuting: session.isExecuting
         )
 
@@ -338,9 +324,8 @@ public final class BackgroundTaskManager: ObservableObject {
 
         // Update current step description
         state.currentStep = getCurrentStep(
+            loopState: loopState,
             issues: issues,
-            plan: plan,
-            stepIndex: stepIndex,
             isExecuting: session.isExecuting
         )
     }
@@ -350,16 +335,14 @@ public final class BackgroundTaskManager: ObservableObject {
     private func calculateProgress(session: AgentSession) -> Double {
         calculateProgress(
             issues: session.issues,
-            plan: session.currentPlan,
-            stepIndex: session.currentStep,
+            loopState: session.loopState,
             isExecuting: session.isExecuting
         )
     }
 
     private func calculateProgress(
         issues: [Issue],
-        plan: ExecutionPlan?,
-        stepIndex: Int,
+        loopState: LoopState?,
         isExecuting: Bool
     ) -> Double {
         let totalIssues = issues.count
@@ -368,17 +351,18 @@ public final class BackgroundTaskManager: ObservableObject {
             let closedIssues = issues.filter { $0.status == .closed }.count
             var progress = Double(closedIssues) / Double(totalIssues)
 
-            // Add fractional progress from current plan
-            if let plan = plan, !plan.steps.isEmpty {
-                let stepProgress = Double(min(stepIndex, plan.steps.count)) / Double(plan.steps.count)
-                progress += stepProgress / Double(totalIssues)
+            // Add fractional progress from reasoning loop iteration
+            if let ls = loopState, ls.maxIterations > 0 {
+                let iterationProgress = ls.progress  // iteration / maxIterations
+                progress += iterationProgress / Double(totalIssues)
             }
 
             return progress
-        } else if let plan = plan, !plan.steps.isEmpty {
-            return Double(min(stepIndex, plan.steps.count)) / Double(plan.steps.count)
+        } else if let ls = loopState, ls.maxIterations > 0, ls.iteration > 0 {
+            // Single-issue or no-issue task: use loop progress directly
+            return ls.progress
         } else if isExecuting {
-            return -1  // Indeterminate
+            return -1  // Indeterminate (not yet started iterating)
         }
 
         return 0
@@ -386,24 +370,32 @@ public final class BackgroundTaskManager: ObservableObject {
 
     private func getCurrentStep(session: AgentSession) -> String? {
         getCurrentStep(
+            loopState: session.loopState,
             issues: session.issues,
-            plan: session.currentPlan,
-            stepIndex: session.currentStep,
             isExecuting: session.isExecuting
         )
     }
 
     private func getCurrentStep(
+        loopState: LoopState?,
         issues: [Issue],
-        plan: ExecutionPlan?,
-        stepIndex: Int,
         isExecuting: Bool
     ) -> String? {
-        if let plan = plan, !plan.steps.isEmpty {
-            if stepIndex < plan.steps.count {
-                return plan.steps[stepIndex].description
-            } else {
-                return issues.count > 1 ? "Completing issue..." : "Completing..."
+        if let ls = loopState {
+            // Use status message if available
+            if let msg = ls.statusMessage, !msg.isEmpty {
+                return msg
+            }
+            // Build a description from iteration info
+            if ls.iteration > 0 {
+                let toolCount = ls.toolCallCount
+                if toolCount > 0 {
+                    return "Iteration \(ls.iteration) \u{00B7} \(toolCount) tool call\(toolCount == 1 ? "" : "s")"
+                }
+                return "Iteration \(ls.iteration)"
+            }
+            if isExecuting {
+                return "Starting..."
             }
         } else if isExecuting {
             return "Working..."

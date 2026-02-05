@@ -771,8 +771,13 @@ struct SelectableTextViewSizer: View {
     }
 
     var body: some View {
+        // If the cache no longer validates this entry (e.g. width changed),
+        // fall back to a small minimum so the view re-measures at the new width.
+        let cacheValid = cacheKey.flatMap { ThreadCache.shared.height(for: $0) } != nil
+        let effectiveHeight = cacheValid ? height : 0
+
         SelectableTextView(blocks: blocks, baseWidth: baseWidth, theme: theme)
-            .frame(width: baseWidth, height: max(20, height), alignment: .leading)
+            .frame(width: baseWidth, height: max(20, effectiveHeight), alignment: .leading)
             .background(
                 GeometryReader { geo in
                     Color.clear.preference(key: TextHeightPreferenceKey.self, value: geo.size.height)

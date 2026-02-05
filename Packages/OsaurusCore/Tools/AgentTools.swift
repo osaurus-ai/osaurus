@@ -2,162 +2,10 @@
 //  AgentTools.swift
 //  osaurus
 //
-//  Agent-specific tools for plan submission and completion reporting.
+//  Agent-specific tools for task completion, issue creation, and artifact generation.
 //
 
 import Foundation
-
-// MARK: - Submit Plan Tool
-
-/// Tool for the agent to submit an execution plan
-public struct SubmitPlanTool: OsaurusTool {
-    public let name = "submit_plan"
-    public let description =
-        "Submit an execution plan for the current task. The plan should contain concrete, actionable steps."
-
-    public let parameters: JSONValue? = .object([
-        "type": .string("object"),
-        "properties": .object([
-            "steps": .object([
-                "type": .string("array"),
-                "items": .object([
-                    "type": .string("object"),
-                    "properties": .object([
-                        "description": .object([
-                            "type": .string("string"),
-                            "description": .string("What this step accomplishes"),
-                        ]),
-                        "tool": .object([
-                            "type": .string("string"),
-                            "description": .string("The tool to use for this step (optional)"),
-                        ]),
-                    ]),
-                    "required": .array([.string("description")]),
-                ]),
-                "description": .string("Array of steps in the plan"),
-            ]),
-            "reasoning": .object([
-                "type": .string("string"),
-                "description": .string("Brief explanation of the approach"),
-            ]),
-        ]),
-        "required": .array([.string("steps")]),
-    ])
-
-    public init() {}
-
-    public func execute(argumentsJSON: String) async throws -> String {
-        // Parse the arguments
-        guard let data = argumentsJSON.data(using: .utf8),
-            let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-            let steps = json["steps"] as? [[String: Any]]
-        else {
-            throw NSError(
-                domain: "AgentTools",
-                code: 1,
-                userInfo: [NSLocalizedDescriptionKey: "Invalid plan format"]
-            )
-        }
-
-        let stepCount = steps.count
-        let maxSteps = AgentExecutionEngine.maxToolCallsPerIssue
-
-        if stepCount > maxSteps {
-            return """
-                Plan has \(stepCount) steps, which exceeds the maximum of \(maxSteps) steps per issue.
-                The task will be decomposed into smaller chunks.
-
-                Steps submitted:
-                \(steps.enumerated().map { "  \($0.offset + 1). \(($0.element["description"] as? String) ?? "Unknown")" }.joined(separator: "\n"))
-                """
-        }
-
-        return """
-            Plan accepted with \(stepCount) step(s).
-            Proceeding with execution.
-
-            Steps:
-            \(steps.enumerated().map { "  \($0.offset + 1). \(($0.element["description"] as? String) ?? "Unknown")" }.joined(separator: "\n"))
-            """
-    }
-}
-
-// MARK: - Report Discovery Tool
-
-/// Tool for the agent to report discovered work
-public struct ReportDiscoveryTool: OsaurusTool {
-    public let name = "report_discovery"
-    public let description =
-        "Report discovered work such as bugs, TODOs, prerequisites, or follow-up tasks that should be tracked."
-
-    public let parameters: JSONValue? = .object([
-        "type": .string("object"),
-        "properties": .object([
-            "type": .object([
-                "type": .string("string"),
-                "enum": .array([
-                    .string("error"),
-                    .string("todo"),
-                    .string("fixme"),
-                    .string("prerequisite"),
-                    .string("follow_up"),
-                ]),
-                "description": .string("Type of discovery"),
-            ]),
-            "title": .object([
-                "type": .string("string"),
-                "description": .string("Short title for the discovered issue"),
-            ]),
-            "description": .object([
-                "type": .string("string"),
-                "description": .string("Detailed description of the discovery"),
-            ]),
-            "priority": .object([
-                "type": .string("string"),
-                "enum": .array([
-                    .string("p0"),
-                    .string("p1"),
-                    .string("p2"),
-                    .string("p3"),
-                ]),
-                "description": .string("Suggested priority (p0=urgent, p3=low)"),
-            ]),
-        ]),
-        "required": .array([.string("type"), .string("title")]),
-    ])
-
-    public init() {}
-
-    public func execute(argumentsJSON: String) async throws -> String {
-        // Parse the arguments
-        guard let data = argumentsJSON.data(using: .utf8),
-            let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-            let typeStr = json["type"] as? String,
-            let title = json["title"] as? String
-        else {
-            throw NSError(
-                domain: "AgentTools",
-                code: 2,
-                userInfo: [NSLocalizedDescriptionKey: "Invalid discovery format"]
-            )
-        }
-
-        let description = json["description"] as? String
-        let priorityStr = json["priority"] as? String ?? "p2"
-
-        // Note: The actual issue creation is handled by DiscoveryDetector or AgentEngine
-        // This tool just acknowledges the discovery for now
-        return """
-            Discovery reported:
-            - Type: \(typeStr)
-            - Title: \(title)
-            - Priority: \(priorityStr.uppercased())
-            \(description.map { "- Description: \($0)" } ?? "")
-
-            This will be tracked as a new issue linked to the current task.
-            """
-    }
-}
 
 // MARK: - Complete Task Tool
 
@@ -316,6 +164,204 @@ public struct GenerateArtifactTool: OsaurusTool {
     }
 }
 
+// MARK: - Create Issue Tool
+
+/// Tool for creating follow-up issues discovered during execution
+public struct CreateIssueTool: OsaurusTool {
+    public let name = "create_issue"
+    public let description =
+        "Create a follow-up issue for work that was discovered but is outside the current task scope. Include detailed context about what you learned so the next execution can pick up without starting from scratch."
+
+    public let parameters: JSONValue? = .object([
+        "type": .string("object"),
+        "properties": .object([
+            "title": .object([
+                "type": .string("string"),
+                "description": .string("Short descriptive title for the issue"),
+            ]),
+            "description": .object([
+                "type": .string("string"),
+                "description": .string(
+                    "Detailed description with full context. Include: what was discovered, why it's needed, relevant file paths, and any preliminary analysis."
+                ),
+            ]),
+            "reason": .object([
+                "type": .string("string"),
+                "description": .string("Why this work was discovered/needed"),
+            ]),
+            "learnings": .object([
+                "type": .string("array"),
+                "items": .object(["type": .string("string")]),
+                "description": .string("Key things learned that are relevant to this work"),
+            ]),
+            "relevant_files": .object([
+                "type": .string("array"),
+                "items": .object(["type": .string("string")]),
+                "description": .string("File paths that are relevant to this issue"),
+            ]),
+            "priority": .object([
+                "type": .string("string"),
+                "enum": .array([
+                    .string("p0"),
+                    .string("p1"),
+                    .string("p2"),
+                    .string("p3"),
+                ]),
+                "description": .string("Priority level: p0 (urgent), p1 (high), p2 (medium), p3 (low)"),
+            ]),
+        ]),
+        "required": .array([.string("title"), .string("description")]),
+    ])
+
+    public init() {}
+
+    public func execute(argumentsJSON: String) async throws -> String {
+        // Parse the arguments
+        guard let data = argumentsJSON.data(using: .utf8),
+            let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+            let title = json["title"] as? String,
+            let description = json["description"] as? String
+        else {
+            throw NSError(
+                domain: "AgentTools",
+                code: 5,
+                userInfo: [
+                    NSLocalizedDescriptionKey: "Invalid issue format. Required: title (string), description (string)"
+                ]
+            )
+        }
+
+        // Parse optional context fields
+        let reason = json["reason"] as? String
+        let learnings = json["learnings"] as? [String]
+        let relevantFiles = json["relevant_files"] as? [String]
+
+        let priorityStr = json["priority"] as? String ?? "p2"
+        let priority: IssuePriority
+        switch priorityStr.lowercased() {
+        case "p0": priority = .p0
+        case "p1": priority = .p1
+        case "p3": priority = .p3
+        default: priority = .p2
+        }
+
+        // Get current issue context for linking
+        guard let currentIssueId = AgentExecutionContext.currentIssueId else {
+            return """
+                Issue creation recorded:
+                - Title: \(title)
+                - Priority: \(priorityStr.uppercased())
+                - Description: \(description.prefix(200))...
+
+                Note: No active execution context. Issue will be created when context is available.
+                """
+        }
+
+        // Build rich handoff context
+        let handoffContext = HandoffContext(
+            title: title,
+            description: description,
+            reason: reason,
+            learnings: learnings,
+            relevantFiles: relevantFiles,
+            constraints: nil,
+            priority: priority,
+            type: .discovery,
+            isDiscoveredWork: true
+        )
+
+        // Create the issue with full context
+        let newIssue = await IssueManager.shared.createIssueWithContextSafe(
+            handoffContext,
+            sourceIssueId: currentIssueId
+        )
+
+        guard let newIssue = newIssue else {
+            return "Error: Failed to create issue. Please try again."
+        }
+
+        return """
+            Successfully created follow-up issue:
+            - ID: \(newIssue.id)
+            - Title: \(title)
+            - Priority: \(priorityStr.uppercased())
+            - Status: Open
+
+            The issue has been linked to the current task for tracking.
+            Continue with your current task.
+            """
+    }
+}
+
+// MARK: - Request Clarification Tool
+
+/// Tool for requesting clarification from the user when task is ambiguous
+public struct RequestClarificationTool: OsaurusTool {
+    public let name = "request_clarification"
+    public let description =
+        "Ask the user a question when the task is critically ambiguous. Only use this for ambiguities that would lead to wrong results if assumed incorrectly. Do NOT use for minor details or preferences."
+
+    public let parameters: JSONValue? = .object([
+        "type": .string("object"),
+        "properties": .object([
+            "question": .object([
+                "type": .string("string"),
+                "description": .string("Clear, specific question to ask the user"),
+            ]),
+            "options": .object([
+                "type": .string("array"),
+                "items": .object([
+                    "type": .string("string")
+                ]),
+                "description": .string("Optional predefined choices for the user to select from"),
+            ]),
+            "context": .object([
+                "type": .string("string"),
+                "description": .string("Brief explanation of why this clarification is needed"),
+            ]),
+        ]),
+        "required": .array([.string("question")]),
+    ])
+
+    public init() {}
+
+    public func execute(argumentsJSON: String) async throws -> String {
+        // Parse the arguments
+        guard let data = argumentsJSON.data(using: .utf8),
+            let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+            let question = json["question"] as? String
+        else {
+            throw NSError(
+                domain: "AgentTools",
+                code: 6,
+                userInfo: [NSLocalizedDescriptionKey: "Invalid clarification format. Required: question (string)"]
+            )
+        }
+
+        let options = json["options"] as? [String]
+        let context = json["context"] as? String
+
+        // Build response that signals clarification is needed
+        var response = """
+            Clarification requested:
+            Question: \(question)
+            """
+
+        if let opts = options, !opts.isEmpty {
+            response +=
+                "\nOptions:\n" + opts.enumerated().map { "  \($0.offset + 1). \($0.element)" }.joined(separator: "\n")
+        }
+
+        if let ctx = context, !ctx.isEmpty {
+            response += "\nContext: \(ctx)"
+        }
+
+        response += "\n\n---CLARIFICATION_NEEDED---"
+
+        return response
+    }
+}
+
 // MARK: - Tool Registration
 
 /// Manager for agent-specific tool registration
@@ -325,11 +371,12 @@ public final class AgentToolManager {
     public static let shared = AgentToolManager()
 
     /// Cached tool instances (created once, reused)
+    /// Note: SubmitPlanTool and ReportDiscoveryTool removed - no longer used with reasoning loop architecture
     private lazy var tools: [OsaurusTool] = [
-        SubmitPlanTool(),
-        ReportDiscoveryTool(),
         CompleteTaskTool(),
         GenerateArtifactTool(),
+        CreateIssueTool(),
+        RequestClarificationTool(),
     ]
 
     /// Reference count for active agent sessions

@@ -20,25 +20,31 @@ private final class ParsedMarkdownWrapper: NSObject {
 }
 
 /// Unified cache for message thread rendering.
-/// Handles heights, parsed markdown, and width-aware invalidation.
+///
+/// Uses a version-based approach for width changes: instead of clearing all
+/// cached heights at once (which causes every visible block to recalculate
+/// simultaneously), a version counter is incremented. Stale-version entries
+/// are treated as cache misses so blocks re-measure gradually as they render.
 final class ThreadCache: @unchecked Sendable {
     static let shared = ThreadCache()
 
     private let lock = NSLock()
     private var currentWidth: CGFloat = 0
     private let widthThreshold: CGFloat = 20
-    private var heights: [String: CGFloat] = [:]
+    private var heights: [String: (height: CGFloat, version: Int)] = [:]
+    private var widthVersion: Int = 0
     private let maxHeights = 500
     private let markdownCache = NSCache<NSString, ParsedMarkdownWrapper>()
 
     // MARK: - Width
 
-    /// Update layout width - invalidates height cache on significant change
+    /// Update layout width - increments version on significant change so stale
+    /// heights are lazily invalidated on next read rather than all at once.
     func setWidth(_ width: CGFloat) {
         lock.lock()
         defer { lock.unlock() }
         if currentWidth > 0 && abs(width - currentWidth) > widthThreshold {
-            heights.removeAll()
+            widthVersion += 1
         }
         currentWidth = width
     }
@@ -48,19 +54,34 @@ final class ThreadCache: @unchecked Sendable {
     func height(for key: String) -> CGFloat? {
         lock.lock()
         defer { lock.unlock() }
-        return heights[key]
+        guard let entry = heights[key], entry.version == widthVersion else {
+            return nil
+        }
+        return entry.height
     }
 
     func setHeight(_ height: CGFloat, for key: String) {
         lock.lock()
         defer { lock.unlock() }
         if heights.count >= maxHeights {
-            let removeCount = maxHeights / 5
-            for key in heights.keys.prefix(removeCount) {
-                heights.removeValue(forKey: key)
+            evictEntries()
+        }
+        heights[key] = (height: height, version: widthVersion)
+    }
+
+    /// Evicts stale-version entries first; falls back to arbitrary eviction.
+    private func evictEntries() {
+        let evictCount = maxHeights / 5
+        let staleKeys = heights.keys.filter { heights[$0]?.version != widthVersion }
+        if !staleKeys.isEmpty {
+            for evictKey in staleKeys.prefix(evictCount) {
+                heights.removeValue(forKey: evictKey)
+            }
+        } else {
+            for evictKey in heights.keys.prefix(evictCount) {
+                heights.removeValue(forKey: evictKey)
             }
         }
-        heights[key] = height
     }
 
     // MARK: - Markdown
@@ -80,6 +101,7 @@ final class ThreadCache: @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
         heights.removeAll()
+        widthVersion = 0
         markdownCache.removeAllObjects()
         currentWidth = 0
     }

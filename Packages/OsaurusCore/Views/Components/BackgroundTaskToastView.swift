@@ -138,10 +138,10 @@ struct BackgroundTaskToastView: View {
 
             Spacer(minLength: 8)
 
-            if let plan = taskState.currentPlan, !plan.steps.isEmpty {
+            if let ls = taskState.loopState, ls.iteration > 0 {
                 AnimatedStepCounter(
-                    current: min(taskState.currentPlanStep + 1, plan.steps.count),
-                    total: plan.steps.count,
+                    current: ls.iteration,
+                    total: ls.maxIterations,
                     color: accentColor
                 )
                 .fixedSize()

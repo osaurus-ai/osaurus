@@ -14,7 +14,6 @@ import SwiftUI
 
 public enum AgentActivityEvent: Equatable, Sendable {
     case startedIssue(title: String)
-    case planCreated(stepCount: Int)
     case willExecuteStep(index: Int, total: Int?, description: String)
     case completedStep(index: Int, total: Int?)
     case toolExecuted(name: String)
@@ -106,7 +105,20 @@ public final class AgentSession: ObservableObject {
     /// Preserves live execution turns to selected turns (call before clearing activeIssue)
     private func preserveLiveExecutionTurns() {
         selectedIssueTurns = liveExecutionTurns
+        persistCurrentTurns()
         notifyTurnsChanged()
+    }
+
+    /// Persists the current live execution turns to the database
+    private func persistCurrentTurns() {
+        guard let issueId = activeIssue?.id ?? selectedIssueId else { return }
+        let turns = liveExecutionTurns
+        guard !turns.isEmpty else { return }
+        do {
+            try IssueStore.saveConversationTurns(issueId: issueId, turns: turns)
+        } catch {
+            print("[AgentSession] Failed to persist conversation turns: \(error)")
+        }
     }
 
     /// Clears all turns state and block cache
@@ -188,11 +200,17 @@ public final class AgentSession: ObservableObject {
     /// Whether execution is in progress
     @Published public var isExecuting: Bool = false
 
-    /// Current execution plan
-    @Published public var currentPlan: ExecutionPlan?
-
-    /// Current step being executed
+    /// Current step/iteration being executed
     @Published public var currentStep: Int = 0
+
+    /// Current loop state for reasoning loop execution (new)
+    @Published public var loopState: LoopState?
+
+    /// Current iteration number (alias for currentStep, for reasoning loop)
+    public var currentIteration: Int {
+        get { currentStep }
+        set { currentStep = newValue }
+    }
 
     /// Streaming response content
     @Published public var streamingContent: String = ""
@@ -545,6 +563,7 @@ public final class AgentSession: ObservableObject {
         activeIssue = issue
         streamingContent = ""
         currentStep = 0
+        loopState = LoopState()
         retryAttempt = 0
         isRetrying = false
         errorMessage = nil
@@ -635,7 +654,7 @@ public final class AgentSession: ObservableObject {
         preserveLiveExecutionTurns()
         isExecuting = false
         activeIssue = nil
-        currentPlan = nil
+        loopState = nil
         retryAttempt = 0
         isRetrying = false
         failedIssue = nil
@@ -657,7 +676,7 @@ public final class AgentSession: ObservableObject {
         finalArtifact = nil
         pendingQueuedMessage = nil
         isExecuting = false
-        currentPlan = nil
+        loopState = nil
         errorMessage = nil
         streamingContent = ""
         retryAttempt = 0
@@ -755,7 +774,6 @@ public final class AgentSession: ObservableObject {
 
         let hasContent =
             !turn.contentIsEmpty
-            || turn.plan != nil
             || !(turn.toolCalls?.isEmpty ?? true)
             || !turn.thinkingIsEmpty
 
@@ -803,21 +821,24 @@ public final class AgentSession: ObservableObject {
         loadIssueHistory(for: issue)
     }
 
-    /// Loads the event history for an issue and builds ChatTurns for rendering
+    /// Loads persisted conversation turns for an issue
     private func loadIssueHistory(for issue: Issue) {
         do {
-            let events = try IssueManager.shared.getHistory(issueId: issue.id)
-            let personaName = windowState?.cachedPersonaDisplayName ?? "Agent"
-            selectedIssueTurns = AgentContentBlockBuilder.buildTurnsFromHistory(
-                events: events,
-                issue: issue,
-                personaName: personaName
-            )
+            let turns = try IssueStore.loadConversationTurns(issueId: issue.id)
+            if !turns.isEmpty {
+                selectedIssueTurns = turns
+            } else {
+                // No persisted turns - show issue description as a minimal user turn
+                let content = issue.description ?? issue.title
+                let userTurn = ChatTurn(role: .user, content: content)
+                let assistantTurn = ChatTurn(role: .assistant, content: issue.result ?? "")
+                selectedIssueTurns = [userTurn, assistantTurn]
+            }
             notifyTurnsChanged()
         } catch {
             selectedIssueTurns = []
             notifyTurnsChanged()
-            print("[AgentSession] Failed to load issue history: \(error)")
+            print("[AgentSession] Failed to load conversation turns: \(error)")
         }
     }
 
@@ -964,34 +985,6 @@ extension AgentSession: AgentEngineDelegate {
         return content
     }
 
-    public func agentEngine(_ engine: AgentEngine, didCreatePlan plan: ExecutionPlan, forIssue issue: Issue) {
-        currentPlan = plan
-        emitActivity(.planCreated(stepCount: plan.steps.count))
-
-        let turn = lastAssistantTurn()
-        turn.plan = plan
-        turn.currentPlanStep = 0
-        turn.notifyContentChanged()
-
-        notifyIfSelected(issue.id)
-    }
-
-    public func agentEngine(
-        _ engine: AgentEngine,
-        willExecuteStep stepIndex: Int,
-        step: PlanStep,
-        forIssue issue: Issue
-    ) {
-        currentStep = stepIndex
-        emitActivity(.willExecuteStep(index: stepIndex, total: currentPlan?.steps.count, description: step.description))
-
-        let turn = lastAssistantTurn()
-        turn.currentPlanStep = stepIndex
-        turn.notifyContentChanged()
-
-        notifyIfSelected(issue.id)
-    }
-
     public func agentEngine(_ engine: AgentEngine, didReceiveStreamingDelta delta: String, forStep stepIndex: Int) {
         streamingContent += delta
 
@@ -1000,65 +993,6 @@ extension AgentSession: AgentEngineDelegate {
         turn.notifyContentChanged()
 
         notifyIfSelected(activeIssue?.id)
-    }
-
-    public func agentEngine(
-        _ engine: AgentEngine,
-        didCompleteStep stepIndex: Int,
-        result: StepResult,
-        forIssue issue: Issue
-    ) {
-        let assistantTurn = lastAssistantTurn()
-
-        // Attach tool call result if present
-        if let toolCallResult = result.toolCallResult {
-            emitActivity(.toolExecuted(name: toolCallResult.toolCall.function.name))
-            if assistantTurn.toolCalls == nil {
-                assistantTurn.toolCalls = []
-            }
-            assistantTurn.toolCalls?.append(toolCallResult.toolCall)
-            assistantTurn.toolResults[toolCallResult.toolCall.id] = toolCallResult.result
-
-            // Add tool turn for API message flow
-            let toolTurn = ChatTurn(role: .tool, content: toolCallResult.result)
-            toolTurn.toolCallId = toolCallResult.toolCall.id
-            liveExecutionTurns.append(toolTurn)
-        }
-
-        // Append response content
-        if !result.responseContent.isEmpty {
-            if assistantTurn.contentIsEmpty {
-                assistantTurn.content = result.responseContent
-            } else {
-                assistantTurn.appendContent("\n\n" + result.responseContent)
-            }
-            assistantTurn.notifyContentChanged()
-        }
-
-        currentStep = stepIndex + 1
-        emitActivity(.completedStep(index: stepIndex, total: currentPlan?.steps.count))
-        notifyIfSelected(issue.id)
-    }
-
-    public func agentEngine(_ engine: AgentEngine, didEncounterError error: Error, forStep stepIndex: Int, issue: Issue)
-    {
-        errorMessage = error.localizedDescription
-    }
-
-    public func agentEngine(
-        _ engine: AgentEngine,
-        didVerifyGoal verification: VerificationResult,
-        forIssue issue: Issue
-    ) {
-        let emoji = verification.status == .achieved ? "✅" : "❌"
-        let content = "\n\n---\n\(emoji) **Result:** \(verification.summary)"
-        streamingContent += content
-        appendToAssistantTurn(content, forIssue: issue.id)
-    }
-
-    public func agentEngine(_ engine: AgentEngine, didDecomposeIssue issue: Issue, into children: [Issue]) {
-        appendToAssistantTurn("\n\n🔀 **Decomposed into \(children.count) sub-issues**")
-        Task { await refreshIssues() }
     }
 
     public func agentEngine(_ engine: AgentEngine, didGenerateArtifact artifact: Artifact, forIssue issue: Issue) {
@@ -1124,5 +1058,85 @@ extension AgentSession: AgentEngineDelegate {
         // Accumulate token usage for cost prediction
         cumulativeInputTokens += input
         cumulativeOutputTokens += output
+    }
+
+    // MARK: - Reasoning Loop Delegate Methods
+
+    public func agentEngine(_ engine: AgentEngine, didStartIteration iteration: Int, forIssue issue: Issue) {
+        // Update current iteration for progress tracking
+        currentStep = iteration
+        loopState?.iteration = iteration
+        loopState?.isGenerating = true
+        emitActivity(
+            .willExecuteStep(index: iteration, total: loopState?.maxIterations, description: "Iteration \(iteration)")
+        )
+
+        // Start a fresh assistant turn when the previous one already has content or
+        // tool calls. This preserves chronological ordering so text and tool calls
+        // from each iteration appear in sequence.
+        if let prev = liveExecutionTurns.last(where: { $0.role == .assistant }),
+            !prev.contentIsEmpty || !(prev.toolCalls?.isEmpty ?? true)
+        {
+            liveExecutionTurns.append(ChatTurn(role: .assistant, content: ""))
+        }
+
+        notifyIfSelected(issue.id)
+    }
+
+    public func agentEngine(
+        _ engine: AgentEngine,
+        didCallTool toolName: String,
+        withArguments args: String,
+        result: String,
+        forIssue issue: Issue
+    ) {
+        // Update loop state with tool call info
+        loopState?.toolCallCount += 1
+        if let ls = loopState, !ls.toolsUsed.contains(toolName) {
+            loopState?.toolsUsed.append(toolName)
+        }
+
+        emitActivity(.toolExecuted(name: toolName))
+
+        let assistantTurn = lastAssistantTurn()
+
+        // Clean up any leaked function-call JSON from the assistant turn's content
+        // This handles cases where raw function call text was streamed before detection
+        assistantTurn.trimTrailingFunctionCallLeakage(toolName: toolName)
+
+        // Create a tool call object for the UI
+        let callId = "call_\(UUID().uuidString.prefix(24))"
+        let toolCall = ToolCall(
+            id: callId,
+            type: "function",
+            function: ToolCallFunction(
+                name: toolName,
+                arguments: args
+            )
+        )
+
+        // Attach tool call to the assistant turn
+        if assistantTurn.toolCalls == nil {
+            assistantTurn.toolCalls = []
+        }
+        assistantTurn.toolCalls?.append(toolCall)
+        assistantTurn.toolResults[callId] = result
+
+        // Add tool turn for API message flow
+        let toolTurn = ChatTurn(role: .tool, content: result)
+        toolTurn.toolCallId = callId
+        liveExecutionTurns.append(toolTurn)
+
+        assistantTurn.notifyContentChanged()
+        notifyIfSelected(issue.id)
+
+        // Persist conversation state after each tool call
+        persistCurrentTurns()
+    }
+
+    public func agentEngine(_ engine: AgentEngine, didUpdateStatus status: String, forIssue issue: Issue) {
+        // Update loop state with status message
+        loopState?.statusMessage = status
+        emitActivity(.willExecuteStep(index: currentStep, total: loopState?.maxIterations, description: status))
     }
 }

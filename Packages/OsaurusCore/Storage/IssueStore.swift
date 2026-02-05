@@ -804,4 +804,136 @@ public struct IssueStore {
             createdAt: createdAt
         )
     }
+
+    // MARK: - Conversation Turns
+
+    /// Saves conversation turns for an issue, replacing any existing turns.
+    @MainActor
+    static func saveConversationTurns(issueId: String, turns: [ChatTurn]) throws {
+        let encoder = JSONEncoder()
+
+        // Delete existing turns for this issue first, then insert fresh
+        let deleteSql = "DELETE FROM conversation_turns WHERE issue_id = ?"
+        try AgentDatabase.shared.prepareAndExecute(
+            deleteSql,
+            bind: { stmt in
+                AgentDatabase.bindText(stmt, index: 1, value: issueId)
+            }
+        ) { stmt in
+            _ = sqlite3_step(stmt)
+        }
+
+        let insertSql = """
+                INSERT INTO conversation_turns (id, issue_id, turn_order, role, content, thinking, tool_calls_json, tool_results_json, tool_call_id, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """
+
+        for (index, turn) in turns.enumerated() {
+            let persisted = turn.toPersisted()
+
+            let toolCallsJson: String? = {
+                guard let toolCalls = persisted.toolCalls else { return nil }
+                guard let data = try? encoder.encode(toolCalls) else { return nil }
+                return String(data: data, encoding: .utf8)
+            }()
+
+            let toolResultsJson: String? = {
+                guard let toolResults = persisted.toolResults else { return nil }
+                guard let data = try? encoder.encode(toolResults) else { return nil }
+                return String(data: data, encoding: .utf8)
+            }()
+
+            try AgentDatabase.shared.prepareAndExecute(
+                insertSql,
+                bind: { stmt in
+                    AgentDatabase.bindText(stmt, index: 1, value: persisted.id)
+                    AgentDatabase.bindText(stmt, index: 2, value: issueId)
+                    AgentDatabase.bindInt(stmt, index: 3, value: index)
+                    AgentDatabase.bindText(stmt, index: 4, value: persisted.role)
+                    AgentDatabase.bindText(stmt, index: 5, value: persisted.content)
+                    AgentDatabase.bindText(stmt, index: 6, value: persisted.thinking)
+                    AgentDatabase.bindText(stmt, index: 7, value: toolCallsJson)
+                    AgentDatabase.bindText(stmt, index: 8, value: toolResultsJson)
+                    AgentDatabase.bindText(stmt, index: 9, value: persisted.toolCallId)
+                    AgentDatabase.bindDate(stmt, index: 10, value: Date())
+                }
+            ) { stmt in
+                let result = sqlite3_step(stmt)
+                if result != SQLITE_DONE {
+                    throw AgentDatabaseError.failedToExecute("Failed to insert conversation turn")
+                }
+            }
+        }
+    }
+
+    /// Loads conversation turns for an issue, ordered by turn_order.
+    @MainActor
+    static func loadConversationTurns(issueId: String) throws -> [ChatTurn] {
+        let sql = """
+                SELECT id, role, content, thinking, tool_calls_json, tool_results_json, tool_call_id
+                FROM conversation_turns
+                WHERE issue_id = ?
+                ORDER BY turn_order ASC
+            """
+
+        let decoder = JSONDecoder()
+        var turns: [ChatTurn] = []
+
+        try AgentDatabase.shared.prepareAndExecute(
+            sql,
+            bind: { stmt in
+                AgentDatabase.bindText(stmt, index: 1, value: issueId)
+            }
+        ) { stmt in
+            while sqlite3_step(stmt) == SQLITE_ROW {
+                let id = AgentDatabase.getText(stmt, column: 0) ?? UUID().uuidString
+                let roleStr = AgentDatabase.getText(stmt, column: 1) ?? "assistant"
+                let content = AgentDatabase.getText(stmt, column: 2)
+                let thinking = AgentDatabase.getText(stmt, column: 3)
+                let toolCallsJson = AgentDatabase.getText(stmt, column: 4)
+                let toolResultsJson = AgentDatabase.getText(stmt, column: 5)
+                let toolCallId = AgentDatabase.getText(stmt, column: 6)
+
+                var toolCalls: [ToolCall]? = nil
+                if let json = toolCallsJson, let data = json.data(using: .utf8) {
+                    toolCalls = try? decoder.decode([ToolCall].self, from: data)
+                }
+
+                var toolResults: [String: String]? = nil
+                if let json = toolResultsJson, let data = json.data(using: .utf8) {
+                    toolResults = try? decoder.decode([String: String].self, from: data)
+                }
+
+                let persisted = ChatTurn.Persisted(
+                    id: id,
+                    role: roleStr,
+                    content: content,
+                    thinking: thinking,
+                    toolCalls: toolCalls,
+                    toolResults: toolResults,
+                    toolCallId: toolCallId
+                )
+
+                turns.append(ChatTurn.fromPersisted(persisted))
+            }
+        }
+
+        return turns
+    }
+
+    /// Deletes all conversation turns for an issue.
+    static func deleteConversationTurns(issueId: String) throws {
+        let sql = "DELETE FROM conversation_turns WHERE issue_id = ?"
+        try AgentDatabase.shared.prepareAndExecute(
+            sql,
+            bind: { stmt in
+                AgentDatabase.bindText(stmt, index: 1, value: issueId)
+            }
+        ) { stmt in
+            let result = sqlite3_step(stmt)
+            if result != SQLITE_DONE {
+                throw AgentDatabaseError.failedToExecute("Failed to delete conversation turns")
+            }
+        }
+    }
 }
