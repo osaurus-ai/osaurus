@@ -340,7 +340,7 @@ public actor AgentEngine {
         messages.append(ChatMessage(role: "user", content: issue.description ?? issue.title))
 
         // Refresh folder context to ensure the file tree and git status are current
-        await MainActor.run { await AgentFolderContextService.shared.refreshContext() }
+        await AgentFolderContextService.shared.refreshContext()
         let folderContext = await MainActor.run { AgentFolderContextService.shared.currentContext }
 
         // Set up file operation log with root path for undo support
