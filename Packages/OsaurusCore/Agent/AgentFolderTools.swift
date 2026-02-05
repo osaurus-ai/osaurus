@@ -127,7 +127,7 @@ enum AgentFolderToolHelpers {
 struct AgentFileTreeTool: OsaurusTool {
     let name = "file_tree"
     let description =
-        "List the directory structure of the working directory or a subdirectory. Returns a tree view of files and folders."
+        "List the directory structure of the working directory or a subdirectory. Returns a tree view of files and folders. Skips hidden files and truncates at 300 files."
     let parameters: JSONValue? = .object([
         "type": .string("object"),
         "properties": .object([
@@ -229,7 +229,7 @@ struct AgentFileTreeTool: OsaurusTool {
 struct AgentFileReadTool: OsaurusTool {
     let name = "file_read"
     let description =
-        "Read the contents of a file. Optionally specify start_line and end_line for partial reads. Line numbers are 1-indexed."
+        "Read the contents of a text file. Cannot read binary files (PDFs, images, etc.). Optionally specify start_line and end_line for partial reads. Line numbers are 1-indexed."
     let parameters: JSONValue? = .object([
         "type": .string("object"),
         "properties": .object([
@@ -734,7 +734,7 @@ struct AgentFileMetadataTool: OsaurusTool {
 struct AgentFileEditTool: OsaurusTool, PermissionedTool {
     let name = "file_edit"
     let description =
-        "Edit a file by replacing specific text. Use old_string to identify the text to replace and new_string for the replacement. For surgical edits, include enough context in old_string to uniquely identify the location."
+        "Edit a file by replacing specific text. old_string must uniquely match exactly one location in the file — include surrounding context lines if needed to ensure uniqueness. The tool will fail if old_string is not found or matches multiple locations."
     let parameters: JSONValue? = .object([
         "type": .string("object"),
         "properties": .object([
@@ -745,7 +745,7 @@ struct AgentFileEditTool: OsaurusTool, PermissionedTool {
             "old_string": .object([
                 "type": .string("string"),
                 "description": .string(
-                    "The exact text to find and replace (include enough context to be unique)"
+                    "The exact text to find and replace (must uniquely match one location in the file)"
                 ),
             ]),
             "new_string": .object([
@@ -818,13 +818,13 @@ struct AgentFileEditTool: OsaurusTool, PermissionedTool {
 struct AgentFileSearchTool: OsaurusTool {
     let name = "file_search"
     let description =
-        "Search for text in files. Returns matching lines with file paths and line numbers."
+        "Search for text in files using case-insensitive substring matching. Returns matching lines with file paths and line numbers."
     let parameters: JSONValue? = .object([
         "type": .string("object"),
         "properties": .object([
             "pattern": .object([
                 "type": .string("string"),
-                "description": .string("Text or regex pattern to search for"),
+                "description": .string("Text to search for (case-insensitive substring match)"),
             ]),
             "path": .object([
                 "type": .string("string"),
@@ -958,7 +958,7 @@ struct AgentFileSearchTool: OsaurusTool {
 struct AgentShellRunTool: OsaurusTool, PermissionedTool {
     let name = "shell_run"
     let description =
-        "Run a shell command in the working directory. This action requires approval. Use for builds, tests, or other commands."
+        "Run a shell command in the working directory. This action requires approval. Output is truncated to 10,000 characters. Use for builds, tests, or other commands."
     let parameters: JSONValue? = .object([
         "type": .string("object"),
         "properties": .object([
@@ -1155,7 +1155,7 @@ struct AgentGitDiffTool: OsaurusTool {
 struct AgentGitCommitTool: OsaurusTool, PermissionedTool {
     let name = "git_commit"
     let description =
-        "Stage and commit changes to git. This action requires approval. Optionally specify files to stage, otherwise stages all changes."
+        "Stage and commit changes to git. This action requires approval. Optionally specify files to stage, otherwise runs `git add -A` to stage all tracked and untracked changes."
     let parameters: JSONValue? = .object([
         "type": .string("object"),
         "properties": .object([
