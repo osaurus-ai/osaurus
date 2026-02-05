@@ -280,10 +280,10 @@ Execute complex, multi-step tasks autonomously with built-in issue tracking and 
 
 - **Issue Tracking** — Tasks broken into issues with status, priority, and dependencies
 - **Parallel Tasks** — Run multiple agent tasks simultaneously for increased productivity
-- **Execution Planning** — AI generates step-by-step plans (max 10 steps per issue)
+- **Reasoning Loop** — AI autonomously observes, thinks, acts, and checks in iterative cycles
 - **Working Directory** — Select a folder for file operations with project detection
 - **File Operations** — Read, write, edit, search files with undo support
-- **Discovery** — Automatically detects errors, TODOs, and prerequisites
+- **Follow-up Issues** — Agent creates child issues when it discovers additional work
 - **Clarification** — Agent pauses to ask when tasks are ambiguous
 - **Background Execution** — Tasks continue running after closing the window
 

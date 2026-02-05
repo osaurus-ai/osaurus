@@ -40,8 +40,8 @@ The working directory determines where file operations can occur. All file paths
 3. The agent will:
    - Analyze your request
    - Create an initial issue
-   - Generate an execution plan
-   - Begin executing steps
+   - Enter the reasoning loop, iteratively calling tools and evaluating progress
+   - Complete the task with a summary artifact
 
 ---
 
@@ -71,13 +71,14 @@ You can run **multiple tasks in parallel**, allowing you to work on different pr
 | **Description** | Detailed explanation and context                |
 | **Result**      | Outcome after completion                        |
 
-### Execution Plans
+### Reasoning Loop
 
-When working on an issue, the agent generates an **execution plan** — a step-by-step sequence of actions:
+When working on an issue, the agent enters a **reasoning loop** -- an iterative cycle where the model autonomously decides what to do next:
 
-- Plans are bounded to **max 10 tool calls** per issue
-- Each step uses available tools (file operations, shell commands, etc.)
-- If a task is too large, it's automatically **decomposed** into subtasks
+- Each iteration: the model observes context, reasons about the next action, calls a tool, and evaluates progress
+- Loops are bounded to **max 30 iterations** per issue
+- The model narrates its thinking and explains actions as it works
+- When finished, the model calls `complete_task` to signal completion with a summary
 
 ### Dependencies
 
@@ -86,18 +87,18 @@ Issues can have **dependencies** that control execution order:
 | Relationship      | Description                                      |
 | ----------------- | ------------------------------------------------ |
 | `blocks`          | One issue must complete before another can start |
-| `parent_child`    | Issue was decomposed from a larger issue         |
+| `parent_child`    | Child issue created from a parent task            |
 | `discovered_from` | Issue was discovered during execution of another |
 
-### Discovery
+### Follow-up Issues
 
-During execution, the agent may **discover** additional work:
+During execution, the agent may discover additional work and create **follow-up issues** using the `create_issue` tool:
 
-- **Errors** — Compilation errors, runtime failures
-- **TODOs** — Code comments indicating pending work
+- **Bugs** — Compilation errors, runtime failures found during execution
+- **Related work** — Additional tasks identified while working on the current issue
 - **Prerequisites** — Missing dependencies or setup steps
 
-Discovered items become new issues automatically tracked in the issue list.
+Follow-up issues are automatically tracked in the issue list and linked to the originating issue.
 
 ---
 
@@ -158,6 +159,15 @@ Agents have access to specialized tools for file and system operations:
 | `git_status` | Show repository status                         |
 | `git_diff`   | Display file differences                       |
 | `git_commit` | Stage and commit changes (requires permission) |
+
+### Agent Control
+
+| Tool                    | Description                                                |
+| ----------------------- | ---------------------------------------------------------- |
+| `complete_task`         | Mark the current task as complete with a summary artifact  |
+| `create_issue`          | Create a follow-up issue for discovered work               |
+| `request_clarification` | Pause execution to ask the user a question                 |
+| `generate_artifact`     | Generate a standalone document (report, analysis, etc.)    |
 
 All tools:
 
@@ -254,8 +264,8 @@ This reduces token usage while maintaining access to all capabilities.
      │                │                   │
      │                │                   │
      ▼                ▼                   ▼
-  Created         Executing          Waiting on
-  by user        plan steps         dependencies
+  Created       Reasoning loop       Waiting on
+  by user        iterating          dependencies
   or agent
 ```
 

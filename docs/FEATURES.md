@@ -392,12 +392,12 @@ Canonical reference for all Osaurus features, their status, and documentation.
 - `Agent/AgentFolderTools.swift` — File and shell operation tools
 - `Agent/AgentFileOperation.swift` — File operation models
 - `Agent/AgentFileOperationLog.swift` — Operation logging with undo support
-- `Models/AgentModels.swift` — Core data models (Issue, AgentTask, ExecutionPlan, etc.)
+- `Models/AgentModels.swift` — Core data models (Issue, AgentTask, LoopState, etc.)
 - `Services/AgentEngine.swift` — Main task execution coordinator
-- `Services/AgentExecutionEngine.swift` — Plan generation and step execution
+- `Services/AgentExecutionEngine.swift` — Reasoning loop execution engine
 - `Managers/IssueManager.swift` — Issue lifecycle and dependency management
-- `Storage/AgentDatabase.swift` — SQLite storage for issues, tasks, and events
-- `Tools/AgentTools.swift` — Agent-specific tools (submit_plan, report_discovery, complete_task)
+- `Storage/AgentDatabase.swift` — SQLite storage for issues, tasks, and conversation turns
+- `Tools/AgentTools.swift` — Agent-specific tools (complete_task, create_issue, generate_artifact, etc.)
 - `Views/AgentView.swift` — Main Agent Mode UI
 - `Views/AgentSession.swift` — Observable session state manager
 
@@ -405,10 +405,10 @@ Canonical reference for all Osaurus features, their status, and documentation.
 
 - **Issue Tracking** — Tasks broken into issues with status, priority, type, and dependencies
 - **Parallel Tasks** — Run multiple agent tasks simultaneously for increased productivity
-- **Execution Planning** — AI generates step-by-step plans (max 10 tool calls per issue)
+- **Reasoning Loop** — AI autonomously iterates through observe-think-act-check cycles (max 30 iterations)
 - **Working Directory** — Select a folder for file operations with project type detection
 - **File Operations** — Read, write, edit, search, move, copy, delete files with undo support
-- **Discovery** — Automatic detection of errors, TODOs, and prerequisites during execution
+- **Follow-up Issues** — Agent creates child issues via `create_issue` tool when it discovers additional work
 - **Clarification** — Agent pauses to ask when tasks are ambiguous
 - **Background Execution** — Tasks continue running after closing the window
 - **Token Usage Tracking** — Monitor cumulative input/output tokens per task
@@ -443,15 +443,15 @@ Canonical reference for all Osaurus features, their status, and documentation.
 | `git_diff`      | Display file differences                       |
 | `git_commit`    | Stage and commit changes (requires permission) |
 
-**Workflow:**
+**Workflow (Reasoning Loop):**
 
 1. User input creates a task with an initial issue
-2. Agent generates an execution plan (max 10 steps)
-3. Steps are executed sequentially, calling tools as needed
-4. Discovery detects errors, TODOs, or prerequisites during execution
-5. Verification checks if goal achieved after steps complete
-6. Large tasks are automatically decomposed into subtasks
-7. Clarification pauses execution when task is ambiguous
+2. Agent enters a reasoning loop (max 30 iterations per issue)
+3. Each iteration: the model observes context, decides on an action, calls a tool, and evaluates progress
+4. The model narrates its reasoning and explains actions as it works
+5. When additional work is found, the agent creates follow-up issues via `create_issue`
+6. When the task is complete, the agent calls `complete_task` with a summary and artifact
+7. Clarification pauses execution when the task is ambiguous
 
 **Storage:** `~/.osaurus/agent/agent.db` (SQLite)
 
