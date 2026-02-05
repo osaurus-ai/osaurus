@@ -99,6 +99,14 @@ final class ExternalPlugin: @unchecked Sendable {
     private let api: osr_plugin_api
     private let ctx: osr_plugin_ctx_t
 
+    /// Dedicated queue for plugin C ABI calls. Uses `.userInitiated` QoS to
+    /// match the caller's priority and avoid priority inversions when the
+    /// cooperative thread pool waits on the blocking C invocation.
+    private static let invokeQueue = DispatchQueue(
+        label: "com.osaurus.plugin.invoke",
+        qos: .userInitiated
+    )
+
     init(
         handle: UnsafeMutableRawPointer,
         api: osr_plugin_api,
@@ -119,7 +127,7 @@ final class ExternalPlugin: @unchecked Sendable {
         // Handle is managed by PluginManager usually.
     }
 
-    func invoke(type: String, id: String, payload: String) throws -> String {
+    func invoke(type: String, id: String, payload: String) async throws -> String {
         guard let invokeFn = api.invoke else {
             throw NSError(
                 domain: "ExternalPlugin",
@@ -128,31 +136,35 @@ final class ExternalPlugin: @unchecked Sendable {
             )
         }
 
-        let resPtr = type.withCString { typePtr in
-            id.withCString { idPtr in
-                payload.withCString { payloadPtr in
-                    invokeFn(ctx, typePtr, idPtr, payloadPtr)
+        let freeString = api.free_string
+        nonisolated(unsafe) let ctx = self.ctx
+
+        return try await withCheckedThrowingContinuation { continuation in
+            ExternalPlugin.invokeQueue.async {
+                let resPtr = type.withCString { typePtr in
+                    id.withCString { idPtr in
+                        payload.withCString { payloadPtr in
+                            invokeFn(ctx, typePtr, idPtr, payloadPtr)
+                        }
+                    }
                 }
+
+                guard let resPtr else {
+                    continuation.resume(
+                        throwing: NSError(
+                            domain: "ExternalPlugin",
+                            code: 2,
+                            userInfo: [NSLocalizedDescriptionKey: "Plugin returned NULL response"]
+                        )
+                    )
+                    return
+                }
+
+                let result = String(cString: resPtr)
+                freeString?(resPtr)
+                continuation.resume(returning: result)
             }
         }
-
-        guard let resPtr = resPtr else {
-            // Null return might mean error or empty?
-            // ABI says generic invocation returns JSON string response.
-            // If it returns NULL, maybe we assume empty object or error?
-            // Let's assume empty JSON object for now or throw.
-            throw NSError(
-                domain: "ExternalPlugin",
-                code: 2,
-                userInfo: [NSLocalizedDescriptionKey: "Plugin returned NULL response"]
-            )
-        }
-
-        defer {
-            api.free_string?(resPtr)
-        }
-
-        return String(cString: resPtr)
     }
 
     /// Returns all configured secrets for this plugin from the Keychain

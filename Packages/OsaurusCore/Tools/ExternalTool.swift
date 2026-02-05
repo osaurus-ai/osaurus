@@ -43,7 +43,7 @@ final class ExternalTool: OsaurusTool, PermissionedTool, @unchecked Sendable {
         let payloadWithSecrets = injectSecrets(into: argumentsJSON)
         // Inject folder context so plugins can resolve relative paths
         let payloadWithContext = await injectFolderContext(into: payloadWithSecrets)
-        return try plugin.invoke(type: "tool", id: toolId, payload: payloadWithContext)
+        return try await plugin.invoke(type: "tool", id: toolId, payload: payloadWithContext)
     }
 
     /// Injects plugin secrets into the tool payload under the `_secrets` key
