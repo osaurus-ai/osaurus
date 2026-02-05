@@ -36,9 +36,8 @@ struct ContentBlockView: View, Equatable {
         }
     }
 
-    /// Height hint for SwiftUI to prevent expensive layout calculations.
-    /// During streaming, uses a live estimate based on current text length instead
-    /// of the cached height (which may be stale from an earlier, shorter render).
+    /// Height hint for LazyVStack recycling. During streaming, uses a live
+    /// estimate; otherwise reads from cache or falls back to an estimate.
     private var estimatedMinHeight: CGFloat {
         if isBlockStreaming {
             return Self.estimateHeight(for: block.kind, width: width)

@@ -3,7 +3,7 @@
 //  osaurus
 //
 //  Renders the message thread with optimized block recycling.
-//  Uses ThreadCache for width-aware height caching.
+//  Invalidates ThreadCache heights on significant width changes.
 //
 
 import SwiftUI
@@ -63,11 +63,10 @@ struct MessageThreadView: View {
                 }
             }
         }
-        .onAppear {
-            ThreadCache.shared.setWidth(contentWidth)
-        }
-        .onChange(of: width) { _, _ in
-            ThreadCache.shared.setWidth(contentWidth)
+        .onChange(of: width) { old, new in
+            if abs(old - new) > 20 {
+                ThreadCache.shared.invalidateHeights()
+            }
         }
     }
 
