@@ -415,7 +415,7 @@ public actor AgentEngine {
                         )
                     )
                 )
-                await self.delegate?.agentEngine(self, didGenerateArtifact: artifact, forIssue: issue)
+                self.delegate?.agentEngine(self, didGenerateArtifact: artifact, forIssue: issue)
             },
             getPendingInputs: { [weak self] in
                 guard let self = self else { return [] }
@@ -708,13 +708,6 @@ public protocol AgentEngineDelegate: AnyObject {
     // Retry
     func agentEngine(_ engine: AgentEngine, willRetryIssue issue: Issue, attempt: Int, afterDelay: TimeInterval)
 
-    // DEPRECATED: Plan-based methods (kept for backward compatibility, will be removed in Phase 2)
-    func agentEngine(_ engine: AgentEngine, didCreatePlan plan: ExecutionPlan, forIssue issue: Issue)
-    func agentEngine(_ engine: AgentEngine, willExecuteStep stepIndex: Int, step: PlanStep, forIssue issue: Issue)
-    func agentEngine(_ engine: AgentEngine, didCompleteStep stepIndex: Int, result: StepResult, forIssue issue: Issue)
-    func agentEngine(_ engine: AgentEngine, didEncounterError error: Error, forStep stepIndex: Int, issue: Issue)
-    func agentEngine(_ engine: AgentEngine, didVerifyGoal verification: VerificationResult, forIssue issue: Issue)
-    func agentEngine(_ engine: AgentEngine, didDecomposeIssue issue: Issue, into children: [Issue])
 }
 
 /// Default implementations for optional delegate methods
@@ -755,28 +748,6 @@ extension AgentEngineDelegate {
     public func agentEngine(_ engine: AgentEngine, willRetryIssue issue: Issue, attempt: Int, afterDelay: TimeInterval)
     {}
 
-    // DEPRECATED: Plan-based methods
-    public func agentEngine(_ engine: AgentEngine, didCreatePlan plan: ExecutionPlan, forIssue issue: Issue) {}
-    public func agentEngine(
-        _ engine: AgentEngine,
-        willExecuteStep stepIndex: Int,
-        step: PlanStep,
-        forIssue issue: Issue
-    ) {}
-    public func agentEngine(
-        _ engine: AgentEngine,
-        didCompleteStep stepIndex: Int,
-        result: StepResult,
-        forIssue issue: Issue
-    ) {}
-    public func agentEngine(_ engine: AgentEngine, didEncounterError error: Error, forStep stepIndex: Int, issue: Issue)
-    {}
-    public func agentEngine(
-        _ engine: AgentEngine,
-        didVerifyGoal verification: VerificationResult,
-        forIssue issue: Issue
-    ) {}
-    public func agentEngine(_ engine: AgentEngine, didDecomposeIssue issue: Issue, into children: [Issue]) {}
 }
 
 // MARK: - Pending Execution Context

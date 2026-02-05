@@ -552,61 +552,6 @@ public struct ToolCallResult: Sendable {
     public let result: String
 }
 
-// MARK: - Deprecated Types (kept for backward compatibility during migration)
-
-/// Result of plan generation
-/// - Note: DEPRECATED - Waterfall pipeline removed. Kept for backward compatibility.
-@available(*, deprecated, message: "Waterfall pipeline removed. Use LoopResult instead.")
-public enum PlanResult: Sendable {
-    case ready(ExecutionPlan, inputTokens: Int, outputTokens: Int)
-    case needsDecomposition(
-        steps: [PlanStep],
-        suggestedChunks: [[PlanStep]],
-        inputTokens: Int,
-        outputTokens: Int,
-        selectedTools: [String],
-        selectedSkills: [String]
-    )
-    case needsClarification(ClarificationRequest, inputTokens: Int, outputTokens: Int)
-}
-
-/// Result of executing a step
-/// - Note: DEPRECATED - Waterfall pipeline removed. Kept for backward compatibility.
-@available(*, deprecated, message: "Waterfall pipeline removed. Use LoopResult instead.")
-public struct StepResult: Sendable {
-    public let stepIndex: Int
-    public let responseContent: String
-    public let toolCallResult: ToolCallResult?
-    public let isComplete: Bool
-    public let remainingToolCalls: Int
-    /// Estimated input tokens consumed by this step
-    public let inputTokens: Int
-    /// Estimated output tokens consumed by this step
-    public let outputTokens: Int
-}
-
-/// Verification status
-/// - Note: DEPRECATED - Waterfall pipeline removed. Kept for backward compatibility.
-@available(*, deprecated, message: "Waterfall pipeline removed. Use LoopResult instead.")
-public enum VerificationStatus: Sendable {
-    case achieved
-    case notAchieved
-    case partial
-}
-
-/// Result of goal verification
-/// - Note: DEPRECATED - Waterfall pipeline removed. Kept for backward compatibility.
-@available(*, deprecated, message: "Waterfall pipeline removed. Use LoopResult instead.")
-public struct VerificationResult: Sendable {
-    public let status: VerificationStatus
-    public let summary: String
-    public let remainingWork: String?
-    /// Estimated input tokens consumed by verification
-    public let inputTokens: Int
-    /// Estimated output tokens consumed by verification
-    public let outputTokens: Int
-}
-
 // MARK: - Errors
 
 /// Errors that can occur during agent execution

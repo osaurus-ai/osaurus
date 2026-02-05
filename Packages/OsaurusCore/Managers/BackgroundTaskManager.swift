@@ -159,8 +159,6 @@ public final class BackgroundTaskManager: ObservableObject {
         state.issues = session.issues
         state.activeIssueId = session.activeIssue?.id
         state.loopState = session.loopState
-        state.currentPlan = session.currentPlan
-        state.currentPlanStep = session.currentStep
 
         return state
     }
@@ -239,9 +237,6 @@ public final class BackgroundTaskManager: ObservableObject {
         switch event {
         case .startedIssue(let title):
             state.appendActivity(kind: .info, title: "Issue", detail: title)
-
-        case .planCreated(let stepCount):
-            state.appendActivity(kind: .info, title: "Plan", detail: "\(stepCount) steps")
 
         case .willExecuteStep:
             // Step info is shown in the toast header + progress bar; skip mini-log entry

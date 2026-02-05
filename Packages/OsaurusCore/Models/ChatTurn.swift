@@ -157,12 +157,6 @@ final class ChatTurn: ObservableObject, Identifiable {
     var toolCallId: String? = nil
     /// Convenience map for UI to show tool results grouped under the assistant turn
     @Published var toolResults: [String: String] = [:]
-    /// Execution plan for agent mode (displayed as PlanBlockView)
-    /// - Note: DEPRECATED - Waterfall pipeline removed. Kept for historical display.
-    var plan: ExecutionPlan? = nil
-    /// Current step index in the plan (for progress indication)
-    /// - Note: DEPRECATED - Waterfall pipeline removed. Use loopState.iteration instead.
-    var currentPlanStep: Int? = nil
     /// Pending clarification request for agent mode (displayed as ClarificationCardView)
     var pendingClarification: ClarificationRequest? = nil
 
@@ -197,5 +191,53 @@ final class ChatTurn: ObservableObject, Identifiable {
     /// Whether this turn has any thinking/reasoning content
     var hasThinking: Bool {
         _thinkingLength > 0
+    }
+}
+
+// MARK: - Persistence
+
+extension ChatTurn {
+    /// Lightweight Codable representation for database persistence
+    struct Persisted: Codable {
+        let id: String
+        let role: String
+        let content: String?
+        let thinking: String?
+        let toolCalls: [ToolCall]?
+        let toolResults: [String: String]?
+        let toolCallId: String?
+    }
+
+    /// Converts this turn to a persistable representation
+    func toPersisted() -> Persisted {
+        Persisted(
+            id: id.uuidString,
+            role: role.rawValue,
+            content: contentIsEmpty ? nil : content,
+            thinking: thinkingIsEmpty ? nil : thinking,
+            toolCalls: toolCalls,
+            toolResults: toolResults.isEmpty ? nil : toolResults,
+            toolCallId: toolCallId
+        )
+    }
+
+    /// Creates a ChatTurn from a persisted representation
+    @MainActor
+    static func fromPersisted(_ p: Persisted) -> ChatTurn {
+        let role = MessageRole(rawValue: p.role) ?? .assistant
+        let turn = ChatTurn(role: role, content: p.content ?? "")
+
+        if let thinking = p.thinking, !thinking.isEmpty {
+            turn.appendThinking(thinking)
+        }
+        if let toolCalls = p.toolCalls {
+            turn.toolCalls = toolCalls
+        }
+        if let toolResults = p.toolResults {
+            turn.toolResults = toolResults
+        }
+        turn.toolCallId = p.toolCallId
+
+        return turn
     }
 }

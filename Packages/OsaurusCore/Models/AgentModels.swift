@@ -215,8 +215,8 @@ public enum IssueEventType: String, Codable, Sendable {
     case dependencyRemoved = "dependency_removed"
     case executionStarted = "execution_started"
     case executionCompleted = "execution_completed"
-    case toolCallExecuted = "tool_call_executed"
-    case planCreated = "plan_created"
+    case toolCallExecuted = "tool_call_executed"  // Legacy, no longer created
+    case planCreated = "plan_created"  // Legacy, no longer created
     case artifactGenerated = "artifact_generated"
     case clarificationRequested = "clarification_requested"
     case clarificationProvided = "clarification_provided"
@@ -282,46 +282,7 @@ public enum EventPayload {
         }
     }
 
-    /// Enhanced tool call payload with arguments and result
-    public struct ToolCall: Codable {
-        public let tool: String
-        public let step: Int
-        public let arguments: String?
-        public let result: String?
-        public init(tool: String, step: Int, arguments: String? = nil, result: String? = nil) {
-            self.tool = tool
-            self.step = step
-            self.arguments = arguments
-            self.result = result
-        }
-    }
-
-    /// Legacy step count (for backward compatibility)
-    public struct StepCount: Codable {
-        public let stepCount: Int
-        public init(stepCount: Int) {
-            self.stepCount = stepCount
-        }
-    }
-
-    /// Enhanced plan payload with full step details
-    public struct PlanCreated: Codable {
-        public let steps: [PlanStepData]
-        public init(steps: [PlanStepData]) {
-            self.steps = steps
-        }
-
-        public struct PlanStepData: Codable {
-            public let stepNumber: Int
-            public let description: String
-            public let toolName: String?
-            public init(stepNumber: Int, description: String, toolName: String?) {
-                self.stepNumber = stepNumber
-                self.description = description
-                self.toolName = toolName
-            }
-        }
-    }
+    // Legacy payload types (ToolCall, StepCount, PlanCreated) removed -- waterfall pipeline no longer exists
 
     public struct ChildCount: Codable {
         public let childCount: Int
@@ -459,120 +420,6 @@ public struct AgentTask: Identifiable, Codable, Sendable, Equatable {
     }
 }
 
-// MARK: - Execution Plan (DEPRECATED)
-
-/// A step in an execution plan
-/// - Note: DEPRECATED - Waterfall pipeline removed. Kept for backward compatibility.
-@available(*, deprecated, message: "Waterfall pipeline removed. Use reasoning loop instead.")
-public struct PlanStep: Codable, Sendable, Equatable {
-    /// Step number (1-based)
-    public let stepNumber: Int
-    /// Description of what this step does
-    public let description: String
-    /// Tool to use (if any)
-    public var toolName: String?
-    /// Whether this step is complete
-    public var isComplete: Bool
-
-    public init(
-        stepNumber: Int,
-        description: String,
-        toolName: String? = nil,
-        isComplete: Bool = false
-    ) {
-        self.stepNumber = stepNumber
-        self.description = description
-        self.toolName = toolName
-        self.isComplete = isComplete
-    }
-}
-
-/// An execution plan for an issue
-/// - Note: DEPRECATED - Waterfall pipeline removed. Kept for backward compatibility.
-@available(*, deprecated, message: "Waterfall pipeline removed. Use reasoning loop instead.")
-public struct ExecutionPlan: Codable, Sendable {
-    /// The issue this plan is for
-    public let issueId: String
-    /// Steps to execute
-    public var steps: [PlanStep]
-    /// Maximum allowed tool calls
-    public let maxToolCalls: Int
-    /// Current tool call count
-    public var toolCallCount: Int
-    /// Selected tools for this task (from capability selection)
-    public let selectedTools: [String]
-    /// Selected skills for this task (from capability selection)
-    public let selectedSkills: [String]
-
-    /// Default maximum tool calls per issue execution
-    public static let defaultMaxToolCalls = 10
-
-    public init(
-        issueId: String,
-        steps: [PlanStep] = [],
-        maxToolCalls: Int = ExecutionPlan.defaultMaxToolCalls,
-        toolCallCount: Int = 0,
-        selectedTools: [String] = [],
-        selectedSkills: [String] = []
-    ) {
-        self.issueId = issueId
-        self.steps = steps
-        self.maxToolCalls = maxToolCalls
-        self.toolCallCount = toolCallCount
-        self.selectedTools = selectedTools
-        self.selectedSkills = selectedSkills
-    }
-
-    /// Whether the plan exceeds the tool call limit
-    public var exceedsLimit: Bool {
-        steps.count > maxToolCalls
-    }
-
-    /// Whether we've reached the tool call limit
-    public var isAtLimit: Bool {
-        toolCallCount >= maxToolCalls
-    }
-
-    /// Number of completed steps
-    public var completedSteps: Int {
-        steps.filter { $0.isComplete }.count
-    }
-
-    /// Progress as a fraction (0.0 to 1.0)
-    public var progress: Double {
-        guard !steps.isEmpty else { return 0 }
-        return Double(completedSteps) / Double(steps.count)
-    }
-}
-
-// MARK: - Capability Selection Context (DEPRECATED)
-
-/// Context for storing selected capabilities in child issues
-/// When a task is decomposed, child issues inherit the parent's capability selection
-/// - Note: DEPRECATED - Waterfall pipeline removed. Kept for backward compatibility.
-@available(*, deprecated, message: "Waterfall pipeline removed. Use reasoning loop instead.")
-public struct SelectedCapabilitiesContext: Codable, Sendable {
-    /// Selected tools for this task
-    public let selectedTools: [String]
-    /// Selected skills for this task
-    public let selectedSkills: [String]
-
-    public init(selectedTools: [String] = [], selectedSkills: [String] = []) {
-        self.selectedTools = selectedTools
-        self.selectedSkills = selectedSkills
-    }
-
-    /// Parse capability context from an issue's context string (JSON)
-    public static func parse(from context: String?) -> SelectedCapabilitiesContext? {
-        guard let context = context,
-            let data = context.data(using: .utf8)
-        else {
-            return nil
-        }
-        return try? JSONDecoder().decode(SelectedCapabilitiesContext.self, from: data)
-    }
-}
-
 // MARK: - Clarification
 
 /// A clarification request from the agent when the task is ambiguous
@@ -657,47 +504,6 @@ public struct LoopState: Sendable {
     }
 }
 
-// MARK: - Discovery (DEPRECATED)
-
-/// A discovered piece of work
-/// - Note: DEPRECATED - Waterfall pipeline removed. Use create_issue tool instead.
-@available(*, deprecated, message: "Waterfall pipeline removed. Use create_issue tool instead.")
-public struct Discovery: Codable, Sendable {
-    /// Type of discovery
-    public enum DiscoveryType: String, Codable, Sendable {
-        case error
-        case todo
-        case fixme
-        case prerequisite
-        case followUp = "follow_up"
-    }
-
-    /// Type of discovery
-    public let type: DiscoveryType
-    /// Title for the discovered issue
-    public let title: String
-    /// Description of the discovery
-    public let description: String?
-    /// Source context (e.g., file path, tool output)
-    public let source: String?
-    /// Suggested priority
-    public let suggestedPriority: IssuePriority
-
-    public init(
-        type: DiscoveryType,
-        title: String,
-        description: String? = nil,
-        source: String? = nil,
-        suggestedPriority: IssuePriority = .p2
-    ) {
-        self.type = type
-        self.title = title
-        self.description = description
-        self.source = source
-        self.suggestedPriority = suggestedPriority
-    }
-}
-
 // MARK: - Execution Result
 
 /// Result of executing an issue
@@ -708,9 +514,7 @@ public struct ExecutionResult: Sendable {
     public let success: Bool
     /// Result message/summary
     public let message: String
-    /// Discoveries made during execution
-    public let discoveries: [Discovery]
-    /// Child issues created (from decomposition)
+    /// Child issues created during execution
     public let childIssues: [Issue]
     /// Final artifact generated by complete_task
     public let artifact: Artifact?
@@ -726,7 +530,6 @@ public struct ExecutionResult: Sendable {
         issue: Issue,
         success: Bool,
         message: String,
-        discoveries: [Discovery] = [],
         childIssues: [Issue] = [],
         artifact: Artifact? = nil,
         awaitingClarification: ClarificationRequest? = nil
@@ -734,7 +537,6 @@ public struct ExecutionResult: Sendable {
         self.issue = issue
         self.success = success
         self.message = message
-        self.discoveries = discoveries
         self.childIssues = childIssues
         self.artifact = artifact
         self.awaitingClarification = awaitingClarification

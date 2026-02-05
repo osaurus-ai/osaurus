@@ -14,7 +14,6 @@ import SwiftUI
 
 public enum AgentActivityEvent: Equatable, Sendable {
     case startedIssue(title: String)
-    case planCreated(stepCount: Int)
     case willExecuteStep(index: Int, total: Int?, description: String)
     case completedStep(index: Int, total: Int?)
     case toolExecuted(name: String)
@@ -106,7 +105,20 @@ public final class AgentSession: ObservableObject {
     /// Preserves live execution turns to selected turns (call before clearing activeIssue)
     private func preserveLiveExecutionTurns() {
         selectedIssueTurns = liveExecutionTurns
+        persistCurrentTurns()
         notifyTurnsChanged()
+    }
+
+    /// Persists the current live execution turns to the database
+    private func persistCurrentTurns() {
+        guard let issueId = activeIssue?.id ?? selectedIssueId else { return }
+        let turns = liveExecutionTurns
+        guard !turns.isEmpty else { return }
+        do {
+            try IssueStore.saveConversationTurns(issueId: issueId, turns: turns)
+        } catch {
+            print("[AgentSession] Failed to persist conversation turns: \(error)")
+        }
     }
 
     /// Clears all turns state and block cache
@@ -187,9 +199,6 @@ public final class AgentSession: ObservableObject {
 
     /// Whether execution is in progress
     @Published public var isExecuting: Bool = false
-
-    /// Current execution plan (DEPRECATED: kept for backward compatibility)
-    @Published public var currentPlan: ExecutionPlan?
 
     /// Current step/iteration being executed
     @Published public var currentStep: Int = 0
@@ -554,7 +563,6 @@ public final class AgentSession: ObservableObject {
         activeIssue = issue
         streamingContent = ""
         currentStep = 0
-        currentPlan = nil
         loopState = LoopState()
         retryAttempt = 0
         isRetrying = false
@@ -646,7 +654,6 @@ public final class AgentSession: ObservableObject {
         preserveLiveExecutionTurns()
         isExecuting = false
         activeIssue = nil
-        currentPlan = nil
         loopState = nil
         retryAttempt = 0
         isRetrying = false
@@ -669,7 +676,6 @@ public final class AgentSession: ObservableObject {
         finalArtifact = nil
         pendingQueuedMessage = nil
         isExecuting = false
-        currentPlan = nil
         loopState = nil
         errorMessage = nil
         streamingContent = ""
@@ -768,7 +774,6 @@ public final class AgentSession: ObservableObject {
 
         let hasContent =
             !turn.contentIsEmpty
-            || turn.plan != nil
             || !(turn.toolCalls?.isEmpty ?? true)
             || !turn.thinkingIsEmpty
 
@@ -816,21 +821,24 @@ public final class AgentSession: ObservableObject {
         loadIssueHistory(for: issue)
     }
 
-    /// Loads the event history for an issue and builds ChatTurns for rendering
+    /// Loads persisted conversation turns for an issue
     private func loadIssueHistory(for issue: Issue) {
         do {
-            let events = try IssueManager.shared.getHistory(issueId: issue.id)
-            let personaName = windowState?.cachedPersonaDisplayName ?? "Agent"
-            selectedIssueTurns = AgentContentBlockBuilder.buildTurnsFromHistory(
-                events: events,
-                issue: issue,
-                personaName: personaName
-            )
+            let turns = try IssueStore.loadConversationTurns(issueId: issue.id)
+            if !turns.isEmpty {
+                selectedIssueTurns = turns
+            } else {
+                // No persisted turns - show issue description as a minimal user turn
+                let content = issue.description ?? issue.title
+                let userTurn = ChatTurn(role: .user, content: content)
+                let assistantTurn = ChatTurn(role: .assistant, content: issue.result ?? "")
+                selectedIssueTurns = [userTurn, assistantTurn]
+            }
             notifyTurnsChanged()
         } catch {
             selectedIssueTurns = []
             notifyTurnsChanged()
-            print("[AgentSession] Failed to load issue history: \(error)")
+            print("[AgentSession] Failed to load conversation turns: \(error)")
         }
     }
 
@@ -977,34 +985,6 @@ extension AgentSession: AgentEngineDelegate {
         return content
     }
 
-    public func agentEngine(_ engine: AgentEngine, didCreatePlan plan: ExecutionPlan, forIssue issue: Issue) {
-        currentPlan = plan
-        emitActivity(.planCreated(stepCount: plan.steps.count))
-
-        let turn = lastAssistantTurn()
-        turn.plan = plan
-        turn.currentPlanStep = 0
-        turn.notifyContentChanged()
-
-        notifyIfSelected(issue.id)
-    }
-
-    public func agentEngine(
-        _ engine: AgentEngine,
-        willExecuteStep stepIndex: Int,
-        step: PlanStep,
-        forIssue issue: Issue
-    ) {
-        currentStep = stepIndex
-        emitActivity(.willExecuteStep(index: stepIndex, total: currentPlan?.steps.count, description: step.description))
-
-        let turn = lastAssistantTurn()
-        turn.currentPlanStep = stepIndex
-        turn.notifyContentChanged()
-
-        notifyIfSelected(issue.id)
-    }
-
     public func agentEngine(_ engine: AgentEngine, didReceiveStreamingDelta delta: String, forStep stepIndex: Int) {
         streamingContent += delta
 
@@ -1013,65 +993,6 @@ extension AgentSession: AgentEngineDelegate {
         turn.notifyContentChanged()
 
         notifyIfSelected(activeIssue?.id)
-    }
-
-    public func agentEngine(
-        _ engine: AgentEngine,
-        didCompleteStep stepIndex: Int,
-        result: StepResult,
-        forIssue issue: Issue
-    ) {
-        let assistantTurn = lastAssistantTurn()
-
-        // Attach tool call result if present
-        if let toolCallResult = result.toolCallResult {
-            emitActivity(.toolExecuted(name: toolCallResult.toolCall.function.name))
-            if assistantTurn.toolCalls == nil {
-                assistantTurn.toolCalls = []
-            }
-            assistantTurn.toolCalls?.append(toolCallResult.toolCall)
-            assistantTurn.toolResults[toolCallResult.toolCall.id] = toolCallResult.result
-
-            // Add tool turn for API message flow
-            let toolTurn = ChatTurn(role: .tool, content: toolCallResult.result)
-            toolTurn.toolCallId = toolCallResult.toolCall.id
-            liveExecutionTurns.append(toolTurn)
-        }
-
-        // Append response content
-        if !result.responseContent.isEmpty {
-            if assistantTurn.contentIsEmpty {
-                assistantTurn.content = result.responseContent
-            } else {
-                assistantTurn.appendContent("\n\n" + result.responseContent)
-            }
-            assistantTurn.notifyContentChanged()
-        }
-
-        currentStep = stepIndex + 1
-        emitActivity(.completedStep(index: stepIndex, total: currentPlan?.steps.count))
-        notifyIfSelected(issue.id)
-    }
-
-    public func agentEngine(_ engine: AgentEngine, didEncounterError error: Error, forStep stepIndex: Int, issue: Issue)
-    {
-        errorMessage = error.localizedDescription
-    }
-
-    public func agentEngine(
-        _ engine: AgentEngine,
-        didVerifyGoal verification: VerificationResult,
-        forIssue issue: Issue
-    ) {
-        let emoji = verification.status == .achieved ? "✅" : "❌"
-        let content = "\n\n---\n\(emoji) **Result:** \(verification.summary)"
-        streamingContent += content
-        appendToAssistantTurn(content, forIssue: issue.id)
-    }
-
-    public func agentEngine(_ engine: AgentEngine, didDecomposeIssue issue: Issue, into children: [Issue]) {
-        appendToAssistantTurn("\n\n🔀 **Decomposed into \(children.count) sub-issues**")
-        Task { await refreshIssues() }
     }
 
     public func agentEngine(_ engine: AgentEngine, didGenerateArtifact artifact: Artifact, forIssue issue: Issue) {
@@ -1198,6 +1119,9 @@ extension AgentSession: AgentEngineDelegate {
 
         assistantTurn.notifyContentChanged()
         notifyIfSelected(issue.id)
+
+        // Persist conversation state after each tool call
+        persistCurrentTurns()
     }
 
     public func agentEngine(_ engine: AgentEngine, didUpdateStatus status: String, forIssue issue: Issue) {

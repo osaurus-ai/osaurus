@@ -35,7 +35,7 @@ public final class AgentDatabase: @unchecked Sendable {
     public static let shared = AgentDatabase()
 
     /// Current schema version
-    private static let schemaVersion = 1
+    private static let schemaVersion = 2
 
     /// Database connection pointer
     private var db: OpaquePointer?
@@ -103,8 +103,9 @@ public final class AgentDatabase: @unchecked Sendable {
             try migrateToV1()
         }
 
-        // Future migrations go here:
-        // if currentVersion < 2 { try migrateToV2() }
+        if currentVersion < 2 {
+            try migrateToV2()
+        }
     }
 
     /// Gets the current schema version from the database
@@ -226,6 +227,34 @@ public final class AgentDatabase: @unchecked Sendable {
         try executeRaw("CREATE INDEX IF NOT EXISTS idx_artifacts_task ON artifacts(task_id)")
 
         try setSchemaVersion(1)
+    }
+
+    /// Migration to schema version 2 - add conversation turns table
+    private func migrateToV2() throws {
+        // Direct conversation turn storage (replaces event-sourcing reconstruction)
+        try executeRaw(
+            """
+                CREATE TABLE IF NOT EXISTS conversation_turns (
+                    id TEXT PRIMARY KEY,
+                    issue_id TEXT NOT NULL,
+                    turn_order INTEGER NOT NULL,
+                    role TEXT NOT NULL,
+                    content TEXT,
+                    thinking TEXT,
+                    tool_calls_json TEXT,
+                    tool_results_json TEXT,
+                    tool_call_id TEXT,
+                    created_at TEXT NOT NULL,
+                    FOREIGN KEY (issue_id) REFERENCES issues(id) ON DELETE CASCADE
+                )
+            """
+        )
+
+        try executeRaw(
+            "CREATE INDEX IF NOT EXISTS idx_conv_turns_issue ON conversation_turns(issue_id, turn_order)"
+        )
+
+        try setSchemaVersion(2)
     }
 
     // MARK: - Query Execution
