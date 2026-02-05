@@ -175,6 +175,7 @@ struct ContentBlock: Identifiable, Equatable {
         )
     }
 
+    /// - Note: DEPRECATED - Waterfall pipeline removed. Plan blocks are no longer used.
     static func plan(turnId: UUID, steps: [PlanStep], currentStep: Int?, isStreaming: Bool, position: BlockPosition)
         -> ContentBlock
     {

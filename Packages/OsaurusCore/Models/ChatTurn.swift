@@ -141,8 +141,10 @@ final class ChatTurn: ObservableObject, Identifiable {
     /// Convenience map for UI to show tool results grouped under the assistant turn
     @Published var toolResults: [String: String] = [:]
     /// Execution plan for agent mode (displayed as PlanBlockView)
+    /// - Note: DEPRECATED - Waterfall pipeline removed. Kept for historical display.
     var plan: ExecutionPlan? = nil
     /// Current step index in the plan (for progress indication)
+    /// - Note: DEPRECATED - Waterfall pipeline removed. Use loopState.iteration instead.
     var currentPlanStep: Int? = nil
     /// Pending clarification request for agent mode (displayed as ClarificationCardView)
     var pendingClarification: ClarificationRequest? = nil

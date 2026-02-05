@@ -188,11 +188,20 @@ public final class AgentSession: ObservableObject {
     /// Whether execution is in progress
     @Published public var isExecuting: Bool = false
 
-    /// Current execution plan
+    /// Current execution plan (DEPRECATED: kept for backward compatibility)
     @Published public var currentPlan: ExecutionPlan?
 
-    /// Current step being executed
+    /// Current step/iteration being executed
     @Published public var currentStep: Int = 0
+
+    /// Current loop state for reasoning loop execution (new)
+    @Published public var loopState: LoopState?
+
+    /// Current iteration number (alias for currentStep, for reasoning loop)
+    public var currentIteration: Int {
+        get { currentStep }
+        set { currentStep = newValue }
+    }
 
     /// Streaming response content
     @Published public var streamingContent: String = ""
@@ -545,6 +554,8 @@ public final class AgentSession: ObservableObject {
         activeIssue = issue
         streamingContent = ""
         currentStep = 0
+        currentPlan = nil
+        loopState = LoopState()
         retryAttempt = 0
         isRetrying = false
         errorMessage = nil
@@ -636,6 +647,7 @@ public final class AgentSession: ObservableObject {
         isExecuting = false
         activeIssue = nil
         currentPlan = nil
+        loopState = nil
         retryAttempt = 0
         isRetrying = false
         failedIssue = nil
@@ -658,6 +670,7 @@ public final class AgentSession: ObservableObject {
         pendingQueuedMessage = nil
         isExecuting = false
         currentPlan = nil
+        loopState = nil
         errorMessage = nil
         streamingContent = ""
         retryAttempt = 0
@@ -1124,5 +1137,58 @@ extension AgentSession: AgentEngineDelegate {
         // Accumulate token usage for cost prediction
         cumulativeInputTokens += input
         cumulativeOutputTokens += output
+    }
+
+    // MARK: - Reasoning Loop Delegate Methods (New)
+
+    public func agentEngine(_ engine: AgentEngine, didStartIteration iteration: Int, forIssue issue: Issue) {
+        // Update current iteration for progress tracking
+        currentStep = iteration
+        emitActivity(.willExecuteStep(index: iteration, total: nil, description: "Iteration \(iteration)"))
+        notifyIfSelected(issue.id)
+    }
+
+    public func agentEngine(
+        _ engine: AgentEngine,
+        didCallTool toolName: String,
+        withArguments args: String,
+        result: String,
+        forIssue issue: Issue
+    ) {
+        emitActivity(.toolExecuted(name: toolName))
+
+        let assistantTurn = lastAssistantTurn()
+
+        // Create a tool call object for the UI
+        let callId = "call_\(UUID().uuidString.prefix(24))"
+        let toolCall = ToolCall(
+            id: callId,
+            type: "function",
+            function: ToolCallFunction(
+                name: toolName,
+                arguments: args
+            )
+        )
+
+        // Attach tool call to the assistant turn
+        if assistantTurn.toolCalls == nil {
+            assistantTurn.toolCalls = []
+        }
+        assistantTurn.toolCalls?.append(toolCall)
+        assistantTurn.toolResults[callId] = result
+
+        // Add tool turn for API message flow
+        let toolTurn = ChatTurn(role: .tool, content: result)
+        toolTurn.toolCallId = callId
+        liveExecutionTurns.append(toolTurn)
+
+        assistantTurn.notifyContentChanged()
+        notifyIfSelected(issue.id)
+    }
+
+    public func agentEngine(_ engine: AgentEngine, didUpdateStatus status: String, forIssue issue: Issue) {
+        // Status updates can be logged or displayed in the UI
+        // For now, we just emit an activity event
+        emitActivity(.willExecuteStep(index: currentStep, total: nil, description: status))
     }
 }

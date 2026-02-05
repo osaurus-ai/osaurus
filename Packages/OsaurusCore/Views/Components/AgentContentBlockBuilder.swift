@@ -5,6 +5,10 @@
 //  Converts historical agent execution events (IssueEvents) into ChatTurns
 //  for rendering via ContentBlock.generateBlocks() in MessageThreadView.
 //
+//  DEPRECATED: This builder was part of the waterfall pipeline and uses
+//  deprecated ExecutionPlan and PlanStep types. Kept for backward compatibility
+//  with historical event display.
+//
 
 import Foundation
 
@@ -16,6 +20,9 @@ import Foundation
 ///
 /// Note: Live execution is now handled directly in AgentSession by populating
 /// executionTurns and using ContentBlock.generateBlocks().
+///
+/// - Note: DEPRECATED - Uses deprecated plan types. Kept for historical event display.
+@available(*, deprecated, message: "Uses deprecated plan types. Kept for historical event display.")
 enum AgentContentBlockBuilder {
 
     // MARK: - Historical Event Loading

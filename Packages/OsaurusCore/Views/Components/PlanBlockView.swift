@@ -5,9 +5,14 @@
 //  Sleek UI to display agent execution plans.
 //  Always expanded to show the full plan with step progress.
 //
+//  DEPRECATED: This view was part of the waterfall pipeline and is no longer used.
+//  The reasoning loop architecture shows tool calls inline in the chat.
+//
 
 import SwiftUI
 
+/// - Note: DEPRECATED - Waterfall pipeline removed. Use inline tool call display instead.
+@available(*, deprecated, message: "Waterfall pipeline removed. Use inline tool call display instead.")
 struct PlanBlockView: View {
     let steps: [PlanStep]
     let currentStep: Int?  // Currently executing step (for progress indication)
@@ -246,61 +251,3 @@ struct PlanBlockView: View {
             )
     }
 }
-
-// MARK: - Preview
-
-#if DEBUG
-    struct PlanBlockView_Previews: PreviewProvider {
-        static let sampleSteps: [PlanStep] = [
-            PlanStep(
-                stepNumber: 1,
-                description: "Read the configuration file to understand current settings",
-                toolName: "read_file",
-                isComplete: true
-            ),
-            PlanStep(
-                stepNumber: 2,
-                description: "Parse and validate the configuration data",
-                toolName: nil,
-                isComplete: true
-            ),
-            PlanStep(
-                stepNumber: 3,
-                description: "Apply the requested changes to the settings",
-                toolName: "write_file",
-                isComplete: false
-            ),
-            PlanStep(
-                stepNumber: 4,
-                description: "Verify the changes were applied correctly",
-                toolName: "read_file",
-                isComplete: false
-            ),
-            PlanStep(
-                stepNumber: 5,
-                description: "Generate a summary report of the changes made",
-                toolName: nil,
-                isComplete: false
-            ),
-        ]
-
-        static var previews: some View {
-            VStack(spacing: 16) {
-                PlanBlockView(
-                    steps: sampleSteps,
-                    currentStep: 2,
-                    isStreaming: false
-                )
-
-                PlanBlockView(
-                    steps: sampleSteps,
-                    currentStep: 2,
-                    isStreaming: true
-                )
-            }
-            .frame(width: 500)
-            .padding()
-            .background(Color(hex: "0c0c0b"))
-        }
-    }
-#endif

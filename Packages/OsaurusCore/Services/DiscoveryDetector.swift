@@ -5,10 +5,15 @@
 //  Detects discoverable work from tool outputs and execution results.
 //  Creates linked issues for bugs, TODOs, prerequisites, and follow-up work.
 //
+//  DEPRECATED: This class was part of the waterfall pipeline and is no longer used.
+//  The reasoning loop architecture uses the `create_issue` tool for follow-up work.
+//
 
 import Foundation
 
 /// Detects discoveries from tool outputs and execution results
+/// - Note: DEPRECATED - Waterfall pipeline removed. Use create_issue tool instead.
+@available(*, deprecated, message: "Waterfall pipeline removed. Use create_issue tool instead.")
 public actor DiscoveryDetector {
     /// Patterns to detect in tool outputs
     private let patterns: [DiscoveryPattern]
@@ -155,6 +160,8 @@ public actor DiscoveryDetector {
 // MARK: - Discovery Context
 
 /// Context for discovery detection
+/// - Note: DEPRECATED - Waterfall pipeline removed.
+@available(*, deprecated, message: "Waterfall pipeline removed.")
 public struct DiscoveryContext: Sendable {
     public let issueId: String
     public let taskId: String

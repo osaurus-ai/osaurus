@@ -3,7 +3,7 @@
 //  osaurus
 //
 //  Main coordinator for Osaurus Agents execution flow.
-//  Orchestrates IssueManager, ExecutionEngine, and DiscoveryDetector.
+//  Orchestrates IssueManager and ExecutionEngine via reasoning loop.
 //
 
 import Foundation
@@ -12,9 +12,6 @@ import Foundation
 public actor AgentEngine {
     /// The execution engine
     private let executionEngine: AgentExecutionEngine
-
-    /// The discovery detector
-    private let discoveryDetector: DiscoveryDetector
 
     /// Current execution state
     private var isExecuting = false
@@ -38,12 +35,8 @@ public actor AgentEngine {
     /// Delegate for execution events
     public nonisolated(unsafe) weak var delegate: AgentEngineDelegate?
 
-    /// Flag to track if streaming callback is setup
-    private var isStreamingSetup = false
-
     public init() {
         self.executionEngine = AgentExecutionEngine()
-        self.discoveryDetector = DiscoveryDetector()
     }
 
     /// Sets the retry configuration
@@ -83,136 +76,7 @@ public actor AgentEngine {
         pendingInputs.removeValue(forKey: issueId)
     }
 
-    /// Ensures streaming callback is configured
-    private func ensureStreamingSetup() async {
-        guard !isStreamingSetup else { return }
-        isStreamingSetup = true
-
-        await executionEngine.setStreamingCallback { [weak self] (delta: String, stepIndex: Int) in
-            guard let self = self else { return }
-            self.delegate?.agentEngine(self, didReceiveStreamingDelta: delta, forStep: stepIndex)
-        }
-    }
-
-    // MARK: - Resume State
-
-    /// State recovered from persisted events for resuming execution
-    private struct ResumeState {
-        /// Reconstructed messages from prior execution
-        let messages: [ChatMessage]
-        /// Reconstructed plan from persisted events
-        let plan: ExecutionPlan
-        /// Index of the first step to execute (0-based)
-        let startStepIndex: Int
-        /// Number of tool calls already made
-        let priorToolCallCount: Int
-    }
-
-    /// Attempts to recover execution state from persisted events
-    /// Returns nil if no resumable state exists (fresh execution)
-    private func recoverResumeState(for issue: Issue) -> ResumeState? {
-        // Only attempt resume for issues that were in progress
-        guard issue.status == .inProgress else { return nil }
-
-        // Load events for this issue
-        guard let events = try? IssueStore.getHistory(issueId: issue.id) else { return nil }
-
-        // Find plan creation event
-        guard let planEvent = events.first(where: { $0.eventType == .planCreated }),
-            let planPayload = planEvent.payload,
-            let planData = planPayload.data(using: .utf8),
-            let planCreated = try? JSONDecoder().decode(EventPayload.PlanCreated.self, from: planData)
-        else { return nil }
-
-        // Build plan steps from persisted data
-        let planSteps = planCreated.steps.map { stepData in
-            PlanStep(
-                stepNumber: stepData.stepNumber,
-                description: stepData.description,
-                toolName: stepData.toolName,
-                isComplete: false  // Will be marked complete as we process events
-            )
-        }
-
-        // Collect tool call events
-        let toolCallEvents = events.filter { $0.eventType == .toolCallExecuted }
-        guard !toolCallEvents.isEmpty else { return nil }  // No progress to resume from
-
-        // Rebuild messages from tool calls
-        var messages: [ChatMessage] = []
-
-        // Add prior context if available
-        if let context = issue.context {
-            messages.append(ChatMessage(role: "user", content: "[Prior Context]:\n\(context)"))
-        }
-
-        // Process each tool call event to rebuild conversation
-        var completedSteps = Set<Int>()
-        for event in toolCallEvents {
-            guard let payload = event.payload,
-                let data = payload.data(using: .utf8),
-                let toolCall = try? JSONDecoder().decode(EventPayload.ToolCall.self, from: data)
-            else { continue }
-
-            completedSteps.insert(toolCall.step)
-
-            // Generate a unique call ID for this historical tool call
-            let callId = "call_resume_\(toolCall.step)_\(UUID().uuidString.prefix(8))"
-
-            // Create assistant message with tool call
-            let assistantToolCall = ToolCall(
-                id: callId,
-                type: "function",
-                function: ToolCallFunction(
-                    name: toolCall.tool,
-                    arguments: toolCall.arguments ?? "{}"
-                )
-            )
-            messages.append(
-                ChatMessage(
-                    role: "assistant",
-                    content: nil,
-                    tool_calls: [assistantToolCall],
-                    tool_call_id: nil
-                )
-            )
-
-            // Create tool result message
-            messages.append(
-                ChatMessage(
-                    role: "tool",
-                    content: toolCall.result ?? "",
-                    tool_calls: nil,
-                    tool_call_id: callId
-                )
-            )
-        }
-
-        // Find the next step to execute (first incomplete step)
-        let maxCompletedStep = completedSteps.max() ?? -1
-        let startStepIndex = maxCompletedStep + 1
-
-        // If all steps are complete, no need to resume
-        guard startStepIndex < planSteps.count else { return nil }
-
-        // Mark completed steps in the plan
-        var resumePlan = ExecutionPlan(
-            issueId: issue.id,
-            steps: planSteps,
-            maxToolCalls: ExecutionPlan.defaultMaxToolCalls,
-            toolCallCount: toolCallEvents.count
-        )
-        for i in 0 ..< startStepIndex {
-            resumePlan.steps[i].isComplete = true
-        }
-
-        return ResumeState(
-            messages: messages,
-            plan: resumePlan,
-            startStepIndex: startStepIndex,
-            priorToolCallCount: toolCallEvents.count
-        )
-    }
+    // MARK: - Delegate
 
     /// Sets the delegate for receiving execution events
     public nonisolated func setDelegate(_ delegate: AgentEngineDelegate?) {
@@ -362,7 +226,6 @@ public actor AgentEngine {
         currentIssueId = nil
         awaitingClarification = nil
         pendingExecutionContext = nil
-        await executionEngine.reset()
     }
 
     // MARK: - Clarification
@@ -442,7 +305,7 @@ public actor AgentEngine {
 
     // MARK: - Main Execution Flow
 
-    /// Executes an issue through the complete agent flow
+    /// Executes an issue through the reasoning loop
     /// - Parameter attemptResume: If true, attempts to recover and resume from prior interrupted execution
     private func execute(
         issue: Issue,
@@ -453,9 +316,6 @@ public actor AgentEngine {
         skillCatalog: [CapabilityEntry] = [],
         attemptResume: Bool = false
     ) async throws -> ExecutionResult {
-        // Ensure streaming is setup before execution
-        await ensureStreamingSetup()
-
         isExecuting = true
         currentIssueId = issue.id
 
@@ -464,96 +324,163 @@ public actor AgentEngine {
             currentIssueId = nil
         }
 
-        // Check for resumable state from prior interrupted execution (only when explicitly requested)
-        if attemptResume, let resumeState = recoverResumeState(for: issue) {
-            // Resume from where we left off
-            await delegate?.agentEngine(self, didStartIssue: issue)
-            await delegate?.agentEngine(self, didCreatePlan: resumeState.plan, forIssue: issue)
+        // Mark issue as in progress
+        _ = await IssueManager.shared.startIssueSafe(issue.id)
+        await delegate?.agentEngine(self, didStartIssue: issue)
 
-            // Log that we're resuming
+        // Build initial messages
+        var messages: [ChatMessage] = []
+
+        // Add prior context if available (skip internal capability selection markers)
+        if let context = issue.context, !context.contains("[Selected Capabilities]") {
+            messages.append(ChatMessage(role: "user", content: "[Prior Context]:\n\(context)"))
+        }
+
+        // Add the user's query
+        messages.append(ChatMessage(role: "user", content: issue.description ?? issue.title))
+
+        // Get current folder context
+        let folderContext = await MainActor.run { AgentFolderContextService.shared.currentContext }
+
+        // Set up file operation log with root path for undo support
+        if let rootPath = folderContext?.rootPath {
+            await AgentFileOperationLog.shared.setRootPath(rootPath)
+        }
+
+        // Load skill instructions if any skills are selected
+        let skillInstructions = await buildSkillInstructions(from: skillCatalog)
+
+        // Build the agent system prompt using the new method
+        let agentSystemPrompt = await executionEngine.buildAgentSystemPrompt(
+            base: systemPrompt,
+            issue: issue,
+            tools: tools,
+            folderContext: folderContext,
+            skillInstructions: skillInstructions
+        )
+
+        // Log execution started
+        _ = try? IssueStore.createEvent(
+            IssueEvent(
+                issueId: issue.id,
+                eventType: .executionStarted,
+                payload: "{\"mode\":\"reasoning_loop\"}"
+            )
+        )
+
+        // Run the reasoning loop
+        let loopResult = try await executionEngine.executeLoop(
+            issue: issue,
+            messages: &messages,
+            systemPrompt: agentSystemPrompt,
+            model: model,
+            tools: tools,
+            toolOverrides: toolOverrides,
+            maxIterations: AgentExecutionEngine.defaultMaxIterations,
+            onIterationStart: { [weak self] iteration in
+                guard let self = self else { return }
+                self.delegate?.agentEngine(self, didStartIteration: iteration, forIssue: issue)
+            },
+            onDelta: { [weak self] delta, iteration in
+                guard let self = self else { return }
+                self.delegate?.agentEngine(self, didReceiveStreamingDelta: delta, forStep: iteration)
+            },
+            onToolCall: { [weak self] toolName, args, result in
+                guard let self = self else { return }
+                // Notify delegate of tool call
+                self.delegate?.agentEngine(
+                    self,
+                    didCallTool: toolName,
+                    withArguments: args,
+                    result: result,
+                    forIssue: issue
+                )
+            },
+            onStatusUpdate: { [weak self] status in
+                guard let self = self else { return }
+                self.delegate?.agentEngine(self, didUpdateStatus: status, forIssue: issue)
+            },
+            onArtifact: { [weak self] artifact in
+                guard let self = self else { return }
+                // Save the artifact and notify delegate
+                _ = try? IssueStore.createArtifact(artifact)
+                _ = try? IssueStore.createEvent(
+                    IssueEvent.withPayload(
+                        issueId: issue.id,
+                        eventType: .artifactGenerated,
+                        payload: EventPayload.ArtifactGenerated(
+                            artifactId: artifact.id,
+                            filename: artifact.filename,
+                            contentType: artifact.contentType.rawValue
+                        )
+                    )
+                )
+                await self.delegate?.agentEngine(self, didGenerateArtifact: artifact, forIssue: issue)
+            },
+            getPendingInputs: { [weak self] in
+                guard let self = self else { return [] }
+                return await self.consumePendingInputs(for: issue.id)
+            },
+            onInputInjected: { [weak self] input in
+                guard let self = self else { return }
+                self.delegate?.agentEngine(self, didInjectUserInput: input, forIssue: issue)
+            },
+            onTokensConsumed: { [weak self] inputTokens, outputTokens in
+                guard let self = self else { return }
+                self.delegate?.agentEngine(self, didConsumeTokens: inputTokens, output: outputTokens, forIssue: issue)
+            }
+        )
+
+        // Handle the loop result
+        switch loopResult {
+        case .completed(let summary, let artifact):
+            // Close the issue with success
+            _ = await IssueManager.shared.closeIssueSafe(issue.id, result: summary)
+
+            // Save artifact if present
+            let finalArtifact = artifact
+            if let artifact = artifact {
+                _ = try? IssueStore.createArtifact(artifact)
+
+                // Log artifact event
+                _ = try? IssueStore.createEvent(
+                    IssueEvent.withPayload(
+                        issueId: issue.id,
+                        eventType: .artifactGenerated,
+                        payload: EventPayload.ArtifactGenerated(
+                            artifactId: artifact.id,
+                            filename: artifact.filename,
+                            contentType: artifact.contentType.rawValue
+                        )
+                    )
+                )
+
+                await delegate?.agentEngine(self, didGenerateArtifact: artifact, forIssue: issue)
+            }
+
+            // Log execution completed
             _ = try? IssueStore.createEvent(
-                IssueEvent(
+                IssueEvent.withPayload(
                     issueId: issue.id,
-                    eventType: .executionStarted,
-                    payload: "{\"resumed\":true,\"fromStep\":\(resumeState.startStepIndex)}"
+                    eventType: .executionCompleted,
+                    payload: EventPayload.ExecutionCompleted(
+                        success: true,
+                        discoveries: 0,
+                        summary: summary
+                    )
                 )
             )
 
-            // Filter tools to only those selected during planning
-            let filteredTools = filterTools(tools, selectedTools: resumeState.plan.selectedTools)
+            await delegate?.agentEngine(self, didCompleteIssue: issue, success: true)
 
-            // Build enhanced system prompt with selected skill instructions
-            var executionSystemPrompt = await buildExecutionSystemPrompt(
-                base: systemPrompt,
-                selectedSkills: resumeState.plan.selectedSkills
-            )
-
-            // Set up file operation log with root path for undo support (if folder context active)
-            let folderContext = await MainActor.run { AgentFolderContextService.shared.currentContext }
-            if let rootPath = folderContext?.rootPath {
-                await AgentFileOperationLog.shared.setRootPath(rootPath)
-            }
-
-            // Inject folder context into system prompt so model knows available files
-            if let folder = folderContext {
-                executionSystemPrompt += buildFolderContextForSystemPrompt(folder)
-            }
-
-            return try await executePlan(
-                plan: resumeState.plan,
+            return ExecutionResult(
                 issue: issue,
-                model: model,
-                systemPrompt: executionSystemPrompt,
-                tools: filteredTools,
-                toolOverrides: toolOverrides,
-                initialMessages: resumeState.messages,
-                startStepIndex: resumeState.startStepIndex
-            )
-        }
-
-        // Mark issue as in progress (fresh start)
-        _ = await IssueManager.shared.startIssueSafe(issue.id)
-
-        await delegate?.agentEngine(self, didStartIssue: issue)
-
-        // Get current folder context (if any) for injection into plan
-        let folderContext = await MainActor.run { AgentFolderContextService.shared.currentContext }
-
-        // Generate plan with capability selection
-        let planResult = try await executionEngine.generatePlan(
-            for: issue,
-            systemPrompt: systemPrompt,
-            model: model,
-            tools: tools,
-            skillCatalog: skillCatalog,
-            folderContext: folderContext
-        )
-
-        switch planResult {
-        case .needsDecomposition(
-            let steps,
-            let chunks,
-            let inputTokens,
-            let outputTokens,
-            let selectedTools,
-            let selectedSkills
-        ):
-            // Report token consumption for plan generation
-            await delegate?.agentEngine(self, didConsumeTokens: inputTokens, output: outputTokens, forIssue: issue)
-
-            // Decompose the issue (child issues inherit selected capabilities)
-            return try await decomposeIssue(
-                issue: issue,
-                steps: steps,
-                chunks: chunks,
-                selectedTools: selectedTools,
-                selectedSkills: selectedSkills
+                success: true,
+                message: summary,
+                artifact: finalArtifact
             )
 
-        case .needsClarification(let request, let inputTokens, let outputTokens):
-            // Report token consumption for plan generation
-            await delegate?.agentEngine(self, didConsumeTokens: inputTokens, output: outputTokens, forIssue: issue)
-
+        case .needsClarification(let request):
             // Store state for resuming after clarification
             awaitingClarification = AwaitingClarificationState(
                 issueId: issue.id,
@@ -586,7 +513,6 @@ public actor AgentEngine {
             // Notify delegate
             await delegate?.agentEngine(self, needsClarification: request, forIssue: issue)
 
-            // Return result indicating we're awaiting input
             return ExecutionResult(
                 issue: issue,
                 success: false,
@@ -594,517 +520,57 @@ public actor AgentEngine {
                 awaitingClarification: request
             )
 
-        case .ready(let plan, let inputTokens, let outputTokens):
-            // Report token consumption for plan generation
-            await delegate?.agentEngine(self, didConsumeTokens: inputTokens, output: outputTokens, forIssue: issue)
+        case .iterationLimitReached(let totalIterations, let totalToolCalls):
+            // Generate a summary of what was accomplished
+            let summary = "Execution paused after \(totalIterations) iterations and \(totalToolCalls) tool calls. Task may require continuation."
 
-            // Log plan creation with full step details
-            let planStepData = plan.steps.map { step in
-                EventPayload.PlanCreated.PlanStepData(
-                    stepNumber: step.stepNumber,
-                    description: step.description,
-                    toolName: step.toolName
-                )
-            }
-            try IssueStore.createEvent(
+            // Close issue as partial success
+            _ = await IssueManager.shared.closeIssueSafe(issue.id, result: "Partial: \(summary)")
+
+            // Log execution completed
+            _ = try? IssueStore.createEvent(
                 IssueEvent.withPayload(
                     issueId: issue.id,
-                    eventType: .planCreated,
-                    payload: EventPayload.PlanCreated(steps: planStepData)
+                    eventType: .executionCompleted,
+                    payload: EventPayload.ExecutionCompleted(
+                        success: true,
+                        discoveries: 0,
+                        summary: summary
+                    )
                 )
             )
 
-            await delegate?.agentEngine(self, didCreatePlan: plan, forIssue: issue)
+            await delegate?.agentEngine(self, didCompleteIssue: issue, success: true)
 
-            // Filter tools to only those selected during planning
-            let filteredTools = filterTools(tools, selectedTools: plan.selectedTools)
-
-            // Build enhanced system prompt with selected skill instructions
-            var executionSystemPrompt = await buildExecutionSystemPrompt(
-                base: systemPrompt,
-                selectedSkills: plan.selectedSkills
-            )
-
-            // Set up file operation log with root path for undo support
-            if let rootPath = folderContext?.rootPath {
-                await AgentFileOperationLog.shared.setRootPath(rootPath)
-            }
-
-            // Inject folder context into system prompt so model knows available files
-            if let folder = folderContext {
-                executionSystemPrompt += buildFolderContextForSystemPrompt(folder)
-            }
-
-            // Execute the plan with filtered tools and enhanced prompt
-            return try await executePlan(
-                plan: plan,
+            return ExecutionResult(
                 issue: issue,
-                model: model,
-                systemPrompt: executionSystemPrompt,
-                tools: filteredTools,
-                toolOverrides: toolOverrides
+                success: true,
+                message: summary
             )
         }
     }
 
-    /// Decomposes an issue into child issues
-    private func decomposeIssue(
-        issue: Issue,
-        steps: [PlanStep],
-        chunks: [[PlanStep]],
-        selectedTools: [String] = [],
-        selectedSkills: [String] = []
-    ) async throws -> ExecutionResult {
-        // Encode selected capabilities as JSON context for child issues to inherit
-        var contextJSON: String?
-        if !selectedTools.isEmpty || !selectedSkills.isEmpty {
-            let capabilityContext = SelectedCapabilitiesContext(
-                selectedTools: selectedTools,
-                selectedSkills: selectedSkills
-            )
-            if let data = try? JSONEncoder().encode(capabilityContext),
-                let json = String(data: data, encoding: .utf8)
-            {
-                contextJSON = json
-            }
-        }
-
-        // Create child issues from chunks
-        let children = chunks.enumerated().map {
-            index,
-            chunk -> (title: String, description: String?, context: String?) in
-            let title = "Part \(index + 1): \(chunk.first?.description ?? "Execute steps")"
-            let description = chunk.map { "- \($0.description)" }.joined(separator: "\n")
-            return (title, description, contextJSON)
-        }
-
-        let childIssues = await IssueManager.shared.decomposeIssueSafe(issue.id, into: children)
-
-        await delegate?.agentEngine(self, didDecomposeIssue: issue, into: childIssues)
-
-        return ExecutionResult(
-            issue: issue,
-            success: true,
-            message: "Decomposed into \(childIssues.count) child issues",
-            discoveries: [],
-            childIssues: childIssues
-        )
-    }
-
-    /// Executes a plan step by step
-    /// - Parameters:
-    ///   - plan: The execution plan to run
-    ///   - issue: The issue being executed
-    ///   - model: Model to use
-    ///   - systemPrompt: System prompt
-    ///   - tools: Available tools
-    ///   - toolOverrides: Tool overrides
-    ///   - initialMessages: Pre-existing messages to start with (for resume)
-    ///   - startStepIndex: Step index to start from (for resume, 0 = start fresh)
-    private func executePlan(
-        plan: ExecutionPlan,
-        issue: Issue,
-        model: String?,
-        systemPrompt: String,
-        tools: [Tool],
-        toolOverrides: [String: Bool]?,
-        initialMessages: [ChatMessage] = [],
-        startStepIndex: Int = 0
-    ) async throws -> ExecutionResult {
-        var messages: [ChatMessage] = initialMessages
-        var allDiscoveries: [Discovery] = []
-        var generatedArtifacts: [Artifact] = []
-        var finalArtifact: Artifact?
-
-        // Prepend prior context if available (only if not resuming with existing messages)
-        if initialMessages.isEmpty, let context = issue.context {
-            messages.append(ChatMessage(role: "user", content: "[Prior Context]:\n\(context)"))
-        }
-
-        // Execute each step (starting from startStepIndex for resume)
-        for stepIndex in startStepIndex ..< plan.steps.count {
-            guard isExecuting else {
-                throw AgentExecutionError.executionCancelled
-            }
-
-            // Check for task cancellation (e.g., window closed mid-execution)
-            try Task.checkCancellation()
-
-            // Inject any queued user input before this step
-            let queuedInputs = consumePendingInputs(for: issue.id)
-            for input in queuedInputs {
-                messages.append(ChatMessage(role: "user", content: "[User Context]: \(input)"))
-                await delegate?.agentEngine(self, didInjectUserInput: input, forIssue: issue)
-            }
-
-            let step = plan.steps[stepIndex]
-            await delegate?.agentEngine(self, willExecuteStep: stepIndex, step: step, forIssue: issue)
-
-            do {
-                let stepResult = try await executionEngine.executeStep(
-                    stepIndex: stepIndex,
-                    issue: issue,
-                    messages: &messages,
-                    systemPrompt: systemPrompt,
-                    model: model,
-                    tools: tools,
-                    toolOverrides: toolOverrides
-                )
-
-                // Report token consumption for step execution
-                await delegate?.agentEngine(
-                    self,
-                    didConsumeTokens: stepResult.inputTokens,
-                    output: stepResult.outputTokens,
-                    forIssue: issue
-                )
-
-                await delegate?.agentEngine(self, didCompleteStep: stepIndex, result: stepResult, forIssue: issue)
-
-                // Check for artifacts in tool results
-                if let toolResult = stepResult.toolCallResult {
-                    let toolName = toolResult.toolCall.function.name
-
-                    // Extract artifact from complete_task
-                    if toolName == "complete_task" {
-                        if let artifact = extractFinalArtifact(
-                            from: toolResult.result,
-                            taskId: issue.taskId
-                        ) {
-                            finalArtifact = artifact
-                            generatedArtifacts.append(artifact)
-
-                            // Persist artifact to database
-                            _ = try? IssueStore.createArtifact(artifact)
-
-                            // Log artifact event
-                            _ = try? IssueStore.createEvent(
-                                IssueEvent.withPayload(
-                                    issueId: issue.id,
-                                    eventType: .artifactGenerated,
-                                    payload: EventPayload.ArtifactGenerated(
-                                        artifactId: artifact.id,
-                                        filename: artifact.filename,
-                                        contentType: artifact.contentType.rawValue
-                                    )
-                                )
-                            )
-
-                            await delegate?.agentEngine(self, didGenerateArtifact: artifact, forIssue: issue)
-                        }
-                    }
-
-                    // Extract artifact from generate_artifact
-                    if toolName == "generate_artifact" {
-                        if let artifact = extractGeneratedArtifact(
-                            from: toolResult.result,
-                            taskId: issue.taskId
-                        ) {
-                            generatedArtifacts.append(artifact)
-
-                            // Persist artifact to database
-                            _ = try? IssueStore.createArtifact(artifact)
-
-                            // Log artifact event
-                            _ = try? IssueStore.createEvent(
-                                IssueEvent.withPayload(
-                                    issueId: issue.id,
-                                    eventType: .artifactGenerated,
-                                    payload: EventPayload.ArtifactGenerated(
-                                        artifactId: artifact.id,
-                                        filename: artifact.filename,
-                                        contentType: artifact.contentType.rawValue
-                                    )
-                                )
-                            )
-
-                            await delegate?.agentEngine(self, didGenerateArtifact: artifact, forIssue: issue)
-                        }
-                    }
-
-                    // Analyze tool output for discoveries
-                    let context = DiscoveryContext(
-                        issueId: issue.id,
-                        taskId: issue.taskId,
-                        currentStep: stepIndex
-                    )
-                    let discoveries = await discoveryDetector.analyze(
-                        toolOutput: toolResult.result,
-                        toolName: toolName,
-                        context: context
-                    )
-                    allDiscoveries.append(contentsOf: discoveries)
-                }
-
-                // Analyze LLM response for discoveries
-                if !stepResult.responseContent.isEmpty {
-                    let context = DiscoveryContext(
-                        issueId: issue.id,
-                        taskId: issue.taskId,
-                        currentStep: stepIndex
-                    )
-                    let discoveries = await discoveryDetector.analyzeResponse(
-                        response: stepResult.responseContent,
-                        context: context
-                    )
-                    allDiscoveries.append(contentsOf: discoveries)
-                }
-
-            } catch {
-                await delegate?.agentEngine(self, didEncounterError: error, forStep: stepIndex, issue: issue)
-                throw error
-            }
-        }
-
-        // Verify goal achievement
-        let verification = try await executionEngine.verifyGoal(
-            issue: issue,
-            messages: messages,
-            systemPrompt: systemPrompt,
-            model: model
-        )
-
-        // Report token consumption for verification
-        await delegate?.agentEngine(
-            self,
-            didConsumeTokens: verification.inputTokens,
-            output: verification.outputTokens,
-            forIssue: issue
-        )
-
-        await delegate?.agentEngine(self, didVerifyGoal: verification, forIssue: issue)
-
-        // Create discovered issues
-        var createdDiscoveries: [Issue] = []
-        for discovery in allDiscoveries {
-            // Build sanitized description including source context
-            let sanitizedDescription = buildDiscoveryDescription(discovery)
-
-            if let discoveryIssue = await IssueManager.shared.createIssueSafe(
-                taskId: issue.taskId,
-                title: discovery.title,
-                description: sanitizedDescription,
-                priority: discovery.suggestedPriority,
-                type: .discovery
-            ) {
-                _ = await IssueManager.shared.linkDiscoverySafe(
-                    sourceIssueId: issue.id,
-                    discoveredIssueId: discoveryIssue.id
-                )
-                createdDiscoveries.append(discoveryIssue)
-            }
-        }
-
-        // Close or update issue based on verification
-        let success: Bool
-        let resultMessage: String
-
-        switch verification.status {
-        case .achieved:
-            success = true
-            resultMessage = verification.summary
-            _ = await IssueManager.shared.closeIssueSafe(issue.id, result: verification.summary)
-
-        case .partial:
-            success = true
-            resultMessage = verification.summary
-            // Create follow-up issue for remaining work
-            if let remaining = verification.remainingWork {
-                if let followUp = await IssueManager.shared.createIssueSafe(
-                    taskId: issue.taskId,
-                    title: "Follow-up: \(remaining.prefix(50))",
-                    description: remaining,
-                    priority: issue.priority,
-                    type: .task
-                ) {
-                    createdDiscoveries.append(followUp)
-                }
-            }
-            _ = await IssueManager.shared.closeIssueSafe(
-                issue.id,
-                result: "Partially completed: \(verification.summary)"
-            )
-
-        case .notAchieved:
-            success = false
-            resultMessage = "Goal not achieved: \(verification.summary)"
-            // Re-open issue for retry
-            _ = await IssueManager.shared.updateIssueStatusSafe(issue.id, to: .open)
-        }
-
-        // Log execution completed with summary
-        try IssueStore.createEvent(
-            IssueEvent.withPayload(
-                issueId: issue.id,
-                eventType: .executionCompleted,
-                payload: EventPayload.ExecutionCompleted(
-                    success: success,
-                    discoveries: allDiscoveries.count,
-                    summary: resultMessage
-                )
-            )
-        )
-
-        await delegate?.agentEngine(self, didCompleteIssue: issue, success: success)
-
-        return ExecutionResult(
-            issue: issue,
-            success: success,
-            message: resultMessage,
-            discoveries: allDiscoveries,
-            childIssues: createdDiscoveries,
-            artifact: finalArtifact
-        )
-    }
-
-    // MARK: - Artifact Extraction
-
-    /// Extracts the final artifact from complete_task tool result
-    private func extractFinalArtifact(from result: String, taskId: String) -> Artifact? {
-        // Look for the artifact markers
-        guard let startRange = result.range(of: "---ARTIFACT_START---\n"),
-            let endRange = result.range(of: "\n---ARTIFACT_END---")
-        else {
-            return nil
-        }
-
-        let content = String(result[startRange.upperBound ..< endRange.lowerBound])
-        guard !content.isEmpty else { return nil }
-
-        return Artifact(
-            taskId: taskId,
-            filename: "result.md",
-            content: content,
-            contentType: .markdown,
-            isFinalResult: true
-        )
-    }
-
-    /// Extracts an artifact from generate_artifact tool result
-    private func extractGeneratedArtifact(from result: String, taskId: String) -> Artifact? {
-        // Look for the artifact markers
-        guard let startRange = result.range(of: "---GENERATED_ARTIFACT_START---\n"),
-            let endRange = result.range(of: "\n---GENERATED_ARTIFACT_END---")
-        else {
-            return nil
-        }
-
-        let fullContent = String(result[startRange.upperBound ..< endRange.lowerBound])
-
-        // First line is JSON metadata, rest is content
-        let lines = fullContent.components(separatedBy: "\n")
-        guard lines.count >= 2, let metadataLine = lines.first else {
-            return nil
-        }
-
-        // Parse metadata
-        guard let metadataData = metadataLine.data(using: .utf8),
-            let metadata = try? JSONSerialization.jsonObject(with: metadataData) as? [String: String],
-            let filename = metadata["filename"]
-        else {
-            return nil
-        }
-
-        let contentType = metadata["content_type"].flatMap { ArtifactContentType(rawValue: $0) } ?? .text
-        let content = lines.dropFirst().joined(separator: "\n")
-
-        guard !content.isEmpty else { return nil }
-
-        return Artifact(
-            taskId: taskId,
-            filename: filename,
-            content: content,
-            contentType: contentType,
-            isFinalResult: false
-        )
-    }
-
-    // MARK: - System Prompt Building
-
-    /// Builds the execution system prompt with selected skill instructions
+    /// Builds skill instructions string from the skill catalog
     @MainActor
-    private func buildExecutionSystemPrompt(base: String, selectedSkills: [String]) async -> String {
-        guard !selectedSkills.isEmpty else {
-            return base
-        }
+    private func buildSkillInstructions(from skillCatalog: [CapabilityEntry]) async -> String? {
+        guard !skillCatalog.isEmpty else { return nil }
 
-        // Load full instructions for selected skills
-        let skillInstructionsMap = SkillManager.shared.loadInstructions(for: selectedSkills)
+        // Get active skill names
+        let skillNames = skillCatalog.map { $0.name }
 
-        guard !skillInstructionsMap.isEmpty else {
-            return base
-        }
+        // Load full instructions for active skills
+        let skillInstructionsMap = SkillManager.shared.loadInstructions(for: skillNames)
 
-        var enhanced = base
+        guard !skillInstructionsMap.isEmpty else { return nil }
 
-        if !enhanced.isEmpty {
-            enhanced += "\n\n"
-        }
-
-        enhanced += "# Active Skills\n\n"
-        enhanced += "The following skills provide specialized guidance for this task:\n\n"
-
-        for skillName in selectedSkills {
-            if let instructions = skillInstructionsMap[skillName] {
-                enhanced += "## \(skillName)\n\n\(instructions)\n\n---\n\n"
+        var instructions = ""
+        for skillName in skillNames {
+            if let content = skillInstructionsMap[skillName] {
+                instructions += "## \(skillName)\n\n\(content)\n\n---\n\n"
             }
         }
 
-        return enhanced.trimmingCharacters(in: .whitespacesAndNewlines)
-    }
-
-    /// Builds folder context section for injection into execution system prompt
-    private func buildFolderContextForSystemPrompt(_ folder: AgentFolderContext) -> String {
-        """
-
-        # Working Directory
-
-        Path: \(folder.rootPath.path)
-
-        ## Available Files
-        ```
-        \(folder.tree)
-        ```
-
-        ## File Operation Rules
-        - Use the exact file names shown above
-        - The `batch` tool has a maximum of 30 operations per call
-        - For more than 30 files, use multiple batch calls
-        """
-    }
-
-    // MARK: - Description Sanitization
-
-    /// Sanitizes text by collapsing whitespace and truncating to max length
-    private func sanitizeDescription(_ text: String?, maxLength: Int = 500) -> String? {
-        guard let text = text, !text.isEmpty else { return nil }
-
-        var cleaned =
-            text
-            .replacingOccurrences(of: "\\n{3,}", with: "\n\n", options: .regularExpression)
-            .replacingOccurrences(of: "[ \\t]+", with: " ", options: .regularExpression)
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-
-        if cleaned.count > maxLength {
-            let truncated = String(cleaned.prefix(maxLength - 3))
-            if let lastSpace = truncated.lastIndex(of: " "), lastSpace > truncated.startIndex {
-                cleaned = String(truncated[..<lastSpace]) + "..."
-            } else {
-                cleaned = truncated + "..."
-            }
-        }
-
-        return cleaned.isEmpty ? nil : cleaned
-    }
-
-    /// Builds a sanitized description from a discovery, combining description and source
-    private func buildDiscoveryDescription(_ discovery: Discovery) -> String? {
-        let parts = [
-            discovery.description,
-            discovery.source.map { "Source: \($0)" },
-        ].compactMap { $0 }.filter { !$0.isEmpty }
-
-        return sanitizeDescription(parts.joined(separator: "\n\n"))
+        return instructions.isEmpty ? nil : instructions.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     // MARK: - Retry Logic
@@ -1192,25 +658,6 @@ public actor AgentEngine {
         throw finalError
     }
 
-    // MARK: - Tool Filtering
-
-    /// Filters tools to only those selected during planning, always including file_tree for discovery
-    private func filterTools(_ tools: [Tool], selectedTools: [String]) -> [Tool] {
-        var filtered: [Tool] =
-            selectedTools.isEmpty
-            ? []
-            : tools.filter { selectedTools.contains($0.function.name) }
-
-        // Always include file_tree for discovery (even if not explicitly selected)
-        if let fileTreeTool = tools.first(where: { $0.function.name == "file_tree" }),
-            !filtered.contains(where: { $0.function.name == "file_tree" })
-        {
-            filtered.append(fileTreeTool)
-        }
-
-        return filtered
-    }
-
     // MARK: - State
 
     /// Whether the engine is currently executing
@@ -1229,59 +676,74 @@ public actor AgentEngine {
 /// Delegate for receiving agent execution events
 @MainActor
 public protocol AgentEngineDelegate: AnyObject {
+    // Issue lifecycle
     func agentEngine(_ engine: AgentEngine, didStartIssue issue: Issue)
+    func agentEngine(_ engine: AgentEngine, didCompleteIssue issue: Issue, success: Bool)
+
+    // Reasoning loop events (new)
+    func agentEngine(_ engine: AgentEngine, didStartIteration iteration: Int, forIssue issue: Issue)
+    func agentEngine(_ engine: AgentEngine, didReceiveStreamingDelta delta: String, forStep stepIndex: Int)
+    func agentEngine(_ engine: AgentEngine, didCallTool toolName: String, withArguments args: String, result: String, forIssue issue: Issue)
+    func agentEngine(_ engine: AgentEngine, didUpdateStatus status: String, forIssue issue: Issue)
+
+    // Clarification
+    func agentEngine(_ engine: AgentEngine, needsClarification request: ClarificationRequest, forIssue issue: Issue)
+
+    // Artifacts
+    func agentEngine(_ engine: AgentEngine, didGenerateArtifact artifact: Artifact, forIssue issue: Issue)
+
+    // Token consumption
+    func agentEngine(_ engine: AgentEngine, didConsumeTokens input: Int, output: Int, forIssue issue: Issue)
+
+    // User input injection
+    func agentEngine(_ engine: AgentEngine, didInjectUserInput input: String, forIssue issue: Issue)
+
+    // Retry
+    func agentEngine(_ engine: AgentEngine, willRetryIssue issue: Issue, attempt: Int, afterDelay: TimeInterval)
+
+    // DEPRECATED: Plan-based methods (kept for backward compatibility, will be removed in Phase 2)
     func agentEngine(_ engine: AgentEngine, didCreatePlan plan: ExecutionPlan, forIssue issue: Issue)
     func agentEngine(_ engine: AgentEngine, willExecuteStep stepIndex: Int, step: PlanStep, forIssue issue: Issue)
-    func agentEngine(_ engine: AgentEngine, didReceiveStreamingDelta delta: String, forStep stepIndex: Int)
     func agentEngine(_ engine: AgentEngine, didCompleteStep stepIndex: Int, result: StepResult, forIssue issue: Issue)
     func agentEngine(_ engine: AgentEngine, didEncounterError error: Error, forStep stepIndex: Int, issue: Issue)
     func agentEngine(_ engine: AgentEngine, didVerifyGoal verification: VerificationResult, forIssue issue: Issue)
     func agentEngine(_ engine: AgentEngine, didDecomposeIssue issue: Issue, into children: [Issue])
-    func agentEngine(_ engine: AgentEngine, didGenerateArtifact artifact: Artifact, forIssue issue: Issue)
-    func agentEngine(_ engine: AgentEngine, didCompleteIssue issue: Issue, success: Bool)
-    func agentEngine(_ engine: AgentEngine, willRetryIssue issue: Issue, attempt: Int, afterDelay: TimeInterval)
-    func agentEngine(_ engine: AgentEngine, needsClarification request: ClarificationRequest, forIssue issue: Issue)
-    func agentEngine(_ engine: AgentEngine, didInjectUserInput input: String, forIssue issue: Issue)
-    /// Called when tokens are consumed by an API call (for cumulative usage tracking)
-    func agentEngine(_ engine: AgentEngine, didConsumeTokens input: Int, output: Int, forIssue issue: Issue)
 }
 
 /// Default implementations for optional delegate methods
 extension AgentEngineDelegate {
+    // Issue lifecycle
     public func agentEngine(_ engine: AgentEngine, didStartIssue issue: Issue) {}
-    public func agentEngine(_ engine: AgentEngine, didCreatePlan plan: ExecutionPlan, forIssue issue: Issue) {}
-    public func agentEngine(
-        _ engine: AgentEngine,
-        willExecuteStep stepIndex: Int,
-        step: PlanStep,
-        forIssue issue: Issue
-    ) {}
-    public func agentEngine(_ engine: AgentEngine, didReceiveStreamingDelta delta: String, forStep stepIndex: Int) {}
-    public func agentEngine(
-        _ engine: AgentEngine,
-        didCompleteStep stepIndex: Int,
-        result: StepResult,
-        forIssue issue: Issue
-    ) {}
-    public func agentEngine(_ engine: AgentEngine, didEncounterError error: Error, forStep stepIndex: Int, issue: Issue)
-    {}
-    public func agentEngine(
-        _ engine: AgentEngine,
-        didVerifyGoal verification: VerificationResult,
-        forIssue issue: Issue
-    ) {}
-    public func agentEngine(_ engine: AgentEngine, didDecomposeIssue issue: Issue, into children: [Issue]) {}
-    public func agentEngine(_ engine: AgentEngine, didGenerateArtifact artifact: Artifact, forIssue issue: Issue) {}
     public func agentEngine(_ engine: AgentEngine, didCompleteIssue issue: Issue, success: Bool) {}
-    public func agentEngine(_ engine: AgentEngine, willRetryIssue issue: Issue, attempt: Int, afterDelay: TimeInterval)
-    {}
-    public func agentEngine(
-        _ engine: AgentEngine,
-        needsClarification request: ClarificationRequest,
-        forIssue issue: Issue
-    ) {}
-    public func agentEngine(_ engine: AgentEngine, didInjectUserInput input: String, forIssue issue: Issue) {}
+
+    // Reasoning loop events
+    public func agentEngine(_ engine: AgentEngine, didStartIteration iteration: Int, forIssue issue: Issue) {}
+    public func agentEngine(_ engine: AgentEngine, didReceiveStreamingDelta delta: String, forStep stepIndex: Int) {}
+    public func agentEngine(_ engine: AgentEngine, didCallTool toolName: String, withArguments args: String, result: String, forIssue issue: Issue) {}
+    public func agentEngine(_ engine: AgentEngine, didUpdateStatus status: String, forIssue issue: Issue) {}
+
+    // Clarification
+    public func agentEngine(_ engine: AgentEngine, needsClarification request: ClarificationRequest, forIssue issue: Issue) {}
+
+    // Artifacts
+    public func agentEngine(_ engine: AgentEngine, didGenerateArtifact artifact: Artifact, forIssue issue: Issue) {}
+
+    // Token consumption
     public func agentEngine(_ engine: AgentEngine, didConsumeTokens input: Int, output: Int, forIssue issue: Issue) {}
+
+    // User input injection
+    public func agentEngine(_ engine: AgentEngine, didInjectUserInput input: String, forIssue issue: Issue) {}
+
+    // Retry
+    public func agentEngine(_ engine: AgentEngine, willRetryIssue issue: Issue, attempt: Int, afterDelay: TimeInterval) {}
+
+    // DEPRECATED: Plan-based methods
+    public func agentEngine(_ engine: AgentEngine, didCreatePlan plan: ExecutionPlan, forIssue issue: Issue) {}
+    public func agentEngine(_ engine: AgentEngine, willExecuteStep stepIndex: Int, step: PlanStep, forIssue issue: Issue) {}
+    public func agentEngine(_ engine: AgentEngine, didCompleteStep stepIndex: Int, result: StepResult, forIssue issue: Issue) {}
+    public func agentEngine(_ engine: AgentEngine, didEncounterError error: Error, forStep stepIndex: Int, issue: Issue) {}
+    public func agentEngine(_ engine: AgentEngine, didVerifyGoal verification: VerificationResult, forIssue issue: Issue) {}
+    public func agentEngine(_ engine: AgentEngine, didDecomposeIssue issue: Issue, into children: [Issue]) {}
 }
 
 // MARK: - Pending Execution Context
