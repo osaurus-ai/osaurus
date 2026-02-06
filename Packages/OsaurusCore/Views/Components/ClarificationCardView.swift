@@ -223,24 +223,43 @@ struct ClarificationCardView: View {
 
     private var textInputContent: some View {
         VStack(alignment: .leading, spacing: 8) {
-            TextField("Type your response...", text: $customResponse, axis: .vertical)
-                .font(theme.font(size: CGFloat(theme.bodySize) - 1, weight: .regular))
-                .foregroundColor(theme.primaryText)
-                .textFieldStyle(.plain)
-                .lineLimit(1 ... 4)
-                .padding(.horizontal, 12)
-                .padding(.vertical, 10)
-                .background(
-                    RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .fill(theme.tertiaryBackground.opacity(0.4))
-                )
-                .overlay(
-                    RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .strokeBorder(theme.primaryBorder.opacity(0.2), lineWidth: 0.5)
-                )
+            textInputField
         }
         .padding(.horizontal, 12)
         .padding(.bottom, 12)
+    }
+
+    private var textInputField: some View {
+        TextField("", text: $customResponse, axis: .vertical)
+            .font(theme.font(size: CGFloat(theme.bodySize) - 1, weight: .regular))
+            .foregroundColor(theme.primaryText)
+            .textFieldStyle(.plain)
+            .lineLimit(1 ... 4)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 10)
+            .overlay(alignment: .topLeading) {
+                if customResponse.isEmpty {
+                    Text("Type your response...")
+                        .font(theme.font(size: CGFloat(theme.bodySize) - 1, weight: .regular))
+                        .foregroundColor(theme.placeholderText)
+                        .padding(.leading, 12)
+                        .padding(.top, 10)
+                        .allowsHitTesting(false)
+                }
+            }
+            .background(
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(theme.tertiaryBackground.opacity(0.4))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .strokeBorder(theme.primaryBorder.opacity(0.2), lineWidth: 0.5)
+            )
+            .onSubmit {
+                if canSubmit {
+                    onSubmit(responseToSubmit)
+                }
+            }
     }
 
     // MARK: - Submit Button
@@ -259,7 +278,7 @@ struct ClarificationCardView: View {
                         .font(theme.font(size: CGFloat(theme.captionSize), weight: .semibold))
 
                     Image(systemName: "arrow.right")
-                        .font(.system(size: 11, weight: .semibold))
+                        .font(theme.font(size: CGFloat(theme.captionSize) - 1, weight: .semibold))
                 }
                 .foregroundColor(canSubmit ? .white : theme.tertiaryText)
                 .padding(.horizontal, 16)

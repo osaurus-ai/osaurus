@@ -636,7 +636,7 @@ struct FloatingInputCard: View {
                     .foregroundColor(theme.accentColor)
 
                 Text("used")
-                    .font(.system(size: CGFloat(theme.captionSize) - 1, weight: .regular))
+                    .font(theme.font(size: CGFloat(theme.captionSize) - 1, weight: .regular))
                     .foregroundColor(theme.tertiaryText.opacity(0.7))
             }
             .help("Total tokens consumed: \(cumulative) (input + output across all API calls)")
@@ -654,7 +654,7 @@ struct FloatingInputCard: View {
                 }
 
                 Text("tokens")
-                    .font(.system(size: CGFloat(theme.captionSize) - 1, weight: .regular))
+                    .font(theme.font(size: CGFloat(theme.captionSize) - 1, weight: .regular))
                     .foregroundColor(theme.tertiaryText.opacity(0.7))
             }
             .help(
@@ -870,7 +870,7 @@ struct FloatingInputCard: View {
                     folderContextService.clearFolder()
                 } label: {
                     Image(systemName: "xmark")
-                        .font(.system(size: 8, weight: .bold))
+                        .font(theme.font(size: CGFloat(theme.captionSize) - 4, weight: .bold))
                         .foregroundColor(theme.tertiaryText)
                         .frame(width: 16, height: 16)
                         .background(Circle().fill(theme.secondaryBackground.opacity(0.8)))
@@ -1082,7 +1082,7 @@ struct FloatingInputCard: View {
             // Placeholder - uses theme body size
             if showPlaceholder {
                 Text(placeholderText)
-                    .font(.system(size: inputFontSize))
+                    .font(theme.font(size: inputFontSize, weight: .regular))
                     .foregroundColor(theme.placeholderText)
                     .padding(.leading, 6)
                     .padding(.top, 2)
@@ -1141,29 +1141,40 @@ struct FloatingInputCard: View {
     private func queuedMessageBanner(message: String) -> some View {
         HStack(spacing: 8) {
             Image(systemName: "clock")
-                .font(.system(size: 11))
+                .font(theme.font(size: CGFloat(theme.captionSize) - 1, weight: .medium))
                 .foregroundColor(theme.accentColor)
+
+            Text("Queued")
+                .font(theme.font(size: CGFloat(theme.captionSize) - 1, weight: .semibold))
+                .foregroundColor(theme.accentColor)
+
             Text(message)
-                .font(.system(size: 12))
-                .foregroundColor(theme.primaryText)
+                .font(theme.font(size: CGFloat(theme.captionSize), weight: .regular))
+                .foregroundColor(theme.secondaryText)
                 .lineLimit(2)
+
             Spacer()
+
             Button {
                 onClearQueued?()
             } label: {
                 Image(systemName: "xmark")
-                    .font(.system(size: 9, weight: .semibold))
+                    .font(theme.font(size: CGFloat(theme.captionSize) - 2, weight: .semibold))
                     .foregroundColor(theme.tertiaryText)
-                    .frame(width: 18, height: 18)
-                    .background(theme.tertiaryText.opacity(0.1))
+                    .frame(width: 20, height: 20)
+                    .background(theme.tertiaryBackground.opacity(0.5))
                     .clipShape(Circle())
             }
             .buttonStyle(.plain)
             .help("Clear queued message")
         }
-        .padding(.horizontal, 10)
+        .padding(.horizontal, 12)
         .padding(.vertical, 8)
-        .background(theme.accentColor.opacity(0.08))
+        .background(theme.accentColor.opacity(0.06))
+        .overlay(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .strokeBorder(theme.primaryBorder.opacity(0.15), lineWidth: 0.5)
+        )
         .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
     }
 
@@ -1290,7 +1301,7 @@ struct CachedImageThumbnail: View {
             // Remove button
             Button(action: onRemove) {
                 Image(systemName: "xmark.circle.fill")
-                    .font(.system(size: 16))
+                    .font(theme.font(size: 16, weight: .regular))
                     .foregroundColor(.white)
                     .background(
                         Circle()
@@ -1526,7 +1537,7 @@ private struct InputActionButton: View {
                 }
 
                 Image(systemName: icon)
-                    .font(.system(size: 13, weight: .medium))
+                    .font(theme.font(size: CGFloat(theme.bodySize), weight: .medium))
                     .foregroundColor(isHovered ? theme.accentColor : theme.secondaryText)
             }
             .frame(width: 32, height: 32)
@@ -1594,7 +1605,7 @@ private struct SendButton: View {
                 }
 
                 Image(systemName: "arrow.up")
-                    .font(.system(size: 14, weight: .semibold))
+                    .font(theme.font(size: CGFloat(theme.bodySize) + 1, weight: .semibold))
                     .foregroundColor(.white)
             }
             .frame(width: 32, height: 32)
@@ -1647,7 +1658,7 @@ private struct StopButton: View {
                     .fill(.white)
                     .frame(width: 8, height: 8)
                 Text("Stop")
-                    .font(.system(size: 11, weight: .medium))
+                    .font(theme.font(size: CGFloat(theme.captionSize) - 1, weight: .medium))
             }
             .foregroundColor(.white)
             .padding(.horizontal, 12)
@@ -1697,9 +1708,9 @@ private struct ResumeButton: View {
         Button(action: action) {
             HStack(spacing: 4) {
                 Image(systemName: "play.fill")
-                    .font(.system(size: 9, weight: .bold))
+                    .font(theme.font(size: CGFloat(theme.captionSize) - 3, weight: .bold))
                 Text("Resume")
-                    .font(.system(size: 11, weight: .medium))
+                    .font(theme.font(size: CGFloat(theme.captionSize) - 1, weight: .medium))
             }
             .foregroundColor(.white)
             .padding(.horizontal, 12)
@@ -1755,9 +1766,9 @@ private struct EndTaskButton: View {
         Button(action: action) {
             HStack(spacing: 4) {
                 Image(systemName: "checkmark")
-                    .font(.system(size: 9, weight: .bold))
+                    .font(theme.font(size: CGFloat(theme.captionSize) - 3, weight: .bold))
                 Text("Done")
-                    .font(.system(size: 11, weight: .medium))
+                    .font(theme.font(size: CGFloat(theme.captionSize) - 1, weight: .medium))
             }
             .foregroundColor(isHovered ? theme.primaryText : theme.secondaryText)
             .padding(.horizontal, 12)
