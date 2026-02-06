@@ -62,6 +62,18 @@ public final class AgentSession: ObservableObject {
     /// Trigger for UI updates when turns change (needed because turns arrays are not @Published)
     @Published private var turnsVersion: Int = 0
 
+    // MARK: - Streaming Delta Throttling
+
+    /// Buffer for accumulating streaming deltas before flushing to the UI.
+    /// Prevents main thread blocking by batching rapid updates.
+    private var streamingDeltaBuffer: String = ""
+
+    /// Timer for flushing accumulated streaming deltas to the UI
+    private var streamingFlushTimer: Timer?
+
+    /// Minimum interval between UI updates for streaming deltas (in seconds)
+    private static let streamingFlushInterval: TimeInterval = 0.1
+
     // MARK: - Block Caching (Performance Optimization)
 
     /// BlockMemoizer for incremental content block generation
@@ -988,8 +1000,35 @@ extension AgentSession: AgentEngineDelegate {
     public func agentEngine(_ engine: AgentEngine, didReceiveStreamingDelta delta: String, forStep stepIndex: Int) {
         streamingContent += delta
 
+        // Accumulate delta in the buffer
+        streamingDeltaBuffer += delta
+
+        // Schedule a flush if one isn't already pending
+        if streamingFlushTimer == nil {
+            streamingFlushTimer = Timer.scheduledTimer(
+                withTimeInterval: Self.streamingFlushInterval,
+                repeats: false
+            ) { [weak self] _ in
+                guard let self else { return }
+                Task { @MainActor in
+                    self.flushStreamingDeltaBuffer()
+                }
+            }
+        }
+    }
+
+    /// Flushes accumulated streaming deltas to the UI in a single batch
+    private func flushStreamingDeltaBuffer() {
+        streamingFlushTimer?.invalidate()
+        streamingFlushTimer = nil
+
+        guard !streamingDeltaBuffer.isEmpty else { return }
+
+        let buffered = streamingDeltaBuffer
+        streamingDeltaBuffer = ""
+
         let turn = lastAssistantTurn()
-        turn.appendContent(delta)
+        turn.appendContent(buffered)
         turn.notifyContentChanged()
 
         notifyIfSelected(activeIssue?.id)
@@ -1010,6 +1049,9 @@ extension AgentSession: AgentEngineDelegate {
     }
 
     public func agentEngine(_ engine: AgentEngine, didCompleteIssue issue: Issue, success: Bool) {
+        // Flush any remaining buffered streaming deltas
+        flushStreamingDeltaBuffer()
+
         // Consolidate content chunks for storage
         liveExecutionTurns.filter { $0.role == .assistant }.forEach { $0.consolidateContent() }
         emitActivity(.completedIssue(success: success))
@@ -1063,6 +1105,9 @@ extension AgentSession: AgentEngineDelegate {
     // MARK: - Reasoning Loop Delegate Methods
 
     public func agentEngine(_ engine: AgentEngine, didStartIteration iteration: Int, forIssue issue: Issue) {
+        // Flush any buffered streaming deltas before starting a new iteration
+        flushStreamingDeltaBuffer()
+
         // Update current iteration for progress tracking
         currentStep = iteration
         loopState?.iteration = iteration
@@ -1090,6 +1135,9 @@ extension AgentSession: AgentEngineDelegate {
         result: String,
         forIssue issue: Issue
     ) {
+        // Flush any buffered streaming deltas before processing tool call
+        flushStreamingDeltaBuffer()
+
         // Update loop state with tool call info
         loopState?.toolCallCount += 1
         if let ls = loopState, !ls.toolsUsed.contains(toolName) {
