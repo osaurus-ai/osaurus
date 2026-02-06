@@ -14,6 +14,8 @@ final class ExternalTool: OsaurusTool, PermissionedTool, @unchecked Sendable {
     let parameters: JSONValue?
     let requirements: [String]
     let defaultPermissionPolicy: ToolPermissionPolicy
+    /// The plugin this tool belongs to (matches `PluginManifest.plugin_id`)
+    let pluginId: String
 
     private let plugin: ExternalPlugin
     private let toolId: String
@@ -23,6 +25,7 @@ final class ExternalTool: OsaurusTool, PermissionedTool, @unchecked Sendable {
         self.toolId = spec.id
 
         self.name = spec.id
+        self.pluginId = plugin.id
         self.description = spec.description
         self.parameters = spec.parameters
         self.requirements = spec.requirements ?? []

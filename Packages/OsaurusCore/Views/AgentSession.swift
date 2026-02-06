@@ -599,7 +599,16 @@ public final class AgentSession: ObservableObject {
                 PersonaManager.shared.persona(for: personaId)?.defaultModel ?? "default"
             }
 
-        let toolOverrides = PersonaManager.shared.effectiveToolOverrides(for: personaId)
+        var toolOverrides = PersonaManager.shared.effectiveToolOverrides(for: personaId)
+
+        // Disable plugin tools that duplicate built-in agent folder/git tools
+        let conflicting = ToolRegistry.shared.agentConflictingToolNames
+        if !conflicting.isEmpty {
+            if toolOverrides == nil { toolOverrides = [:] }
+            for name in conflicting {
+                toolOverrides?[name] = false
+            }
+        }
 
         return (model, systemPrompt, toolOverrides)
     }

@@ -54,6 +54,7 @@ private struct ToolGroup: Identifiable {
 
 struct CapabilitiesSelectorView: View {
     let personaId: UUID
+    var isAgentMode: Bool = false
 
     @ObservedObject private var toolRegistry = ToolRegistry.shared
     @ObservedObject private var skillManager = SkillManager.shared
@@ -66,6 +67,11 @@ struct CapabilitiesSelectorView: View {
     @State private var cachedGroups: [ToolGroup] = []
 
     @Environment(\.theme) private var theme
+
+    /// Plugin tool names that conflict with built-in agent tools (empty when not in agent mode).
+    private var agentRestrictedTools: Set<String> {
+        isAgentMode ? toolRegistry.agentConflictingToolNames : []
+    }
 
     // MARK: - Data
 
@@ -198,7 +204,9 @@ struct CapabilitiesSelectorView: View {
 
     private func enableAll() {
         if selectedTab == .tools {
-            personaManager.enableAllTools(for: personaId, tools: cachedTools.map { $0.name })
+            let restricted = agentRestrictedTools
+            let toolNames = cachedTools.map { $0.name }.filter { !restricted.contains($0) }
+            personaManager.enableAllTools(for: personaId, tools: toolNames)
         } else {
             personaManager.enableAllSkills(for: personaId, skills: skills.map { $0.name })
         }
@@ -221,7 +229,9 @@ struct CapabilitiesSelectorView: View {
     }
 
     private func enableAllInGroup(_ group: ToolGroup) {
-        personaManager.enableAllTools(for: personaId, tools: group.tools.map { $0.name })
+        let restricted = agentRestrictedTools
+        let toolNames = group.tools.map { $0.name }.filter { !restricted.contains($0) }
+        personaManager.enableAllTools(for: personaId, tools: toolNames)
     }
 
     private func disableAllInGroup(_ group: ToolGroup) {
@@ -461,8 +471,11 @@ struct CapabilitiesSelectorView: View {
                         Section {
                             if isGroupExpanded(group.id) {
                                 ForEach(group.tools) { tool in
-                                    ToolRowItem(tool: tool) { toggleTool(tool.name, enabled: tool.enabled) }
-                                        .padding(.leading, 20)
+                                    ToolRowItem(
+                                        tool: tool,
+                                        isAgentRestricted: agentRestrictedTools.contains(tool.name)
+                                    ) { toggleTool(tool.name, enabled: tool.enabled) }
+                                    .padding(.leading, 20)
                                 }
                             }
                         } header: {
@@ -623,10 +636,16 @@ private struct GroupHeader: View {
 
 private struct ToolRowItem: View {
     let tool: ToolRegistry.ToolEntry
+    var isAgentRestricted: Bool = false
     let onToggle: () -> Void
 
     @State private var isHovered = false
     @Environment(\.theme) private var theme
+
+    private var nameColor: Color {
+        if isAgentRestricted { return theme.tertiaryText }
+        return tool.enabled ? theme.primaryText : theme.secondaryText
+    }
 
     var body: some View {
         HStack(spacing: 12) {
@@ -634,12 +653,20 @@ private struct ToolRowItem: View {
                 .toggleStyle(SwitchToggleStyle(tint: theme.accentColor))
                 .scaleEffect(0.7)
                 .frame(width: 36)
+                .disabled(isAgentRestricted)
+                .opacity(isAgentRestricted ? 0.4 : 1.0)
 
             VStack(alignment: .leading, spacing: 3) {
-                Text(tool.name)
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(tool.enabled ? theme.primaryText : theme.secondaryText)
-                    .lineLimit(1)
+                HStack(spacing: 6) {
+                    Text(tool.name)
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundColor(nameColor)
+                        .lineLimit(1)
+
+                    if isAgentRestricted {
+                        chatOnlyBadge
+                    }
+                }
                 Text(tool.description)
                     .font(.system(size: 10))
                     .foregroundColor(theme.tertiaryText)
@@ -648,14 +675,21 @@ private struct ToolRowItem: View {
 
             Spacer()
 
-            tokenBadge(tool.catalogEntryTokens)
-                .help("Catalog: ~\(tool.catalogEntryTokens), Full: ~\(tool.estimatedTokens) tokens")
+            if !isAgentRestricted {
+                tokenBadge(tool.catalogEntryTokens)
+                    .help("Catalog: ~\(tool.catalogEntryTokens), Full: ~\(tool.estimatedTokens) tokens")
+            }
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 10)
         .background(rowBackground)
         .overlay(rowBorder)
         .contentShape(Rectangle())
+        .help(
+            isAgentRestricted
+                ? "Available in Chat Mode only. Agent Mode includes equivalent built-in tools."
+                : ""
+        )
         .onHover { hovering in
             withAnimation(.easeOut(duration: 0.15)) {
                 isHovered = hovering
@@ -663,12 +697,28 @@ private struct ToolRowItem: View {
         }
     }
 
+    private var chatOnlyBadge: some View {
+        Text("Chat Mode only")
+            .font(.system(size: 8, weight: .medium))
+            .foregroundColor(theme.secondaryText)
+            .padding(.horizontal, 5)
+            .padding(.vertical, 2)
+            .background(
+                Capsule()
+                    .fill(theme.secondaryBackground)
+                    .overlay(
+                        Capsule()
+                            .strokeBorder(theme.primaryBorder.opacity(0.1), lineWidth: 1)
+                    )
+            )
+    }
+
     private var rowBackground: some View {
         ZStack {
             RoundedRectangle(cornerRadius: 8, style: .continuous)
                 .fill(isHovered ? theme.secondaryBackground.opacity(0.7) : Color.clear)
 
-            if isHovered && tool.enabled {
+            if isHovered && tool.enabled && !isAgentRestricted {
                 RoundedRectangle(cornerRadius: 8, style: .continuous)
                     .fill(
                         LinearGradient(
@@ -917,7 +967,7 @@ private struct CapabilityActionButton: View {
     struct CapabilitiesSelectorView_Previews: PreviewProvider {
         struct PreviewWrapper: View {
             var body: some View {
-                CapabilitiesSelectorView(personaId: Persona.defaultId)
+                CapabilitiesSelectorView(personaId: Persona.defaultId, isAgentMode: false)
                     .padding()
                     .frame(width: 500, height: 600)
                     .background(Color.gray.opacity(0.2))
