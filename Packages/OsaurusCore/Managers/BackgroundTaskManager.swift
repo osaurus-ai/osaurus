@@ -252,9 +252,6 @@ public final class BackgroundTaskManager: ObservableObject {
         case .needsClarification:
             state.appendActivity(kind: .warning, title: "Needs input")
 
-        case .injectedUserInput:
-            state.appendActivity(kind: .info, title: "Context injected")
-
         case .retrying(let attempt, let waitSeconds):
             state.appendActivity(kind: .warning, title: "Retrying", detail: "Attempt \(attempt), wait \(waitSeconds)s")
 

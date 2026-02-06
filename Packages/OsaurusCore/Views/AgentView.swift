@@ -78,6 +78,7 @@ struct AgentView: View {
                             windowId: windowState.windowId,
                             agentInputState: session.inputState,
                             pendingQueuedMessage: session.pendingQueuedMessage,
+                            onClearQueued: { session.clearQueuedMessage() },
                             onEndTask: { session.endTask() },
                             onResume: { Task { await session.resumeSelectedIssue() } },
                             canResume: session.canResumeSelectedIssue,
@@ -90,6 +91,7 @@ struct AgentView: View {
             }
         }
         .frame(minWidth: 800, idealWidth: 950)
+        .compositingGroup()
         .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
         .overlay(alignment: .topTrailing) {
             windowControls
@@ -131,9 +133,7 @@ struct AgentView: View {
             ? [UTType(filenameExtension: "md") ?? .plainText]
             : [.plainText]
 
-        panel.begin { response in
-            guard response == .OK, let url = panel.url else { return }
-
+        if panel.runModal() == .OK, let url = panel.url {
             do {
                 try artifact.content.write(to: url, atomically: true, encoding: .utf8)
             } catch {
@@ -321,7 +321,7 @@ struct AgentView: View {
                 // Task title
                 if let task = session.currentTask {
                     Text(task.title)
-                        .font(.system(size: 13, weight: .medium))
+                        .font(theme.font(size: CGFloat(theme.bodySize), weight: .medium))
                         .foregroundColor(theme.primaryText)
                         .lineLimit(1)
                 }
@@ -380,6 +380,10 @@ struct AgentView: View {
                     noIssueSelectedView
                 }
 
+                if session.isExecuting {
+                    agentProcessingIndicator
+                }
+
                 if let error = session.errorMessage { errorView(error: error) }
                 Spacer(minLength: 0)
             }
@@ -427,11 +431,11 @@ struct AgentView: View {
     private var noIssueSelectedView: some View {
         VStack(spacing: 12) {
             Image(systemName: "hand.point.right")
-                .font(.system(size: 32))
+                .font(theme.font(size: 32, weight: .regular))
                 .foregroundColor(theme.tertiaryText)
 
             Text("Select an issue to view details")
-                .font(.system(size: 14, weight: .medium))
+                .font(theme.font(size: CGFloat(theme.bodySize) + 1, weight: .medium))
                 .foregroundColor(theme.secondaryText)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -484,7 +488,7 @@ private struct CollapsedSidebarButton: View {
                 }
 
                 Image(systemName: "sidebar.right")
-                    .font(.system(size: 12, weight: .medium))
+                    .font(theme.font(size: CGFloat(theme.captionSize), weight: .medium))
                     .foregroundColor(isHovered ? theme.accentColor : theme.tertiaryText)
             }
             .frame(width: 32, height: 32)
@@ -571,20 +575,49 @@ extension AgentView {
     private var issueEmptyDetailView: some View {
         VStack(spacing: 12) {
             Image(systemName: "doc.text.magnifyingglass")
-                .font(.system(size: 32))
+                .font(theme.font(size: 32, weight: .regular))
                 .foregroundColor(theme.tertiaryText)
 
             Text("No execution history")
-                .font(.system(size: 14, weight: .medium))
+                .font(theme.font(size: CGFloat(theme.bodySize) + 1, weight: .medium))
                 .foregroundColor(theme.secondaryText)
 
             Text("Select an issue to view its details, or run it to see live execution.")
-                .font(.system(size: 12))
+                .font(theme.font(size: CGFloat(theme.captionSize), weight: .regular))
                 .foregroundColor(theme.tertiaryText)
                 .multilineTextAlignment(.center)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .padding(.horizontal, Self.contentHorizontalPadding)
+    }
+
+    // MARK: - Processing Indicator
+
+    private var agentProcessingIndicator: some View {
+        HStack(spacing: 8) {
+            // Animated pulsing dot
+            Circle()
+                .fill(theme.accentColor)
+                .frame(width: 6, height: 6)
+                .modifier(AgentPulseModifier())
+
+            Text("Working on it...")
+                .font(theme.font(size: CGFloat(theme.captionSize), weight: .medium))
+                .foregroundColor(theme.secondaryText)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
+        .background(
+            Capsule()
+                .fill(theme.secondaryBackground.opacity(0.6))
+        )
+        .overlay(
+            Capsule()
+                .strokeBorder(theme.primaryBorder.opacity(0.2), lineWidth: 0.5)
+        )
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, Self.contentHorizontalPadding)
+        .padding(.top, 12)
     }
 
     // MARK: - Error View
@@ -599,18 +632,18 @@ extension AgentView {
                     .fill(theme.errorColor.opacity(0.15))
                     .frame(width: 40, height: 40)
                 Image(systemName: "exclamationmark.circle.fill")
-                    .font(.system(size: 20))
+                    .font(theme.font(size: 20, weight: .regular))
                     .foregroundColor(theme.errorColor)
             }
 
             // Error content
             VStack(alignment: .leading, spacing: 4) {
                 Text(friendlyError.title)
-                    .font(.system(size: 14, weight: .semibold))
+                    .font(theme.font(size: CGFloat(theme.bodySize) + 1, weight: .semibold))
                     .foregroundColor(theme.primaryText)
 
                 Text(friendlyError.message)
-                    .font(.system(size: 12))
+                    .font(theme.font(size: CGFloat(theme.captionSize), weight: .regular))
                     .foregroundColor(theme.secondaryText)
                     .lineLimit(2)
             }
@@ -629,9 +662,9 @@ extension AgentView {
                 } label: {
                     HStack(spacing: 6) {
                         Image(systemName: "arrow.clockwise")
-                            .font(.system(size: 11, weight: .semibold))
+                            .font(theme.font(size: CGFloat(theme.captionSize) - 1, weight: .semibold))
                         Text("Retry")
-                            .font(.system(size: 12, weight: .semibold))
+                            .font(theme.font(size: CGFloat(theme.captionSize), weight: .semibold))
                     }
                     .foregroundColor(.white)
                     .padding(.horizontal, 14)
@@ -650,7 +683,7 @@ extension AgentView {
                 session.failedIssue = nil
             } label: {
                 Image(systemName: "xmark")
-                    .font(.system(size: 10, weight: .semibold))
+                    .font(theme.font(size: CGFloat(theme.captionSize) - 2, weight: .semibold))
                     .foregroundColor(theme.tertiaryText)
                     .frame(width: 24, height: 24)
                     .background(Circle().fill(theme.tertiaryBackground.opacity(0.5)))
@@ -772,6 +805,16 @@ private struct ProgressSidebarResizeHandle: View {
 // MARK: - Shared Header Components
 // HeaderActionButton, ModeToggleButton, ModeIndicatorBadge are now in SharedHeaderComponents.swift
 
+// MARK: - Download Menu Target
+
+private class DownloadMenuTarget: NSObject {
+    var selectedTag: Int = -1
+
+    @objc func itemClicked(_ sender: NSMenuItem) {
+        selectedTag = sender.tag
+    }
+}
+
 // MARK: - Artifact Viewer Sheet
 
 struct ArtifactViewerSheet: View {
@@ -819,6 +862,7 @@ struct ArtifactViewerSheet: View {
             RoundedRectangle(cornerRadius: 16, style: .continuous)
                 .strokeBorder(theme.primaryBorder.opacity(0.2), lineWidth: 1)
         )
+        .compositingGroup()
         .shadow(color: theme.shadowColor.opacity(0.3), radius: 30, x: 0, y: 10)
     }
 
@@ -858,7 +902,7 @@ struct ArtifactViewerSheet: View {
                 .frame(width: 40, height: 40)
 
             Image(systemName: artifact.contentType == .markdown ? "doc.richtext" : "doc.text")
-                .font(.system(size: 18, weight: .medium))
+                .font(theme.font(size: 18, weight: .medium))
                 .foregroundColor(theme.accentColor)
         }
     }
@@ -866,11 +910,11 @@ struct ArtifactViewerSheet: View {
     private var fileInfoView: some View {
         VStack(alignment: .leading, spacing: 2) {
             Text(artifact.filename)
-                .font(.system(size: 15, weight: .semibold))
+                .font(theme.font(size: CGFloat(theme.bodySize) + 2, weight: .semibold))
                 .foregroundColor(theme.primaryText)
                 .lineLimit(1)
             Text(artifact.contentType == .markdown ? "Markdown Document" : "Text File")
-                .font(.system(size: 11))
+                .font(theme.font(size: CGFloat(theme.captionSize) - 1, weight: .regular))
                 .foregroundColor(theme.tertiaryText)
         }
     }
@@ -889,7 +933,7 @@ struct ArtifactViewerSheet: View {
             withAnimation(.easeOut(duration: 0.2)) { action() }
         } label: {
             Text(title)
-                .font(.system(size: 11, weight: isSelected ? .semibold : .medium))
+                .font(theme.font(size: CGFloat(theme.captionSize) - 1, weight: isSelected ? .semibold : .medium))
                 .foregroundColor(isSelected ? theme.primaryText : theme.tertiaryText)
                 .padding(.horizontal, 12)
                 .padding(.vertical, 6)
@@ -914,12 +958,15 @@ struct ArtifactViewerSheet: View {
             copyToClipboard()
         } label: {
             HStack(spacing: 6) {
-                Image(systemName: isCopied ? "checkmark" : "doc.on.doc").font(.system(size: 12, weight: .medium))
-                Text(isCopied ? "Copied" : "Copy").font(.system(size: 11, weight: .medium))
+                Image(systemName: isCopied ? "checkmark" : "doc.on.doc")
+                    .font(theme.font(size: CGFloat(theme.captionSize), weight: .medium))
+                Text(isCopied ? "Copied" : "Copy")
+                    .font(theme.font(size: CGFloat(theme.captionSize) - 1, weight: .medium))
             }
             .fixedSize(horizontal: true, vertical: false)
             .foregroundColor(isCopied ? theme.successColor : (isHoveringCopy ? theme.primaryText : theme.secondaryText))
-            .padding(.horizontal, 10).padding(.vertical, 7)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 7)
             .background(
                 RoundedRectangle(cornerRadius: 8, style: .continuous)
                     .fill(
@@ -933,49 +980,93 @@ struct ArtifactViewerSheet: View {
                     .strokeBorder(theme.primaryBorder.opacity(isHoveringCopy ? 0.2 : 0.1), lineWidth: 1)
             )
         }
-        .buttonStyle(.plain).fixedSize()
+        .buttonStyle(.plain)
+        .fixedSize()
         .help("Copy content to clipboard")
         .onHover { isHoveringCopy = $0 }
         .animation(.easeOut(duration: 0.15), value: isHoveringCopy)
         .animation(.easeOut(duration: 0.2), value: isCopied)
     }
 
+    @ViewBuilder
     private var downloadButton: some View {
-        Menu {
-            Button {
-                onDownload()
-            } label: {
-                Label("Save as Markdown", systemImage: "doc.text")
-            }
-            if artifact.contentType == .markdown {
+        if artifact.contentType == .markdown {
+            // Markdown: primary save + PDF export option
+            HStack(spacing: 0) {
                 Button {
-                    exportAsPDF()
+                    onDownload()
                 } label: {
-                    Label("Export as PDF", systemImage: "doc.richtext")
+                    HStack(spacing: 6) {
+                        Image(systemName: "arrow.down.to.line")
+                            .font(theme.font(size: CGFloat(theme.captionSize), weight: .medium))
+                        Text("Download")
+                            .font(theme.font(size: CGFloat(theme.captionSize) - 1, weight: .medium))
+                    }
+                    .foregroundColor(isHoveringDownload ? theme.primaryText : theme.secondaryText)
+                    .padding(.leading, 10)
+                    .padding(.trailing, 6)
+                    .padding(.vertical, 7)
                 }
+                .buttonStyle(.plain)
+
+                Divider()
+                    .frame(height: 16)
+                    .opacity(0.3)
+
+                Button {
+                    showDownloadMenu()
+                } label: {
+                    Image(systemName: "chevron.down")
+                        .font(theme.font(size: CGFloat(theme.captionSize) - 4, weight: .bold))
+                        .foregroundColor(isHoveringDownload ? theme.primaryText : theme.secondaryText)
+                        .padding(.leading, 2)
+                        .padding(.trailing, 8)
+                        .padding(.vertical, 7)
+                }
+                .buttonStyle(.plain)
             }
-        } label: {
-            HStack(spacing: 6) {
-                Image(systemName: "arrow.down.to.line").font(.system(size: 12, weight: .medium))
-                Text("Download").font(.system(size: 11, weight: .medium))
-                Image(systemName: "chevron.down").font(.system(size: 8, weight: .bold))
-            }
-            .fixedSize(horizontal: true, vertical: false)
-            .foregroundColor(isHoveringDownload ? .white : theme.accentColor)
-            .padding(.horizontal, 10).padding(.vertical, 7)
             .background(
                 RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .fill(isHoveringDownload ? theme.accentColor : theme.accentColor.opacity(0.12))
+                    .fill(theme.tertiaryBackground.opacity(isHoveringDownload ? 0.8 : 0.5))
             )
             .overlay(
                 RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .strokeBorder(theme.accentColor.opacity(0.2), lineWidth: 1)
+                    .strokeBorder(theme.primaryBorder.opacity(isHoveringDownload ? 0.2 : 0.1), lineWidth: 1)
             )
+            .fixedSize()
+            .help("Download as Markdown or PDF")
+            .onHover { isHoveringDownload = $0 }
+            .animation(.easeOut(duration: 0.15), value: isHoveringDownload)
+        } else {
+            // Plain text: single download button
+            Button {
+                onDownload()
+            } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: "arrow.down.to.line")
+                        .font(theme.font(size: CGFloat(theme.captionSize), weight: .medium))
+                    Text("Download")
+                        .font(theme.font(size: CGFloat(theme.captionSize) - 1, weight: .medium))
+                }
+                .fixedSize(horizontal: true, vertical: false)
+                .foregroundColor(isHoveringDownload ? theme.primaryText : theme.secondaryText)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 7)
+                .background(
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .fill(theme.tertiaryBackground.opacity(isHoveringDownload ? 0.8 : 0.5))
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .strokeBorder(theme.primaryBorder.opacity(isHoveringDownload ? 0.2 : 0.1), lineWidth: 1)
+                )
+            }
+            .buttonStyle(.plain)
+            .fixedSize()
+            .help("Download")
+            .onHover { isHoveringDownload = $0 }
+            .animation(.easeOut(duration: 0.15), value: isHoveringDownload)
         }
-        .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
-        .help("Download as Markdown or PDF")
-        .onHover { isHoveringDownload = $0 }
-        .animation(.easeOut(duration: 0.15), value: isHoveringDownload)
     }
 
     private var closeButton: some View {
@@ -983,7 +1074,7 @@ struct ArtifactViewerSheet: View {
             onDismiss()
         } label: {
             Image(systemName: "xmark")
-                .font(.system(size: 12, weight: .semibold))
+                .font(theme.font(size: CGFloat(theme.captionSize), weight: .semibold))
                 .foregroundColor(theme.tertiaryText)
                 .frame(width: 32, height: 32)
                 .background(Circle().fill(theme.tertiaryBackground.opacity(0.5)))
@@ -999,7 +1090,7 @@ struct ArtifactViewerSheet: View {
             VStack(alignment: .trailing, spacing: 0) {
                 ForEach(Array(lines.enumerated()), id: \.offset) { index, _ in
                     Text("\(index + 1)")
-                        .font(.system(size: 12, design: .monospaced))
+                        .font(.system(size: CGFloat(theme.captionSize), design: .monospaced))
                         .foregroundColor(theme.tertiaryText.opacity(0.5))
                         .frame(height: 20)
                 }
@@ -1014,7 +1105,7 @@ struct ArtifactViewerSheet: View {
                 VStack(alignment: .leading, spacing: 0) {
                     ForEach(Array(lines.enumerated()), id: \.offset) { _, line in
                         Text(line.isEmpty ? " " : line)
-                            .font(.system(size: 12, design: .monospaced))
+                            .font(.system(size: CGFloat(theme.captionSize), design: .monospaced))
                             .foregroundColor(theme.primaryText.opacity(0.9))
                             .frame(height: 20, alignment: .leading)
                             .fixedSize(horizontal: true, vertical: false)
@@ -1043,6 +1134,43 @@ struct ArtifactViewerSheet: View {
         }
     }
 
+    private func showDownloadMenu() {
+        let menu = NSMenu()
+        let target = DownloadMenuTarget()
+
+        let markdownItem = NSMenuItem(
+            title: "Save as Markdown",
+            action: #selector(DownloadMenuTarget.itemClicked(_:)),
+            keyEquivalent: ""
+        )
+        markdownItem.target = target
+        markdownItem.tag = 0
+        markdownItem.image = NSImage(systemSymbolName: "doc.text", accessibilityDescription: nil)
+        menu.addItem(markdownItem)
+
+        let pdfItem = NSMenuItem(
+            title: "Export as PDF",
+            action: #selector(DownloadMenuTarget.itemClicked(_:)),
+            keyEquivalent: ""
+        )
+        pdfItem.target = target
+        pdfItem.tag = 1
+        pdfItem.image = NSImage(systemSymbolName: "doc.richtext", accessibilityDescription: nil)
+        menu.addItem(pdfItem)
+
+        guard let event = NSApp.currentEvent,
+            let contentView = event.window?.contentView
+        else { return }
+        let locationInView = contentView.convert(event.locationInWindow, from: nil)
+        menu.popUp(positioning: nil, at: locationInView, in: contentView)
+
+        switch target.selectedTag {
+        case 0: onDownload()
+        case 1: exportAsPDF()
+        default: break
+        }
+    }
+
     private func exportAsPDF() {
         // Create save panel
         let panel = NSSavePanel()
@@ -1050,10 +1178,7 @@ struct ArtifactViewerSheet: View {
         panel.nameFieldStringValue = "\(baseName).pdf"
         panel.allowedContentTypes = [.pdf]
 
-        panel.begin { response in
-            guard response == .OK, let url = panel.url else { return }
-
-            // Generate PDF from markdown
+        if panel.runModal() == .OK, let url = panel.url {
             generatePDF(to: url)
         }
     }
@@ -1451,5 +1576,24 @@ struct ArtifactViewerSheet: View {
         }
 
         return result
+    }
+}
+
+// MARK: - Agent Pulse Modifier
+
+private struct AgentPulseModifier: ViewModifier {
+    @State private var isPulsing = false
+
+    func body(content: Content) -> some View {
+        content
+            .scaleEffect(isPulsing ? 1.4 : 1.0)
+            .opacity(isPulsing ? 0.4 : 1.0)
+            .animation(
+                .easeInOut(duration: 0.9).repeatForever(autoreverses: true),
+                value: isPulsing
+            )
+            .onAppear {
+                isPulsing = true
+            }
     }
 }

@@ -26,9 +26,6 @@ public actor AgentEngine {
     /// Error states by issue ID
     private var errorStates: [String: IssueErrorState] = [:]
 
-    /// Pending user inputs by issue ID (for mid-execution injection)
-    private var pendingInputs: [String: [String]] = [:]
-
     /// Retry configuration
     private var retryConfig = RetryConfiguration.default
 
@@ -52,28 +49,6 @@ public actor AgentEngine {
     /// Clears the error state for an issue
     public func clearErrorState(for issueId: String) {
         errorStates.removeValue(forKey: issueId)
-    }
-
-    // MARK: - User Input Queue
-
-    /// Queue user input for injection at next step boundary
-    public func queueInput(issueId: String, message: String) async {
-        if pendingInputs[issueId] == nil {
-            pendingInputs[issueId] = []
-        }
-        pendingInputs[issueId]?.append(message)
-    }
-
-    /// Consume and clear pending inputs for an issue
-    private func consumePendingInputs(for issueId: String) -> [String] {
-        let inputs = pendingInputs[issueId] ?? []
-        pendingInputs[issueId] = []
-        return inputs
-    }
-
-    /// Clear pending inputs for an issue (e.g., on cancel)
-    private func clearPendingInputs(for issueId: String) {
-        pendingInputs.removeValue(forKey: issueId)
     }
 
     // MARK: - Delegate
@@ -219,9 +194,6 @@ public actor AgentEngine {
 
     /// Cancels the current execution
     public func cancel() async {
-        if let issueId = currentIssueId {
-            clearPendingInputs(for: issueId)
-        }
         isExecuting = false
         currentIssueId = nil
         awaitingClarification = nil
@@ -417,14 +389,6 @@ public actor AgentEngine {
                     )
                 )
                 self.delegate?.agentEngine(self, didGenerateArtifact: artifact, forIssue: issue)
-            },
-            getPendingInputs: { [weak self] in
-                guard let self = self else { return [] }
-                return await self.consumePendingInputs(for: issue.id)
-            },
-            onInputInjected: { [weak self] input in
-                guard let self = self else { return }
-                self.delegate?.agentEngine(self, didInjectUserInput: input, forIssue: issue)
             },
             onTokensConsumed: { [weak self] inputTokens, outputTokens in
                 guard let self = self else { return }
@@ -703,9 +667,6 @@ public protocol AgentEngineDelegate: AnyObject {
     // Token consumption
     func agentEngine(_ engine: AgentEngine, didConsumeTokens input: Int, output: Int, forIssue issue: Issue)
 
-    // User input injection
-    func agentEngine(_ engine: AgentEngine, didInjectUserInput input: String, forIssue issue: Issue)
-
     // Retry
     func agentEngine(_ engine: AgentEngine, willRetryIssue issue: Issue, attempt: Int, afterDelay: TimeInterval)
 
@@ -741,9 +702,6 @@ extension AgentEngineDelegate {
 
     // Token consumption
     public func agentEngine(_ engine: AgentEngine, didConsumeTokens input: Int, output: Int, forIssue issue: Issue) {}
-
-    // User input injection
-    public func agentEngine(_ engine: AgentEngine, didInjectUserInput input: String, forIssue issue: Issue) {}
 
     // Retry
     public func agentEngine(_ engine: AgentEngine, willRetryIssue issue: Issue, attempt: Int, afterDelay: TimeInterval)

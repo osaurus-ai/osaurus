@@ -32,8 +32,10 @@ struct FloatingInputCard: View {
     var windowId: UUID? = nil
     /// Agent input state (nil = chat mode, non-nil = agent mode)
     var agentInputState: AgentInputState? = nil
-    /// Queued message waiting to be injected (agent mode)
+    /// Queued message waiting to be sent after execution (agent mode)
     var pendingQueuedMessage: String? = nil
+    /// Callback to clear/dismiss the queued message (agent mode)
+    var onClearQueued: (() -> Void)? = nil
     /// Callback to end the current task (agent mode)
     var onEndTask: (() -> Void)? = nil
     /// Callback to resume an in-progress issue (agent mode)
@@ -99,7 +101,7 @@ struct FloatingInputCard: View {
         let hasImages = !pendingImages.isEmpty
         let hasContent = hasText || hasImages
 
-        // In agent mode, allow sending during streaming (will queue)
+        // In agent mode, allow sending during streaming (will queue for after completion)
         // but only if there isn't already a queued message
         if agentInputState != nil && isStreaming {
             return hasContent && pendingQueuedMessage == nil
@@ -634,7 +636,7 @@ struct FloatingInputCard: View {
                     .foregroundColor(theme.accentColor)
 
                 Text("used")
-                    .font(.system(size: CGFloat(theme.captionSize) - 1, weight: .regular))
+                    .font(theme.font(size: CGFloat(theme.captionSize) - 1, weight: .regular))
                     .foregroundColor(theme.tertiaryText.opacity(0.7))
             }
             .help("Total tokens consumed: \(cumulative) (input + output across all API calls)")
@@ -652,7 +654,7 @@ struct FloatingInputCard: View {
                 }
 
                 Text("tokens")
-                    .font(.system(size: CGFloat(theme.captionSize) - 1, weight: .regular))
+                    .font(theme.font(size: CGFloat(theme.captionSize) - 1, weight: .regular))
                     .foregroundColor(theme.tertiaryText.opacity(0.7))
             }
             .help(
@@ -868,7 +870,7 @@ struct FloatingInputCard: View {
                     folderContextService.clearFolder()
                 } label: {
                     Image(systemName: "xmark")
-                        .font(.system(size: 8, weight: .bold))
+                        .font(theme.font(size: CGFloat(theme.captionSize) - 4, weight: .bold))
                         .foregroundColor(theme.tertiaryText)
                         .frame(width: 16, height: 16)
                         .background(Circle().fill(theme.secondaryBackground.opacity(0.8)))
@@ -945,6 +947,13 @@ struct FloatingInputCard: View {
 
     private var inputCard: some View {
         VStack(alignment: .leading, spacing: 0) {
+            // Queued message banner (agent mode, when message is queued)
+            if let queuedMessage = pendingQueuedMessage {
+                queuedMessageBanner(message: queuedMessage)
+                    .padding(.horizontal, 12)
+                    .padding(.top, 10)
+            }
+
             // Inline pending images (compact, inside the card)
             if !pendingImages.isEmpty {
                 inlinePendingImagesPreview
@@ -970,6 +979,7 @@ struct FloatingInputCard: View {
             RoundedRectangle(cornerRadius: 20, style: .continuous)
                 .strokeBorder(effectiveBorderStyle, lineWidth: isDragOver ? 2 : (isFocused ? 1.5 : 0.5))
         )
+        .compositingGroup()
         .shadow(
             color: shadowColor,
             radius: isFocused ? 24 : 12,
@@ -1047,7 +1057,7 @@ struct FloatingInputCard: View {
             case .executing:
                 return pendingQueuedMessage != nil
                     ? "Message queued..."
-                    : "Add context while it runs..."
+                    : "Queue a follow-up message..."
             case .idle:
                 return "What's next?"
             }
@@ -1073,7 +1083,7 @@ struct FloatingInputCard: View {
             // Placeholder - uses theme body size
             if showPlaceholder {
                 Text(placeholderText)
-                    .font(.system(size: inputFontSize))
+                    .font(theme.font(size: inputFontSize, weight: .regular))
                     .foregroundColor(theme.placeholderText)
                     .padding(.leading, 6)
                     .padding(.top, 2)
@@ -1111,11 +1121,6 @@ struct FloatingInputCard: View {
 
             Spacer()
 
-            // Queued message indicator (agent mode only)
-            if pendingQueuedMessage != nil {
-                queuedIndicator
-            }
-
             // Right side - Stop/Resume/End button + Send button
             HStack(spacing: 8) {
                 if isStreaming {
@@ -1133,18 +1138,45 @@ struct FloatingInputCard: View {
 
     // MARK: - Action Buttons
 
-    private var queuedIndicator: some View {
-        HStack(spacing: 4) {
+    /// Queued message banner showing the message text with a dismiss button
+    private func queuedMessageBanner(message: String) -> some View {
+        HStack(spacing: 8) {
             Image(systemName: "clock")
-                .font(.system(size: 10))
+                .font(theme.font(size: CGFloat(theme.captionSize) - 1, weight: .medium))
+                .foregroundColor(theme.accentColor)
+
             Text("Queued")
-                .font(.system(size: 10, weight: .medium))
+                .font(theme.font(size: CGFloat(theme.captionSize) - 1, weight: .semibold))
+                .foregroundColor(theme.accentColor)
+
+            Text(message)
+                .font(theme.font(size: CGFloat(theme.captionSize), weight: .regular))
+                .foregroundColor(theme.secondaryText)
+                .lineLimit(2)
+
+            Spacer()
+
+            Button {
+                onClearQueued?()
+            } label: {
+                Image(systemName: "xmark")
+                    .font(theme.font(size: CGFloat(theme.captionSize) - 2, weight: .semibold))
+                    .foregroundColor(theme.tertiaryText)
+                    .frame(width: 20, height: 20)
+                    .background(theme.tertiaryBackground.opacity(0.5))
+                    .clipShape(Circle())
+            }
+            .buttonStyle(.plain)
+            .help("Clear queued message")
         }
-        .foregroundColor(theme.accentColor)
-        .padding(.horizontal, 8)
-        .padding(.vertical, 4)
-        .background(theme.accentColor.opacity(0.1))
-        .clipShape(Capsule())
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(theme.accentColor.opacity(0.06))
+        .overlay(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .strokeBorder(theme.primaryBorder.opacity(0.15), lineWidth: 0.5)
+        )
+        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
     }
 
     private var mediaButton: some View {
@@ -1270,7 +1302,7 @@ struct CachedImageThumbnail: View {
             // Remove button
             Button(action: onRemove) {
                 Image(systemName: "xmark.circle.fill")
-                    .font(.system(size: 16))
+                    .font(theme.font(size: 16, weight: .regular))
                     .foregroundColor(.white)
                     .background(
                         Circle()
@@ -1506,7 +1538,7 @@ private struct InputActionButton: View {
                 }
 
                 Image(systemName: icon)
-                    .font(.system(size: 13, weight: .medium))
+                    .font(theme.font(size: CGFloat(theme.bodySize), weight: .medium))
                     .foregroundColor(isHovered ? theme.accentColor : theme.secondaryText)
             }
             .frame(width: 32, height: 32)
@@ -1574,7 +1606,7 @@ private struct SendButton: View {
                 }
 
                 Image(systemName: "arrow.up")
-                    .font(.system(size: 14, weight: .semibold))
+                    .font(theme.font(size: CGFloat(theme.bodySize) + 1, weight: .semibold))
                     .foregroundColor(.white)
             }
             .frame(width: 32, height: 32)
@@ -1627,7 +1659,7 @@ private struct StopButton: View {
                     .fill(.white)
                     .frame(width: 8, height: 8)
                 Text("Stop")
-                    .font(.system(size: 11, weight: .medium))
+                    .font(theme.font(size: CGFloat(theme.captionSize) - 1, weight: .medium))
             }
             .foregroundColor(.white)
             .padding(.horizontal, 12)
@@ -1677,9 +1709,9 @@ private struct ResumeButton: View {
         Button(action: action) {
             HStack(spacing: 4) {
                 Image(systemName: "play.fill")
-                    .font(.system(size: 9, weight: .bold))
+                    .font(theme.font(size: CGFloat(theme.captionSize) - 3, weight: .bold))
                 Text("Resume")
-                    .font(.system(size: 11, weight: .medium))
+                    .font(theme.font(size: CGFloat(theme.captionSize) - 1, weight: .medium))
             }
             .foregroundColor(.white)
             .padding(.horizontal, 12)
@@ -1735,9 +1767,9 @@ private struct EndTaskButton: View {
         Button(action: action) {
             HStack(spacing: 4) {
                 Image(systemName: "checkmark")
-                    .font(.system(size: 9, weight: .bold))
+                    .font(theme.font(size: CGFloat(theme.captionSize) - 3, weight: .bold))
                 Text("Done")
-                    .font(.system(size: 11, weight: .medium))
+                    .font(theme.font(size: CGFloat(theme.captionSize) - 1, weight: .medium))
             }
             .foregroundColor(isHovered ? theme.primaryText : theme.secondaryText)
             .padding(.horizontal, 12)

@@ -79,6 +79,7 @@ struct IssueTrackerPanel: View {
         .background(panelBackground)
         .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
         .overlay(panelBorder)
+        .compositingGroup()
         .shadow(color: theme.shadowColor.opacity(theme.shadowOpacity * 0.5), radius: 8, x: 0, y: 2)
     }
 
