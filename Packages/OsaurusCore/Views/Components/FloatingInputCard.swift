@@ -32,8 +32,10 @@ struct FloatingInputCard: View {
     var windowId: UUID? = nil
     /// Agent input state (nil = chat mode, non-nil = agent mode)
     var agentInputState: AgentInputState? = nil
-    /// Queued message waiting to be injected (agent mode)
+    /// Queued message waiting to be sent after execution (agent mode)
     var pendingQueuedMessage: String? = nil
+    /// Callback to clear/dismiss the queued message (agent mode)
+    var onClearQueued: (() -> Void)? = nil
     /// Callback to end the current task (agent mode)
     var onEndTask: (() -> Void)? = nil
     /// Callback to resume an in-progress issue (agent mode)
@@ -99,7 +101,7 @@ struct FloatingInputCard: View {
         let hasImages = !pendingImages.isEmpty
         let hasContent = hasText || hasImages
 
-        // In agent mode, allow sending during streaming (will queue)
+        // In agent mode, allow sending during streaming (will queue for after completion)
         // but only if there isn't already a queued message
         if agentInputState != nil && isStreaming {
             return hasContent && pendingQueuedMessage == nil
@@ -945,6 +947,13 @@ struct FloatingInputCard: View {
 
     private var inputCard: some View {
         VStack(alignment: .leading, spacing: 0) {
+            // Queued message banner (agent mode, when message is queued)
+            if let queuedMessage = pendingQueuedMessage {
+                queuedMessageBanner(message: queuedMessage)
+                    .padding(.horizontal, 12)
+                    .padding(.top, 10)
+            }
+
             // Inline pending images (compact, inside the card)
             if !pendingImages.isEmpty {
                 inlinePendingImagesPreview
@@ -1047,7 +1056,7 @@ struct FloatingInputCard: View {
             case .executing:
                 return pendingQueuedMessage != nil
                     ? "Message queued..."
-                    : "Add context while it runs..."
+                    : "Queue a follow-up message..."
             case .idle:
                 return "What's next?"
             }
@@ -1111,11 +1120,6 @@ struct FloatingInputCard: View {
 
             Spacer()
 
-            // Queued message indicator (agent mode only)
-            if pendingQueuedMessage != nil {
-                queuedIndicator
-            }
-
             // Right side - Stop/Resume/End button + Send button
             HStack(spacing: 8) {
                 if isStreaming {
@@ -1133,18 +1137,34 @@ struct FloatingInputCard: View {
 
     // MARK: - Action Buttons
 
-    private var queuedIndicator: some View {
-        HStack(spacing: 4) {
+    /// Queued message banner showing the message text with a dismiss button
+    private func queuedMessageBanner(message: String) -> some View {
+        HStack(spacing: 8) {
             Image(systemName: "clock")
-                .font(.system(size: 10))
-            Text("Queued")
-                .font(.system(size: 10, weight: .medium))
+                .font(.system(size: 11))
+                .foregroundColor(theme.accentColor)
+            Text(message)
+                .font(.system(size: 12))
+                .foregroundColor(theme.primaryText)
+                .lineLimit(2)
+            Spacer()
+            Button {
+                onClearQueued?()
+            } label: {
+                Image(systemName: "xmark")
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundColor(theme.tertiaryText)
+                    .frame(width: 18, height: 18)
+                    .background(theme.tertiaryText.opacity(0.1))
+                    .clipShape(Circle())
+            }
+            .buttonStyle(.plain)
+            .help("Clear queued message")
         }
-        .foregroundColor(theme.accentColor)
-        .padding(.horizontal, 8)
-        .padding(.vertical, 4)
-        .background(theme.accentColor.opacity(0.1))
-        .clipShape(Capsule())
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .background(theme.accentColor.opacity(0.08))
+        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
     }
 
     private var mediaButton: some View {

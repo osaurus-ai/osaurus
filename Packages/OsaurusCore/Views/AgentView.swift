@@ -78,6 +78,7 @@ struct AgentView: View {
                             windowId: windowState.windowId,
                             agentInputState: session.inputState,
                             pendingQueuedMessage: session.pendingQueuedMessage,
+                            onClearQueued: { session.clearQueuedMessage() },
                             onEndTask: { session.endTask() },
                             onResume: { Task { await session.resumeSelectedIssue() } },
                             canResume: session.canResumeSelectedIssue,
@@ -380,6 +381,10 @@ struct AgentView: View {
                     noIssueSelectedView
                 }
 
+                if session.isExecuting {
+                    agentProcessingIndicator
+                }
+
                 if let error = session.errorMessage { errorView(error: error) }
                 Spacer(minLength: 0)
             }
@@ -585,6 +590,21 @@ extension AgentView {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .padding(.horizontal, Self.contentHorizontalPadding)
+    }
+
+    // MARK: - Processing Indicator
+
+    private var agentProcessingIndicator: some View {
+        HStack(spacing: 8) {
+            ProgressView()
+                .controlSize(.small)
+            Text("Working on it...")
+                .font(.system(size: 12, weight: .medium))
+                .foregroundColor(theme.secondaryText)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, Self.contentHorizontalPadding)
+        .padding(.top, 12)
     }
 
     // MARK: - Error View

@@ -143,12 +143,6 @@ public actor AgentExecutionEngine {
     /// Callback type for iteration start (iteration number)
     public typealias IterationStartCallback = @MainActor @Sendable (Int) async -> Void
 
-    /// Callback type for getting pending user inputs (returns inputs to inject, empty array if none)
-    public typealias GetPendingInputsCallback = @MainActor @Sendable () async -> [String]
-
-    /// Callback type for notifying when user input was injected
-    public typealias InputInjectedCallback = @MainActor @Sendable (String) async -> Void
-
     /// Callback type for token consumption (inputTokens, outputTokens)
     public typealias TokenConsumptionCallback = @MainActor @Sendable (Int, Int) async -> Void
 
@@ -174,8 +168,6 @@ public actor AgentExecutionEngine {
     ///   - onToolCall: Callback when a tool is called (toolName, args, result)
     ///   - onStatusUpdate: Callback for status messages
     ///   - onArtifact: Callback when an artifact is generated (via generate_artifact tool)
-    ///   - getPendingInputs: Callback to get pending user inputs to inject
-    ///   - onInputInjected: Callback when user input was injected
     ///   - onTokensConsumed: Callback with estimated token consumption per iteration
     /// - Returns: The result of the loop execution
     func executeLoop(
@@ -191,8 +183,6 @@ public actor AgentExecutionEngine {
         onToolCall: @escaping ToolCallCallback,
         onStatusUpdate: @escaping StatusCallback,
         onArtifact: @escaping ArtifactCallback,
-        getPendingInputs: @escaping GetPendingInputsCallback,
-        onInputInjected: @escaping InputInjectedCallback,
         onTokensConsumed: @escaping TokenConsumptionCallback
     ) async throws -> LoopResult {
         var iteration = 0
@@ -205,13 +195,6 @@ public actor AgentExecutionEngine {
             try Task.checkCancellation()
 
             await onIterationStart(iteration)
-
-            // Check for pending user inputs to inject
-            let pendingInputs = await getPendingInputs()
-            for input in pendingInputs {
-                messages.append(ChatMessage(role: "user", content: "[User Context]: \(input)"))
-                await onInputInjected(input)
-            }
 
             await onStatusUpdate("Iteration \(iteration)")
 
