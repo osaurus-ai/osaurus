@@ -174,7 +174,7 @@ struct ContentBlockView: View, Equatable {
                         RoundedRectangle(cornerRadius: 8, style: .continuous)
                             .strokeBorder(theme.primaryBorder.opacity(0.2), lineWidth: 1)
                     )
-                    .shadow(color: .black.opacity(0.1), radius: 4, x: 0, y: 2)
+                    .shadow(color: theme.shadowColor.opacity(0.1), radius: 4, x: 0, y: 2)
                     .padding(.top, 6)
                     .padding(.bottom, isLastInTurn ? 16 : 6)
             }

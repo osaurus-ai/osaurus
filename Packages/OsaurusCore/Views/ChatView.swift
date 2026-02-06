@@ -1525,6 +1525,7 @@ struct ChatView: View {
             idealHeight: session.turns.isEmpty ? 610 : 760,
             maxHeight: .infinity
         )
+        .compositingGroup()
         .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
         .overlay(alignment: .topTrailing) {
             windowControls

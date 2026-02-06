@@ -258,7 +258,7 @@ struct LightTheme: ThemeProtocol {
     }
 
     // Shadows - Warm and soft
-    let shadowColor = Color(hex: "1a1a18")
+    let shadowColor = Color(hex: "8e8e93")
     let shadowOpacity: Double = 0.08
 
     let isDark = false

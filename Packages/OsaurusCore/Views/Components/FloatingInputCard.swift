@@ -979,6 +979,7 @@ struct FloatingInputCard: View {
             RoundedRectangle(cornerRadius: 20, style: .continuous)
                 .strokeBorder(effectiveBorderStyle, lineWidth: isDragOver ? 2 : (isFocused ? 1.5 : 0.5))
         )
+        .compositingGroup()
         .shadow(
             color: shadowColor,
             radius: isFocused ? 24 : 12,

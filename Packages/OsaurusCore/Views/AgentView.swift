@@ -91,6 +91,7 @@ struct AgentView: View {
             }
         }
         .frame(minWidth: 800, idealWidth: 950)
+        .compositingGroup()
         .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
         .overlay(alignment: .topTrailing) {
             windowControls
@@ -132,9 +133,7 @@ struct AgentView: View {
             ? [UTType(filenameExtension: "md") ?? .plainText]
             : [.plainText]
 
-        panel.begin { response in
-            guard response == .OK, let url = panel.url else { return }
-
+        if panel.runModal() == .OK, let url = panel.url {
             do {
                 try artifact.content.write(to: url, atomically: true, encoding: .utf8)
             } catch {
@@ -806,6 +805,16 @@ private struct ProgressSidebarResizeHandle: View {
 // MARK: - Shared Header Components
 // HeaderActionButton, ModeToggleButton, ModeIndicatorBadge are now in SharedHeaderComponents.swift
 
+// MARK: - Download Menu Target
+
+private class DownloadMenuTarget: NSObject {
+    var selectedTag: Int = -1
+
+    @objc func itemClicked(_ sender: NSMenuItem) {
+        selectedTag = sender.tag
+    }
+}
+
 // MARK: - Artifact Viewer Sheet
 
 struct ArtifactViewerSheet: View {
@@ -853,6 +862,7 @@ struct ArtifactViewerSheet: View {
             RoundedRectangle(cornerRadius: 16, style: .continuous)
                 .strokeBorder(theme.primaryBorder.opacity(0.2), lineWidth: 1)
         )
+        .compositingGroup()
         .shadow(color: theme.shadowColor.opacity(0.3), radius: 30, x: 0, y: 10)
     }
 
@@ -978,48 +988,85 @@ struct ArtifactViewerSheet: View {
         .animation(.easeOut(duration: 0.2), value: isCopied)
     }
 
+    @ViewBuilder
     private var downloadButton: some View {
-        Menu {
-            Button {
-                onDownload()
-            } label: {
-                Label("Save as Markdown", systemImage: "doc.text")
-            }
-            if artifact.contentType == .markdown {
+        if artifact.contentType == .markdown {
+            // Markdown: primary save + PDF export option
+            HStack(spacing: 0) {
                 Button {
-                    exportAsPDF()
+                    onDownload()
                 } label: {
-                    Label("Export as PDF", systemImage: "doc.richtext")
+                    HStack(spacing: 6) {
+                        Image(systemName: "arrow.down.to.line")
+                            .font(theme.font(size: CGFloat(theme.captionSize), weight: .medium))
+                        Text("Download")
+                            .font(theme.font(size: CGFloat(theme.captionSize) - 1, weight: .medium))
+                    }
+                    .foregroundColor(isHoveringDownload ? theme.primaryText : theme.secondaryText)
+                    .padding(.leading, 10)
+                    .padding(.trailing, 6)
+                    .padding(.vertical, 7)
                 }
+                .buttonStyle(.plain)
+
+                Divider()
+                    .frame(height: 16)
+                    .opacity(0.3)
+
+                Button {
+                    showDownloadMenu()
+                } label: {
+                    Image(systemName: "chevron.down")
+                        .font(theme.font(size: CGFloat(theme.captionSize) - 4, weight: .bold))
+                        .foregroundColor(isHoveringDownload ? theme.primaryText : theme.secondaryText)
+                        .padding(.leading, 2)
+                        .padding(.trailing, 8)
+                        .padding(.vertical, 7)
+                }
+                .buttonStyle(.plain)
             }
-        } label: {
-            HStack(spacing: 6) {
-                Image(systemName: "arrow.down.to.line")
-                    .font(theme.font(size: CGFloat(theme.captionSize), weight: .medium))
-                Text("Download")
-                    .font(theme.font(size: CGFloat(theme.captionSize) - 1, weight: .medium))
-                Image(systemName: "chevron.down")
-                    .font(theme.font(size: CGFloat(theme.captionSize) - 4, weight: .bold))
-            }
-            .fixedSize(horizontal: true, vertical: false)
-            .foregroundColor(isHoveringDownload ? .white : theme.secondaryText)
-            .padding(.horizontal, 10)
-            .padding(.vertical, 7)
             .background(
                 RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .fill(isHoveringDownload ? theme.accentColor : theme.tertiaryBackground.opacity(0.6))
+                    .fill(theme.tertiaryBackground.opacity(isHoveringDownload ? 0.8 : 0.5))
             )
             .overlay(
                 RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .strokeBorder(theme.primaryBorder.opacity(isHoveringDownload ? 0.2 : 0.15), lineWidth: 1)
+                    .strokeBorder(theme.primaryBorder.opacity(isHoveringDownload ? 0.2 : 0.1), lineWidth: 1)
             )
+            .fixedSize()
+            .help("Download as Markdown or PDF")
+            .onHover { isHoveringDownload = $0 }
+            .animation(.easeOut(duration: 0.15), value: isHoveringDownload)
+        } else {
+            // Plain text: single download button
+            Button {
+                onDownload()
+            } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: "arrow.down.to.line")
+                        .font(theme.font(size: CGFloat(theme.captionSize), weight: .medium))
+                    Text("Download")
+                        .font(theme.font(size: CGFloat(theme.captionSize) - 1, weight: .medium))
+                }
+                .fixedSize(horizontal: true, vertical: false)
+                .foregroundColor(isHoveringDownload ? theme.primaryText : theme.secondaryText)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 7)
+                .background(
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .fill(theme.tertiaryBackground.opacity(isHoveringDownload ? 0.8 : 0.5))
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .strokeBorder(theme.primaryBorder.opacity(isHoveringDownload ? 0.2 : 0.1), lineWidth: 1)
+                )
+            }
+            .buttonStyle(.plain)
+            .fixedSize()
+            .help("Download")
+            .onHover { isHoveringDownload = $0 }
+            .animation(.easeOut(duration: 0.15), value: isHoveringDownload)
         }
-        .menuStyle(.borderlessButton)
-        .menuIndicator(.hidden)
-        .fixedSize()
-        .help("Download as Markdown or PDF")
-        .onHover { isHoveringDownload = $0 }
-        .animation(.easeOut(duration: 0.15), value: isHoveringDownload)
     }
 
     private var closeButton: some View {
@@ -1087,6 +1134,43 @@ struct ArtifactViewerSheet: View {
         }
     }
 
+    private func showDownloadMenu() {
+        let menu = NSMenu()
+        let target = DownloadMenuTarget()
+
+        let markdownItem = NSMenuItem(
+            title: "Save as Markdown",
+            action: #selector(DownloadMenuTarget.itemClicked(_:)),
+            keyEquivalent: ""
+        )
+        markdownItem.target = target
+        markdownItem.tag = 0
+        markdownItem.image = NSImage(systemSymbolName: "doc.text", accessibilityDescription: nil)
+        menu.addItem(markdownItem)
+
+        let pdfItem = NSMenuItem(
+            title: "Export as PDF",
+            action: #selector(DownloadMenuTarget.itemClicked(_:)),
+            keyEquivalent: ""
+        )
+        pdfItem.target = target
+        pdfItem.tag = 1
+        pdfItem.image = NSImage(systemSymbolName: "doc.richtext", accessibilityDescription: nil)
+        menu.addItem(pdfItem)
+
+        guard let event = NSApp.currentEvent,
+            let contentView = event.window?.contentView
+        else { return }
+        let locationInView = contentView.convert(event.locationInWindow, from: nil)
+        menu.popUp(positioning: nil, at: locationInView, in: contentView)
+
+        switch target.selectedTag {
+        case 0: onDownload()
+        case 1: exportAsPDF()
+        default: break
+        }
+    }
+
     private func exportAsPDF() {
         // Create save panel
         let panel = NSSavePanel()
@@ -1094,10 +1178,7 @@ struct ArtifactViewerSheet: View {
         panel.nameFieldStringValue = "\(baseName).pdf"
         panel.allowedContentTypes = [.pdf]
 
-        panel.begin { response in
-            guard response == .OK, let url = panel.url else { return }
-
-            // Generate PDF from markdown
+        if panel.runModal() == .OK, let url = panel.url {
             generatePDF(to: url)
         }
     }
