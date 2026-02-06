@@ -1272,7 +1272,6 @@ struct ChatView: View {
     @State private var isPinnedToBottom: Bool = true
     @State private var hostWindow: NSWindow?
     @State private var keyMonitor: Any?
-    @State private var isHeaderHovered: Bool = false
 
     /// Convenience accessor for the window's theme
     private var theme: ThemeProtocol { windowState.theme }
@@ -1413,6 +1412,7 @@ struct ChatView: View {
                     }
                     .frame(width: 240, alignment: .top)
                     .frame(maxHeight: .infinity, alignment: .top)
+                    .padding(.top, 8)
                     .zIndex(1)
                     .transition(.move(edge: .leading).combined(with: .opacity))
                 }
@@ -1527,9 +1527,6 @@ struct ChatView: View {
         )
         .compositingGroup()
         .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
-        .overlay(alignment: .topTrailing) {
-            windowControls
-        }
         .ignoresSafeArea()
         .animation(theme.animationMedium(), value: session.turns.isEmpty)
         .animation(theme.springAnimation(responseMultiplier: 0.9), value: windowState.showSidebar)
@@ -1717,64 +1714,11 @@ struct ChatView: View {
     // MARK: - Header
 
     private var chatHeader: some View {
-        ZStack {
-            // Full-size drag area behind content
-            WindowDragArea()
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-
-            // Header content on top
-            HStack(spacing: 12) {
-                // Sidebar toggle - far left
-                HeaderActionButton(
-                    icon: "sidebar.left",
-                    help: windowState.showSidebar ? "Hide sidebar" : "Show sidebar",
-                    action: {
-                        withAnimation(theme.animationQuick()) {
-                            windowState.showSidebar.toggle()
-                        }
-                    }
-                )
-
-                // Mode toggle - Agent mode (to the right of sidebar toggle)
-                ModeToggleButton(currentMode: .chat, isDisabled: !session.hasAnyModel) {
-                    windowState.switchMode(to: .agent)
-                }
-
-                // Model indicator
-                if let model = session.selectedModel, session.modelOptions.count <= 1 {
-                    ModeIndicatorBadge(style: .model(name: displayModelName(model)))
-                }
-
-                Spacer()
-            }
-            .padding(.leading, 20)
-            .padding(.trailing, 56)  // Leave room for close button
-        }
-        .frame(height: 72)  // Fixed height for consistent drag area
-        .onHover { hovering in
-            isHeaderHovered = hovering
-        }
-    }
-
-    private var windowControls: some View {
-        HStack(spacing: 8) {
-            if session.turns.isEmpty {
-                SettingsButton(action: {
-                    AppDelegate.shared?.showManagementWindow(initialTab: .settings)
-                })
-            } else {
-                HeaderActionButton(
-                    icon: "plus",
-                    help: "New chat",
-                    action: {
-                        windowState.startNewChat()
-                    }
-                )
-            }
-            PinButton(windowId: windowState.windowId)
-            CloseButton(action: closeWindow)
-        }
-        .padding(16)
+        // Interactive titlebar controls are hosted in the window's `NSToolbar`.
+        // Keep a spacer here so content starts below the titlebar.
+        Color.clear
+            .frame(height: 52)
+            .allowsHitTesting(false)
     }
 
     /// Close this window via ChatWindowManager
@@ -1971,24 +1915,3 @@ struct WindowAccessor: NSViewRepresentable {
     }
 }
 
-// MARK: - Window Drag Area
-
-/// An NSViewRepresentable that makes its area draggable to move the window
-struct WindowDragArea: NSViewRepresentable {
-    func makeNSView(context: Context) -> NSView {
-        let view = WindowDragView()
-        return view
-    }
-
-    func updateNSView(_ nsView: NSView, context: Context) {}
-}
-
-/// Custom NSView that enables window dragging
-private class WindowDragView: NSView {
-    override var mouseDownCanMoveWindow: Bool { true }
-
-    override func mouseDown(with event: NSEvent) {
-        // Start window drag
-        window?.performDrag(with: event)
-    }
-}
