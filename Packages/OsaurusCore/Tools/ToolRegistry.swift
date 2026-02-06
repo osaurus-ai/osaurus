@@ -360,6 +360,24 @@ final class ToolRegistry: ObservableObject {
         }
     }
 
+    // MARK: - Agent-Conflicting Plugin Tools
+
+    /// Plugins that duplicate built-in agent folder/git tools and bypass undo + sandboxing.
+    static let agentConflictingPluginIds: Set<String> = [
+        "osaurus.filesystem",
+        "osaurus.git",
+    ]
+
+    /// Registered tool names from agent-conflicting plugins. Disabled in agent mode.
+    var agentConflictingToolNames: Set<String> {
+        Set(
+            toolsByName.values
+                .compactMap { $0 as? ExternalTool }
+                .filter { Self.agentConflictingPluginIds.contains($0.pluginId) }
+                .map { $0.name }
+        )
+    }
+
     // MARK: - User-Facing Tool List
 
     /// Agent tool names that should be excluded from user-facing tool lists.

@@ -818,7 +818,7 @@ struct FloatingInputCard: View {
             }
         }
         .popover(isPresented: $showCapabilitiesPicker, arrowEdge: .top) {
-            CapabilitiesSelectorView(personaId: effectivePersonaId)
+            CapabilitiesSelectorView(personaId: effectivePersonaId, isAgentMode: agentInputState != nil)
         }
     }
 
