@@ -62,6 +62,10 @@ public actor RemoteProviderService: ToolCapableService {
         self.session = URLSession(configuration: config)
     }
 
+    /// Inactivity timeout for streaming: if no bytes arrive within this interval,
+    /// assume the provider has stalled and end the stream.
+    private static let streamInactivityTimeout: TimeInterval = 60
+
     /// Update available models (called when connection refreshes)
     public func updateModels(_ models: [String]) {
         self.availableModels = models
@@ -205,34 +209,35 @@ public actor RemoteProviderService: ToolCapableService {
                 // Track accumulated tool calls by index (even in streamDeltas for robustness)
                 var accumulatedToolCalls: [Int: (id: String?, name: String?, args: String)] = [:]
 
-                // Parse SSE stream with proper UTF-8 decoding
+                // Parse SSE stream with UTF-8 decoding and inactivity timeout
                 var buffer = ""
                 var utf8Buffer = Data()
-                // Maximum UTF-8 buffer size to prevent infinite accumulation on malformed data
-                // (e.g., error messages with encoding issues). 1KB is plenty for any valid multi-byte sequence.
                 let maxUtf8BufferSize = 1024
-                for try await byte in bytes {
-                    // Check for task cancellation to allow early termination
+                let byteRef = ByteIteratorRef(bytes.makeAsyncIterator())
+
+                while true {
                     if Task.isCancelled {
                         continuation.finish()
                         return
                     }
+
+                    guard
+                        let byte = try await Self.nextByte(
+                            from: byteRef,
+                            timeout: Self.streamInactivityTimeout
+                        )
+                    else {
+                        break
+                    }
+
                     utf8Buffer.append(byte)
-                    // Try to decode accumulated bytes as UTF-8
                     if let decoded = String(data: utf8Buffer, encoding: .utf8) {
                         buffer.append(decoded)
                         utf8Buffer.removeAll()
                     } else if utf8Buffer.count > maxUtf8BufferSize {
-                        // Buffer exceeded limit without successful decode - likely malformed data.
-                        // Use lossy conversion to prevent infinite accumulation.
-                        print(
-                            "[Osaurus] Warning: UTF-8 buffer exceeded \(maxUtf8BufferSize) bytes without successful decode, using lossy conversion"
-                        )
-                        let lossy = String(decoding: utf8Buffer, as: UTF8.self)
-                        buffer.append(lossy)
+                        buffer.append(String(decoding: utf8Buffer, as: UTF8.self))
                         utf8Buffer.removeAll()
                     }
-                    // If decoding fails and buffer is small, we have an incomplete multi-byte sequence - keep accumulating
 
                     // Process complete lines
                     while let newlineIndex = buffer.firstIndex(of: "\n") {
@@ -250,17 +255,8 @@ public actor RemoteProviderService: ToolCapableService {
 
                             // Check for stream end (OpenAI format)
                             if dataContent.trimmingCharacters(in: .whitespaces) == "[DONE]" {
-                                // Check for accumulated tool calls before finishing
-                                if let firstToolCall = accumulatedToolCalls.sorted(by: { $0.key < $1.key }).first,
-                                    let toolName = firstToolCall.value.name
-                                {
-                                    continuation.finish(
-                                        throwing: ServiceToolInvocation(
-                                            toolName: toolName,
-                                            jsonArguments: firstToolCall.value.args,
-                                            toolCallId: firstToolCall.value.id
-                                        )
-                                    )
+                                if let invocation = Self.makeToolInvocation(from: accumulatedToolCalls) {
+                                    continuation.finish(throwing: invocation)
                                     return
                                 }
                                 continuation.finish()
@@ -315,19 +311,9 @@ public actor RemoteProviderService: ToolCapableService {
                                                     }
                                                 }
                                             case "message_stop":
-                                                // Check for accumulated tool calls before finishing
-                                                if let firstToolCall = accumulatedToolCalls.sorted(by: {
-                                                    $0.key < $1.key
-                                                }).first,
-                                                    let toolName = firstToolCall.value.name
+                                                if let invocation = Self.makeToolInvocation(from: accumulatedToolCalls)
                                                 {
-                                                    continuation.finish(
-                                                        throwing: ServiceToolInvocation(
-                                                            toolName: toolName,
-                                                            jsonArguments: firstToolCall.value.args,
-                                                            toolCallId: firstToolCall.value.id
-                                                        )
-                                                    )
+                                                    continuation.finish(throwing: invocation)
                                                     return
                                                 }
                                                 continuation.finish()
@@ -385,19 +371,9 @@ public actor RemoteProviderService: ToolCapableService {
                                                     accumulatedToolCalls[idx] = current
                                                 }
                                             case "response.completed":
-                                                // Check for accumulated tool calls before finishing
-                                                if let firstToolCall = accumulatedToolCalls.sorted(by: {
-                                                    $0.key < $1.key
-                                                }).first,
-                                                    let toolName = firstToolCall.value.name
+                                                if let invocation = Self.makeToolInvocation(from: accumulatedToolCalls)
                                                 {
-                                                    continuation.finish(
-                                                        throwing: ServiceToolInvocation(
-                                                            toolName: toolName,
-                                                            jsonArguments: firstToolCall.value.args,
-                                                            toolCallId: firstToolCall.value.id
-                                                        )
-                                                    )
+                                                    continuation.finish(throwing: invocation)
                                                     return
                                                 }
                                                 continuation.finish()
@@ -449,24 +425,13 @@ public actor RemoteProviderService: ToolCapableService {
                                             continuation.yield(output)
                                         }
 
-                                        // Check for finish reason - emit tool calls if we have any
+                                        // Emit tool calls on finish reason
                                         if let finishReason = chunk.choices.first?.finish_reason,
                                             !finishReason.isEmpty,
-                                            !accumulatedToolCalls.isEmpty
+                                            let invocation = Self.makeToolInvocation(from: accumulatedToolCalls)
                                         {
-                                            if let firstToolCall = accumulatedToolCalls.sorted(by: { $0.key < $1.key })
-                                                .first,
-                                                let toolName = firstToolCall.value.name
-                                            {
-                                                continuation.finish(
-                                                    throwing: ServiceToolInvocation(
-                                                        toolName: toolName,
-                                                        jsonArguments: firstToolCall.value.args,
-                                                        toolCallId: firstToolCall.value.id
-                                                    )
-                                                )
-                                                return
-                                            }
+                                            continuation.finish(throwing: invocation)
+                                            return
                                         }
                                     }
                                 } catch {
@@ -480,23 +445,14 @@ public actor RemoteProviderService: ToolCapableService {
                     }
                 }
 
-                // Check for accumulated tool calls at stream end
-                if let firstToolCall = accumulatedToolCalls.sorted(by: { $0.key < $1.key }).first,
-                    let toolName = firstToolCall.value.name
-                {
-                    continuation.finish(
-                        throwing: ServiceToolInvocation(
-                            toolName: toolName,
-                            jsonArguments: firstToolCall.value.args,
-                            toolCallId: firstToolCall.value.id
-                        )
-                    )
+                // Emit any remaining accumulated tool calls at stream end
+                if let invocation = Self.makeToolInvocation(from: accumulatedToolCalls) {
+                    continuation.finish(throwing: invocation)
                     return
                 }
 
                 continuation.finish()
             } catch {
-                // Handle cancellation gracefully
                 if Task.isCancelled {
                     continuation.finish()
                 } else {
@@ -505,7 +461,6 @@ public actor RemoteProviderService: ToolCapableService {
             }
         }
 
-        // Cancel producer task when consumer stops consuming
         continuation.onTermination = { @Sendable _ in
             producerTask.cancel()
         }
@@ -626,34 +581,40 @@ public actor RemoteProviderService: ToolCapableService {
                 // Track if we've seen any finish reason (for edge case handling)
                 var lastFinishReason: String?
 
-                // Parse SSE stream with proper UTF-8 decoding
+                // Accumulate yielded text content for fallback tool call detection.
+                // Some models (e.g., Llama) embed tool calls inline in text instead
+                // of using the structured tool_calls field.
+                var accumulatedContent = ""
+
+                // Parse SSE stream with UTF-8 decoding and inactivity timeout
                 var buffer = ""
                 var utf8Buffer = Data()
-                // Maximum UTF-8 buffer size to prevent infinite accumulation on malformed data
-                // (e.g., error messages with encoding issues). 1KB is plenty for any valid multi-byte sequence.
                 let maxUtf8BufferSize = 1024
-                for try await byte in bytes {
-                    // Check for task cancellation to allow early termination
+                let byteRef = ByteIteratorRef(bytes.makeAsyncIterator())
+
+                while true {
                     if Task.isCancelled {
                         continuation.finish()
                         return
                     }
+
+                    guard
+                        let byte = try await Self.nextByte(
+                            from: byteRef,
+                            timeout: Self.streamInactivityTimeout
+                        )
+                    else {
+                        break
+                    }
+
                     utf8Buffer.append(byte)
-                    // Try to decode accumulated bytes as UTF-8
                     if let decoded = String(data: utf8Buffer, encoding: .utf8) {
                         buffer.append(decoded)
                         utf8Buffer.removeAll()
                     } else if utf8Buffer.count > maxUtf8BufferSize {
-                        // Buffer exceeded limit without successful decode - likely malformed data.
-                        // Use lossy conversion to prevent infinite accumulation.
-                        print(
-                            "[Osaurus] Warning: UTF-8 buffer exceeded \(maxUtf8BufferSize) bytes without successful decode, using lossy conversion"
-                        )
-                        let lossy = String(decoding: utf8Buffer, as: UTF8.self)
-                        buffer.append(lossy)
+                        buffer.append(String(decoding: utf8Buffer, as: UTF8.self))
                         utf8Buffer.removeAll()
                     }
-                    // If decoding fails and buffer is small, we have an incomplete multi-byte sequence - keep accumulating
 
                     while let newlineIndex = buffer.firstIndex(of: "\n") {
                         let line = String(buffer[..<newlineIndex])
@@ -667,23 +628,30 @@ public actor RemoteProviderService: ToolCapableService {
                             let dataContent = String(line.dropFirst(6))
 
                             if dataContent.trimmingCharacters(in: .whitespaces) == "[DONE]" {
-                                // If we accumulated any tool calls, emit the first one
-                                // (subsequent tool calls will be handled in the next loop iteration)
-                                if let firstToolCall = accumulatedToolCalls.sorted(by: { $0.key < $1.key }).first,
-                                    let toolName = firstToolCall.value.name
-                                {
-                                    print(
-                                        "[Osaurus] Stream [DONE]: Emitting accumulated tool call '\(toolName)' with \(firstToolCall.value.args.count) bytes of arguments"
+                                if let invocation = Self.makeToolInvocation(from: accumulatedToolCalls) {
+                                    print("[Osaurus] Stream [DONE]: Emitting tool call '\(invocation.toolName)'")
+                                    continuation.finish(throwing: invocation)
+                                    return
+                                }
+
+                                // Fallback: detect inline tool calls in text content
+                                if !accumulatedContent.isEmpty, !tools.isEmpty,
+                                    let (name, args) = ToolDetection.detectInlineToolCall(
+                                        in: accumulatedContent,
+                                        tools: tools
                                     )
+                                {
+                                    print("[Osaurus] Fallback: Detected inline tool call '\(name)' in text")
                                     continuation.finish(
                                         throwing: ServiceToolInvocation(
-                                            toolName: toolName,
-                                            jsonArguments: firstToolCall.value.args,
-                                            toolCallId: firstToolCall.value.id
+                                            toolName: name,
+                                            jsonArguments: args,
+                                            toolCallId: nil
                                         )
                                     )
                                     return
                                 }
+
                                 continuation.finish()
                                 return
                             }
@@ -747,22 +715,12 @@ public actor RemoteProviderService: ToolCapableService {
                                                     }
                                                 }
                                             case "message_stop":
-                                                // Check for accumulated tool calls before finishing
-                                                if let firstToolCall = accumulatedToolCalls.sorted(by: {
-                                                    $0.key < $1.key
-                                                }).first,
-                                                    let toolName = firstToolCall.value.name
+                                                if let invocation = Self.makeToolInvocation(from: accumulatedToolCalls)
                                                 {
                                                     print(
-                                                        "[Osaurus] Anthropic stream ended: Emitting tool call '\(toolName)'"
+                                                        "[Osaurus] Anthropic stream ended: Emitting tool call '\(invocation.toolName)'"
                                                     )
-                                                    continuation.finish(
-                                                        throwing: ServiceToolInvocation(
-                                                            toolName: toolName,
-                                                            jsonArguments: firstToolCall.value.args,
-                                                            toolCallId: firstToolCall.value.id
-                                                        )
-                                                    )
+                                                    continuation.finish(throwing: invocation)
                                                     return
                                                 }
                                                 continuation.finish()
@@ -824,22 +782,12 @@ public actor RemoteProviderService: ToolCapableService {
                                                 }
                                             case "response.completed":
                                                 lastFinishReason = "completed"
-                                                // Check for accumulated tool calls before finishing
-                                                if let firstToolCall = accumulatedToolCalls.sorted(by: {
-                                                    $0.key < $1.key
-                                                }).first,
-                                                    let toolName = firstToolCall.value.name
+                                                if let invocation = Self.makeToolInvocation(from: accumulatedToolCalls)
                                                 {
                                                     print(
-                                                        "[Osaurus] Open Responses stream ended: Emitting tool call '\(toolName)'"
+                                                        "[Osaurus] Open Responses stream ended: Emitting tool call '\(invocation.toolName)'"
                                                     )
-                                                    continuation.finish(
-                                                        throwing: ServiceToolInvocation(
-                                                            toolName: toolName,
-                                                            jsonArguments: firstToolCall.value.args,
-                                                            toolCallId: firstToolCall.value.id
-                                                        )
-                                                    )
+                                                    continuation.finish(throwing: invocation)
                                                     return
                                                 }
                                                 continuation.finish()
@@ -884,43 +832,27 @@ public actor RemoteProviderService: ToolCapableService {
                                             for seq in stopSequences {
                                                 if let range = output.range(of: seq) {
                                                     output = String(output[..<range.lowerBound])
+                                                    accumulatedContent += output
                                                     continuation.yield(output)
                                                     continuation.finish()
                                                     return
                                                 }
                                             }
+                                            accumulatedContent += output
                                             continuation.yield(output)
                                         }
 
-                                        // Check finish reason - handle various formats from different providers
+                                        // Check finish reason — emit tool calls if available
                                         if let finishReason = chunk.choices.first?.finish_reason,
                                             !finishReason.isEmpty
                                         {
                                             lastFinishReason = finishReason
-                                            print(
-                                                "[Osaurus] Received finish_reason: '\(finishReason)', accumulated tool calls: \(accumulatedToolCalls.count)"
-                                            )
-
-                                            // Emit tool call if we have accumulated data and finish reason indicates tool calls
-                                            // Some providers use "tool_calls", others might use "function_call" or just "stop"
-                                            if !accumulatedToolCalls.isEmpty {
-                                                if let firstToolCall = accumulatedToolCalls.sorted(by: {
-                                                    $0.key < $1.key
-                                                }).first,
-                                                    let toolName = firstToolCall.value.name
-                                                {
-                                                    print(
-                                                        "[Osaurus] Emitting tool call '\(toolName)' on finish_reason '\(finishReason)'"
-                                                    )
-                                                    continuation.finish(
-                                                        throwing: ServiceToolInvocation(
-                                                            toolName: toolName,
-                                                            jsonArguments: firstToolCall.value.args,
-                                                            toolCallId: firstToolCall.value.id
-                                                        )
-                                                    )
-                                                    return
-                                                }
+                                            if let invocation = Self.makeToolInvocation(from: accumulatedToolCalls) {
+                                                print(
+                                                    "[Osaurus] Emitting tool call '\(invocation.toolName)' on finish_reason '\(finishReason)'"
+                                                )
+                                                continuation.finish(throwing: invocation)
+                                                return
                                             }
                                         }
                                     }
@@ -936,18 +868,28 @@ public actor RemoteProviderService: ToolCapableService {
                     }
                 }
 
-                // If we have accumulated tool call data at stream end (without [DONE] or explicit finish_reason)
-                if let firstToolCall = accumulatedToolCalls.sorted(by: { $0.key < $1.key }).first,
-                    let toolName = firstToolCall.value.name
-                {
+                // Emit any accumulated tool call data at stream end
+                if let invocation = Self.makeToolInvocation(from: accumulatedToolCalls) {
                     print(
-                        "[Osaurus] Stream ended: Emitting accumulated tool call '\(toolName)' (finish_reason was: \(lastFinishReason ?? "none"))"
+                        "[Osaurus] Stream ended: Emitting tool call '\(invocation.toolName)' (finish_reason: \(lastFinishReason ?? "none"))"
                     )
+                    continuation.finish(throwing: invocation)
+                    return
+                }
+
+                // Fallback: detect inline tool calls in text content (e.g., Llama)
+                if !accumulatedContent.isEmpty, !tools.isEmpty,
+                    let (name, args) = ToolDetection.detectInlineToolCall(
+                        in: accumulatedContent,
+                        tools: tools
+                    )
+                {
+                    print("[Osaurus] Fallback: Detected inline tool call '\(name)' in text")
                     continuation.finish(
                         throwing: ServiceToolInvocation(
-                            toolName: toolName,
-                            jsonArguments: firstToolCall.value.args,
-                            toolCallId: firstToolCall.value.id
+                            toolName: name,
+                            jsonArguments: args,
+                            toolCallId: nil
                         )
                     )
                     return
@@ -974,6 +916,130 @@ public actor RemoteProviderService: ToolCapableService {
     }
 
     // MARK: - Private Helpers
+
+    /// Actor wrapper around a byte iterator so it can be safely used inside escaping
+    /// `addTask` closures (which cannot capture `inout` parameters directly).
+    private final class ByteIteratorRef: @unchecked Sendable {
+        private var iterator: URLSession.AsyncBytes.AsyncIterator
+        private let lock = NSLock()
+        init(_ iterator: URLSession.AsyncBytes.AsyncIterator) { self.iterator = iterator }
+        func next() async throws -> UInt8? {
+            // Only one task ever calls next() at a time (the other is just sleeping),
+            // so the lock is uncontended but satisfies Sendable requirements.
+            try await iterator.next()
+        }
+    }
+
+    /// Reads the next byte from a `ByteIteratorRef`, racing against an inactivity timeout.
+    /// Returns `nil` if the stream ended naturally or the timeout fired.
+    private static func nextByte(
+        from ref: ByteIteratorRef,
+        timeout: TimeInterval
+    ) async throws -> UInt8? {
+        try await withThrowingTaskGroup(of: UInt8?.self) { group in
+            group.addTask { try await ref.next() }
+            group.addTask {
+                try await Task.sleep(nanoseconds: UInt64(timeout * 1_000_000_000))
+                return nil
+            }
+            let first = try await group.next()!
+            group.cancelAll()
+            return first
+        }
+    }
+
+    /// Creates a `ServiceToolInvocation` from the first accumulated tool call entry,
+    /// validating the JSON arguments. Returns `nil` if there are no accumulated calls
+    /// or the first entry has no name.
+    private static func makeToolInvocation(
+        from accumulated: [Int: (id: String?, name: String?, args: String)]
+    ) -> ServiceToolInvocation? {
+        guard let first = accumulated.sorted(by: { $0.key < $1.key }).first,
+            let name = first.value.name
+        else { return nil }
+
+        return ServiceToolInvocation(
+            toolName: name,
+            jsonArguments: validateToolCallJSON(first.value.args),
+            toolCallId: first.value.id
+        )
+    }
+
+    /// Validates that tool call arguments JSON is well-formed.
+    /// If the JSON is incomplete (e.g., stream was cut off mid-argument), attempts to repair it.
+    /// Returns the original string if valid, or a best-effort repair.
+    private static func validateToolCallJSON(_ json: String) -> String {
+        let trimmed = json.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return "{}" }
+
+        // Quick validation: try to parse as-is
+        if let data = trimmed.data(using: .utf8),
+            (try? JSONSerialization.jsonObject(with: data)) != nil
+        {
+            return trimmed
+        }
+
+        // Attempt repair: close unclosed braces/brackets
+        var repaired = trimmed
+        var braceCount = 0
+        var bracketCount = 0
+        var inString = false
+        var isEscaped = false
+        for ch in repaired {
+            if inString {
+                if isEscaped {
+                    isEscaped = false
+                } else if ch == "\\" {
+                    isEscaped = true
+                } else if ch == "\"" {
+                    inString = false
+                }
+            } else {
+                if ch == "\"" {
+                    inString = true
+                } else if ch == "{" {
+                    braceCount += 1
+                } else if ch == "}" {
+                    braceCount -= 1
+                } else if ch == "[" {
+                    bracketCount += 1
+                } else if ch == "]" {
+                    bracketCount -= 1
+                }
+            }
+        }
+
+        // Close any unclosed strings
+        if inString {
+            repaired += "\""
+        }
+
+        // Remove trailing comma before closing
+        let trimmedForComma = repaired.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmedForComma.hasSuffix(",") {
+            repaired = String(trimmedForComma.dropLast())
+        }
+
+        // Close unclosed brackets and braces
+        for _ in 0 ..< bracketCount {
+            repaired += "]"
+        }
+        for _ in 0 ..< braceCount {
+            repaired += "}"
+        }
+
+        // Verify the repair worked
+        if let data = repaired.data(using: .utf8),
+            (try? JSONSerialization.jsonObject(with: data)) != nil
+        {
+            print("[Osaurus] Repaired incomplete tool call JSON (\(json.count) -> \(repaired.count) chars)")
+            return repaired
+        }
+
+        // Repair failed - return original and let downstream handle the error
+        print("[Osaurus] Warning: Tool call JSON is malformed and could not be repaired: \(json.prefix(200))")
+        return json
+    }
 
     /// Build a chat completion request structure
     private func buildChatRequest(

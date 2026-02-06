@@ -19,22 +19,46 @@ public actor AgentExecutionEngine {
 
     // MARK: - Tool Execution
 
-    /// Executes a tool call
+    /// Maximum time (in seconds) to wait for a single tool execution before timing out.
+    private static let toolExecutionTimeout: UInt64 = 120
+
+    /// Executes a tool call with a timeout to prevent indefinite hangs.
     private func executeToolCall(
         _ invocation: ServiceToolInvocation,
         overrides: [String: Bool]?,
         issueId: String
     ) async throws -> ToolCallResult {
         let callId =
-            invocation.toolCallId ?? "call_\(UUID().uuidString.replacingOccurrences(of: "-", with: "").prefix(24))"
+            invocation.toolCallId
+            ?? "call_\(UUID().uuidString.replacingOccurrences(of: "-", with: "").prefix(24))"
 
-        // Execute tool with issue context for file operation logging
-        let result = await executeToolInBackground(
-            name: invocation.toolName,
-            argumentsJSON: invocation.jsonArguments,
-            overrides: overrides,
-            issueId: issueId
-        )
+        let timeout = Self.toolExecutionTimeout
+        let toolName = invocation.toolName
+
+        let result: String = await withTaskGroup(of: String?.self) { group in
+            group.addTask {
+                await self.executeToolInBackground(
+                    name: invocation.toolName,
+                    argumentsJSON: invocation.jsonArguments,
+                    overrides: overrides,
+                    issueId: issueId
+                )
+            }
+            group.addTask {
+                try? await Task.sleep(nanoseconds: timeout * 1_000_000_000)
+                return nil
+            }
+
+            let first = await group.next()!
+            group.cancelAll()
+
+            if let result = first {
+                return result
+            }
+
+            print("[AgentExecutionEngine] Tool '\(toolName)' timed out after \(timeout)s")
+            return "[TIMEOUT] Tool '\(toolName)' did not complete within \(timeout) seconds."
+        }
 
         let toolCall = ToolCall(
             id: callId,
@@ -131,6 +155,11 @@ public actor AgentExecutionEngine {
     /// Default maximum iterations for the reasoning loop
     public static let defaultMaxIterations = 30
 
+    /// Maximum consecutive text-only responses (no tool call) before aborting.
+    /// Models that don't support tool calling will describe actions in plain text
+    /// instead of invoking tools, causing an infinite loop of "Continue" prompts.
+    private static let maxConsecutiveTextOnlyResponses = 3
+
     /// The main reasoning loop. Model decides what to do on each iteration.
     /// - Parameters:
     ///   - issue: The issue being executed
@@ -169,6 +198,7 @@ public actor AgentExecutionEngine {
         var iteration = 0
         var totalToolCalls = 0
         var toolsUsed: [String] = []
+        var consecutiveTextOnly = 0
 
         while iteration < maxIterations {
             iteration += 1
@@ -237,11 +267,29 @@ public actor AgentExecutionEngine {
                     return .completed(summary: summary, artifact: nil)
                 }
 
+                // Track consecutive text-only responses to detect models that can't use tools
+                consecutiveTextOnly += 1
+                if consecutiveTextOnly >= Self.maxConsecutiveTextOnlyResponses {
+                    print(
+                        "[AgentExecutionEngine] \(consecutiveTextOnly) consecutive text-only responses"
+                            + " — aborting to prevent infinite loop"
+                    )
+                    let summary = extractCompletionSummary(from: responseContent)
+                    let fallback =
+                        summary.isEmpty
+                        ? String(responseContent.prefix(500))
+                        : summary
+                    return .completed(summary: fallback, artifact: nil)
+                }
+
                 // Model is reasoning but hasn't called a tool yet - prompt to continue
                 // This helps models that reason out loud before acting
                 messages.append(ChatMessage(role: "user", content: "Continue with the next action."))
                 continue
             }
+
+            // Model successfully called a tool - reset consecutive text-only counter
+            consecutiveTextOnly = 0
 
             // Tool call - execute it
             let invocation = toolInvoked!
