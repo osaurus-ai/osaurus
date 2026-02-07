@@ -74,9 +74,9 @@ extension ChatTurnData {
 }
 
 extension ChatTurn {
-    /// Create a ChatTurn from persisted data
+    /// Create a ChatTurn from persisted data (preserves original UUID for stable block IDs)
     convenience init(from data: ChatTurnData) {
-        self.init(role: data.role, content: data.content, images: data.attachedImages)
+        self.init(role: data.role, content: data.content, images: data.attachedImages, id: data.id)
         self.toolCalls = data.toolCalls
         self.toolCallId = data.toolCallId
         self.toolResults = data.toolResults

@@ -555,6 +555,10 @@ final class ChatSession: ObservableObject {
         // Reset capability selection for loaded conversation
         // (capabilities will be re-selected on next message if skills are enabled)
         resetCapabilitySelection()
+
+        // Clear caches to force a clean block rebuild for the new session
+        blockMemoizer.clear()
+        _tokenCacheValid = false
     }
 
     /// Edit a user message and regenerate from that point

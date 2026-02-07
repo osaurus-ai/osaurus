@@ -22,8 +22,8 @@ private final class ParsedMarkdownWrapper: NSObject {
 /// Unified cache for message thread rendering.
 ///
 /// Height cache uses NSCache for automatic memory-pressure eviction.
-/// Width invalidation is handled by the view layer calling `invalidateHeights()`
-/// when the container width changes significantly.
+/// Cache keys are width-aware (e.g. "segmentId-w636") so entries at
+/// different widths coexist without invalidation.
 final class ThreadCache: @unchecked Sendable {
     static let shared = ThreadCache()
 
@@ -39,11 +39,6 @@ final class ThreadCache: @unchecked Sendable {
 
     func setHeight(_ height: CGFloat, for key: String) {
         heights.setObject(NSNumber(value: Double(height)), forKey: key as NSString)
-    }
-
-    /// Invalidate all cached heights (e.g. on significant width change).
-    func invalidateHeights() {
-        heights.removeAllObjects()
     }
 
     // MARK: - Markdown
