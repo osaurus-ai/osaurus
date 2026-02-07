@@ -479,7 +479,7 @@ public final class ChatWindowManager: NSObject, ObservableObject {
         panel.becomesKeyOnlyIfNeeded = false
         panel.hidesOnDeactivate = false
         panel.worksWhenModal = true
-        panel.isReleasedWhenClosed = falgse
+        panel.isReleasedWhenClosed = false
 
         panel.titleVisibility = .hidden
         panel.titlebarAppearsTransparent = true
