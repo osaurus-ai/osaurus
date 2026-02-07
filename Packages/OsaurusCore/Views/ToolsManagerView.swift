@@ -12,18 +12,22 @@ import SwiftUI
 
 struct ToolsManagerView: View {
     @ObservedObject private var themeManager = ThemeManager.shared
-    @ObservedObject private var repoService = PluginRepositoryService.shared
-    @ObservedObject private var providerManager = MCPProviderManager.shared
+    private let repoService = PluginRepositoryService.shared
+    private let providerManager = MCPProviderManager.shared
 
     private var theme: ThemeProtocol { themeManager.currentTheme }
 
     @State private var selectedTab: ToolsTab = .available
     @State private var searchText: String = ""
-    @State private var toolEntries: [ToolRegistry.ToolEntry] = []
     @State private var hasAppeared = false
     @State private var isRefreshingInstalled = false
 
-    // Cache filtered results to improve performance
+    // Snapshot values from services (updated via .onReceive / reload)
+    @State private var toolEntries: [ToolRegistry.ToolEntry] = []
+    @State private var remoteProviderCount: Int = 0
+    @State private var policyInfoCache: [String: ToolRegistry.ToolPolicyInfo] = [:]
+
+    // Cached filtered results
     @State private var filteredEntries: [ToolRegistry.ToolEntry] = []
     @State private var installedPluginsWithTools: [(plugin: PluginState, tools: [ToolRegistry.ToolEntry])] = []
     @State private var remoteProviderTools: [(provider: MCPProvider, tools: [ToolRegistry.ToolEntry])] = []
@@ -31,13 +35,11 @@ struct ToolsManagerView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            // Header with tabs and search
             headerBar
                 .opacity(hasAppeared ? 1 : 0)
                 .offset(y: hasAppeared ? 0 : -10)
                 .animation(.spring(response: 0.4, dampingFraction: 0.8), value: hasAppeared)
 
-            // Content area
             Group {
                 switch selectedTab {
                 case .available:
@@ -53,25 +55,25 @@ struct ToolsManagerView: View {
         .environment(\.theme, themeManager.currentTheme)
         .onAppear {
             reload()
-            // Animate content appearance
             withAnimation(.easeOut(duration: 0.25).delay(0.1)) {
                 hasAppeared = true
             }
         }
         .task(id: searchText) {
-            // Debounce search input to avoid filtering on every keystroke
-            try? await Task.sleep(nanoseconds: 150_000_000)  // 150ms debounce
+            try? await Task.sleep(nanoseconds: 150_000_000)
             guard !Task.isCancelled else { return }
             await updateFilteredLists()
         }
-        .task(id: repoService.plugins) { await updateFilteredLists() }
+        .onReceive(PluginRepositoryService.shared.$plugins) { _ in
+            Task { await updateFilteredLists() }
+        }
         .onReceive(NotificationCenter.default.publisher(for: .toolsListChanged)) { _ in
             reload()
         }
         .onReceive(NotificationCenter.default.publisher(for: Foundation.Notification.Name.mcpProviderStatusChanged)) {
             _ in
+            remoteProviderCount = providerManager.configuration.providers.count
             reload()
-            Task { await updateFilteredLists() }
         }
     }
 
@@ -82,7 +84,6 @@ struct ToolsManagerView: View {
             title: "Tools",
             subtitle: "Manage and discover tools"
         ) {
-            // Refresh button
             HeaderIconButton(
                 "arrow.clockwise",
                 isLoading: isRefreshingInstalled,
@@ -100,7 +101,7 @@ struct ToolsManagerView: View {
                 selection: $selectedTab,
                 counts: [
                     .available: filteredEntries.count,
-                    .remote: providerManager.configuration.providers.count,
+                    .remote: remoteProviderCount,
                 ],
                 searchText: $searchText,
                 searchPlaceholder: "Search tools"
@@ -113,7 +114,6 @@ struct ToolsManagerView: View {
     private var availableToolsTabContent: some View {
         ScrollView {
             LazyVStack(spacing: 16) {
-                // Section header
                 SectionHeader(
                     title: "Available Tools",
                     description: "Tools from installed plugins and connected providers"
@@ -131,26 +131,24 @@ struct ToolsManagerView: View {
                             : "Try a different search term"
                     )
                 } else {
-                    // Permission status banner
                     if pluginsWithMissingPermissionsCount > 0 {
                         ToolPermissionBanner(count: pluginsWithMissingPermissionsCount)
                     }
 
-                    // Plugin tools section
                     if !plugins.isEmpty {
                         InstalledSectionHeader(title: "Plugin Tools", icon: "puzzlepiece.extension")
 
                         ForEach(plugins, id: \.plugin.id) { item in
                             ToolPluginCard(
                                 plugin: item.plugin,
-                                tools: item.tools
+                                tools: item.tools,
+                                policyInfoCache: policyInfoCache
                             ) {
                                 reload()
                             }
                         }
                     }
 
-                    // Remote provider tools section
                     if !remoteTools.isEmpty {
                         InstalledSectionHeader(title: "Remote Tools", icon: "server.rack")
 
@@ -159,6 +157,7 @@ struct ToolsManagerView: View {
                                 provider: item.provider,
                                 tools: item.tools,
                                 providerState: providerManager.providerStates[item.provider.id],
+                                policyInfoCache: policyInfoCache,
                                 onDisconnect: {
                                     providerManager.disconnect(providerId: item.provider.id)
                                 },
@@ -301,11 +300,20 @@ struct ToolsManagerView: View {
         installedPluginsWithTools = installedPluginsResult
         remoteProviderTools = remoteToolsResult
 
-        // Calculate plugins with missing permissions
+        // Build policy info cache once for all tools
+        var cache: [String: ToolRegistry.ToolPolicyInfo] = [:]
+        for entry in currentToolEntries {
+            if let info = ToolRegistry.shared.policyInfo(for: entry.name) {
+                cache[entry.name] = info
+            }
+        }
+        policyInfoCache = cache
+
+        // Calculate plugins with missing permissions using the cache
         var permissionCount = 0
         for (_, tools) in installedPluginsResult {
             for tool in tools {
-                if let info = ToolRegistry.shared.policyInfo(for: tool.name) {
+                if let info = cache[tool.name] {
                     if info.systemPermissionStates.values.contains(false) {
                         permissionCount += 1
                         break
@@ -318,6 +326,7 @@ struct ToolsManagerView: View {
 
     private func reload() {
         toolEntries = ToolRegistry.shared.listTools()
+        remoteProviderCount = providerManager.configuration.providers.count
         Task { await updateFilteredLists() }
     }
 }
@@ -409,12 +418,13 @@ private struct InstalledSectionHeader: View {
     }
 }
 
-// MARK: - Tool Plugin Card (simplified, read-only view of plugin tools)
+// MARK: - Tool Plugin Card
 
 private struct ToolPluginCard: View {
     @Environment(\.theme) private var theme
     let plugin: PluginState
     let tools: [ToolRegistry.ToolEntry]
+    let policyInfoCache: [String: ToolRegistry.ToolPolicyInfo]
     let onChange: () -> Void
 
     @State private var isExpanded: Bool = false
@@ -501,7 +511,6 @@ private struct ToolPluginCard: View {
                 .buttonStyle(PlainButtonStyle())
             }
 
-            // Error message
             if isExpanded, let loadError = plugin.loadError {
                 Divider()
                     .padding(.vertical, 4)
@@ -531,14 +540,13 @@ private struct ToolPluginCard: View {
                 .transition(.opacity.combined(with: .move(edge: .top)))
             }
 
-            // Tools list (expandable)
             if isExpanded && !tools.isEmpty && !plugin.hasLoadError {
                 Divider()
                     .padding(.vertical, 4)
 
-                VStack(spacing: 8) {
+                LazyVStack(spacing: 8) {
                     ForEach(tools, id: \.id) { entry in
-                        ToolEntryRow(entry: entry, onChange: onChange)
+                        ToolEntryRow(entry: entry, policyInfo: policyInfoCache[entry.name], onChange: onChange)
                     }
                 }
                 .transition(.opacity.combined(with: .move(edge: .top)))
@@ -568,6 +576,7 @@ private struct ToolPluginCard: View {
                 x: 0,
                 y: theme.cardShadowY
             )
+            .drawingGroup()
     }
 }
 
@@ -578,6 +587,7 @@ private struct RemoteProviderToolsCard: View {
     let provider: MCPProvider
     let tools: [ToolRegistry.ToolEntry]
     let providerState: MCPProviderState?
+    let policyInfoCache: [String: ToolRegistry.ToolPolicyInfo]
     let onDisconnect: () -> Void
     let onChange: () -> Void
 
@@ -671,9 +681,14 @@ private struct RemoteProviderToolsCard: View {
                 Divider()
                     .padding(.vertical, 4)
 
-                VStack(spacing: 8) {
+                LazyVStack(spacing: 8) {
                     ForEach(tools, id: \.id) { entry in
-                        RemoteToolRow(entry: entry, providerName: provider.name, onChange: onChange)
+                        RemoteToolRow(
+                            entry: entry,
+                            providerName: provider.name,
+                            policyInfo: policyInfoCache[entry.name],
+                            onChange: onChange
+                        )
                     }
                 }
                 .transition(.opacity.combined(with: .move(edge: .top)))
@@ -703,6 +718,7 @@ private struct RemoteProviderToolsCard: View {
                 x: 0,
                 y: theme.cardShadowY
             )
+            .drawingGroup()
     }
 }
 
@@ -804,9 +820,8 @@ private struct ToolEnableToggle: View {
 struct ToolEntryRow: View {
     @Environment(\.theme) private var theme
     let entry: ToolRegistry.ToolEntry
+    let policyInfo: ToolRegistry.ToolPolicyInfo?
     let onChange: () -> Void
-
-    @State private var policyInfo: ToolRegistry.ToolPolicyInfo?
 
     private var hasMissingSystemPermissions: Bool {
         guard let info = policyInfo else { return false }
@@ -823,10 +838,7 @@ struct ToolEntryRow: View {
                 ToolPolicyMenu(
                     toolName: entry.name,
                     info: info,
-                    onChange: {
-                        onChange()
-                        updatePolicyInfo()
-                    }
+                    onChange: onChange
                 )
             }
 
@@ -837,8 +849,6 @@ struct ToolEntryRow: View {
             RoundedRectangle(cornerRadius: 8)
                 .fill(theme.tertiaryBackground.opacity(0.5))
         )
-        .onAppear { updatePolicyInfo() }
-        .onChange(of: entry.name) { _, _ in updatePolicyInfo() }
     }
 
     private var toolIcon: some View {
@@ -887,10 +897,6 @@ struct ToolEntryRow: View {
                 .lineLimit(1)
         }
     }
-
-    private func updatePolicyInfo() {
-        policyInfo = ToolRegistry.shared.policyInfo(for: entry.name)
-    }
 }
 
 // MARK: - Remote Tool Row
@@ -899,9 +905,8 @@ private struct RemoteToolRow: View {
     @Environment(\.theme) private var theme
     let entry: ToolRegistry.ToolEntry
     let providerName: String
+    let policyInfo: ToolRegistry.ToolPolicyInfo?
     let onChange: () -> Void
-
-    @State private var policyInfo: ToolRegistry.ToolPolicyInfo?
 
     private var displayName: String {
         let safeProviderName =
@@ -944,10 +949,7 @@ private struct RemoteToolRow: View {
                 ToolPolicyMenu(
                     toolName: entry.name,
                     info: info,
-                    onChange: {
-                        onChange()
-                        updatePolicyInfo()
-                    }
+                    onChange: onChange
                 )
             }
 
@@ -958,11 +960,5 @@ private struct RemoteToolRow: View {
             RoundedRectangle(cornerRadius: 8)
                 .fill(theme.tertiaryBackground.opacity(0.5))
         )
-        .onAppear { updatePolicyInfo() }
-        .onChange(of: entry.name) { _, _ in updatePolicyInfo() }
-    }
-
-    private func updatePolicyInfo() {
-        policyInfo = ToolRegistry.shared.policyInfo(for: entry.name)
     }
 }

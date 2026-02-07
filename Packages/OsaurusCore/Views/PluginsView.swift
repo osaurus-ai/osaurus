@@ -11,20 +11,26 @@ import SwiftUI
 
 struct PluginsView: View {
     @ObservedObject private var themeManager = ThemeManager.shared
-    @ObservedObject private var repoService = PluginRepositoryService.shared
+    private let repoService = PluginRepositoryService.shared
 
     private var theme: ThemeProtocol { themeManager.currentTheme }
 
     @State private var selectedTab: PluginsTab = .installed
     @State private var searchText: String = ""
     @State private var hasAppeared = false
-    @State private var isRefreshing = false
+    @State private var isRefreshButtonLoading = false
+
+    // Snapshot values from service (updated via .onReceive / reload)
+    @State private var toolEntries: [ToolRegistry.ToolEntry] = []
+    @State private var isRepoRefreshing = false
+    @State private var updatesAvailableCount = 0
+    @State private var policyInfoCache: [String: ToolRegistry.ToolPolicyInfo] = [:]
+    @State private var missingPermissionsPerPlugin: [String: [SystemPermission]] = [:]
 
     // Cached filtered results
-    @State private var toolEntries: [ToolRegistry.ToolEntry] = []
     @State private var filteredPlugins: [PluginState] = []
     @State private var installedPluginsWithTools: [(plugin: PluginState, tools: [ToolRegistry.ToolEntry])] = []
-    @State private var pluginsWithMissingPermissionsCount: Int = 0
+    @State private var pluginsWithMissingPermissionsCount = 0
 
     // Secrets sheet state for post-installation prompt
     @State private var showSecretsSheet: Bool = false
@@ -35,13 +41,11 @@ struct PluginsView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            // Header with tabs and search
             headerBar
                 .opacity(hasAppeared ? 1 : 0)
                 .offset(y: hasAppeared ? 0 : -10)
                 .animation(.spring(response: 0.4, dampingFraction: 0.8), value: hasAppeared)
 
-            // Content area
             Group {
                 switch selectedTab {
                 case .installed:
@@ -72,15 +76,19 @@ struct PluginsView: View {
             guard !Task.isCancelled else { return }
             await updateFilteredLists()
         }
-        .task(id: repoService.plugins) { await updateFilteredLists() }
-        .onReceive(NotificationCenter.default.publisher(for: .toolsListChanged)) { _ in
-            reload()
+        .onReceive(PluginRepositoryService.shared.$plugins) { _ in
+            Task { await updateFilteredLists() }
         }
-        .onChange(of: repoService.pendingSecretsPlugin) { _, newValue in
+        .onReceive(PluginRepositoryService.shared.$isRefreshing) { isRepoRefreshing = $0 }
+        .onReceive(PluginRepositoryService.shared.$updatesAvailableCount) { updatesAvailableCount = $0 }
+        .onReceive(PluginRepositoryService.shared.$pendingSecretsPlugin) { newValue in
             if let pluginId = newValue {
                 showSecretsSheetForPlugin(pluginId: pluginId)
                 repoService.pendingSecretsPlugin = nil
             }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .toolsListChanged)) { _ in
+            reload()
         }
         .sheet(isPresented: $showSecretsSheet) {
             if let pluginId = secretsSheetPluginId {
@@ -89,10 +97,7 @@ struct PluginsView: View {
                     pluginName: secretsSheetPluginName ?? pluginId,
                     pluginVersion: secretsSheetPluginVersion,
                     secrets: secretsSheetSecrets,
-                    onSave: {
-                        reload()
-                        Task { await updateFilteredLists() }
-                    }
+                    onSave: { reload() }
                 )
             }
         }
@@ -123,15 +128,15 @@ struct PluginsView: View {
         ) {
             HeaderIconButton(
                 "arrow.clockwise",
-                isLoading: isRefreshing,
-                help: isRefreshing ? "Refreshing..." : "Refresh repository"
+                isLoading: isRefreshButtonLoading,
+                help: isRefreshButtonLoading ? "Refreshing..." : "Refresh repository"
             ) {
                 Task {
-                    isRefreshing = true
+                    isRefreshButtonLoading = true
                     await repoService.refresh()
                     PluginManager.shared.loadAll()
                     reload()
-                    isRefreshing = false
+                    isRefreshButtonLoading = false
                 }
             }
         } tabsRow: {
@@ -141,8 +146,8 @@ struct PluginsView: View {
                     .installed: installedPluginsWithTools.count,
                     .browse: filteredPlugins.count,
                 ],
-                badges: repoService.updatesAvailableCount > 0
-                    ? [.installed: repoService.updatesAvailableCount]
+                badges: updatesAvailableCount > 0
+                    ? [.installed: updatesAvailableCount]
                     : nil,
                 searchText: $searchText,
                 searchPlaceholder: "Search plugins"
@@ -171,7 +176,6 @@ struct PluginsView: View {
                             : "Try a different search term"
                     )
                 } else {
-                    // Permission status banner
                     if pluginsWithMissingPermissionsCount > 0 {
                         ToolPermissionBanner(count: pluginsWithMissingPermissionsCount)
                     }
@@ -180,7 +184,10 @@ struct PluginsView: View {
                         InstalledPluginCard(
                             plugin: item.plugin,
                             tools: item.tools,
-                            repoService: repoService
+                            missingPermissions: missingPermissionsPerPlugin[item.plugin.spec.plugin_id] ?? [],
+                            policyInfoCache: policyInfoCache,
+                            onUpgrade: { try await repoService.upgrade(pluginId: item.plugin.spec.plugin_id) },
+                            onUninstall: { try repoService.uninstall(pluginId: item.plugin.spec.plugin_id) }
                         ) {
                             reload()
                         }
@@ -203,7 +210,7 @@ struct PluginsView: View {
                 )
                 .padding(.bottom, 4)
 
-                if repoService.isRefreshing && repoService.plugins.isEmpty {
+                if isRepoRefreshing && repoService.plugins.isEmpty {
                     loadingState
                 } else if filteredPlugins.isEmpty {
                     emptyState(
@@ -215,7 +222,9 @@ struct PluginsView: View {
                     ForEach(filteredPlugins, id: \.id) { plugin in
                         PluginBrowseRow(
                             plugin: plugin,
-                            repoService: repoService
+                            onInstall: { try await repoService.install(pluginId: plugin.spec.plugin_id) },
+                            onUpgrade: { try await repoService.upgrade(pluginId: plugin.spec.plugin_id) },
+                            onUninstall: { try repoService.uninstall(pluginId: plugin.spec.plugin_id) }
                         )
                     }
                 }
@@ -328,23 +337,41 @@ struct PluginsView: View {
         filteredPlugins = filteredPluginsResult
         installedPluginsWithTools = installedPluginsResult
 
-        // Calculate plugins with missing permissions
+        // Build policy info cache once for all tools
+        var cache: [String: ToolRegistry.ToolPolicyInfo] = [:]
+        for entry in currentToolEntries {
+            if let info = ToolRegistry.shared.policyInfo(for: entry.name) {
+                cache[entry.name] = info
+            }
+        }
+        policyInfoCache = cache
+
+        // Calculate plugins with missing permissions and per-plugin missing permissions
         var permissionCount = 0
-        for (_, tools) in installedPluginsResult {
+        var missingPerms: [String: [SystemPermission]] = [:]
+        for (plugin, tools) in installedPluginsResult {
+            var missing = Set<SystemPermission>()
             for tool in tools {
-                if let info = ToolRegistry.shared.policyInfo(for: tool.name) {
-                    if info.systemPermissionStates.values.contains(false) {
-                        permissionCount += 1
-                        break
+                if let info = cache[tool.name] {
+                    for (perm, granted) in info.systemPermissionStates {
+                        if !granted {
+                            missing.insert(perm)
+                        }
                     }
                 }
             }
+            if !missing.isEmpty {
+                missingPerms[plugin.spec.plugin_id] = Array(missing).sorted { $0.rawValue < $1.rawValue }
+                permissionCount += 1
+            }
         }
+        missingPermissionsPerPlugin = missingPerms
         pluginsWithMissingPermissionsCount = permissionCount
     }
 
     private func reload() {
         toolEntries = ToolRegistry.shared.listTools()
+        updatesAvailableCount = repoService.updatesAvailableCount
         Task { await updateFilteredLists() }
     }
 }
@@ -359,7 +386,10 @@ private struct InstalledPluginCard: View {
     @Environment(\.theme) private var theme
     let plugin: PluginState
     let tools: [ToolRegistry.ToolEntry]
-    @ObservedObject var repoService: PluginRepositoryService
+    let missingPermissions: [SystemPermission]
+    let policyInfoCache: [String: ToolRegistry.ToolPolicyInfo]
+    let onUpgrade: () async throws -> Void
+    let onUninstall: () throws -> Void
     let onChange: () -> Void
 
     @State private var isExpanded: Bool = false
@@ -368,27 +398,19 @@ private struct InstalledPluginCard: View {
     @State private var showError: Bool = false
     @State private var showSecretsSheet: Bool = false
 
-    @State private var missingSystemPermissions: [SystemPermission] = []
     @State private var hasMissingSecrets: Bool = false
+    @State private var cachedSecrets: [PluginManifest.SecretSpec] = []
 
     private var hasMissingPermissions: Bool {
-        !missingSystemPermissions.isEmpty
-    }
-
-    private var pluginSecrets: [PluginManifest.SecretSpec] {
-        if let loaded = PluginManager.shared.plugins.first(where: { $0.plugin.id == plugin.spec.plugin_id }) {
-            return loaded.plugin.manifest.secrets ?? []
-        }
-        return []
+        !missingPermissions.isEmpty
     }
 
     private var hasSecrets: Bool {
-        !pluginSecrets.isEmpty
+        !cachedSecrets.isEmpty
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            // Plugin header
             HStack(spacing: 14) {
                 Button(action: {
                     withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
@@ -396,7 +418,6 @@ private struct InstalledPluginCard: View {
                     }
                 }) {
                     HStack(spacing: 14) {
-                        // Plugin icon
                         ZStack {
                             RoundedRectangle(cornerRadius: 10)
                                 .fill(
@@ -430,7 +451,6 @@ private struct InstalledPluginCard: View {
                         }
                         .frame(width: 44, height: 44)
 
-                        // Plugin info
                         VStack(alignment: .leading, spacing: 4) {
                             HStack(spacing: 8) {
                                 Text(plugin.spec.name ?? plugin.spec.plugin_id)
@@ -492,7 +512,6 @@ private struct InstalledPluginCard: View {
                 }
                 .buttonStyle(PlainButtonStyle())
 
-                // Action buttons
                 HStack(spacing: 8) {
                     if plugin.isInstalling {
                         ProgressView()
@@ -573,7 +592,6 @@ private struct InstalledPluginCard: View {
                 }
             }
 
-            // Error message
             if isExpanded, let loadError = plugin.loadError {
                 Divider()
                     .padding(.vertical, 4)
@@ -603,7 +621,6 @@ private struct InstalledPluginCard: View {
                 .transition(.opacity.combined(with: .move(edge: .top)))
             }
 
-            // Secrets warning banner
             if isExpanded && hasMissingSecrets && !plugin.hasLoadError {
                 Divider()
                     .padding(.vertical, 4)
@@ -653,7 +670,6 @@ private struct InstalledPluginCard: View {
                 .transition(.opacity.combined(with: .move(edge: .top)))
             }
 
-            // Permission warning banner
             if isExpanded && hasMissingPermissions && !plugin.hasLoadError {
                 Divider()
                     .padding(.vertical, 4)
@@ -677,10 +693,9 @@ private struct InstalledPluginCard: View {
                     }
 
                     HStack(spacing: 8) {
-                        ForEach(missingSystemPermissions, id: \.rawValue) { perm in
+                        ForEach(missingPermissions, id: \.rawValue) { perm in
                             Button(action: {
                                 SystemPermissionService.shared.requestPermission(perm)
-                                updatePermissions()
                                 onChange()
                             }) {
                                 HStack(spacing: 6) {
@@ -703,7 +718,7 @@ private struct InstalledPluginCard: View {
                         Spacer()
 
                         Button(action: {
-                            if let firstPerm = missingSystemPermissions.first {
+                            if let firstPerm = missingPermissions.first {
                                 SystemPermissionService.shared.openSystemSettings(for: firstPerm)
                             }
                         }) {
@@ -736,14 +751,13 @@ private struct InstalledPluginCard: View {
                 .transition(.opacity.combined(with: .move(edge: .top)))
             }
 
-            // Tools list (expandable)
             if isExpanded && !tools.isEmpty && !plugin.hasLoadError {
                 Divider()
                     .padding(.vertical, 4)
 
-                VStack(spacing: 8) {
+                LazyVStack(spacing: 8) {
                     ForEach(tools, id: \.id) { entry in
-                        ToolEntryRow(entry: entry, onChange: onChange)
+                        ToolEntryRow(entry: entry, policyInfo: policyInfoCache[entry.name], onChange: onChange)
                     }
                 }
                 .transition(.opacity.combined(with: .move(edge: .top)))
@@ -756,11 +770,9 @@ private struct InstalledPluginCard: View {
             isHovering = hovering
         }
         .onAppear {
-            updatePermissions()
-            updateSecretsStatus()
-        }
-        .onChange(of: tools.map { $0.id }) { _, _ in
-            updatePermissions()
+            if let loaded = PluginManager.shared.plugins.first(where: { $0.plugin.id == plugin.spec.plugin_id }) {
+                cachedSecrets = loaded.plugin.manifest.secrets ?? []
+            }
             updateSecretsStatus()
         }
         .themedAlert(
@@ -774,7 +786,7 @@ private struct InstalledPluginCard: View {
                 pluginId: plugin.spec.plugin_id,
                 pluginName: plugin.spec.name ?? plugin.spec.plugin_id,
                 pluginVersion: plugin.installedVersion?.description,
-                secrets: pluginSecrets,
+                secrets: cachedSecrets,
                 onSave: {
                     updateSecretsStatus()
                     onChange()
@@ -783,22 +795,8 @@ private struct InstalledPluginCard: View {
         }
     }
 
-    private func updatePermissions() {
-        var missing = Set<SystemPermission>()
-        for tool in tools {
-            if let info = ToolRegistry.shared.policyInfo(for: tool.name) {
-                for (perm, granted) in info.systemPermissionStates {
-                    if !granted {
-                        missing.insert(perm)
-                    }
-                }
-            }
-        }
-        missingSystemPermissions = Array(missing).sorted { $0.rawValue < $1.rawValue }
-    }
-
     private func updateSecretsStatus() {
-        let secrets = pluginSecrets
+        let secrets = cachedSecrets
         if secrets.isEmpty {
             hasMissingSecrets = false
         } else {
@@ -825,6 +823,7 @@ private struct InstalledPluginCard: View {
                 x: 0,
                 y: theme.cardShadowY
             )
+            .drawingGroup()
     }
 
     private var updateBadge: some View {
@@ -899,7 +898,7 @@ private struct InstalledPluginCard: View {
     private func upgrade() {
         Task {
             do {
-                try await repoService.upgrade(pluginId: plugin.spec.plugin_id)
+                try await onUpgrade()
             } catch {
                 errorMessage = error.localizedDescription
                 showError = true
@@ -909,7 +908,7 @@ private struct InstalledPluginCard: View {
 
     private func uninstall() {
         do {
-            try repoService.uninstall(pluginId: plugin.spec.plugin_id)
+            try onUninstall()
         } catch {
             errorMessage = error.localizedDescription
             showError = true
@@ -922,7 +921,9 @@ private struct InstalledPluginCard: View {
 private struct PluginBrowseRow: View {
     @Environment(\.theme) private var theme
     let plugin: PluginState
-    @ObservedObject var repoService: PluginRepositoryService
+    let onInstall: () async throws -> Void
+    let onUpgrade: () async throws -> Void
+    let onUninstall: () throws -> Void
 
     @State private var errorMessage: String?
     @State private var showError: Bool = false
@@ -1082,6 +1083,7 @@ private struct PluginBrowseRow: View {
                 x: 0,
                 y: theme.cardShadowY
             )
+            .drawingGroup()
     }
 
     private var updateBadge: some View {
@@ -1172,7 +1174,7 @@ private struct PluginBrowseRow: View {
     private func install() {
         Task {
             do {
-                try await repoService.install(pluginId: plugin.spec.plugin_id)
+                try await onInstall()
             } catch {
                 errorMessage = error.localizedDescription
                 showError = true
@@ -1183,7 +1185,7 @@ private struct PluginBrowseRow: View {
     private func upgrade() {
         Task {
             do {
-                try await repoService.upgrade(pluginId: plugin.spec.plugin_id)
+                try await onUpgrade()
             } catch {
                 errorMessage = error.localizedDescription
                 showError = true
@@ -1193,7 +1195,7 @@ private struct PluginBrowseRow: View {
 
     private func uninstall() {
         do {
-            try repoService.uninstall(pluginId: plugin.spec.plugin_id)
+            try onUninstall()
         } catch {
             errorMessage = error.localizedDescription
             showError = true
