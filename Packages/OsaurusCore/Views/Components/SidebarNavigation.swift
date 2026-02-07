@@ -17,6 +17,7 @@ struct SidebarItemData: Identifiable, Hashable {
     let icon: String
     let label: String
     var badge: Int?
+    var badgeHighlight: Bool = false
 
     func hash(into hasher: inout Hasher) {
         hasher.combine(id)
@@ -250,8 +251,13 @@ private struct SidebarItemView: View {
 
     private var collapsedBadge: some View {
         Circle()
-            .fill(theme.tertiaryBackground)
-            .overlay(Circle().stroke(theme.primaryBorder.opacity(0.5), lineWidth: 0.5))
+            .fill(item.badgeHighlight ? theme.accentColor : theme.tertiaryBackground)
+            .overlay(
+                Circle().stroke(
+                    item.badgeHighlight ? theme.accentColor.opacity(0.5) : theme.primaryBorder.opacity(0.5),
+                    lineWidth: 0.5
+                )
+            )
             .frame(width: 8, height: 8)
             .offset(x: 12, y: -12)
     }
@@ -298,10 +304,10 @@ private struct SidebarItemView: View {
     private func expandedBadge(count: Int) -> some View {
         Text("\(count)")
             .font(.system(size: 10, weight: .semibold, design: .rounded))
-            .foregroundColor(theme.secondaryText)
+            .foregroundColor(item.badgeHighlight ? .white : theme.secondaryText)
             .padding(.horizontal, 5)
             .padding(.vertical, 1)
-            .background(Capsule().fill(theme.tertiaryBackground))
+            .background(Capsule().fill(item.badgeHighlight ? theme.accentColor : theme.tertiaryBackground))
     }
 
     private var expandedBackground: some View {

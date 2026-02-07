@@ -133,8 +133,16 @@ private struct AnimatedTabButton<Tab: AnimatedTabItem>: View {
 
 enum ToolsTab: String, CaseIterable, AnimatedTabItem {
     case available = "Available"
-    case plugins = "Plugins"
     case remote = "Remote"
+
+    var title: String { rawValue }
+}
+
+// MARK: - Plugins Tab (for PluginsView)
+
+enum PluginsTab: String, CaseIterable, AnimatedTabItem {
+    case installed = "Installed"
+    case browse = "Browse"
 
     var title: String { rawValue }
 }
@@ -145,6 +153,7 @@ enum ToolsTab: String, CaseIterable, AnimatedTabItem {
     struct PreviewWrapper: View {
         @State private var modelTab: ModelListTab = .all
         @State private var toolsTab: ToolsTab = .available
+        @State private var pluginsTab: PluginsTab = .installed
 
         var body: some View {
             VStack(spacing: 40) {
@@ -155,8 +164,13 @@ enum ToolsTab: String, CaseIterable, AnimatedTabItem {
 
                 AnimatedTabSelector(
                     selection: $toolsTab,
-                    counts: [.available: 8, .plugins: 24, .remote: 2],
-                    badges: [.available: 2]
+                    counts: [.available: 8, .remote: 2]
+                )
+
+                AnimatedTabSelector(
+                    selection: $pluginsTab,
+                    counts: [.installed: 3, .browse: 24],
+                    badges: [.browse: 2]
                 )
             }
             .padding(40)
