@@ -937,237 +937,24 @@ final class ChatSession: ObservableObject {
                         let streamStartTime = Date()
                         var uiDeltaCount = 0
 
-                        // Batching: accumulate deltas and flush periodically to reduce UI updates
-                        var deltaBuffer = ""
-                        var lastFlushTime = Date()
-                        // Adaptive flush tuning: as output grows, reduce update frequency to avoid
-                        // markdown/layout churn that can beachball the UI on large responses.
-                        var flushIntervalMs: Double = 50  // baseline
-                        var maxBufferSize: Int = 256  // baseline
-                        var longestFlushMs: Double = 0
-
-                        // Track approximate output sizes without repeatedly calling String.count on huge buffers.
-                        var assistantContentLen: Int = 0
-                        var assistantThinkingLen: Int = 0
-
-                        func recomputeFlushTuning() {
-                            let totalChars = assistantContentLen + assistantThinkingLen
-
-                            // Simple tuning based on content size - avoid overly complex backpressure
-                            switch totalChars {
-                            case 0 ..< 2_000:
-                                flushIntervalMs = 50
-                                maxBufferSize = 256
-                            case 2_000 ..< 8_000:
-                                flushIntervalMs = 75
-                                maxBufferSize = 512
-                            case 8_000 ..< 20_000:
-                                flushIntervalMs = 100
-                                maxBufferSize = 768
-                            default:
-                                flushIntervalMs = 150
-                                maxBufferSize = 1024
-                            }
-
-                            // Light backpressure - don't skip flushes, just slow down slightly
-                            if longestFlushMs > 50 {
-                                flushIntervalMs = min(200, flushIntervalMs * 1.5)
-                            }
-                        }
-
-                        // Thinking tag parsing state
-                        var isInsideThinking = false
-                        var pendingTagBuffer = ""  // Buffer for partial tag detection
-
-                        // Track when we last synced to the turn (to batch UI updates)
-                        var lastSyncTime = Date()
-                        // Track if we have pending content to sync
-                        var hasPendingContent = false
-                        // Debug: track sync count
-                        var syncCount = 0
-
-                        @MainActor
-                        func appendContent(_ s: String) {
-                            guard !s.isEmpty else { return }
-                            // Use ChatTurn's efficient O(1) append method
-                            assistantTurn.appendContent(s)
-                            assistantContentLen += s.count
-                            hasPendingContent = true
-                        }
-
-                        @MainActor
-                        func appendThinking(_ s: String) {
-                            guard !s.isEmpty else { return }
-                            // Use ChatTurn's efficient O(1) append method
-                            assistantTurn.appendThinking(s)
-                            assistantThinkingLen += s.count
-                            hasPendingContent = true
-                        }
-
-                        /// Sync pending content to the turn and trigger UI update
-                        @MainActor
-                        func syncChunksToTurn() {
-                            guard hasPendingContent else { return }
-                            syncCount += 1
-                            assistantTurn.notifyContentChanged()
-                            hasPendingContent = false
-                            lastSyncTime = Date()
-                            objectWillChange.send()
-                        }
-
-                        @MainActor
-                        func flushBuffer() {
-                            guard !deltaBuffer.isEmpty else { return }
-                            let flushStart = Date()
-
-                            // Combine pending tag buffer with new delta for parsing
-                            var textToProcess = pendingTagBuffer + deltaBuffer
-                            pendingTagBuffer = ""
-                            deltaBuffer = ""
-
-                            // Process text, routing thinking content appropriately
-                            while !textToProcess.isEmpty {
-                                if isInsideThinking {
-                                    // Look for </think> closing tag
-                                    if let closeRange = textToProcess.range(of: "</think>", options: .caseInsensitive) {
-                                        // Add content before closing tag to thinking
-                                        let thinkingContent = String(textToProcess[..<closeRange.lowerBound])
-                                        appendThinking(thinkingContent)
-                                        // Remove processed content including the tag
-                                        textToProcess = String(textToProcess[closeRange.upperBound...])
-                                        isInsideThinking = false
-                                    } else {
-                                        // Check if we might have a partial </think> tag at the end
-                                        let possiblePartialTags = ["</", "</t", "</th", "</thi", "</thin", "</think"]
-                                        var foundPartial = false
-                                        for partial in possiblePartialTags.reversed() {
-                                            if textToProcess.lowercased().hasSuffix(partial) {
-                                                // Buffer the potential partial tag
-                                                let safePart = String(textToProcess.dropLast(partial.count))
-                                                appendThinking(safePart)
-                                                pendingTagBuffer = String(textToProcess.suffix(partial.count))
-                                                textToProcess = ""
-                                                foundPartial = true
-                                                break
-                                            }
-                                        }
-                                        if !foundPartial {
-                                            // All content goes to thinking
-                                            appendThinking(textToProcess)
-                                            textToProcess = ""
-                                        }
-                                    }
-                                } else {
-                                    // Look for <think> opening tag
-                                    if let openRange = textToProcess.range(of: "<think>", options: .caseInsensitive) {
-                                        // Add content before opening tag to regular content
-                                        let regularContent = String(textToProcess[..<openRange.lowerBound])
-                                        appendContent(regularContent)
-                                        // Remove processed content including the tag
-                                        textToProcess = String(textToProcess[openRange.upperBound...])
-                                        isInsideThinking = true
-                                    } else {
-                                        // Check if we might have a partial <think> tag at the end
-                                        let possiblePartialTags = ["<", "<t", "<th", "<thi", "<thin", "<think"]
-                                        var foundPartial = false
-                                        for partial in possiblePartialTags.reversed() {
-                                            if textToProcess.lowercased().hasSuffix(partial) {
-                                                // Buffer the potential partial tag
-                                                let safePart = String(textToProcess.dropLast(partial.count))
-                                                appendContent(safePart)
-                                                pendingTagBuffer = String(textToProcess.suffix(partial.count))
-                                                textToProcess = ""
-                                                foundPartial = true
-                                                break
-                                            }
-                                        }
-                                        if !foundPartial {
-                                            // All content goes to regular content
-                                            appendContent(textToProcess)
-                                            textToProcess = ""
-                                        }
-                                    }
-                                }
-                            }
-
-                            lastFlushTime = Date()
-
-                            let flushMs = lastFlushTime.timeIntervalSince(flushStart) * 1000
-                            if flushMs > longestFlushMs { longestFlushMs = flushMs }
-                        }
-
-                        /// Final flush that handles any remaining buffered content
-                        @MainActor
-                        func finalFlush() {
-                            // First flush any remaining delta buffer
-                            if !deltaBuffer.isEmpty || !pendingTagBuffer.isEmpty {
-                                // On final flush, treat any pending partial tags as regular content
-                                let remaining = pendingTagBuffer + deltaBuffer
-                                pendingTagBuffer = ""
-                                deltaBuffer = ""
-                                if isInsideThinking {
-                                    appendThinking(remaining)
-                                } else {
-                                    appendContent(remaining)
-                                }
-                            }
-                            // Always sync any remaining chunks to the turn
-                            syncChunksToTurn()
+                        let processor = StreamingDeltaProcessor(turn: assistantTurn) { [weak self] in
+                            self?.objectWillChange.send()
                         }
 
                         let stream = try await engine.streamChat(request: req)
                         for try await delta in stream {
                             if Task.isCancelled {
-                                flushBuffer()  // Flush remaining before breaking
-                                syncChunksToTurn()  // Sync any accumulated chunks
+                                processor.finalize()
                                 break outer
                             }
                             if !delta.isEmpty {
                                 uiDeltaCount += 1
-
-                                deltaBuffer += delta
-
-                                // Flush if buffer is large enough or enough time has passed
-                                let now = Date()
-                                let timeSinceFlush = now.timeIntervalSince(lastFlushTime) * 1000  // ms
-                                recomputeFlushTuning()
-
-                                if deltaBuffer.count >= maxBufferSize || timeSinceFlush >= flushIntervalMs {
-                                    flushBuffer()
-
-                                    // Sync interval - paragraph-based rendering allows more frequent updates
-                                    // since only the last paragraph needs to update
-                                    let totalChars = assistantContentLen + assistantThinkingLen
-                                    let syncIntervalMs: Double = {
-                                        switch totalChars {
-                                        case 0 ..< 2_000:
-                                            return 100  // Small: ~10 updates/sec
-                                        case 2_000 ..< 5_000:
-                                            return 150  // Medium: ~7 updates/sec
-                                        case 5_000 ..< 10_000:
-                                            return 200  // Large: ~5 updates/sec
-                                        default:
-                                            return 250  // Very large: ~4 updates/sec
-                                        }
-                                    }()
-
-                                    let timeSinceSync = now.timeIntervalSince(lastSyncTime) * 1000
-
-                                    // Always sync immediately for first content (syncCount == 0)
-                                    // to ensure content appears without delay
-                                    let shouldSync =
-                                        (syncCount == 0 && hasPendingContent)
-                                        || (timeSinceSync >= syncIntervalMs && hasPendingContent)
-
-                                    if shouldSync {
-                                        syncChunksToTurn()
-                                    }
-                                }
+                                processor.receiveDelta(delta)
                             }
                         }
 
                         // Flush any remaining buffered content (including partial tags)
-                        finalFlush()
+                        processor.finalize()
 
                         let totalTime = Date().timeIntervalSince(streamStartTime)
                         print(

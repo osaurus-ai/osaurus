@@ -61,17 +61,10 @@ public final class AgentSession: ObservableObject {
     /// Trigger for UI updates when turns change (needed because turns arrays are not @Published)
     @Published private var turnsVersion: Int = 0
 
-    // MARK: - Streaming Delta Throttling
+    // MARK: - Streaming Delta Processing
 
-    /// Buffer for accumulating streaming deltas before flushing to the UI.
-    /// Prevents main thread blocking by batching rapid updates.
-    private var streamingDeltaBuffer: String = ""
-
-    /// Timer for flushing accumulated streaming deltas to the UI
-    private var streamingFlushTimer: Timer?
-
-    /// Minimum interval between UI updates for streaming deltas (in seconds)
-    private static let streamingFlushInterval: TimeInterval = 0.1
+    /// Shared processor for delta buffering, thinking tag parsing, and throttled UI updates.
+    private var deltaProcessor: StreamingDeltaProcessor?
 
     // MARK: - Block Caching
 
@@ -576,6 +569,7 @@ public final class AgentSession: ObservableObject {
         isExecuting = true
         activeIssue = issue
         streamingContent = ""
+        deltaProcessor = nil
         currentStep = 0
         loopState = LoopState()
         retryAttempt = 0
@@ -982,6 +976,13 @@ extension AgentSession: AgentEngineDelegate {
         }
 
         selectedIssueId = issue.id
+
+        // Initialize streaming processor with the assistant turn
+        let turn = lastAssistantTurn()
+        deltaProcessor = StreamingDeltaProcessor(turn: turn) { [weak self] in
+            self?.notifyIfSelected(self?.activeIssue?.id)
+        }
+
         notifyTurnsChanged()
     }
 
@@ -1019,39 +1020,7 @@ extension AgentSession: AgentEngineDelegate {
 
     public func agentEngine(_ engine: AgentEngine, didReceiveStreamingDelta delta: String, forStep stepIndex: Int) {
         streamingContent += delta
-
-        // Accumulate delta in the buffer
-        streamingDeltaBuffer += delta
-
-        // Schedule a flush if one isn't already pending
-        if streamingFlushTimer == nil {
-            streamingFlushTimer = Timer.scheduledTimer(
-                withTimeInterval: Self.streamingFlushInterval,
-                repeats: false
-            ) { [weak self] _ in
-                guard let self else { return }
-                Task { @MainActor in
-                    self.flushStreamingDeltaBuffer()
-                }
-            }
-        }
-    }
-
-    /// Flushes accumulated streaming deltas to the UI in a single batch
-    private func flushStreamingDeltaBuffer() {
-        streamingFlushTimer?.invalidate()
-        streamingFlushTimer = nil
-
-        guard !streamingDeltaBuffer.isEmpty else { return }
-
-        let buffered = streamingDeltaBuffer
-        streamingDeltaBuffer = ""
-
-        let turn = lastAssistantTurn()
-        turn.appendContent(buffered)
-        turn.notifyContentChanged()
-
-        notifyIfSelected(activeIssue?.id)
+        deltaProcessor?.receiveDelta(delta)
     }
 
     public func agentEngine(_ engine: AgentEngine, didGenerateArtifact artifact: Artifact, forIssue issue: Issue) {
@@ -1070,7 +1039,8 @@ extension AgentSession: AgentEngineDelegate {
 
     public func agentEngine(_ engine: AgentEngine, didCompleteIssue issue: Issue, success: Bool) {
         // Flush any remaining buffered streaming deltas
-        flushStreamingDeltaBuffer()
+        deltaProcessor?.finalize()
+        deltaProcessor = nil
 
         // Consolidate content chunks for storage
         liveExecutionTurns.filter { $0.role == .assistant }.forEach { $0.consolidateContent() }
@@ -1116,7 +1086,7 @@ extension AgentSession: AgentEngineDelegate {
 
     public func agentEngine(_ engine: AgentEngine, didStartIteration iteration: Int, forIssue issue: Issue) {
         // Flush any buffered streaming deltas before starting a new iteration
-        flushStreamingDeltaBuffer()
+        deltaProcessor?.flush()
 
         // Update current iteration for progress tracking
         currentStep = iteration
@@ -1146,7 +1116,7 @@ extension AgentSession: AgentEngineDelegate {
         forIssue issue: Issue
     ) {
         // Flush any buffered streaming deltas before processing tool call
-        flushStreamingDeltaBuffer()
+        deltaProcessor?.flush()
 
         // Update loop state with tool call info
         loopState?.toolCallCount += 1
