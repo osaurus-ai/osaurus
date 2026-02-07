@@ -26,64 +26,6 @@ struct ContentBlockView: View, Equatable {
     private var isUserMessage: Bool { block.role == .user }
     private var isLastInTurn: Bool { block.position == .only || block.position == .last }
 
-    /// Whether this block is currently receiving streaming content
-    private var isBlockStreaming: Bool {
-        switch block.kind {
-        case let .paragraph(_, _, isStreaming, _): return isStreaming
-        case let .thinking(_, _, isStreaming): return isStreaming
-        case .typingIndicator: return true
-        default: return false
-        }
-    }
-
-    /// Height hint for LazyVStack recycling. During streaming, uses a live
-    /// estimate; otherwise reads from cache or falls back to an estimate.
-    private var estimatedMinHeight: CGFloat {
-        if isBlockStreaming {
-            return Self.estimateHeight(for: block.kind, width: width)
-        }
-        return ThreadCache.shared.height(for: block.id) ?? Self.estimateHeight(for: block.kind, width: width)
-    }
-
-    /// Estimate height for a block kind (used when no cached height is available)
-    private static func estimateHeight(for kind: ContentBlockKind, width: CGFloat) -> CGFloat {
-        switch kind {
-        case .header:
-            return 48  // header height + padding
-
-        case let .paragraph(_, text, _, _):
-            // Estimate: ~80 chars per line, ~20px per line, plus padding
-            let estimatedLines = max(1, CGFloat(text.count) / 80)
-            return min(max(40, estimatedLines * 22 + 24), 500)  // Cap at 500px
-
-        case .toolCall:
-            return 60  // collapsed tool call height
-
-        case .toolCallGroup(let calls):
-            // Each collapsed tool call row is ~40px (10 padding top + 20 content + 10 padding bottom)
-            return CGFloat(calls.count * 40)
-
-        case let .thinking(_, text, _):
-            // Similar to paragraph but typically shorter
-            let estimatedLines = max(1, CGFloat(text.count) / 80)
-            return min(max(50, estimatedLines * 20 + 30), 300)
-
-        case let .clarification(request):
-            // Header + question + options/input + button
-            let optionsCount = request.options?.count ?? 1
-            return CGFloat(100 + optionsCount * 48)
-
-        case .image:
-            return 170  // max image height + padding
-
-        case .typingIndicator:
-            return 48
-
-        case .groupSpacer:
-            return 16
-        }
-    }
-
     // MARK: - Body
 
     var body: some View {
@@ -103,7 +45,7 @@ struct ContentBlockView: View, Equatable {
         VStack(alignment: .leading, spacing: 0) {
             blockContent
         }
-        .frame(maxWidth: .infinity, minHeight: estimatedMinHeight, alignment: .leading)
+        .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, 16)
     }
 

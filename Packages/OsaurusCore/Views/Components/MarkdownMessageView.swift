@@ -13,7 +13,7 @@ import SwiftUI
 struct MarkdownMessageView: View {
     let text: String
     let baseWidth: CGFloat
-    /// Optional cache key for persisting heights across view recycling
+    /// Optional cache key passed to SelectableTextView for width-aware height caching
     var cacheKey: String? = nil
     /// Whether content is actively streaming - when true, uses lighter rendering for large content
     var isStreaming: Bool = false
@@ -21,32 +21,6 @@ struct MarkdownMessageView: View {
     var body: some View {
         // Use inner view with memoized parsing to avoid re-parsing on every render
         MemoizedMarkdownView(text: text, baseWidth: baseWidth, cacheKey: cacheKey, isStreaming: isStreaming)
-    }
-}
-
-// MARK: - Height Reporter
-
-/// Reports measured height to ThreadCache so ContentBlockView can provide
-/// height hints for LazyVStack recycling of off-screen items.
-private struct HeightReporter: ViewModifier {
-    let cacheKey: String?
-
-    func body(content: Content) -> some View {
-        content
-            .fixedSize(horizontal: false, vertical: true)
-            .background(
-                GeometryReader { geo in
-                    Color.clear
-                        .onAppear { report(geo.size.height) }
-                        .onChange(of: geo.size.height) { _, h in report(h) }
-                }
-            )
-    }
-
-    private func report(_ height: CGFloat) {
-        if let key = cacheKey {
-            ThreadCache.shared.setHeight(height, for: key)
-        }
     }
 }
 
@@ -98,37 +72,6 @@ private struct MemoizedMarkdownView: View {
         default:
             return 200  // Large content: moderate debounce
         }
-    }
-
-    /// Estimate height for a text group (used as minHeight before NSTextView measures itself).
-    static func estimateTextGroupHeight(blocks: [SelectableTextBlock]) -> CGFloat {
-        var totalHeight: CGFloat = 0
-
-        for block in blocks {
-            switch block {
-            case .paragraph(let text):
-                // Estimate ~80 chars per line, ~20px per line
-                let lines = max(1, CGFloat(text.count) / 80)
-                totalHeight += lines * 22 + 8
-
-            case .heading(let level, let text):
-                // Headings are taller
-                let baseHeight: CGFloat = level <= 2 ? 32 : 26
-                let lines = max(1, CGFloat(text.count) / 60)
-                totalHeight += lines * baseHeight + 12
-
-            case .blockquote(let text):
-                let lines = max(1, CGFloat(text.count) / 70)
-                totalHeight += lines * 20 + 16
-
-            case .listItem(let text, _, _, _):
-                let lines = max(1, CGFloat(text.count) / 70)
-                totalHeight += lines * 20 + 8
-            }
-        }
-
-        // Minimum height and cap
-        return min(max(24, totalHeight), 800)
     }
 
     var body: some View {
@@ -235,33 +178,25 @@ private struct MemoizedMarkdownView: View {
 
             switch segment.kind {
             case .textGroup(let textBlocks):
-                // minHeight prevents collapse before intrinsicContentSize is set.
-                let cachedHeight = segmentCacheKey.flatMap { ThreadCache.shared.height(for: $0) }
-                let minHeight = cachedHeight ?? Self.estimateTextGroupHeight(blocks: textBlocks)
-
                 SelectableTextView(
                     blocks: textBlocks,
                     baseWidth: baseWidth,
                     theme: theme,
                     cacheKey: segmentCacheKey
                 )
-                .frame(minWidth: baseWidth, maxWidth: baseWidth, minHeight: minHeight, alignment: .leading)
+                .frame(minWidth: baseWidth, maxWidth: baseWidth, alignment: .leading)
 
             case .codeBlock(let code, let lang):
                 CodeBlockView(code: code, language: lang, baseWidth: baseWidth)
-                    .modifier(HeightReporter(cacheKey: segmentCacheKey))
 
             case .image(let url, let altText):
                 MarkdownImageView(urlString: url, altText: altText, baseWidth: baseWidth)
-                    .modifier(HeightReporter(cacheKey: segmentCacheKey))
 
             case .horizontalRule:
                 HorizontalRuleView()
-                    .modifier(HeightReporter(cacheKey: segmentCacheKey))
 
             case .table(let headers, let rows):
                 TableView(headers: headers, rows: rows, baseWidth: baseWidth)
-                    .modifier(HeightReporter(cacheKey: segmentCacheKey))
             }
         }
     }

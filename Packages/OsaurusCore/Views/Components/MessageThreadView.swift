@@ -3,7 +3,6 @@
 //  osaurus
 //
 //  Renders the message thread with optimized block recycling.
-//  Invalidates ThreadCache heights on significant width changes.
 //
 
 import SwiftUI
@@ -61,11 +60,6 @@ struct MessageThreadView: View {
                 if autoScrollEnabled {
                     scrollToResponseStart(proxy: proxy)
                 }
-            }
-        }
-        .onChange(of: width) { old, new in
-            if abs(old - new) > 20 {
-                ThreadCache.shared.invalidateHeights()
             }
         }
     }

@@ -61,12 +61,13 @@ struct SelectableTextView: NSViewRepresentable {
         // This enables O(1) incremental updates by only modifying changed blocks
         var blockLengths: [Int] = []
 
+        /// Once set, disables ThreadCache (Tier 2) lookups for the rest of this
+        /// coordinator's lifetime. Only fresh coordinators (recycled views) benefit
+        /// from Tier 2 to avoid expensive ensureLayout on large messages.
+        var contentChangedSinceInit: Bool = false
+
         init(cacheKey: String? = nil) {
             self.cacheKey = cacheKey
-            // Initialize from cache if available
-            if let key = cacheKey, let cachedHeight = ThreadCache.shared.height(for: key) {
-                self.lastMeasuredHeight = cachedHeight
-            }
         }
     }
 
@@ -99,11 +100,6 @@ struct SelectableTextView: NSViewRepresentable {
 
         // Apply cursor color
         textView.insertionPointColor = NSColor(theme.cursorColor)
-
-        // Initialize preferred size from cache if available (prevents LazyVStack height estimation issues)
-        if context.coordinator.lastMeasuredHeight > 0 {
-            textView.updatePreferredSize(width: baseWidth, height: context.coordinator.lastMeasuredHeight)
-        }
 
         return textView
     }
@@ -139,32 +135,65 @@ struct SelectableTextView: NSViewRepresentable {
                 textView.textStorage?.setAttributedString(attributedString)
             }
 
-            // Force layout once (single pass). SwiftUI sizing uses intrinsicContentSize.
-            if let textContainer = textView.textContainer,
-                let layoutManager = textView.layoutManager
-            {
-                layoutManager.ensureLayout(for: textContainer)
-                let usedRect = layoutManager.usedRect(for: textContainer)
-                let measured = ceil(usedRect.height) + 4  // small buffer to prevent clipping
-                context.coordinator.lastMeasuredHeight = measured
-                textView.updatePreferredSize(width: baseWidth, height: measured)
-
-                // Cache the measured height for future view recycling
-                if let key = cacheKey {
-                    ThreadCache.shared.setHeight(measured, for: key)
-                }
-            } else {
-                textView.updatePreferredSize(width: baseWidth, height: context.coordinator.lastMeasuredHeight)
+            // Mark content as changed (disables Tier 2 ThreadCache lookups to prevent
+            // stale heights during streaming). Only set for non-initial loads since
+            // fresh coordinators (recycled views) should use ThreadCache.
+            if (blocksChanged || themeChanged) && !context.coordinator.lastBlocks.isEmpty {
+                context.coordinator.contentChangedSinceInit = true
             }
+
+            // Reset coordinator height so sizeThatFits re-measures
+            context.coordinator.lastMeasuredHeight = 0
 
             // Update coordinator state
             context.coordinator.lastBlocks = blocks
             context.coordinator.lastWidth = baseWidth
             context.coordinator.lastThemeFingerprint = themeFingerprint
-        } else {
-            // Fast path: keep intrinsic sizing stable without re-layout.
-            textView.updatePreferredSize(width: baseWidth, height: context.coordinator.lastMeasuredHeight)
         }
+    }
+
+    // MARK: - Sizing
+
+    func sizeThatFits(_ proposal: ProposedViewSize, nsView: SelectableNSTextView, context: Context) -> CGSize? {
+        let width = proposal.width ?? baseWidth
+
+        // Tier 1: coordinator cache (same width, height already measured this cycle)
+        if context.coordinator.lastMeasuredHeight > 0
+            && abs(context.coordinator.lastWidth - width) < 0.5
+        {
+            return CGSize(width: width, height: context.coordinator.lastMeasuredHeight)
+        }
+
+        // Tier 2: ThreadCache with width-aware key (survives view recycling).
+        // Skipped when content has changed since coordinator creation to prevent
+        // returning stale heights from a previous width during streaming.
+        if !context.coordinator.contentChangedSinceInit, let key = cacheKey {
+            let widthKey = "\(key)-w\(Int(width))"
+            if let cached = ThreadCache.shared.height(for: widthKey) {
+                context.coordinator.lastWidth = width
+                context.coordinator.lastMeasuredHeight = cached
+                return CGSize(width: width, height: cached)
+            }
+        }
+
+        // Tier 3: full layout measurement
+        nsView.textContainer?.containerSize = NSSize(width: width, height: .greatestFiniteMagnitude)
+        guard let textContainer = nsView.textContainer,
+            let layoutManager = nsView.layoutManager
+        else { return nil }
+        layoutManager.ensureLayout(for: textContainer)
+        let usedRect = layoutManager.usedRect(for: textContainer)
+        let measured = ceil(usedRect.height) + 4  // small buffer to prevent clipping
+
+        context.coordinator.lastWidth = width
+        context.coordinator.lastMeasuredHeight = measured
+
+        // Cache for future view recycling (width-aware key)
+        if let key = cacheKey {
+            ThreadCache.shared.setHeight(measured, for: "\(key)-w\(Int(width))")
+        }
+
+        return CGSize(width: width, height: measured)
     }
 
     // MARK: - Incremental Updates
@@ -699,26 +728,10 @@ struct SelectableTextView: NSViewRepresentable {
 
 // MARK: - Custom NSTextView
 
-/// Custom NSTextView that handles link clicks and cursor changes
+/// Custom NSTextView that handles link clicks and cursor changes.
+/// Sizing is driven by `SelectableTextView.sizeThatFits` -- no custom
+/// intrinsicContentSize override is needed.
 final class SelectableNSTextView: NSTextView {
-    private var preferredIntrinsicWidth: CGFloat = 0
-    private var preferredIntrinsicHeight: CGFloat = 0
-
-    override var intrinsicContentSize: NSSize {
-        let width = preferredIntrinsicWidth > 0 ? preferredIntrinsicWidth : super.intrinsicContentSize.width
-        let height = preferredIntrinsicHeight > 0 ? preferredIntrinsicHeight : super.intrinsicContentSize.height
-        return NSSize(width: width, height: height)
-    }
-
-    func updatePreferredSize(width: CGFloat, height: CGFloat) {
-        let w = max(1, width)
-        let h = max(1, height)
-        guard w != preferredIntrinsicWidth || h != preferredIntrinsicHeight else { return }
-        preferredIntrinsicWidth = w
-        preferredIntrinsicHeight = h
-        invalidateIntrinsicContentSize()
-    }
-
     override func resetCursorRects() {
         addCursorRect(bounds, cursor: .iBeam)
     }

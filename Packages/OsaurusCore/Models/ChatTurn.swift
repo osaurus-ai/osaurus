@@ -10,7 +10,7 @@ import Combine
 import Foundation
 
 final class ChatTurn: ObservableObject, Identifiable {
-    let id = UUID()
+    let id: UUID
     let role: MessageRole
 
     // MARK: - Content with lazy joining
@@ -162,7 +162,8 @@ final class ChatTurn: ObservableObject, Identifiable {
 
     // MARK: - Initializers
 
-    init(role: MessageRole, content: String) {
+    init(role: MessageRole, content: String, id: UUID = UUID()) {
+        self.id = id
         self.role = role
         if !content.isEmpty {
             self.contentChunks = [content]
@@ -171,7 +172,8 @@ final class ChatTurn: ObservableObject, Identifiable {
         }
     }
 
-    init(role: MessageRole, content: String, images: [Data]) {
+    init(role: MessageRole, content: String, images: [Data], id: UUID = UUID()) {
+        self.id = id
         self.role = role
         if !content.isEmpty {
             self.contentChunks = [content]
@@ -221,11 +223,12 @@ extension ChatTurn {
         )
     }
 
-    /// Creates a ChatTurn from a persisted representation
+    /// Creates a ChatTurn from a persisted representation (preserves original UUID)
     @MainActor
     static func fromPersisted(_ p: Persisted) -> ChatTurn {
         let role = MessageRole(rawValue: p.role) ?? .assistant
-        let turn = ChatTurn(role: role, content: p.content ?? "")
+        let restoredId = UUID(uuidString: p.id) ?? UUID()
+        let turn = ChatTurn(role: role, content: p.content ?? "", id: restoredId)
 
         if let thinking = p.thinking, !thinking.isEmpty {
             turn.appendThinking(thinking)
