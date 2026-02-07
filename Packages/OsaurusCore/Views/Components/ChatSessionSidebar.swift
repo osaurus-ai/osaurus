@@ -37,7 +37,7 @@ struct ChatSessionSidebar: View {
     }
 
     var body: some View {
-        SidebarContainer(attachedEdge: .leading) {
+        SidebarContainer(attachedEdge: .leading, topPadding: 40) {
             // Header with New Chat button
             sidebarHeader
 

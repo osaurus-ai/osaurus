@@ -47,6 +47,7 @@ struct AgentView: View {
                             }
                         }
                     )
+                    .padding(.top, 0)
                     .transition(.move(edge: .leading).combined(with: .opacity))
                 }
 
@@ -93,9 +94,6 @@ struct AgentView: View {
         .frame(minWidth: 800, idealWidth: 950)
         .compositingGroup()
         .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
-        .overlay(alignment: .topTrailing) {
-            windowControls
-        }
         .ignoresSafeArea()
         .animation(theme.springAnimation(responseMultiplier: 0.9), value: windowState.showSidebar)
         .environment(\.theme, windowState.theme)
@@ -187,19 +185,6 @@ struct AgentView: View {
                 _ = try? await AgentFileOperationLog.shared.undoAll(issueId: issue.id)
             }
         }
-    }
-
-    // MARK: - Window Controls
-
-    private var windowControls: some View {
-        HStack(spacing: 8) {
-            SettingsButton(action: {
-                AppDelegate.shared?.showManagementWindow(initialTab: .settings)
-            })
-            PinButton(windowId: windowState.windowId)
-            CloseButton(action: closeWindow)
-        }
-        .padding(16)
     }
 
     /// Close this window via ChatWindowManager
@@ -297,41 +282,11 @@ struct AgentView: View {
     // MARK: - Header
 
     private var agentHeader: some View {
-        ZStack {
-            WindowDragArea()
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-
-            HStack(spacing: 12) {
-                // Sidebar toggle - far left
-                HeaderActionButton(
-                    icon: "sidebar.left",
-                    help: windowState.showSidebar ? "Hide sidebar" : "Show sidebar",
-                    action: {
-                        withAnimation(theme.animationQuick()) {
-                            windowState.showSidebar.toggle()
-                        }
-                    }
-                )
-
-                // Mode toggle - Chat mode (to the right of sidebar toggle)
-                ModeToggleButton(currentMode: .agent) {
-                    windowState.switchMode(to: .chat)
-                }
-
-                // Task title
-                if let task = session.currentTask {
-                    Text(task.title)
-                        .font(theme.font(size: CGFloat(theme.bodySize), weight: .medium))
-                        .foregroundColor(theme.primaryText)
-                        .lineLimit(1)
-                }
-
-                Spacer()
-            }
-            .padding(.leading, 20)
-            .padding(.trailing, 56)
-        }
-        .frame(height: 72)
+        // Interactive titlebar controls are hosted in the window's `NSToolbar`.
+        // Keep a spacer here so content starts below the titlebar.
+        Color.clear
+            .frame(height: 52)
+            .allowsHitTesting(false)
     }
 
     // MARK: - Empty State

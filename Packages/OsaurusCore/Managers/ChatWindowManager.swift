@@ -368,9 +368,9 @@ public final class ChatWindowManager: NSObject, ObservableObject {
             initialRect = NSRect(origin: .zero, size: defaultSize)
         }
 
-        let panel = NSPanel(
+        let panel = ChatPanel(
             contentRect: initialRect,
-            styleMask: [.titled, .closable, .resizable, .fullSizeContentView],
+            styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
             backing: .buffered,
             defer: false
         )
@@ -387,10 +387,18 @@ public final class ChatWindowManager: NSObject, ObservableObject {
         panel.titleVisibility = .hidden
         panel.titlebarAppearsTransparent = true
         panel.isMovableByWindowBackground = false
+        panel.acceptsMouseMovedEvents = true
+        panel.appearance = NSAppearance(named: windowState.theme.isDark ? .darkAqua : .aqua)
 
-        panel.standardWindowButton(.closeButton)?.isHidden = true
-        panel.standardWindowButton(.miniaturizeButton)?.isHidden = true
-        panel.standardWindowButton(.zoomButton)?.isHidden = true
+        let toolbar = NSToolbar(identifier: "ChatToolbar")
+        toolbar.allowsUserCustomization = false
+        toolbar.autosavesConfiguration = false
+
+        let toolbarDelegate = ChatToolbarDelegate(windowState: windowState, session: windowState.session)
+        toolbar.delegate = toolbarDelegate
+        panel.chatToolbarDelegate = toolbarDelegate
+        panel.toolbar = toolbar
+        panel.toolbarStyle = .unified
 
         panel.contentViewController = hostingController
         panel.setContentSize(defaultSize)
@@ -457,9 +465,9 @@ public final class ChatWindowManager: NSObject, ObservableObject {
         }
 
         // Create panel (like original chat window)
-        let panel = NSPanel(
+        let panel = ChatPanel(
             contentRect: initialRect,
-            styleMask: [.titled, .closable, .resizable, .fullSizeContentView],
+            styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
             backing: .buffered,
             defer: false
         )
@@ -476,11 +484,18 @@ public final class ChatWindowManager: NSObject, ObservableObject {
         panel.titleVisibility = .hidden
         panel.titlebarAppearsTransparent = true
         panel.isMovableByWindowBackground = false
+        panel.acceptsMouseMovedEvents = true
+        panel.appearance = NSAppearance(named: windowState.theme.isDark ? .darkAqua : .aqua)
 
-        // Hide standard buttons (we have custom ones)
-        panel.standardWindowButton(.closeButton)?.isHidden = true
-        panel.standardWindowButton(.miniaturizeButton)?.isHidden = true
-        panel.standardWindowButton(.zoomButton)?.isHidden = true
+        let toolbar = NSToolbar(identifier: "ChatToolbar")
+        toolbar.allowsUserCustomization = false
+        toolbar.autosavesConfiguration = false
+
+        let toolbarDelegate = ChatToolbarDelegate(windowState: windowState, session: windowState.session)
+        toolbar.delegate = toolbarDelegate
+        panel.chatToolbarDelegate = toolbarDelegate
+        panel.toolbar = toolbar
+        panel.toolbarStyle = .unified
 
         panel.contentViewController = hostingController
 
@@ -547,6 +562,225 @@ public final class ChatWindowManager: NSObject, ObservableObject {
 
         let msg = isDetachedToBackground ? " (detached to background)" : ""
         print("[ChatWindowManager] Window \(id) cleanup complete\(msg), remaining: \(windows.count)")
+    }
+}
+
+// MARK: - Chat Panel
+
+/// Custom panel that keeps native traffic lights and hosts a unified toolbar.
+private final class ChatPanel: NSPanel {
+    /// Keep toolbar delegate alive (NSToolbar's delegate is weak).
+    var chatToolbarDelegate: ChatToolbarDelegate?
+
+    override var canBecomeKey: Bool { true }
+    override var canBecomeMain: Bool { true }
+}
+
+// MARK: - Chat Toolbar
+
+/// Toolbar delegate that places each control in its own `NSToolbarItem`
+/// so macOS applies native per-item styling (pill backgrounds, spacing).
+@MainActor
+private final class ChatToolbarDelegate: NSObject, NSToolbarDelegate {
+    private static let sidebarItem = NSToolbarItem.Identifier("ChatToolbar.sidebar")
+    private static let modeToggleItem = NSToolbarItem.Identifier("ChatToolbar.modeToggle")
+    private static let titleItem = NSToolbarItem.Identifier("ChatToolbar.title")
+    private static let actionItem = NSToolbarItem.Identifier("ChatToolbar.action")
+    private static let pinItem = NSToolbarItem.Identifier("ChatToolbar.pin")
+
+    private weak var windowState: ChatWindowState?
+    private weak var session: ChatSession?
+
+    init(windowState: ChatWindowState, session: ChatSession) {
+        self.windowState = windowState
+        self.session = session
+        super.init()
+    }
+
+    func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
+        [Self.sidebarItem, Self.modeToggleItem, Self.titleItem, .flexibleSpace, Self.actionItem, Self.pinItem]
+    }
+
+    func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
+        [Self.sidebarItem, Self.modeToggleItem, Self.titleItem, .flexibleSpace, Self.actionItem, Self.pinItem]
+    }
+
+    func toolbar(
+        _ toolbar: NSToolbar,
+        itemForItemIdentifier itemIdentifier: NSToolbarItem.Identifier,
+        willBeInsertedIntoToolbar flag: Bool
+    ) -> NSToolbarItem? {
+        guard let windowState, let session else { return nil }
+
+        switch itemIdentifier {
+        case Self.sidebarItem:
+            return makeHostingItem(
+                identifier: itemIdentifier,
+                rootView:
+                    ChatToolbarSidebarView(windowState: windowState)
+            )
+
+        case Self.modeToggleItem:
+            return makeHostingItem(
+                identifier: itemIdentifier,
+                rootView:
+                    ChatToolbarModeToggleView(windowState: windowState, session: session)
+            )
+
+        case Self.titleItem:
+            return makeHostingItem(
+                identifier: itemIdentifier,
+                rootView:
+                    ChatToolbarTitleView(windowState: windowState, session: session)
+            )
+
+        case Self.actionItem:
+            return makeHostingItem(
+                identifier: itemIdentifier,
+                rootView:
+                    ChatToolbarActionView(windowState: windowState, session: session)
+            )
+
+        case Self.pinItem:
+            return makeHostingItem(
+                identifier: itemIdentifier,
+                rootView:
+                    ChatToolbarPinView(windowState: windowState)
+            )
+
+        default:
+            return nil
+        }
+    }
+
+    private func makeHostingItem<Content: View>(
+        identifier: NSToolbarItem.Identifier,
+        rootView: Content
+    ) -> NSToolbarItem {
+        let item = NSToolbarItem(itemIdentifier: identifier)
+        let hostingView = NSHostingView(rootView: rootView)
+        hostingView.frame = NSRect(origin: .zero, size: hostingView.fittingSize)
+        item.view = hostingView
+        return item
+    }
+}
+
+// MARK: - Toolbar Item Views
+
+/// Sidebar toggle button. Observes windowState for reactive theme updates.
+private struct ChatToolbarSidebarView: View {
+    @ObservedObject var windowState: ChatWindowState
+
+    var body: some View {
+        HeaderActionButton(
+            icon: "sidebar.left",
+            help: windowState.showSidebar ? "Hide sidebar" : "Show sidebar",
+            action: {
+                withAnimation(windowState.theme.animationQuick()) {
+                    windowState.showSidebar.toggle()
+                }
+            }
+        )
+        .environment(\.theme, windowState.theme)
+    }
+}
+
+/// Mode toggle (Chat/Agent).
+private struct ChatToolbarModeToggleView: View {
+    @ObservedObject var windowState: ChatWindowState
+    @ObservedObject var session: ChatSession
+
+    private var isAgentMode: Bool { windowState.mode == .agent }
+
+    var body: some View {
+        ModeToggleButton(
+            currentMode: isAgentMode ? .agent : .chat,
+            isDisabled: !isAgentMode && !session.hasAnyModel,
+            action: { windowState.switchMode(to: isAgentMode ? .chat : .agent) }
+        )
+        .environment(\.theme, windowState.theme)
+    }
+}
+
+/// Title view showing Agent Task or Model Badge
+private struct ChatToolbarTitleView: View {
+    @ObservedObject var windowState: ChatWindowState
+    @ObservedObject var session: ChatSession
+
+    private var isAgentMode: Bool { windowState.mode == .agent }
+
+    var body: some View {
+        Group {
+            if isAgentMode, let agentSession = windowState.agentSession {
+                AgentTaskTitleView(session: agentSession)
+                    .frame(maxWidth: 360, alignment: .leading)
+            } else if let model = session.selectedModel, session.modelOptions.count <= 1 {
+                ModeIndicatorBadge(style: .model(name: displayModelName(model)))
+            }
+        }
+        .environment(\.theme, windowState.theme)
+    }
+
+    private func displayModelName(_ raw: String?) -> String {
+        guard let raw else { return "Model" }
+        if raw.lowercased() == "foundation" { return "Foundation" }
+        if let last = raw.split(separator: "/").last { return String(last) }
+        return raw
+    }
+}
+
+/// Contextual action button: settings (empty state / agent) or new-chat plus.
+private struct ChatToolbarActionView: View {
+    @ObservedObject var windowState: ChatWindowState
+    @ObservedObject var session: ChatSession
+
+    private var isAgentMode: Bool { windowState.mode == .agent }
+
+    var body: some View {
+        Group {
+            if isAgentMode || session.turns.isEmpty {
+                SettingsButton(action: {
+                    AppDelegate.shared?.showManagementWindow(initialTab: .settings)
+                })
+            } else {
+                HeaderActionButton(
+                    icon: "plus",
+                    help: "New chat",
+                    action: { windowState.startNewChat() }
+                )
+            }
+        }
+        .environment(\.theme, windowState.theme)
+    }
+}
+
+/// Pin button. Observes windowState for reactive theme updates.
+private struct ChatToolbarPinView: View {
+    @ObservedObject var windowState: ChatWindowState
+
+    var body: some View {
+        PinButton(windowId: windowState.windowId)
+            .environment(\.theme, windowState.theme)
+    }
+}
+
+/// Agent task title shown next to the mode toggle in agent mode.
+private struct AgentTaskTitleView: View {
+    @ObservedObject var session: AgentSession
+
+    @Environment(\.theme) private var theme
+
+    var body: some View {
+        Group {
+            if let task = session.currentTask {
+                Text(task.title)
+                    .padding(.horizontal, 16)
+                    .font(theme.font(size: CGFloat(theme.bodySize), weight: .medium))
+                    .foregroundColor(theme.primaryText)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+            }
+        }
     }
 }
 

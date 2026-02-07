@@ -20,7 +20,7 @@ struct AgentTaskSidebar: View {
     @FocusState private var isSearchFocused: Bool
 
     var body: some View {
-        SidebarContainer(attachedEdge: .leading) {
+        SidebarContainer(attachedEdge: .leading, topPadding: 40) {
             // Header
             sidebarHeader
 

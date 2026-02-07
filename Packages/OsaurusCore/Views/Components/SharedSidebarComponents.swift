@@ -45,12 +45,15 @@ enum SidebarStyle {
 struct SidebarContainer<Content: View>: View {
     /// The edge this sidebar is attached to (affects corner radius)
     let attachedEdge: Edge?
+    /// Top padding for the content (useful for window control clearance)
+    let topPadding: CGFloat
 
     @ViewBuilder let content: () -> Content
     @Environment(\.theme) private var theme
 
-    init(attachedEdge: Edge? = nil, @ViewBuilder content: @escaping () -> Content) {
+    init(attachedEdge: Edge? = nil, topPadding: CGFloat = 0, @ViewBuilder content: @escaping () -> Content) {
         self.attachedEdge = attachedEdge
+        self.topPadding = topPadding
         self.content = content
     }
 
@@ -58,6 +61,7 @@ struct SidebarContainer<Content: View>: View {
         VStack(spacing: 0) {
             content()
         }
+        .padding(.top, topPadding)
         .frame(width: SidebarStyle.width, alignment: .top)
         .frame(maxHeight: .infinity, alignment: .top)
         .background { SidebarBackground() }
