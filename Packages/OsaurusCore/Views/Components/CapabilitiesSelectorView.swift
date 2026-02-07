@@ -527,13 +527,17 @@ private struct GroupHeader: View {
 
             // All/None — always rendered, visibility controlled by opacity
             HStack(spacing: 4) {
-                Button { onEnableAll() } label: {
+                Button {
+                    onEnableAll()
+                } label: {
                     Text("All")
                         .font(.system(size: 9, weight: allEnabled ? .bold : .medium))
                         .foregroundColor(allEnabled ? theme.accentColor : theme.tertiaryText)
                 }
                 Text("/").font(.system(size: 9)).foregroundColor(theme.tertiaryText)
-                Button { onDisableAll() } label: {
+                Button {
+                    onDisableAll()
+                } label: {
                     Text("None")
                         .font(.system(size: 9, weight: noneEnabled ? .bold : .medium))
                         .foregroundColor(noneEnabled ? theme.accentColor : theme.tertiaryText)
