@@ -23,18 +23,51 @@ struct MessageThreadView: View {
     var onClarificationSubmit: ((String) -> Void)? = nil
 
     @Environment(\.theme) private var theme
+    @State private var hoveredGroupId: UUID? = nil
 
     private var contentWidth: CGFloat { max(100, width - 64) }
 
+    /// Maps each turnId to its visual group's header turnId.
+    /// Consecutive assistant turns share a group; user turns are their own group.
+    private var groupHeaderMap: [UUID: UUID] {
+        var map: [UUID: UUID] = [:]
+        var currentGroupHeaderId: UUID? = nil
+
+        for block in blocks {
+            if case .groupSpacer = block.kind {
+                // Group spacer resets the group
+                currentGroupHeaderId = nil
+                continue
+            }
+
+            if case .header = block.kind {
+                currentGroupHeaderId = block.turnId
+            }
+
+            if let groupId = currentGroupHeaderId {
+                map[block.turnId] = groupId
+            } else {
+                // Block before any header (shouldn't happen, but safe fallback)
+                map[block.turnId] = block.turnId
+            }
+        }
+        return map
+    }
+
     var body: some View {
+        let headerMap = groupHeaderMap
+
         ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(spacing: 0) {
                     ForEach(blocks) { block in
+                        let groupId = headerMap[block.turnId] ?? block.turnId
+
                         ContentBlockView(
                             block: block,
                             width: contentWidth,
                             personaName: personaName,
+                            isTurnHovered: hoveredGroupId == groupId,
                             onCopy: onCopy,
                             onRegenerate: onRegenerate,
                             onClarificationSubmit: onClarificationSubmit
@@ -42,6 +75,13 @@ struct MessageThreadView: View {
                         .equatable()
                         .id(block.id)
                         .padding(.horizontal, 12)
+                        .onHover { hovering in
+                            if hovering {
+                                hoveredGroupId = groupId
+                            } else if hoveredGroupId == groupId {
+                                hoveredGroupId = nil
+                            }
+                        }
                     }
                 }
                 .padding(.top, 8)
