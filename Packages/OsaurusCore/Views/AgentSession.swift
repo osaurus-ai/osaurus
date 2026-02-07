@@ -73,15 +73,11 @@ public final class AgentSession: ObservableObject {
     /// Minimum interval between UI updates for streaming deltas (in seconds)
     private static let streamingFlushInterval: TimeInterval = 0.1
 
-    // MARK: - Block Caching (Performance Optimization)
+    // MARK: - Block Caching
 
-    /// BlockMemoizer for incremental content block generation
     private let blockMemoizer = BlockMemoizer()
 
-    /// Content blocks for the selected issue - computed from current turns with caching
-    ///
-    /// PERFORMANCE: Uses BlockMemoizer for incremental updates during streaming.
-    /// Only regenerates blocks for the last turn instead of all blocks (O(1) vs O(n)).
+    /// Content blocks for the selected issue, with incremental streaming updates via BlockMemoizer.
     var issueBlocks: [ContentBlock] {
         let isStreamingThisIssue = isExecuting && activeIssue?.id == selectedIssueId
         let displayName = windowState?.cachedPersonaDisplayName ?? "Agent"
@@ -93,6 +89,11 @@ public final class AgentSession: ObservableObject {
             personaName: displayName,
             version: turnsVersion  // Ensures cache invalidation on issue switch
         )
+    }
+
+    /// Precomputed group header map from BlockMemoizer.
+    var issueBlocksGroupHeaderMap: [UUID: UUID] {
+        blockMemoizer.groupHeaderMap
     }
 
     /// The actual turn count for the selected issue (used for scroll triggers)
@@ -223,8 +224,8 @@ public final class AgentSession: ObservableObject {
         set { currentStep = newValue }
     }
 
-    /// Streaming response content
-    @Published public var streamingContent: String = ""
+    /// Streaming response content (internal bookkeeping, not observed by views)
+    public var streamingContent: String = ""
 
     /// Error message if execution failed
     @Published public var errorMessage: String?

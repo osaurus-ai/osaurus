@@ -10,12 +10,17 @@ import Foundation
 
 final class BlockMemoizer {
     private var cached: [ContentBlock] = []
+    private var cachedGroupHeaderMap: [UUID: UUID] = [:]
     private var lastCount = 0
     private var lastTurnId: UUID?
     private var lastContentLen = 0
     private var lastThinkingLen = 0
     private var lastVersion = -1
     private let maxBlocks = 80
+
+    /// Maps each block's turnId to its visual group's header turnId.
+    /// Updated alongside blocks in `blocks(from:...)`.
+    var groupHeaderMap: [UUID: UUID] { cachedGroupHeaderMap }
 
     func blocks(
         from turns: [ChatTurn],
@@ -67,6 +72,8 @@ final class BlockMemoizer {
         lastThinkingLen = thinkingLen
         lastVersion = version
 
+        cachedGroupHeaderMap = Self.buildGroupHeaderMap(from: cached)
+
         return limited(streaming: streamingTurnId != nil)
     }
 
@@ -76,10 +83,35 @@ final class BlockMemoizer {
 
     func clear() {
         cached = []
+        cachedGroupHeaderMap = [:]
         lastCount = 0
         lastTurnId = nil
         lastContentLen = 0
         lastThinkingLen = 0
         lastVersion = -1
+    }
+
+    private static func buildGroupHeaderMap(from blocks: [ContentBlock]) -> [UUID: UUID] {
+        var map: [UUID: UUID] = [:]
+        map.reserveCapacity(blocks.count)
+        var currentGroupHeaderId: UUID? = nil
+
+        for block in blocks {
+            if case .groupSpacer = block.kind {
+                currentGroupHeaderId = nil
+                continue
+            }
+
+            if case .header = block.kind {
+                currentGroupHeaderId = block.turnId
+            }
+
+            if let groupId = currentGroupHeaderId {
+                map[block.turnId] = groupId
+            } else {
+                map[block.turnId] = block.turnId
+            }
+        }
+        return map
     }
 }

@@ -27,8 +27,17 @@ private final class ParsedMarkdownWrapper: NSObject {
 final class ThreadCache: @unchecked Sendable {
     static let shared = ThreadCache()
 
-    private let heights = NSCache<NSString, NSNumber>()
-    private let markdownCache = NSCache<NSString, ParsedMarkdownWrapper>()
+    private let heights: NSCache<NSString, NSNumber> = {
+        let c = NSCache<NSString, NSNumber>()
+        c.countLimit = 500
+        return c
+    }()
+
+    private let markdownCache: NSCache<NSString, ParsedMarkdownWrapper> = {
+        let c = NSCache<NSString, ParsedMarkdownWrapper>()
+        c.countLimit = 200
+        return c
+    }()
 
     // MARK: - Heights
 
