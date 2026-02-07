@@ -153,31 +153,64 @@ public struct CapabilityCatalog: Sendable {
 
 // MARK: - Catalog Builder
 
-/// Helper to build a capability catalog from ToolRegistry and SkillManager
+/// Builds a capability catalog from ToolRegistry and SkillManager.
+/// Results are cached per persona and invalidated automatically on tool/skill changes.
 @MainActor
 public struct CapabilityCatalogBuilder {
-    /// Build catalog from current enabled tools and skills
+    // MARK: - Cache
+
+    private static var cache: [UUID: CapabilityCatalog] = [:]
+    private static var globalCache: CapabilityCatalog?
+    private static var observersInstalled = false
+
+    public static func invalidateCache() {
+        cache.removeAll()
+        globalCache = nil
+    }
+
+    private static func installObserversIfNeeded() {
+        guard !observersInstalled else { return }
+        observersInstalled = true
+        NotificationCenter.default.addObserver(
+            forName: .toolsListChanged,
+            object: nil,
+            queue: .main
+        ) { _ in Task { @MainActor in invalidateCache() } }
+        NotificationCenter.default.addObserver(
+            forName: .skillsListChanged,
+            object: nil,
+            queue: .main
+        ) { _ in Task { @MainActor in invalidateCache() } }
+    }
+
+    /// Build catalog from all currently enabled tools and skills.
     public static func build() -> CapabilityCatalog {
+        installObserversIfNeeded()
+        if let cached = globalCache { return cached }
+
         let toolEntries = ToolRegistry.shared.enabledCatalogEntries()
         let skillEntries = SkillManager.shared.enabledCatalogEntries()
-        return CapabilityCatalog(tools: toolEntries, skills: skillEntries)
+        let catalog = CapabilityCatalog(tools: toolEntries, skills: skillEntries)
+        globalCache = catalog
+        return catalog
     }
 
-    /// Build catalog for a specific persona, respecting persona-level overrides
+    /// Build catalog for a specific persona, applying persona-level overrides.
     public static func build(for personaId: UUID) -> CapabilityCatalog {
+        installObserversIfNeeded()
+        if let cached = cache[personaId] { return cached }
+
         let toolOverrides = PersonaManager.shared.effectiveToolOverrides(for: personaId)
         let skillOverrides = PersonaManager.shared.effectiveSkillOverrides(for: personaId)
-
-        // Get tools with persona overrides applied
         let toolEntries = ToolRegistry.shared.enabledCatalogEntries(withOverrides: toolOverrides)
-
-        // Get skills with persona overrides applied
         let skillEntries = SkillManager.shared.enabledCatalogEntries(withOverrides: skillOverrides)
 
-        return CapabilityCatalog(tools: toolEntries, skills: skillEntries)
+        let catalog = CapabilityCatalog(tools: toolEntries, skills: skillEntries)
+        cache[personaId] = catalog
+        return catalog
     }
 
-    /// Build catalog with specific tool and skill filters
+    /// Build catalog with specific tool and skill filters (not cached — used rarely)
     static func build(
         toolFilter: ((ToolRegistry.ToolEntry) -> Bool)? = nil,
         skillFilter: ((Skill) -> Bool)? = nil

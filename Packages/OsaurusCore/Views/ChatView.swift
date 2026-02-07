@@ -28,15 +28,11 @@ final class ChatSession: ObservableObject {
     /// The persona this session belongs to
     @Published var personaId: UUID?
 
-    // MARK: - Two-Phase Capability Selection
-    /// Whether capabilities have been selected for this conversation
-    @Published var capabilitiesSelected: Bool = false
-    /// Names of selected tools after select_capabilities is called
-    @Published var selectedToolNames: [String] = []
-    /// Names of selected skills after select_capabilities is called
-    @Published var selectedSkillNames: [String] = []
-    /// Combined instructions from selected skills (injected after selection)
-    @Published var selectedSkillInstructions: String = ""
+    // MARK: - Two-Phase Capability Selection (internal state, not @Published)
+    var capabilitiesSelected: Bool = false
+    var selectedToolNames: [String] = []
+    var selectedSkillNames: [String] = []
+    var selectedSkillInstructions: String = ""
 
     // MARK: - Persistence Properties
     @Published var sessionId: UUID?
@@ -52,6 +48,7 @@ final class ChatSession: ObservableObject {
     private var _cachedEstimatedTokens: Int = 0
     private var _tokenCacheValid: Bool = false
     private var _lastTokenTurnsCount: Int = 0
+    private var _lastTokenComputeTime: Date = .distantPast
 
     /// Callback when session needs to be saved (called after streaming completes)
     var onSessionChanged: (() -> Void)?
@@ -306,11 +303,20 @@ final class ChatSession: ObservableObject {
         )
     }
 
-    /// Estimated token count for current session context (rough heuristic: ~4 chars per token)
-    /// Memoized - only recomputes when turns/tools change or streaming ends
+    /// Precomputed group header map from BlockMemoizer.
+    var visibleBlocksGroupHeaderMap: [UUID: UUID] {
+        blockMemoizer.groupHeaderMap
+    }
+
+    /// Estimated token count for current session context (~4 chars per token).
+    /// Throttled to at most once per 500ms during streaming.
     var estimatedContextTokens: Int {
-        // Use cache if valid and not streaming (during streaming, estimate changes frequently)
         if _tokenCacheValid && !isStreaming && turns.count == _lastTokenTurnsCount {
+            return _cachedEstimatedTokens
+        }
+
+        // Throttle during streaming to avoid per-frame overhead
+        if isStreaming && _tokenCacheValid && Date().timeIntervalSince(_lastTokenComputeTime) < 0.5 {
             return _cachedEstimatedTokens
         }
 
@@ -394,6 +400,7 @@ final class ChatSession: ObservableObject {
         _cachedEstimatedTokens = total
         _tokenCacheValid = true
         _lastTokenTurnsCount = turns.count
+        _lastTokenComputeTime = Date()
 
         return total
     }
@@ -1735,12 +1742,14 @@ struct ChatView: View {
     /// Isolated message thread view to prevent cascading re-renders
     private func messageThread(_ width: CGFloat) -> some View {
         let blocks = session.visibleBlocks
+        let groupHeaderMap = session.visibleBlocksGroupHeaderMap
         let displayName = windowState.cachedPersonaDisplayName
         let lastAssistantTurnId = session.turns.last { $0.role == .assistant }?.id
 
         return ZStack {
             MessageThreadView(
                 blocks: blocks,
+                groupHeaderMap: groupHeaderMap,
                 width: width,
                 personaName: displayName,
                 isStreaming: session.isStreaming,

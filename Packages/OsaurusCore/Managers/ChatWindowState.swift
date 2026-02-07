@@ -60,6 +60,7 @@ final class ChatWindowState: ObservableObject {
     // MARK: - Private
 
     private nonisolated(unsafe) var notificationObservers: [NSObjectProtocol] = []
+    private var sessionRefreshWorkItem: DispatchWorkItem?
 
     // MARK: - Initialization
 
@@ -87,7 +88,7 @@ final class ChatWindowState: ObservableObject {
             self.session.load(from: data)
         }
         self.session.onSessionChanged = { [weak self] in
-            self?.refreshSessions()
+            self?.refreshSessionsDebounced()
         }
 
         setupNotificationObservers()
@@ -190,10 +191,19 @@ final class ChatWindowState: ObservableObject {
     }
 
     func refreshSessions() {
-        // Refresh the global sessions manager from disk first
-        ChatSessionsManager.shared.refresh()
-        // Then get the filtered sessions for this persona
         filteredSessions = ChatSessionsManager.shared.sessions(for: personaId)
+    }
+
+    /// Coalesces rapid `refreshSessions()` calls (e.g. during streaming saves).
+    func refreshSessionsDebounced() {
+        sessionRefreshWorkItem?.cancel()
+        let workItem = DispatchWorkItem { [weak self] in
+            Task { @MainActor in
+                self?.refreshSessions()
+            }
+        }
+        sessionRefreshWorkItem = workItem
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3, execute: workItem)
     }
 
     func refreshTheme() {

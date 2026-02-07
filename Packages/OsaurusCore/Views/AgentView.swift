@@ -321,12 +321,13 @@ struct AgentView: View {
         let expandedWidth = progressSidebarWidth + 12
         let sidebarWidth = isProgressSidebarCollapsed ? collapsedWidth : expandedWidth
         let chatWidth = width - sidebarWidth
+        let hasBlocks = !session.issueBlocks.isEmpty
 
         return HStack(spacing: 0) {
             // Main chat area
             VStack(spacing: 0) {
                 // Issue detail view with MessageThreadView
-                if session.selectedIssueId != nil && !session.issueBlocks.isEmpty {
+                if session.selectedIssueId != nil && hasBlocks {
                     issueDetailView(width: chatWidth)
                 } else if session.selectedIssueId != nil {
                     // Selected issue but no blocks yet (loading or empty)
@@ -494,14 +495,18 @@ extension AgentView {
         let availableWidth = width - (Self.contentHorizontalPadding * 2)
         let contentWidth = min(availableWidth, Self.maxChatContentWidth)
 
+        let blocks = session.issueBlocks
+        let groupHeaderMap = session.issueBlocksGroupHeaderMap
+
         return ZStack(alignment: .bottomTrailing) {
             MessageThreadView(
-                blocks: session.issueBlocks,
+                blocks: blocks,
+                groupHeaderMap: groupHeaderMap,
                 width: contentWidth,
                 personaName: personaName,
                 isStreaming: session.isExecuting && session.activeIssue?.id == session.selectedIssueId,
                 scrollTrigger: session.issueTurnsCount,
-                lastAssistantTurnId: session.issueBlocks.last?.turnId,
+                lastAssistantTurnId: blocks.last?.turnId,
                 autoScrollEnabled: false,
                 onCopy: { _ in },
                 onRegenerate: { _ in },
@@ -518,7 +523,7 @@ extension AgentView {
             // Scroll to bottom button
             ScrollToBottomButton(
                 isPinnedToBottom: isPinnedToBottom,
-                hasTurns: !session.issueBlocks.isEmpty,
+                hasTurns: !blocks.isEmpty,
                 onTap: { isPinnedToBottom = true }
             )
         }

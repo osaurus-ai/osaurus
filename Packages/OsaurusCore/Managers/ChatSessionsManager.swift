@@ -26,7 +26,7 @@ final class ChatSessionsManager: ObservableObject {
 
     // MARK: - Public API
 
-    /// Reload sessions from disk
+    /// Full reload from disk — prefer `save()`/`delete()` for single-session mutations.
     func refresh() {
         sessions = ChatSessionStore.loadAll()
     }
@@ -44,7 +44,7 @@ final class ChatSessionsManager: ObservableObject {
             personaId: personaId
         )
         ChatSessionStore.save(session)
-        refresh()
+        upsertInMemory(session)
         return session.id
     }
 
@@ -61,10 +61,10 @@ final class ChatSessionsManager: ObservableObject {
         return sessions.filter { $0.personaId == personaId }
     }
 
-    /// Save a session (updates the list)
+    /// Save a session (updates the in-memory list without full disk reload)
     func save(_ session: ChatSessionData) {
         ChatSessionStore.save(session)
-        refresh()
+        upsertInMemory(session)
     }
 
     /// Delete a session by ID
@@ -73,7 +73,7 @@ final class ChatSessionsManager: ObservableObject {
         if currentSessionId == id {
             currentSessionId = nil
         }
-        refresh()
+        sessions.removeAll { $0.id == id }
     }
 
     /// Rename a session
@@ -82,7 +82,7 @@ final class ChatSessionsManager: ObservableObject {
         session.title = title
         session.updatedAt = Date()
         ChatSessionStore.save(session)
-        refresh()
+        upsertInMemory(session)
     }
 
     /// Get a session by ID
@@ -103,6 +103,18 @@ final class ChatSessionsManager: ObservableObject {
         session.selectedModel = selectedModel
         session.updatedAt = Date()
         ChatSessionStore.save(session)
-        refresh()
+        upsertInMemory(session)
+    }
+
+    // MARK: - Private
+
+    /// Insert or replace a session in the in-memory array, maintaining updatedAt descending order.
+    private func upsertInMemory(_ session: ChatSessionData) {
+        if let index = sessions.firstIndex(where: { $0.id == session.id }) {
+            sessions.remove(at: index)
+        }
+        // Insert at the correct position to maintain updatedAt descending order
+        let insertIndex = sessions.firstIndex(where: { $0.updatedAt < session.updatedAt }) ?? sessions.endIndex
+        sessions.insert(session, at: insertIndex)
     }
 }

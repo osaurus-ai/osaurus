@@ -9,6 +9,8 @@ import SwiftUI
 
 struct MessageThreadView: View {
     let blocks: [ContentBlock]
+    /// Optional precomputed group header map; falls back to local computation when nil.
+    var groupHeaderMap: [UUID: UUID]? = nil
     let width: CGFloat
     let personaName: String
     let isStreaming: Bool
@@ -27,15 +29,14 @@ struct MessageThreadView: View {
 
     private var contentWidth: CGFloat { max(100, width - 64) }
 
-    /// Maps each turnId to its visual group's header turnId.
-    /// Consecutive assistant turns share a group; user turns are their own group.
-    private var groupHeaderMap: [UUID: UUID] {
+    private var resolvedGroupHeaderMap: [UUID: UUID] {
+        if let precomputed = groupHeaderMap { return precomputed }
+
         var map: [UUID: UUID] = [:]
         var currentGroupHeaderId: UUID? = nil
 
         for block in blocks {
             if case .groupSpacer = block.kind {
-                // Group spacer resets the group
                 currentGroupHeaderId = nil
                 continue
             }
@@ -47,7 +48,6 @@ struct MessageThreadView: View {
             if let groupId = currentGroupHeaderId {
                 map[block.turnId] = groupId
             } else {
-                // Block before any header (shouldn't happen, but safe fallback)
                 map[block.turnId] = block.turnId
             }
         }
@@ -55,7 +55,7 @@ struct MessageThreadView: View {
     }
 
     var body: some View {
-        let headerMap = groupHeaderMap
+        let headerMap = resolvedGroupHeaderMap
 
         ScrollViewReader { proxy in
             ScrollView {
