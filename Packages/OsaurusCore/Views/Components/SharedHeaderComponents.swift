@@ -10,7 +10,8 @@ import SwiftUI
 
 // MARK: - Header Action Button
 
-/// A circular icon button used in the header for actions like sidebar toggle, new chat, etc.
+/// An icon-only button for the toolbar. Relies on the native toolbar item
+/// pill for its background; only renders the icon with a hover color change.
 struct HeaderActionButton: View {
     let icon: String
     let help: String
@@ -21,51 +22,12 @@ struct HeaderActionButton: View {
 
     var body: some View {
         Button(action: action) {
-            ZStack {
-                // Background
-                Circle()
-                    .fill(theme.secondaryBackground.opacity(isHovered ? 0.9 : 0.6))
-
-                // Subtle accent gradient on hover
-                if isHovered {
-                    Circle()
-                        .fill(
-                            LinearGradient(
-                                colors: [
-                                    theme.accentColor.opacity(0.08),
-                                    Color.clear,
-                                ],
-                                startPoint: .topLeading,
-                                endPoint: .bottomTrailing
-                            )
-                        )
-                }
-
-                Image(systemName: icon)
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(isHovered ? theme.accentColor : theme.secondaryText)
-            }
-            .frame(width: 30, height: 30)
-            .overlay(
-                Circle()
-                    .strokeBorder(
-                        LinearGradient(
-                            colors: [
-                                theme.glassEdgeLight.opacity(isHovered ? 0.2 : 0.1),
-                                theme.primaryBorder.opacity(isHovered ? 0.15 : 0.08),
-                            ],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        ),
-                        lineWidth: 1
-                    )
-            )
-            .shadow(
-                color: isHovered ? theme.accentColor.opacity(0.12) : .clear,
-                radius: 6,
-                x: 0,
-                y: 2
-            )
+            Image(systemName: icon)
+                .font(.system(size: 12, weight: .medium))
+                .foregroundColor(isHovered ? theme.accentColor : theme.secondaryText)
+                .frame(width: 28, height: 28)
+                .padding(.horizontal, 4)
+                .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .onHover { hovering in
@@ -93,48 +55,15 @@ struct ModeToggleButton: View {
 
     var body: some View {
         Button(action: action) {
-            HStack(spacing: 2) {
+            HStack(spacing: 0) {
                 segment(icon: "bubble.left.and.bubble.right", label: "Chat", isSelected: currentMode == .chat)
                 segment(icon: "bolt.fill", label: "Agent", isSelected: currentMode == .agent)
             }
-            .padding(3)
-            .background(
-                ZStack {
-                    RoundedRectangle(cornerRadius: 10, style: .continuous)
-                        .fill(theme.secondaryBackground.opacity(isHovered ? 0.9 : 0.7))
-
-                    // Subtle accent glow at top on hover
-                    if isHovered {
-                        LinearGradient(
-                            colors: [
-                                theme.accentColor.opacity(0.06),
-                                Color.clear,
-                            ],
-                            startPoint: .top,
-                            endPoint: .bottom
-                        )
-                        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-                    }
-                }
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .strokeBorder(
-                        LinearGradient(
-                            colors: [
-                                theme.glassEdgeLight.opacity(isHovered ? 0.18 : 0.12),
-                                theme.primaryBorder.opacity(isHovered ? 0.12 : 0.08),
-                            ],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        ),
-                        lineWidth: 1
-                    )
-            )
+            .padding(.horizontal, 6)
+            .padding(.vertical, 2)
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .onHover { isHovered = isDisabled ? false : $0 }
-        .animation(.easeOut(duration: 0.15), value: isHovered)
         .opacity(isDisabled ? 0.4 : 1.0)
         .disabled(isDisabled)
         .help(
@@ -151,17 +80,13 @@ struct ModeToggleButton: View {
             Text(label).font(.system(size: 11, weight: .semibold))
         }
         .foregroundColor(isSelected ? theme.primaryText : theme.tertiaryText)
-        .padding(.horizontal, 12)
-        .padding(.vertical, 6)
+        .padding(.horizontal, 14)
+        .padding(.vertical, 5)
         .background {
             if isSelected {
-                RoundedRectangle(cornerRadius: 7, style: .continuous)
-                    .fill(theme.primaryBackground)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 7, style: .continuous)
-                            .strokeBorder(theme.primaryBorder.opacity(0.1), lineWidth: 1)
-                    )
-                    .shadow(color: theme.shadowColor.opacity(0.1), radius: 2, x: 0, y: 1)
+                RoundedRectangle(cornerRadius: 20, style: .continuous)
+                    .fill(theme.secondaryBackground.opacity(0.8))
+                    .shadow(color: theme.shadowColor.opacity(0.08), radius: 1.5, x: 0, y: 0.5)
                     .matchedGeometryEffect(id: "modeIndicator", in: animation)
             }
         }
@@ -240,49 +165,12 @@ struct CloseButton: View {
 
     var body: some View {
         Button(action: action) {
-            ZStack {
-                Circle()
-                    .fill(theme.secondaryBackground.opacity(isHovered ? 0.9 : 0.6))
-
-                if isHovered {
-                    Circle()
-                        .fill(
-                            LinearGradient(
-                                colors: [
-                                    Color.red.opacity(0.1),
-                                    Color.clear,
-                                ],
-                                startPoint: .topLeading,
-                                endPoint: .bottomTrailing
-                            )
-                        )
-                }
-
-                Image(systemName: "xmark")
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundColor(isHovered ? Color.red.opacity(0.9) : theme.secondaryText)
-            }
-            .frame(width: 30, height: 30)
-            .overlay(
-                Circle()
-                    .strokeBorder(
-                        LinearGradient(
-                            colors: [
-                                theme.glassEdgeLight.opacity(isHovered ? 0.2 : 0.1),
-                                (isHovered ? Color.red : theme.primaryBorder).opacity(isHovered ? 0.2 : 0.08),
-                            ],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        ),
-                        lineWidth: 1
-                    )
-            )
-            .shadow(
-                color: isHovered ? Color.red.opacity(0.15) : .clear,
-                radius: 6,
-                x: 0,
-                y: 2
-            )
+            Image(systemName: "xmark")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundColor(isHovered ? Color.red.opacity(0.9) : theme.secondaryText)
+                .frame(width: 28, height: 28)
+                .padding(.horizontal, 4)
+                .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .onHover { hovering in
@@ -308,52 +196,13 @@ struct PinButton: View {
             isPinned.toggle()
             ChatWindowManager.shared.setWindowPinned(id: windowId, pinned: isPinned)
         } label: {
-            ZStack {
-                Circle()
-                    .fill(theme.secondaryBackground.opacity(isHovered || isPinned ? 0.9 : 0.6))
-
-                if isHovered || isPinned {
-                    Circle()
-                        .fill(
-                            LinearGradient(
-                                colors: [
-                                    theme.accentColor.opacity(isPinned ? 0.12 : 0.08),
-                                    Color.clear,
-                                ],
-                                startPoint: .topLeading,
-                                endPoint: .bottomTrailing
-                            )
-                        )
-                }
-
-                Image(systemName: isPinned ? "pin.fill" : "pin")
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundColor(isPinned || isHovered ? theme.accentColor : theme.secondaryText)
-                    .rotationEffect(.degrees(isPinned ? 0 : 45))
-            }
-            .frame(width: 30, height: 30)
-            .overlay(
-                Circle()
-                    .strokeBorder(
-                        LinearGradient(
-                            colors: [
-                                theme.glassEdgeLight.opacity(isHovered || isPinned ? 0.2 : 0.1),
-                                (isPinned ? theme.accentColor : theme.primaryBorder).opacity(
-                                    isHovered || isPinned ? 0.2 : 0.08
-                                ),
-                            ],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        ),
-                        lineWidth: 1
-                    )
-            )
-            .shadow(
-                color: isPinned || isHovered ? theme.accentColor.opacity(0.12) : .clear,
-                radius: 6,
-                x: 0,
-                y: 2
-            )
+            Image(systemName: isPinned ? "pin.fill" : "pin")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundColor(isPinned || isHovered ? theme.accentColor : theme.secondaryText)
+                .rotationEffect(.degrees(isPinned ? 0 : 45))
+                .frame(width: 28, height: 28)
+                .padding(.horizontal, 4)
+                .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .onHover { hovering in

@@ -1914,4 +1914,3 @@ struct WindowAccessor: NSViewRepresentable {
         }
     }
 }
-

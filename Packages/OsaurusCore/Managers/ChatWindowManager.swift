@@ -388,8 +388,8 @@ public final class ChatWindowManager: NSObject, ObservableObject {
         panel.titlebarAppearsTransparent = true
         panel.isMovableByWindowBackground = false
         panel.acceptsMouseMovedEvents = true
+        panel.appearance = NSAppearance(named: windowState.theme.isDark ? .darkAqua : .aqua)
 
-        // Titlebar toolbar: centers traffic lights + hosts interactive controls
         let toolbar = NSToolbar(identifier: "ChatToolbar")
         toolbar.showsBaselineSeparator = false
         toolbar.allowsUserCustomization = false
@@ -486,8 +486,8 @@ public final class ChatWindowManager: NSObject, ObservableObject {
         panel.titlebarAppearsTransparent = true
         panel.isMovableByWindowBackground = false
         panel.acceptsMouseMovedEvents = true
+        panel.appearance = NSAppearance(named: windowState.theme.isDark ? .darkAqua : .aqua)
 
-        // Titlebar toolbar: centers traffic lights + hosts interactive controls
         let toolbar = NSToolbar(identifier: "ChatToolbar")
         toolbar.showsBaselineSeparator = false
         toolbar.allowsUserCustomization = false
@@ -580,12 +580,14 @@ private final class ChatPanel: NSPanel {
 
 // MARK: - Chat Toolbar
 
-/// Toolbar delegate that hosts SwiftUI views inside `NSToolbarItem.view`.
-/// This is the most reliable way to get clickable/hoverable controls in the titlebar.
+/// Toolbar delegate that places each control in its own `NSToolbarItem`
+/// so macOS applies native per-item styling (pill backgrounds, spacing).
 @MainActor
 private final class ChatToolbarDelegate: NSObject, NSToolbarDelegate {
-    private static let leadingControlsItem = NSToolbarItem.Identifier("ChatToolbar.leadingControls")
-    private static let trailingControlsItem = NSToolbarItem.Identifier("ChatToolbar.trailingControls")
+    private static let sidebarItem = NSToolbarItem.Identifier("ChatToolbar.sidebar")
+    private static let modeToggleItem = NSToolbarItem.Identifier("ChatToolbar.modeToggle")
+    private static let actionItem = NSToolbarItem.Identifier("ChatToolbar.action")
+    private static let pinItem = NSToolbarItem.Identifier("ChatToolbar.pin")
 
     private weak var windowState: ChatWindowState?
     private weak var session: ChatSession?
@@ -597,11 +599,11 @@ private final class ChatToolbarDelegate: NSObject, NSToolbarDelegate {
     }
 
     func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        [Self.leadingControlsItem, .flexibleSpace, Self.trailingControlsItem]
+        [Self.sidebarItem, Self.modeToggleItem, .flexibleSpace, Self.actionItem, Self.pinItem]
     }
 
     func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        [Self.leadingControlsItem, .flexibleSpace, Self.trailingControlsItem]
+        [Self.sidebarItem, Self.modeToggleItem, .flexibleSpace, Self.actionItem, Self.pinItem]
     }
 
     func toolbar(
@@ -612,16 +614,32 @@ private final class ChatToolbarDelegate: NSObject, NSToolbarDelegate {
         guard let windowState, let session else { return nil }
 
         switch itemIdentifier {
-        case Self.leadingControlsItem:
+        case Self.sidebarItem:
             return makeHostingItem(
                 identifier: itemIdentifier,
-                rootView: ChatToolbarLeadingControlsView(windowState: windowState, session: session)
+                rootView:
+                    ChatToolbarSidebarView(windowState: windowState)
             )
 
-        case Self.trailingControlsItem:
+        case Self.modeToggleItem:
             return makeHostingItem(
                 identifier: itemIdentifier,
-                rootView: ChatToolbarTrailingControlsView(windowState: windowState, session: session)
+                rootView:
+                    ChatToolbarModeToggleView(windowState: windowState, session: session)
+            )
+
+        case Self.actionItem:
+            return makeHostingItem(
+                identifier: itemIdentifier,
+                rootView:
+                    ChatToolbarActionView(windowState: windowState, session: session)
+            )
+
+        case Self.pinItem:
+            return makeHostingItem(
+                identifier: itemIdentifier,
+                rootView:
+                    ChatToolbarPinView(windowState: windowState)
             )
 
         default:
@@ -634,55 +652,60 @@ private final class ChatToolbarDelegate: NSObject, NSToolbarDelegate {
         rootView: Content
     ) -> NSToolbarItem {
         let item = NSToolbarItem(itemIdentifier: identifier)
-
         let hostingView = NSHostingView(rootView: rootView)
         hostingView.frame = NSRect(origin: .zero, size: hostingView.fittingSize)
-
         item.view = hostingView
         return item
     }
 }
 
-private struct ChatToolbarLeadingControlsView: View {
+// MARK: - Toolbar Item Views
+
+/// Sidebar toggle button. Observes windowState for reactive theme updates.
+private struct ChatToolbarSidebarView: View {
+    @ObservedObject var windowState: ChatWindowState
+
+    var body: some View {
+        HeaderActionButton(
+            icon: "sidebar.left",
+            help: windowState.showSidebar ? "Hide sidebar" : "Show sidebar",
+            action: {
+                withAnimation(windowState.theme.animationQuick()) {
+                    windowState.showSidebar.toggle()
+                }
+            }
+        )
+        .environment(\.theme, windowState.theme)
+    }
+}
+
+/// Mode toggle (Chat/Agent) with optional task title or model badge.
+private struct ChatToolbarModeToggleView: View {
     @ObservedObject var windowState: ChatWindowState
     @ObservedObject var session: ChatSession
 
     private var isAgentMode: Bool { windowState.mode == .agent }
 
     var body: some View {
-        HStack(spacing: 12) {
-            HeaderActionButton(
-                icon: "sidebar.left",
-                help: windowState.showSidebar ? "Hide sidebar" : "Show sidebar",
-                action: {
-                    withAnimation(windowState.theme.animationQuick()) {
-                        windowState.showSidebar.toggle()
-                    }
-                }
-            )
-
+        HStack(spacing: 8) {
             ModeToggleButton(
                 currentMode: isAgentMode ? .agent : .chat,
                 isDisabled: !isAgentMode && !session.hasAnyModel,
-                action: {
-                    windowState.switchMode(to: isAgentMode ? .chat : .agent)
-                }
+                action: { windowState.switchMode(to: isAgentMode ? .chat : .agent) }
             )
 
             if isAgentMode, let agentSession = windowState.agentSession {
                 AgentTaskTitleView(session: agentSession)
                     .frame(maxWidth: 260, alignment: .leading)
             } else if let model = session.selectedModel, session.modelOptions.count <= 1 {
-                ModeIndicatorBadge(style: .model(name: displayModelName(model)))
+                ModeIndicatorBadge(style: .model(name: Self.displayModelName(model)))
             }
         }
-        .frame(height: 52)
-        .fixedSize(horizontal: true, vertical: true)
-        // Ensure header components see the correct theme even in the separate hosting view.
+        .fixedSize(horizontal: true, vertical: false)
         .environment(\.theme, windowState.theme)
     }
 
-    private func displayModelName(_ raw: String?) -> String {
+    private static func displayModelName(_ raw: String?) -> String {
         guard let raw else { return "Model" }
         if raw.lowercased() == "foundation" { return "Foundation" }
         if let last = raw.split(separator: "/").last { return String(last) }
@@ -690,6 +713,42 @@ private struct ChatToolbarLeadingControlsView: View {
     }
 }
 
+/// Contextual action button: settings (empty state / agent) or new-chat plus.
+private struct ChatToolbarActionView: View {
+    @ObservedObject var windowState: ChatWindowState
+    @ObservedObject var session: ChatSession
+
+    private var isAgentMode: Bool { windowState.mode == .agent }
+
+    var body: some View {
+        Group {
+            if isAgentMode || session.turns.isEmpty {
+                SettingsButton(action: {
+                    AppDelegate.shared?.showManagementWindow(initialTab: .settings)
+                })
+            } else {
+                HeaderActionButton(
+                    icon: "plus",
+                    help: "New chat",
+                    action: { windowState.startNewChat() }
+                )
+            }
+        }
+        .environment(\.theme, windowState.theme)
+    }
+}
+
+/// Pin button. Observes windowState for reactive theme updates.
+private struct ChatToolbarPinView: View {
+    @ObservedObject var windowState: ChatWindowState
+
+    var body: some View {
+        PinButton(windowId: windowState.windowId)
+            .environment(\.theme, windowState.theme)
+    }
+}
+
+/// Agent task title shown next to the mode toggle in agent mode.
 private struct AgentTaskTitleView: View {
     @ObservedObject var session: AgentSession
 
@@ -705,40 +764,6 @@ private struct AgentTaskTitleView: View {
                     .truncationMode(.tail)
             }
         }
-    }
-}
-
-private struct ChatToolbarTrailingControlsView: View {
-    @ObservedObject var windowState: ChatWindowState
-    @ObservedObject var session: ChatSession
-
-    private var isAgentMode: Bool { windowState.mode == .agent }
-
-    var body: some View {
-        HStack(spacing: 8) {
-            if isAgentMode {
-                SettingsButton(action: {
-                    AppDelegate.shared?.showManagementWindow(initialTab: .settings)
-                })
-            } else {
-                if session.turns.isEmpty {
-                    SettingsButton(action: {
-                        AppDelegate.shared?.showManagementWindow(initialTab: .settings)
-                    })
-                } else {
-                    HeaderActionButton(
-                        icon: "plus",
-                        help: "New chat",
-                        action: { windowState.startNewChat() }
-                    )
-                }
-            }
-
-            PinButton(windowId: windowState.windowId)
-        }
-        .frame(height: 52)
-        .fixedSize(horizontal: true, vertical: true)
-        .environment(\.theme, windowState.theme)
     }
 }
 
