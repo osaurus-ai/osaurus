@@ -1412,7 +1412,7 @@ struct ChatView: View {
                     }
                     .frame(width: 240, alignment: .top)
                     .frame(maxHeight: .infinity, alignment: .top)
-                    .padding(.top, 8)
+                    .padding(.top, 0)
                     .zIndex(1)
                     .transition(.move(edge: .leading).combined(with: .opacity))
                 }

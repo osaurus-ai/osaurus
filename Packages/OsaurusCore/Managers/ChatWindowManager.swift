@@ -391,7 +391,6 @@ public final class ChatWindowManager: NSObject, ObservableObject {
         panel.appearance = NSAppearance(named: windowState.theme.isDark ? .darkAqua : .aqua)
 
         let toolbar = NSToolbar(identifier: "ChatToolbar")
-        toolbar.showsBaselineSeparator = false
         toolbar.allowsUserCustomization = false
         toolbar.autosavesConfiguration = false
 
@@ -489,7 +488,6 @@ public final class ChatWindowManager: NSObject, ObservableObject {
         panel.appearance = NSAppearance(named: windowState.theme.isDark ? .darkAqua : .aqua)
 
         let toolbar = NSToolbar(identifier: "ChatToolbar")
-        toolbar.showsBaselineSeparator = false
         toolbar.allowsUserCustomization = false
         toolbar.autosavesConfiguration = false
 
@@ -586,6 +584,7 @@ private final class ChatPanel: NSPanel {
 private final class ChatToolbarDelegate: NSObject, NSToolbarDelegate {
     private static let sidebarItem = NSToolbarItem.Identifier("ChatToolbar.sidebar")
     private static let modeToggleItem = NSToolbarItem.Identifier("ChatToolbar.modeToggle")
+    private static let titleItem = NSToolbarItem.Identifier("ChatToolbar.title")
     private static let actionItem = NSToolbarItem.Identifier("ChatToolbar.action")
     private static let pinItem = NSToolbarItem.Identifier("ChatToolbar.pin")
 
@@ -599,11 +598,11 @@ private final class ChatToolbarDelegate: NSObject, NSToolbarDelegate {
     }
 
     func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        [Self.sidebarItem, Self.modeToggleItem, .flexibleSpace, Self.actionItem, Self.pinItem]
+        [Self.sidebarItem, Self.modeToggleItem, Self.titleItem, .flexibleSpace, Self.actionItem, Self.pinItem]
     }
 
     func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        [Self.sidebarItem, Self.modeToggleItem, .flexibleSpace, Self.actionItem, Self.pinItem]
+        [Self.sidebarItem, Self.modeToggleItem, Self.titleItem, .flexibleSpace, Self.actionItem, Self.pinItem]
     }
 
     func toolbar(
@@ -626,6 +625,13 @@ private final class ChatToolbarDelegate: NSObject, NSToolbarDelegate {
                 identifier: itemIdentifier,
                 rootView:
                     ChatToolbarModeToggleView(windowState: windowState, session: session)
+            )
+
+        case Self.titleItem:
+            return makeHostingItem(
+                identifier: itemIdentifier,
+                rootView:
+                    ChatToolbarTitleView(windowState: windowState, session: session)
             )
 
         case Self.actionItem:
@@ -679,7 +685,7 @@ private struct ChatToolbarSidebarView: View {
     }
 }
 
-/// Mode toggle (Chat/Agent) with optional task title or model badge.
+/// Mode toggle (Chat/Agent).
 private struct ChatToolbarModeToggleView: View {
     @ObservedObject var windowState: ChatWindowState
     @ObservedObject var session: ChatSession
@@ -687,25 +693,35 @@ private struct ChatToolbarModeToggleView: View {
     private var isAgentMode: Bool { windowState.mode == .agent }
 
     var body: some View {
-        HStack(spacing: 8) {
-            ModeToggleButton(
-                currentMode: isAgentMode ? .agent : .chat,
-                isDisabled: !isAgentMode && !session.hasAnyModel,
-                action: { windowState.switchMode(to: isAgentMode ? .chat : .agent) }
-            )
+        ModeToggleButton(
+            currentMode: isAgentMode ? .agent : .chat,
+            isDisabled: !isAgentMode && !session.hasAnyModel,
+            action: { windowState.switchMode(to: isAgentMode ? .chat : .agent) }
+        )
+        .environment(\.theme, windowState.theme)
+    }
+}
 
+/// Title view showing Agent Task or Model Badge
+private struct ChatToolbarTitleView: View {
+    @ObservedObject var windowState: ChatWindowState
+    @ObservedObject var session: ChatSession
+
+    private var isAgentMode: Bool { windowState.mode == .agent }
+
+    var body: some View {
+        Group {
             if isAgentMode, let agentSession = windowState.agentSession {
                 AgentTaskTitleView(session: agentSession)
-                    .frame(maxWidth: 260, alignment: .leading)
+                    .frame(maxWidth: 360, alignment: .leading)
             } else if let model = session.selectedModel, session.modelOptions.count <= 1 {
-                ModeIndicatorBadge(style: .model(name: Self.displayModelName(model)))
+                ModeIndicatorBadge(style: .model(name: displayModelName(model)))
             }
         }
-        .fixedSize(horizontal: true, vertical: false)
         .environment(\.theme, windowState.theme)
     }
 
-    private static func displayModelName(_ raw: String?) -> String {
+    private func displayModelName(_ raw: String?) -> String {
         guard let raw else { return "Model" }
         if raw.lowercased() == "foundation" { return "Foundation" }
         if let last = raw.split(separator: "/").last { return String(last) }
@@ -758,6 +774,7 @@ private struct AgentTaskTitleView: View {
         Group {
             if let task = session.currentTask {
                 Text(task.title)
+                    .padding(.horizontal, 16)
                     .font(theme.font(size: CGFloat(theme.bodySize), weight: .medium))
                     .foregroundColor(theme.primaryText)
                     .lineLimit(1)
