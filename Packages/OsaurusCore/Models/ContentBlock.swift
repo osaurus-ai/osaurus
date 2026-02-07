@@ -204,8 +204,6 @@ struct ContentBlock: Identifiable, Equatable {
 // MARK: - Block Generation
 
 extension ContentBlock {
-    private static let maxParagraphSize = 600
-
     private static func isToolOnlyTurn(_ turn: ChatTurn) -> Bool {
         turn.contentIsEmpty && !turn.hasThinking && (turn.toolCalls?.isEmpty == false)
     }
@@ -280,37 +278,29 @@ extension ContentBlock {
             }
 
             if turn.role == .assistant && turn.hasThinking {
-                let paragraphs = splitIntoParagraphs(turn.thinking)
-                for (idx, text) in paragraphs.enumerated() {
-                    let isLast = idx == paragraphs.count - 1
-                    turnBlocks.append(
-                        .thinking(
-                            turnId: turn.id,
-                            index: idx,
-                            text: text,
-                            isStreaming: isStreaming && isLast && turn.contentIsEmpty,
-                            position: .middle
-                        )
+                turnBlocks.append(
+                    .thinking(
+                        turnId: turn.id,
+                        index: 0,
+                        text: turn.thinking,
+                        isStreaming: isStreaming && turn.contentIsEmpty,
+                        position: .middle
                     )
-                }
+                )
             }
 
             if !turn.contentIsEmpty {
                 flushPendingToolCalls(into: &turnBlocks)
-                let paragraphs = splitIntoParagraphs(turn.content)
-                for (idx, text) in paragraphs.enumerated() {
-                    let isLast = idx == paragraphs.count - 1
-                    turnBlocks.append(
-                        .paragraph(
-                            turnId: turn.id,
-                            index: idx,
-                            text: text,
-                            isStreaming: isStreaming && isLast,
-                            role: turn.role,
-                            position: .middle
-                        )
+                turnBlocks.append(
+                    .paragraph(
+                        turnId: turn.id,
+                        index: 0,
+                        text: turn.content,
+                        isStreaming: isStreaming,
+                        role: turn.role,
+                        position: .middle
                     )
-                }
+                )
             } else if isStreaming && turn.role == .assistant && !turn.hasThinking && (turn.toolCalls ?? []).isEmpty {
                 turnBlocks.append(.typingIndicator(turnId: turn.id, position: .middle))
             }
@@ -341,36 +331,4 @@ extension ContentBlock {
         }
     }
 
-    private static func splitIntoParagraphs(_ text: String) -> [String] {
-        guard text.count > maxParagraphSize else { return [text] }
-
-        var result: [String] = []
-        var chunk = ""
-        var inCodeBlock = false
-        let lines = text.components(separatedBy: "\n")
-
-        for (index, line) in lines.enumerated() {
-            let trimmed = line.trimmingCharacters(in: .whitespaces)
-            if trimmed.hasPrefix("```") { inCodeBlock.toggle() }
-            if !chunk.isEmpty { chunk += "\n" }
-            chunk += line
-
-            let isLastLine = index == lines.count - 1
-            let isBlankLine = trimmed.isEmpty
-            let nextIsBlank = index + 1 < lines.count && lines[index + 1].trimmingCharacters(in: .whitespaces).isEmpty
-            let shouldSplit =
-                !inCodeBlock && !isLastLine
-                && ((chunk.count >= maxParagraphSize && (isBlankLine || nextIsBlank))
-                    || chunk.count >= maxParagraphSize * 2)
-
-            if shouldSplit {
-                result.append(chunk.trimmingCharacters(in: .whitespacesAndNewlines))
-                chunk = ""
-            }
-        }
-
-        let remaining = chunk.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !remaining.isEmpty { result.append(remaining) }
-        return result.isEmpty ? [text] : result
-    }
 }

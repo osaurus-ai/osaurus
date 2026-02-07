@@ -28,6 +28,9 @@ private enum BlockSpacing {
     static let blockquoteAfterBlockquote: CGFloat = 4
     static let listItemAfterOther: CGFloat = 10
     static let listItemAfterListItem: CGFloat = 8
+    static let codeBlockAfterOther: CGFloat = 14
+    static let horizontalRuleAfterOther: CGFloat = 8
+    static let tableAfterOther: CGFloat = 14
 }
 
 // MARK: - Text Block for Rendering
@@ -38,6 +41,18 @@ enum SelectableTextBlock: Equatable {
     case heading(level: Int, text: String)
     case blockquote(String)
     case listItem(text: String, index: Int, ordered: Bool, indentLevel: Int)
+    case codeBlock(code: String, language: String?)
+    case horizontalRule
+    case table(headers: [String], rows: [[String]])
+}
+
+// MARK: - Custom Attribute Keys
+
+extension NSAttributedString.Key {
+    /// Marks a range as a blockquote for custom drawing (vertical accent bar)
+    static let blockquoteMarker = NSAttributedString.Key("osaurus.blockquote")
+    /// Marks a range as a heading that should have an underline (H1/H2)
+    static let headingUnderline = NSAttributedString.Key("osaurus.headingUnderline")
 }
 
 // MARK: - Selectable Text View
@@ -48,6 +63,20 @@ struct SelectableTextView: NSViewRepresentable {
     let theme: ThemeProtocol
     /// Optional cache key (turn ID) for persisting measured height across view recycling
     var cacheKey: String? = nil
+    /// Optional overlay data for code block copy buttons (provided by wrapper view)
+    var overlayData: CodeBlockOverlayData? = nil
+
+    /// Observable object that publishes code block overlay data to SwiftUI
+    final class CodeBlockOverlayData: ObservableObject {
+        struct OverlayItem: Identifiable {
+            let id: Int
+            let code: String
+            let language: String?
+            let rect: CGRect
+        }
+
+        @Published var items: [OverlayItem] = []
+    }
 
     final class Coordinator {
         // Store previous state directly for O(1) comparison instead of O(n) hashing
@@ -61,6 +90,12 @@ struct SelectableTextView: NSViewRepresentable {
         // This enables O(1) incremental updates by only modifying changed blocks
         var blockLengths: [Int] = []
 
+        // Track code block ranges for overlay rendering (copy buttons)
+        var codeBlockInfos: [SelectableNSTextView.CodeBlockInfo] = []
+
+        /// External overlay data provided by the wrapper view
+        weak var overlayData: CodeBlockOverlayData?
+
         /// Once set, disables ThreadCache (Tier 2) lookups for the rest of this
         /// coordinator's lifetime. Only fresh coordinators (recycled views) benefit
         /// from Tier 2 to avoid expensive ensureLayout on large messages.
@@ -69,10 +104,49 @@ struct SelectableTextView: NSViewRepresentable {
         init(cacheKey: String? = nil) {
             self.cacheKey = cacheKey
         }
+
+        /// Update overlay items from the current code block infos and text view layout.
+        /// Deferred to the next run loop iteration to avoid publishing changes during
+        /// SwiftUI's view update cycle (which causes undefined behavior warnings).
+        @MainActor
+        func updateOverlayRects(textView: SelectableNSTextView) {
+            guard let overlayData = overlayData else { return }
+            guard let layoutManager = textView.layoutManager,
+                let textContainer = textView.textContainer
+            else {
+                DispatchQueue.main.async {
+                    overlayData.items = []
+                }
+                return
+            }
+
+            var items: [CodeBlockOverlayData.OverlayItem] = []
+            for (index, info) in codeBlockInfos.enumerated() {
+                let glyphRange = layoutManager.glyphRange(forCharacterRange: info.range, actualCharacterRange: nil)
+                var rect = layoutManager.boundingRect(forGlyphRange: glyphRange, in: textContainer)
+                // Expand to full width for the code block background
+                rect.origin.x = 0
+                rect.size.width = textView.bounds.width
+
+                items.append(
+                    CodeBlockOverlayData.OverlayItem(
+                        id: index,
+                        code: info.code,
+                        language: info.language,
+                        rect: rect
+                    )
+                )
+            }
+            DispatchQueue.main.async {
+                overlayData.items = items
+            }
+        }
     }
 
     func makeCoordinator() -> Coordinator {
-        Coordinator(cacheKey: cacheKey)
+        let coordinator = Coordinator(cacheKey: cacheKey)
+        coordinator.overlayData = overlayData
+        return coordinator
     }
 
     func makeNSView(context: Context) -> SelectableNSTextView {
@@ -101,10 +175,18 @@ struct SelectableTextView: NSViewRepresentable {
         // Apply cursor color
         textView.insertionPointColor = NSColor(theme.cursorColor)
 
+        // Set theme colors for custom drawing
+        textView.accentColor = NSColor(theme.accentColor)
+        textView.blockquoteBarColor = NSColor(theme.accentColor).withAlphaComponent(0.6)
+        textView.secondaryBackgroundColor = NSColor(theme.secondaryBackground)
+
         return textView
     }
 
     func updateNSView(_ textView: SelectableNSTextView, context: Context) {
+        // Keep overlay data reference up to date
+        context.coordinator.overlayData = overlayData
+
         // Update container width
         textView.textContainer?.containerSize = NSSize(width: baseWidth, height: CGFloat.greatestFiniteMagnitude)
 
@@ -112,6 +194,11 @@ struct SelectableTextView: NSViewRepresentable {
         textView.selectedTextAttributes = [
             .backgroundColor: NSColor(theme.selectionColor)
         ]
+
+        // Update theme colors for custom drawing
+        textView.accentColor = NSColor(theme.accentColor)
+        textView.blockquoteBarColor = NSColor(theme.accentColor).withAlphaComponent(0.6)
+        textView.secondaryBackgroundColor = NSColor(theme.secondaryBackground)
 
         // Fast path: Direct comparison instead of expensive O(n) hashing every update
         // Swift's Equatable for arrays uses optimized comparison that short-circuits early
@@ -149,6 +236,13 @@ struct SelectableTextView: NSViewRepresentable {
             context.coordinator.lastBlocks = blocks
             context.coordinator.lastWidth = baseWidth
             context.coordinator.lastThemeFingerprint = themeFingerprint
+
+            // Pass code block info to the text view for background drawing
+            textView.codeBlockInfos = context.coordinator.codeBlockInfos
+            textView.needsDisplay = true
+
+            // Update overlay rects for copy buttons
+            context.coordinator.updateOverlayRects(textView: textView)
         }
     }
 
@@ -187,6 +281,9 @@ struct SelectableTextView: NSViewRepresentable {
 
         context.coordinator.lastWidth = width
         context.coordinator.lastMeasuredHeight = measured
+
+        // Update overlay rects now that layout is complete
+        context.coordinator.updateOverlayRects(textView: nsView)
 
         // Cache for future view recycling (width-aware key)
         if let key = cacheKey {
@@ -296,6 +393,37 @@ struct SelectableTextView: NSViewRepresentable {
 
         // Update cache
         coordinator.blockLengths = newLengths
+
+        // Rebuild code block infos from scratch (ranges may have shifted)
+        rebuildCodeBlockInfos(blocks: newBlocks, lengths: newLengths, coordinator: coordinator)
+    }
+
+    /// Rebuild code block range info from block lengths
+    private func rebuildCodeBlockInfos(
+        blocks: [SelectableTextBlock],
+        lengths: [Int],
+        coordinator: Coordinator
+    ) {
+        var codeInfos: [SelectableNSTextView.CodeBlockInfo] = []
+        var offset = 0
+        for (i, block) in blocks.enumerated() {
+            let blockContentLength = i < lengths.count ? lengths[i] : 0
+            // Subtract trailing newline from the content range
+            let hasTrailingNewline = i < blocks.count - 1
+            let contentLen = hasTrailingNewline ? max(0, blockContentLength - 1) : blockContentLength
+
+            if case .codeBlock(let code, let language) = block {
+                codeInfos.append(
+                    SelectableNSTextView.CodeBlockInfo(
+                        code: code,
+                        language: language,
+                        range: NSRange(location: offset, length: contentLen)
+                    )
+                )
+            }
+            offset += blockContentLength
+        }
+        coordinator.codeBlockInfos = codeInfos
     }
 
     // MARK: - Attributed String Building
@@ -305,10 +433,13 @@ struct SelectableTextView: NSViewRepresentable {
         let scale = Typography.scale(for: baseWidth)
         let bodyFontSize = CGFloat(theme.bodySize) * scale
         var lengths: [Int] = []
+        var codeInfos: [SelectableNSTextView.CodeBlockInfo] = []
 
         for (index, block) in blocks.enumerated() {
             let isFirst = index == 0
             let previousBlock = isFirst ? nil : blocks[index - 1]
+
+            let currentOffset = result.length
 
             let attrString = renderBlock(
                 block,
@@ -318,6 +449,17 @@ struct SelectableTextView: NSViewRepresentable {
                 scale: scale
             )
             result.append(attrString)
+
+            // Track code block ranges
+            if case .codeBlock(let code, let language) = block {
+                codeInfos.append(
+                    SelectableNSTextView.CodeBlockInfo(
+                        code: code,
+                        language: language,
+                        range: NSRange(location: currentOffset, length: attrString.length)
+                    )
+                )
+            }
 
             var blockLen = attrString.length
 
@@ -331,6 +473,7 @@ struct SelectableTextView: NSViewRepresentable {
         }
 
         coordinator.blockLengths = lengths
+        coordinator.codeBlockInfos = codeInfos
 
         return result
     }
@@ -342,86 +485,162 @@ struct SelectableTextView: NSViewRepresentable {
         bodyFontSize: CGFloat,
         scale: CGFloat
     ) -> NSMutableAttributedString {
-        let result = NSMutableAttributedString()
+        let spacing = isFirst ? 0 : spacingBefore(block: block, previousBlock: previousBlock)
 
         switch block {
         case .paragraph(let text):
             let attrString = renderInlineMarkdown(text, fontSize: bodyFontSize, weight: .regular)
-            applyParagraphStyle(
-                to: attrString,
-                lineSpacing: LineSpacing.paragraph,
-                spacingBefore: isFirst ? 0 : spacingBefore(block: block, previousBlock: previousBlock)
-            )
-            result.append(attrString)
+            applyParagraphStyle(to: attrString, lineSpacing: LineSpacing.paragraph, spacingBefore: spacing)
+            return attrString
 
         case .heading(let level, let text):
             let fontSize = headingSize(level: level, scale: scale)
             let weight = level <= 2 ? NSFont.Weight.bold : .semibold
             let attrString = renderInlineMarkdown(text, fontSize: fontSize, weight: weight)
-            applyParagraphStyle(
-                to: attrString,
-                lineSpacing: LineSpacing.heading,
-                spacingBefore: isFirst ? 0 : spacingBefore(block: block, previousBlock: previousBlock)
-            )
-            result.append(attrString)
+            applyParagraphStyle(to: attrString, lineSpacing: LineSpacing.heading, spacingBefore: spacing)
+            if level <= 2 {
+                attrString.addAttribute(
+                    .headingUnderline,
+                    value: true,
+                    range: NSRange(location: 0, length: attrString.length)
+                )
+            }
+            return attrString
 
         case .blockquote(let text):
             let attrString = renderInlineMarkdown(text, fontSize: bodyFontSize, weight: .regular, isItalic: true)
-            // Apply secondary text color for blockquotes
-            attrString.addAttribute(
-                .foregroundColor,
-                value: NSColor(theme.secondaryText),
-                range: NSRange(location: 0, length: attrString.length)
-            )
+            let fullRange = NSRange(location: 0, length: attrString.length)
+            attrString.addAttribute(.foregroundColor, value: NSColor(theme.secondaryText), range: fullRange)
+            attrString.addAttribute(.blockquoteMarker, value: true, range: fullRange)
             applyParagraphStyle(
                 to: attrString,
                 lineSpacing: LineSpacing.blockquote,
-                spacingBefore: isFirst ? 0 : spacingBefore(block: block, previousBlock: previousBlock),
-                leftIndent: 16
+                spacingBefore: spacing,
+                leftIndent: 20
             )
-            result.append(attrString)
+            return attrString
 
         case .listItem(let text, let itemIndex, let ordered, let indentLevel):
             let bulletWidth: CGFloat = ordered ? 28 : 20
-            let bullet: String
-            if ordered {
-                bullet = "\(itemIndex + 1)."
-            } else {
-                bullet = "•"
-            }
+            let bullet = ordered ? "\(itemIndex + 1)." : "•"
 
-            // Create the full line with bullet + text
             let fullLine = NSMutableAttributedString()
-
-            // Create bullet with accent color
-            let bulletAttr = NSMutableAttributedString(
-                string: bullet,
-                attributes: [
-                    .font: nsFont(size: bodyFontSize, weight: .medium),
-                    .foregroundColor: NSColor(theme.accentColor),
-                ]
+            fullLine.append(
+                NSMutableAttributedString(
+                    string: bullet,
+                    attributes: [
+                        .font: nsFont(size: bodyFontSize, weight: .medium),
+                        .foregroundColor: NSColor(theme.accentColor),
+                    ]
+                )
             )
-            fullLine.append(bulletAttr)
-
-            // Add tab character
             fullLine.append(NSAttributedString(string: "\t"))
+            fullLine.append(renderInlineMarkdown(text, fontSize: bodyFontSize, weight: .regular))
 
-            // Create item text
-            let itemAttr = renderInlineMarkdown(text, fontSize: bodyFontSize, weight: .regular)
-            fullLine.append(itemAttr)
-
-            // Apply paragraph style with hanging indent, accounting for nesting level
             applyListParagraphStyle(
                 to: fullLine,
                 lineSpacing: LineSpacing.listItem,
-                spacingBefore: isFirst ? 0 : spacingBefore(block: block, previousBlock: previousBlock),
+                spacingBefore: spacing,
                 bulletWidth: bulletWidth,
                 indentLevel: indentLevel
             )
-            result.append(fullLine)
+            return fullLine
+
+        case .codeBlock(let code, _):
+            let codeAttr = NSMutableAttributedString(
+                string: code,
+                attributes: [
+                    .font: cachedMonoFont(size: bodyFontSize * 0.85, weight: .regular),
+                    .foregroundColor: NSColor(theme.primaryText.opacity(0.95)),
+                    .backgroundColor: NSColor(theme.codeBlockBackground),
+                ]
+            )
+            let style = NSMutableParagraphStyle()
+            style.lineSpacing = 4
+            style.paragraphSpacingBefore = isFirst ? 8 : spacing
+            style.paragraphSpacing = 8
+            style.firstLineHeadIndent = 12
+            style.headIndent = 12
+            style.tailIndent = -12
+            codeAttr.addAttribute(.paragraphStyle, value: style, range: NSRange(location: 0, length: codeAttr.length))
+            return codeAttr
+
+        case .horizontalRule:
+            let hrText = String(repeating: "\u{2500}", count: 40)
+            let hrAttr = NSMutableAttributedString(
+                string: hrText,
+                attributes: [
+                    .font: cachedFont(size: bodyFontSize * 0.5, weight: .ultraLight, italic: false),
+                    .foregroundColor: NSColor(theme.primaryBorder.opacity(0.4)),
+                ]
+            )
+            let style = NSMutableParagraphStyle()
+            style.alignment = .center
+            style.paragraphSpacingBefore = spacing
+            style.paragraphSpacing = 4
+            hrAttr.addAttribute(.paragraphStyle, value: style, range: NSRange(location: 0, length: hrAttr.length))
+            return hrAttr
+
+        case .table(let headers, let rows):
+            let tableText = renderTableAsText(headers: headers, rows: rows)
+            let tableAttr = NSMutableAttributedString(
+                string: tableText,
+                attributes: [
+                    .font: cachedMonoFont(size: bodyFontSize * 0.85, weight: .regular),
+                    .foregroundColor: NSColor(theme.primaryText),
+                ]
+            )
+            let style = NSMutableParagraphStyle()
+            style.lineSpacing = 2
+            style.paragraphSpacingBefore = spacing
+            tableAttr.addAttribute(.paragraphStyle, value: style, range: NSRange(location: 0, length: tableAttr.length))
+
+            // Bold header row
+            if let firstNewline = tableText.firstIndex(of: "\n") {
+                let headerLength = tableText.distance(from: tableText.startIndex, to: firstNewline)
+                tableAttr.addAttribute(
+                    .font,
+                    value: cachedMonoFont(size: bodyFontSize * 0.85, weight: .semibold),
+                    range: NSRange(location: 0, length: headerLength)
+                )
+            }
+            return tableAttr
+        }
+    }
+
+    /// Render a markdown table as aligned monospace text
+    private func renderTableAsText(headers: [String], rows: [[String]]) -> String {
+        // Calculate column widths
+        var colWidths = headers.map { $0.count }
+        for row in rows {
+            for (i, cell) in row.enumerated() where i < colWidths.count {
+                colWidths[i] = max(colWidths[i], cell.count)
+            }
         }
 
-        return result
+        func padCell(_ text: String, width: Int) -> String {
+            text + String(repeating: " ", count: max(0, width - text.count))
+        }
+
+        var lines: [String] = []
+
+        // Header
+        let headerLine = headers.enumerated().map { i, h in padCell(h, width: colWidths[i]) }.joined(separator: "  ")
+        lines.append(headerLine)
+
+        // Separator
+        let separator = colWidths.map { String(repeating: "\u{2500}", count: $0) }.joined(separator: "  ")
+        lines.append(separator)
+
+        // Rows
+        for row in rows {
+            let rowLine = row.enumerated().map { i, cell in
+                padCell(cell, width: i < colWidths.count ? colWidths[i] : cell.count)
+            }.joined(separator: "  ")
+            lines.append(rowLine)
+        }
+
+        return lines.joined(separator: "\n")
     }
 
     // MARK: - Paragraph Style Helpers
@@ -478,29 +697,38 @@ struct SelectableTextView: NSViewRepresentable {
     }
 
     private func spacingBefore(block: SelectableTextBlock, previousBlock: SelectableTextBlock?) -> CGFloat {
-        guard let prev = previousBlock else { return 0 }
+        guard previousBlock != nil else { return 0 }
 
         switch block {
         case .heading(let level, _):
-            if case .heading = prev {
+            if case .heading = previousBlock {
                 return BlockSpacing.headingAfterHeading
             }
             return level <= 2 ? BlockSpacing.headingH1H2AfterOther : BlockSpacing.headingH3PlusAfterOther
 
         case .blockquote:
-            if case .blockquote = prev {
+            if case .blockquote = previousBlock {
                 return BlockSpacing.blockquoteAfterBlockquote
             }
             return BlockSpacing.blockquoteAfterOther
 
         case .listItem:
-            if case .listItem = prev {
+            if case .listItem = previousBlock {
                 return BlockSpacing.listItemAfterListItem
             }
             return BlockSpacing.listItemAfterOther
 
         case .paragraph:
             return BlockSpacing.paragraphAfterOther
+
+        case .codeBlock:
+            return BlockSpacing.codeBlockAfterOther
+
+        case .horizontalRule:
+            return BlockSpacing.horizontalRuleAfterOther
+
+        case .table:
+            return BlockSpacing.tableAfterOther
         }
     }
 
@@ -726,12 +954,154 @@ struct SelectableTextView: NSViewRepresentable {
     }
 }
 
+// MARK: - Selectable Text View with Code Block Overlays
+
+/// Wraps `SelectableTextView` with copy button overlays for inline code blocks
+struct SelectableTextWithOverlays: View {
+    let blocks: [SelectableTextBlock]
+    let baseWidth: CGFloat
+    let theme: ThemeProtocol
+    var cacheKey: String? = nil
+
+    @StateObject private var overlayData = SelectableTextView.CodeBlockOverlayData()
+    @State private var hoveredCodeBlock: Int? = nil
+
+    var body: some View {
+        SelectableTextView(
+            blocks: blocks,
+            baseWidth: baseWidth,
+            theme: theme,
+            cacheKey: cacheKey,
+            overlayData: overlayData
+        )
+        .frame(minWidth: baseWidth, maxWidth: baseWidth, alignment: .leading)
+        .overlay(alignment: .topLeading) {
+            codeBlockOverlays
+        }
+    }
+
+    @ViewBuilder
+    private var codeBlockOverlays: some View {
+        ForEach(overlayData.items) { item in
+            CodeBlockCopyOverlay(
+                code: item.code,
+                language: item.language,
+                isHovered: hoveredCodeBlock == item.id,
+                theme: theme
+            )
+            .frame(width: item.rect.width, height: 30)  // Only cover top strip for hover/button
+            .offset(x: item.rect.origin.x, y: item.rect.origin.y)
+            .onHover { hovering in
+                hoveredCodeBlock = hovering ? item.id : nil
+            }
+        }
+    }
+}
+
+/// Copy button overlay for a single code block
+private struct CodeBlockCopyOverlay: View {
+    let code: String
+    let language: String?
+    let isHovered: Bool
+    let theme: ThemeProtocol
+
+    @State private var copied = false
+
+    private var languageIcon: String {
+        switch language?.lowercased() {
+        case "swift": return "swift"
+        case "python", "py": return "chevron.left.forwardslash.chevron.right"
+        case "javascript", "js", "typescript", "ts": return "curlybraces"
+        case "json": return "doc.text"
+        case "bash", "sh", "shell", "zsh": return "terminal"
+        case "html", "xml": return "chevron.left.forwardslash.chevron.right"
+        case "css", "scss", "sass": return "paintbrush"
+        case "sql": return "cylinder"
+        case "rust", "go", "java", "kotlin", "c", "cpp", "c++": return "chevron.left.forwardslash.chevron.right"
+        case "markdown", "md": return "doc.richtext"
+        default: return "doc.text"
+        }
+    }
+
+    var body: some View {
+        HStack(spacing: 8) {
+            if let language, !language.isEmpty {
+                HStack(spacing: 4) {
+                    Image(systemName: languageIcon)
+                        .font(.system(size: CGFloat(theme.captionSize) - 2, weight: .medium))
+                        .foregroundColor(theme.tertiaryText)
+
+                    Text(language.lowercased())
+                        .font(theme.monoFont(size: CGFloat(theme.captionSize) - 1, weight: .medium))
+                        .foregroundColor(theme.secondaryText)
+                }
+                .padding(.horizontal, 6)
+                .padding(.vertical, 3)
+                .background(
+                    Capsule()
+                        .fill(theme.tertiaryBackground.opacity(0.5))
+                )
+                .opacity(isHovered || copied ? 1 : 0)
+            }
+
+            Spacer()
+
+            Button(action: copyCode) {
+                HStack(spacing: 4) {
+                    Image(systemName: copied ? "checkmark" : "doc.on.doc")
+                        .font(.system(size: CGFloat(theme.captionSize) - 2, weight: .medium))
+                    if copied {
+                        Text("Copied!")
+                            .font(.system(size: CGFloat(theme.captionSize) - 2, weight: .medium))
+                    }
+                }
+                .foregroundColor(copied ? theme.successColor : theme.tertiaryText)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
+                .background(
+                    Capsule()
+                        .fill(copied ? theme.successColor.opacity(0.15) : theme.tertiaryBackground.opacity(0.6))
+                )
+            }
+            .buttonStyle(.plain)
+            .opacity(isHovered || copied ? 1 : 0)
+        }
+        .padding(.horizontal, 8)
+        .padding(.top, 4)
+        .contentShape(Rectangle())
+    }
+
+    private func copyCode() {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(code, forType: .string)
+        withAnimation(.easeInOut(duration: 0.2)) {
+            copied = true
+        }
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 2_000_000_000)
+            withAnimation(.easeInOut(duration: 0.2)) {
+                copied = false
+            }
+        }
+    }
+}
+
 // MARK: - Custom NSTextView
 
-/// Custom NSTextView that handles link clicks and cursor changes.
+/// Custom NSTextView that handles link clicks, cursor changes, and code block background drawing.
 /// Sizing is driven by `SelectableTextView.sizeThatFits` -- no custom
 /// intrinsicContentSize override is needed.
 final class SelectableNSTextView: NSTextView {
+
+    /// Code block ranges and their metadata for overlay rendering (copy buttons)
+    var codeBlockInfos: [CodeBlockInfo] = []
+
+    struct CodeBlockInfo {
+        let code: String
+        let language: String?
+        let range: NSRange
+    }
+
     override func resetCursorRects() {
         addCursorRect(bounds, cursor: .iBeam)
     }
@@ -740,19 +1110,92 @@ final class SelectableNSTextView: NSTextView {
         let point = convert(event.locationInWindow, from: nil)
         let charIndex = characterIndexForInsertion(at: point)
 
-        // Check for link at click location
         if charIndex < textStorage?.length ?? 0,
             let link = textStorage?.attribute(.link, at: charIndex, effectiveRange: nil)
         {
-            if let url = link as? URL {
-                NSWorkspace.shared.open(url)
-                return
-            } else if let urlString = link as? String, let url = URL(string: urlString) {
+            let url = (link as? URL) ?? (link as? String).flatMap(URL.init(string:))
+            if let url {
                 NSWorkspace.shared.open(url)
                 return
             }
         }
 
         super.mouseDown(with: event)
+    }
+
+    /// Theme colors for custom drawing (set by SelectableTextView on update)
+    var accentColor: NSColor = .controlAccentColor
+    var blockquoteBarColor: NSColor = .controlAccentColor
+    var secondaryBackgroundColor: NSColor = .clear
+
+    override func draw(_ dirtyRect: NSRect) {
+        guard let layoutManager = layoutManager,
+            let textContainer = textContainer,
+            let textStorage = textStorage
+        else {
+            super.draw(dirtyRect)
+            return
+        }
+
+        let fullRange = NSRange(location: 0, length: textStorage.length)
+
+        // Draw code block backgrounds with rounded corners
+        textStorage.enumerateAttribute(.backgroundColor, in: fullRange, options: []) { value, range, _ in
+            guard let bgColor = value as? NSColor else { return }
+
+            let glyphRange = layoutManager.glyphRange(forCharacterRange: range, actualCharacterRange: nil)
+            var rect = layoutManager.boundingRect(forGlyphRange: glyphRange, in: textContainer)
+            rect.origin.x = 0
+            rect.size.width = bounds.width
+
+            let path = NSBezierPath(roundedRect: rect, xRadius: 8, yRadius: 8)
+            bgColor.setFill()
+            path.fill()
+        }
+
+        // Draw blockquote accent bars and subtle background
+        textStorage.enumerateAttribute(.blockquoteMarker, in: fullRange, options: []) { value, range, _ in
+            guard value != nil else { return }
+
+            let glyphRange = layoutManager.glyphRange(forCharacterRange: range, actualCharacterRange: nil)
+            var rect = layoutManager.boundingRect(forGlyphRange: glyphRange, in: textContainer)
+            rect.origin.x = 0
+            rect.size.width = bounds.width
+
+            // Subtle background
+            let bgRect = NSRect(x: 4, y: rect.origin.y - 2, width: rect.width - 8, height: rect.height + 4)
+            let bgPath = NSBezierPath(roundedRect: bgRect, xRadius: 6, yRadius: 6)
+            secondaryBackgroundColor.withAlphaComponent(0.3).setFill()
+            bgPath.fill()
+
+            // Vertical accent bar
+            let barRect = NSRect(x: 6, y: rect.origin.y - 2, width: 3, height: rect.height + 4)
+            let barPath = NSBezierPath(roundedRect: barRect, xRadius: 1.5, yRadius: 1.5)
+            blockquoteBarColor.setFill()
+            barPath.fill()
+        }
+
+        // Draw heading underlines for H1/H2
+        textStorage.enumerateAttribute(.headingUnderline, in: fullRange, options: []) { value, range, _ in
+            guard value != nil else { return }
+
+            let glyphRange = layoutManager.glyphRange(forCharacterRange: range, actualCharacterRange: nil)
+            let rect = layoutManager.boundingRect(forGlyphRange: glyphRange, in: textContainer)
+
+            // Draw a subtle gradient underline below the heading
+            let lineY = rect.origin.y + rect.height + 4
+            let lineRect = NSRect(x: 0, y: lineY, width: bounds.width, height: 1)
+
+            if let gradient = NSGradient(
+                colors: [
+                    accentColor.withAlphaComponent(0.3),
+                    accentColor.withAlphaComponent(0.05),
+                ]
+            ) {
+                gradient.draw(in: lineRect, angle: 0)
+            }
+        }
+
+        super.draw(dirtyRect)
     }
 }

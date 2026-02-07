@@ -178,25 +178,15 @@ private struct MemoizedMarkdownView: View {
 
             switch segment.kind {
             case .textGroup(let textBlocks):
-                SelectableTextView(
+                SelectableTextWithOverlays(
                     blocks: textBlocks,
                     baseWidth: baseWidth,
                     theme: theme,
                     cacheKey: segmentCacheKey
                 )
-                .frame(minWidth: baseWidth, maxWidth: baseWidth, alignment: .leading)
-
-            case .codeBlock(let code, let lang):
-                CodeBlockView(code: code, language: lang, baseWidth: baseWidth)
 
             case .image(let url, let altText):
                 MarkdownImageView(urlString: url, altText: altText, baseWidth: baseWidth)
-
-            case .horizontalRule:
-                HorizontalRuleView()
-
-            case .table(let headers, let rows):
-                TableView(headers: headers, rows: rows, baseWidth: baseWidth)
             }
         }
     }
@@ -204,14 +194,11 @@ private struct MemoizedMarkdownView: View {
 
 // MARK: - Content Segment
 
-/// Represents a segment of content - either a group of selectable text blocks or a special element
+/// Represents a segment of content - either a group of selectable text blocks or a standalone image
 struct ContentSegment: Identifiable {
     enum Kind {
         case textGroup([SelectableTextBlock])
-        case codeBlock(code: String, language: String?)
         case image(url: String, altText: String)
-        case horizontalRule
-        case table(headers: [String], rows: [[String]])
     }
 
     let id: String
@@ -227,16 +214,16 @@ struct ContentSegment: Identifiable {
 
 // MARK: - Block Grouping
 
-/// Groups consecutive text blocks into segments for efficient rendering with NSTextView
+/// Groups consecutive text blocks into segments for efficient rendering with NSTextView.
+/// Code blocks, horizontal rules, and tables are kept inline in the text group for continuous
+/// selection. Only images break the text group since they cannot be rendered as attributed text.
 private func groupBlocksIntoSegments(_ blocks: [MessageBlock]) -> [ContentSegment] {
     var segments: [ContentSegment] = []
     var currentTextBlocks: [SelectableTextBlock] = []
     var segmentIndex = 0
-    var previousBlockKind: MessageBlock.Kind? = nil
-
     func flushTextGroup() {
         if !currentTextBlocks.isEmpty {
-            let spacing = segments.isEmpty ? 0 : spacingBeforeTextGroup(previousNonTextKind: previousBlockKind)
+            let spacing = segments.isEmpty ? 0 : imageSpacing
             segments.append(
                 ContentSegment(
                     id: "text-\(segmentIndex)",
@@ -273,21 +260,13 @@ private func groupBlocksIntoSegments(_ blocks: [MessageBlock]) -> [ContentSegmen
             }
 
         case .code(let code, let lang):
-            flushTextGroup()
-            let spacing = spacingForSpecialBlock(.code(code, lang), previousKind: previousBlockKind)
-            segments.append(
-                ContentSegment(
-                    id: "code-\(segmentIndex)",
-                    kind: .codeBlock(code: code, language: lang),
-                    spacingBefore: spacing
-                )
-            )
-            segmentIndex += 1
-            previousBlockKind = block.kind
+            // Keep code blocks inline in the text group for continuous selection
+            currentTextBlocks.append(.codeBlock(code: code, language: lang))
 
         case .image(let url, let altText):
+            // Images are the only blocks that break text groups (can't be attributed text)
             flushTextGroup()
-            let spacing = spacingForSpecialBlock(.image(url: url, altText: altText), previousKind: previousBlockKind)
+            let spacing = imageSpacing
             segments.append(
                 ContentSegment(
                     id: "image-\(segmentIndex)",
@@ -296,45 +275,16 @@ private func groupBlocksIntoSegments(_ blocks: [MessageBlock]) -> [ContentSegmen
                 )
             )
             segmentIndex += 1
-            previousBlockKind = block.kind
 
         case .horizontalRule:
-            flushTextGroup()
-            let spacing = spacingForSpecialBlock(.horizontalRule, previousKind: previousBlockKind)
-            segments.append(
-                ContentSegment(
-                    id: "hr-\(segmentIndex)",
-                    kind: .horizontalRule,
-                    spacingBefore: spacing
-                )
-            )
-            segmentIndex += 1
-            previousBlockKind = block.kind
+            // Keep horizontal rules inline in the text group
+            currentTextBlocks.append(.horizontalRule)
 
         case .table(let headers, let rows):
-            flushTextGroup()
-            let spacing = spacingForSpecialBlock(.table(headers: headers, rows: rows), previousKind: previousBlockKind)
-            segments.append(
-                ContentSegment(
-                    id: "table-\(segmentIndex)",
-                    kind: .table(headers: headers, rows: rows),
-                    spacingBefore: spacing
-                )
-            )
-            segmentIndex += 1
-            previousBlockKind = block.kind
+            // Keep tables inline in the text group for continuous selection
+            currentTextBlocks.append(.table(headers: headers, rows: rows))
         }
 
-        // Track last text block kind for spacing
-        if case .paragraph = block.kind {
-            previousBlockKind = block.kind
-        } else if case .heading = block.kind {
-            previousBlockKind = block.kind
-        } else if case .blockquote = block.kind {
-            previousBlockKind = block.kind
-        } else if case .list = block.kind {
-            previousBlockKind = block.kind
-        }
     }
 
     flushTextGroup()
@@ -342,41 +292,8 @@ private func groupBlocksIntoSegments(_ blocks: [MessageBlock]) -> [ContentSegmen
     return segments
 }
 
-/// Calculate spacing before a special block (code, image, hr, table)
-private func spacingForSpecialBlock(_ kind: MessageBlock.Kind, previousKind: MessageBlock.Kind?) -> CGFloat {
-    guard previousKind != nil else { return 0 }
-
-    switch kind {
-    case .code:
-        return 14
-    case .image:
-        return 16
-    case .horizontalRule:
-        return 8
-    case .table:
-        return 14
-    default:
-        return 12
-    }
-}
-
-/// Calculate spacing before a text group that follows a special block
-private func spacingBeforeTextGroup(previousNonTextKind: MessageBlock.Kind?) -> CGFloat {
-    guard let prev = previousNonTextKind else { return 0 }
-
-    switch prev {
-    case .code:
-        return 14
-    case .image:
-        return 16
-    case .horizontalRule:
-        return 8
-    case .table:
-        return 14
-    default:
-        return 12
-    }
-}
+/// Spacing around images (the only block type that breaks text groups)
+private let imageSpacing: CGFloat = 16
 
 // MARK: - Message Block
 
@@ -528,13 +445,12 @@ private func parseBlocks(_ input: String) -> [MessageBlock] {
     }
 
     @inline(__always)
-    func flushList(resetCounters: Bool = true) {
+    func flushList() {
         if !currentListItems.isEmpty {
             blocks.append(MessageBlock(index: blockIndex, kind: .list(items: currentListItems)))
             blockIndex += 1
             currentListItems.removeAll(keepingCapacity: true)
-        }
-        if resetCounters {
+            // Always reset counters when a list ends - the next list is a new list
             orderedCounters.removeAll(keepingCapacity: true)
         }
     }
@@ -565,7 +481,7 @@ private func parseBlocks(_ input: String) -> [MessageBlock] {
         if trimmed.hasPrefix("```") {
             flushParagraph()
             flushBlockquote()
-            flushList(resetCounters: false)
+            flushList()
 
             let langPart = trimmed.dropFirst(3)
             let lang = langPart.trimmingWhitespace()
@@ -592,7 +508,7 @@ private func parseBlocks(_ input: String) -> [MessageBlock] {
             if isTableSeparatorLine(nextLine) {
                 flushParagraph()
                 flushBlockquote()
-                flushList(resetCounters: false)
+                flushList()
 
                 // Parse headers from the current line
                 let headers = parseTableRow(trimmed)
@@ -622,7 +538,7 @@ private func parseBlocks(_ input: String) -> [MessageBlock] {
         if isHorizontalRuleFast(trimmed) {
             flushParagraph()
             flushBlockquote()
-            flushList(resetCounters: false)
+            flushList()
             blocks.append(MessageBlock(index: blockIndex, kind: .horizontalRule))
             blockIndex += 1
             i += 1
@@ -633,7 +549,7 @@ private func parseBlocks(_ input: String) -> [MessageBlock] {
         if let headingMatch = parseHeadingFast(trimmed) {
             flushParagraph()
             flushBlockquote()
-            flushList(resetCounters: false)
+            flushList()
             blocks.append(
                 MessageBlock(index: blockIndex, kind: .heading(level: headingMatch.level, text: headingMatch.text))
             )
@@ -645,7 +561,7 @@ private func parseBlocks(_ input: String) -> [MessageBlock] {
         // Blockquote (> ...)
         if trimmed.hasPrefix(">") {
             flushParagraph()
-            flushList(resetCounters: false)
+            flushList()
             let quoteContent = trimmed.dropFirst().trimmingWhitespace()
             currentBlockquoteLines.append(quoteContent)
             i += 1
@@ -705,7 +621,7 @@ private func parseBlocks(_ input: String) -> [MessageBlock] {
             // This allows "loose" lists (lists with blank lines between items) to stay together
             if !currentListItems.isEmpty {
                 if !nextNonBlankIsAnyListItem(from: i + 1) {
-                    flushList(resetCounters: true)
+                    flushList()
                 }
             }
 
@@ -730,7 +646,7 @@ private func parseBlocks(_ input: String) -> [MessageBlock] {
                 continue
             }
             // Non-list content encountered
-            flushList(resetCounters: false)
+            flushList()
         }
 
         // Regular paragraph line
@@ -746,7 +662,6 @@ private func parseBlocks(_ input: String) -> [MessageBlock] {
     return blocks
 }
 
-// MARK: - Incremental Parsing Helpers
 // MARK: - Table Parsing Helpers
 
 /// Check if a line is a table separator line (e.g., | --- | --- |)
@@ -993,12 +908,6 @@ private func extractStandaloneImageKind(from text: String) -> MessageBlock.Kind?
     let altText = String(trimmed[altRange])
     let url = String(trimmed[urlRange])
     return .image(url: url, altText: altText)
-}
-
-// MARK: - String Extension
-
-extension String {
-    fileprivate var nilIfEmpty: String? { self.isEmpty ? nil : self }
 }
 
 // MARK: - Preview
