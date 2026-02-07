@@ -13,12 +13,14 @@ struct ContentBlockView: View, Equatable {
     let block: ContentBlock
     let width: CGFloat  // Content width (already adjusted by parent)
     let personaName: String
+    var isTurnHovered: Bool = false
     var onCopy: ((UUID) -> Void)?
     var onRegenerate: ((UUID) -> Void)?
     var onClarificationSubmit: ((String) -> Void)?
 
     nonisolated static func == (lhs: ContentBlockView, rhs: ContentBlockView) -> Bool {
-        lhs.block == rhs.block && lhs.width == rhs.width && lhs.personaName == rhs.personaName
+        lhs.block == rhs.block && lhs.width == rhs.width
+            && lhs.personaName == rhs.personaName && lhs.isTurnHovered == rhs.isTurnHovered
     }
 
     @Environment(\.theme) private var theme
@@ -59,6 +61,7 @@ struct ContentBlockView: View, Equatable {
                 turnId: block.turnId,
                 role: role,
                 name: name,
+                isTurnHovered: isTurnHovered,
                 onCopy: onCopy,
                 onRegenerate: onRegenerate
             )
@@ -231,11 +234,11 @@ private struct HeaderBlockContent: View {
     let turnId: UUID
     let role: MessageRole
     let name: String
+    var isTurnHovered: Bool = false
     var onCopy: ((UUID) -> Void)?
     var onRegenerate: ((UUID) -> Void)?
 
     @Environment(\.theme) private var theme
-    @State private var isHovered = false
 
     var body: some View {
         HStack(spacing: 8) {
@@ -246,12 +249,11 @@ private struct HeaderBlockContent: View {
             Spacer()
 
             actionButtons
-                .opacity(isHovered ? 1 : 0)
+                .opacity(isTurnHovered ? 1 : 0)
         }
         .frame(height: 28)
         .contentShape(Rectangle())
-        .onHover { isHovered = $0 }
-        .animation(theme.animationQuick(), value: isHovered)
+        .animation(theme.animationQuick(), value: isTurnHovered)
     }
 
     @ViewBuilder
