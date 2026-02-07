@@ -2,7 +2,7 @@
 //  CapabilitiesSelectorView.swift
 //  osaurus
 //
-//  Capabilities selector with tools grouped by plugin/provider and sticky headers.
+//  Capabilities selector with tools grouped by plugin/provider.
 //
 
 import SwiftUI
@@ -275,17 +275,14 @@ struct CapabilitiesSelectorView: View {
 
     private var popoverBackground: some View {
         ZStack {
-            // Layer 1: Glass material
             if theme.glassEnabled {
                 RoundedRectangle(cornerRadius: 12, style: .continuous)
                     .fill(.ultraThinMaterial)
             }
 
-            // Layer 2: Semi-transparent background
             RoundedRectangle(cornerRadius: 12, style: .continuous)
                 .fill(theme.primaryBackground.opacity(theme.isDark ? 0.85 : 0.92))
 
-            // Layer 3: Subtle accent gradient at top
             LinearGradient(
                 colors: [
                     theme.accentColor.opacity(theme.isDark ? 0.06 : 0.04),
@@ -325,17 +322,7 @@ struct CapabilitiesSelectorView: View {
                 Spacer()
 
                 if totalEnabledCount > 0 {
-                    HStack(spacing: 2) {
-                        Text("~\(totalTokenEstimate)")
-                            .font(.system(size: 10, weight: .medium, design: .monospaced))
-                        Text("tokens")
-                            .font(.system(size: 9))
-                            .opacity(0.7)
-                    }
-                    .foregroundColor(theme.tertiaryText)
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 2)
-                    .background(Capsule().fill(theme.secondaryBackground.opacity(0.5)))
+                    TokenBadge(count: totalTokenEstimate)
                 }
 
                 Text("\(totalEnabledCount)/\(totalCount)")
@@ -368,12 +355,14 @@ struct CapabilitiesSelectorView: View {
                         .padding(.vertical, 8)
                         .contentShape(Rectangle())
                         .background(
-                            ZStack {
+                            Group {
                                 if selectedTab == tab {
                                     RoundedRectangle(cornerRadius: 6, style: .continuous)
                                         .fill(theme.secondaryBackground)
-                                    RoundedRectangle(cornerRadius: 6, style: .continuous)
-                                        .strokeBorder(theme.primaryBorder.opacity(0.12), lineWidth: 1)
+                                        .overlay(
+                                            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                                                .strokeBorder(theme.primaryBorder.opacity(0.12), lineWidth: 1)
+                                        )
                                 }
                             }
                         )
@@ -389,12 +378,12 @@ struct CapabilitiesSelectorView: View {
             }
             .padding(3)
             .background(
-                ZStack {
-                    RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .fill(theme.secondaryBackground.opacity(theme.isDark ? 0.4 : 0.5))
-                    RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .strokeBorder(theme.primaryBorder.opacity(0.1), lineWidth: 1)
-                }
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(theme.secondaryBackground.opacity(theme.isDark ? 0.4 : 0.5))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 8, style: .continuous)
+                            .strokeBorder(theme.primaryBorder.opacity(0.1), lineWidth: 1)
+                    )
             )
 
             // Actions
@@ -465,7 +454,7 @@ struct CapabilitiesSelectorView: View {
 
     private var itemList: some View {
         ScrollView {
-            LazyVStack(spacing: 2, pinnedViews: [.sectionHeaders]) {
+            LazyVStack(spacing: 2) {
                 if selectedTab == .tools {
                     ForEach(filteredGroups) { group in
                         Section {
@@ -519,114 +508,62 @@ private struct GroupHeader: View {
 
     var body: some View {
         HStack(spacing: 8) {
-            // Expand/collapse area
-            HStack(spacing: 8) {
-                Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
-                    .font(.system(size: 10, weight: .semibold))
-                    .foregroundColor(theme.tertiaryText)
-                    .frame(width: 12)
-                    .rotationEffect(.degrees(isExpanded ? 0 : 0))
+            Image(systemName: "chevron.right")
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundColor(theme.tertiaryText)
+                .frame(width: 12)
+                .rotationEffect(.degrees(isExpanded ? 90 : 0))
 
-                Image(systemName: group.icon)
-                    .font(.system(size: 11))
-                    .foregroundColor(isHovered ? theme.accentColor : theme.secondaryText)
+            Image(systemName: group.icon)
+                .font(.system(size: 11))
+                .foregroundColor(isHovered ? theme.accentColor : theme.secondaryText)
 
-                Text(group.displayName)
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundColor(theme.primaryText)
-                    .lineLimit(1)
-            }
-            .contentShape(Rectangle())
-            .onTapGesture { onToggle() }
+            Text(group.displayName)
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundColor(theme.primaryText)
+                .lineLimit(1)
 
             Spacer()
 
-            // All/None buttons (on hover)
-            if isHovered {
-                HStack(spacing: 4) {
-                    Button {
-                        onEnableAll()
-                    } label: {
-                        Text("All")
-                            .font(.system(size: 9, weight: allEnabled ? .bold : .medium))
-                            .foregroundColor(allEnabled ? theme.accentColor : theme.tertiaryText)
-                    }
-                    Text("/").font(.system(size: 9)).foregroundColor(theme.tertiaryText)
-                    Button {
-                        onDisableAll()
-                    } label: {
-                        Text("None")
-                            .font(.system(size: 9, weight: noneEnabled ? .bold : .medium))
-                            .foregroundColor(noneEnabled ? theme.accentColor : theme.tertiaryText)
-                    }
+            // All/None — always rendered, visibility controlled by opacity
+            HStack(spacing: 4) {
+                Button {
+                    onEnableAll()
+                } label: {
+                    Text("All")
+                        .font(.system(size: 9, weight: allEnabled ? .bold : .medium))
+                        .foregroundColor(allEnabled ? theme.accentColor : theme.tertiaryText)
                 }
-                .buttonStyle(.plain)
-                .padding(.horizontal, 8)
-                .padding(.vertical, 3)
-                .background(
-                    Capsule()
-                        .fill(theme.primaryBackground)
-                        .overlay(
-                            Capsule()
-                                .strokeBorder(theme.primaryBorder.opacity(0.15), lineWidth: 1)
-                        )
-                )
-                .transition(.opacity.combined(with: .scale(scale: 0.9)))
+                Text("/").font(.system(size: 9)).foregroundColor(theme.tertiaryText)
+                Button {
+                    onDisableAll()
+                } label: {
+                    Text("None")
+                        .font(.system(size: 9, weight: noneEnabled ? .bold : .medium))
+                        .foregroundColor(noneEnabled ? theme.accentColor : theme.tertiaryText)
+                }
             }
+            .buttonStyle(.plain)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 3)
+            .background(
+                Capsule()
+                    .fill(theme.primaryBackground)
+                    .overlay(Capsule().strokeBorder(theme.primaryBorder.opacity(0.15), lineWidth: 1))
+            )
+            .opacity(isHovered ? 1 : 0)
+            .allowsHitTesting(isHovered)
 
             // Count badge
-            Text("\(group.enabledCount)/\(group.tools.count)")
-                .font(.system(size: 10, weight: .medium))
-                .foregroundColor(group.enabledCount > 0 ? theme.accentColor : theme.tertiaryText)
-                .padding(.horizontal, 8)
-                .padding(.vertical, 3)
-                .background(
-                    Capsule()
-                        .fill(group.enabledCount > 0 ? theme.accentColor.opacity(0.15) : theme.primaryBackground)
-                        .overlay(
-                            Capsule()
-                                .strokeBorder(
-                                    group.enabledCount > 0
-                                        ? theme.accentColor.opacity(0.2) : theme.primaryBorder.opacity(0.1),
-                                    lineWidth: 1
-                                )
-                        )
-                )
-                .onTapGesture { onToggle() }
+            CountBadge(enabled: group.enabledCount, total: group.tools.count)
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 12)
-        .background(
-            ZStack {
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .fill(theme.secondaryBackground.opacity(isHovered ? 1.0 : 0.9))
-
-                if isHovered {
-                    RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .fill(
-                            LinearGradient(
-                                colors: [
-                                    theme.accentColor.opacity(0.05),
-                                    Color.clear,
-                                ],
-                                startPoint: .leading,
-                                endPoint: .trailing
-                            )
-                        )
-                }
-            }
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .strokeBorder(
-                    isHovered ? theme.accentColor.opacity(0.15) : theme.primaryBorder.opacity(0.08),
-                    lineWidth: 1
-                )
-        )
+        .contentShape(Rectangle())
+        .onTapGesture { onToggle() }
+        .modifier(HoverRowStyle(isHovered: isHovered, showAccent: true))
         .onHover { hovering in
-            withAnimation(.easeOut(duration: 0.15)) {
-                isHovered = hovering
-            }
+            withAnimation(.easeOut(duration: 0.15)) { isHovered = hovering }
         }
         .animation(.easeOut(duration: 0.15), value: isExpanded)
     }
@@ -664,7 +601,7 @@ private struct ToolRowItem: View {
                         .lineLimit(1)
 
                     if isAgentRestricted {
-                        chatOnlyBadge
+                        SmallCapsuleBadge(text: "Chat Mode only")
                     }
                 }
                 Text(tool.description)
@@ -676,94 +613,25 @@ private struct ToolRowItem: View {
             Spacer()
 
             if !isAgentRestricted {
-                tokenBadge(tool.catalogEntryTokens)
+                TokenBadge(count: tool.catalogEntryTokens)
                     .help("Catalog: ~\(tool.catalogEntryTokens), Full: ~\(tool.estimatedTokens) tokens")
             }
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 10)
-        .background(rowBackground)
-        .overlay(rowBorder)
         .contentShape(Rectangle())
+        .onTapGesture {
+            if !isAgentRestricted { onToggle() }
+        }
+        .modifier(HoverRowStyle(isHovered: isHovered, showAccent: tool.enabled && !isAgentRestricted))
         .help(
             isAgentRestricted
                 ? "Available in Chat Mode only. Agent Mode includes equivalent built-in tools."
                 : ""
         )
         .onHover { hovering in
-            withAnimation(.easeOut(duration: 0.15)) {
-                isHovered = hovering
-            }
+            withAnimation(.easeOut(duration: 0.15)) { isHovered = hovering }
         }
-    }
-
-    private var chatOnlyBadge: some View {
-        Text("Chat Mode only")
-            .font(.system(size: 8, weight: .medium))
-            .foregroundColor(theme.secondaryText)
-            .padding(.horizontal, 5)
-            .padding(.vertical, 2)
-            .background(
-                Capsule()
-                    .fill(theme.secondaryBackground)
-                    .overlay(
-                        Capsule()
-                            .strokeBorder(theme.primaryBorder.opacity(0.1), lineWidth: 1)
-                    )
-            )
-    }
-
-    private var rowBackground: some View {
-        ZStack {
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .fill(isHovered ? theme.secondaryBackground.opacity(0.7) : Color.clear)
-
-            if isHovered && tool.enabled && !isAgentRestricted {
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .fill(
-                        LinearGradient(
-                            colors: [
-                                theme.accentColor.opacity(0.06),
-                                Color.clear,
-                            ],
-                            startPoint: .leading,
-                            endPoint: .trailing
-                        )
-                    )
-            }
-        }
-    }
-
-    @ViewBuilder
-    private var rowBorder: some View {
-        if isHovered {
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .strokeBorder(
-                    LinearGradient(
-                        colors: [
-                            theme.glassEdgeLight.opacity(0.12),
-                            theme.primaryBorder.opacity(0.08),
-                        ],
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
-                    ),
-                    lineWidth: 1
-                )
-        }
-    }
-
-    private func tokenBadge(_ count: Int) -> some View {
-        HStack(spacing: 2) {
-            Text("~\(count)").font(.system(size: 10, weight: .medium, design: .monospaced))
-            Text("tokens").font(.system(size: 9)).opacity(0.6)
-        }
-        .foregroundColor(theme.tertiaryText)
-        .padding(.horizontal, 6)
-        .padding(.vertical, 2)
-        .background(
-            Capsule()
-                .fill(theme.secondaryBackground.opacity(0.5))
-        )
     }
 }
 
@@ -794,19 +662,7 @@ private struct SkillRowItem: View {
                         .lineLimit(1)
 
                     if skill.isBuiltIn {
-                        Text("Built-in")
-                            .font(.system(size: 8, weight: .medium))
-                            .foregroundColor(theme.secondaryText)
-                            .padding(.horizontal, 5)
-                            .padding(.vertical, 2)
-                            .background(
-                                Capsule()
-                                    .fill(theme.secondaryBackground)
-                                    .overlay(
-                                        Capsule()
-                                            .strokeBorder(theme.primaryBorder.opacity(0.1), lineWidth: 1)
-                                    )
-                            )
+                        SmallCapsuleBadge(text: "Built-in")
                     }
                 }
                 Text(skill.description)
@@ -817,68 +673,128 @@ private struct SkillRowItem: View {
 
             Spacer()
 
-            HStack(spacing: 2) {
-                Text("~\(estimatedTokens)").font(.system(size: 10, weight: .medium, design: .monospaced))
-                Text("tokens").font(.system(size: 9)).opacity(0.6)
-            }
-            .foregroundColor(theme.tertiaryText)
-            .padding(.horizontal, 6)
-            .padding(.vertical, 2)
-            .background(
-                Capsule()
-                    .fill(theme.secondaryBackground.opacity(0.5))
-            )
-            .help("Catalog entry tokens")
+            TokenBadge(count: estimatedTokens)
+                .help("Catalog entry tokens")
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 10)
-        .background(rowBackground)
-        .overlay(rowBorder)
         .contentShape(Rectangle())
+        .onTapGesture { onToggle() }
+        .modifier(HoverRowStyle(isHovered: isHovered, showAccent: isEnabled))
         .onHover { hovering in
-            withAnimation(.easeOut(duration: 0.15)) {
-                isHovered = hovering
-            }
+            withAnimation(.easeOut(duration: 0.15)) { isHovered = hovering }
         }
     }
+}
 
-    private var rowBackground: some View {
-        ZStack {
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .fill(isHovered ? theme.secondaryBackground.opacity(0.7) : Color.clear)
+// MARK: - Shared Components
 
-            if isHovered && isEnabled {
+/// Hover background + border applied to row items and group headers.
+private struct HoverRowStyle: ViewModifier {
+    let isHovered: Bool
+    let showAccent: Bool
+
+    @Environment(\.theme) private var theme
+
+    func body(content: Content) -> some View {
+        content
+            .background(
                 RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .fill(
-                        LinearGradient(
-                            colors: [
-                                theme.accentColor.opacity(0.06),
-                                Color.clear,
-                            ],
-                            startPoint: .leading,
-                            endPoint: .trailing
-                        )
+                    .fill(isHovered ? theme.secondaryBackground.opacity(0.7) : Color.clear)
+                    .overlay(
+                        isHovered && showAccent
+                            ? RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                .fill(
+                                    LinearGradient(
+                                        colors: [theme.accentColor.opacity(0.06), Color.clear],
+                                        startPoint: .leading,
+                                        endPoint: .trailing
+                                    )
+                                )
+                            : nil
                     )
-            }
-        }
+            )
+            .overlay(
+                isHovered
+                    ? RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .strokeBorder(
+                            LinearGradient(
+                                colors: [
+                                    theme.glassEdgeLight.opacity(0.12),
+                                    theme.primaryBorder.opacity(0.08),
+                                ],
+                                startPoint: .topLeading,
+                                endPoint: .bottomTrailing
+                            ),
+                            lineWidth: 1
+                        )
+                    : nil
+            )
     }
+}
 
-    @ViewBuilder
-    private var rowBorder: some View {
-        if isHovered {
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .strokeBorder(
-                    LinearGradient(
-                        colors: [
-                            theme.glassEdgeLight.opacity(0.12),
-                            theme.primaryBorder.opacity(0.08),
-                        ],
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
-                    ),
-                    lineWidth: 1
-                )
+/// Token count badge (e.g. "~42 tokens").
+private struct TokenBadge: View {
+    let count: Int
+
+    @Environment(\.theme) private var theme
+
+    var body: some View {
+        HStack(spacing: 2) {
+            Text("~\(count)").font(.system(size: 10, weight: .medium, design: .monospaced))
+            Text("tokens").font(.system(size: 9)).opacity(0.6)
         }
+        .foregroundColor(theme.tertiaryText)
+        .padding(.horizontal, 6)
+        .padding(.vertical, 2)
+        .background(Capsule().fill(theme.secondaryBackground.opacity(0.5)))
+    }
+}
+
+/// Small capsule label (e.g. "Built-in", "Chat Mode only").
+private struct SmallCapsuleBadge: View {
+    let text: String
+
+    @Environment(\.theme) private var theme
+
+    var body: some View {
+        Text(text)
+            .font(.system(size: 8, weight: .medium))
+            .foregroundColor(theme.secondaryText)
+            .padding(.horizontal, 5)
+            .padding(.vertical, 2)
+            .background(
+                Capsule()
+                    .fill(theme.secondaryBackground)
+                    .overlay(Capsule().strokeBorder(theme.primaryBorder.opacity(0.1), lineWidth: 1))
+            )
+    }
+}
+
+/// Enabled/total count badge (e.g. "3/5").
+private struct CountBadge: View {
+    let enabled: Int
+    let total: Int
+
+    @Environment(\.theme) private var theme
+
+    var body: some View {
+        Text("\(enabled)/\(total)")
+            .font(.system(size: 10, weight: .medium))
+            .foregroundColor(enabled > 0 ? theme.accentColor : theme.tertiaryText)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 3)
+            .background(
+                Capsule()
+                    .fill(enabled > 0 ? theme.accentColor.opacity(0.15) : theme.primaryBackground)
+                    .overlay(
+                        Capsule()
+                            .strokeBorder(
+                                enabled > 0 ? theme.accentColor.opacity(0.2) : theme.primaryBorder.opacity(0.1),
+                                lineWidth: 1
+                            )
+                    )
+            )
     }
 }
 
@@ -906,14 +822,40 @@ private struct CapabilityActionButton: View {
             .foregroundColor(foregroundColor)
             .padding(.horizontal, 10)
             .padding(.vertical, 6)
-            .background(buttonBackground)
-            .overlay(buttonBorder)
+            .background(
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .fill(theme.secondaryBackground.opacity(isSecondary ? 0.5 : (isHovered ? 0.95 : 0.8)))
+                    .overlay(
+                        isHovered
+                            ? RoundedRectangle(cornerRadius: 6, style: .continuous)
+                                .fill(
+                                    LinearGradient(
+                                        colors: [theme.accentColor.opacity(0.08), Color.clear],
+                                        startPoint: .topLeading,
+                                        endPoint: .bottomTrailing
+                                    )
+                                )
+                            : nil
+                    )
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .strokeBorder(
+                        LinearGradient(
+                            colors: [
+                                theme.glassEdgeLight.opacity(isHovered ? 0.2 : 0.1),
+                                theme.primaryBorder.opacity(isHovered ? 0.15 : 0.08),
+                            ],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        ),
+                        lineWidth: 1
+                    )
+            )
         }
         .buttonStyle(.plain)
         .onHover { hovering in
-            withAnimation(.easeOut(duration: 0.15)) {
-                isHovered = hovering
-            }
+            withAnimation(.easeOut(duration: 0.15)) { isHovered = hovering }
         }
     }
 
@@ -922,42 +864,6 @@ private struct CapabilityActionButton: View {
             return isHovered ? theme.accentColor : theme.secondaryText
         }
         return isHovered ? theme.accentColor : theme.primaryText
-    }
-
-    private var buttonBackground: some View {
-        ZStack {
-            RoundedRectangle(cornerRadius: 6, style: .continuous)
-                .fill(theme.secondaryBackground.opacity(isSecondary ? 0.5 : (isHovered ? 0.95 : 0.8)))
-
-            if isHovered {
-                RoundedRectangle(cornerRadius: 6, style: .continuous)
-                    .fill(
-                        LinearGradient(
-                            colors: [
-                                theme.accentColor.opacity(0.08),
-                                Color.clear,
-                            ],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        )
-                    )
-            }
-        }
-    }
-
-    private var buttonBorder: some View {
-        RoundedRectangle(cornerRadius: 6, style: .continuous)
-            .strokeBorder(
-                LinearGradient(
-                    colors: [
-                        theme.glassEdgeLight.opacity(isHovered ? 0.2 : 0.1),
-                        theme.primaryBorder.opacity(isHovered ? 0.15 : 0.08),
-                    ],
-                    startPoint: .topLeading,
-                    endPoint: .bottomTrailing
-                ),
-                lineWidth: 1
-            )
     }
 }
 
