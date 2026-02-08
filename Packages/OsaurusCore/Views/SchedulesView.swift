@@ -1609,7 +1609,7 @@ private struct PersonaOptionRow: View {
 
 // MARK: - Schedule Editor Sheet
 
-private struct ScheduleEditorSheet: View {
+struct ScheduleEditorSheet: View {
     enum Mode {
         case create
         case edit(Schedule)
@@ -1621,6 +1621,7 @@ private struct ScheduleEditorSheet: View {
     let mode: Mode
     let onSave: (Schedule) -> Void
     let onCancel: () -> Void
+    var initialPersonaId: UUID? = nil
 
     @State private var name: String = ""
     @State private var instructions: String = ""
@@ -1707,6 +1708,8 @@ private struct ScheduleEditorSheet: View {
         .onAppear {
             if case .edit(let schedule) = mode {
                 loadSchedule(schedule)
+            } else if let initialPersonaId = initialPersonaId {
+                selectedPersonaId = initialPersonaId
             }
             withAnimation {
                 hasAppeared = true
