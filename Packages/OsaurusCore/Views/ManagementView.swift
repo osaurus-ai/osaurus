@@ -16,6 +16,7 @@ import SwiftUI
 enum ManagementTab: String, CaseIterable, Identifiable {
     case models
     case providers
+    case plugins
     case tools
     case skills
     case personas
@@ -33,6 +34,7 @@ enum ManagementTab: String, CaseIterable, Identifiable {
         switch self {
         case .models: "cube.box.fill"
         case .providers: "cloud.fill"
+        case .plugins: "puzzlepiece.extension.fill"
         case .tools: "wrench.and.screwdriver.fill"
         case .skills: "sparkles"
         case .personas: "person.2.fill"
@@ -50,6 +52,7 @@ enum ManagementTab: String, CaseIterable, Identifiable {
         switch self {
         case .models: "Models"
         case .providers: "Providers"
+        case .plugins: "Plugins"
         case .tools: "Tools"
         case .skills: "Skills"
         case .personas: "Personas"
@@ -63,13 +66,14 @@ enum ManagementTab: String, CaseIterable, Identifiable {
         }
     }
 
-    /// Creates a sidebar item for this tab with an optional badge count.
-    func sidebarItem(badge: Int? = nil) -> SidebarItemData {
+    /// Creates a sidebar item for this tab with an optional badge count and highlight state.
+    func sidebarItem(badge: Int? = nil, badgeHighlight: Bool = false) -> SidebarItemData {
         SidebarItemData(
             id: rawValue,
             icon: icon,
             label: label,
-            badge: badge
+            badge: badge,
+            badgeHighlight: badgeHighlight
         )
     }
 }
@@ -86,6 +90,8 @@ struct ManagementView: View {
     @ObservedObject private var personaManager = PersonaManager.shared
     @ObservedObject private var skillManager = SkillManager.shared
     @ObservedObject private var scheduleManager = ScheduleManager.shared
+    @ObservedObject private var modelManager = ModelManager.shared
+    @ObservedObject private var whisperModelManager = WhisperModelManager.shared
 
     @EnvironmentObject private var updater: UpdaterViewModel
 
@@ -178,6 +184,8 @@ private extension ManagementView {
             )
         case .providers:
             RemoteProvidersView()
+        case .plugins:
+            PluginsView()
         case .tools:
             ToolsManagerView()
         case .skills:
@@ -210,29 +218,47 @@ private extension ManagementView {
 
     var sidebarItems: [SidebarItemData] {
         ManagementTab.allCases.map { tab in
-            tab.sidebarItem(badge: badgeCount(for: tab))
+            tab.sidebarItem(
+                badge: badgeCount(for: tab),
+                badgeHighlight: badgeHighlight(for: tab)
+            )
         }
     }
 
     func badgeCount(for tab: ManagementTab) -> Int? {
         let count: Int
         switch tab {
+        case .models:
+            count = modelManager.availableModels.filter { $0.isDownloaded }.count
         case .providers:
             count = remoteProviderManager.providerStates.values.filter(\.isConnected).count
+        case .plugins:
+            count = repoService.plugins.filter { $0.isInstalled }.count
         case .tools:
-            count = repoService.updatesAvailableCount
+            count = ToolRegistry.shared.listTools().count
         case .skills:
-            count = skillManager.enabledCount
+            count = skillManager.skills.count
         case .personas:
             count = personaManager.personas.filter { !$0.isBuiltIn }.count
         case .schedules:
             count = scheduleManager.schedules.count
+        case .voice:
+            count = whisperModelManager.downloadedModelsCount
         case .themes:
             count = themeManager.installedThemes.filter { !$0.isBuiltIn }.count
         default:
             return nil
         }
         return count > 0 ? count : nil
+    }
+
+    func badgeHighlight(for tab: ManagementTab) -> Bool {
+        switch tab {
+        case .plugins:
+            return repoService.updatesAvailableCount > 0
+        default:
+            return false
+        }
     }
 }
 
