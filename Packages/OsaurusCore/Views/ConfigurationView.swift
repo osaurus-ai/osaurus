@@ -29,6 +29,7 @@ struct ConfigurationView: View {
     @State private var tempAgentTemperature: String = ""
     @State private var tempAgentMaxTokens: String = ""
     @State private var tempAgentTopP: String = ""
+    @State private var tempAgentMaxIterations: String = ""
 
     // Server settings state
     @State private var tempAllowedOrigins: String = ""
@@ -165,14 +166,12 @@ struct ConfigurationView: View {
                         // MARK: - Chat Section
                         if matchesSearch(
                             "Chat",
-                            "Model",
                             "System Prompt",
                             "Temperature",
                             "Max Tokens",
                             "Context Length",
                             "Top P",
-                            "Tools",
-                            "Tool Call",
+                            "Max Tool Attempts",
                             "Generation"
                         ) {
                             SettingsSection(title: "Chat", icon: "message") {
@@ -226,19 +225,15 @@ struct ConfigurationView: View {
                                                 defaultValue: 1.0,
                                                 formatString: "%.2f"
                                             )
+                                            SettingsStepperField(
+                                                label: "Max Tool Attempts",
+                                                help: "Max consecutive tool calls per turn",
+                                                text: $tempChatMaxToolAttempts,
+                                                range: 1 ... 50,
+                                                step: 1,
+                                                defaultValue: 15
+                                            )
                                         }
-                                    }
-
-                                    // Tools Settings
-                                    SettingsSubsection(label: "Tools") {
-                                        SettingsStepperField(
-                                            label: "Max Tool Attempts",
-                                            help: "Max consecutive tool calls per turn",
-                                            text: $tempChatMaxToolAttempts,
-                                            range: 1 ... 50,
-                                            step: 1,
-                                            defaultValue: 15
-                                        )
                                     }
 
                                 }
@@ -252,6 +247,7 @@ struct ConfigurationView: View {
                             "Temperature",
                             "Max Tokens",
                             "Top P",
+                            "Max Iterations",
                             "Folder",
                             "File",
                             "Shell",
@@ -265,7 +261,8 @@ struct ConfigurationView: View {
                             AgentSettingsSection(
                                 agentTemperature: $tempAgentTemperature,
                                 agentMaxTokens: $tempAgentMaxTokens,
-                                agentTopP: $tempAgentTopP
+                                agentTopP: $tempAgentTopP,
+                                agentMaxIterations: $tempAgentMaxIterations
                             )
                         }
 
@@ -559,6 +556,7 @@ struct ConfigurationView: View {
         tempAgentTemperature = chat.agentTemperature.map { String($0) } ?? ""
         tempAgentMaxTokens = chat.agentMaxTokens.map(String.init) ?? ""
         tempAgentTopP = chat.agentTopPOverride.map { String($0) } ?? ""
+        tempAgentMaxIterations = chat.agentMaxIterations.map(String.init) ?? ""
 
         let defaults = ServerConfiguration.default
         tempTopP = configuration.genTopP == defaults.genTopP ? "" : String(configuration.genTopP)
@@ -616,8 +614,9 @@ struct ConfigurationView: View {
         tempAgentTemperature = ""
         tempAgentMaxTokens = ""
         tempAgentTopP = ""
+        tempAgentMaxIterations = ""
 
-        // Performance settings - clear to use defaults
+        // Local Inference settings - clear to use defaults
         tempTopP = ""
         tempKVBits = ""
         tempKVGroup = ""
@@ -644,7 +643,7 @@ struct ConfigurationView: View {
         configuration.startAtLogin = tempStartAtLogin
         configuration.hideDockIcon = tempHideDockIcon
 
-        // Save performance settings
+        // Save Local Inference settings
         let defaults = ServerConfiguration.default
         let trimmedTopP = tempTopP.trimmingCharacters(in: .whitespacesAndNewlines)
         if trimmedTopP.isEmpty {
@@ -759,6 +758,12 @@ struct ConfigurationView: View {
             return max(0.0, min(1.0, v))
         }()
 
+        let parsedAgentMaxIterations: Int? = {
+            let s = tempAgentMaxIterations.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !s.isEmpty, let v = Int(s) else { return nil }
+            return max(1, min(100, v))
+        }()
+
         // Preserve the existing defaultModel (auto-persisted via model picker)
         let existingDefaultModel = previousChatCfg.defaultModel
         let chatCfg = ChatConfiguration(
@@ -772,7 +777,8 @@ struct ConfigurationView: View {
             defaultModel: existingDefaultModel,
             agentTemperature: parsedAgentTemp,
             agentMaxTokens: parsedAgentMax,
-            agentTopPOverride: parsedAgentTopP
+            agentTopPOverride: parsedAgentTopP,
+            agentMaxIterations: parsedAgentMaxIterations
         )
         ChatConfigurationStore.save(chatCfg)
 
@@ -1863,6 +1869,7 @@ private struct AgentSettingsSection: View {
     @Binding var agentTemperature: String
     @Binding var agentMaxTokens: String
     @Binding var agentTopP: String
+    @Binding var agentMaxIterations: String
 
     // (name, display, desc, destructive, defaultPolicy)
     private static let folderTools:
@@ -1913,6 +1920,14 @@ private struct AgentSettingsSection: View {
                             step: 0.05,
                             defaultValue: 1.0,
                             formatString: "%.2f"
+                        )
+                        SettingsStepperField(
+                            label: "Max Iterations",
+                            help: "Max reasoning loop iterations",
+                            text: $agentMaxIterations,
+                            range: 1 ... 100,
+                            step: 5,
+                            defaultValue: 30
                         )
                     }
                 }

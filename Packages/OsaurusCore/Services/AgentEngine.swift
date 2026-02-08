@@ -355,7 +355,7 @@ public actor AgentEngine {
             temperature: agentCfg.agentTemperature,
             maxTokens: agentCfg.agentMaxTokens,
             topPOverride: agentCfg.agentTopPOverride,
-            maxIterations: AgentExecutionEngine.defaultMaxIterations,
+            maxIterations: agentCfg.agentMaxIterations ?? AgentExecutionEngine.defaultMaxIterations,
             onIterationStart: { [weak self] iteration in
                 guard let self = self else { return }
                 self.delegate?.agentEngine(self, didStartIteration: iteration, forIssue: issue)

@@ -48,6 +48,8 @@ public struct ChatConfiguration: Codable, Equatable, Sendable {
     public var agentMaxTokens: Int?
     /// Agent-specific top_p override (nil uses server default)
     public var agentTopPOverride: Float?
+    /// Agent-specific max reasoning loop iterations (nil uses default 30)
+    public var agentMaxIterations: Int?
 
     public init(
         hotkey: Hotkey?,
@@ -60,7 +62,8 @@ public struct ChatConfiguration: Codable, Equatable, Sendable {
         defaultModel: String? = nil,
         agentTemperature: Float? = nil,
         agentMaxTokens: Int? = nil,
-        agentTopPOverride: Float? = nil
+        agentTopPOverride: Float? = nil,
+        agentMaxIterations: Int? = nil
     ) {
         self.hotkey = hotkey
         self.systemPrompt = systemPrompt
@@ -73,6 +76,7 @@ public struct ChatConfiguration: Codable, Equatable, Sendable {
         self.agentTemperature = agentTemperature
         self.agentMaxTokens = agentMaxTokens
         self.agentTopPOverride = agentTopPOverride
+        self.agentMaxIterations = agentMaxIterations
     }
 
     public static var `default`: ChatConfiguration {
@@ -87,10 +91,11 @@ public struct ChatConfiguration: Codable, Equatable, Sendable {
             maxTokens: 16384,  // High default to support long generations (essays, code, etc.)
             contextLength: 128000,  // Default to 128k for modern remote models
             topPOverride: nil,
-            maxToolAttempts: 15,  // Increased from 3 to support longer agentic workflows
+            maxToolAttempts: 15,  // Max consecutive tool calls per chat turn
             agentTemperature: 0.3,  // Low temperature for reliable tool-calling
             agentMaxTokens: 4096,  // Conservative per-iteration limit for agent steps
-            agentTopPOverride: nil
+            agentTopPOverride: nil,
+            agentMaxIterations: 30  // Default reasoning loop iterations
         )
     }
 }
