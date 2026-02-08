@@ -1091,7 +1091,7 @@ extension ModelManager {
         guard
             let orgDirs = try? fm.contentsOfDirectory(
                 at: root,
-                includingPropertiesForKeys: [.isDirectoryKey],
+                includingPropertiesForKeys: [.isDirectoryKey, .isSymbolicLinkKey],
                 options: [.skipsHiddenFiles]
             )
         else {
@@ -1104,34 +1104,42 @@ extension ModelManager {
             fm.fileExists(atPath: base.appendingPathComponent(name).path)
         }
 
-        for orgURL in orgDirs {
-            var isOrg: ObjCBool = false
-            guard fm.fileExists(atPath: orgURL.path, isDirectory: &isOrg), isOrg.boolValue else {
-                continue
+        /// Resolve symlinks and return the real directory URL, or `nil` if the entry is not a directory.
+        func resolvedDirectory(_ url: URL) -> URL? {
+            let resolved = url.resolvingSymlinksInPath()
+            var isDir: ObjCBool = false
+            guard fm.fileExists(atPath: resolved.path, isDirectory: &isDir), isDir.boolValue else {
+                return nil
             }
+            return resolved
+        }
+
+        for orgURL in orgDirs {
+            guard let resolvedOrgURL = resolvedDirectory(orgURL) else { continue }
             guard
                 let repos = try? fm.contentsOfDirectory(
-                    at: orgURL,
-                    includingPropertiesForKeys: [.isDirectoryKey],
+                    at: resolvedOrgURL,
+                    includingPropertiesForKeys: [.isDirectoryKey, .isSymbolicLinkKey],
                     options: [.skipsHiddenFiles]
                 )
             else { continue }
             for repoURL in repos {
-                var isRepo: ObjCBool = false
-                guard fm.fileExists(atPath: repoURL.path, isDirectory: &isRepo), isRepo.boolValue else {
-                    continue
-                }
+                guard let resolvedRepoURL = resolvedDirectory(repoURL) else { continue }
 
                 // Validate minimal required files (aligned with MLXModel.isDownloaded)
-                guard exists(repoURL, "config.json") else { continue }
-                let hasTokenizerJSON = exists(repoURL, "tokenizer.json")
+                guard exists(resolvedRepoURL, "config.json") else { continue }
+                let hasTokenizerJSON = exists(resolvedRepoURL, "tokenizer.json")
                 let hasBPE =
-                    exists(repoURL, "merges.txt")
-                    && (exists(repoURL, "vocab.json") || exists(repoURL, "vocab.txt"))
-                let hasSentencePiece = exists(repoURL, "tokenizer.model") || exists(repoURL, "spiece.model")
-                let hasTokenizer = hasTokenizerJSON || hasBPE || hasSentencePiece
-                guard hasTokenizer else { continue }
-                guard let items = try? fm.contentsOfDirectory(at: repoURL, includingPropertiesForKeys: nil),
+                    exists(resolvedRepoURL, "merges.txt")
+                    && (exists(resolvedRepoURL, "vocab.json") || exists(resolvedRepoURL, "vocab.txt"))
+                let hasSentencePiece =
+                    exists(resolvedRepoURL, "tokenizer.model") || exists(resolvedRepoURL, "spiece.model")
+                guard hasTokenizerJSON || hasBPE || hasSentencePiece else { continue }
+                guard
+                    let items = try? fm.contentsOfDirectory(
+                        at: resolvedRepoURL,
+                        includingPropertiesForKeys: nil
+                    ),
                     items.contains(where: { $0.pathExtension == "safetensors" })
                 else { continue }
 

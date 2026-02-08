@@ -172,6 +172,7 @@ final class DirectoryPickerService: ObservableObject {
 
             // Update the static cache with the new URL
             Self.updateCache(with: url)
+            notifyModelsDirectoryChanged()
 
         } catch {
             print("Failed to create security-scoped bookmark: \(error)")
@@ -225,6 +226,13 @@ final class DirectoryPickerService: ObservableObject {
 
         // Invalidate the static cache
         Self.invalidateCache()
+        notifyModelsDirectoryChanged()
+    }
+
+    /// Notify the rest of the app that the models directory changed so local models are rescanned.
+    private func notifyModelsDirectoryChanged() {
+        ModelManager.invalidateLocalModelsCache()
+        NotificationCenter.default.post(name: .localModelsChanged, object: nil)
     }
 
     deinit {
