@@ -25,10 +25,15 @@ struct ConfigurationView: View {
     @State private var tempChatTopP: String = ""
     @State private var tempChatMaxToolAttempts: String = ""
 
+    // Agent generation settings state
+    @State private var tempAgentTemperature: String = ""
+    @State private var tempAgentMaxTokens: String = ""
+    @State private var tempAgentTopP: String = ""
+
     // Server settings state
     @State private var tempAllowedOrigins: String = ""
 
-    // Performance settings state
+    // Local Inference settings state
     @State private var tempTopP: String = ""
     @State private var tempKVBits: String = ""
     @State private var tempKVGroup: String = ""
@@ -71,113 +76,11 @@ struct ConfigurationView: View {
                 // Scrollable content area
                 ScrollView {
                     VStack(alignment: .leading, spacing: 24) {
-                        // MARK: - Chat Section
+                        // MARK: - General Section
                         if matchesSearch(
-                            "Chat",
-                            "Hotkey",
-                            "Model",
-                            "System Prompt",
-                            "Temperature",
-                            "Max Tokens",
-                            "Context Length",
-                            "Top P",
-                            "Tools",
-                            "Tool Call",
-                            "Generation"
-                        ) {
-                            SettingsSection(title: "Chat", icon: "message") {
-                                VStack(alignment: .leading, spacing: 20) {
-                                    // Global Hotkey
-                                    SettingsField(label: "Global Hotkey") {
-                                        HotkeyRecorder(value: $tempChatHotkey)
-                                    }
-
-                                    // System Prompt
-                                    StyledSettingsTextArea(
-                                        label: "System Prompt",
-                                        text: $tempSystemPrompt,
-                                        placeholder: "Enter instructions for all chats...",
-                                        hint: "Optional. Shown as a system message for all chats."
-                                    )
-
-                                    // Generation Settings
-                                    SettingsSubsection(label: "Generation") {
-                                        VStack(spacing: 12) {
-                                            settingsTextField(
-                                                label: "Temperature",
-                                                text: $tempChatTemperature,
-                                                placeholder: "0.7",
-                                                help: "Randomness (0–2). Values > 0.8 may cause erratic output"
-                                            )
-                                            settingsTextField(
-                                                label: "Max Tokens",
-                                                text: $tempChatMaxTokens,
-                                                placeholder: "16384",
-                                                help: "Maximum response tokens. Empty uses default 16384"
-                                            )
-                                            settingsTextField(
-                                                label: "Context Length",
-                                                text: $tempChatContextLength,
-                                                placeholder: "128000",
-                                                help:
-                                                    "Assumed context window for remote models. Empty uses default 128k"
-                                            )
-                                            settingsTextField(
-                                                label: "Top P Override",
-                                                text: $tempChatTopP,
-                                                placeholder: "",
-                                                help: "Override server Top P (0–1). Empty uses server default"
-                                            )
-                                        }
-                                    }
-
-                                    // Tools Settings
-                                    SettingsSubsection(label: "Tools") {
-                                        settingsTextField(
-                                            label: "Max Tool Attempts",
-                                            text: $tempChatMaxToolAttempts,
-                                            placeholder: "",
-                                            help: "Max consecutive tool calls (1–10). Empty uses no limit"
-                                        )
-                                    }
-
-                                }
-                            }
-                        }
-
-                        // MARK: - Server Section
-                        if matchesSearch("Server", "Port", "Network", "Expose", "CORS", "Origins", "Allowed Origins") {
-                            SettingsSection(title: "Server", icon: "network") {
-                                VStack(alignment: .leading, spacing: 20) {
-                                    // Port
-                                    StyledSettingsTextField(
-                                        label: "Port",
-                                        text: $tempPortString,
-                                        placeholder: "1337",
-                                        help: "Enter a port number between 1 and 65535"
-                                    )
-
-                                    // Network Exposure Toggle
-                                    SettingsToggle(
-                                        title: "Expose to Network",
-                                        description: "Allow devices on your network to connect",
-                                        isOn: $tempExposeToNetwork
-                                    )
-
-                                    // CORS Settings
-                                    StyledSettingsTextField(
-                                        label: "Allowed Origins",
-                                        text: $tempAllowedOrigins,
-                                        placeholder: "https://example.com, https://app.localhost",
-                                        help: "Comma-separated list. Use * for any, empty to disable CORS"
-                                    )
-                                }
-                            }
-                        }
-
-                        // MARK: - System Section
-                        if matchesSearch(
+                            "General",
                             "System",
+                            "Hotkey",
                             "Login",
                             "Start at Login",
                             "CLI",
@@ -185,8 +88,17 @@ struct ConfigurationView: View {
                             "Install",
                             "Symlink"
                         ) {
-                            SettingsSection(title: "System", icon: "gear") {
+                            SettingsSection(title: "General", icon: "gear") {
                                 VStack(alignment: .leading, spacing: 20) {
+                                    Text("Application behavior and system integration.")
+                                        .font(.system(size: 12))
+                                        .foregroundColor(theme.secondaryText)
+
+                                    // Global Hotkey
+                                    SettingsField(label: "Global Hotkey") {
+                                        HotkeyRecorder(value: $tempChatHotkey)
+                                    }
+
                                     // Start at Login
                                     SettingsToggle(
                                         title: "Start at Login",
@@ -250,9 +162,154 @@ struct ConfigurationView: View {
                             }
                         }
 
-                        // MARK: - Performance Section
+                        // MARK: - Chat Section
                         if matchesSearch(
-                            "Performance",
+                            "Chat",
+                            "Model",
+                            "System Prompt",
+                            "Temperature",
+                            "Max Tokens",
+                            "Context Length",
+                            "Top P",
+                            "Tools",
+                            "Tool Call",
+                            "Generation"
+                        ) {
+                            SettingsSection(title: "Chat", icon: "message") {
+                                VStack(alignment: .leading, spacing: 20) {
+                                    Text("Configure how chat mode generates responses.")
+                                        .font(.system(size: 12))
+                                        .foregroundColor(theme.secondaryText)
+
+                                    // System Prompt
+                                    StyledSettingsTextArea(
+                                        label: "System Prompt",
+                                        text: $tempSystemPrompt,
+                                        placeholder: "Enter instructions for all chats...",
+                                        hint: "Optional. Shown as a system message for all chats."
+                                    )
+
+                                    // Generation Settings
+                                    SettingsSubsection(label: "Generation") {
+                                        VStack(alignment: .leading, spacing: 12) {
+                                            SettingsSliderField(
+                                                label: "Temperature",
+                                                help: "Randomness (0–2). Higher = more creative",
+                                                text: $tempChatTemperature,
+                                                range: 0 ... 2,
+                                                step: 0.1,
+                                                defaultValue: 0.7,
+                                                formatString: "%.1f"
+                                            )
+                                            SettingsStepperField(
+                                                label: "Max Tokens",
+                                                help: "Maximum response tokens",
+                                                text: $tempChatMaxTokens,
+                                                range: 1 ... 65536,
+                                                step: 1024,
+                                                defaultValue: 16384
+                                            )
+                                            SettingsStepperField(
+                                                label: "Context Length",
+                                                help: "Context window for remote models",
+                                                text: $tempChatContextLength,
+                                                range: 2048 ... 256000,
+                                                step: 1024,
+                                                defaultValue: 128000
+                                            )
+                                            SettingsSliderField(
+                                                label: "Top P Override",
+                                                help: "Sampling diversity (0–1)",
+                                                text: $tempChatTopP,
+                                                range: 0 ... 1,
+                                                step: 0.05,
+                                                defaultValue: 1.0,
+                                                formatString: "%.2f"
+                                            )
+                                        }
+                                    }
+
+                                    // Tools Settings
+                                    SettingsSubsection(label: "Tools") {
+                                        SettingsStepperField(
+                                            label: "Max Tool Attempts",
+                                            help: "Max consecutive tool calls per turn",
+                                            text: $tempChatMaxToolAttempts,
+                                            range: 1 ... 50,
+                                            step: 1,
+                                            defaultValue: 15
+                                        )
+                                    }
+
+                                }
+                            }
+                        }
+
+                        // MARK: - Agent Section
+                        if matchesSearch(
+                            "Agent",
+                            "Agent Generation",
+                            "Temperature",
+                            "Max Tokens",
+                            "Top P",
+                            "Folder",
+                            "File",
+                            "Shell",
+                            "Git",
+                            "Permissions",
+                            "Write",
+                            "Delete",
+                            "Move",
+                            "Copy"
+                        ) {
+                            AgentSettingsSection(
+                                agentTemperature: $tempAgentTemperature,
+                                agentMaxTokens: $tempAgentMaxTokens,
+                                agentTopP: $tempAgentTopP
+                            )
+                        }
+
+                        // MARK: - Server Section
+                        if matchesSearch("Server", "Port", "Network", "Expose", "CORS", "Origins", "Allowed Origins") {
+                            SettingsSection(title: "Server", icon: "network") {
+                                VStack(alignment: .leading, spacing: 20) {
+                                    Text("Configure the local API server for external integrations.")
+                                        .font(.system(size: 12))
+                                        .foregroundColor(theme.secondaryText)
+
+                                    // Port
+                                    SettingsStepperField(
+                                        label: "Port",
+                                        help: "Port number (1–65535)",
+                                        text: $tempPortString,
+                                        range: 1 ... 65535,
+                                        step: 1,
+                                        defaultValue: 1337
+                                    )
+
+                                    // Network Exposure Toggle
+                                    SettingsToggle(
+                                        title: "Expose to Network",
+                                        description: "Allow devices on your network to connect",
+                                        isOn: $tempExposeToNetwork
+                                    )
+
+                                    // CORS Settings
+                                    StyledSettingsTextField(
+                                        label: "Allowed Origins",
+                                        text: $tempAllowedOrigins,
+                                        placeholder: "https://example.com, https://app.localhost",
+                                        help: "Comma-separated list. Use * for any, empty to disable CORS"
+                                    )
+                                }
+                            }
+                        }
+
+                        // MARK: - Local Inference Section
+                        if matchesSearch(
+                            "Local Inference",
+                            "Inference",
+                            "Sampling",
                             "Top P",
                             "KV Cache",
                             "Quantization",
@@ -261,53 +318,71 @@ struct ConfigurationView: View {
                             "CPU",
                             "Memory"
                         ) {
-                            SettingsSection(title: "Performance", icon: "cpu") {
+                            SettingsSection(title: "Local Inference", icon: "bolt") {
                                 VStack(alignment: .leading, spacing: 20) {
-                                    // Generation
-                                    SettingsSubsection(label: "Generation") {
-                                        VStack(spacing: 12) {
-                                            settingsTextField(
+                                    Text(
+                                        "Tune the local model runtime. These settings only affect models running on this device."
+                                    )
+                                    .font(.system(size: 12))
+                                    .foregroundColor(theme.secondaryText)
+
+                                    // Sampling
+                                    SettingsSubsection(label: "Sampling") {
+                                        VStack(alignment: .leading, spacing: 12) {
+                                            SettingsSliderField(
                                                 label: "Top P",
+                                                help: "Default sampling diversity (0–1)",
                                                 text: $tempTopP,
-                                                placeholder: "1.0",
-                                                help:
-                                                    "Controls diversity of generated text (0–1). Empty uses default 1.0"
+                                                range: 0 ... 1,
+                                                step: 0.05,
+                                                defaultValue: 1.0,
+                                                formatString: "%.2f"
                                             )
                                         }
                                     }
 
                                     // KV Cache Settings
                                     SettingsSubsection(label: "KV Cache") {
-                                        VStack(spacing: 12) {
-                                            settingsTextField(
+                                        VStack(alignment: .leading, spacing: 12) {
+                                            SettingsStepperField(
                                                 label: "Cache Bits",
+                                                help: "Quantization bits. Empty disables",
                                                 text: $tempKVBits,
-                                                placeholder: "",
-                                                help: "Quantization bits for KV cache. Empty disables quantization"
+                                                range: 2 ... 8,
+                                                step: 1,
+                                                defaultValue: 4
                                             )
-                                            settingsTextField(
+                                            SettingsStepperField(
                                                 label: "Group Size",
+                                                help: "KV quantization group size",
                                                 text: $tempKVGroup,
-                                                placeholder: "64",
-                                                help: "Group size for KV quantization. Empty uses default 64"
+                                                range: 1 ... 256,
+                                                step: 16,
+                                                defaultValue: 64
                                             )
-                                            settingsTextField(
+                                            SettingsStepperField(
                                                 label: "Quantized Start",
+                                                help: "Starting layer for quantization",
                                                 text: $tempQuantStart,
-                                                placeholder: "0",
-                                                help: "Starting layer for KV quantization. Empty uses default 0"
+                                                range: 0 ... 1024,
+                                                step: 64,
+                                                defaultValue: 0
                                             )
-                                            settingsTextField(
+                                            SettingsStepperField(
                                                 label: "Max Size",
+                                                help: "Max KV cache size in tokens",
                                                 text: $tempMaxKV,
-                                                placeholder: "8192",
-                                                help: "Maximum KV cache size in tokens. Empty uses default 8192"
+                                                range: 1024 ... 131072,
+                                                step: 1024,
+                                                defaultValue: 8192
                                             )
-                                            settingsTextField(
+                                            SettingsStepperField(
                                                 label: "Prefill Step",
+                                                help: "Tokens per prefill chunk",
                                                 text: $tempPrefillStep,
-                                                placeholder: "512",
-                                                help: "Step size for prefill operations. Empty uses default 512"
+                                                range: 64 ... 2048,
+                                                step: 64,
+                                                defaultValue: 512
                                             )
                                         }
                                     }
@@ -403,21 +478,6 @@ struct ConfigurationView: View {
                             }
                         }
 
-                        // MARK: - Agent Section
-                        if matchesSearch(
-                            "Agent",
-                            "Folder",
-                            "File",
-                            "Shell",
-                            "Git",
-                            "Permissions",
-                            "Write",
-                            "Delete",
-                            "Move",
-                            "Copy"
-                        ) {
-                            AgentSettingsSection()
-                        }
                     }
                     .padding(.horizontal, 24)
                     .padding(.vertical, 24)
@@ -465,7 +525,7 @@ struct ConfigurationView: View {
     private var headerView: some View {
         ManagerHeaderWithActions(
             title: "Settings",
-            subtitle: "Configure your server and chat settings"
+            subtitle: "Configure your Osaurus settings"
         ) {
             HeaderSecondaryButton("Reset", icon: "arrow.counterclockwise") {
                 resetToDefaults()
@@ -475,18 +535,6 @@ struct ConfigurationView: View {
                 saveConfiguration()
             }
         }
-    }
-
-    // MARK: - Settings Text Field
-
-    @ViewBuilder
-    private func settingsTextField(
-        label: String,
-        text: Binding<String>,
-        placeholder: String,
-        help: String
-    ) -> some View {
-        StyledSettingsTextField(label: label, text: text, placeholder: placeholder, help: help)
     }
 
     // MARK: - Configuration Loading
@@ -506,6 +554,11 @@ struct ConfigurationView: View {
         tempChatContextLength = chat.contextLength.map(String.init) ?? ""
         tempChatTopP = chat.topPOverride.map { String($0) } ?? ""
         tempChatMaxToolAttempts = chat.maxToolAttempts.map(String.init) ?? ""
+
+        // Agent generation settings
+        tempAgentTemperature = chat.agentTemperature.map { String($0) } ?? ""
+        tempAgentMaxTokens = chat.agentMaxTokens.map(String.init) ?? ""
+        tempAgentTopP = chat.agentTopPOverride.map { String($0) } ?? ""
 
         let defaults = ServerConfiguration.default
         tempTopP = configuration.genTopP == defaults.genTopP ? "" : String(configuration.genTopP)
@@ -558,6 +611,11 @@ struct ConfigurationView: View {
         tempChatContextLength = ""
         tempChatTopP = ""
         tempChatMaxToolAttempts = ""
+
+        // Agent generation settings - clear to use defaults
+        tempAgentTemperature = ""
+        tempAgentMaxTokens = ""
+        tempAgentTopP = ""
 
         // Performance settings - clear to use defaults
         tempTopP = ""
@@ -682,6 +740,25 @@ struct ConfigurationView: View {
             return max(1, min(10, v))
         }()
 
+        // Parse agent generation settings
+        let parsedAgentTemp: Float? = {
+            let s = tempAgentTemperature.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !s.isEmpty, let v = Float(s) else { return nil }
+            return max(0.0, min(2.0, v))
+        }()
+
+        let parsedAgentMax: Int? = {
+            let s = tempAgentMaxTokens.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !s.isEmpty, let v = Int(s) else { return nil }
+            return max(1, v)
+        }()
+
+        let parsedAgentTopP: Float? = {
+            let s = tempAgentTopP.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !s.isEmpty, let v = Float(s) else { return nil }
+            return max(0.0, min(1.0, v))
+        }()
+
         // Preserve the existing defaultModel (auto-persisted via model picker)
         let existingDefaultModel = previousChatCfg.defaultModel
         let chatCfg = ChatConfiguration(
@@ -692,7 +769,10 @@ struct ConfigurationView: View {
             contextLength: parsedContext,
             topPOverride: parsedTopP,
             maxToolAttempts: parsedMaxToolAttempts,
-            defaultModel: existingDefaultModel
+            defaultModel: existingDefaultModel,
+            agentTemperature: parsedAgentTemp,
+            agentMaxTokens: parsedAgentMax,
+            agentTopPOverride: parsedAgentTopP
         )
         ChatConfigurationStore.save(chatCfg)
 
@@ -1082,8 +1162,6 @@ private struct StyledSettingsTextArea: View {
     let placeholder: String
     let hint: String
 
-    @State private var isFocused = false
-
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text(label)
@@ -1194,6 +1272,238 @@ private struct StyledSettingsTextField: View {
     }
 }
 
+// MARK: - Settings Slider Field
+
+private struct SettingsSliderField: View {
+    @ObservedObject private var themeManager = ThemeManager.shared
+
+    let label: String
+    let help: String
+    @Binding var text: String
+    let range: ClosedRange<Float>
+    let step: Float
+    let defaultValue: Float
+    let formatString: String
+
+    @State private var sliderValue: Float = 0
+    @State private var isInitialized = false
+
+    private var effectiveValue: Float {
+        if let v = Float(text.trimmingCharacters(in: .whitespacesAndNewlines)) {
+            return min(max(v, range.lowerBound), range.upperBound)
+        }
+        return defaultValue
+    }
+
+    private var displayValue: String {
+        String(format: formatString, effectiveValue)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text(label)
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundColor(themeManager.currentTheme.secondaryText)
+
+                Spacer()
+
+                Text(help)
+                    .font(.system(size: 10))
+                    .foregroundColor(themeManager.currentTheme.tertiaryText)
+                    .lineLimit(1)
+            }
+
+            HStack(spacing: 12) {
+                Text(String(format: formatString, range.lowerBound))
+                    .font(.system(size: 10, design: .monospaced))
+                    .foregroundColor(themeManager.currentTheme.tertiaryText)
+                    .frame(width: 28, alignment: .trailing)
+
+                Slider(
+                    value: $sliderValue,
+                    in: range,
+                    step: step
+                )
+                .tint(themeManager.currentTheme.accentColor)
+                .onChange(of: sliderValue) { _, newValue in
+                    guard isInitialized else { return }
+                    text = String(format: formatString, newValue)
+                }
+
+                Text(String(format: formatString, range.upperBound))
+                    .font(.system(size: 10, design: .monospaced))
+                    .foregroundColor(themeManager.currentTheme.tertiaryText)
+                    .frame(width: 28, alignment: .leading)
+
+                // Current value badge
+                Text(displayValue)
+                    .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                    .foregroundColor(themeManager.currentTheme.primaryText)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(
+                        RoundedRectangle(cornerRadius: 6)
+                            .fill(themeManager.currentTheme.inputBackground)
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 6)
+                                    .stroke(themeManager.currentTheme.inputBorder, lineWidth: 1)
+                            )
+                    )
+                    .frame(width: 52)
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 10)
+            .background(
+                RoundedRectangle(cornerRadius: 10)
+                    .fill(themeManager.currentTheme.inputBackground)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 10)
+                            .stroke(themeManager.currentTheme.inputBorder, lineWidth: 1)
+                    )
+            )
+        }
+        .onAppear {
+            sliderValue = effectiveValue
+            DispatchQueue.main.async {
+                isInitialized = true
+            }
+        }
+        .onChange(of: text) { _, _ in
+            guard isInitialized else { return }
+            let newEffective = effectiveValue
+            if abs(sliderValue - newEffective) > step / 2 {
+                sliderValue = newEffective
+            }
+        }
+    }
+}
+
+// MARK: - Settings Stepper Field
+
+private struct SettingsStepperField: View {
+    @ObservedObject private var themeManager = ThemeManager.shared
+
+    let label: String
+    let help: String
+    @Binding var text: String
+    let range: ClosedRange<Int>
+    let step: Int
+    let defaultValue: Int
+
+    @State private var isFocused = false
+
+    private var effectiveValue: Int {
+        if let v = Int(text.trimmingCharacters(in: .whitespacesAndNewlines)) {
+            return min(max(v, range.lowerBound), range.upperBound)
+        }
+        return defaultValue
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Text(label)
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundColor(themeManager.currentTheme.secondaryText)
+
+                Spacer()
+
+                Text(help)
+                    .font(.system(size: 10))
+                    .foregroundColor(themeManager.currentTheme.tertiaryText)
+                    .lineLimit(1)
+            }
+
+            HStack(spacing: 0) {
+                ZStack(alignment: .leading) {
+                    if text.isEmpty {
+                        Text(String(defaultValue))
+                            .font(.system(size: 13, design: .monospaced))
+                            .foregroundColor(themeManager.currentTheme.placeholderText)
+                            .allowsHitTesting(false)
+                    }
+
+                    TextField(
+                        "",
+                        text: $text,
+                        onEditingChanged: { editing in
+                            withAnimation(.easeOut(duration: 0.15)) {
+                                isFocused = editing
+                            }
+                        }
+                    )
+                    .textFieldStyle(.plain)
+                    .font(.system(size: 13, design: .monospaced))
+                    .foregroundColor(themeManager.currentTheme.primaryText)
+                }
+                .padding(.horizontal, 12)
+
+                Divider()
+                    .frame(height: 20)
+
+                // Stepper buttons
+                HStack(spacing: 0) {
+                    Button(action: decrement) {
+                        Image(systemName: "minus")
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundColor(
+                                effectiveValue <= range.lowerBound
+                                    ? themeManager.currentTheme.tertiaryText
+                                    : themeManager.currentTheme.primaryText
+                            )
+                            .frame(width: 32, height: 32)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(effectiveValue <= range.lowerBound)
+
+                    Divider()
+                        .frame(height: 20)
+
+                    Button(action: increment) {
+                        Image(systemName: "plus")
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundColor(
+                                effectiveValue >= range.upperBound
+                                    ? themeManager.currentTheme.tertiaryText
+                                    : themeManager.currentTheme.primaryText
+                            )
+                            .frame(width: 32, height: 32)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(effectiveValue >= range.upperBound)
+                }
+            }
+            .padding(.vertical, 2)
+            .background(
+                RoundedRectangle(cornerRadius: 10)
+                    .fill(themeManager.currentTheme.inputBackground)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 10)
+                            .stroke(
+                                isFocused
+                                    ? themeManager.currentTheme.accentColor.opacity(0.5)
+                                    : themeManager.currentTheme.inputBorder,
+                                lineWidth: isFocused ? 1.5 : 1
+                            )
+                    )
+            )
+        }
+    }
+
+    private func increment() {
+        let newValue = min(effectiveValue + step, range.upperBound)
+        text = String(newValue)
+    }
+
+    private func decrement() {
+        let newValue = max(effectiveValue - step, range.lowerBound)
+        text = String(newValue)
+    }
+}
+
 private struct SettingsToggle: View {
     @ObservedObject private var themeManager = ThemeManager.shared
 
@@ -1279,21 +1589,8 @@ private struct VoiceSettingsSection: View {
     @State private var hasLoadedConfig = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            // Section header with icon and uppercase title
-            HStack(spacing: 8) {
-                Image(systemName: "waveform")
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundColor(themeManager.currentTheme.accentColor)
-
-                Text("VOICE (ADVANCED)")
-                    .font(.system(size: 11, weight: .bold))
-                    .foregroundColor(themeManager.currentTheme.secondaryText)
-                    .tracking(0.5)
-            }
-
+        SettingsSection(title: "Voice (Advanced)", icon: "waveform") {
             VStack(alignment: .leading, spacing: 20) {
-                // Info text
                 Text("Configure voice settings directly in the Voice tab. Advanced options below.")
                     .font(.system(size: 12))
                     .foregroundColor(themeManager.currentTheme.secondaryText)
@@ -1353,15 +1650,6 @@ private struct VoiceSettingsSection: View {
                 )
             }
         }
-        .padding(16)
-        .background(
-            RoundedRectangle(cornerRadius: 12)
-                .fill(themeManager.currentTheme.cardBackground)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 12)
-                        .stroke(themeManager.currentTheme.cardBorder, lineWidth: 1)
-                )
-        )
         .onAppear {
             if !hasLoadedConfig {
                 loadVoiceConfig()
@@ -1396,103 +1684,6 @@ private struct VoiceSettingsSection: View {
         var config = WhisperConfigurationStore.load()
         config.wordTimestamps = tempWordTimestamps
         WhisperConfigurationStore.save(config)
-    }
-}
-
-// MARK: - Voice Settings Subsection
-
-private struct VoiceSettingsSubsection<Content: View>: View {
-    @ObservedObject private var themeManager = ThemeManager.shared
-
-    let label: String
-    @ViewBuilder let content: () -> Content
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(spacing: 6) {
-                Rectangle()
-                    .fill(themeManager.currentTheme.accentColor)
-                    .frame(width: 3, height: 14)
-                    .clipShape(RoundedRectangle(cornerRadius: 1.5))
-
-                Text(label.uppercased())
-                    .font(.system(size: 10, weight: .bold))
-                    .foregroundColor(themeManager.currentTheme.tertiaryText)
-                    .tracking(0.5)
-            }
-
-            content()
-                .padding(.leading, 9)
-        }
-    }
-}
-
-// MARK: - Voice Settings Text Field
-
-private struct VoiceSettingsTextField: View {
-    @ObservedObject private var themeManager = ThemeManager.shared
-
-    let label: String
-    @Binding var text: String
-    let placeholder: String
-    let help: String
-
-    @State private var isFocused = false
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack {
-                Text(label)
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundColor(themeManager.currentTheme.secondaryText)
-
-                Spacer()
-
-                Text(help)
-                    .font(.system(size: 10))
-                    .foregroundColor(themeManager.currentTheme.tertiaryText)
-                    .lineLimit(1)
-            }
-
-            HStack(spacing: 10) {
-                ZStack(alignment: .leading) {
-                    if text.isEmpty && !placeholder.isEmpty {
-                        Text(placeholder)
-                            .font(.system(size: 13, design: .monospaced))
-                            .foregroundColor(themeManager.currentTheme.placeholderText)
-                            .allowsHitTesting(false)
-                    }
-
-                    TextField(
-                        "",
-                        text: $text,
-                        onEditingChanged: { editing in
-                            withAnimation(.easeOut(duration: 0.15)) {
-                                isFocused = editing
-                            }
-                        }
-                    )
-                    .textFieldStyle(.plain)
-                    .font(.system(size: 13, design: .monospaced))
-                    .foregroundColor(themeManager.currentTheme.primaryText)
-                }
-            }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 10)
-            .background(
-                RoundedRectangle(cornerRadius: 10)
-                    .fill(themeManager.currentTheme.inputBackground)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 10)
-                            .stroke(
-                                isFocused
-                                    ? themeManager.currentTheme.accentColor.opacity(0.5)
-                                    : themeManager.currentTheme.inputBorder,
-                                lineWidth: isFocused ? 1.5 : 1
-                            )
-                    )
-            )
-        }
     }
 }
 
@@ -1669,6 +1860,10 @@ private struct AgentSettingsSection: View {
     @ObservedObject private var themeManager = ThemeManager.shared
     @State private var refreshId = UUID()
 
+    @Binding var agentTemperature: String
+    @Binding var agentMaxTokens: String
+    @Binding var agentTopP: String
+
     // (name, display, desc, destructive, defaultPolicy)
     private static let folderTools:
         [(name: String, display: String, desc: String, destructive: Bool, defaultPolicy: ToolPermissionPolicy)] = [
@@ -1686,44 +1881,87 @@ private struct AgentSettingsSection: View {
     var body: some View {
         SettingsSection(title: "Agent", icon: "cpu") {
             VStack(alignment: .leading, spacing: 16) {
-                Text("Control how agent folder tools execute when working with folders in Agent mode.")
-                    .font(.system(size: 12))
-                    .foregroundColor(themeManager.currentTheme.secondaryText)
+                // Generation Settings
+                SettingsSubsection(label: "Generation") {
+                    VStack(alignment: .leading, spacing: 12) {
+                        Text("Controls how the agent reasons and calls tools. Lower temperature improves reliability.")
+                            .font(.system(size: 12))
+                            .foregroundColor(themeManager.currentTheme.secondaryText)
 
-                VStack(spacing: 0) {
-                    ForEach(Self.folderTools, id: \.name) { tool in
-                        AgentToolPermissionRow(
-                            name: tool.name,
-                            displayName: tool.display,
-                            description: tool.desc,
-                            isDestructive: tool.destructive,
-                            defaultPolicy: tool.defaultPolicy,
-                            onPolicyChange: { refreshId = UUID() }
+                        SettingsSliderField(
+                            label: "Temperature",
+                            help: "Lower = more reliable tool use",
+                            text: $agentTemperature,
+                            range: 0 ... 2,
+                            step: 0.1,
+                            defaultValue: 0.3,
+                            formatString: "%.1f"
+                        )
+                        SettingsStepperField(
+                            label: "Max Tokens",
+                            help: "Tokens per agent iteration",
+                            text: $agentMaxTokens,
+                            range: 1 ... 65536,
+                            step: 512,
+                            defaultValue: 4096
+                        )
+                        SettingsSliderField(
+                            label: "Top P Override",
+                            help: "Sampling diversity (0–1)",
+                            text: $agentTopP,
+                            range: 0 ... 1,
+                            step: 0.05,
+                            defaultValue: 1.0,
+                            formatString: "%.2f"
                         )
                     }
                 }
-                .background(
-                    RoundedRectangle(cornerRadius: 10)
-                        .fill(themeManager.currentTheme.inputBackground)
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 10)
-                                .stroke(themeManager.currentTheme.inputBorder, lineWidth: 1)
-                        )
-                )
-                .id(refreshId)
 
-                HStack {
-                    Spacer()
-                    Button(action: resetAllToDefault) {
-                        HStack(spacing: 6) {
-                            Image(systemName: "arrow.counterclockwise")
-                                .font(.system(size: 11))
-                            Text("Reset All to Default")
-                                .font(.system(size: 12, weight: .medium))
+                SettingsDivider()
+
+                // Permissions
+                SettingsSubsection(label: "Permissions") {
+                    VStack(alignment: .leading, spacing: 12) {
+                        Text("Control how agent folder tools execute when working with folders in Agent mode.")
+                            .font(.system(size: 12))
+                            .foregroundColor(themeManager.currentTheme.secondaryText)
+
+                        VStack(spacing: 0) {
+                            ForEach(Self.folderTools, id: \.name) { tool in
+                                AgentToolPermissionRow(
+                                    name: tool.name,
+                                    displayName: tool.display,
+                                    description: tool.desc,
+                                    isDestructive: tool.destructive,
+                                    defaultPolicy: tool.defaultPolicy,
+                                    onPolicyChange: { refreshId = UUID() }
+                                )
+                            }
+                        }
+                        .background(
+                            RoundedRectangle(cornerRadius: 10)
+                                .fill(themeManager.currentTheme.inputBackground)
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 10)
+                                        .stroke(themeManager.currentTheme.inputBorder, lineWidth: 1)
+                                )
+                        )
+                        .id(refreshId)
+
+                        HStack {
+                            Spacer()
+                            Button(action: resetAllToDefault) {
+                                HStack(spacing: 6) {
+                                    Image(systemName: "arrow.counterclockwise")
+                                        .font(.system(size: 11))
+                                    Text("Reset All to Default")
+                                        .font(.system(size: 12, weight: .medium))
+                                }
+                            }
+                            .buttonStyle(SettingsButtonStyle())
+                            .help("Reset all agent tool permissions to default")
                         }
                     }
-                    .buttonStyle(SettingsButtonStyle())
-                    .help("Reset all agent tool permissions to default")
                 }
             }
         }

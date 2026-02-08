@@ -41,6 +41,14 @@ public struct ChatConfiguration: Codable, Equatable, Sendable {
     /// Default model for new chat sessions (nil uses first available)
     public var defaultModel: String?
 
+    // MARK: - Agent Generation Settings
+    /// Agent-specific temperature override (nil uses default 0.3)
+    public var agentTemperature: Float?
+    /// Agent-specific max tokens override (nil uses default 4096)
+    public var agentMaxTokens: Int?
+    /// Agent-specific top_p override (nil uses server default)
+    public var agentTopPOverride: Float?
+
     public init(
         hotkey: Hotkey?,
         systemPrompt: String,
@@ -49,7 +57,10 @@ public struct ChatConfiguration: Codable, Equatable, Sendable {
         contextLength: Int? = nil,
         topPOverride: Float? = nil,
         maxToolAttempts: Int? = nil,
-        defaultModel: String? = nil
+        defaultModel: String? = nil,
+        agentTemperature: Float? = nil,
+        agentMaxTokens: Int? = nil,
+        agentTopPOverride: Float? = nil
     ) {
         self.hotkey = hotkey
         self.systemPrompt = systemPrompt
@@ -59,6 +70,9 @@ public struct ChatConfiguration: Codable, Equatable, Sendable {
         self.topPOverride = topPOverride
         self.maxToolAttempts = maxToolAttempts
         self.defaultModel = defaultModel
+        self.agentTemperature = agentTemperature
+        self.agentMaxTokens = agentMaxTokens
+        self.agentTopPOverride = agentTopPOverride
     }
 
     public static var `default`: ChatConfiguration {
@@ -73,7 +87,10 @@ public struct ChatConfiguration: Codable, Equatable, Sendable {
             maxTokens: 16384,  // High default to support long generations (essays, code, etc.)
             contextLength: 128000,  // Default to 128k for modern remote models
             topPOverride: nil,
-            maxToolAttempts: 15  // Increased from 3 to support longer agentic workflows
+            maxToolAttempts: 15,  // Increased from 3 to support longer agentic workflows
+            agentTemperature: 0.3,  // Low temperature for reliable tool-calling
+            agentMaxTokens: 4096,  // Conservative per-iteration limit for agent steps
+            agentTopPOverride: nil
         )
     }
 }
