@@ -341,6 +341,9 @@ public actor AgentEngine {
             )
         )
 
+        // Load agent generation settings from configuration
+        let agentCfg = await ChatConfigurationStore.load()
+
         // Run the reasoning loop
         let loopResult = try await executionEngine.executeLoop(
             issue: issue,
@@ -349,7 +352,10 @@ public actor AgentEngine {
             model: model,
             tools: tools,
             toolOverrides: toolOverrides,
-            maxIterations: AgentExecutionEngine.defaultMaxIterations,
+            temperature: agentCfg.agentTemperature,
+            maxTokens: agentCfg.agentMaxTokens,
+            topPOverride: agentCfg.agentTopPOverride,
+            maxIterations: agentCfg.agentMaxIterations ?? AgentExecutionEngine.defaultMaxIterations,
             onIterationStart: { [weak self] iteration in
                 guard let self = self else { return }
                 self.delegate?.agentEngine(self, didStartIteration: iteration, forIssue: issue)
