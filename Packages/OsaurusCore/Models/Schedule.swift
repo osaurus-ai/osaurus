@@ -259,6 +259,10 @@ public struct Schedule: Codable, Identifiable, Sendable, Equatable {
     public var mode: ChatMode
     /// Extra parameters for future extensibility
     public var parameters: [String: String]
+    /// Agent working directory path (for display)
+    public var folderPath: String?
+    /// Security-scoped bookmark for the agent working directory
+    public var folderBookmark: Data?
     /// When and how often to run
     public var frequency: ScheduleFrequency
     /// Whether the schedule is active
@@ -279,6 +283,8 @@ public struct Schedule: Codable, Identifiable, Sendable, Equatable {
         personaId: UUID? = nil,
         mode: ChatMode = .chat,
         parameters: [String: String] = [:],
+        folderPath: String? = nil,
+        folderBookmark: Data? = nil,
         frequency: ScheduleFrequency,
         isEnabled: Bool = true,
         lastRunAt: Date? = nil,
@@ -292,6 +298,8 @@ public struct Schedule: Codable, Identifiable, Sendable, Equatable {
         self.personaId = personaId
         self.mode = mode
         self.parameters = parameters
+        self.folderPath = folderPath
+        self.folderBookmark = folderBookmark
         self.frequency = frequency
         self.isEnabled = isEnabled
         self.lastRunAt = lastRunAt
@@ -304,6 +312,7 @@ public struct Schedule: Codable, Identifiable, Sendable, Equatable {
 
     private enum CodingKeys: String, CodingKey {
         case id, name, instructions, personaId, mode, parameters
+        case folderPath, folderBookmark
         case frequency, isEnabled, lastRunAt, lastChatSessionId
         case createdAt, updatedAt
     }
@@ -316,6 +325,8 @@ public struct Schedule: Codable, Identifiable, Sendable, Equatable {
         personaId = try container.decodeIfPresent(UUID.self, forKey: .personaId)
         mode = try container.decodeIfPresent(ChatMode.self, forKey: .mode) ?? .chat
         parameters = try container.decodeIfPresent([String: String].self, forKey: .parameters) ?? [:]
+        folderPath = try container.decodeIfPresent(String.self, forKey: .folderPath)
+        folderBookmark = try container.decodeIfPresent(Data.self, forKey: .folderBookmark)
         frequency = try container.decode(ScheduleFrequency.self, forKey: .frequency)
         isEnabled = try container.decode(Bool.self, forKey: .isEnabled)
         lastRunAt = try container.decodeIfPresent(Date.self, forKey: .lastRunAt)

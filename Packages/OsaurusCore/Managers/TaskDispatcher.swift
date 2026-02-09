@@ -35,7 +35,8 @@ public final class TaskDispatcher {
             id: request.id,
             mode: request.mode,
             personaId: personaId,
-            title: request.title
+            title: request.title,
+            folderBookmark: request.folderBookmark
         )
         contexts[request.id] = context
 

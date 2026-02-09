@@ -5,6 +5,7 @@
 //  Management view for creating, editing, and viewing scheduled AI tasks.
 //
 
+import AppKit
 import SwiftUI
 
 // MARK: - Schedules View
@@ -98,6 +99,8 @@ struct SchedulesView: View {
                         personaId: schedule.personaId,
                         mode: schedule.mode,
                         parameters: schedule.parameters,
+                        folderPath: schedule.folderPath,
+                        folderBookmark: schedule.folderBookmark,
                         frequency: schedule.frequency,
                         isEnabled: schedule.isEnabled
                     )
@@ -573,7 +576,7 @@ private struct ScheduleCard: View {
 
     @ViewBuilder
     private var configurationBadges: some View {
-        let hasBadges = persona != nil || !schedule.isEnabled || schedule.mode == .agent
+        let hasBadges = persona != nil || !schedule.isEnabled || schedule.mode == .agent || schedule.folderPath != nil
 
         if hasBadges {
             ScrollView(.horizontal, showsIndicators: false) {
@@ -584,6 +587,15 @@ private struct ScheduleCard: View {
                             icon: "bolt.fill",
                             text: "Agent",
                             color: .orange
+                        )
+                    }
+
+                    // Folder badge (agent mode with folder)
+                    if let folderPath = schedule.folderPath {
+                        ScheduleConfigBadge(
+                            icon: "folder.fill",
+                            text: URL(fileURLWithPath: folderPath).lastPathComponent,
+                            color: .cyan
                         )
                     }
 
@@ -1634,27 +1646,23 @@ struct ScheduleEditorSheet: View {
     let onCancel: () -> Void
     var initialPersonaId: UUID? = nil
 
-    @State private var name: String = ""
-    @State private var instructions: String = ""
-    @State private var selectedPersonaId: UUID? = nil
+    @State private var name = ""
+    @State private var instructions = ""
+    @State private var selectedPersonaId: UUID?
     @State private var selectedMode: ChatMode = .chat
     @State private var frequencyType: ScheduleFrequencyType = .daily
-    @State private var isEnabled: Bool = true
-
-    // Time components
-    @State private var selectedHour: Int = 9
-    @State private var selectedMinute: Int = 0
-
-    // Day components
-    @State private var selectedDayOfWeek: Int = 2  // Monday
-    @State private var selectedDayOfMonth: Int = 1
-    @State private var selectedMonth: Int = 1
-    @State private var selectedDay: Int = 1
-
-    // For "once" frequency
-    @State private var selectedDate: Date = Date()
-
+    @State private var isEnabled = true
+    @State private var selectedFolderPath: String?
+    @State private var selectedFolderBookmark: Data?
+    @State private var selectedHour = 9
+    @State private var selectedMinute = 0
+    @State private var selectedDayOfWeek = 2  // Monday
+    @State private var selectedDayOfMonth = 1
+    @State private var selectedMonth = 1
+    @State private var selectedDay = 1
+    @State private var selectedDate = Date()
     @State private var hasAppeared = false
+    @Namespace private var modeNamespace
 
     private var isEditing: Bool {
         if case .edit = mode { return true }
@@ -1683,31 +1691,26 @@ struct ScheduleEditorSheet: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            // Header
             headerView
 
-            // Form
             ScrollView {
-                VStack(alignment: .leading, spacing: 20) {
-                    // Basic Info Section
+                VStack(alignment: .leading, spacing: 24) {
                     scheduleInfoSection
-
-                    // Mode Section
                     modeSection
 
-                    // Instructions Section
+                    if selectedMode == .agent {
+                        folderContextSection
+                            .transition(.opacity.combined(with: .move(edge: .top)))
+                    }
+
                     instructionsSection
-
-                    // Frequency Section
                     frequencySection
-
-                    // Persona Section
                     personaSection
                 }
                 .padding(24)
+                .animation(.spring(response: 0.35, dampingFraction: 0.85), value: selectedMode)
             }
 
-            // Footer
             footerView
         }
         .frame(width: 580, height: 680)
@@ -1872,71 +1875,174 @@ struct ScheduleEditorSheet: View {
 
     private var modeSection: some View {
         ScheduleEditorSection(title: "Execution Mode", icon: "bolt.circle") {
-            VStack(alignment: .leading, spacing: 10) {
-                HStack(spacing: 0) {
-                    modeSegment(
-                        icon: "bubble.left.and.bubble.right",
-                        label: "Chat",
-                        description: "Conversational response",
-                        isSelected: selectedMode == .chat
-                    ) {
-                        withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
-                            selectedMode = .chat
-                        }
-                    }
-
-                    modeSegment(
-                        icon: "bolt.fill",
-                        label: "Agent",
-                        description: "Autonomous task execution",
-                        isSelected: selectedMode == .agent
-                    ) {
-                        withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
-                            selectedMode = .agent
-                        }
-                    }
-                }
+            HStack(spacing: 6) {
+                modeOption(
+                    icon: "bubble.left.and.bubble.right",
+                    label: "Chat",
+                    description: "Conversational response",
+                    mode: .chat
+                )
+                modeOption(
+                    icon: "bolt.fill",
+                    label: "Agent",
+                    description: "Autonomous task execution",
+                    mode: .agent
+                )
             }
+            .padding(4)
+            .background(
+                RoundedRectangle(cornerRadius: 10)
+                    .fill(theme.tertiaryBackground.opacity(0.6))
+            )
         }
     }
 
     @ViewBuilder
-    private func modeSegment(
+    private func modeOption(
         icon: String,
         label: String,
         description: String,
-        isSelected: Bool,
-        action: @escaping () -> Void
+        mode: ChatMode
     ) -> some View {
-        Button(action: action) {
-            VStack(spacing: 4) {
+        let isSelected = selectedMode == mode
+        Button {
+            withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
+                selectedMode = mode
+            }
+        } label: {
+            VStack(spacing: 3) {
                 HStack(spacing: 6) {
                     Image(systemName: icon)
-                        .font(.system(size: 12, weight: .semibold))
+                        .font(.system(size: 11, weight: .semibold))
                     Text(label)
                         .font(.system(size: 13, weight: .semibold))
                 }
-                .foregroundColor(isSelected ? theme.accentColor : theme.tertiaryText)
-
                 Text(description)
                     .font(.system(size: 10))
-                    .foregroundColor(isSelected ? theme.secondaryText : theme.tertiaryText)
             }
+            .foregroundColor(isSelected ? theme.primaryText : theme.secondaryText)
             .frame(maxWidth: .infinity)
             .padding(.vertical, 10)
             .background(
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(isSelected ? theme.accentColor.opacity(0.1) : Color.clear)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 8)
-                            .stroke(
-                                isSelected ? theme.accentColor.opacity(0.3) : theme.inputBorder,
-                                lineWidth: 1
-                            )
-                    )
+                ZStack {
+                    if isSelected {
+                        RoundedRectangle(cornerRadius: 7)
+                            .fill(theme.cardBackground)
+                            .shadow(color: theme.shadowColor.opacity(0.1), radius: 3, x: 0, y: 1)
+                            .matchedGeometryEffect(id: "mode_indicator", in: modeNamespace)
+                    }
+                }
             )
+            .contentShape(RoundedRectangle(cornerRadius: 7))
         }
         .buttonStyle(.plain)
+    }
+
+    // MARK: - Folder Context Section
+
+    private var hasFolder: Bool { selectedFolderPath != nil }
+
+    private var folderContextSection: some View {
+        ScheduleEditorSection(title: "Working Directory", icon: "folder.fill") {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(spacing: 12) {
+                    ZStack {
+                        RoundedRectangle(cornerRadius: 8)
+                            .fill(hasFolder ? theme.accentColor.opacity(0.1) : theme.tertiaryBackground)
+                        Image(systemName: hasFolder ? "folder.fill" : "folder.badge.questionmark")
+                            .font(.system(size: 14, weight: .medium))
+                            .foregroundColor(hasFolder ? theme.accentColor : theme.tertiaryText)
+                    }
+                    .frame(width: 36, height: 36)
+
+                    if let path = selectedFolderPath {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(URL(fileURLWithPath: path).lastPathComponent)
+                                .font(.system(size: 13, weight: .medium))
+                                .foregroundColor(theme.primaryText)
+                                .lineLimit(1)
+                            Text(path)
+                                .font(.system(size: 10))
+                                .foregroundColor(theme.tertiaryText)
+                                .lineLimit(1)
+                                .truncationMode(.middle)
+                        }
+                    } else {
+                        Text("No folder selected")
+                            .font(.system(size: 13))
+                            .foregroundColor(theme.placeholderText)
+                    }
+
+                    Spacer()
+
+                    if hasFolder {
+                        Button {
+                            withAnimation(.easeOut(duration: 0.2)) {
+                                selectedFolderPath = nil
+                                selectedFolderBookmark = nil
+                            }
+                        } label: {
+                            Image(systemName: "xmark.circle.fill")
+                                .font(.system(size: 14))
+                                .foregroundColor(theme.tertiaryText)
+                        }
+                        .buttonStyle(.plain)
+                    }
+
+                    Button(action: selectFolder) {
+                        Text("Browse")
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundColor(theme.accentColor)
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 6)
+                            .background(
+                                RoundedRectangle(cornerRadius: 6)
+                                    .fill(theme.accentColor.opacity(0.1))
+                            )
+                    }
+                    .buttonStyle(.plain)
+                }
+                .padding(10)
+                .background(
+                    RoundedRectangle(cornerRadius: 10)
+                        .fill(theme.inputBackground)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 10)
+                                .stroke(theme.inputBorder, lineWidth: 1)
+                        )
+                )
+
+                Text("The agent will use this folder as its working directory.")
+                    .font(.system(size: 11))
+                    .foregroundColor(theme.tertiaryText)
+            }
+        }
+    }
+
+    private func selectFolder() {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.canCreateDirectories = false
+        panel.allowsMultipleSelection = false
+        panel.title = "Select Working Directory"
+        panel.prompt = "Select"
+
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+
+        do {
+            let bookmark = try url.bookmarkData(
+                options: .withSecurityScope,
+                includingResourceValuesForKeys: nil,
+                relativeTo: nil
+            )
+            withAnimation(.easeOut(duration: 0.2)) {
+                selectedFolderPath = url.path
+                selectedFolderBookmark = bookmark
+            }
+        } catch {
+            print("[ScheduleEditor] Failed to create bookmark: \(error)")
+        }
     }
 
     // MARK: - Instructions Section
@@ -2369,6 +2475,8 @@ struct ScheduleEditorSheet: View {
         selectedPersonaId = schedule.personaId
         selectedMode = schedule.mode
         isEnabled = schedule.isEnabled
+        selectedFolderPath = schedule.folderPath
+        selectedFolderBookmark = schedule.folderBookmark
         frequencyType = schedule.frequency.frequencyType
 
         switch schedule.frequency {
@@ -2419,6 +2527,8 @@ struct ScheduleEditorSheet: View {
             instructions: trimmedInstructions,
             personaId: selectedPersonaId,
             mode: selectedMode,
+            folderPath: selectedMode == .agent ? selectedFolderPath : nil,
+            folderBookmark: selectedMode == .agent ? selectedFolderBookmark : nil,
             frequency: buildFrequency(),
             isEnabled: isEnabled,
             lastRunAt: existingLastRunAt,

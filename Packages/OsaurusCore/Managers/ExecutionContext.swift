@@ -25,10 +25,8 @@ public final class ExecutionContext: ObservableObject {
     /// Display title for the execution
     public let title: String?
 
-    /// Chat session (always present -- used for model config and chat-mode execution)
     let chatSession: ChatSession
-
-    /// Agent session (only created for .agent mode)
+    let folderBookmark: Data?
     public private(set) var agentSession: AgentSession?
 
     /// Whether execution is currently in progress
@@ -45,12 +43,14 @@ public final class ExecutionContext: ObservableObject {
         id: UUID = UUID(),
         mode: ChatMode,
         personaId: UUID,
-        title: String? = nil
+        title: String? = nil,
+        folderBookmark: Data? = nil
     ) {
         self.id = id
         self.mode = mode
         self.personaId = personaId
         self.title = title
+        self.folderBookmark = folderBookmark
 
         // Configure chat session (no window required)
         let session = ChatSession()
@@ -84,11 +84,33 @@ public final class ExecutionContext: ObservableObject {
         case .chat:
             chatSession.send(prompt)
         case .agent:
+            await activateFolderContextIfNeeded()
             do {
                 try await agentSession?.dispatch(query: prompt)
             } catch {
                 print("[ExecutionContext] Agent dispatch failed: \(error.localizedDescription)")
             }
+        }
+    }
+
+    /// Resolve the stored bookmark and set the agent folder context before execution.
+    private func activateFolderContextIfNeeded() async {
+        guard let bookmark = folderBookmark else { return }
+        do {
+            var isStale = false
+            let url = try URL(
+                resolvingBookmarkData: bookmark,
+                options: .withSecurityScope,
+                relativeTo: nil,
+                bookmarkDataIsStale: &isStale
+            )
+            guard !isStale else {
+                print("[ExecutionContext] Folder bookmark is stale, skipping")
+                return
+            }
+            await AgentFolderContextService.shared.setFolder(url)
+        } catch {
+            print("[ExecutionContext] Failed to resolve folder bookmark: \(error)")
         }
     }
 

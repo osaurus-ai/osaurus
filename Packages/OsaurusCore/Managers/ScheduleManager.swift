@@ -88,6 +88,8 @@ public final class ScheduleManager: ObservableObject {
         personaId: UUID? = nil,
         mode: ChatMode = .chat,
         parameters: [String: String] = [:],
+        folderPath: String? = nil,
+        folderBookmark: Data? = nil,
         frequency: ScheduleFrequency,
         isEnabled: Bool = true
     ) -> Schedule {
@@ -98,6 +100,8 @@ public final class ScheduleManager: ObservableObject {
             personaId: personaId,
             mode: mode,
             parameters: parameters,
+            folderPath: folderPath,
+            folderBookmark: folderBookmark,
             frequency: frequency,
             isEnabled: isEnabled,
             createdAt: Date(),
@@ -316,7 +320,9 @@ public final class ScheduleManager: ObservableObject {
             prompt: schedule.instructions,
             personaId: schedule.personaId,
             title: schedule.name,
-            parameters: schedule.parameters
+            parameters: schedule.parameters,
+            folderPath: schedule.folderPath,
+            folderBookmark: schedule.folderBookmark
         )
 
         print("[Osaurus] Executing schedule: \(schedule.name) (\(schedule.mode.displayName) mode)")

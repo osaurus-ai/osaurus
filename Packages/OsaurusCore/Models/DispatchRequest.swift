@@ -19,7 +19,8 @@ public struct DispatchRequest: Sendable {
     public let personaId: UUID?
     public let title: String?
     public let parameters: [String: String]
-    /// Show toast notifications for this dispatch. Default `true`.
+    public let folderPath: String?
+    public let folderBookmark: Data?
     /// Set to `false` for headless execution (e.g. webhooks).
     public let showToast: Bool
 
@@ -30,6 +31,8 @@ public struct DispatchRequest: Sendable {
         personaId: UUID? = nil,
         title: String? = nil,
         parameters: [String: String] = [:],
+        folderPath: String? = nil,
+        folderBookmark: Data? = nil,
         showToast: Bool = true
     ) {
         self.id = id
@@ -38,6 +41,8 @@ public struct DispatchRequest: Sendable {
         self.personaId = personaId
         self.title = title
         self.parameters = parameters
+        self.folderPath = folderPath
+        self.folderBookmark = folderBookmark
         self.showToast = showToast
     }
 }
