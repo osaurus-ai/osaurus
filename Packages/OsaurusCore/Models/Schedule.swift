@@ -245,7 +245,7 @@ public enum ScheduleFrequencyType: String, CaseIterable, Sendable {
 
 // MARK: - Schedule Model
 
-/// A scheduled task that runs AI chat interactions at specified intervals
+/// A scheduled task that runs AI chat or agent interactions at specified intervals
 public struct Schedule: Codable, Identifiable, Sendable, Equatable {
     /// Unique identifier for the schedule
     public let id: UUID
@@ -255,6 +255,10 @@ public struct Schedule: Codable, Identifiable, Sendable, Equatable {
     public var instructions: String
     /// The persona to use for the chat (nil = default persona)
     public var personaId: UUID?
+    /// Execution mode: chat (conversational) or agent (task execution)
+    public var mode: ChatMode
+    /// Extra parameters for future extensibility
+    public var parameters: [String: String]
     /// When and how often to run
     public var frequency: ScheduleFrequency
     /// Whether the schedule is active
@@ -273,6 +277,8 @@ public struct Schedule: Codable, Identifiable, Sendable, Equatable {
         name: String,
         instructions: String,
         personaId: UUID? = nil,
+        mode: ChatMode = .chat,
+        parameters: [String: String] = [:],
         frequency: ScheduleFrequency,
         isEnabled: Bool = true,
         lastRunAt: Date? = nil,
@@ -284,12 +290,38 @@ public struct Schedule: Codable, Identifiable, Sendable, Equatable {
         self.name = name
         self.instructions = instructions
         self.personaId = personaId
+        self.mode = mode
+        self.parameters = parameters
         self.frequency = frequency
         self.isEnabled = isEnabled
         self.lastRunAt = lastRunAt
         self.lastChatSessionId = lastChatSessionId
         self.createdAt = createdAt
         self.updatedAt = updatedAt
+    }
+
+    // MARK: - Backward-Compatible Decoding
+
+    private enum CodingKeys: String, CodingKey {
+        case id, name, instructions, personaId, mode, parameters
+        case frequency, isEnabled, lastRunAt, lastChatSessionId
+        case createdAt, updatedAt
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(UUID.self, forKey: .id)
+        name = try container.decode(String.self, forKey: .name)
+        instructions = try container.decode(String.self, forKey: .instructions)
+        personaId = try container.decodeIfPresent(UUID.self, forKey: .personaId)
+        mode = try container.decodeIfPresent(ChatMode.self, forKey: .mode) ?? .chat
+        parameters = try container.decodeIfPresent([String: String].self, forKey: .parameters) ?? [:]
+        frequency = try container.decode(ScheduleFrequency.self, forKey: .frequency)
+        isEnabled = try container.decode(Bool.self, forKey: .isEnabled)
+        lastRunAt = try container.decodeIfPresent(Date.self, forKey: .lastRunAt)
+        lastChatSessionId = try container.decodeIfPresent(UUID.self, forKey: .lastChatSessionId)
+        createdAt = try container.decode(Date.self, forKey: .createdAt)
+        updatedAt = try container.decode(Date.self, forKey: .updatedAt)
     }
 
     // MARK: - Computed Properties
@@ -365,7 +397,6 @@ public struct ScheduleRunInfo: Identifiable, Sendable {
     public let personaId: UUID?
     public var chatSessionId: UUID
     public let startedAt: Date
-    public var toastId: UUID?
 
     public init(
         id: UUID = UUID(),
@@ -373,8 +404,7 @@ public struct ScheduleRunInfo: Identifiable, Sendable {
         scheduleName: String,
         personaId: UUID?,
         chatSessionId: UUID,
-        startedAt: Date = Date(),
-        toastId: UUID? = nil
+        startedAt: Date = Date()
     ) {
         self.id = id
         self.scheduleId = scheduleId
@@ -382,6 +412,5 @@ public struct ScheduleRunInfo: Identifiable, Sendable {
         self.personaId = personaId
         self.chatSessionId = chatSessionId
         self.startedAt = startedAt
-        self.toastId = toastId
     }
 }

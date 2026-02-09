@@ -328,6 +328,32 @@ public final class ChatWindowManager: NSObject, ObservableObject {
         return windowId
     }
 
+    /// Lazily create a window from an `ExecutionContext`, reusing its sessions.
+    /// Called when the user taps "View" on a dispatch toast.
+    @discardableResult
+    public func createWindowForContext(
+        _ context: ExecutionContext,
+        showImmediately: Bool = true
+    ) -> UUID {
+        let windowId = UUID()
+        let windowState = ChatWindowState(windowId: windowId, executionContext: context)
+
+        windows[windowId] = ChatWindowInfo(
+            id: windowId,
+            personaId: context.personaId,
+            createdAt: Date()
+        )
+
+        let window = createNSWindowForBackgroundTask(windowId: windowId, windowState: windowState)
+        nsWindows[windowId] = window
+        windowStates[windowId] = windowState
+
+        if showImmediately { showWindow(id: windowId) }
+
+        print("[ChatWindowManager] Created window \(windowId) for context \(context.id)")
+        return windowId
+    }
+
     /// Create an NSWindow for viewing a background task (reuses existing window state)
     private func createNSWindowForBackgroundTask(
         windowId: UUID,

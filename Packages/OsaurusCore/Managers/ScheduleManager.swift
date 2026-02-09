@@ -86,6 +86,8 @@ public final class ScheduleManager: ObservableObject {
         name: String,
         instructions: String,
         personaId: UUID? = nil,
+        mode: ChatMode = .chat,
+        parameters: [String: String] = [:],
         frequency: ScheduleFrequency,
         isEnabled: Bool = true
     ) -> Schedule {
@@ -94,6 +96,8 @@ public final class ScheduleManager: ObservableObject {
             name: name,
             instructions: instructions,
             personaId: personaId,
+            mode: mode,
+            parameters: parameters,
             frequency: frequency,
             isEnabled: isEnabled,
             createdAt: Date(),
@@ -178,9 +182,6 @@ public final class ScheduleManager: ObservableObject {
             executionTasks.removeValue(forKey: scheduleId)
         }
 
-        if let runInfo = runningTasks[scheduleId], let toastId = runInfo.toastId {
-            ToastManager.shared.dismiss(id: toastId)
-        }
         runningTasks.removeValue(forKey: scheduleId)
     }
 
@@ -308,146 +309,78 @@ public final class ScheduleManager: ObservableObject {
 
     // MARK: - Execution
 
-    /// Execute a schedule by creating a chat window and using its session for streaming
+    /// Execute a schedule by dispatching to TaskDispatcher
     private func executeSchedule(_ schedule: Schedule) {
-        let personaId = schedule.personaId ?? Persona.defaultId
-
-        // Create the chat window (hidden) - this gives us a real ChatSession with proper streaming
-        let windowId = ChatWindowManager.shared.createWindow(personaId: personaId, showImmediately: false)
-
-        // Get the window state and session
-        guard let windowState = ChatWindowManager.shared.windowState(id: windowId) else {
-            print("[Osaurus] Failed to get window state for schedule: \(schedule.name)")
-            return
-        }
-
-        let session = windowState.session
-
-        // Set the session title to the schedule name
-        session.title = schedule.name
-
-        // Create run info (session ID will be assigned when message is sent)
-        var runInfo = ScheduleRunInfo(
-            scheduleId: schedule.id,
-            scheduleName: schedule.name,
+        let request = DispatchRequest(
+            mode: schedule.mode,
+            prompt: schedule.instructions,
             personaId: schedule.personaId,
-            chatSessionId: UUID(),  // Placeholder, will be updated
-            startedAt: Date()
+            title: schedule.name,
+            parameters: schedule.parameters
         )
 
-        // Show loading toast with action to show the chat window
-        let loadingToast = Toast(
-            type: .loading,
-            title: "Running \"\(schedule.name)\"",
-            message: "Tap to view progress...",
-            personaId: personaId,
-            actionTitle: "View",
-            action: .showChatWindow(windowId: windowId)
-        )
-        let toastId = ToastManager.shared.show(loadingToast)
-        runInfo.toastId = toastId
+        print("[Osaurus] Executing schedule: \(schedule.name) (\(schedule.mode.displayName) mode)")
 
-        runningTasks[schedule.id] = runInfo
-
-        print("[Osaurus] Executing schedule: \(schedule.name)")
-
-        // Execute in a task to properly await model loading before sending
         let task = Task { @MainActor in
-            // Ensure model options are loaded (ChatSession.init starts this async but may not be done)
-            await session.refreshModelOptions()
+            guard let handle = await TaskDispatcher.shared.dispatch(request) else {
+                print("[Osaurus] Failed to dispatch schedule: \(schedule.name)")
+                return
+            }
 
-            // Send the message - this triggers ChatSession's streaming which updates the UI in real-time
-            session.send(schedule.instructions)
-
-            // Observe when streaming completes
-            await self.observeCompletion(
-                schedule: schedule,
-                session: session,
-                windowId: windowId,
-                toastId: toastId
+            self.runningTasks[schedule.id] = ScheduleRunInfo(
+                scheduleId: schedule.id,
+                scheduleName: schedule.name,
+                personaId: schedule.personaId,
+                chatSessionId: UUID()
             )
+
+            let result = await TaskDispatcher.shared.awaitCompletion(handle)
+            self.handleResult(result, schedule: schedule, request: handle.request)
         }
 
         executionTasks[schedule.id] = task
     }
 
-    /// Observe the ChatSession until streaming completes
-    private func observeCompletion(
-        schedule: Schedule,
-        session: ChatSession,
-        windowId: UUID,
-        toastId: UUID
-    ) async {
-        // Wait for streaming to start (give it a moment)
-        try? await Task.sleep(nanoseconds: 100_000_000)  // 100ms
+    // MARK: - Result Handling
 
-        // Poll until streaming completes or task is cancelled
-        while session.isStreaming && !Task.isCancelled {
-            try? await Task.sleep(nanoseconds: 250_000_000)  // 250ms polling
+    /// Update schedule metadata and show result toast via TaskDispatcher.
+    private func handleResult(_ result: DispatchResult, schedule: Schedule, request: DispatchRequest) {
+        defer {
+            executionTasks.removeValue(forKey: schedule.id)
+            runningTasks.removeValue(forKey: schedule.id)
         }
 
-        // Check for cancellation
-        guard !Task.isCancelled else {
-            print("[Osaurus] Schedule execution cancelled: \(schedule.name)")
-            ToastManager.shared.dismiss(id: toastId)
-            // Close the hidden window if cancelled
-            ChatWindowManager.shared.closeWindow(id: windowId)
-            cleanupExecution(scheduleId: schedule.id)
-            return
+        switch result {
+        case .completed(let sessionId):
+            let chatSessionId = sessionId ?? UUID()
+
+            var updatedSchedule = schedule
+            updatedSchedule.lastRunAt = Date()
+            updatedSchedule.lastChatSessionId = chatSessionId
+            if case .once = schedule.frequency { updatedSchedule.isEnabled = false }
+
+            ScheduleStore.save(updatedSchedule)
+            refresh()
+
+            TaskDispatcher.shared.showResultToast(for: request, result: result)
+
+            NotificationCenter.default.post(
+                name: .scheduleExecutionCompleted,
+                object: nil,
+                userInfo: [
+                    "scheduleId": schedule.id,
+                    "sessionId": chatSessionId,
+                    "personaId": schedule.personaId ?? Persona.defaultId,
+                ]
+            )
+            print("[Osaurus] Schedule completed: \(schedule.name)")
+
+        case .cancelled:
+            print("[Osaurus] Schedule cancelled: \(schedule.name)")
+
+        case .failed(let error):
+            print("[Osaurus] Schedule failed: \(schedule.name) - \(error)")
+            TaskDispatcher.shared.showResultToast(for: request, result: result)
         }
-
-        // Get the session ID (it's created when the first message is sent)
-        let chatSessionId = session.sessionId ?? UUID()
-
-        // Update run info with actual session ID
-        if var runInfo = runningTasks[schedule.id] {
-            runInfo.chatSessionId = chatSessionId
-            runningTasks[schedule.id] = runInfo
-        }
-
-        // Update schedule with last run info
-        var updatedSchedule = schedule
-        updatedSchedule.lastRunAt = Date()
-        updatedSchedule.lastChatSessionId = chatSessionId
-
-        // Auto-disable "once" schedules after execution
-        if case .once = schedule.frequency {
-            updatedSchedule.isEnabled = false
-        }
-
-        ScheduleStore.save(updatedSchedule)
-        refresh()
-
-        // Dismiss loading toast and show success
-        ToastManager.shared.dismiss(id: toastId)
-
-        ToastManager.shared.action(
-            "Completed \"\(schedule.name)\"",
-            message: "Scheduled task finished successfully",
-            action: .showChatWindow(windowId: windowId),
-            buttonTitle: "View Chat",
-            timeout: 0  // Only dismissable by user
-        )
-
-        NotificationCenter.default.post(
-            name: .scheduleExecutionCompleted,
-            object: nil,
-            userInfo: [
-                "scheduleId": schedule.id,
-                "sessionId": chatSessionId,
-                "personaId": schedule.personaId ?? Persona.defaultId,
-            ]
-        )
-
-        print("[Osaurus] Schedule completed: \(schedule.name)")
-
-        // Cleanup
-        cleanupExecution(scheduleId: schedule.id)
-    }
-
-    /// Clean up after execution completes
-    private func cleanupExecution(scheduleId: UUID) {
-        executionTasks.removeValue(forKey: scheduleId)
-        runningTasks.removeValue(forKey: scheduleId)
     }
 }

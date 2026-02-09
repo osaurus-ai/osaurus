@@ -299,8 +299,8 @@ public final class AgentSession: ObservableObject {
     /// Persona ID for this session
     let personaId: UUID
 
-    /// Reference to window state
-    private weak var windowState: ChatWindowState?
+    /// Reference to window state (internal access for ExecutionContext back-reference)
+    weak var windowState: ChatWindowState?
 
     // MARK: - Private
 
@@ -362,6 +362,13 @@ public final class AgentSession: ObservableObject {
     }
 
     // MARK: - Task Management
+
+    /// Programmatic entry point for dispatched tasks (used by TaskDispatcher).
+    /// Creates a new task and begins execution without touching the input field.
+    public func dispatch(query: String) async throws {
+        streamingContent = ""
+        try await startNewTask(query: query)
+    }
 
     /// Handles user input based on current input state
     public func handleUserInput() async {
@@ -583,7 +590,9 @@ public final class AgentSession: ObservableObject {
 
     /// Builds execution configuration from current state
     private func buildExecutionConfig() -> (model: String, systemPrompt: String, toolOverrides: [String: Bool]?) {
-        let systemPrompt = windowState?.cachedSystemPrompt ?? ""
+        let systemPrompt =
+            windowState?.cachedSystemPrompt
+            ?? PersonaManager.shared.effectiveSystemPrompt(for: personaId)
 
         // Model priority: selectedModel > windowState model > persona default
         let model =

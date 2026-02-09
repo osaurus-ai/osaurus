@@ -96,6 +96,8 @@ struct SchedulesView: View {
                         name: schedule.name,
                         instructions: schedule.instructions,
                         personaId: schedule.personaId,
+                        mode: schedule.mode,
+                        parameters: schedule.parameters,
                         frequency: schedule.frequency,
                         isEnabled: schedule.isEnabled
                     )
@@ -571,11 +573,20 @@ private struct ScheduleCard: View {
 
     @ViewBuilder
     private var configurationBadges: some View {
-        let hasBadges = persona != nil || !schedule.isEnabled
+        let hasBadges = persona != nil || !schedule.isEnabled || schedule.mode == .agent
 
         if hasBadges {
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 6) {
+                    // Mode badge (only for agent mode; chat is default)
+                    if schedule.mode == .agent {
+                        ScheduleConfigBadge(
+                            icon: "bolt.fill",
+                            text: "Agent",
+                            color: .orange
+                        )
+                    }
+
                     // Frequency badge
                     ScheduleConfigBadge(
                         icon: schedule.frequency.frequencyType.icon,
@@ -1626,6 +1637,7 @@ struct ScheduleEditorSheet: View {
     @State private var name: String = ""
     @State private var instructions: String = ""
     @State private var selectedPersonaId: UUID? = nil
+    @State private var selectedMode: ChatMode = .chat
     @State private var frequencyType: ScheduleFrequencyType = .daily
     @State private var isEnabled: Bool = true
 
@@ -1679,6 +1691,9 @@ struct ScheduleEditorSheet: View {
                 VStack(alignment: .leading, spacing: 20) {
                     // Basic Info Section
                     scheduleInfoSection
+
+                    // Mode Section
+                    modeSection
 
                     // Instructions Section
                     instructionsSection
@@ -1851,6 +1866,77 @@ struct ScheduleEditorSheet: View {
                 )
             }
         }
+    }
+
+    // MARK: - Mode Section
+
+    private var modeSection: some View {
+        ScheduleEditorSection(title: "Execution Mode", icon: "bolt.circle") {
+            VStack(alignment: .leading, spacing: 10) {
+                HStack(spacing: 0) {
+                    modeSegment(
+                        icon: "bubble.left.and.bubble.right",
+                        label: "Chat",
+                        description: "Conversational response",
+                        isSelected: selectedMode == .chat
+                    ) {
+                        withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+                            selectedMode = .chat
+                        }
+                    }
+
+                    modeSegment(
+                        icon: "bolt.fill",
+                        label: "Agent",
+                        description: "Autonomous task execution",
+                        isSelected: selectedMode == .agent
+                    ) {
+                        withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+                            selectedMode = .agent
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func modeSegment(
+        icon: String,
+        label: String,
+        description: String,
+        isSelected: Bool,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            VStack(spacing: 4) {
+                HStack(spacing: 6) {
+                    Image(systemName: icon)
+                        .font(.system(size: 12, weight: .semibold))
+                    Text(label)
+                        .font(.system(size: 13, weight: .semibold))
+                }
+                .foregroundColor(isSelected ? theme.accentColor : theme.tertiaryText)
+
+                Text(description)
+                    .font(.system(size: 10))
+                    .foregroundColor(isSelected ? theme.secondaryText : theme.tertiaryText)
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 10)
+            .background(
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(isSelected ? theme.accentColor.opacity(0.1) : Color.clear)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 8)
+                            .stroke(
+                                isSelected ? theme.accentColor.opacity(0.3) : theme.inputBorder,
+                                lineWidth: 1
+                            )
+                    )
+            )
+        }
+        .buttonStyle(.plain)
     }
 
     // MARK: - Instructions Section
@@ -2281,6 +2367,7 @@ struct ScheduleEditorSheet: View {
         name = schedule.name
         instructions = schedule.instructions
         selectedPersonaId = schedule.personaId
+        selectedMode = schedule.mode
         isEnabled = schedule.isEnabled
         frequencyType = schedule.frequency.frequencyType
 
@@ -2331,6 +2418,7 @@ struct ScheduleEditorSheet: View {
             name: trimmedName,
             instructions: trimmedInstructions,
             personaId: selectedPersonaId,
+            mode: selectedMode,
             frequency: buildFrequency(),
             isEnabled: isEnabled,
             lastRunAt: existingLastRunAt,
