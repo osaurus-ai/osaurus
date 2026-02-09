@@ -2,22 +2,23 @@
 //  TaskDispatcher.swift
 //  osaurus
 //
-//  UI-aware dispatch orchestrator that creates ExecutionContexts and manages
-//  toast notifications. Trigger sources (schedules, shortcuts, etc.) create
-//  a DispatchRequest and hand it here. Headless callers (webhooks) can use
-//  ExecutionContext directly.
+//  UI-aware dispatch orchestrator. For agent mode, delegates entirely to
+//  BackgroundTaskManager (single owner of all backgrounded agent work).
+//  For chat mode, manages ExecutionContext and simple toasts directly.
+//  Trigger sources (schedules, shortcuts, etc.) create a DispatchRequest
+//  and hand it here.
 //
 
 import Foundation
 
-/// Dispatches tasks using ExecutionContext and manages toast lifecycle
+/// Dispatches tasks using ExecutionContext (chat) or BackgroundTaskManager (agent)
 @MainActor
 public final class TaskDispatcher {
     public static let shared = TaskDispatcher()
 
-    // MARK: - State
+    // MARK: - State (chat-only)
 
-    /// Active execution contexts keyed by dispatch ID
+    /// Active chat-mode execution contexts keyed by dispatch ID
     private var contexts: [UUID: ExecutionContext] = [:]
 
     /// Chat-mode loading toast IDs (dispatch ID -> toast ID)
@@ -27,64 +28,79 @@ public final class TaskDispatcher {
 
     // MARK: - Dispatch
 
-    /// Dispatch a request: creates an ExecutionContext, starts execution, returns a handle.
+    /// Dispatch a request. Agent mode delegates to BackgroundTaskManager;
+    /// chat mode creates an ExecutionContext and manages it locally.
     public func dispatch(_ request: DispatchRequest) async -> DispatchHandle? {
-        let personaId = request.personaId ?? Persona.defaultId
+        switch request.mode {
+        case .agent:
+            return await BackgroundTaskManager.shared.dispatchAgent(request)
 
-        let context = ExecutionContext(
-            id: request.id,
-            mode: request.mode,
-            personaId: personaId,
-            title: request.title,
-            folderBookmark: request.folderBookmark
-        )
-        contexts[request.id] = context
+        case .chat:
+            let personaId = request.personaId ?? Persona.defaultId
 
-        await context.prepare()
-        await context.start(prompt: request.prompt)
+            let context = ExecutionContext(
+                id: request.id,
+                mode: .chat,
+                personaId: personaId,
+                title: request.title,
+                folderBookmark: request.folderBookmark
+            )
+            contexts[request.id] = context
 
-        if request.showToast {
-            showLoadingToast(for: request, context: context)
+            await context.prepare()
+            await context.start(prompt: request.prompt)
+
+            if request.showToast {
+                showChatLoadingToast(for: request)
+            }
+
+            print("[TaskDispatcher] Dispatched chat task: \(request.title ?? "untitled")")
+            return DispatchHandle(id: request.id, request: request)
         }
-
-        print("[TaskDispatcher] Dispatched \(request.mode.displayName) task: \(request.title ?? "untitled")")
-        return DispatchHandle(id: request.id, windowId: nil, request: request)
     }
 
     /// Await completion of a dispatched task.
     public func awaitCompletion(_ handle: DispatchHandle) async -> DispatchResult {
-        guard let context = contexts[handle.id] else {
-            return .failed("Execution context not found")
+        switch handle.request.mode {
+        case .agent:
+            return await BackgroundTaskManager.shared.awaitCompletion(handle.id)
+
+        case .chat:
+            guard let context = contexts[handle.id] else {
+                return .failed("Execution context not found")
+            }
+
+            let result = await context.awaitCompletion()
+
+            // Dismiss loading toast before showing result
+            if let toastId = chatToasts.removeValue(forKey: handle.id) {
+                ToastManager.shared.dismiss(id: toastId)
+            }
+
+            // Keep context alive so the result toast "View" action works
+            scheduleContextCleanup(handle.id)
+
+            return result
         }
-
-        let result = await context.awaitCompletion()
-
-        // Dismiss the chat loading toast before the result toast appears
-        if let toastId = chatToasts.removeValue(forKey: handle.id) {
-            ToastManager.shared.dismiss(id: toastId)
-        }
-
-        // Context stays alive for the result toast "View" action.
-        // Cleaned up when the user opens the window or after timeout.
-        scheduleContextCleanup(handle.id)
-
-        return result
     }
 
     /// Cancel a running dispatch.
     public func cancel(_ id: UUID) {
-        guard let context = contexts.removeValue(forKey: id) else { return }
-
-        context.cancel()
-
-        if let toastId = chatToasts.removeValue(forKey: id) {
-            ToastManager.shared.dismiss(id: toastId)
+        // Try chat-mode first
+        if let context = contexts.removeValue(forKey: id) {
+            context.cancel()
+            if let toastId = chatToasts.removeValue(forKey: id) {
+                ToastManager.shared.dismiss(id: toastId)
+            }
+            print("[TaskDispatcher] Cancelled chat dispatch: \(id.uuidString)")
+            return
         }
-        if context.mode == .agent {
-            BackgroundTaskManager.shared.cancelTask(context.id)
-        }
 
-        print("[TaskDispatcher] Cancelled dispatch: \(id.uuidString)")
+        // Otherwise delegate to BTM (agent mode)
+        if BackgroundTaskManager.shared.isBackgroundTask(id) {
+            BackgroundTaskManager.shared.cancelTask(id)
+            print("[TaskDispatcher] Cancelled agent dispatch via BTM: \(id.uuidString)")
+        }
     }
 
     // MARK: - Window Creation
@@ -92,58 +108,61 @@ public final class TaskDispatcher {
     /// Lazily create a window from a dispatched execution context.
     /// Called when the user taps "View" on a toast.
     public func openWindow(for contextId: UUID) {
+        // Chat-mode: context is stored locally
         if let context = contexts.removeValue(forKey: contextId) {
             ChatWindowManager.shared.createWindowForContext(context, showImmediately: true)
             return
         }
+
+        // Agent-mode: BTM owns the context
         if BackgroundTaskManager.shared.isBackgroundTask(contextId) {
             BackgroundTaskManager.shared.openTaskWindow(contextId)
             return
         }
+
         print("[TaskDispatcher] No context found for id: \(contextId)")
     }
 
-    // MARK: - Toast
+    // MARK: - Toast (chat-only)
 
-    /// Show a loading toast while execution is in progress.
-    private func showLoadingToast(for request: DispatchRequest, context: ExecutionContext) {
-        switch request.mode {
-        case .agent:
-            BackgroundTaskManager.shared.registerContext(context)
-
-        case .chat:
-            let toast = Toast(
-                type: .loading,
-                title: "Running \"\(request.title ?? "Task")\"",
-                message: "Tap to view progress...",
-                personaId: request.personaId,
-                actionTitle: "View",
-                action: .showExecutionContext(contextId: request.id)
-            )
-            chatToasts[request.id] = ToastManager.shared.show(toast)
-        }
+    /// Show a loading toast for a chat-mode dispatch.
+    private func showChatLoadingToast(for request: DispatchRequest) {
+        let toast = Toast(
+            type: .loading,
+            title: "Running \"\(request.title ?? "Task")\"",
+            message: "Tap to view progress...",
+            personaId: request.personaId,
+            actionTitle: "View",
+            action: .showExecutionContext(contextId: request.id)
+        )
+        chatToasts[request.id] = ToastManager.shared.show(toast)
     }
 
-    /// Show a result toast after execution completes.
-    /// Prefers persisted session for the action so it works even after context cleanup.
-    func showResultToast(for request: DispatchRequest, result: DispatchResult) {
-        let action = resolveResultAction(for: request)
-
+    /// Show a result toast for a chat-mode dispatch.
+    /// Agent mode result toasts are handled by BackgroundTaskToastView.
+    func showChatResultToast(for request: DispatchRequest, result: DispatchResult) {
         switch result {
-        case .completed:
-            let buttonTitle = request.mode == .agent ? "View Agent" : "View Chat"
+        case .completed(let sessionId):
+            // Use the sessionId from the result directly — the context may already
+            // be cleaned up by the time the user taps "View".
+            let action: ToastAction =
+                if let sessionId {
+                    .openChatSession(sessionId: sessionId, personaId: request.personaId)
+                } else {
+                    .showExecutionContext(contextId: request.id)
+                }
             ToastManager.shared.action(
                 "Completed \"\(request.title ?? "Task")\"",
                 message: "Task finished successfully",
                 action: action,
-                buttonTitle: buttonTitle,
+                buttonTitle: "View Chat",
                 timeout: 0
             )
         case .failed(let error):
             ToastManager.shared.action(
                 "Failed \"\(request.title ?? "Task")\"",
                 message: error,
-                action: action,
+                action: .showExecutionContext(contextId: request.id),
                 buttonTitle: "View",
                 timeout: 0
             )
@@ -154,16 +173,7 @@ public final class TaskDispatcher {
 
     // MARK: - Private
 
-    /// Resolve the best toast action for a completed task.
-    /// Uses persisted session when available, falls back to in-memory context.
-    private func resolveResultAction(for request: DispatchRequest) -> ToastAction {
-        if let sessionId = contexts[request.id]?.chatSession.sessionId {
-            return .openChatSession(sessionId: sessionId, personaId: request.personaId)
-        }
-        return .showExecutionContext(contextId: request.id)
-    }
-
-    /// Schedule deferred cleanup of a completed context.
+    /// Schedule deferred cleanup of a completed chat context.
     /// Keeps it alive for 5 minutes so the result toast "View" action still works.
     private func scheduleContextCleanup(_ id: UUID) {
         Task { @MainActor in

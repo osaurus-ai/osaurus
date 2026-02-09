@@ -4,7 +4,11 @@
 //
 //  Window-free execution primitive that owns ChatSession + AgentSession.
 //  Runs tasks headlessly; windows are created lazily only when needed for UI.
-//  Both TaskDispatcher (UI-aware) and future webhook handlers (headless) use this.
+//
+//  Used by:
+//  - TaskDispatcher (chat mode, managed directly)
+//  - BackgroundTaskManager (agent mode, via dispatchAgent)
+//  - Future webhook handlers (headless, no UI)
 //
 
 import Foundation
@@ -115,6 +119,7 @@ public final class ExecutionContext: ObservableObject {
     }
 
     /// Poll until execution completes or the task is cancelled.
+    /// Used for chat mode only; agent mode completion is observed by BackgroundTaskManager via Combine.
     public func awaitCompletion() async -> DispatchResult {
         try? await Task.sleep(nanoseconds: 100_000_000)  // 100ms startup grace
 
