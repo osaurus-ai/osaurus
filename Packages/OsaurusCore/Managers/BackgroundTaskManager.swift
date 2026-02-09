@@ -94,15 +94,65 @@ public final class BackgroundTaskManager: ObservableObject {
         backgroundTasks[windowId]
     }
 
+    /// Register an ExecutionContext for background task management (used by TaskDispatcher).
+    /// Creates a BackgroundTaskState from the context's agent session without requiring a window.
+    @discardableResult
+    func registerContext(_ context: ExecutionContext) -> BackgroundTaskState? {
+        guard backgroundTasks[context.id] == nil else {
+            return backgroundTasks[context.id]
+        }
+
+        guard let agentSession = context.agentSession,
+            let currentTask = agentSession.currentTask
+        else {
+            return nil
+        }
+
+        let state = BackgroundTaskState(
+            id: context.id,
+            taskId: currentTask.id,
+            taskTitle: currentTask.title,
+            personaId: context.personaId,
+            session: agentSession,
+            executionContext: context,
+            status: agentSession.hasPendingClarification ? .awaitingClarification : .running,
+            progress: calculateProgress(session: agentSession),
+            currentStep: getCurrentStep(session: agentSession),
+            pendingClarification: agentSession.pendingClarification
+        )
+
+        // Copy additional state
+        state.issues = agentSession.issues
+        state.activeIssueId = agentSession.activeIssue?.id
+        state.loopState = agentSession.loopState
+
+        backgroundTasks[context.id] = state
+
+        // Setup consolidated observation
+        observeTask(state, session: agentSession)
+
+        // Seed the activity feed
+        state.appendActivity(kind: .info, title: "Running in background")
+
+        print("[BackgroundTaskManager] Registered context \(context.id) with task '\(currentTask.title)'")
+        return state
+    }
+
     /// Open a window for a background task
     public func openTaskWindow(_ backgroundId: UUID) {
         guard let state = backgroundTasks[backgroundId] else { return }
 
-        ChatWindowManager.shared.createWindowForBackgroundTask(
-            backgroundId: backgroundId,
-            session: state.session,
-            windowState: state.windowState
-        )
+        if let context = state.executionContext {
+            // Context-based: create window lazily from execution context
+            ChatWindowManager.shared.createWindowForContext(context, showImmediately: true)
+        } else if let windowState = state.windowState {
+            // Window-based: restore from detached window state
+            ChatWindowManager.shared.createWindowForBackgroundTask(
+                backgroundId: backgroundId,
+                session: state.session,
+                windowState: windowState
+            )
+        }
 
         // Remove from background management - will re-detach if closed while running
         finalizeTask(backgroundId)

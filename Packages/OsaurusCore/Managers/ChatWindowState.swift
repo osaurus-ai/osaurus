@@ -94,6 +94,36 @@ final class ChatWindowState: ObservableObject {
         setupNotificationObservers()
     }
 
+    /// Wrap an existing `ExecutionContext`, reusing its sessions without duplication.
+    /// Used for lazy window creation when a user clicks "View" on a toast.
+    init(windowId: UUID, executionContext context: ExecutionContext) {
+        self.windowId = windowId
+        self.personaId = context.personaId
+        self.session = context.chatSession
+        self.foundationModelAvailable = AppConfiguration.shared.foundationModelAvailable
+        self.theme = Self.loadTheme(for: context.personaId)
+
+        self.personas = PersonaManager.shared.personas
+        self.filteredSessions = ChatSessionsManager.shared.sessions(for: context.personaId)
+        self.cachedSystemPrompt = PersonaManager.shared.effectiveSystemPrompt(for: context.personaId)
+        self.cachedActivePersona = personas.first { $0.id == context.personaId } ?? .default
+        self.cachedPersonaDisplayName = cachedActivePersona.isBuiltIn ? "Assistant" : cachedActivePersona.name
+        decodeBackgroundImageAsync(themeConfig: theme.customThemeConfig)
+
+        self.session.onSessionChanged = { [weak self] in
+            self?.refreshSessionsDebounced()
+        }
+
+        if let agentSession = context.agentSession {
+            self.mode = .agent
+            self.agentSession = agentSession
+            agentSession.windowState = self
+            refreshAgentTasks()
+        }
+
+        setupNotificationObservers()
+    }
+
     deinit {
         notificationObservers.forEach { NotificationCenter.default.removeObserver($0) }
     }

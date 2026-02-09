@@ -115,8 +115,13 @@ public final class BackgroundTaskState: ObservableObject, Identifiable {
     /// The agent session (retained reference, keeps task executing)
     let session: AgentSession
 
-    /// The window state (retained for window recreation)
-    let windowState: ChatWindowState
+    /// The execution context (retained for lazy window creation).
+    /// Present for dispatched tasks; nil for tasks detached from an existing window.
+    let executionContext: ExecutionContext?
+
+    /// The window state (retained for window recreation when detached from an existing window).
+    /// Present for window-detached tasks; nil for dispatched tasks.
+    let windowState: ChatWindowState?
 
     /// Current status of the background task
     @Published public var status: BackgroundTaskStatus
@@ -157,7 +162,8 @@ public final class BackgroundTaskState: ObservableObject, Identifiable {
         taskTitle: String,
         personaId: UUID,
         session: AgentSession,
-        windowState: ChatWindowState,
+        executionContext: ExecutionContext? = nil,
+        windowState: ChatWindowState? = nil,
         status: BackgroundTaskStatus = .running,
         progress: Double = 0.0,
         currentStep: String? = nil,
@@ -168,6 +174,7 @@ public final class BackgroundTaskState: ObservableObject, Identifiable {
         self.taskTitle = taskTitle
         self.personaId = personaId
         self.session = session
+        self.executionContext = executionContext
         self.windowState = windowState
         self.status = status
         self.progress = progress

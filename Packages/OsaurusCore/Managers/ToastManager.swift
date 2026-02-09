@@ -393,6 +393,10 @@ public final class ToastManager: ObservableObject {
             // Show an existing chat window
             ChatWindowManager.shared.showWindow(id: windowId)
 
+        case .showExecutionContext(let contextId):
+            // Lazily create a window from a dispatched execution context
+            TaskDispatcher.shared.openWindow(for: contextId)
+
         case .openSettings(let tab):
             // Open settings window to specific tab
             if let tabName = tab, let managementTab = ManagementTab(rawValue: tabName) {

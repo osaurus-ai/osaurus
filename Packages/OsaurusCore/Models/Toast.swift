@@ -288,6 +288,9 @@ public enum ToastAction: Equatable, Sendable {
     /// Show the main app window
     case showMainWindow
 
+    /// Show a dispatched execution context (lazily creates a window from ExecutionContext)
+    case showExecutionContext(contextId: UUID)
+
     /// Custom action with string identifier (for backward compatibility)
     case custom(id: String)
 
@@ -306,6 +309,8 @@ public enum ToastAction: Equatable, Sendable {
             return "Open"
         case .showMainWindow:
             return "Show"
+        case .showExecutionContext:
+            return "View"
         case .custom:
             return "Action"
         }
@@ -335,6 +340,8 @@ public enum ToastAction: Equatable, Sendable {
             return "openURL:\(url.absoluteString)"
         case .showMainWindow:
             return "showMainWindow"
+        case .showExecutionContext(let contextId):
+            return "showExecutionContext:\(contextId.uuidString)"
         case .custom(let id):
             return id
         }
@@ -372,6 +379,10 @@ public enum ToastAction: Equatable, Sendable {
 
         case "showMainWindow":
             return .showMainWindow
+
+        case "showExecutionContext":
+            guard parts.count > 1, let contextId = UUID(uuidString: parts[1]) else { return nil }
+            return .showExecutionContext(contextId: contextId)
 
         default:
             return .custom(id: actionId)
