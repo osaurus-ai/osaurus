@@ -12,7 +12,7 @@ import SwiftUI
 
 @MainActor
 public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
-    static weak var shared: AppDelegate?
+    public static weak var shared: AppDelegate?
     let serverController = ServerController()
     private var statusItem: NSStatusItem?
     private var popover: NSPopover?
@@ -879,7 +879,7 @@ extension AppDelegate {
 
 // MARK: Management Window
 extension AppDelegate {
-    @MainActor func showManagementWindow(
+    @MainActor public func showManagementWindow(
         initialTab: ManagementTab = .models,
         deeplinkModelId: String? = nil,
         deeplinkFile: String? = nil
