@@ -55,6 +55,7 @@ private struct ToolGroup: Identifiable {
 struct CapabilitiesSelectorView: View {
     let personaId: UUID
     var isAgentMode: Bool = false
+    var isInline: Bool = false
 
     @ObservedObject private var toolRegistry = ToolRegistry.shared
     @ObservedObject private var skillManager = SkillManager.shared
@@ -242,10 +243,31 @@ struct CapabilitiesSelectorView: View {
         AppDelegate.shared?.showManagementWindow(initialTab: selectedTab == .tools ? .tools : .skills)
     }
 
+    private func resetToDefaults() {
+        guard var persona = personaManager.persona(for: personaId) else { return }
+        if selectedTab == .tools {
+            persona.enabledTools = nil
+        } else {
+            persona.enabledSkills = nil
+        }
+        personaManager.update(persona)
+        let notification: Notification.Name = selectedTab == .tools ? .toolsListChanged : .skillsListChanged
+        NotificationCenter.default.post(name: notification, object: nil)
+    }
+
+    private var hasOverrides: Bool {
+        let persona = personaManager.persona(for: personaId)
+        if selectedTab == .tools {
+            return persona?.enabledTools?.isEmpty == false
+        } else {
+            return persona?.enabledSkills?.isEmpty == false
+        }
+    }
+
     // MARK: - Body
 
     var body: some View {
-        VStack(spacing: 0) {
+        let content = VStack(spacing: 0) {
             header
             Divider().background(theme.primaryBorder.opacity(0.3))
             searchField
@@ -257,11 +279,6 @@ struct CapabilitiesSelectorView: View {
                 itemList
             }
         }
-        .frame(width: 420, height: min(CGFloat(totalCount * 48 + 200), 540))
-        .background(popoverBackground)
-        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-        .overlay(popoverBorder)
-        .shadow(color: theme.shadowColor.opacity(0.25), radius: 20, x: 0, y: 10)
         .animation(.easeInOut(duration: 0.2), value: selectedTab)
         .onAppear { rebuildToolsCache() }
         .onReceive(toolRegistry.objectWillChange) { _ in
@@ -269,6 +286,19 @@ struct CapabilitiesSelectorView: View {
         }
         .onReceive(NotificationCenter.default.publisher(for: .toolsListChanged)) { _ in rebuildToolsCache() }
         .onReceive(NotificationCenter.default.publisher(for: .skillsListChanged)) { _ in rebuildToolsCache() }
+
+        if isInline {
+            content
+                .frame(maxWidth: .infinity)
+                .frame(maxHeight: 460)
+        } else {
+            content
+                .frame(width: 420, height: min(CGFloat(totalCount * 48 + 200), 540))
+                .background(popoverBackground)
+                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                .overlay(popoverBorder)
+                .shadow(color: theme.shadowColor.opacity(0.25), radius: 20, x: 0, y: 10)
+        }
     }
 
     // MARK: - Background & Border
@@ -314,23 +344,25 @@ struct CapabilitiesSelectorView: View {
 
     private var header: some View {
         VStack(spacing: 12) {
-            HStack {
-                Text("Abilities")
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundColor(theme.primaryText)
+            if !isInline {
+                HStack {
+                    Text("Abilities")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundColor(theme.primaryText)
 
-                Spacer()
+                    Spacer()
 
-                if totalEnabledCount > 0 {
-                    TokenBadge(count: totalTokenEstimate)
+                    if totalEnabledCount > 0 {
+                        TokenBadge(count: totalTokenEstimate)
+                    }
+
+                    Text("\(totalEnabledCount)/\(totalCount)")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundColor(theme.secondaryText)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 3)
+                        .background(Capsule().fill(theme.secondaryBackground))
                 }
-
-                Text("\(totalEnabledCount)/\(totalCount)")
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundColor(theme.secondaryText)
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 3)
-                    .background(Capsule().fill(theme.secondaryBackground))
             }
 
             // Tab selector
@@ -391,6 +423,14 @@ struct CapabilitiesSelectorView: View {
                 CapabilityActionButton(title: "Enable All", action: enableAll)
                 CapabilityActionButton(title: "Disable All", action: disableAll)
 
+                if isInline && hasOverrides {
+                    CapabilityActionButton(
+                        title: "Reset to Defaults",
+                        icon: "arrow.uturn.backward",
+                        action: resetToDefaults
+                    )
+                }
+
                 Spacer()
 
                 CapabilityActionButton(title: "Manage", icon: "gearshape", isSecondary: true, action: openManagement)
@@ -398,7 +438,7 @@ struct CapabilitiesSelectorView: View {
             }
         }
         .padding(.horizontal, 14)
-        .padding(.vertical, 12)
+        .padding(.vertical, isInline ? 8 : 12)
     }
 
     // MARK: - Search

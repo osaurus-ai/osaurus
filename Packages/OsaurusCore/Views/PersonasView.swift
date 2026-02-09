@@ -8,6 +8,23 @@
 import SwiftUI
 import UniformTypeIdentifiers
 
+// MARK: - Shared Helpers
+
+/// Generate a consistent color based on a persona name
+private func personaColorFor(_ name: String) -> Color {
+    let hash = abs(name.hashValue)
+    let hue = Double(hash % 360) / 360.0
+    return Color(hue: hue, saturation: 0.6, brightness: 0.8)
+}
+
+/// Format a model identifier to show only the last path component
+private func formatModelName(_ model: String) -> String {
+    if let last = model.split(separator: "/").last {
+        return String(last)
+    }
+    return model
+}
+
 // MARK: - Personas View
 
 struct PersonasView: View {
@@ -16,9 +33,8 @@ struct PersonasView: View {
 
     private var theme: ThemeProtocol { themeManager.currentTheme }
 
-    @State private var selectedPersonaId: UUID?
+    @State private var selectedPersona: Persona?
     @State private var isCreating = false
-    @State private var editingPersona: Persona?
     @State private var hasAppeared = false
     @State private var successMessage: String?
 
@@ -33,65 +49,50 @@ struct PersonasView: View {
     }
 
     var body: some View {
-        VStack(spacing: 0) {
-            // Header
-            headerView
-                .opacity(hasAppeared ? 1 : 0)
-                .offset(y: hasAppeared ? 0 : -10)
-                .animation(.spring(response: 0.4, dampingFraction: 0.8), value: hasAppeared)
+        ZStack {
+            // Grid view
+            if selectedPersona == nil {
+                gridContent
+                    .transition(.opacity.combined(with: .move(edge: .leading)))
+            }
 
-            // Content
-            ZStack {
-                if customPersonas.isEmpty {
-                    PersonaEmptyState(
-                        hasAppeared: hasAppeared,
-                        onCreate: { isCreating = true },
-                        onImport: { showImportPicker = true }
-                    )
-                } else {
-                    ScrollView {
-                        LazyVGrid(
-                            columns: [
-                                GridItem(.flexible(minimum: 300), spacing: 20),
-                                GridItem(.flexible(minimum: 300), spacing: 20),
-                            ],
-                            spacing: 20
-                        ) {
-                            ForEach(Array(customPersonas.enumerated()), id: \.element.id) { index, persona in
-                                PersonaCard(
-                                    persona: persona,
-                                    animationDelay: Double(index) * 0.05,
-                                    hasAppeared: hasAppeared,
-                                    onEdit: {
-                                        editingPersona = persona
-                                    },
-                                    onDuplicate: {
-                                        duplicatePersona(persona)
-                                    },
-                                    onExport: {
-                                        exportPersona(persona)
-                                    },
-                                    onDelete: {
-                                        personaManager.delete(id: persona.id)
-                                        showSuccess("Deleted \"\(persona.name)\"")
-                                    }
-                                )
-                            }
+            // Detail view
+            if let persona = selectedPersona {
+                PersonaDetailView(
+                    persona: persona,
+                    onBack: {
+                        withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
+                            selectedPersona = nil
                         }
-                        .padding(24)
+                    },
+                    onExport: { p in
+                        exportPersona(p)
+                    },
+                    onDelete: { p in
+                        withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
+                            selectedPersona = nil
+                        }
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                            personaManager.delete(id: p.id)
+                            showSuccess("Deleted \"\(p.name)\"")
+                        }
+                    },
+                    showSuccess: { msg in
+                        showSuccess(msg)
                     }
-                    .opacity(hasAppeared ? 1 : 0)
-                }
+                )
+                .transition(.opacity.combined(with: .move(edge: .trailing)))
+            }
 
-                // Success toast
-                if let message = successMessage {
-                    VStack {
-                        Spacer()
-                        ThemedToastView(message, type: .success)
-                            .transition(.move(edge: .bottom).combined(with: .opacity))
-                            .padding(.bottom, 20)
-                    }
+            // Success toast
+            if let message = successMessage {
+                VStack {
+                    Spacer()
+                    ThemedToastView(message, type: .success)
+                        .transition(.move(edge: .bottom).combined(with: .opacity))
+                        .padding(.bottom, 20)
                 }
+                .zIndex(100)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -99,7 +100,6 @@ struct PersonasView: View {
         .environment(\.theme, themeManager.currentTheme)
         .sheet(isPresented: $isCreating) {
             PersonaEditorSheet(
-                mode: .create,
                 onSave: { persona in
                     PersonaStore.save(persona)
                     personaManager.refresh()
@@ -108,19 +108,6 @@ struct PersonasView: View {
                 },
                 onCancel: {
                     isCreating = false
-                }
-            )
-        }
-        .sheet(item: $editingPersona) { persona in
-            PersonaEditorSheet(
-                mode: .edit(persona),
-                onSave: { updated in
-                    personaManager.update(updated)
-                    editingPersona = nil
-                    showSuccess("Updated \"\(updated.name)\"")
-                },
-                onCancel: {
-                    editingPersona = nil
                 }
             )
         }
@@ -146,6 +133,63 @@ struct PersonasView: View {
             personaManager.refresh()
             withAnimation(.easeOut(duration: 0.25).delay(0.05)) {
                 hasAppeared = true
+            }
+        }
+    }
+
+    // MARK: - Grid Content
+
+    private var gridContent: some View {
+        VStack(spacing: 0) {
+            // Header
+            headerView
+                .opacity(hasAppeared ? 1 : 0)
+                .offset(y: hasAppeared ? 0 : -10)
+                .animation(.spring(response: 0.4, dampingFraction: 0.8), value: hasAppeared)
+
+            // Content
+            if customPersonas.isEmpty {
+                PersonaEmptyState(
+                    hasAppeared: hasAppeared,
+                    onCreate: { isCreating = true },
+                    onImport: { showImportPicker = true }
+                )
+            } else {
+                ScrollView {
+                    LazyVGrid(
+                        columns: [
+                            GridItem(.flexible(minimum: 300), spacing: 20),
+                            GridItem(.flexible(minimum: 300), spacing: 20),
+                        ],
+                        spacing: 20
+                    ) {
+                        ForEach(Array(customPersonas.enumerated()), id: \.element.id) { index, persona in
+                            PersonaCard(
+                                persona: persona,
+                                isActive: personaManager.activePersonaId == persona.id,
+                                animationDelay: Double(index) * 0.05,
+                                hasAppeared: hasAppeared,
+                                onSelect: {
+                                    withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
+                                        selectedPersona = persona
+                                    }
+                                },
+                                onDuplicate: {
+                                    duplicatePersona(persona)
+                                },
+                                onExport: {
+                                    exportPersona(persona)
+                                },
+                                onDelete: {
+                                    personaManager.delete(id: persona.id)
+                                    showSuccess("Deleted \"\(persona.name)\"")
+                                }
+                            )
+                        }
+                    }
+                    .padding(24)
+                }
+                .opacity(hasAppeared ? 1 : 0)
             }
         }
     }
@@ -216,9 +260,11 @@ struct PersonasView: View {
         personaManager.refresh()
         showSuccess("Duplicated as \"\(newName)\"")
 
-        // Open editor for the duplicated persona
+        // Open detail for the duplicated persona
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-            editingPersona = duplicated
+            withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
+                selectedPersona = duplicated
+            }
         }
     }
 
@@ -469,12 +515,14 @@ private struct PersonaUseCaseRow: View {
 
 private struct PersonaCard: View {
     @Environment(\.theme) private var theme
-    @ObservedObject private var themeManager = ThemeManager.shared
+    @ObservedObject private var personaManager = PersonaManager.shared
+    @ObservedObject private var scheduleManager = ScheduleManager.shared
 
     let persona: Persona
+    let isActive: Bool
     let animationDelay: Double
     let hasAppeared: Bool
-    let onEdit: () -> Void
+    let onSelect: () -> Void
     let onDuplicate: () -> Void
     let onExport: () -> Void
     let onDelete: () -> Void
@@ -482,89 +530,102 @@ private struct PersonaCard: View {
     @State private var isHovered = false
     @State private var showDeleteConfirm = false
 
-    /// Generate a consistent color based on persona name
-    private var personaColor: Color {
-        let hash = abs(persona.name.hashValue)
-        let hue = Double(hash % 360) / 360.0
-        return Color(hue: hue, saturation: 0.6, brightness: 0.8)
+    private var personaColor: Color { personaColorFor(persona.name) }
+
+    /// Resolved enabled tool count
+    private var enabledToolCount: Int {
+        let overrides = personaManager.effectiveToolOverrides(for: persona.id)
+        let tools = ToolRegistry.shared.listUserTools(withOverrides: overrides, excludeInternal: true)
+        return tools.filter { $0.enabled }.count
     }
 
-    /// Get tool configuration summary
-    private var toolsSummary: String? {
-        guard let tools = persona.enabledTools, !tools.isEmpty else { return nil }
-        let enabled = tools.values.filter { $0 }.count
-        let total = tools.count
-        return "\(enabled)/\(total) tools"
+    /// Total tool count
+    private var totalToolCount: Int {
+        ToolRegistry.shared.listTools().count
     }
 
-    /// Get skill configuration summary
-    private var skillsSummary: String? {
-        guard let skills = persona.enabledSkills, !skills.isEmpty else { return nil }
-        let enabled = skills.values.filter { $0 }.count
-        let total = skills.count
-        return "\(enabled)/\(total) skills"
+    /// Resolved enabled skill count
+    private var enabledSkillCount: Int {
+        let skills = SkillManager.shared.skills
+        return skills.filter { skill in
+            if let overrides = personaManager.effectiveSkillOverrides(for: persona.id),
+                let value = overrides[skill.name]
+            {
+                return value
+            }
+            return skill.enabled
+        }.count
     }
 
-    /// Get theme info if assigned
-    private var assignedTheme: CustomTheme? {
-        guard let themeId = persona.themeId else { return nil }
-        return themeManager.installedThemes.first { $0.metadata.id == themeId }
+    /// Total skill count
+    private var totalSkillCount: Int {
+        SkillManager.shared.skills.count
+    }
+
+    /// Schedule count for this persona
+    private var scheduleCount: Int {
+        scheduleManager.schedules.filter { $0.personaId == persona.id }.count
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            // Header row - Name and actions only
-            HStack(alignment: .center, spacing: 12) {
-                // Avatar with colored ring
-                ZStack {
-                    Circle()
-                        .fill(
-                            LinearGradient(
-                                colors: [personaColor.opacity(0.15), personaColor.opacity(0.05)],
-                                startPoint: .topLeading,
-                                endPoint: .bottomTrailing
+        Button(action: onSelect) {
+            VStack(alignment: .leading, spacing: 12) {
+                // Header row
+                HStack(alignment: .center, spacing: 12) {
+                    // Avatar with colored ring
+                    ZStack {
+                        Circle()
+                            .fill(
+                                LinearGradient(
+                                    colors: [personaColor.opacity(0.15), personaColor.opacity(0.05)],
+                                    startPoint: .topLeading,
+                                    endPoint: .bottomTrailing
+                                )
                             )
-                        )
 
-                    Circle()
-                        .strokeBorder(personaColor.opacity(0.4), lineWidth: 2)
+                        Circle()
+                            .strokeBorder(personaColor.opacity(0.4), lineWidth: 2)
 
-                    Text(persona.name.prefix(1).uppercased())
-                        .font(.system(size: 16, weight: .bold, design: .rounded))
-                        .foregroundColor(personaColor)
-                }
-                .frame(width: 36, height: 36)
+                        Text(persona.name.prefix(1).uppercased())
+                            .font(.system(size: 16, weight: .bold, design: .rounded))
+                            .foregroundColor(personaColor)
+                    }
+                    .frame(width: 36, height: 36)
 
-                // Name
-                Text(persona.name)
-                    .font(.system(size: 15, weight: .semibold))
-                    .foregroundColor(theme.primaryText)
-                    .lineLimit(1)
+                    VStack(alignment: .leading, spacing: 2) {
+                        HStack(spacing: 6) {
+                            Text(persona.name)
+                                .font(.system(size: 15, weight: .semibold))
+                                .foregroundColor(theme.primaryText)
+                                .lineLimit(1)
 
-                Spacer(minLength: 8)
-
-                // Quick actions (visible on hover)
-                HStack(spacing: 4) {
-                    Group {
-                        QuickActionButton(icon: "pencil", help: "Edit") {
-                            onEdit()
+                            if isActive {
+                                Text("Active")
+                                    .font(.system(size: 9, weight: .bold))
+                                    .foregroundColor(theme.successColor)
+                                    .padding(.horizontal, 6)
+                                    .padding(.vertical, 2)
+                                    .background(
+                                        Capsule()
+                                            .fill(theme.successColor.opacity(0.12))
+                                    )
+                            }
                         }
 
-                        QuickActionButton(icon: "doc.on.doc", help: "Duplicate") {
-                            onDuplicate()
-                        }
-
-                        QuickActionButton(icon: "square.and.arrow.up", help: "Export") {
-                            onExport()
+                        if !persona.description.isEmpty {
+                            Text(persona.description)
+                                .font(.system(size: 11))
+                                .foregroundColor(theme.secondaryText)
+                                .lineLimit(1)
                         }
                     }
-                    .opacity(isHovered ? 1 : 0)
-                    .animation(.easeOut(duration: 0.15), value: isHovered)
 
-                    // More menu (always visible)
+                    Spacer(minLength: 8)
+
+                    // Context menu button
                     Menu {
-                        Button(action: onEdit) {
-                            Label("Edit", systemImage: "pencil")
+                        Button(action: onSelect) {
+                            Label("Open", systemImage: "arrow.right.circle")
                         }
                         Button(action: onDuplicate) {
                             Label("Duplicate", systemImage: "doc.on.doc")
@@ -592,71 +653,41 @@ private struct PersonaCard: View {
                     .menuIndicator(.hidden)
                     .frame(width: 24)
                 }
-            }
 
-            // Description section - fixed height to maintain card alignment
-            Text(persona.description.isEmpty ? " " : persona.description)
-                .font(.system(size: 12))
-                .foregroundColor(theme.secondaryText)
-                .lineLimit(2)
-                .lineSpacing(2)
-                .frame(maxWidth: .infinity, minHeight: 32, alignment: .topLeading)
-                .opacity(persona.description.isEmpty ? 0 : 1)
-
-            // System prompt section - always visible
-            VStack(alignment: .leading, spacing: 6) {
-                Text("SYSTEM PROMPT")
-                    .font(.system(size: 9, weight: .bold))
-                    .foregroundColor(theme.tertiaryText)
-                    .tracking(0.5)
-
-                if persona.systemPrompt.isEmpty {
-                    Text("No system prompt defined")
-                        .font(.system(size: 11))
-                        .foregroundColor(theme.tertiaryText)
-                        .italic()
-                        .frame(maxWidth: .infinity, minHeight: 52, alignment: .topLeading)
-                } else {
+                // System prompt excerpt
+                if !persona.systemPrompt.isEmpty {
                     Text(persona.systemPrompt)
-                        .font(.system(size: 11, design: .monospaced))
+                        .font(.system(size: 12))
                         .foregroundColor(theme.secondaryText)
-                        .lineLimit(4)
-                        .lineSpacing(3)
-                        .frame(maxWidth: .infinity, minHeight: 52, alignment: .topLeading)
+                        .lineLimit(2)
+                        .lineSpacing(2)
+                        .frame(maxWidth: .infinity, alignment: .leading)
                 }
-            }
-            .padding(10)
-            .background(
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(theme.inputBackground.opacity(0.5))
-            )
 
-            // Configuration badges - always visible with fixed height
-            configurationBadges
-                .frame(minHeight: 26)
+                // Compact stat row
+                compactStats
+            }
+            .padding(16)
+            .background(cardBackground)
+            .overlay(hoverGradient)
+            .clipShape(RoundedRectangle(cornerRadius: 12))
+            .overlay(cardBorder)
+            .shadow(
+                color: Color.black.opacity(isHovered ? 0.08 : 0.04),
+                radius: isHovered ? 10 : 5,
+                x: 0,
+                y: isHovered ? 3 : 2
+            )
+            .contentShape(Rectangle())
         }
-        .padding(14)
-        .background(
-            RoundedRectangle(cornerRadius: 12)
-                .fill(theme.cardBackground)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 12)
-                        .stroke(theme.cardBorder, lineWidth: 1)
-                )
-                .shadow(
-                    color: Color.black.opacity(isHovered ? 0.08 : 0.04),
-                    radius: isHovered ? 10 : 5,
-                    x: 0,
-                    y: isHovered ? 3 : 2
-                )
-        )
+        .buttonStyle(PlainButtonStyle())
         .scaleEffect(isHovered ? 1.01 : 1.0)
         .animation(.spring(response: 0.3, dampingFraction: 0.7), value: isHovered)
         .opacity(hasAppeared ? 1 : 0)
         .offset(y: hasAppeared ? 0 : 20)
         .animation(.spring(response: 0.4, dampingFraction: 0.8).delay(animationDelay), value: hasAppeared)
         .onHover { hovering in
-            isHovered = hovering
+            withAnimation(.easeOut(duration: 0.15)) { isHovered = hovering }
         }
         .themedAlert(
             "Delete Persona",
@@ -667,123 +698,982 @@ private struct PersonaCard: View {
         )
     }
 
-    // MARK: - Configuration Badges
+    // MARK: - Card Background
+
+    private var cardBackground: some View {
+        RoundedRectangle(cornerRadius: 12)
+            .fill(theme.cardBackground)
+    }
+
+    private var cardBorder: some View {
+        RoundedRectangle(cornerRadius: 12)
+            .strokeBorder(
+                isHovered
+                    ? personaColor.opacity(0.25)
+                    : (isActive ? personaColor.opacity(0.3) : theme.cardBorder),
+                lineWidth: isActive || isHovered ? 1.5 : 1
+            )
+    }
+
+    private var hoverGradient: some View {
+        RoundedRectangle(cornerRadius: 12)
+            .fill(
+                LinearGradient(
+                    colors: [
+                        personaColor.opacity(isHovered ? 0.06 : 0),
+                        Color.clear,
+                    ],
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing
+                )
+            )
+            .allowsHitTesting(false)
+            .animation(.easeOut(duration: 0.15), value: isHovered)
+    }
+
+    // MARK: - Compact Stats
 
     @ViewBuilder
-    private var configurationBadges: some View {
-        let hasBadges =
-            persona.defaultModel != nil || toolsSummary != nil || skillsSummary != nil
-            || persona.temperature != nil || persona.maxTokens != nil || assignedTheme != nil
+    private var compactStats: some View {
+        HStack(spacing: 0) {
+            statItem(icon: "wrench.and.screwdriver", text: "\(enabledToolCount)/\(totalToolCount)")
+            statDot
+            statItem(icon: "sparkles", text: "\(enabledSkillCount)/\(totalSkillCount)")
 
-        if hasBadges {
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 6) {
-                    // Model badge
-                    if let model = persona.defaultModel {
-                        ConfigBadge(
-                            icon: "cube.fill",
-                            text: formatModelName(model),
-                            color: .blue
-                        )
-                    }
-
-                    // Tools badge
-                    if let tools = toolsSummary {
-                        ConfigBadge(
-                            icon: "wrench.and.screwdriver.fill",
-                            text: tools,
-                            color: .orange
-                        )
-                    }
-
-                    // Skills badge
-                    if let skills = skillsSummary {
-                        ConfigBadge(
-                            icon: "sparkles",
-                            text: skills,
-                            color: .cyan
-                        )
-                    }
-
-                    // Temperature badge
-                    if let temp = persona.temperature {
-                        ConfigBadge(
-                            icon: "thermometer.medium",
-                            text: String(format: "%.1f", temp),
-                            color: .red
-                        )
-                    }
-
-                    // Max tokens badge
-                    if let tokens = persona.maxTokens {
-                        ConfigBadge(
-                            icon: "number",
-                            text: formatTokens(tokens),
-                            color: .purple
-                        )
-                    }
-
-                    // Theme preview
-                    if let customTheme = assignedTheme {
-                        ThemePreviewBadge(theme: customTheme)
-                    }
-                }
+            if scheduleCount > 0 {
+                statDot
+                statItem(icon: "clock", text: "\(scheduleCount)")
             }
-        } else {
-            // Default state when no configuration overrides
-            HStack(spacing: 5) {
-                Image(systemName: "gearshape")
-                    .font(.system(size: 9, weight: .medium))
-                    .foregroundColor(theme.tertiaryText)
-                Text("Default configuration")
-                    .font(.system(size: 10, weight: .medium))
-                    .foregroundColor(theme.tertiaryText)
+
+            if let model = persona.defaultModel {
+                statDot
+                statItem(icon: "cube", text: formatModelName(model))
             }
+
+            Spacer(minLength: 0)
+        }
+    }
+
+    private func statItem(icon: String, text: String) -> some View {
+        HStack(spacing: 3) {
+            Image(systemName: icon)
+                .font(.system(size: 9, weight: .medium))
+            Text(text)
+                .font(.system(size: 10, weight: .medium))
+                .lineLimit(1)
+        }
+        .foregroundColor(theme.tertiaryText)
+    }
+
+    private var statDot: some View {
+        Circle()
+            .fill(theme.tertiaryText.opacity(0.4))
+            .frame(width: 3, height: 3)
             .padding(.horizontal, 8)
-            .frame(height: 22)
-            .background(
-                Capsule()
-                    .fill(theme.tertiaryBackground.opacity(0.5))
-            )
-        }
-    }
-
-    private func formatModelName(_ model: String) -> String {
-        if let last = model.split(separator: "/").last {
-            return String(last)
-        }
-        return model
-    }
-
-    private func formatTokens(_ tokens: Int) -> String {
-        if tokens >= 1000 {
-            return "\(tokens / 1000)K tokens"
-        }
-        return "\(tokens) tokens"
     }
 }
 
-// MARK: - Quick Action Button
+// MARK: - Persona Detail View
 
-private struct QuickActionButton: View {
+private struct PersonaDetailView: View {
+    @ObservedObject private var themeManager = ThemeManager.shared
+    @ObservedObject private var personaManager = PersonaManager.shared
+    @ObservedObject private var scheduleManager = ScheduleManager.shared
+
+    private var theme: ThemeProtocol { themeManager.currentTheme }
+
+    let persona: Persona
+    let onBack: () -> Void
+    let onExport: (Persona) -> Void
+    let onDelete: (Persona) -> Void
+    let showSuccess: (String) -> Void
+
+    // MARK: - Editable State
+
+    @State private var name: String = ""
+    @State private var description: String = ""
+    @State private var systemPrompt: String = ""
+    @State private var temperature: String = ""
+    @State private var maxTokens: String = ""
+    @State private var selectedThemeId: UUID?
+
+    // MARK: - UI State
+
+    @State private var hasAppeared = false
+    @State private var saveIndicator: String?
+    @State private var saveDebounceTask: Task<Void, Never>?
+    @State private var showDeleteConfirm = false
+
+    // Model picker
+    @State private var modelOptions: [ModelOption] = []
+    @State private var showModelPicker = false
+    @State private var selectedModel: String?
+
+    // Schedule creation
+    @State private var showCreateSchedule = false
+
+    // Guard to prevent save on initial load
+    @State private var isInitialLoadComplete = false
+
+    /// Current persona (refreshed from manager)
+    private var currentPersona: Persona {
+        personaManager.persona(for: persona.id) ?? persona
+    }
+
+    /// Schedules linked to this persona
+    private var linkedSchedules: [Schedule] {
+        scheduleManager.schedules.filter { $0.personaId == persona.id }
+    }
+
+    /// Chat sessions for this persona
+    private var chatSessions: [ChatSessionData] {
+        ChatSessionsManager.shared.sessions(for: persona.id)
+    }
+
+    /// Tasks for this persona
+    private var agentTasks: [AgentTask] {
+        (try? IssueStore.listTasks(personaId: persona.id)) ?? []
+    }
+
+    private var personaColor: Color { personaColorFor(name) }
+
+    /// Resolved enabled tool count using PersonaManager's effective overrides
+    private var resolvedEnabledToolCount: Int {
+        let overrides = personaManager.effectiveToolOverrides(for: persona.id)
+        let tools = ToolRegistry.shared.listUserTools(withOverrides: overrides, excludeInternal: true)
+        return tools.filter { $0.enabled }.count
+    }
+
+    /// Resolved enabled skill count using PersonaManager's effective overrides
+    private var resolvedEnabledSkillCount: Int {
+        let skills = SkillManager.shared.skills
+        return skills.filter { skill in
+            if let overrides = personaManager.effectiveSkillOverrides(for: persona.id),
+                let value = overrides[skill.name]
+            {
+                return value
+            }
+            return skill.enabled
+        }.count
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            // Top bar
+            detailHeaderBar
+
+            // Content
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) {
+                    // Hero header
+                    heroHeader
+                        .padding(.bottom, 8)
+
+                    // Sections (all always expanded, ordered by importance)
+                    identitySection
+                    systemPromptSection
+                    generationSection
+                    capabilitiesSection
+                    themeSection
+                    schedulesSection
+                    historySection
+                }
+                .padding(24)
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(theme.primaryBackground)
+        .opacity(hasAppeared ? 1 : 0)
+        .animation(.easeOut(duration: 0.2), value: hasAppeared)
+        .onAppear {
+            loadPersonaData()
+            selectedModel = currentPersona.defaultModel
+            loadModelOptions()
+            // Defer the flag so initial .onChange triggers are ignored
+            DispatchQueue.main.async {
+                isInitialLoadComplete = true
+            }
+            withAnimation { hasAppeared = true }
+        }
+        .themedAlert(
+            "Delete Persona",
+            isPresented: $showDeleteConfirm,
+            message: "Are you sure you want to delete \"\(currentPersona.name)\"? This action cannot be undone.",
+            primaryButton: .destructive("Delete") { onDelete(currentPersona) },
+            secondaryButton: .cancel("Cancel")
+        )
+        .sheet(isPresented: $showCreateSchedule) {
+            ScheduleEditorSheet(
+                mode: .create,
+                onSave: { schedule in
+                    ScheduleManager.shared.create(
+                        name: schedule.name,
+                        instructions: schedule.instructions,
+                        personaId: schedule.personaId,
+                        frequency: schedule.frequency,
+                        isEnabled: schedule.isEnabled
+                    )
+                    showCreateSchedule = false
+                    showSuccess("Created schedule \"\(schedule.name)\"")
+                },
+                onCancel: { showCreateSchedule = false },
+                initialPersonaId: persona.id
+            )
+            .environment(\.theme, themeManager.currentTheme)
+        }
+    }
+
+    // MARK: - Detail Header Bar
+
+    private var detailHeaderBar: some View {
+        HStack(spacing: 12) {
+            Button(action: onBack) {
+                HStack(spacing: 6) {
+                    Image(systemName: "chevron.left")
+                        .font(.system(size: 12, weight: .semibold))
+                    Text("Personas")
+                        .font(.system(size: 13, weight: .medium))
+                }
+                .foregroundColor(theme.accentColor)
+            }
+            .buttonStyle(PlainButtonStyle())
+
+            Spacer()
+
+            if let indicator = saveIndicator {
+                HStack(spacing: 4) {
+                    Image(systemName: "checkmark.circle.fill")
+                        .font(.system(size: 10))
+                    Text(indicator)
+                        .font(.system(size: 11, weight: .medium))
+                }
+                .foregroundColor(theme.successColor)
+                .transition(.opacity.combined(with: .scale(scale: 0.9)))
+            }
+
+            HStack(spacing: 6) {
+                Button {
+                    onExport(currentPersona)
+                } label: {
+                    Image(systemName: "square.and.arrow.up")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundColor(theme.secondaryText)
+                        .frame(width: 28, height: 28)
+                        .background(Circle().fill(theme.tertiaryBackground))
+                }
+                .buttonStyle(PlainButtonStyle())
+                .help("Export")
+
+                Button {
+                    showDeleteConfirm = true
+                } label: {
+                    Image(systemName: "trash")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundColor(theme.errorColor)
+                        .frame(width: 28, height: 28)
+                        .background(Circle().fill(theme.errorColor.opacity(0.1)))
+                }
+                .buttonStyle(PlainButtonStyle())
+                .help("Delete")
+            }
+        }
+        .padding(.horizontal, 24)
+        .padding(.vertical, 14)
+        .background(
+            theme.secondaryBackground
+                .overlay(
+                    Rectangle()
+                        .fill(theme.primaryBorder)
+                        .frame(height: 1),
+                    alignment: .bottom
+                )
+        )
+    }
+
+    // MARK: - Hero Header
+
+    private var heroHeader: some View {
+        HStack(spacing: 20) {
+            ZStack {
+                Circle()
+                    .fill(
+                        LinearGradient(
+                            colors: [personaColor.opacity(0.2), personaColor.opacity(0.05)],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        )
+                    )
+                Circle()
+                    .strokeBorder(personaColor.opacity(0.5), lineWidth: 2.5)
+                Text(name.isEmpty ? "?" : name.prefix(1).uppercased())
+                    .font(.system(size: 28, weight: .bold, design: .rounded))
+                    .foregroundColor(personaColor)
+            }
+            .frame(width: 72, height: 72)
+            .animation(.spring(response: 0.3), value: name)
+
+            VStack(alignment: .leading, spacing: 6) {
+                Text(name.isEmpty ? "Untitled Persona" : name)
+                    .font(.system(size: 22, weight: .bold))
+                    .foregroundColor(theme.primaryText)
+
+                if !description.isEmpty {
+                    Text(description)
+                        .font(.system(size: 13))
+                        .foregroundColor(theme.secondaryText)
+                        .lineLimit(2)
+                }
+
+                HStack(spacing: 12) {
+                    let toolCount = resolvedEnabledToolCount
+                    let totalTools = ToolRegistry.shared.listTools().count
+                    statBadge(icon: "wrench.and.screwdriver", text: "\(toolCount)/\(totalTools) tools", color: .orange)
+
+                    let skillCount = resolvedEnabledSkillCount
+                    let totalSkills = SkillManager.shared.skills.count
+                    statBadge(icon: "sparkles", text: "\(skillCount)/\(totalSkills) skills", color: .cyan)
+
+                    if !linkedSchedules.isEmpty {
+                        statBadge(
+                            icon: "clock",
+                            text: "\(linkedSchedules.count) schedule\(linkedSchedules.count == 1 ? "" : "s")",
+                            color: .green
+                        )
+                    }
+                    statBadge(
+                        icon: "calendar",
+                        text: "Created \(persona.createdAt.formatted(date: .abbreviated, time: .omitted))",
+                        color: theme.tertiaryText
+                    )
+                }
+                .padding(.top, 2)
+            }
+
+            Spacer()
+        }
+    }
+
+    private func statBadge(icon: String, text: String, color: Color) -> some View {
+        HStack(spacing: 4) {
+            Image(systemName: icon)
+                .font(.system(size: 9, weight: .medium))
+                .foregroundColor(color)
+            Text(text)
+                .font(.system(size: 10, weight: .medium))
+                .foregroundColor(theme.tertiaryText)
+        }
+    }
+
+    // MARK: - Identity Section
+
+    private var identitySection: some View {
+        PersonaDetailSection(title: "Identity", icon: "person.circle.fill") {
+            VStack(spacing: 16) {
+                HStack(spacing: 16) {
+                    ZStack {
+                        Circle()
+                            .fill(
+                                LinearGradient(
+                                    colors: [personaColor.opacity(0.2), personaColor.opacity(0.05)],
+                                    startPoint: .topLeading,
+                                    endPoint: .bottomTrailing
+                                )
+                            )
+                        Circle()
+                            .strokeBorder(personaColor.opacity(0.5), lineWidth: 2)
+                        Text(name.isEmpty ? "?" : name.prefix(1).uppercased())
+                            .font(.system(size: 20, weight: .bold, design: .rounded))
+                            .foregroundColor(personaColor)
+                    }
+                    .frame(width: 52, height: 52)
+                    .animation(.spring(response: 0.3), value: name)
+
+                    VStack(alignment: .leading, spacing: 12) {
+                        StyledTextField(
+                            placeholder: "e.g., Code Assistant",
+                            text: $name,
+                            icon: "textformat"
+                        )
+                    }
+                }
+
+                StyledTextField(
+                    placeholder: "Brief description (optional)",
+                    text: $description,
+                    icon: "text.alignleft"
+                )
+            }
+            .onChange(of: name) { debouncedSave() }
+            .onChange(of: description) { debouncedSave() }
+        }
+    }
+
+    // MARK: - System Prompt Section
+
+    private var systemPromptSection: some View {
+        PersonaDetailSection(title: "System Prompt", icon: "brain") {
+            VStack(alignment: .leading, spacing: 8) {
+                ZStack(alignment: .topLeading) {
+                    if systemPrompt.isEmpty {
+                        Text("Enter instructions for this persona...")
+                            .font(.system(size: 13, design: .monospaced))
+                            .foregroundColor(theme.placeholderText)
+                            .padding(.top, 12)
+                            .padding(.leading, 16)
+                            .allowsHitTesting(false)
+                    }
+
+                    TextEditor(text: $systemPrompt)
+                        .font(.system(size: 13, design: .monospaced))
+                        .foregroundColor(theme.primaryText)
+                        .scrollContentBackground(.hidden)
+                        .frame(minHeight: 160, maxHeight: 300)
+                        .padding(12)
+                }
+                .background(
+                    RoundedRectangle(cornerRadius: 10)
+                        .fill(theme.inputBackground)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 10)
+                                .stroke(theme.inputBorder, lineWidth: 1)
+                        )
+                )
+
+                Text("Instructions that define this persona's behavior. Leave empty to use global settings.")
+                    .font(.system(size: 11))
+                    .foregroundColor(theme.tertiaryText)
+            }
+            .onChange(of: systemPrompt) { debouncedSave() }
+        }
+    }
+
+    // MARK: - Generation Section
+
+    private var generationSection: some View {
+        PersonaDetailSection(title: "Generation", icon: "cpu") {
+            VStack(spacing: 16) {
+                // Model selector
+                VStack(alignment: .leading, spacing: 6) {
+                    Label("Default Model", systemImage: "cube.fill")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundColor(theme.secondaryText)
+
+                    Button {
+                        showModelPicker.toggle()
+                    } label: {
+                        HStack(spacing: 8) {
+                            if let model = selectedModel {
+                                Text(formatModelName(model))
+                                    .font(.system(size: 13, weight: .medium))
+                                    .foregroundColor(theme.primaryText)
+                                    .lineLimit(1)
+                            } else {
+                                Text("Default (from global settings)")
+                                    .font(.system(size: 13))
+                                    .foregroundColor(theme.placeholderText)
+                            }
+                            Spacer()
+                            Image(systemName: "chevron.up.chevron.down")
+                                .font(.system(size: 10, weight: .medium))
+                                .foregroundColor(theme.tertiaryText)
+                        }
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 10)
+                        .background(
+                            RoundedRectangle(cornerRadius: 10)
+                                .fill(theme.inputBackground)
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 10)
+                                        .stroke(theme.inputBorder, lineWidth: 1)
+                                )
+                        )
+                    }
+                    .buttonStyle(PlainButtonStyle())
+                    .popover(isPresented: $showModelPicker, arrowEdge: .bottom) {
+                        ModelPickerView(
+                            options: modelOptions,
+                            selectedModel: Binding(
+                                get: { selectedModel },
+                                set: { newModel in
+                                    selectedModel = newModel
+                                    personaManager.updateDefaultModel(for: persona.id, model: newModel)
+                                    showSaveIndicator()
+                                }
+                            ),
+                            personaId: persona.id,
+                            onDismiss: { showModelPicker = false }
+                        )
+                    }
+
+                    if selectedModel != nil {
+                        Button {
+                            selectedModel = nil
+                            personaManager.updateDefaultModel(for: persona.id, model: nil)
+                            showSaveIndicator()
+                        } label: {
+                            HStack(spacing: 4) {
+                                Image(systemName: "arrow.uturn.backward")
+                                    .font(.system(size: 10))
+                                Text("Reset to default")
+                                    .font(.system(size: 11, weight: .medium))
+                            }
+                            .foregroundColor(theme.accentColor)
+                        }
+                        .buttonStyle(PlainButtonStyle())
+                    }
+                }
+
+                HStack(spacing: 16) {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Label("Temperature", systemImage: "thermometer.medium")
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundColor(theme.secondaryText)
+
+                        StyledTextField(placeholder: "0.7", text: $temperature, icon: nil)
+                    }
+
+                    VStack(alignment: .leading, spacing: 6) {
+                        Label("Max Tokens", systemImage: "number")
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundColor(theme.secondaryText)
+
+                        StyledTextField(placeholder: "4096", text: $maxTokens, icon: nil)
+                    }
+                }
+
+                Text("Leave empty to use default values from global settings.")
+                    .font(.system(size: 11))
+                    .foregroundColor(theme.tertiaryText)
+            }
+            .onChange(of: temperature) { debouncedSave() }
+            .onChange(of: maxTokens) { debouncedSave() }
+        }
+    }
+
+    // MARK: - Abilities Section
+
+    private var capabilitiesSection: some View {
+        PersonaDetailSection(
+            title: "Abilities",
+            icon: "wrench.and.screwdriver",
+            subtitle: "\(resolvedEnabledToolCount + resolvedEnabledSkillCount) enabled"
+        ) {
+            CapabilitiesSelectorView(personaId: persona.id, isInline: true)
+                .background(
+                    RoundedRectangle(cornerRadius: 10)
+                        .fill(theme.inputBackground)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 10)
+                                .stroke(theme.inputBorder, lineWidth: 1)
+                        )
+                )
+                .clipShape(RoundedRectangle(cornerRadius: 10))
+        }
+    }
+
+    // MARK: - Theme Section
+
+    private var themeSection: some View {
+        PersonaDetailSection(title: "Visual Theme", icon: "paintpalette.fill") {
+            VStack(alignment: .leading, spacing: 12) {
+                themePickerGrid
+
+                Text("Optionally assign a visual theme to this persona.")
+                    .font(.system(size: 11))
+                    .foregroundColor(theme.tertiaryText)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var themePickerGrid: some View {
+        LazyVGrid(columns: [GridItem(.adaptive(minimum: 100), spacing: 12)], spacing: 12) {
+            ThemeOptionCard(
+                name: "Default",
+                colors: [theme.accentColor, theme.primaryBackground, theme.successColor],
+                isSelected: selectedThemeId == nil,
+                onSelect: {
+                    selectedThemeId = nil; savePersona()
+                }
+            )
+
+            ForEach(themeManager.installedThemes, id: \.metadata.id) { customTheme in
+                ThemeOptionCard(
+                    name: customTheme.metadata.name,
+                    colors: [
+                        Color(themeHex: customTheme.colors.accentColor),
+                        Color(themeHex: customTheme.colors.primaryBackground),
+                        Color(themeHex: customTheme.colors.successColor),
+                    ],
+                    isSelected: selectedThemeId == customTheme.metadata.id,
+                    onSelect: {
+                        selectedThemeId = customTheme.metadata.id; savePersona()
+                    }
+                )
+            }
+        }
+    }
+
+    // MARK: - Schedules Section
+
+    private var schedulesSection: some View {
+        PersonaDetailSection(
+            title: "Schedules",
+            icon: "clock.fill",
+            subtitle: linkedSchedules.isEmpty ? "None" : "\(linkedSchedules.count)"
+        ) {
+            VStack(alignment: .leading, spacing: 12) {
+                if linkedSchedules.isEmpty {
+                    VStack(spacing: 8) {
+                        Image(systemName: "clock.badge.questionmark")
+                            .font(.system(size: 24))
+                            .foregroundColor(theme.tertiaryText)
+                        Text("No schedules linked to this persona")
+                            .font(.system(size: 12))
+                            .foregroundColor(theme.secondaryText)
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 12)
+                } else {
+                    ForEach(linkedSchedules) { schedule in
+                        HStack(spacing: 12) {
+                            Circle()
+                                .fill(schedule.isEnabled ? theme.successColor : theme.tertiaryText)
+                                .frame(width: 8, height: 8)
+
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(schedule.name)
+                                    .font(.system(size: 13, weight: .medium))
+                                    .foregroundColor(theme.primaryText)
+
+                                HStack(spacing: 8) {
+                                    Text(schedule.frequency.displayDescription)
+                                        .font(.system(size: 11))
+                                        .foregroundColor(theme.secondaryText)
+
+                                    if let nextRun = schedule.nextRunDescription {
+                                        Text("Next: \(nextRun)")
+                                            .font(.system(size: 10))
+                                            .foregroundColor(theme.tertiaryText)
+                                    }
+                                }
+                            }
+
+                            Spacer()
+
+                            Text(schedule.isEnabled ? "Active" : "Paused")
+                                .font(.system(size: 10, weight: .medium))
+                                .foregroundColor(schedule.isEnabled ? theme.successColor : theme.tertiaryText)
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 3)
+                                .background(
+                                    Capsule()
+                                        .fill(
+                                            (schedule.isEnabled ? theme.successColor : theme.tertiaryText).opacity(0.1)
+                                        )
+                                )
+                        }
+                        .padding(10)
+                        .background(
+                            RoundedRectangle(cornerRadius: 8)
+                                .fill(theme.inputBackground)
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 8)
+                                        .stroke(theme.inputBorder, lineWidth: 1)
+                                )
+                        )
+                    }
+                }
+
+                Button {
+                    showCreateSchedule = true
+                } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: "plus.circle")
+                            .font(.system(size: 11))
+                        Text("Create Schedule")
+                            .font(.system(size: 11, weight: .medium))
+                    }
+                    .foregroundColor(theme.accentColor)
+                }
+                .buttonStyle(PlainButtonStyle())
+            }
+        }
+    }
+
+    // MARK: - History Section
+
+    private var historySection: some View {
+        PersonaDetailSection(
+            title: "History",
+            icon: "clock.arrow.circlepath",
+            subtitle:
+                "\(chatSessions.count) chat\(chatSessions.count == 1 ? "" : "s"), \(agentTasks.count) task\(agentTasks.count == 1 ? "" : "s")"
+        ) {
+            VStack(alignment: .leading, spacing: 16) {
+                // Chat sessions
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack {
+                        HStack(spacing: 6) {
+                            Image(systemName: "bubble.left.and.bubble.right")
+                                .font(.system(size: 10, weight: .medium))
+                                .foregroundColor(theme.accentColor)
+                            Text("RECENT CHATS")
+                                .font(.system(size: 10, weight: .bold))
+                                .foregroundColor(theme.secondaryText)
+                                .tracking(0.3)
+                        }
+                        Spacer()
+                        Button {
+                            ChatWindowManager.shared.createWindow(personaId: persona.id)
+                        } label: {
+                            HStack(spacing: 3) {
+                                Image(systemName: "plus")
+                                    .font(.system(size: 9, weight: .semibold))
+                                Text("New Chat")
+                                    .font(.system(size: 10, weight: .medium))
+                            }
+                            .foregroundColor(theme.accentColor)
+                        }
+                        .buttonStyle(PlainButtonStyle())
+                    }
+
+                    if chatSessions.isEmpty {
+                        Text("No chat sessions yet")
+                            .font(.system(size: 12))
+                            .foregroundColor(theme.tertiaryText)
+                            .padding(.vertical, 8)
+                    } else {
+                        ForEach(chatSessions.prefix(5)) { session in
+                            ClickableHistoryRow {
+                                ChatWindowManager.shared.createWindow(
+                                    personaId: persona.id,
+                                    sessionData: session
+                                )
+                            } content: {
+                                HStack(spacing: 10) {
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text(session.title)
+                                            .font(.system(size: 12, weight: .medium))
+                                            .foregroundColor(theme.primaryText)
+                                            .lineLimit(1)
+
+                                        Text(session.updatedAt.formatted(date: .abbreviated, time: .shortened))
+                                            .font(.system(size: 10))
+                                            .foregroundColor(theme.tertiaryText)
+                                    }
+                                    Spacer()
+                                    HStack(spacing: 4) {
+                                        Text("\(session.turns.count) turns")
+                                            .font(.system(size: 10))
+                                            .foregroundColor(theme.tertiaryText)
+                                        Image(systemName: "arrow.up.right")
+                                            .font(.system(size: 8, weight: .medium))
+                                            .foregroundColor(theme.tertiaryText)
+                                    }
+                                }
+                            }
+                        }
+                        if chatSessions.count > 5 {
+                            Text("and \(chatSessions.count - 5) more...")
+                                .font(.system(size: 11))
+                                .foregroundColor(theme.tertiaryText)
+                                .padding(.leading, 4)
+                        }
+                    }
+                }
+
+                Rectangle()
+                    .fill(theme.primaryBorder)
+                    .frame(height: 1)
+
+                // Agent tasks
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack(spacing: 6) {
+                        Image(systemName: "checklist")
+                            .font(.system(size: 10, weight: .medium))
+                            .foregroundColor(theme.accentColor)
+                        Text("RECENT TASKS")
+                            .font(.system(size: 10, weight: .bold))
+                            .foregroundColor(theme.secondaryText)
+                            .tracking(0.3)
+                    }
+
+                    if agentTasks.isEmpty {
+                        Text("No agent tasks yet")
+                            .font(.system(size: 12))
+                            .foregroundColor(theme.tertiaryText)
+                            .padding(.vertical, 8)
+                    } else {
+                        ForEach(agentTasks.prefix(5)) { task in
+                            HStack(spacing: 10) {
+                                Circle()
+                                    .fill(taskStatusColor(task.status))
+                                    .frame(width: 6, height: 6)
+
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(task.title)
+                                        .font(.system(size: 12, weight: .medium))
+                                        .foregroundColor(theme.primaryText)
+                                        .lineLimit(1)
+
+                                    Text(task.createdAt.formatted(date: .abbreviated, time: .shortened))
+                                        .font(.system(size: 10))
+                                        .foregroundColor(theme.tertiaryText)
+                                }
+                                Spacer()
+                                Text(task.status.rawValue.capitalized)
+                                    .font(.system(size: 10, weight: .medium))
+                                    .foregroundColor(taskStatusColor(task.status))
+                            }
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 6)
+                            .background(
+                                RoundedRectangle(cornerRadius: 6)
+                                    .fill(theme.inputBackground.opacity(0.5))
+                            )
+                        }
+                        if agentTasks.count > 5 {
+                            Text("and \(agentTasks.count - 5) more...")
+                                .font(.system(size: 11))
+                                .foregroundColor(theme.tertiaryText)
+                                .padding(.leading, 4)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private func taskStatusColor(_ status: AgentTaskStatus) -> Color {
+        switch status {
+        case .active: return theme.accentColor
+        case .completed: return theme.successColor
+        case .cancelled: return theme.tertiaryText
+        }
+    }
+
+    // MARK: - Data Loading
+
+    private func loadPersonaData() {
+        name = persona.name
+        description = persona.description
+        systemPrompt = persona.systemPrompt
+        temperature = persona.temperature.map { String($0) } ?? ""
+        maxTokens = persona.maxTokens.map { String($0) } ?? ""
+        selectedThemeId = persona.themeId
+    }
+
+    private func loadModelOptions() {
+        Task {
+            var options: [ModelOption] = []
+
+            if AppConfiguration.shared.foundationModelAvailable {
+                options.append(.foundation())
+            }
+
+            let localModels = await Task.detached(priority: .userInitiated) {
+                ModelManager.discoverLocalModels()
+            }.value
+            for model in localModels {
+                options.append(.fromMLXModel(model))
+            }
+
+            let remoteModels = await MainActor.run {
+                RemoteProviderManager.shared.cachedAvailableModels()
+            }
+            for providerInfo in remoteModels {
+                for modelId in providerInfo.models {
+                    options.append(
+                        .fromRemoteModel(
+                            modelId: modelId,
+                            providerName: providerInfo.providerName,
+                            providerId: providerInfo.providerId
+                        )
+                    )
+                }
+            }
+
+            await MainActor.run {
+                modelOptions = options
+            }
+        }
+    }
+
+    // MARK: - Save
+
+    private func debouncedSave() {
+        guard isInitialLoadComplete else { return }
+        saveDebounceTask?.cancel()
+        saveDebounceTask = Task {
+            try? await Task.sleep(nanoseconds: 500_000_000)
+            guard !Task.isCancelled else { return }
+            savePersona()
+        }
+    }
+
+    private func savePersona() {
+        let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedName.isEmpty else { return }
+
+        // Preserve existing tool/skill overrides managed by CapabilitiesSelectorView
+        let current = currentPersona
+
+        let updated = Persona(
+            id: persona.id,
+            name: trimmedName,
+            description: description.trimmingCharacters(in: .whitespacesAndNewlines),
+            systemPrompt: systemPrompt.trimmingCharacters(in: .whitespacesAndNewlines),
+            enabledTools: current.enabledTools,
+            enabledSkills: current.enabledSkills,
+            themeId: selectedThemeId,
+            defaultModel: selectedModel,
+            temperature: Float(temperature),
+            maxTokens: Int(maxTokens),
+            isBuiltIn: false,
+            createdAt: persona.createdAt,
+            updatedAt: Date()
+        )
+
+        personaManager.update(updated)
+        showSaveIndicator()
+    }
+
+    private func showSaveIndicator() {
+        withAnimation(.easeOut(duration: 0.2)) {
+            saveIndicator = "Saved"
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+            withAnimation(.easeOut(duration: 0.3)) {
+                saveIndicator = nil
+            }
+        }
+    }
+}
+
+// MARK: - Clickable History Row
+
+private struct ClickableHistoryRow<Content: View>: View {
     @Environment(\.theme) private var theme
 
-    let icon: String
-    let help: String
     let action: () -> Void
-
+    @ViewBuilder let content: () -> Content
     @State private var isHovered = false
 
     var body: some View {
         Button(action: action) {
-            Image(systemName: icon)
-                .font(.system(size: 11, weight: .medium))
-                .foregroundColor(isHovered ? theme.primaryText : theme.secondaryText)
-                .frame(width: 26, height: 26)
+            content()
+                .padding(.horizontal, 10)
+                .padding(.vertical, 6)
                 .background(
-                    Circle()
-                        .fill(isHovered ? theme.tertiaryBackground : theme.tertiaryBackground.opacity(0.5))
+                    RoundedRectangle(cornerRadius: 6)
+                        .fill(
+                            isHovered
+                                ? theme.tertiaryBackground.opacity(0.7)
+                                : theme.inputBackground.opacity(0.5)
+                        )
                 )
+                .contentShape(Rectangle())
         }
         .buttonStyle(PlainButtonStyle())
         .onHover { hovering in
@@ -791,103 +1681,67 @@ private struct QuickActionButton: View {
                 isHovered = hovering
             }
         }
-        .help(help)
     }
 }
 
-// MARK: - Config Badge
+// MARK: - Detail Section Component
 
-private struct ConfigBadge: View {
+private struct PersonaDetailSection<Content: View>: View {
     @Environment(\.theme) private var theme
 
+    let title: String
     let icon: String
-    let text: String
-    let color: Color
+    var subtitle: String? = nil
+    @ViewBuilder let content: () -> Content
 
     var body: some View {
-        HStack(spacing: 4) {
-            Image(systemName: icon)
-                .font(.system(size: 9, weight: .semibold))
-                .foregroundColor(color)
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 10) {
+                Image(systemName: icon)
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundColor(theme.accentColor)
+                    .frame(width: 20)
 
-            Text(text)
-                .font(.system(size: 10, weight: .medium))
-                .foregroundColor(theme.secondaryText)
-                .lineLimit(1)
-        }
-        .padding(.horizontal, 8)
-        .frame(height: 22)
-        .background(
-            Capsule()
-                .fill(color.opacity(0.1))
-                .overlay(
-                    Capsule()
-                        .stroke(color.opacity(0.2), lineWidth: 0.5)
-                )
-        )
-    }
-}
+                Text(title.uppercased())
+                    .font(.system(size: 11, weight: .bold))
+                    .foregroundColor(theme.primaryText)
+                    .tracking(0.5)
 
-// MARK: - Theme Preview Badge
+                if let subtitle = subtitle {
+                    Text(subtitle)
+                        .font(.system(size: 11))
+                        .foregroundColor(theme.tertiaryText)
+                }
 
-private struct ThemePreviewBadge: View {
-    @Environment(\.theme) private var currentTheme
-
-    let theme: CustomTheme
-
-    var body: some View {
-        HStack(spacing: 6) {
-            Image(systemName: "paintpalette.fill")
-                .font(.system(size: 9, weight: .semibold))
-                .foregroundColor(.pink)
-
-            Text(theme.metadata.name)
-                .font(.system(size: 10, weight: .medium))
-                .foregroundColor(currentTheme.secondaryText)
-                .lineLimit(1)
-
-            // Color swatches
-            HStack(spacing: 2) {
-                colorDot(theme.colors.accentColor)
-                colorDot(theme.colors.primaryBackground)
-                colorDot(theme.colors.successColor)
+                Spacer()
             }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 14)
+
+            VStack(alignment: .leading, spacing: 12) {
+                content()
+            }
+            .padding(.horizontal, 16)
+            .padding(.bottom, 16)
         }
-        .padding(.horizontal, 8)
-        .frame(height: 22)
         .background(
-            Capsule()
-                .fill(Color.pink.opacity(0.1))
+            RoundedRectangle(cornerRadius: 12)
+                .fill(theme.cardBackground)
                 .overlay(
-                    Capsule()
-                        .stroke(Color.pink.opacity(0.2), lineWidth: 0.5)
+                    RoundedRectangle(cornerRadius: 12)
+                        .stroke(theme.cardBorder, lineWidth: 1)
                 )
         )
-    }
-
-    private func colorDot(_ hex: String) -> some View {
-        Circle()
-            .fill(Color(themeHex: hex))
-            .frame(width: 8, height: 8)
-            .overlay(
-                Circle()
-                    .stroke(Color.white.opacity(0.3), lineWidth: 0.5)
-            )
     }
 }
 
 // MARK: - Persona Editor Sheet
 
 private struct PersonaEditorSheet: View {
-    enum Mode {
-        case create
-        case edit(Persona)
-    }
-
-    @Environment(\.theme) private var theme
     @ObservedObject private var themeManager = ThemeManager.shared
 
-    let mode: Mode
+    private var theme: ThemeProtocol { themeManager.currentTheme }
+
     let onSave: (Persona) -> Void
     let onCancel: () -> Void
 
@@ -897,47 +1751,13 @@ private struct PersonaEditorSheet: View {
     @State private var temperature: String = ""
     @State private var maxTokens: String = ""
     @State private var selectedThemeId: UUID?
-    @State private var enabledTools: [String: Bool] = [:]
-    @State private var showToolsSection = false
-    @State private var enabledSkills: [String: Bool] = [:]
-    @State private var showSkillsSection = false
     @State private var hasAppeared = false
 
-    /// All available tools from the registry
-    private var availableTools: [ToolRegistry.ToolEntry] {
-        ToolRegistry.shared.listTools()
-    }
-
-    /// All available skills from the manager
-    private var availableSkills: [Skill] {
-        SkillManager.shared.skills
-    }
-
-    private var isEditing: Bool {
-        if case .edit = mode { return true }
-        return false
-    }
-
-    private var existingId: UUID? {
-        if case .edit(let persona) = mode { return persona.id }
-        return nil
-    }
-
-    private var existingCreatedAt: Date? {
-        if case .edit(let persona) = mode { return persona.createdAt }
-        return nil
-    }
-
-    /// Generate a consistent color based on persona name
-    private var personaColor: Color {
-        let hash = abs(name.hashValue)
-        let hue = Double(hash % 360) / 360.0
-        return Color(hue: hue, saturation: 0.6, brightness: 0.8)
-    }
+    private var personaColor: Color { personaColorFor(name) }
 
     var body: some View {
         VStack(spacing: 0) {
-            // Polished Header
+            // Header
             headerView
 
             // Form
@@ -946,9 +1766,7 @@ private struct PersonaEditorSheet: View {
                     // Identity Section
                     EditorSection(title: "Identity", icon: "person.circle.fill") {
                         VStack(spacing: 16) {
-                            // Name with preview avatar
                             HStack(spacing: 16) {
-                                // Live avatar preview
                                 ZStack {
                                     Circle()
                                         .fill(
@@ -988,11 +1806,10 @@ private struct PersonaEditorSheet: View {
                     EditorSection(title: "System Prompt", icon: "brain") {
                         VStack(alignment: .leading, spacing: 8) {
                             ZStack(alignment: .topLeading) {
-                                // Themed placeholder overlay
                                 if systemPrompt.isEmpty {
                                     Text("Enter instructions for this persona...")
                                         .font(.system(size: 13, design: .monospaced))
-                                        .foregroundColor(themeManager.currentTheme.placeholderText)
+                                        .foregroundColor(theme.placeholderText)
                                         .padding(.top, 12)
                                         .padding(.leading, 16)
                                         .allowsHitTesting(false)
@@ -1000,17 +1817,17 @@ private struct PersonaEditorSheet: View {
 
                                 TextEditor(text: $systemPrompt)
                                     .font(.system(size: 13, design: .monospaced))
-                                    .foregroundColor(themeManager.currentTheme.primaryText)
+                                    .foregroundColor(theme.primaryText)
                                     .scrollContentBackground(.hidden)
                                     .frame(minHeight: 140, maxHeight: 200)
                                     .padding(12)
                             }
                             .background(
                                 RoundedRectangle(cornerRadius: 10)
-                                    .fill(themeManager.currentTheme.inputBackground)
+                                    .fill(theme.inputBackground)
                                     .overlay(
                                         RoundedRectangle(cornerRadius: 10)
-                                            .stroke(themeManager.currentTheme.inputBorder, lineWidth: 1)
+                                            .stroke(theme.inputBorder, lineWidth: 1)
                                     )
                             )
 
@@ -1018,19 +1835,18 @@ private struct PersonaEditorSheet: View {
                                 "Instructions that define this persona's behavior. Leave empty to use global settings."
                             )
                             .font(.system(size: 11))
-                            .foregroundColor(themeManager.currentTheme.tertiaryText)
+                            .foregroundColor(theme.tertiaryText)
                         }
                     }
 
-                    // Generation Settings Section
+                    // Generation Settings
                     EditorSection(title: "Generation", icon: "cpu") {
                         VStack(spacing: 16) {
                             HStack(spacing: 16) {
-                                // Temperature
                                 VStack(alignment: .leading, spacing: 6) {
                                     Label("Temperature", systemImage: "thermometer.medium")
                                         .font(.system(size: 11, weight: .medium))
-                                        .foregroundColor(themeManager.currentTheme.secondaryText)
+                                        .foregroundColor(theme.secondaryText)
 
                                     StyledTextField(
                                         placeholder: "0.7",
@@ -1039,11 +1855,10 @@ private struct PersonaEditorSheet: View {
                                     )
                                 }
 
-                                // Max Tokens
                                 VStack(alignment: .leading, spacing: 6) {
                                     Label("Max Tokens", systemImage: "number")
                                         .font(.system(size: 11, weight: .medium))
-                                        .foregroundColor(themeManager.currentTheme.secondaryText)
+                                        .foregroundColor(theme.secondaryText)
 
                                     StyledTextField(
                                         placeholder: "4096",
@@ -1055,255 +1870,58 @@ private struct PersonaEditorSheet: View {
 
                             Text("Leave empty to use default values from global settings.")
                                 .font(.system(size: 11))
-                                .foregroundColor(themeManager.currentTheme.tertiaryText)
+                                .foregroundColor(theme.tertiaryText)
                         }
                     }
 
                     // Theme Section
                     EditorSection(title: "Visual Theme", icon: "paintpalette.fill") {
                         VStack(alignment: .leading, spacing: 12) {
-                            themePickerGrid
+                            LazyVGrid(columns: [GridItem(.adaptive(minimum: 100), spacing: 12)], spacing: 12) {
+                                ThemeOptionCard(
+                                    name: "Default",
+                                    colors: [theme.accentColor, theme.primaryBackground, theme.successColor],
+                                    isSelected: selectedThemeId == nil,
+                                    onSelect: { selectedThemeId = nil }
+                                )
+
+                                ForEach(themeManager.installedThemes, id: \.metadata.id) { customTheme in
+                                    ThemeOptionCard(
+                                        name: customTheme.metadata.name,
+                                        colors: [
+                                            Color(themeHex: customTheme.colors.accentColor),
+                                            Color(themeHex: customTheme.colors.primaryBackground),
+                                            Color(themeHex: customTheme.colors.successColor),
+                                        ],
+                                        isSelected: selectedThemeId == customTheme.metadata.id,
+                                        onSelect: { selectedThemeId = customTheme.metadata.id }
+                                    )
+                                }
+                            }
 
                             Text("Optionally assign a visual theme to this persona.")
                                 .font(.system(size: 11))
-                                .foregroundColor(themeManager.currentTheme.tertiaryText)
-                        }
-                    }
-
-                    // Tools Configuration
-                    EditorSection(title: "Tools", icon: "wrench.and.screwdriver") {
-                        VStack(alignment: .leading, spacing: 12) {
-                            // Custom accordion header - fully clickable
-                            Button {
-                                withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
-                                    showToolsSection.toggle()
-                                }
-                            } label: {
-                                HStack(spacing: 8) {
-                                    Image(systemName: "chevron.right")
-                                        .font(.system(size: 10, weight: .semibold))
-                                        .foregroundColor(themeManager.currentTheme.tertiaryText)
-                                        .rotationEffect(.degrees(showToolsSection ? 90 : 0))
-
-                                    Text(showToolsSection ? "Hide tool overrides" : "Configure tool overrides")
-                                        .font(.system(size: 12, weight: .medium))
-                                        .foregroundColor(themeManager.currentTheme.secondaryText)
-
-                                    if !enabledTools.isEmpty {
-                                        Text("(\(enabledTools.count) modified)")
-                                            .font(.system(size: 11))
-                                            .foregroundColor(themeManager.currentTheme.accentColor)
-                                            .padding(.horizontal, 6)
-                                            .padding(.vertical, 2)
-                                            .background(
-                                                Capsule()
-                                                    .fill(themeManager.currentTheme.accentColor.opacity(0.1))
-                                            )
-                                    }
-
-                                    Spacer()
-                                }
-                                .padding(.vertical, 8)
-                                .padding(.horizontal, 10)
-                                .background(
-                                    RoundedRectangle(cornerRadius: 8)
-                                        .fill(themeManager.currentTheme.tertiaryBackground.opacity(0.5))
-                                )
-                                .contentShape(Rectangle())
-                            }
-                            .buttonStyle(.plain)
-
-                            // Expandable content with height animation
-                            VStack(alignment: .leading, spacing: 8) {
-                                if availableTools.isEmpty {
-                                    Text("No tools available")
-                                        .font(.system(size: 12))
-                                        .foregroundColor(themeManager.currentTheme.secondaryText)
-                                        .padding(.vertical, 8)
-                                } else {
-                                    LazyVStack(spacing: 0) {
-                                        ForEach(availableTools, id: \.name) { tool in
-                                            ToolToggleRow(
-                                                tool: tool,
-                                                isEnabled: enabledTools[tool.name] ?? tool.enabled,
-                                                hasOverride: enabledTools[tool.name] != nil,
-                                                onToggle: { enabled in
-                                                    enabledTools[tool.name] = enabled
-                                                },
-                                                onReset: {
-                                                    enabledTools.removeValue(forKey: tool.name)
-                                                }
-                                            )
-                                        }
-                                    }
-                                    .background(
-                                        RoundedRectangle(cornerRadius: 10)
-                                            .fill(themeManager.currentTheme.inputBackground)
-                                            .overlay(
-                                                RoundedRectangle(cornerRadius: 10)
-                                                    .stroke(themeManager.currentTheme.inputBorder, lineWidth: 1)
-                                            )
-                                    )
-                                    .clipShape(RoundedRectangle(cornerRadius: 10))
-                                }
-
-                                if !enabledTools.isEmpty {
-                                    Button(action: { enabledTools.removeAll() }) {
-                                        HStack(spacing: 4) {
-                                            Image(systemName: "arrow.uturn.backward")
-                                                .font(.system(size: 10))
-                                            Text("Reset All to Default")
-                                        }
-                                        .font(.system(size: 11, weight: .medium))
-                                        .foregroundColor(themeManager.currentTheme.accentColor)
-                                    }
-                                    .buttonStyle(.plain)
-                                    .padding(.top, 4)
-                                }
-                            }
-                            .frame(maxHeight: showToolsSection ? .infinity : 0)
-                            .opacity(showToolsSection ? 1 : 0)
-                            .clipped()
-
-                            Text("Override which tools are available when using this persona.")
-                                .font(.system(size: 11))
-                                .foregroundColor(themeManager.currentTheme.tertiaryText)
-                        }
-                    }
-
-                    // Skills Configuration
-                    EditorSection(title: "Skills", icon: "sparkles") {
-                        VStack(alignment: .leading, spacing: 12) {
-                            // Custom accordion header - fully clickable
-                            Button {
-                                withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
-                                    showSkillsSection.toggle()
-                                }
-                            } label: {
-                                HStack(spacing: 8) {
-                                    Image(systemName: "chevron.right")
-                                        .font(.system(size: 10, weight: .semibold))
-                                        .foregroundColor(themeManager.currentTheme.tertiaryText)
-                                        .rotationEffect(.degrees(showSkillsSection ? 90 : 0))
-
-                                    Text(showSkillsSection ? "Hide skill overrides" : "Configure skill overrides")
-                                        .font(.system(size: 12, weight: .medium))
-                                        .foregroundColor(themeManager.currentTheme.secondaryText)
-
-                                    if !enabledSkills.isEmpty {
-                                        Text("(\(enabledSkills.count) modified)")
-                                            .font(.system(size: 11))
-                                            .foregroundColor(themeManager.currentTheme.accentColor)
-                                            .padding(.horizontal, 6)
-                                            .padding(.vertical, 2)
-                                            .background(
-                                                Capsule()
-                                                    .fill(themeManager.currentTheme.accentColor.opacity(0.1))
-                                            )
-                                    }
-
-                                    Spacer()
-                                }
-                                .padding(.vertical, 8)
-                                .padding(.horizontal, 10)
-                                .background(
-                                    RoundedRectangle(cornerRadius: 8)
-                                        .fill(themeManager.currentTheme.tertiaryBackground.opacity(0.5))
-                                )
-                                .contentShape(Rectangle())
-                            }
-                            .buttonStyle(.plain)
-
-                            // Expandable content with height animation
-                            VStack(alignment: .leading, spacing: 8) {
-                                if availableSkills.isEmpty {
-                                    Text("No skills available")
-                                        .font(.system(size: 12))
-                                        .foregroundColor(themeManager.currentTheme.secondaryText)
-                                        .padding(.vertical, 8)
-                                } else {
-                                    LazyVStack(spacing: 0) {
-                                        ForEach(availableSkills) { skill in
-                                            SkillToggleRow(
-                                                skill: skill,
-                                                isEnabled: enabledSkills[skill.name] ?? skill.enabled,
-                                                hasOverride: enabledSkills[skill.name] != nil,
-                                                onToggle: { enabled in
-                                                    enabledSkills[skill.name] = enabled
-                                                },
-                                                onReset: {
-                                                    enabledSkills.removeValue(forKey: skill.name)
-                                                }
-                                            )
-                                        }
-                                    }
-                                    .background(
-                                        RoundedRectangle(cornerRadius: 10)
-                                            .fill(themeManager.currentTheme.inputBackground)
-                                            .overlay(
-                                                RoundedRectangle(cornerRadius: 10)
-                                                    .stroke(themeManager.currentTheme.inputBorder, lineWidth: 1)
-                                            )
-                                    )
-                                    .clipShape(RoundedRectangle(cornerRadius: 10))
-                                }
-
-                                if !enabledSkills.isEmpty {
-                                    Button(action: { enabledSkills.removeAll() }) {
-                                        HStack(spacing: 4) {
-                                            Image(systemName: "arrow.uturn.backward")
-                                                .font(.system(size: 10))
-                                            Text("Reset All to Default")
-                                        }
-                                        .font(.system(size: 11, weight: .medium))
-                                        .foregroundColor(themeManager.currentTheme.accentColor)
-                                    }
-                                    .buttonStyle(.plain)
-                                    .padding(.top, 4)
-                                }
-                            }
-                            .frame(maxHeight: showSkillsSection ? .infinity : 0)
-                            .opacity(showSkillsSection ? 1 : 0)
-                            .clipped()
-
-                            Text("Override which skills are available when using this persona.")
-                                .font(.system(size: 11))
-                                .foregroundColor(themeManager.currentTheme.tertiaryText)
+                                .foregroundColor(theme.tertiaryText)
                         }
                     }
                 }
                 .padding(24)
             }
 
-            // Footer
             footerView
         }
-        .frame(width: 580, height: 720)
-        .background(themeManager.currentTheme.primaryBackground)
+        .frame(width: 580, height: 620)
+        .background(theme.primaryBackground)
         .clipShape(RoundedRectangle(cornerRadius: 16))
         .overlay(
             RoundedRectangle(cornerRadius: 16)
-                .stroke(themeManager.currentTheme.primaryBorder.opacity(0.5), lineWidth: 1)
+                .stroke(theme.primaryBorder.opacity(0.5), lineWidth: 1)
         )
         .opacity(hasAppeared ? 1 : 0)
         .scaleEffect(hasAppeared ? 1 : 0.95)
         .animation(.spring(response: 0.3, dampingFraction: 0.8), value: hasAppeared)
         .onAppear {
-            if case .edit(let persona) = mode {
-                name = persona.name
-                description = persona.description
-                systemPrompt = persona.systemPrompt
-                temperature = persona.temperature.map { String($0) } ?? ""
-                maxTokens = persona.maxTokens.map { String($0) } ?? ""
-                selectedThemeId = persona.themeId
-                enabledTools = persona.enabledTools ?? [:]
-                showToolsSection = !(persona.enabledTools?.isEmpty ?? true)
-                enabledSkills = persona.enabledSkills ?? [:]
-                showSkillsSection = !(persona.enabledSkills?.isEmpty ?? true)
-            }
-            withAnimation {
-                hasAppeared = true
-            }
+            withAnimation { hasAppeared = true }
         }
     }
 
@@ -1311,27 +1929,20 @@ private struct PersonaEditorSheet: View {
 
     private var headerView: some View {
         HStack(spacing: 12) {
-            // Icon with gradient background
             ZStack {
                 Circle()
                     .fill(
                         LinearGradient(
-                            colors: [
-                                themeManager.currentTheme.accentColor.opacity(0.2),
-                                themeManager.currentTheme.accentColor.opacity(0.05),
-                            ],
+                            colors: [theme.accentColor.opacity(0.2), theme.accentColor.opacity(0.05)],
                             startPoint: .topLeading,
                             endPoint: .bottomTrailing
                         )
                     )
-                Image(systemName: isEditing ? "pencil.circle.fill" : "person.crop.circle.badge.plus")
+                Image(systemName: "person.crop.circle.badge.plus")
                     .font(.system(size: 18, weight: .semibold))
                     .foregroundStyle(
                         LinearGradient(
-                            colors: [
-                                themeManager.currentTheme.accentColor,
-                                themeManager.currentTheme.accentColor.opacity(0.7),
-                            ],
+                            colors: [theme.accentColor, theme.accentColor.opacity(0.7)],
                             startPoint: .topLeading,
                             endPoint: .bottomTrailing
                         )
@@ -1340,13 +1951,13 @@ private struct PersonaEditorSheet: View {
             .frame(width: 40, height: 40)
 
             VStack(alignment: .leading, spacing: 2) {
-                Text(isEditing ? "Edit Persona" : "Create Persona")
+                Text("Create Persona")
                     .font(.system(size: 16, weight: .semibold))
-                    .foregroundColor(themeManager.currentTheme.primaryText)
+                    .foregroundColor(theme.primaryText)
 
-                Text(isEditing ? "Modify your AI assistant" : "Build your custom AI assistant")
+                Text("Build your custom AI assistant")
                     .font(.system(size: 12))
-                    .foregroundColor(themeManager.currentTheme.secondaryText)
+                    .foregroundColor(theme.secondaryText)
             }
 
             Spacer()
@@ -1354,12 +1965,9 @@ private struct PersonaEditorSheet: View {
             Button(action: onCancel) {
                 Image(systemName: "xmark")
                     .font(.system(size: 12, weight: .semibold))
-                    .foregroundColor(themeManager.currentTheme.secondaryText)
+                    .foregroundColor(theme.secondaryText)
                     .frame(width: 28, height: 28)
-                    .background(
-                        Circle()
-                            .fill(themeManager.currentTheme.tertiaryBackground)
-                    )
+                    .background(Circle().fill(theme.tertiaryBackground))
             }
             .buttonStyle(PlainButtonStyle())
             .keyboardShortcut(.escape, modifiers: [])
@@ -1367,13 +1975,10 @@ private struct PersonaEditorSheet: View {
         .padding(.horizontal, 24)
         .padding(.vertical, 20)
         .background(
-            themeManager.currentTheme.secondaryBackground
+            theme.secondaryBackground
                 .overlay(
                     LinearGradient(
-                        colors: [
-                            themeManager.currentTheme.accentColor.opacity(0.03),
-                            Color.clear,
-                        ],
+                        colors: [theme.accentColor.opacity(0.03), Color.clear],
                         startPoint: .topLeading,
                         endPoint: .bottomTrailing
                     )
@@ -1381,64 +1986,30 @@ private struct PersonaEditorSheet: View {
         )
     }
 
-    // MARK: - Theme Picker Grid
-
-    @ViewBuilder
-    private var themePickerGrid: some View {
-        LazyVGrid(columns: [GridItem(.adaptive(minimum: 100), spacing: 12)], spacing: 12) {
-            // Default option
-            ThemeOptionCard(
-                name: "Default",
-                colors: [
-                    themeManager.currentTheme.accentColor,
-                    themeManager.currentTheme.primaryBackground,
-                    themeManager.currentTheme.successColor,
-                ],
-                isSelected: selectedThemeId == nil,
-                onSelect: { selectedThemeId = nil }
-            )
-
-            // Installed themes
-            ForEach(themeManager.installedThemes, id: \.metadata.id) { customTheme in
-                ThemeOptionCard(
-                    name: customTheme.metadata.name,
-                    colors: [
-                        Color(themeHex: customTheme.colors.accentColor),
-                        Color(themeHex: customTheme.colors.primaryBackground),
-                        Color(themeHex: customTheme.colors.successColor),
-                    ],
-                    isSelected: selectedThemeId == customTheme.metadata.id,
-                    onSelect: { selectedThemeId = customTheme.metadata.id }
-                )
-            }
-        }
-    }
-
     // MARK: - Footer View
 
     private var footerView: some View {
         HStack(spacing: 12) {
-            // Keyboard hint
             HStack(spacing: 4) {
-                Text("⌘")
+                Text("\u{2318}")
                     .font(.system(size: 10, weight: .medium, design: .rounded))
                     .padding(.horizontal, 4)
                     .padding(.vertical, 2)
                     .background(
                         RoundedRectangle(cornerRadius: 4)
-                            .fill(themeManager.currentTheme.tertiaryBackground)
+                            .fill(theme.tertiaryBackground)
                     )
                 Text("+ Enter to save")
                     .font(.system(size: 11))
             }
-            .foregroundColor(themeManager.currentTheme.tertiaryText)
+            .foregroundColor(theme.tertiaryText)
 
             Spacer()
 
             Button("Cancel", action: onCancel)
                 .buttonStyle(SecondaryButtonStyle())
 
-            Button(isEditing ? "Save Changes" : "Create Persona") {
+            Button("Create Persona") {
                 savePersona()
             }
             .buttonStyle(PrimaryButtonStyle())
@@ -1448,10 +2019,10 @@ private struct PersonaEditorSheet: View {
         .padding(.horizontal, 24)
         .padding(.vertical, 16)
         .background(
-            themeManager.currentTheme.secondaryBackground
+            theme.secondaryBackground
                 .overlay(
                     Rectangle()
-                        .fill(themeManager.currentTheme.primaryBorder)
+                        .fill(theme.primaryBorder)
                         .frame(height: 1),
                     alignment: .top
                 )
@@ -1462,27 +2033,19 @@ private struct PersonaEditorSheet: View {
         let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedName.isEmpty else { return }
 
-        // Preserve existing defaultModel from persona being edited (model is now auto-persisted via chat)
-        let existingDefaultModel: String? = {
-            if case .edit(let existingPersona) = mode {
-                return existingPersona.defaultModel
-            }
-            return nil
-        }()
-
         let persona = Persona(
-            id: existingId ?? UUID(),
+            id: UUID(),
             name: trimmedName,
             description: description.trimmingCharacters(in: .whitespacesAndNewlines),
             systemPrompt: systemPrompt.trimmingCharacters(in: .whitespacesAndNewlines),
-            enabledTools: enabledTools.isEmpty ? nil : enabledTools,
-            enabledSkills: enabledSkills.isEmpty ? nil : enabledSkills,
+            enabledTools: nil,
+            enabledSkills: nil,
             themeId: selectedThemeId,
-            defaultModel: existingDefaultModel,
+            defaultModel: nil,
             temperature: Float(temperature),
             maxTokens: Int(maxTokens),
             isBuiltIn: false,
-            createdAt: existingCreatedAt ?? Date(),
+            createdAt: Date(),
             updatedAt: Date()
         )
 
@@ -1493,7 +2056,7 @@ private struct PersonaEditorSheet: View {
 // MARK: - Editor Section
 
 private struct EditorSection<Content: View>: View {
-    @ObservedObject private var themeManager = ThemeManager.shared
+    @Environment(\.theme) private var theme
 
     let title: String
     let icon: String
@@ -1501,15 +2064,14 @@ private struct EditorSection<Content: View>: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            // Section header
             HStack(spacing: 8) {
                 Image(systemName: icon)
                     .font(.system(size: 12, weight: .semibold))
-                    .foregroundColor(themeManager.currentTheme.accentColor)
+                    .foregroundColor(theme.accentColor)
 
                 Text(title.uppercased())
                     .font(.system(size: 11, weight: .bold))
-                    .foregroundColor(themeManager.currentTheme.secondaryText)
+                    .foregroundColor(theme.secondaryText)
                     .tracking(0.5)
             }
 
@@ -1518,10 +2080,10 @@ private struct EditorSection<Content: View>: View {
         .padding(16)
         .background(
             RoundedRectangle(cornerRadius: 12)
-                .fill(themeManager.currentTheme.cardBackground)
+                .fill(theme.cardBackground)
                 .overlay(
                     RoundedRectangle(cornerRadius: 12)
-                        .stroke(themeManager.currentTheme.cardBorder, lineWidth: 1)
+                        .stroke(theme.cardBorder, lineWidth: 1)
                 )
         )
     }
@@ -1530,7 +2092,7 @@ private struct EditorSection<Content: View>: View {
 // MARK: - Styled Text Field
 
 private struct StyledTextField: View {
-    @ObservedObject private var themeManager = ThemeManager.shared
+    @Environment(\.theme) private var theme
 
     let placeholder: String
     @Binding var text: String
@@ -1543,18 +2105,15 @@ private struct StyledTextField: View {
             if let icon = icon {
                 Image(systemName: icon)
                     .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(
-                        isFocused ? themeManager.currentTheme.accentColor : themeManager.currentTheme.tertiaryText
-                    )
+                    .foregroundColor(isFocused ? theme.accentColor : theme.tertiaryText)
                     .frame(width: 16)
             }
 
             ZStack(alignment: .leading) {
-                // Themed placeholder overlay
                 if text.isEmpty {
                     Text(placeholder)
                         .font(.system(size: 13))
-                        .foregroundColor(themeManager.currentTheme.placeholderText)
+                        .foregroundColor(theme.placeholderText)
                         .allowsHitTesting(false)
                 }
 
@@ -1569,20 +2128,18 @@ private struct StyledTextField: View {
                 )
                 .textFieldStyle(.plain)
                 .font(.system(size: 13))
-                .foregroundColor(themeManager.currentTheme.primaryText)
+                .foregroundColor(theme.primaryText)
             }
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 10)
         .background(
             RoundedRectangle(cornerRadius: 10)
-                .fill(themeManager.currentTheme.inputBackground)
+                .fill(theme.inputBackground)
                 .overlay(
                     RoundedRectangle(cornerRadius: 10)
                         .stroke(
-                            isFocused
-                                ? themeManager.currentTheme.accentColor.opacity(0.5)
-                                : themeManager.currentTheme.inputBorder,
+                            isFocused ? theme.accentColor.opacity(0.5) : theme.inputBorder,
                             lineWidth: isFocused ? 1.5 : 1
                         )
                 )
@@ -1593,7 +2150,7 @@ private struct StyledTextField: View {
 // MARK: - Theme Option Card
 
 private struct ThemeOptionCard: View {
-    @ObservedObject private var themeManager = ThemeManager.shared
+    @Environment(\.theme) private var theme
 
     let name: String
     let colors: [Color]
@@ -1605,7 +2162,6 @@ private struct ThemeOptionCard: View {
     var body: some View {
         Button(action: onSelect) {
             VStack(spacing: 8) {
-                // Color swatches
                 HStack(spacing: 4) {
                     ForEach(0 ..< min(3, colors.count), id: \.self) { index in
                         Circle()
@@ -1620,7 +2176,7 @@ private struct ThemeOptionCard: View {
 
                 Text(name)
                     .font(.system(size: 11, weight: .medium))
-                    .foregroundColor(themeManager.currentTheme.primaryText)
+                    .foregroundColor(theme.primaryText)
                     .lineLimit(1)
             }
             .frame(maxWidth: .infinity)
@@ -1628,12 +2184,11 @@ private struct ThemeOptionCard: View {
             .padding(.horizontal, 8)
             .background(
                 RoundedRectangle(cornerRadius: 10)
-                    .fill(themeManager.currentTheme.inputBackground)
+                    .fill(theme.inputBackground)
                     .overlay(
                         RoundedRectangle(cornerRadius: 10)
                             .stroke(
-                                isSelected
-                                    ? themeManager.currentTheme.accentColor : themeManager.currentTheme.inputBorder,
+                                isSelected ? theme.accentColor : theme.inputBorder,
                                 lineWidth: isSelected ? 2 : 1
                             )
                     )
@@ -1648,193 +2203,10 @@ private struct ThemeOptionCard: View {
     }
 }
 
-// MARK: - Tool Toggle Row
-
-private struct ToolToggleRow: View {
-    @ObservedObject private var themeManager = ThemeManager.shared
-
-    let tool: ToolRegistry.ToolEntry
-    let isEnabled: Bool
-    let hasOverride: Bool
-    let onToggle: (Bool) -> Void
-    let onReset: () -> Void
-
-    @State private var isHovered = false
-
-    var body: some View {
-        HStack(spacing: 12) {
-            // Tool info
-            VStack(alignment: .leading, spacing: 2) {
-                HStack(spacing: 6) {
-                    Text(tool.name)
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundColor(themeManager.currentTheme.primaryText)
-
-                    if hasOverride {
-                        Text("Modified")
-                            .font(.system(size: 9, weight: .semibold))
-                            .foregroundColor(themeManager.currentTheme.accentColor)
-                            .padding(.horizontal, 5)
-                            .padding(.vertical, 1)
-                            .background(
-                                Capsule()
-                                    .fill(themeManager.currentTheme.accentColor.opacity(0.1))
-                            )
-                    }
-                }
-
-                Text(tool.description)
-                    .font(.system(size: 10))
-                    .foregroundColor(themeManager.currentTheme.tertiaryText)
-                    .lineLimit(1)
-            }
-
-            Spacer()
-
-            // Reset button (only when overridden)
-            if hasOverride && isHovered {
-                Button(action: onReset) {
-                    Image(systemName: "arrow.uturn.backward")
-                        .font(.system(size: 10, weight: .medium))
-                        .foregroundColor(themeManager.currentTheme.secondaryText)
-                }
-                .buttonStyle(.plain)
-                .help("Reset to default")
-            }
-
-            // Toggle
-            Toggle(
-                "",
-                isOn: Binding(
-                    get: { isEnabled },
-                    set: { onToggle($0) }
-                )
-            )
-            .toggleStyle(.switch)
-            .controlSize(.small)
-            .labelsHidden()
-        }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
-        .background(isHovered ? themeManager.currentTheme.tertiaryBackground.opacity(0.5) : Color.clear)
-        .onHover { hovering in
-            withAnimation(.easeOut(duration: 0.1)) {
-                isHovered = hovering
-            }
-        }
-    }
-}
-
-// MARK: - Skill Toggle Row
-
-private struct SkillToggleRow: View {
-    @ObservedObject private var themeManager = ThemeManager.shared
-
-    let skill: Skill
-    let isEnabled: Bool
-    let hasOverride: Bool
-    let onToggle: (Bool) -> Void
-    let onReset: () -> Void
-
-    @State private var isHovered = false
-
-    /// Generate a consistent color based on skill name
-    private var skillColor: Color {
-        let hash = abs(skill.name.hashValue)
-        let hue = Double(hash % 360) / 360.0
-        return Color(hue: hue, saturation: 0.6, brightness: 0.8)
-    }
-
-    var body: some View {
-        HStack(spacing: 12) {
-            // Skill icon
-            ZStack {
-                RoundedRectangle(cornerRadius: 6)
-                    .fill(skillColor.opacity(0.1))
-                Image(systemName: "sparkles")
-                    .font(.system(size: 10, weight: .medium))
-                    .foregroundColor(skillColor)
-            }
-            .frame(width: 24, height: 24)
-
-            // Skill info
-            VStack(alignment: .leading, spacing: 2) {
-                HStack(spacing: 6) {
-                    Text(skill.name)
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundColor(themeManager.currentTheme.primaryText)
-
-                    if skill.isBuiltIn {
-                        Text("Built-in")
-                            .font(.system(size: 9, weight: .semibold))
-                            .foregroundColor(themeManager.currentTheme.secondaryText)
-                            .padding(.horizontal, 5)
-                            .padding(.vertical, 1)
-                            .background(
-                                Capsule()
-                                    .fill(themeManager.currentTheme.tertiaryBackground)
-                            )
-                    }
-
-                    if hasOverride {
-                        Text("Modified")
-                            .font(.system(size: 9, weight: .semibold))
-                            .foregroundColor(themeManager.currentTheme.accentColor)
-                            .padding(.horizontal, 5)
-                            .padding(.vertical, 1)
-                            .background(
-                                Capsule()
-                                    .fill(themeManager.currentTheme.accentColor.opacity(0.1))
-                            )
-                    }
-                }
-
-                Text(skill.description)
-                    .font(.system(size: 10))
-                    .foregroundColor(themeManager.currentTheme.tertiaryText)
-                    .lineLimit(1)
-            }
-
-            Spacer()
-
-            // Reset button (only when overridden)
-            if hasOverride && isHovered {
-                Button(action: onReset) {
-                    Image(systemName: "arrow.uturn.backward")
-                        .font(.system(size: 10, weight: .medium))
-                        .foregroundColor(themeManager.currentTheme.secondaryText)
-                }
-                .buttonStyle(.plain)
-                .help("Reset to default")
-            }
-
-            // Toggle
-            Toggle(
-                "",
-                isOn: Binding(
-                    get: { isEnabled },
-                    set: { onToggle($0) }
-                )
-            )
-            .toggleStyle(.switch)
-            .controlSize(.small)
-            .labelsHidden()
-        }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
-        .background(isHovered ? themeManager.currentTheme.tertiaryBackground.opacity(0.5) : Color.clear)
-        .onHover { hovering in
-            withAnimation(.easeOut(duration: 0.1)) {
-                isHovered = hovering
-            }
-        }
-    }
-}
-
 // MARK: - Button Styles
 
 private struct PrimaryButtonStyle: ButtonStyle {
-    @ObservedObject private var themeManager = ThemeManager.shared
+    @Environment(\.theme) private var theme
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
@@ -1844,27 +2216,27 @@ private struct PrimaryButtonStyle: ButtonStyle {
             .padding(.vertical, 10)
             .background(
                 RoundedRectangle(cornerRadius: 8)
-                    .fill(themeManager.currentTheme.accentColor)
+                    .fill(theme.accentColor)
             )
             .opacity(configuration.isPressed ? 0.8 : 1.0)
     }
 }
 
 private struct SecondaryButtonStyle: ButtonStyle {
-    @ObservedObject private var themeManager = ThemeManager.shared
+    @Environment(\.theme) private var theme
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .font(.system(size: 13, weight: .medium))
-            .foregroundColor(themeManager.currentTheme.primaryText)
+            .foregroundColor(theme.primaryText)
             .padding(.horizontal, 16)
             .padding(.vertical, 10)
             .background(
                 RoundedRectangle(cornerRadius: 8)
-                    .fill(themeManager.currentTheme.tertiaryBackground)
+                    .fill(theme.tertiaryBackground)
                     .overlay(
                         RoundedRectangle(cornerRadius: 8)
-                            .stroke(themeManager.currentTheme.inputBorder, lineWidth: 1)
+                            .stroke(theme.inputBorder, lineWidth: 1)
                     )
             )
             .opacity(configuration.isPressed ? 0.8 : 1.0)
