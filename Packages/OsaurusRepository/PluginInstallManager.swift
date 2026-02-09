@@ -38,6 +38,8 @@ public final class PluginInstallManager: @unchecked Sendable {
         public let receipt: PluginReceipt
         public let installDirectory: URL
         public let dylibURL: URL
+        /// SKILL.md files found in the artifact and copied to the install directory
+        public let skillFiles: [URL]
     }
 
     @discardableResult
@@ -118,6 +120,31 @@ public final class PluginInstallManager: @unchecked Sendable {
         // Remove quarantine attribute so macOS allows loading the dylib
         Self.removeQuarantineAttribute(from: finalDylibURL)
 
+        // Copy any SKILL.md files found in the artifact
+        let skillFileURLs = findSkillFiles(in: tmpDir)
+        var installedSkillFiles: [URL] = []
+        if !skillFileURLs.isEmpty {
+            let skillsDir = installDir.appendingPathComponent("skills", isDirectory: true)
+            try ensureDirectoryExists(skillsDir)
+            for skillURL in skillFileURLs {
+                // Use parent directory name as prefix for disambiguation, or just the filename
+                let relativePath = skillURL.deletingLastPathComponent().lastPathComponent
+                let destName: String
+                if relativePath != tmpDir.lastPathComponent && relativePath != "skills" {
+                    destName = "\(relativePath)_SKILL.md"
+                } else {
+                    destName = "SKILL.md"
+                }
+                let destURL = skillsDir.appendingPathComponent(destName, isDirectory: false)
+                if FileManager.default.fileExists(atPath: destURL.path) {
+                    try FileManager.default.removeItem(at: destURL)
+                }
+                try FileManager.default.copyItem(at: skillURL, to: destURL)
+                installedSkillFiles.append(destURL)
+                NSLog("[Osaurus] Installed SKILL.md for plugin \(pluginId): \(destName)")
+            }
+        }
+
         let dylibData = try Data(contentsOf: finalDylibURL)
         let dylibDigest = SHA256.hash(data: dylibData)
         let dylibSha = Data(dylibDigest).map { String(format: "%02x", $0) }.joined()
@@ -144,7 +171,12 @@ public final class PluginInstallManager: @unchecked Sendable {
 
         try Self.updateCurrentSymlink(pluginId: spec.plugin_id, version: resolution.version.version)
 
-        return InstallResult(receipt: receipt, installDirectory: installDir, dylibURL: finalDylibURL)
+        return InstallResult(
+            receipt: receipt,
+            installDirectory: installDir,
+            dylibURL: finalDylibURL,
+            skillFiles: installedSkillFiles
+        )
     }
 
     // MARK: - Paths
@@ -217,6 +249,27 @@ public final class PluginInstallManager: @unchecked Sendable {
         let dir = base.appendingPathComponent("osaurus-plugin-\(UUID().uuidString)", isDirectory: true)
         try fm.createDirectory(at: dir, withIntermediateDirectories: true)
         return dir
+    }
+
+    /// Finds all SKILL.md files in the extracted archive directory
+    private func findSkillFiles(in directory: URL) -> [URL] {
+        let fm = FileManager.default
+        guard
+            let enumerator = fm.enumerator(
+                at: directory,
+                includingPropertiesForKeys: [.isRegularFileKey],
+                options: [.skipsHiddenFiles]
+            )
+        else {
+            return []
+        }
+        var results: [URL] = []
+        for case let fileURL as URL in enumerator {
+            if fileURL.lastPathComponent.uppercased() == "SKILL.MD" {
+                results.append(fileURL)
+            }
+        }
+        return results
     }
 
     private func findFirstDylib(in directory: URL) -> URL? {

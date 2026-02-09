@@ -262,7 +262,8 @@ public enum SkillStore {
                 updatedAt: parsed.updatedAt,
                 references: loadFilesFromSubdirectory(directoryURL, subdirectory: "references"),
                 assets: loadFilesFromSubdirectory(directoryURL, subdirectory: "assets"),
-                directoryName: directoryURL.lastPathComponent
+                directoryName: directoryURL.lastPathComponent,
+                pluginId: parsed.pluginId
             )
         } catch {
             print("[Osaurus] Failed to load skill from \(directoryURL.lastPathComponent): \(error)")

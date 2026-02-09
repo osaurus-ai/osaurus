@@ -18,6 +18,7 @@ final class PluginManager {
         let plugin: ExternalPlugin
         let handle: UnsafeMutableRawPointer
         let tools: [ExternalTool]  // Keep track of tools to unregister later
+        let skills: [Skill]  // Skills bundled with this plugin
     }
 
     /// Represents a plugin that failed to load
@@ -72,6 +73,11 @@ final class PluginManager {
                 let names = loaded.tools.map { $0.name }
                 ToolRegistry.shared.unregister(names: names)
 
+                // Unregister plugin skills
+                if !loaded.skills.isEmpty {
+                    SkillManager.shared.unregisterPluginSkills(pluginId: loaded.plugin.id)
+                }
+
                 // dlclose happens here
                 dlclose(loaded.handle)
                 loadedPluginPaths.remove(loaded.plugin.bundlePath)
@@ -95,6 +101,11 @@ final class PluginManager {
                 // Register tools
                 for tool in loaded.tools {
                     ToolRegistry.shared.register(tool)
+                }
+
+                // Register plugin skills
+                for skill in loaded.skills {
+                    SkillManager.shared.registerPluginSkill(skill)
                 }
 
                 // Clear any previous failure for this plugin
@@ -204,7 +215,67 @@ final class PluginManager {
             }
         }
 
-        return .success(LoadedPlugin(plugin: plugin, handle: handle, tools: tools))
+        // Load bundled SKILL.md files
+        let skills = Self.loadPluginSkills(from: url, pluginId: manifest.plugin_id)
+
+        return .success(LoadedPlugin(plugin: plugin, handle: handle, tools: tools, skills: skills))
+    }
+
+    /// Scans the plugin install directory for SKILL.md files and parses them into Skills
+    private static func loadPluginSkills(from dylibURL: URL, pluginId: String) -> [Skill] {
+        let versionDir = dylibURL.deletingLastPathComponent()
+        let skillsDir = versionDir.appendingPathComponent("skills", isDirectory: true)
+
+        var results: [Skill] = []
+
+        // Check for skills/ directory
+        let fm = FileManager.default
+        var isDirectory: ObjCBool = false
+        guard fm.fileExists(atPath: skillsDir.path, isDirectory: &isDirectory), isDirectory.boolValue else {
+            return results
+        }
+
+        guard
+            let files = try? fm.contentsOfDirectory(
+                at: skillsDir,
+                includingPropertiesForKeys: [.isRegularFileKey],
+                options: [.skipsHiddenFiles]
+            )
+        else {
+            return results
+        }
+
+        for file in files {
+            guard file.lastPathComponent.uppercased().hasSuffix("SKILL.MD") else { continue }
+            do {
+                let content = try String(contentsOf: file, encoding: .utf8)
+                var skill = try Skill.parseAnyFormat(from: content)
+                // Set the pluginId to link the skill to its plugin
+                skill = Skill(
+                    id: skill.id,
+                    name: skill.name,
+                    description: skill.description,
+                    version: skill.version,
+                    author: skill.author,
+                    category: skill.category,
+                    enabled: skill.enabled,
+                    instructions: skill.instructions,
+                    isBuiltIn: false,
+                    createdAt: skill.createdAt,
+                    updatedAt: skill.updatedAt,
+                    references: skill.references,
+                    assets: skill.assets,
+                    directoryName: skill.directoryName,
+                    pluginId: pluginId
+                )
+                results.append(skill)
+                NSLog("[Osaurus] Loaded skill '\(skill.name)' from plugin \(pluginId)")
+            } catch {
+                NSLog("[Osaurus] Failed to parse SKILL.md from plugin \(pluginId): \(error)")
+            }
+        }
+
+        return results
     }
 
     // MARK: - Tools directory helpers

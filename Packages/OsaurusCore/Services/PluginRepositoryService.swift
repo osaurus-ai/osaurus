@@ -206,6 +206,9 @@ final class PluginRepositoryService: ObservableObject {
         // Clean up any secrets stored in Keychain for this plugin
         ToolSecretsKeychain.deleteAllSecrets(for: pluginId)
 
+        // Remove plugin skills from SkillManager
+        SkillManager.shared.unregisterPluginSkills(pluginId: pluginId)
+
         // Update state to ensure UI reflects uninstallation immediately
         if let index = plugins.firstIndex(where: { $0.spec.plugin_id == pluginId }) {
             plugins[index].installedVersion = nil

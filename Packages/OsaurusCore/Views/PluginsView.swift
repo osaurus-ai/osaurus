@@ -490,18 +490,10 @@ private struct InstalledPluginCard: View {
 
                         Spacer()
 
-                        if !tools.isEmpty {
-                            HStack(spacing: 4) {
-                                Image(systemName: "wrench.and.screwdriver")
-                                    .font(.system(size: 10))
-                                Text("\(tools.count) tool\(tools.count == 1 ? "" : "s")")
-                                    .font(.system(size: 11, weight: .medium))
-                            }
-                            .foregroundColor(theme.secondaryText)
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 4)
-                            .background(Capsule().fill(theme.tertiaryBackground))
-                        }
+                        PluginCapabilitiesBadge(
+                            toolCount: tools.count,
+                            skillCount: SkillManager.shared.pluginSkills(for: plugin.spec.plugin_id).count
+                        )
 
                         Image(systemName: "chevron.right")
                             .font(.system(size: 11, weight: .semibold))
@@ -762,6 +754,71 @@ private struct InstalledPluginCard: View {
                 }
                 .transition(.opacity.combined(with: .move(edge: .top)))
             }
+
+            // Plugin skills section
+            if isExpanded && !plugin.hasLoadError {
+                let pluginSkills = SkillManager.shared.pluginSkills(for: plugin.spec.plugin_id)
+                if !pluginSkills.isEmpty {
+                    if !tools.isEmpty {
+                        Divider()
+                            .padding(.vertical, 4)
+                    }
+
+                    VStack(alignment: .leading, spacing: 8) {
+                        HStack(spacing: 6) {
+                            Image(systemName: "lightbulb.fill")
+                                .font(.system(size: 10))
+                                .foregroundColor(theme.accentColor)
+                            Text("Skills")
+                                .font(.system(size: 12, weight: .semibold))
+                                .foregroundColor(theme.secondaryText)
+                        }
+                        .padding(.bottom, 2)
+
+                        ForEach(pluginSkills) { skill in
+                            HStack(spacing: 10) {
+                                Image(systemName: "lightbulb")
+                                    .font(.system(size: 11))
+                                    .foregroundColor(skill.enabled ? theme.accentColor : theme.tertiaryText)
+                                    .frame(width: 16)
+
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(skill.name)
+                                        .font(.system(size: 13, weight: .medium))
+                                        .foregroundColor(theme.primaryText)
+                                    Text(skill.description)
+                                        .font(.system(size: 11))
+                                        .foregroundColor(theme.secondaryText)
+                                        .lineLimit(2)
+                                }
+
+                                Spacer()
+
+                                Toggle(
+                                    "",
+                                    isOn: Binding(
+                                        get: { skill.enabled },
+                                        set: { enabled in
+                                            SkillManager.shared.setEnabled(enabled, for: skill.id)
+                                            onChange()
+                                        }
+                                    )
+                                )
+                                .toggleStyle(SwitchToggleStyle(tint: theme.accentColor))
+                                .scaleEffect(0.7)
+                                .frame(width: 36)
+                            }
+                            .padding(.vertical, 4)
+                            .padding(.horizontal, 8)
+                            .background(
+                                RoundedRectangle(cornerRadius: 8)
+                                    .fill(theme.tertiaryBackground.opacity(0.5))
+                            )
+                        }
+                    }
+                    .transition(.opacity.combined(with: .move(edge: .top)))
+                }
+            }
         }
         .padding(16)
         .frame(maxWidth: .infinity)
@@ -981,18 +1038,10 @@ private struct PluginBrowseRow: View {
 
                         Spacer()
 
-                        if let tools = plugin.spec.capabilities?.tools, !tools.isEmpty {
-                            HStack(spacing: 4) {
-                                Image(systemName: "wrench.and.screwdriver")
-                                    .font(.system(size: 10))
-                                Text("\(tools.count) tool\(tools.count == 1 ? "" : "s")")
-                                    .font(.system(size: 11, weight: .medium))
-                            }
-                            .foregroundColor(theme.secondaryText)
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 4)
-                            .background(Capsule().fill(theme.tertiaryBackground))
-                        }
+                        PluginCapabilitiesBadge(
+                            toolCount: plugin.spec.capabilities?.tools?.count ?? 0,
+                            skillCount: plugin.spec.capabilities?.skills?.count ?? 0
+                        )
 
                         Image(systemName: "chevron.right")
                             .font(.system(size: 11, weight: .semibold))
@@ -1022,7 +1071,9 @@ private struct PluginBrowseRow: View {
                 }
                 .padding(.leading, 58)
 
-                if let tools = plugin.spec.capabilities?.tools, !tools.isEmpty {
+                let tools = plugin.spec.capabilities?.tools ?? []
+                let specSkills = plugin.spec.capabilities?.skills ?? []
+                if !tools.isEmpty || !specSkills.isEmpty {
                     Divider()
                         .padding(.vertical, 4)
 
@@ -1047,6 +1098,23 @@ private struct PluginBrowseRow: View {
                                 )
                                 .foregroundColor(theme.primaryText)
                                 .help(tool.description)
+                            }
+
+                            ForEach(specSkills, id: \.name) { skill in
+                                HStack(spacing: 4) {
+                                    Image(systemName: "lightbulb")
+                                        .font(.system(size: 9))
+                                    Text(skill.name)
+                                        .font(.system(size: 11, weight: .medium))
+                                }
+                                .padding(.horizontal, 10)
+                                .padding(.vertical, 5)
+                                .background(
+                                    Capsule()
+                                        .fill(theme.accentColor.opacity(0.12))
+                                )
+                                .foregroundColor(theme.primaryText)
+                                .help(skill.description)
                             }
                         }
                     }
@@ -1199,6 +1267,48 @@ private struct PluginBrowseRow: View {
         } catch {
             errorMessage = error.localizedDescription
             showError = true
+        }
+    }
+}
+
+// MARK: - Capabilities Badge
+
+/// Reusable badge showing tool and skill counts for a plugin
+private struct PluginCapabilitiesBadge: View {
+    @Environment(\.theme) private var theme
+
+    let toolCount: Int
+    let skillCount: Int
+
+    var body: some View {
+        if toolCount > 0 || skillCount > 0 {
+            HStack(spacing: 4) {
+                if toolCount > 0 {
+                    HStack(spacing: 3) {
+                        Image(systemName: "wrench.and.screwdriver")
+                            .font(.system(size: 9))
+                        Text("\(toolCount)")
+                            .font(.system(size: 11, weight: .medium))
+                    }
+                }
+                if toolCount > 0 && skillCount > 0 {
+                    Text("+")
+                        .font(.system(size: 9))
+                        .foregroundColor(theme.tertiaryText)
+                }
+                if skillCount > 0 {
+                    HStack(spacing: 3) {
+                        Image(systemName: "lightbulb")
+                            .font(.system(size: 9))
+                        Text("\(skillCount)")
+                            .font(.system(size: 11, weight: .medium))
+                    }
+                }
+            }
+            .foregroundColor(theme.secondaryText)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
+            .background(Capsule().fill(theme.tertiaryBackground))
         }
     }
 }

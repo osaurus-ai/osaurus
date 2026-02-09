@@ -10,6 +10,7 @@ import SwiftUI
 // MARK: - Types
 
 enum CapabilityTab: String, CaseIterable {
+    case plugins = "Plugins"
     case tools = "Tools"
     case skills = "Skills"
 }
@@ -50,6 +51,16 @@ private struct ToolGroup: Identifiable {
     var enabledCount: Int { tools.filter { $0.enabled }.count }
 }
 
+/// A compound plugin that provides both tools and skills.
+private struct CompoundPluginGroup: Identifiable {
+    let pluginId: String
+    let name: String
+    let toolNames: [String]
+    let skillNames: [String]
+
+    var id: String { "compound-\(pluginId)" }
+}
+
 // MARK: - Capabilities Selector View
 
 struct CapabilitiesSelectorView: View {
@@ -66,6 +77,7 @@ struct CapabilitiesSelectorView: View {
     @State private var expandedGroups: Set<String> = []
     @State private var cachedTools: [ToolRegistry.ToolEntry] = []
     @State private var cachedGroups: [ToolGroup] = []
+    @State private var cachedCompoundPlugins: [CompoundPluginGroup] = []
 
     @Environment(\.theme) private var theme
 
@@ -82,16 +94,32 @@ struct CapabilitiesSelectorView: View {
         cachedTools = tools
 
         var groups: [ToolGroup] = []
+        var compoundPlugins: [CompoundPluginGroup] = []
         var assignedNames: Set<String> = []
 
-        // Group by installed plugins
+        // Single pass over installed plugins: build tool groups and detect compound plugins
         for plugin in PluginRepositoryService.shared.plugins where plugin.isInstalled {
-            let specToolNames = Set((plugin.spec.capabilities?.tools ?? []).map { $0.name })
+            let pluginId = plugin.spec.plugin_id
+            let displayName = plugin.spec.name ?? pluginId
+            let specToolNames = (plugin.spec.capabilities?.tools ?? []).map { $0.name }
             let matched = tools.filter { specToolNames.contains($0.name) }
+
             if !matched.isEmpty {
-                let name = plugin.spec.name ?? plugin.spec.plugin_id
-                groups.append(ToolGroup(source: .plugin(id: plugin.spec.plugin_id, name: name), tools: matched))
+                groups.append(ToolGroup(source: .plugin(id: pluginId, name: displayName), tools: matched))
                 assignedNames.formUnion(matched.map { $0.name })
+            }
+
+            // Compound plugin: has both tools and skills
+            let pluginSkills = skillManager.pluginSkills(for: pluginId)
+            if !specToolNames.isEmpty && !pluginSkills.isEmpty {
+                compoundPlugins.append(
+                    CompoundPluginGroup(
+                        pluginId: pluginId,
+                        name: displayName,
+                        toolNames: specToolNames,
+                        skillNames: pluginSkills.map { $0.name }
+                    )
+                )
             }
         }
 
@@ -120,21 +148,51 @@ struct CapabilitiesSelectorView: View {
         }
 
         cachedGroups = groups
+        cachedCompoundPlugins = compoundPlugins
     }
+
+    // MARK: - Plugins
+
+    private var filteredCompoundPlugins: [CompoundPluginGroup] {
+        guard !searchText.isEmpty else { return cachedCompoundPlugins }
+        return cachedCompoundPlugins.filter { SearchService.matches(query: searchText, in: $0.name) }
+    }
+
+    private var enabledCompoundPluginCount: Int {
+        cachedCompoundPlugins.filter { isCompoundPluginActive($0) }.count
+    }
+
+    private func isCompoundPluginActive(_ group: CompoundPluginGroup) -> Bool {
+        group.toolNames.allSatisfy { name in
+            cachedTools.first(where: { $0.name == name })?.enabled ?? false
+        }
+            && group.skillNames.allSatisfy { isSkillEnabled($0) }
+    }
+
+    private func toggleCompoundPlugin(_ group: CompoundPluginGroup) {
+        let isActive = isCompoundPluginActive(group)
+        if isActive {
+            personaManager.disableAllTools(for: personaId, tools: group.toolNames)
+            personaManager.disableAllSkills(for: personaId, skills: group.skillNames)
+        } else {
+            let restricted = agentRestrictedTools
+            personaManager.enableAllTools(for: personaId, tools: group.toolNames.filter { !restricted.contains($0) })
+            personaManager.enableAllSkills(for: personaId, skills: group.skillNames)
+        }
+    }
+
+    // MARK: - Tools
 
     private var filteredGroups: [ToolGroup] {
         guard !searchText.isEmpty else { return cachedGroups }
-
         return cachedGroups.compactMap { group in
             let groupMatches = SearchService.matches(query: searchText, in: group.displayName)
             let matchedTools = group.tools.filter {
                 SearchService.matches(query: searchText, in: $0.name)
                     || SearchService.matches(query: searchText, in: $0.description)
             }
-
-            if groupMatches {
-                return group
-            } else if !matchedTools.isEmpty {
+            if groupMatches { return group }
+            if !matchedTools.isEmpty {
                 var filtered = group
                 filtered.tools = matchedTools
                 return filtered
@@ -143,26 +201,17 @@ struct CapabilitiesSelectorView: View {
         }
     }
 
-    private func isGroupExpanded(_ groupId: String) -> Bool {
-        !searchText.isEmpty || expandedGroups.contains(groupId)
-    }
-
     private var enabledToolCount: Int {
         cachedTools.filter { $0.enabled }.count
     }
 
-    // MARK: - Skill Data
+    private func isGroupExpanded(_ groupId: String) -> Bool {
+        !searchText.isEmpty || expandedGroups.contains(groupId)
+    }
+
+    // MARK: - Skills
 
     private var skills: [Skill] { skillManager.skills }
-
-    private func isSkillEnabled(_ name: String) -> Bool {
-        if let overrides = personaManager.effectiveSkillOverrides(for: personaId),
-            let value = overrides[name]
-        {
-            return value
-        }
-        return skillManager.skill(named: name)?.enabled ?? false
-    }
 
     private var filteredSkills: [Skill] {
         guard !searchText.isEmpty else { return skills }
@@ -176,7 +225,16 @@ struct CapabilitiesSelectorView: View {
         skills.filter { isSkillEnabled($0.name) }.count
     }
 
-    // MARK: - Stats
+    private func isSkillEnabled(_ name: String) -> Bool {
+        if let overrides = personaManager.effectiveSkillOverrides(for: personaId),
+            let value = overrides[name]
+        {
+            return value
+        }
+        return skillManager.skill(named: name)?.enabled ?? false
+    }
+
+    // MARK: - Counts & Tokens
 
     private var totalEnabledCount: Int { enabledToolCount + enabledSkillCount }
     private var totalCount: Int { cachedTools.count + skills.count }
@@ -190,7 +248,16 @@ struct CapabilitiesSelectorView: View {
     }
 
     private var currentTabFilteredCount: Int {
-        selectedTab == .tools ? filteredGroups.reduce(0) { $0 + $1.tools.count } : filteredSkills.count
+        switch selectedTab {
+        case .plugins: return filteredCompoundPlugins.count
+        case .tools: return filteredGroups.reduce(0) { $0 + $1.tools.count }
+        case .skills: return filteredSkills.count
+        }
+    }
+
+    /// Only show Plugins tab when compound plugins exist.
+    private var visibleTabs: [CapabilityTab] {
+        cachedCompoundPlugins.isEmpty ? [.tools, .skills] : CapabilityTab.allCases
     }
 
     // MARK: - Actions
@@ -204,35 +271,50 @@ struct CapabilitiesSelectorView: View {
     }
 
     private func enableAll() {
-        if selectedTab == .tools {
-            let restricted = agentRestrictedTools
-            let toolNames = cachedTools.map { $0.name }.filter { !restricted.contains($0) }
-            personaManager.enableAllTools(for: personaId, tools: toolNames)
-        } else {
+        let restricted = agentRestrictedTools
+        switch selectedTab {
+        case .plugins:
+            for group in cachedCompoundPlugins {
+                personaManager.enableAllTools(
+                    for: personaId,
+                    tools: group.toolNames.filter { !restricted.contains($0) }
+                )
+                personaManager.enableAllSkills(for: personaId, skills: group.skillNames)
+            }
+        case .tools:
+            personaManager.enableAllTools(
+                for: personaId,
+                tools: cachedTools.map { $0.name }.filter { !restricted.contains($0) }
+            )
+        case .skills:
             personaManager.enableAllSkills(for: personaId, skills: skills.map { $0.name })
         }
     }
 
     private func disableAll() {
-        if selectedTab == .tools {
+        switch selectedTab {
+        case .plugins:
+            for group in cachedCompoundPlugins {
+                personaManager.disableAllTools(for: personaId, tools: group.toolNames)
+                personaManager.disableAllSkills(for: personaId, skills: group.skillNames)
+            }
+        case .tools:
             personaManager.disableAllTools(for: personaId, tools: cachedTools.map { $0.name })
-        } else {
+        case .skills:
             personaManager.disableAllSkills(for: personaId, skills: skills.map { $0.name })
         }
     }
 
     private func toggleGroup(_ group: ToolGroup) {
-        if expandedGroups.contains(group.id) {
-            expandedGroups.remove(group.id)
-        } else {
-            expandedGroups.insert(group.id)
-        }
+        expandedGroups.formSymmetricDifference([group.id])
     }
 
     private func enableAllInGroup(_ group: ToolGroup) {
         let restricted = agentRestrictedTools
-        let toolNames = group.tools.map { $0.name }.filter { !restricted.contains($0) }
-        personaManager.enableAllTools(for: personaId, tools: toolNames)
+        personaManager.enableAllTools(
+            for: personaId,
+            tools: group.tools.map { $0.name }.filter { !restricted.contains($0) }
+        )
     }
 
     private func disableAllInGroup(_ group: ToolGroup) {
@@ -240,27 +322,58 @@ struct CapabilitiesSelectorView: View {
     }
 
     private func openManagement() {
-        AppDelegate.shared?.showManagementWindow(initialTab: selectedTab == .tools ? .tools : .skills)
+        switch selectedTab {
+        case .plugins, .tools:
+            AppDelegate.shared?.showManagementWindow(initialTab: .tools)
+        case .skills:
+            AppDelegate.shared?.showManagementWindow(initialTab: .skills)
+        }
     }
 
     private func resetToDefaults() {
         guard var persona = personaManager.persona(for: personaId) else { return }
-        if selectedTab == .tools {
+        switch selectedTab {
+        case .plugins:
+            // Reset both tools and skills for compound plugins
             persona.enabledTools = nil
-        } else {
+            persona.enabledSkills = nil
+        case .tools:
+            persona.enabledTools = nil
+        case .skills:
             persona.enabledSkills = nil
         }
         personaManager.update(persona)
-        let notification: Notification.Name = selectedTab == .tools ? .toolsListChanged : .skillsListChanged
-        NotificationCenter.default.post(name: notification, object: nil)
+        NotificationCenter.default.post(name: .toolsListChanged, object: nil)
+        NotificationCenter.default.post(name: .skillsListChanged, object: nil)
     }
 
     private var hasOverrides: Bool {
         let persona = personaManager.persona(for: personaId)
-        if selectedTab == .tools {
+        switch selectedTab {
+        case .plugins:
+            return (persona?.enabledTools?.isEmpty == false) || (persona?.enabledSkills?.isEmpty == false)
+        case .tools:
             return persona?.enabledTools?.isEmpty == false
-        } else {
+        case .skills:
             return persona?.enabledSkills?.isEmpty == false
+        }
+    }
+
+    // MARK: - Tab Helpers
+
+    private func tabIcon(for tab: CapabilityTab) -> String {
+        switch tab {
+        case .plugins: return "puzzlepiece.extension"
+        case .tools: return "wrench.and.screwdriver"
+        case .skills: return "lightbulb"
+        }
+    }
+
+    private func tabCountLabel(for tab: CapabilityTab) -> String {
+        switch tab {
+        case .plugins: return "\(enabledCompoundPluginCount)/\(cachedCompoundPlugins.count)"
+        case .tools: return "\(enabledToolCount)/\(cachedTools.count)"
+        case .skills: return "\(enabledSkillCount)/\(skills.count)"
         }
     }
 
@@ -280,12 +393,24 @@ struct CapabilitiesSelectorView: View {
             }
         }
         .animation(.easeInOut(duration: 0.2), value: selectedTab)
-        .onAppear { rebuildToolsCache() }
+        .onAppear {
+            rebuildToolsCache()
+            // Default to plugins tab when compound plugins exist
+            if !cachedCompoundPlugins.isEmpty {
+                selectedTab = .plugins
+            }
+        }
         .onReceive(toolRegistry.objectWillChange) { _ in
             DispatchQueue.main.async { rebuildToolsCache() }
         }
         .onReceive(NotificationCenter.default.publisher(for: .toolsListChanged)) { _ in rebuildToolsCache() }
         .onReceive(NotificationCenter.default.publisher(for: .skillsListChanged)) { _ in rebuildToolsCache() }
+        .onChange(of: cachedCompoundPlugins.count) { _, newCount in
+            // If plugins tab is selected but no compound plugins remain, switch to tools
+            if newCount == 0 && selectedTab == .plugins {
+                selectedTab = .tools
+            }
+        }
 
         if isInline {
             content
@@ -367,20 +492,20 @@ struct CapabilitiesSelectorView: View {
 
             // Tab selector
             HStack(spacing: 0) {
-                ForEach(CapabilityTab.allCases, id: \.self) { tab in
+                ForEach(visibleTabs, id: \.self) { tab in
                     Button {
                         withAnimation(.easeInOut(duration: 0.15)) { selectedTab = tab }
                     } label: {
-                        HStack(spacing: 5) {
-                            Image(systemName: tab == .tools ? "wrench.and.screwdriver" : "lightbulb")
+                        HStack(spacing: 4) {
+                            Image(systemName: tabIcon(for: tab))
                                 .font(.system(size: 11))
                             Text(tab.rawValue)
                                 .font(.system(size: 12, weight: .medium))
-                            Text(
-                                "(\(tab == .tools ? enabledToolCount : enabledSkillCount)/\(tab == .tools ? cachedTools.count : skills.count))"
-                            )
-                            .font(.system(size: 10))
-                            .foregroundColor(selectedTab == tab ? theme.primaryText.opacity(0.7) : theme.tertiaryText)
+                            Text("(\(tabCountLabel(for: tab)))")
+                                .font(.system(size: 10))
+                                .foregroundColor(
+                                    selectedTab == tab ? theme.primaryText.opacity(0.7) : theme.tertiaryText
+                                )
                         }
                         .foregroundColor(selectedTab == tab ? theme.primaryText : theme.secondaryText)
                         .frame(maxWidth: .infinity)
@@ -434,7 +559,7 @@ struct CapabilitiesSelectorView: View {
                 Spacer()
 
                 CapabilityActionButton(title: "Manage", icon: "gearshape", isSecondary: true, action: openManagement)
-                    .help("Open \(selectedTab == .tools ? "Tools" : "Skills") management")
+                    .help("Open \(selectedTab == .skills ? "Skills" : "Tools") management")
             }
         }
         .padding(.horizontal, 14)
@@ -449,13 +574,10 @@ struct CapabilitiesSelectorView: View {
                 .font(.system(size: 13))
                 .foregroundColor(theme.tertiaryText)
 
-            TextField(
-                selectedTab == .tools ? "Search tools or plugins..." : "Search skills...",
-                text: $searchText
-            )
-            .textFieldStyle(.plain)
-            .font(.system(size: 13))
-            .foregroundColor(theme.primaryText)
+            TextField("Search \(selectedTab.rawValue.lowercased())...", text: $searchText)
+                .textFieldStyle(.plain)
+                .font(.system(size: 13))
+                .foregroundColor(theme.primaryText)
 
             if !searchText.isEmpty {
                 Button {
@@ -482,7 +604,7 @@ struct CapabilitiesSelectorView: View {
             Image(systemName: "magnifyingglass")
                 .font(.system(size: 24))
                 .foregroundColor(theme.tertiaryText)
-            Text("No \(selectedTab == .tools ? "tools" : "skills") found")
+            Text("No \(selectedTab.rawValue.lowercased()) found")
                 .font(.system(size: 13))
                 .foregroundColor(theme.secondaryText)
         }
@@ -495,7 +617,17 @@ struct CapabilitiesSelectorView: View {
     private var itemList: some View {
         ScrollView {
             LazyVStack(spacing: 2) {
-                if selectedTab == .tools {
+                switch selectedTab {
+                case .plugins:
+                    ForEach(filteredCompoundPlugins) { group in
+                        CompoundPluginRow(
+                            group: group,
+                            isActive: isCompoundPluginActive(group),
+                            onToggle: { toggleCompoundPlugin(group) }
+                        )
+                    }
+
+                case .tools:
                     ForEach(filteredGroups) { group in
                         Section {
                             if isGroupExpanded(group.id) {
@@ -517,7 +649,8 @@ struct CapabilitiesSelectorView: View {
                             )
                         }
                     }
-                } else {
+
+                case .skills:
                     ForEach(filteredSkills) { skill in
                         SkillRowItem(skill: skill, isEnabled: isSkillEnabled(skill.name)) {
                             toggleSkill(skill.name)
@@ -703,6 +836,8 @@ private struct SkillRowItem: View {
 
                     if skill.isBuiltIn {
                         SmallCapsuleBadge(text: "Built-in")
+                    } else if skill.isFromPlugin {
+                        SmallCapsuleBadge(text: "Plugin", icon: "puzzlepiece.extension")
                     }
                 }
                 Text(skill.description)
@@ -721,6 +856,97 @@ private struct SkillRowItem: View {
         .contentShape(Rectangle())
         .onTapGesture { onToggle() }
         .modifier(HoverRowStyle(isHovered: isHovered, showAccent: isEnabled))
+        .onHover { hovering in
+            withAnimation(.easeOut(duration: 0.15)) { isHovered = hovering }
+        }
+    }
+}
+
+// MARK: - Compound Plugin Views
+
+/// A row for a compound plugin (has both tools and skills) with a master toggle
+private struct CompoundPluginRow: View {
+    let group: CompoundPluginGroup
+    let isActive: Bool
+    let onToggle: () -> Void
+
+    @State private var isHovered = false
+    @Environment(\.theme) private var theme
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Toggle("", isOn: Binding(get: { isActive }, set: { _ in onToggle() }))
+                .toggleStyle(SwitchToggleStyle(tint: theme.accentColor))
+                .scaleEffect(0.7)
+                .frame(width: 36)
+
+            // Plugin icon with sparkle overlay
+            ZStack {
+                Image(systemName: "puzzlepiece.extension.fill")
+                    .font(.system(size: 14))
+                    .foregroundColor(isActive ? theme.accentColor : theme.tertiaryText)
+
+                Image(systemName: "sparkle")
+                    .font(.system(size: 7, weight: .bold))
+                    .foregroundColor(isActive ? theme.accentColor : theme.tertiaryText)
+                    .offset(x: 8, y: -8)
+            }
+            .frame(width: 20)
+
+            VStack(alignment: .leading, spacing: 3) {
+                Text(group.name)
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundColor(isActive ? theme.primaryText : theme.secondaryText)
+                    .lineLimit(1)
+
+                HStack(spacing: 4) {
+                    HStack(spacing: 2) {
+                        Image(systemName: "wrench.and.screwdriver")
+                            .font(.system(size: 8))
+                        Text("\(group.toolNames.count)")
+                            .font(.system(size: 9, weight: .medium))
+                    }
+                    .foregroundColor(theme.tertiaryText)
+
+                    Text("+")
+                        .font(.system(size: 8))
+                        .foregroundColor(theme.tertiaryText)
+
+                    HStack(spacing: 2) {
+                        Image(systemName: "lightbulb")
+                            .font(.system(size: 8))
+                        Text("\(group.skillNames.count)")
+                            .font(.system(size: 9, weight: .medium))
+                    }
+                    .foregroundColor(theme.tertiaryText)
+                }
+            }
+
+            Spacer()
+
+            // Active/inactive badge
+            Text(isActive ? "Active" : "Inactive")
+                .font(.system(size: 9, weight: .medium))
+                .foregroundColor(isActive ? theme.accentColor : theme.tertiaryText)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 3)
+                .background(
+                    Capsule()
+                        .fill(isActive ? theme.accentColor.opacity(0.15) : theme.secondaryBackground.opacity(0.5))
+                        .overlay(
+                            Capsule()
+                                .strokeBorder(
+                                    isActive ? theme.accentColor.opacity(0.2) : theme.primaryBorder.opacity(0.1),
+                                    lineWidth: 1
+                                )
+                        )
+                )
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .contentShape(Rectangle())
+        .onTapGesture { onToggle() }
+        .modifier(HoverRowStyle(isHovered: isHovered, showAccent: isActive))
         .onHover { hovering in
             withAnimation(.easeOut(duration: 0.15)) { isHovered = hovering }
         }
@@ -791,23 +1017,30 @@ private struct TokenBadge: View {
     }
 }
 
-/// Small capsule label (e.g. "Built-in", "Chat Mode only").
+/// Small capsule label (e.g. "Built-in", "Chat Mode only", "Plugin").
 private struct SmallCapsuleBadge: View {
     let text: String
+    var icon: String? = nil
 
     @Environment(\.theme) private var theme
 
     var body: some View {
-        Text(text)
-            .font(.system(size: 8, weight: .medium))
-            .foregroundColor(theme.secondaryText)
-            .padding(.horizontal, 5)
-            .padding(.vertical, 2)
-            .background(
-                Capsule()
-                    .fill(theme.secondaryBackground)
-                    .overlay(Capsule().strokeBorder(theme.primaryBorder.opacity(0.1), lineWidth: 1))
-            )
+        HStack(spacing: 3) {
+            if let icon = icon {
+                Image(systemName: icon)
+                    .font(.system(size: 7))
+            }
+            Text(text)
+                .font(.system(size: 8, weight: .medium))
+        }
+        .foregroundColor(theme.secondaryText)
+        .padding(.horizontal, 5)
+        .padding(.vertical, 2)
+        .background(
+            Capsule()
+                .fill(theme.secondaryBackground)
+                .overlay(Capsule().strokeBorder(theme.primaryBorder.opacity(0.1), lineWidth: 1))
+        )
     }
 }
 
