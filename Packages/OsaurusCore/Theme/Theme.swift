@@ -468,17 +468,17 @@ extension Notification.Name {
 }
 
 @MainActor
-class ThemeManager: ObservableObject {
-    static let shared = ThemeManager()
+public class ThemeManager: ObservableObject {
+    public static let shared = ThemeManager()
 
     @Published var currentTheme: ThemeProtocol
     @Published var chatTheme: ThemeProtocol
-    @Published private(set) var appearanceMode: AppearanceMode = .system
-    @Published private(set) var activeCustomTheme: CustomTheme?
-    @Published private(set) var installedThemes: [CustomTheme] = []
+    @Published public private(set) var appearanceMode: AppearanceMode = .system
+    @Published public private(set) var activeCustomTheme: CustomTheme?
+    @Published public private(set) var installedThemes: [CustomTheme] = []
 
     /// Whether a custom theme is currently active
-    var isCustomThemeActive: Bool { activeCustomTheme != nil }
+    public var isCustomThemeActive: Bool { activeCustomTheme != nil }
 
     private init() {
         print("[Osaurus] ThemeManager: Initializing...")
@@ -578,7 +578,7 @@ class ThemeManager: ObservableObject {
     ///   - theme: The theme to apply
     ///   - persist: Whether to save the theme ID to disk (default: true). Set to false for temporary theme changes like persona themes.
     ///   - animated: Whether to animate the theme transition (default: true). Set to false for instant changes on initial load.
-    func applyCustomTheme(_ theme: CustomTheme, persist: Bool = true, animated: Bool = true) {
+    public func applyCustomTheme(_ theme: CustomTheme, persist: Bool = true, animated: Bool = true) {
         activeCustomTheme = theme
         if persist {
             ThemeConfigurationStore.saveActiveThemeId(theme.metadata.id)

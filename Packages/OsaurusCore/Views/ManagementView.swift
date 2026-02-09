@@ -13,7 +13,7 @@ import SwiftUI
 // MARK: - Management Tab
 
 /// Defines all available tabs in the management sidebar.
-enum ManagementTab: String, CaseIterable, Identifiable {
+public enum ManagementTab: String, CaseIterable, Identifiable {
     case models
     case providers
     case plugins
@@ -28,9 +28,9 @@ enum ManagementTab: String, CaseIterable, Identifiable {
     case permissions
     case settings
 
-    var id: String { rawValue }
+    public var id: String { rawValue }
 
-    var icon: String {
+    public var icon: String {
         switch self {
         case .models: "cube.box.fill"
         case .providers: "cloud.fill"
@@ -48,7 +48,7 @@ enum ManagementTab: String, CaseIterable, Identifiable {
         }
     }
 
-    var label: String {
+    public var label: String {
         switch self {
         case .models: "Models"
         case .providers: "Providers"

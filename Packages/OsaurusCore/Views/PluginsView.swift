@@ -265,7 +265,7 @@ struct PluginsView: View {
     // MARK: - Helpers
 
     /// Whether a plugin matches the current search query.
-    private static func pluginMatchesQuery(_ plugin: PluginState, query: String) -> Bool {
+    nonisolated private static func pluginMatchesQuery(_ plugin: PluginState, query: String) -> Bool {
         guard !query.isEmpty else { return true }
         let queryLower = query.lowercased()
         return [

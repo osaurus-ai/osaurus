@@ -12,97 +12,275 @@ import SwiftUI
 @main
 struct osaurusApp: SwiftUI.App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
+    @ObservedObject private var themeManager = ThemeManager.shared
+    @ObservedObject private var scheduleManager = ScheduleManager.shared
+    @ObservedObject private var vadService = VADService.shared
+    @ObservedObject private var whisperModelManager = WhisperModelManager.shared
 
     var body: some SwiftUI.Scene {
         Settings {
             EmptyView()
         }
         .commands {
-            // File menu commands
-            CommandGroup(replacing: .newItem) {
-                Button("New Window") {
-                    Task { @MainActor in
-                        ChatWindowManager.shared.createWindow()
-                    }
-                }
-                .keyboardShortcut("n", modifiers: .command)
+            fileMenuCommands
+            fileMenuExtras
+            settingsCommand
+            aboutCommand
+            viewMenuCommands
+            windowMenuCommands
+            helpMenuCommands
+        }
+    }
+}
 
-                Menu("New Window with Persona") {
-                    ForEach(PersonaManager.shared.personas, id: \.id) { persona in
-                        Button(persona.name) {
-                            Task { @MainActor in
-                                ChatWindowManager.shared.createWindow(personaId: persona.id)
-                            }
+// MARK: - Menu Commands
+
+private extension osaurusApp {
+
+    // MARK: File Menu
+
+    var fileMenuCommands: some Commands {
+        CommandGroup(replacing: .newItem) {
+            Button("New Window") {
+                Task { @MainActor in
+                    ChatWindowManager.shared.createWindow()
+                }
+            }
+            .keyboardShortcut("n", modifiers: .command)
+
+            Menu("New Window with Persona") {
+                ForEach(PersonaManager.shared.personas, id: \.id) { persona in
+                    Button(persona.name) {
+                        Task { @MainActor in
+                            ChatWindowManager.shared.createWindow(personaId: persona.id)
                         }
                     }
                 }
             }
+        }
+    }
 
-            // Settings command
-            CommandGroup(replacing: .appSettings) {
-                Button("Settings…") {
-                    appDelegate.showPopover()
+    var fileMenuExtras: some Commands {
+        CommandGroup(after: .newItem) {
+            Divider()
+
+            Button(vadToggleLabel) {
+                toggleVAD()
+            }
+            .keyboardShortcut("v", modifiers: [.command, .shift])
+            .disabled(!canToggleVAD)
+
+            Divider()
+
+            schedulesMenu
+            personasMenu
+        }
+    }
+
+    // MARK: Settings
+
+    var settingsCommand: some Commands {
+        CommandGroup(replacing: .appSettings) {
+            Button("Settings…") {
+                openManagementTab(.settings)
+            }
+            .keyboardShortcut(",", modifiers: .command)
+        }
+    }
+
+    // MARK: About
+
+    var aboutCommand: some Commands {
+        CommandGroup(replacing: .appInfo) {
+            Button("About Osaurus") {
+                NSApp.orderFrontStandardAboutPanel(options: [
+                    .applicationName: "Osaurus",
+                    .applicationVersion: Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String
+                        ?? "1.0",
+                    .version: Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "1",
+                ])
+            }
+        }
+    }
+
+    // MARK: View Menu
+
+    var viewMenuCommands: some Commands {
+        CommandGroup(after: .sidebar) {
+            Divider()
+
+            Menu("Theme") {
+                ForEach(themeManager.installedThemes, id: \.metadata.id) { theme in
+                    Button {
+                        themeManager.applyCustomTheme(theme)
+                    } label: {
+                        HStack {
+                            Text(theme.metadata.name)
+                            if themeManager.activeCustomTheme?.metadata.id == theme.metadata.id {
+                                Spacer()
+                                Image(systemName: "checkmark")
+                            }
+                        }
+                    }
                 }
-                .keyboardShortcut(",", modifiers: .command)
+
+                Divider()
+
+                Button("Manage Themes…") {
+                    openManagementTab(.themes)
+                }
+            }
+        }
+    }
+
+    // MARK: Window Menu
+
+    var windowMenuCommands: some Commands {
+        CommandGroup(after: .windowList) {
+            Divider()
+            Button("Models") { openManagementTab(.models) }
+            Button("Plugins") { openManagementTab(.plugins) }
+            Button("Server") { openManagementTab(.server) }
+        }
+    }
+
+    // MARK: Help Menu
+
+    var helpMenuCommands: some Commands {
+        CommandGroup(replacing: .help) {
+            Button("Osaurus Help") {
+                openURL("https://docs.osaurus.ai/")
+            }
+            .keyboardShortcut("?", modifiers: .command)
+
+            Divider()
+
+            Button("Documentation") {
+                openURL("https://docs.osaurus.ai/")
             }
 
-            // About command
-            CommandGroup(replacing: .appInfo) {
-                Button("About Osaurus") {
-                    NSApp.orderFrontStandardAboutPanel(options: [
-                        .applicationName: "Osaurus",
-                        .applicationVersion: Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String
-                            ?? "1.0",
-                        .version: Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "1",
-                    ])
+            Button("Discord Community") {
+                openURL("https://discord.gg/dinoki")
+            }
+
+            Button("Report an Issue…") {
+                openURL("https://github.com/dinoki-ai/osaurus/issues/new")
+            }
+
+            Divider()
+
+            Button("Keyboard Shortcuts") {
+                openURL("https://docs.osaurus.ai/keyboard-shortcuts")
+            }
+
+            Divider()
+
+            Button("Acknowledgements…") {
+                Task { @MainActor in
+                    appDelegate.showAcknowledgements()
+                }
+            }
+        }
+    }
+}
+
+// MARK: - Submenus
+
+private extension osaurusApp {
+
+    var schedulesMenu: some View {
+        Menu("Schedules") {
+            ForEach(scheduleManager.schedules) { schedule in
+                Button(schedule.name) {
+                    openManagementTab(.schedules)
                 }
             }
 
-            // Help menu commands
-            CommandGroup(replacing: .help) {
-                Button("Osaurus Help") {
-                    if let url = URL(string: "https://docs.osaurus.ai/") {
-                        NSWorkspace.shared.open(url)
-                    }
-                }
-                .keyboardShortcut("?", modifiers: .command)
-
+            if !scheduleManager.schedules.isEmpty {
                 Divider()
+            }
 
-                Button("Documentation") {
-                    if let url = URL(string: "https://docs.osaurus.ai/") {
-                        NSWorkspace.shared.open(url)
-                    }
-                }
+            Button("New Schedule…") {
+                openManagementTab(.schedules)
+            }
 
-                Button("Discord Community") {
-                    if let url = URL(string: "https://discord.gg/dinoki") {
-                        NSWorkspace.shared.open(url)
-                    }
-                }
+            Button("Manage Schedules…") {
+                openManagementTab(.schedules)
+            }
+        }
+    }
 
-                Button("Report an Issue…") {
-                    if let url = URL(string: "https://github.com/dinoki-ai/osaurus/issues/new") {
-                        NSWorkspace.shared.open(url)
-                    }
-                }
-
-                Divider()
-
-                Button("Keyboard Shortcuts") {
-                    if let url = URL(string: "https://docs.osaurus.ai/keyboard-shortcuts") {
-                        NSWorkspace.shared.open(url)
-                    }
-                }
-
-                Divider()
-
-                Button("Acknowledgements…") {
+    var personasMenu: some View {
+        Menu("Personas") {
+            ForEach(PersonaManager.shared.personas, id: \.id) { persona in
+                Button(persona.name) {
                     Task { @MainActor in
-                        appDelegate.showAcknowledgements()
+                        ChatWindowManager.shared.createWindow(personaId: persona.id)
                     }
                 }
             }
+
+            Divider()
+
+            Button("Manage Personas…") {
+                openManagementTab(.personas)
+            }
+        }
+    }
+}
+
+// MARK: - VAD Helpers
+
+private extension osaurusApp {
+
+    var canToggleVAD: Bool {
+        whisperModelManager.selectedModel != nil && whisperModelManager.downloadedModelsCount > 0
+    }
+
+    var vadToggleLabel: String {
+        let config = VADConfigurationStore.load()
+        guard canToggleVAD else { return "Toggle Voice Detection" }
+        return config.vadModeEnabled ? "Disable Voice Detection" : "Enable Voice Detection"
+    }
+
+    func toggleVAD() {
+        Task { @MainActor in
+            var config = VADConfigurationStore.load()
+            let newState = !config.vadModeEnabled
+            config.vadModeEnabled = newState
+            VADConfigurationStore.save(config)
+            vadService.loadConfiguration()
+
+            do {
+                if newState {
+                    try await vadService.start()
+                } else {
+                    await vadService.stop()
+                }
+            } catch {
+                if newState {
+                    config.vadModeEnabled = false
+                    VADConfigurationStore.save(config)
+                    vadService.loadConfiguration()
+                }
+            }
+        }
+    }
+}
+
+// MARK: - Utilities
+
+private extension osaurusApp {
+
+    func openManagementTab(_ tab: ManagementTab) {
+        Task { @MainActor in
+            AppDelegate.shared?.showManagementWindow(initialTab: tab)
+        }
+    }
+
+    func openURL(_ string: String) {
+        if let url = URL(string: string) {
+            NSWorkspace.shared.open(url)
         }
     }
 }

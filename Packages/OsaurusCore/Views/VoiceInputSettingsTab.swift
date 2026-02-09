@@ -67,7 +67,7 @@ struct VoiceInputSettingsTab: View {
                 Spacer()
             }
             .padding(24)
-            .frame(maxWidth: 700)
+            .frame(maxWidth: .infinity)
         }
         .onAppear {
             if !hasLoadedSettings {

@@ -478,7 +478,7 @@ struct ConfigurationView: View {
                     }
                     .padding(.horizontal, 24)
                     .padding(.vertical, 24)
-                    .frame(maxWidth: 700)
+                    .frame(maxWidth: .infinity)
                 }
                 .opacity(hasAppeared ? 1 : 0)
             }
