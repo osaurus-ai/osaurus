@@ -40,7 +40,12 @@ public struct RegistryCapabilities: Codable, Equatable, Sendable {
         public let name: String
         public let description: String
     }
+    public struct SkillSummary: Codable, Equatable, Sendable {
+        public let name: String
+        public let description: String
+    }
     public let tools: [ToolSummary]?
+    public let skills: [SkillSummary]?
 }
 
 public struct PluginSpec: Codable, Equatable, Sendable {

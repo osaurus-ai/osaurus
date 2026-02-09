@@ -38,6 +38,14 @@ public struct Skill: Codable, Identifiable, Sendable, Equatable {
     public let createdAt: Date
     public var updatedAt: Date
 
+    // MARK: - Plugin Association
+
+    /// The plugin ID if this skill was installed as part of a plugin
+    public var pluginId: String?
+
+    /// Whether this skill was installed from a plugin
+    public var isFromPlugin: Bool { pluginId != nil }
+
     // MARK: - Directory Structure
 
     /// Files in the references/ directory (loaded into context)
@@ -61,7 +69,8 @@ public struct Skill: Codable, Identifiable, Sendable, Equatable {
         updatedAt: Date = Date(),
         references: [SkillFile] = [],
         assets: [SkillFile] = [],
-        directoryName: String? = nil
+        directoryName: String? = nil,
+        pluginId: String? = nil
     ) {
         self.id = id
         self.name = name
@@ -77,6 +86,7 @@ public struct Skill: Codable, Identifiable, Sendable, Equatable {
         self.references = references
         self.assets = assets
         self.directoryName = directoryName
+        self.pluginId = pluginId
     }
 
     /// Total count of associated files
@@ -420,7 +430,8 @@ extension Skill {
             instructions: body.trimmingCharacters(in: .whitespacesAndNewlines),
             isBuiltIn: false,
             createdAt: createdAt,
-            updatedAt: updatedAt
+            updatedAt: updatedAt,
+            pluginId: frontmatter["pluginId"] as? String
         )
     }
 
@@ -441,6 +452,9 @@ extension Skill {
             yaml += "category: \"\(escapeYamlString(category))\"\n"
         }
         yaml += "enabled: \(enabled)\n"
+        if let pluginId = pluginId {
+            yaml += "pluginId: \"\(escapeYamlString(pluginId))\"\n"
+        }
         yaml += "createdAt: \"\(dateFormatter.string(from: createdAt))\"\n"
         yaml += "updatedAt: \"\(dateFormatter.string(from: updatedAt))\"\n"
         yaml += "---\n\n"
@@ -667,6 +681,9 @@ extension Skill {
             yaml += "  osaurus-id: \"\(id.uuidString)\"\n"
             yaml += "  osaurus-enabled: \(enabled)\n"
         }
+        if let pluginId = pluginId {
+            yaml += "  osaurus-plugin-id: \"\(pluginId)\"\n"
+        }
         if let author = author {
             yaml += "  author: \(escapeAgentSkillsYaml(author))\n"
         }
@@ -700,6 +717,7 @@ extension Skill {
         var category: String?
         var osaurusId: UUID?
         var enabled = true
+        var pluginId: String?
 
         if let metadata = frontmatter["metadata"] as? [String: Any] {
             author = metadata["author"] as? String
@@ -713,6 +731,7 @@ extension Skill {
             if let enabledValue = metadata["osaurus-enabled"] as? Bool {
                 enabled = enabledValue
             }
+            pluginId = metadata["osaurus-plugin-id"] as? String
         }
 
         // Convert Agent Skills name (lowercase-hyphen) to display name (Title Case)
@@ -733,7 +752,8 @@ extension Skill {
             instructions: body.trimmingCharacters(in: .whitespacesAndNewlines),
             isBuiltIn: false,
             createdAt: Date(),
-            updatedAt: Date()
+            updatedAt: Date(),
+            pluginId: pluginId
         )
     }
 

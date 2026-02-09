@@ -21,15 +21,13 @@ struct PluginsView: View {
     @State private var isRefreshButtonLoading = false
 
     // Snapshot values from service (updated via .onReceive / reload)
-    @State private var toolEntries: [ToolRegistry.ToolEntry] = []
     @State private var isRepoRefreshing = false
     @State private var updatesAvailableCount = 0
-    @State private var policyInfoCache: [String: ToolRegistry.ToolPolicyInfo] = [:]
     @State private var missingPermissionsPerPlugin: [String: [SystemPermission]] = [:]
 
     // Cached filtered results
     @State private var filteredPlugins: [PluginState] = []
-    @State private var installedPluginsWithTools: [(plugin: PluginState, tools: [ToolRegistry.ToolEntry])] = []
+    @State private var installedPlugins: [PluginState] = []
     @State private var pluginsWithMissingPermissionsCount = 0
 
     // Secrets sheet state for post-installation prompt
@@ -143,7 +141,7 @@ struct PluginsView: View {
             HeaderTabsRow(
                 selection: $selectedTab,
                 counts: [
-                    .installed: installedPluginsWithTools.count,
+                    .installed: installedPlugins.count,
                     .browse: filteredPlugins.count,
                 ],
                 badges: updatesAvailableCount > 0
@@ -162,12 +160,10 @@ struct PluginsView: View {
             LazyVStack(spacing: 16) {
                 SectionHeader(
                     title: "Installed Plugins",
-                    description: "Manage your installed plugins and their tools"
+                    description: "Manage your installed plugins"
                 )
 
-                let plugins = installedPluginsWithTools
-
-                if plugins.isEmpty {
+                if installedPlugins.isEmpty {
                     emptyState(
                         icon: "puzzlepiece.extension",
                         title: "No plugins installed",
@@ -180,14 +176,12 @@ struct PluginsView: View {
                         ToolPermissionBanner(count: pluginsWithMissingPermissionsCount)
                     }
 
-                    ForEach(plugins, id: \.plugin.id) { item in
+                    ForEach(installedPlugins, id: \.id) { plugin in
                         InstalledPluginCard(
-                            plugin: item.plugin,
-                            tools: item.tools,
-                            missingPermissions: missingPermissionsPerPlugin[item.plugin.spec.plugin_id] ?? [],
-                            policyInfoCache: policyInfoCache,
-                            onUpgrade: { try await repoService.upgrade(pluginId: item.plugin.spec.plugin_id) },
-                            onUninstall: { try repoService.uninstall(pluginId: item.plugin.spec.plugin_id) }
+                            plugin: plugin,
+                            missingPermissions: missingPermissionsPerPlugin[plugin.spec.plugin_id] ?? [],
+                            onUpgrade: { try await repoService.upgrade(pluginId: plugin.spec.plugin_id) },
+                            onUninstall: { try repoService.uninstall(pluginId: plugin.spec.plugin_id) }
                         ) {
                             reload()
                         }
@@ -270,93 +264,46 @@ struct PluginsView: View {
 
     // MARK: - Helpers
 
+    /// Whether a plugin matches the current search query.
+    private static func pluginMatchesQuery(_ plugin: PluginState, query: String) -> Bool {
+        guard !query.isEmpty else { return true }
+        let queryLower = query.lowercased()
+        return [
+            plugin.spec.plugin_id.lowercased(),
+            (plugin.spec.name ?? "").lowercased(),
+            (plugin.spec.description ?? "").lowercased(),
+        ].contains { SearchService.fuzzyMatch(query: queryLower, in: $0) }
+    }
+
     private func updateFilteredLists() async {
         let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
-        let queryLower = query.lowercased()
-        let currentToolEntries = toolEntries
         let currentPlugins = repoService.plugins
 
-        let (filteredPluginsResult, installedPluginsResult) =
+        let (browseResult, installedResult) =
             await Task.detached(priority: .userInitiated) {
-
-                // 1. Filtered Plugins (for Browse tab)
-                let filteredPlugins: [PluginState]
-                if query.isEmpty {
-                    filteredPlugins = currentPlugins
-                } else {
-                    filteredPlugins = currentPlugins.filter { plugin in
-                        let candidates = [
-                            plugin.spec.plugin_id.lowercased(),
-                            (plugin.spec.name ?? "").lowercased(),
-                            (plugin.spec.description ?? "").lowercased(),
-                        ]
-                        return candidates.contains { SearchService.fuzzyMatch(query: queryLower, in: $0) }
-                    }
-                }
-
-                // 2. Installed Plugins with Tools (for Installed tab)
-                let installedPlugins =
+                let browse = currentPlugins.filter { Self.pluginMatchesQuery($0, query: query) }
+                let installed =
                     currentPlugins
-                    .filter { $0.isInstalled }
-                    .compactMap { plugin -> (plugin: PluginState, tools: [ToolRegistry.ToolEntry])? in
-                        let specTools = plugin.spec.capabilities?.tools ?? []
-                        let toolNames = Set(specTools.map { $0.name })
-                        var matchedTools = currentToolEntries.filter { toolNames.contains($0.name) }
-
-                        if !query.isEmpty {
-                            let pluginMatches = [
-                                plugin.spec.plugin_id.lowercased(),
-                                (plugin.spec.name ?? "").lowercased(),
-                                (plugin.spec.description ?? "").lowercased(),
-                            ].contains { SearchService.fuzzyMatch(query: queryLower, in: $0) }
-
-                            if !pluginMatches {
-                                matchedTools = matchedTools.filter { tool in
-                                    let candidates = [tool.name.lowercased(), tool.description.lowercased()]
-                                    return candidates.contains { SearchService.fuzzyMatch(query: queryLower, in: $0) }
-                                }
-                            }
-
-                            if matchedTools.isEmpty && !pluginMatches && !plugin.hasLoadError { return nil }
-                        }
-
-                        if matchedTools.isEmpty && !plugin.hasLoadError { return nil }
-
-                        return (plugin, matchedTools)
-                    }
-                    .sorted {
-                        ($0.plugin.spec.name ?? $0.plugin.spec.plugin_id)
-                            < ($1.plugin.spec.name ?? $1.plugin.spec.plugin_id)
-                    }
-
-                return (filteredPlugins, installedPlugins)
+                    .filter { $0.isInstalled && Self.pluginMatchesQuery($0, query: query) }
+                    .sorted { ($0.spec.name ?? $0.spec.plugin_id) < ($1.spec.name ?? $1.spec.plugin_id) }
+                return (browse, installed)
             }.value
 
         guard !Task.isCancelled else { return }
 
-        filteredPlugins = filteredPluginsResult
-        installedPluginsWithTools = installedPluginsResult
+        filteredPlugins = browseResult
+        installedPlugins = installedResult
 
-        // Build policy info cache once for all tools
-        var cache: [String: ToolRegistry.ToolPolicyInfo] = [:]
-        for entry in currentToolEntries {
-            if let info = ToolRegistry.shared.policyInfo(for: entry.name) {
-                cache[entry.name] = info
-            }
-        }
-        policyInfoCache = cache
-
-        // Calculate plugins with missing permissions and per-plugin missing permissions
+        // Calculate per-plugin missing permissions from spec tool names
         var permissionCount = 0
         var missingPerms: [String: [SystemPermission]] = [:]
-        for (plugin, tools) in installedPluginsResult {
+        for plugin in installedResult {
+            let toolNames = (plugin.spec.capabilities?.tools ?? []).map { $0.name }
             var missing = Set<SystemPermission>()
-            for tool in tools {
-                if let info = cache[tool.name] {
-                    for (perm, granted) in info.systemPermissionStates {
-                        if !granted {
-                            missing.insert(perm)
-                        }
+            for name in toolNames {
+                if let info = ToolRegistry.shared.policyInfo(for: name) {
+                    for (perm, granted) in info.systemPermissionStates where !granted {
+                        missing.insert(perm)
                     }
                 }
             }
@@ -370,7 +317,6 @@ struct PluginsView: View {
     }
 
     private func reload() {
-        toolEntries = ToolRegistry.shared.listTools()
         updatesAvailableCount = repoService.updatesAvailableCount
         Task { await updateFilteredLists() }
     }
@@ -385,9 +331,7 @@ struct PluginsView: View {
 private struct InstalledPluginCard: View {
     @Environment(\.theme) private var theme
     let plugin: PluginState
-    let tools: [ToolRegistry.ToolEntry]
     let missingPermissions: [SystemPermission]
-    let policyInfoCache: [String: ToolRegistry.ToolPolicyInfo]
     let onUpgrade: () async throws -> Void
     let onUninstall: () throws -> Void
     let onChange: () -> Void
@@ -470,13 +414,25 @@ private struct InstalledPluginCard: View {
                                 }
 
                                 if plugin.hasLoadError {
-                                    loadErrorBadge
+                                    StatusCapsuleBadge(
+                                        icon: "exclamationmark.triangle.fill",
+                                        text: "Error",
+                                        color: .red
+                                    )
                                 } else if hasMissingSecrets {
-                                    secretsWarningBadge
+                                    StatusCapsuleBadge(
+                                        icon: "key.fill",
+                                        text: "Needs API Key",
+                                        color: theme.warningColor
+                                    )
                                 } else if hasMissingPermissions {
-                                    permissionWarningBadge
+                                    StatusCapsuleBadge(
+                                        icon: "lock.shield",
+                                        text: "Needs Permission",
+                                        color: theme.warningColor
+                                    )
                                 } else if plugin.hasUpdate {
-                                    updateBadge
+                                    StatusCapsuleBadge(icon: "arrow.up.circle.fill", text: "Update", color: .orange)
                                 }
                             }
 
@@ -490,18 +446,10 @@ private struct InstalledPluginCard: View {
 
                         Spacer()
 
-                        if !tools.isEmpty {
-                            HStack(spacing: 4) {
-                                Image(systemName: "wrench.and.screwdriver")
-                                    .font(.system(size: 10))
-                                Text("\(tools.count) tool\(tools.count == 1 ? "" : "s")")
-                                    .font(.system(size: 11, weight: .medium))
-                            }
-                            .foregroundColor(theme.secondaryText)
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 4)
-                            .background(Capsule().fill(theme.tertiaryBackground))
-                        }
+                        PluginCapabilitiesBadge(
+                            toolCount: plugin.spec.capabilities?.tools?.count ?? 0,
+                            skillCount: plugin.spec.capabilities?.skills?.count ?? 0
+                        )
 
                         Image(systemName: "chevron.right")
                             .font(.system(size: 11, weight: .semibold))
@@ -751,24 +699,23 @@ private struct InstalledPluginCard: View {
                 .transition(.opacity.combined(with: .move(edge: .top)))
             }
 
-            if isExpanded && !tools.isEmpty && !plugin.hasLoadError {
-                Divider()
-                    .padding(.vertical, 4)
+            // Read-only capabilities summary
+            if isExpanded && !plugin.hasLoadError {
+                let specTools = plugin.spec.capabilities?.tools ?? []
+                let specSkills = plugin.spec.capabilities?.skills ?? []
+                if !specTools.isEmpty || !specSkills.isEmpty {
+                    Divider()
+                        .padding(.vertical, 4)
 
-                LazyVStack(spacing: 8) {
-                    ForEach(tools, id: \.id) { entry in
-                        ToolEntryRow(entry: entry, policyInfo: policyInfoCache[entry.name], onChange: onChange)
-                    }
+                    PluginProvidesSummary(tools: specTools, skills: specSkills)
+                        .transition(.opacity.combined(with: .move(edge: .top)))
                 }
-                .transition(.opacity.combined(with: .move(edge: .top)))
             }
         }
         .padding(16)
         .frame(maxWidth: .infinity)
-        .background(cardBackground)
-        .onHover { hovering in
-            isHovering = hovering
-        }
+        .background(PluginCardBackground(isHovering: isHovering))
+        .onHover { isHovering = $0 }
         .onAppear {
             if let loaded = PluginManager.shared.plugins.first(where: { $0.plugin.id == plugin.spec.plugin_id }) {
                 cachedSecrets = loaded.plugin.manifest.secrets ?? []
@@ -796,98 +743,9 @@ private struct InstalledPluginCard: View {
     }
 
     private func updateSecretsStatus() {
-        let secrets = cachedSecrets
-        if secrets.isEmpty {
-            hasMissingSecrets = false
-        } else {
-            hasMissingSecrets = !ToolSecretsKeychain.hasAllRequiredSecrets(
-                specs: secrets,
-                for: plugin.spec.plugin_id
-            )
-        }
-    }
-
-    private var cardBackground: some View {
-        RoundedRectangle(cornerRadius: 12)
-            .fill(theme.cardBackground)
-            .overlay(
-                RoundedRectangle(cornerRadius: 12)
-                    .stroke(
-                        isHovering ? theme.accentColor.opacity(0.2) : theme.cardBorder,
-                        lineWidth: 1
-                    )
-            )
-            .shadow(
-                color: theme.shadowColor.opacity(theme.shadowOpacity),
-                radius: theme.cardShadowRadius,
-                x: 0,
-                y: theme.cardShadowY
-            )
-            .drawingGroup()
-    }
-
-    private var updateBadge: some View {
-        HStack(spacing: 4) {
-            Image(systemName: "arrow.up.circle.fill")
-                .font(.system(size: 10))
-            Text("Update")
-                .font(.system(size: 10, weight: .semibold))
-        }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 3)
-        .background(
-            Capsule()
-                .fill(Color.orange.opacity(0.15))
-        )
-        .foregroundColor(.orange)
-    }
-
-    private var loadErrorBadge: some View {
-        HStack(spacing: 4) {
-            Image(systemName: "exclamationmark.triangle.fill")
-                .font(.system(size: 10))
-            Text("Error")
-                .font(.system(size: 10, weight: .semibold))
-        }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 3)
-        .background(
-            Capsule()
-                .fill(Color.red.opacity(0.15))
-        )
-        .foregroundColor(.red)
-    }
-
-    private var permissionWarningBadge: some View {
-        HStack(spacing: 4) {
-            Image(systemName: "lock.shield")
-                .font(.system(size: 10))
-            Text("Needs Permission")
-                .font(.system(size: 10, weight: .semibold))
-        }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 3)
-        .background(
-            Capsule()
-                .fill(theme.warningColor.opacity(0.15))
-        )
-        .foregroundColor(theme.warningColor)
-    }
-
-    private var secretsWarningBadge: some View {
-        HStack(spacing: 4) {
-            Image(systemName: "key.fill")
-                .font(.system(size: 10))
-            Text("Needs API Key")
-                .font(.system(size: 10, weight: .semibold))
-        }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 3)
-        .background(
-            Capsule()
-                .fill(theme.warningColor.opacity(0.15))
-        )
-        .foregroundColor(theme.warningColor)
+        hasMissingSecrets =
+            !cachedSecrets.isEmpty
+            && !ToolSecretsKeychain.hasAllRequiredSecrets(specs: cachedSecrets, for: plugin.spec.plugin_id)
     }
 
     private func retryLoad() {
@@ -967,7 +825,7 @@ private struct PluginBrowseRow: View {
                                 }
 
                                 if plugin.hasUpdate {
-                                    updateBadge
+                                    StatusCapsuleBadge(icon: "arrow.up.circle.fill", text: "Update", color: .orange)
                                 }
                             }
 
@@ -981,18 +839,10 @@ private struct PluginBrowseRow: View {
 
                         Spacer()
 
-                        if let tools = plugin.spec.capabilities?.tools, !tools.isEmpty {
-                            HStack(spacing: 4) {
-                                Image(systemName: "wrench.and.screwdriver")
-                                    .font(.system(size: 10))
-                                Text("\(tools.count) tool\(tools.count == 1 ? "" : "s")")
-                                    .font(.system(size: 11, weight: .medium))
-                            }
-                            .foregroundColor(theme.secondaryText)
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 4)
-                            .background(Capsule().fill(theme.tertiaryBackground))
-                        }
+                        PluginCapabilitiesBadge(
+                            toolCount: plugin.spec.capabilities?.tools?.count ?? 0,
+                            skillCount: plugin.spec.capabilities?.skills?.count ?? 0
+                        )
 
                         Image(systemName: "chevron.right")
                             .font(.system(size: 11, weight: .semibold))
@@ -1022,84 +872,26 @@ private struct PluginBrowseRow: View {
                 }
                 .padding(.leading, 58)
 
-                if let tools = plugin.spec.capabilities?.tools, !tools.isEmpty {
+                let specTools = plugin.spec.capabilities?.tools ?? []
+                let specSkills = plugin.spec.capabilities?.skills ?? []
+                if !specTools.isEmpty || !specSkills.isEmpty {
                     Divider()
                         .padding(.vertical, 4)
 
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("Provides:")
-                            .font(.system(size: 12, weight: .medium))
-                            .foregroundColor(theme.secondaryText)
-
-                        PluginFlowLayout(spacing: 6) {
-                            ForEach(tools, id: \.name) { tool in
-                                HStack(spacing: 4) {
-                                    Image(systemName: "function")
-                                        .font(.system(size: 9))
-                                    Text(tool.name)
-                                        .font(.system(size: 11, weight: .medium))
-                                }
-                                .padding(.horizontal, 10)
-                                .padding(.vertical, 5)
-                                .background(
-                                    Capsule()
-                                        .fill(theme.tertiaryBackground)
-                                )
-                                .foregroundColor(theme.primaryText)
-                                .help(tool.description)
-                            }
-                        }
-                    }
+                    PluginProvidesSummary(tools: specTools, skills: specSkills)
                 }
             }
         }
         .padding(16)
         .frame(maxWidth: .infinity)
-        .background(cardBackground)
-        .onHover { hovering in
-            isHovering = hovering
-        }
+        .background(PluginCardBackground(isHovering: isHovering))
+        .onHover { isHovering = $0 }
         .themedAlert(
             "Installation Error",
             isPresented: $showError,
             message: errorMessage ?? "Unknown error",
             primaryButton: .primary("OK") {}
         )
-    }
-
-    private var cardBackground: some View {
-        RoundedRectangle(cornerRadius: 12)
-            .fill(theme.cardBackground)
-            .overlay(
-                RoundedRectangle(cornerRadius: 12)
-                    .stroke(
-                        isHovering ? theme.accentColor.opacity(0.2) : theme.cardBorder,
-                        lineWidth: 1
-                    )
-            )
-            .shadow(
-                color: theme.shadowColor.opacity(theme.shadowOpacity),
-                radius: theme.cardShadowRadius,
-                x: 0,
-                y: theme.cardShadowY
-            )
-            .drawingGroup()
-    }
-
-    private var updateBadge: some View {
-        HStack(spacing: 4) {
-            Image(systemName: "arrow.up.circle.fill")
-                .font(.system(size: 10))
-            Text("Update")
-                .font(.system(size: 10, weight: .semibold))
-        }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 3)
-        .background(
-            Capsule()
-                .fill(Color.orange.opacity(0.15))
-        )
-        .foregroundColor(.orange)
     }
 
     @ViewBuilder
@@ -1200,6 +992,141 @@ private struct PluginBrowseRow: View {
             errorMessage = error.localizedDescription
             showError = true
         }
+    }
+}
+
+// MARK: - Shared Components
+
+/// Small status capsule badge (e.g. "Update", "Error", "Needs Permission").
+private struct StatusCapsuleBadge: View {
+    let icon: String
+    let text: String
+    let color: Color
+
+    var body: some View {
+        HStack(spacing: 4) {
+            Image(systemName: icon)
+                .font(.system(size: 10))
+            Text(text)
+                .font(.system(size: 10, weight: .semibold))
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 3)
+        .background(Capsule().fill(color.opacity(0.15)))
+        .foregroundColor(color)
+    }
+}
+
+/// Reusable badge showing tool and skill counts for a plugin.
+private struct PluginCapabilitiesBadge: View {
+    @Environment(\.theme) private var theme
+
+    let toolCount: Int
+    let skillCount: Int
+
+    var body: some View {
+        if toolCount > 0 || skillCount > 0 {
+            HStack(spacing: 4) {
+                if toolCount > 0 {
+                    HStack(spacing: 3) {
+                        Image(systemName: "wrench.and.screwdriver")
+                            .font(.system(size: 9))
+                        Text("\(toolCount)")
+                            .font(.system(size: 11, weight: .medium))
+                    }
+                }
+                if toolCount > 0 && skillCount > 0 {
+                    Text("+")
+                        .font(.system(size: 9))
+                        .foregroundColor(theme.tertiaryText)
+                }
+                if skillCount > 0 {
+                    HStack(spacing: 3) {
+                        Image(systemName: "lightbulb")
+                            .font(.system(size: 9))
+                        Text("\(skillCount)")
+                            .font(.system(size: 11, weight: .medium))
+                    }
+                }
+            }
+            .foregroundColor(theme.secondaryText)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
+            .background(Capsule().fill(theme.tertiaryBackground))
+        }
+    }
+}
+
+/// Read-only "Provides:" summary showing tool/skill name capsules.
+private struct PluginProvidesSummary: View {
+    @Environment(\.theme) private var theme
+
+    let tools: [RegistryCapabilities.ToolSummary]
+    let skills: [RegistryCapabilities.SkillSummary]
+
+    var body: some View {
+        if !tools.isEmpty || !skills.isEmpty {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Provides:")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundColor(theme.secondaryText)
+
+                PluginFlowLayout(spacing: 6) {
+                    ForEach(tools, id: \.name) { tool in
+                        HStack(spacing: 4) {
+                            Image(systemName: "function")
+                                .font(.system(size: 9))
+                            Text(tool.name)
+                                .font(.system(size: 11, weight: .medium))
+                        }
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 5)
+                        .background(Capsule().fill(theme.tertiaryBackground))
+                        .foregroundColor(theme.primaryText)
+                        .help(tool.description)
+                    }
+
+                    ForEach(skills, id: \.name) { skill in
+                        HStack(spacing: 4) {
+                            Image(systemName: "lightbulb")
+                                .font(.system(size: 9))
+                            Text(skill.name)
+                                .font(.system(size: 11, weight: .medium))
+                        }
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 5)
+                        .background(Capsule().fill(theme.accentColor.opacity(0.12)))
+                        .foregroundColor(theme.primaryText)
+                        .help(skill.description)
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Card background with hover-sensitive border used by both installed and browse cards.
+private struct PluginCardBackground: View {
+    @Environment(\.theme) private var theme
+    let isHovering: Bool
+
+    var body: some View {
+        RoundedRectangle(cornerRadius: 12)
+            .fill(theme.cardBackground)
+            .overlay(
+                RoundedRectangle(cornerRadius: 12)
+                    .stroke(
+                        isHovering ? theme.accentColor.opacity(0.2) : theme.cardBorder,
+                        lineWidth: 1
+                    )
+            )
+            .shadow(
+                color: theme.shadowColor.opacity(theme.shadowOpacity),
+                radius: theme.cardShadowRadius,
+                x: 0,
+                y: theme.cardShadowY
+            )
+            .drawingGroup()
     }
 }
 

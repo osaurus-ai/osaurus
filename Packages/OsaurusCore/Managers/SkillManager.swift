@@ -15,6 +15,7 @@ extension Notification.Name {
 
 public enum SkillFileError: Error, LocalizedError {
     case cannotModifyBuiltIn
+    case cannotModifyPluginSkill
     case skillNotFound
     case exportFailed
     case invalidSkillArchive
@@ -22,6 +23,7 @@ public enum SkillFileError: Error, LocalizedError {
     public var errorDescription: String? {
         switch self {
         case .cannotModifyBuiltIn: return "Cannot modify built-in skills"
+        case .cannotModifyPluginSkill: return "Cannot modify plugin-provided skills"
         case .skillNotFound: return "Skill not found"
         case .exportFailed: return "Failed to export skill"
         case .invalidSkillArchive: return "Invalid skill archive - SKILL.md not found"
@@ -69,7 +71,7 @@ public final class SkillManager: ObservableObject {
     }
 
     public func update(_ skill: Skill) {
-        guard !skill.isBuiltIn else { return }
+        guard !skill.isBuiltIn && !skill.isFromPlugin else { return }
         var updated = skill
         updated.updatedAt = Date()
         SkillStore.save(updated)
@@ -79,12 +81,48 @@ public final class SkillManager: ObservableObject {
 
     @discardableResult
     public func delete(id: UUID) -> Bool {
+        // Prevent deleting plugin-provided skills
+        if let skill = skill(for: id), skill.isFromPlugin { return false }
         let result = SkillStore.delete(id: id)
         if result {
             refresh()
             NotificationCenter.default.post(name: .skillsListChanged, object: nil)
         }
         return result
+    }
+
+    // MARK: - Plugin Skills
+
+    /// Register a skill from a plugin. If a skill with the same pluginId and name already exists, update it.
+    public func registerPluginSkill(_ skill: Skill) {
+        // Check if we already have a skill from this plugin with the same name
+        if let existing = skills.first(where: { $0.pluginId == skill.pluginId && $0.name == skill.name }) {
+            // Update existing skill but preserve enabled state
+            var updated = skill
+            updated.enabled = existing.enabled
+            SkillStore.save(updated)
+        } else {
+            SkillStore.save(skill)
+        }
+        refresh()
+        NotificationCenter.default.post(name: .skillsListChanged, object: nil)
+    }
+
+    /// Remove all skills associated with a plugin
+    public func unregisterPluginSkills(pluginId: String) {
+        let pluginSkillIds = skills.filter { $0.pluginId == pluginId }.map { $0.id }
+        for id in pluginSkillIds {
+            _ = SkillStore.delete(id: id)
+        }
+        if !pluginSkillIds.isEmpty {
+            refresh()
+            NotificationCenter.default.post(name: .skillsListChanged, object: nil)
+        }
+    }
+
+    /// Returns all skills belonging to a specific plugin
+    public func pluginSkills(for pluginId: String) -> [Skill] {
+        skills.filter { $0.pluginId == pluginId }
     }
 
     public func setEnabled(_ enabled: Bool, for id: UUID) {

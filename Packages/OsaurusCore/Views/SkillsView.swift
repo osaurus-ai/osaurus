@@ -565,6 +565,15 @@ private struct SkillRow: View {
     @State private var isExpanded = false
     @State private var showDeleteConfirm = false
 
+    /// Display name of the source plugin, or "Plugin" as fallback
+    private var pluginDisplayName: String {
+        guard let pluginId = skill.pluginId else { return "Plugin" }
+        if let plugin = PluginRepositoryService.shared.plugins.first(where: { $0.spec.plugin_id == pluginId }) {
+            return "From: \(plugin.spec.name ?? pluginId)"
+        }
+        return "Plugin"
+    }
+
     private var skillColor: Color {
         let hash = abs(skill.name.hashValue)
         let hue = Double(hash % 360) / 360.0
@@ -608,6 +617,20 @@ private struct SkillRow: View {
                                             Capsule()
                                                 .fill(theme.tertiaryBackground)
                                         )
+                                } else if skill.isFromPlugin {
+                                    HStack(spacing: 3) {
+                                        Image(systemName: "puzzlepiece.extension")
+                                            .font(.system(size: 8))
+                                        Text(pluginDisplayName)
+                                            .font(.system(size: 9, weight: .medium))
+                                    }
+                                    .foregroundColor(theme.accentColor)
+                                    .padding(.horizontal, 6)
+                                    .padding(.vertical, 2)
+                                    .background(
+                                        Capsule()
+                                            .fill(theme.accentColor.opacity(0.1))
+                                    )
                                 }
 
                                 if let category = skill.category {
@@ -719,43 +742,76 @@ private struct SkillRow: View {
 
                     // Action buttons
                     HStack(spacing: 8) {
-                        Button(action: onEdit) {
-                            HStack(spacing: 4) {
-                                Image(systemName: skill.isBuiltIn ? "eye" : "pencil")
-                                    .font(.system(size: 10))
-                                Text(skill.isBuiltIn ? "View" : "Edit")
-                                    .font(.system(size: 11, weight: .medium))
+                        if !skill.isFromPlugin {
+                            Button(action: onEdit) {
+                                HStack(spacing: 4) {
+                                    Image(systemName: skill.isBuiltIn ? "eye" : "pencil")
+                                        .font(.system(size: 10))
+                                    Text(skill.isBuiltIn ? "View" : "Edit")
+                                        .font(.system(size: 11, weight: .medium))
+                                }
+                                .foregroundColor(theme.accentColor)
+                                .padding(.horizontal, 12)
+                                .padding(.vertical, 6)
+                                .background(
+                                    RoundedRectangle(cornerRadius: 6)
+                                        .fill(theme.accentColor.opacity(0.1))
+                                )
                             }
-                            .foregroundColor(theme.accentColor)
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 6)
-                            .background(
-                                RoundedRectangle(cornerRadius: 6)
-                                    .fill(theme.accentColor.opacity(0.1))
-                            )
+                            .buttonStyle(PlainButtonStyle())
+                        } else {
+                            // View-only button for plugin skills
+                            Button(action: onEdit) {
+                                HStack(spacing: 4) {
+                                    Image(systemName: "eye")
+                                        .font(.system(size: 10))
+                                    Text("View")
+                                        .font(.system(size: 11, weight: .medium))
+                                }
+                                .foregroundColor(theme.accentColor)
+                                .padding(.horizontal, 12)
+                                .padding(.vertical, 6)
+                                .background(
+                                    RoundedRectangle(cornerRadius: 6)
+                                        .fill(theme.accentColor.opacity(0.1))
+                                )
+                            }
+                            .buttonStyle(PlainButtonStyle())
                         }
-                        .buttonStyle(PlainButtonStyle())
 
-                        Button(action: onExport) {
-                            HStack(spacing: 4) {
-                                Image(systemName: "square.and.arrow.up")
-                                    .font(.system(size: 10))
-                                Text("Export")
-                                    .font(.system(size: 11, weight: .medium))
+                        if !skill.isFromPlugin {
+                            Button(action: onExport) {
+                                HStack(spacing: 4) {
+                                    Image(systemName: "square.and.arrow.up")
+                                        .font(.system(size: 10))
+                                    Text("Export")
+                                        .font(.system(size: 11, weight: .medium))
+                                }
+                                .foregroundColor(theme.secondaryText)
+                                .padding(.horizontal, 12)
+                                .padding(.vertical, 6)
+                                .background(
+                                    RoundedRectangle(cornerRadius: 6)
+                                        .fill(theme.tertiaryBackground)
+                                )
                             }
-                            .foregroundColor(theme.secondaryText)
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 6)
-                            .background(
-                                RoundedRectangle(cornerRadius: 6)
-                                    .fill(theme.tertiaryBackground)
-                            )
+                            .buttonStyle(PlainButtonStyle())
                         }
-                        .buttonStyle(PlainButtonStyle())
 
                         Spacer()
 
-                        if !skill.isBuiltIn {
+                        if skill.isFromPlugin {
+                            // Info badge for plugin skills
+                            HStack(spacing: 4) {
+                                Image(systemName: "info.circle")
+                                    .font(.system(size: 10))
+                                Text("Managed by plugin")
+                                    .font(.system(size: 10, weight: .medium))
+                            }
+                            .foregroundColor(theme.tertiaryText)
+                        }
+
+                        if !skill.isBuiltIn && !skill.isFromPlugin {
                             Button(action: { showDeleteConfirm = true }) {
                                 HStack(spacing: 4) {
                                     Image(systemName: "trash")
