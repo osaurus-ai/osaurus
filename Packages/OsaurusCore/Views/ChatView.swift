@@ -637,7 +637,7 @@ final class ChatSession: ObservableObject {
 
         // Validate and collect tools (respecting persona overrides)
         let enabledToolNames = Set(
-            ToolRegistry.shared.listTools(withOverrides: toolOverrides)
+            ToolRegistry.shared.listUserTools(withOverrides: toolOverrides)
                 .filter { tool in
                     if let override = toolOverrides?[tool.name] { return override }
                     return tool.enabled
