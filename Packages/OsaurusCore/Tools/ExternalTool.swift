@@ -45,7 +45,7 @@ final class ExternalTool: OsaurusTool, PermissionedTool, @unchecked Sendable {
         // Inject secrets into the payload if the plugin has secrets configured
         let payloadWithSecrets = injectSecrets(into: argumentsJSON)
         // Inject folder context so plugins can resolve relative paths
-        let payloadWithContext = await injectFolderContext(into: payloadWithSecrets)
+        let payloadWithContext = injectFolderContext(into: payloadWithSecrets)
         return try await plugin.invoke(type: "tool", id: toolId, payload: payloadWithContext)
     }
 
@@ -80,13 +80,10 @@ final class ExternalTool: OsaurusTool, PermissionedTool, @unchecked Sendable {
     /// Injects folder context into the tool payload under the `_context` key
     /// - Parameter payload: Original JSON payload
     /// - Returns: Payload with folder context injected, or original payload if no folder context active
-    private func injectFolderContext(into payload: String) async -> String {
-        // Access the folder context service on the main actor
-        let rootPath: URL? = await MainActor.run {
-            AgentFolderContextService.shared.currentContext?.rootPath
-        }
-
-        guard let rootPath = rootPath else { return payload }
+    private func injectFolderContext(into payload: String) -> String {
+        // Read from the thread-safe cache to avoid hopping to MainActor,
+        // which can deadlock when the main thread is busy with SwiftUI layout.
+        guard let rootPath = AgentFolderContextService.cachedRootPath else { return payload }
 
         // Parse the original payload
         guard let payloadData = payload.data(using: .utf8),
