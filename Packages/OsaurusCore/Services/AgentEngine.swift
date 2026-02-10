@@ -491,23 +491,50 @@ public actor AgentEngine {
                 awaitingClarification: request
             )
 
-        case .iterationLimitReached(let totalIterations, let totalToolCalls):
-            // Generate a summary of what was accomplished
+        case .iterationLimitReached(let totalIterations, let totalToolCalls, let lastResponseContent):
             let summary =
-                "Execution paused after \(totalIterations) iterations and \(totalToolCalls) tool calls. Task may require continuation."
+                "Reached iteration limit after \(totalIterations) iterations and \(totalToolCalls) tool calls."
 
-            // Close issue as partial success
-            _ = await IssueManager.shared.closeIssueSafe(issue.id, result: "Partial: \(summary)")
+            // Build continuation context so the next execution can pick up where we left off
+            let progress = String(lastResponseContent.prefix(2000))
+            let continuationDescription = """
+                Continue the following task from where it left off:
 
-            // Log execution completed
+                Original task: \(issue.description ?? issue.title)
+
+                Progress so far:
+                \(progress)
+                """
+
+            let continuationIssue = await IssueManager.shared.createIssueWithContextSafe(
+                HandoffContext(
+                    title: "Continue: \(issue.title)",
+                    description: continuationDescription,
+                    reason: summary,
+                    priority: issue.priority,
+                    type: issue.type,
+                    isDiscoveredWork: false
+                ),
+                sourceIssueId: issue.id
+            )
+
+            let closeResult =
+                if let contIssue = continuationIssue {
+                    "Continued in \(contIssue.id): \(summary)"
+                } else {
+                    "Partial: \(summary)"
+                }
+
+            _ = await IssueManager.shared.closeIssueSafe(issue.id, result: closeResult)
+
             _ = try? IssueStore.createEvent(
                 IssueEvent.withPayload(
                     issueId: issue.id,
                     eventType: .executionCompleted,
                     payload: EventPayload.ExecutionCompleted(
                         success: true,
-                        discoveries: 0,
-                        summary: summary
+                        discoveries: continuationIssue != nil ? 1 : 0,
+                        summary: closeResult
                     )
                 )
             )
@@ -517,7 +544,7 @@ public actor AgentEngine {
             return ExecutionResult(
                 issue: issue,
                 success: true,
-                message: summary
+                message: closeResult
             )
         }
     }

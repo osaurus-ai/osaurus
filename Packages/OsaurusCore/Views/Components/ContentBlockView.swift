@@ -78,11 +78,6 @@ struct ContentBlockView: View, Equatable {
             .padding(.top, 4)
             .padding(.bottom, isLastInTurn ? 16 : 4)
 
-        case let .toolCall(call, result):
-            InlineToolCallView(call: call, result: result)
-                .padding(.top, 6)
-                .padding(.bottom, isLastInTurn ? 12 : 4)
-
         case let .toolCallGroup(calls):
             GroupedToolCallsContainerView(calls: calls)
                 .padding(.top, 6)
