@@ -12,6 +12,7 @@ import SwiftUI
 enum ProviderPreset: String, CaseIterable, Identifiable {
     case anthropic = "Anthropic"
     case openai = "OpenAI"
+    case google = "Google"
     case xai = "xAI"
     case openrouter = "OpenRouter"
     case custom = "Custom"
@@ -22,6 +23,7 @@ enum ProviderPreset: String, CaseIterable, Identifiable {
         switch self {
         case .anthropic: return "brain.head.profile"
         case .openai: return "sparkles"
+        case .google: return "globe"
         case .xai: return "bolt.fill"
         case .openrouter: return "arrow.triangle.branch"
         case .custom: return "slider.horizontal.3"
@@ -32,6 +34,7 @@ enum ProviderPreset: String, CaseIterable, Identifiable {
         switch self {
         case .anthropic: return "Claude models"
         case .openai: return "GPT-4o, o1, etc."
+        case .google: return "Gemini models"
         case .xai: return "Grok models"
         case .openrouter: return "Multi-provider"
         case .custom: return "Custom endpoint"
@@ -42,6 +45,7 @@ enum ProviderPreset: String, CaseIterable, Identifiable {
         switch self {
         case .anthropic: return [Color(red: 0.85, green: 0.55, blue: 0.35), Color(red: 0.75, green: 0.4, blue: 0.25)]
         case .openai: return [Color(red: 0.0, green: 0.65, blue: 0.52), Color(red: 0.0, green: 0.5, blue: 0.4)]
+        case .google: return [Color(red: 0.26, green: 0.52, blue: 0.96), Color(red: 0.18, green: 0.38, blue: 0.85)]
         case .xai: return [Color(red: 0.1, green: 0.1, blue: 0.1), Color(red: 0.2, green: 0.2, blue: 0.2)]
         case .openrouter: return [Color(red: 0.95, green: 0.55, blue: 0.25), Color(red: 0.85, green: 0.4, blue: 0.2)]
         case .custom: return [Color(red: 0.55, green: 0.55, blue: 0.6), Color(red: 0.4, green: 0.4, blue: 0.45)]
@@ -79,6 +83,16 @@ enum ProviderPreset: String, CaseIterable, Identifiable {
                 basePath: "/v1",
                 authType: .apiKey,
                 providerType: .openai
+            )
+        case .google:
+            return Configuration(
+                name: "Google",
+                host: "generativelanguage.googleapis.com",
+                providerProtocol: .https,
+                port: nil,
+                basePath: "/v1beta",
+                authType: .apiKey,
+                providerType: .gemini
             )
         case .xai:
             return Configuration(

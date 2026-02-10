@@ -1,0 +1,224 @@
+//
+//  GeminiAPI.swift
+//  osaurus
+//
+//  Google Gemini API compatible request/response models.
+//
+
+import Foundation
+
+// MARK: - Request Models
+
+/// Gemini GenerateContent API request
+struct GeminiGenerateContentRequest: Codable, Sendable {
+    let contents: [GeminiContent]
+    let tools: [GeminiTool]?
+    let toolConfig: GeminiToolConfig?
+    let systemInstruction: GeminiContent?
+    let generationConfig: GeminiGenerationConfig?
+    let safetySettings: [GeminiSafetySetting]?
+
+    private enum CodingKeys: String, CodingKey {
+        case contents, tools, toolConfig, systemInstruction, generationConfig, safetySettings
+    }
+}
+
+/// Gemini content object (used for messages and system instructions)
+struct GeminiContent: Codable, Sendable {
+    let role: String?
+    let parts: [GeminiPart]
+
+    init(role: String? = nil, parts: [GeminiPart]) {
+        self.role = role
+        self.parts = parts
+    }
+}
+
+/// Gemini content part (polymorphic: text, functionCall, functionResponse)
+enum GeminiPart: Codable, Sendable {
+    case text(String)
+    case functionCall(GeminiFunctionCall)
+    case functionResponse(GeminiFunctionResponse)
+
+    private enum CodingKeys: String, CodingKey {
+        case text, functionCall, functionResponse
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+
+        if let text = try container.decodeIfPresent(String.self, forKey: .text) {
+            self = .text(text)
+        } else if let funcCall = try container.decodeIfPresent(GeminiFunctionCall.self, forKey: .functionCall) {
+            self = .functionCall(funcCall)
+        } else if let funcResponse = try container.decodeIfPresent(
+            GeminiFunctionResponse.self,
+            forKey: .functionResponse
+        ) {
+            self = .functionResponse(funcResponse)
+        } else {
+            // Default to empty text for unknown part types
+            self = .text("")
+        }
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        switch self {
+        case .text(let text):
+            try container.encode(text, forKey: .text)
+        case .functionCall(let funcCall):
+            try container.encode(funcCall, forKey: .functionCall)
+        case .functionResponse(let funcResponse):
+            try container.encode(funcResponse, forKey: .functionResponse)
+        }
+    }
+}
+
+/// Gemini function call (model requesting tool invocation)
+struct GeminiFunctionCall: Codable, Sendable {
+    let name: String
+    let args: [String: AnyCodableValue]?
+}
+
+/// Gemini function response (user providing tool output)
+struct GeminiFunctionResponse: Codable, Sendable {
+    let name: String
+    let response: [String: AnyCodableValue]
+}
+
+// MARK: - Tool Definitions
+
+/// Gemini tool definition
+struct GeminiTool: Codable, Sendable {
+    let functionDeclarations: [GeminiFunctionDeclaration]?
+
+    private enum CodingKeys: String, CodingKey {
+        case functionDeclarations
+    }
+}
+
+/// Gemini function declaration
+struct GeminiFunctionDeclaration: Codable, Sendable {
+    let name: String
+    let description: String?
+    let parameters: JSONValue?
+}
+
+/// Gemini tool configuration
+struct GeminiToolConfig: Codable, Sendable {
+    let functionCallingConfig: GeminiFunctionCallingConfig?
+
+    private enum CodingKeys: String, CodingKey {
+        case functionCallingConfig
+    }
+}
+
+/// Gemini function calling configuration
+struct GeminiFunctionCallingConfig: Codable, Sendable {
+    let mode: String  // "AUTO", "NONE", "ANY"
+
+    private enum CodingKeys: String, CodingKey {
+        case mode
+    }
+}
+
+// MARK: - Safety Settings
+
+/// Gemini safety setting
+struct GeminiSafetySetting: Codable, Sendable {
+    let category: String
+    let threshold: String
+}
+
+// MARK: - Generation Config
+
+/// Gemini generation configuration
+struct GeminiGenerationConfig: Codable, Sendable {
+    let temperature: Double?
+    let maxOutputTokens: Int?
+    let topP: Double?
+    let topK: Int?
+    let stopSequences: [String]?
+
+    private enum CodingKeys: String, CodingKey {
+        case temperature, maxOutputTokens, topP, topK, stopSequences
+    }
+}
+
+// MARK: - Response Models
+
+/// Gemini GenerateContent API response
+struct GeminiGenerateContentResponse: Codable, Sendable {
+    let candidates: [GeminiCandidate]?
+    let usageMetadata: GeminiUsageMetadata?
+
+    private enum CodingKeys: String, CodingKey {
+        case candidates, usageMetadata
+    }
+}
+
+/// Gemini response candidate
+struct GeminiCandidate: Codable, Sendable {
+    let content: GeminiContent?
+    let finishReason: String?
+    let index: Int?
+
+    private enum CodingKeys: String, CodingKey {
+        case content, finishReason, index
+    }
+}
+
+/// Gemini token usage metadata
+struct GeminiUsageMetadata: Codable, Sendable {
+    let promptTokenCount: Int?
+    let candidatesTokenCount: Int?
+    let totalTokenCount: Int?
+}
+
+// MARK: - Error Response
+
+/// Gemini error response
+struct GeminiErrorResponse: Codable, Sendable {
+    let error: GeminiError
+
+    struct GeminiError: Codable, Sendable {
+        let code: Int
+        let message: String
+        let status: String?
+    }
+}
+
+// MARK: - Models List Response
+
+/// Gemini models list response (GET /models)
+struct GeminiModelsResponse: Codable, Sendable {
+    let models: [GeminiModelInfo]?
+
+    /// Support for nextPageToken if paginated
+    let nextPageToken: String?
+
+    private enum CodingKeys: String, CodingKey {
+        case models, nextPageToken
+    }
+}
+
+/// Gemini model info from list endpoint
+struct GeminiModelInfo: Codable, Sendable {
+    let name: String  // e.g. "models/gemini-2.0-flash"
+    let displayName: String?
+    let description: String?
+    let supportedGenerationMethods: [String]?
+
+    private enum CodingKeys: String, CodingKey {
+        case name, displayName, description, supportedGenerationMethods
+    }
+
+    /// Extract the short model ID (strips "models/" prefix)
+    var modelId: String {
+        if name.hasPrefix("models/") {
+            return String(name.dropFirst("models/".count))
+        }
+        return name
+    }
+}

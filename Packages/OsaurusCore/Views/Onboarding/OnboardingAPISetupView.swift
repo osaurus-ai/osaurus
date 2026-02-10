@@ -15,6 +15,7 @@ import SwiftUI
 enum OnboardingProviderOption: String, CaseIterable, Identifiable {
     case anthropic
     case openai
+    case google
     case xai
     case other
 
@@ -24,6 +25,7 @@ enum OnboardingProviderOption: String, CaseIterable, Identifiable {
         switch self {
         case .anthropic: return "Anthropic"
         case .openai: return "OpenAI"
+        case .google: return "Google"
         case .xai: return "xAI"
         case .other: return "Any OpenAI-compatible API"
         }
@@ -33,6 +35,7 @@ enum OnboardingProviderOption: String, CaseIterable, Identifiable {
         switch self {
         case .anthropic: return "Claude models"
         case .openai: return "ChatGPT models"
+        case .google: return "Gemini models"
         case .xai: return "Grok models"
         case .other: return "OpenRouter, MiniMax, etc."
         }
@@ -42,6 +45,7 @@ enum OnboardingProviderOption: String, CaseIterable, Identifiable {
         switch self {
         case .anthropic: return "brain.head.profile"
         case .openai: return "sparkles"
+        case .google: return "globe"
         case .xai: return "bolt.fill"
         case .other: return "slider.horizontal.3"
         }
@@ -51,6 +55,7 @@ enum OnboardingProviderOption: String, CaseIterable, Identifiable {
         switch self {
         case .anthropic: return "https://console.anthropic.com/settings/keys"
         case .openai: return "https://platform.openai.com/api-keys"
+        case .google: return "https://aistudio.google.com/apikey"
         case .xai: return "https://console.x.ai/"
         case .other: return ""
         }
@@ -60,6 +65,7 @@ enum OnboardingProviderOption: String, CaseIterable, Identifiable {
         switch self {
         case .anthropic: return "api.anthropic.com"
         case .openai: return "api.openai.com"
+        case .google: return "generativelanguage.googleapis.com"
         case .xai: return "api.x.ai"
         case .other: return ""
         }
@@ -68,6 +74,7 @@ enum OnboardingProviderOption: String, CaseIterable, Identifiable {
     var providerType: RemoteProviderType {
         switch self {
         case .anthropic: return .anthropic
+        case .google: return .gemini
         case .openai, .xai, .other: return .openai
         }
     }
@@ -494,11 +501,12 @@ struct OnboardingAPISetupView: View {
                 providerProtocol: customProtocol
             )
         } else {
+            let basePath = provider == .google ? "/v1beta" : "/v1"
             return (
                 name: provider.name,
                 host: provider.host,
                 port: nil,
-                basePath: "/v1",
+                basePath: basePath,
                 providerType: provider.providerType,
                 providerProtocol: .https
             )

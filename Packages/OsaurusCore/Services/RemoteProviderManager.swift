@@ -367,6 +367,8 @@ public final class RemoteProviderManager: ObservableObject {
                 if testHeaders["anthropic-version"] == nil {
                     testHeaders["anthropic-version"] = "2023-06-01"
                 }
+            case .gemini:
+                testHeaders["x-goog-api-key"] = apiKey
             case .openai, .openResponses:
                 testHeaders["Authorization"] = "Bearer \(apiKey)"
             }
@@ -377,7 +379,7 @@ public final class RemoteProviderManager: ObservableObject {
             return try await testAnthropicConnection(tempProvider: tempProvider, testHeaders: testHeaders)
         }
 
-        // OpenAI-compatible providers use /models endpoint
+        // OpenAI-compatible and Gemini providers use /models endpoint
         guard let url = tempProvider.url(for: "/models") else {
             print("[Osaurus] Test Connection: Invalid URL")
             throw RemoteProviderError.invalidURL
@@ -393,7 +395,9 @@ public final class RemoteProviderManager: ObservableObject {
         // Add headers
         for (key, value) in testHeaders {
             // Don't log the full auth header for security
-            if key.lowercased() == "authorization" || key.lowercased() == "x-api-key" {
+            if key.lowercased() == "authorization" || key.lowercased() == "x-api-key"
+                || key.lowercased() == "x-goog-api-key"
+            {
                 print("[Osaurus] Test Connection: Adding header \(key)=***")
             } else {
                 print("[Osaurus] Test Connection: Adding header \(key)=\(value)")
@@ -417,10 +421,22 @@ public final class RemoteProviderManager: ObservableObject {
                 throw RemoteProviderError.connectionFailed(errorMessage)
             }
 
-            // Parse models response
-            let modelsResponse = try JSONDecoder().decode(ModelsResponse.self, from: data)
-            print("[Osaurus] Test Connection: Success - found \(modelsResponse.data.count) models")
-            return modelsResponse.data.map { $0.id }
+            // Parse models response based on provider type
+            if providerType == .gemini {
+                let modelsResponse = try JSONDecoder().decode(GeminiModelsResponse.self, from: data)
+                let models = (modelsResponse.models ?? [])
+                    .filter { model in
+                        guard let methods = model.supportedGenerationMethods else { return false }
+                        return methods.contains("generateContent")
+                    }
+                    .map { $0.modelId }
+                print("[Osaurus] Test Connection (Gemini): Success - found \(models.count) models")
+                return models
+            } else {
+                let modelsResponse = try JSONDecoder().decode(ModelsResponse.self, from: data)
+                print("[Osaurus] Test Connection: Success - found \(modelsResponse.data.count) models")
+                return modelsResponse.data.map { $0.id }
+            }
         } catch let error as RemoteProviderError {
             throw error
         } catch {
