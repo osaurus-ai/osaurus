@@ -1130,7 +1130,11 @@ extension AgentSession: AgentEngineDelegate {
         if let prev = liveExecutionTurns.last(where: { $0.role == .assistant }),
             !prev.contentIsEmpty || !(prev.toolCalls?.isEmpty ?? true)
         {
-            liveExecutionTurns.append(ChatTurn(role: .assistant, content: ""))
+            let newTurn = ChatTurn(role: .assistant, content: "")
+            liveExecutionTurns.append(newTurn)
+            // Reset the streaming processor to the new turn so deltas go to the
+            // correct turn instead of accumulating in the first one.
+            deltaProcessor?.reset(turn: newTurn)
         }
 
         notifyIfSelected(issue.id)

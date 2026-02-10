@@ -29,7 +29,6 @@ struct ToolCallItem: Equatable {
 enum ContentBlockKind: Equatable {
     case header(role: MessageRole, personaName: String, isFirstInGroup: Bool)
     case paragraph(index: Int, text: String, isStreaming: Bool, role: MessageRole)
-    case toolCall(call: ToolCall, result: String?)
     case toolCallGroup(calls: [ToolCallItem])
     case thinking(index: Int, text: String, isStreaming: Bool)
     case clarification(request: ClarificationRequest)
@@ -50,9 +49,6 @@ enum ContentBlockKind: Equatable {
             guard lIdx == rIdx && lStream == rStream && lRole == rRole else { return false }
             guard lText.count == rText.count else { return false }
             return lText == rText
-
-        case let (.toolCall(lCall, lResult), .toolCall(rCall, rResult)):
-            return lCall.id == rCall.id && lResult == rResult
 
         case let (.toolCallGroup(lCalls), .toolCallGroup(rCalls)):
             return lCalls == rCalls
@@ -94,7 +90,7 @@ struct ContentBlock: Identifiable, Equatable {
         switch kind {
         case let .header(role, _, _): return role
         case let .paragraph(_, _, _, role): return role
-        case .toolCall, .toolCallGroup, .thinking, .clarification, .typingIndicator, .groupSpacer:
+        case .toolCallGroup, .thinking, .clarification, .typingIndicator, .groupSpacer:
             return .assistant
         case .image: return .user
         }
@@ -138,15 +134,6 @@ struct ContentBlock: Identifiable, Equatable {
             id: "para-\(turnId.uuidString)-\(index)",
             turnId: turnId,
             kind: .paragraph(index: index, text: text, isStreaming: isStreaming, role: role),
-            position: position
-        )
-    }
-
-    static func toolCall(turnId: UUID, call: ToolCall, result: String?, position: BlockPosition) -> ContentBlock {
-        ContentBlock(
-            id: "tool-\(turnId.uuidString)-\(call.id)",
-            turnId: turnId,
-            kind: .toolCall(call: call, result: result),
             position: position
         )
     }
@@ -204,10 +191,6 @@ struct ContentBlock: Identifiable, Equatable {
 // MARK: - Block Generation
 
 extension ContentBlock {
-    private static func isToolOnlyTurn(_ turn: ChatTurn) -> Bool {
-        turn.contentIsEmpty && !turn.hasThinking && (turn.toolCalls?.isEmpty == false)
-    }
-
     static func generateBlocks(
         from turns: [ChatTurn],
         streamingTurnId: UUID?,
@@ -217,30 +200,14 @@ extension ContentBlock {
         var blocks: [ContentBlock] = []
         var previousRole: MessageRole? = previousTurn?.role
         var previousTurnId: UUID? = previousTurn?.id
-        var pendingToolCalls: [ToolCallItem] = []
-        var pendingToolTurnId: UUID?
-
-        // If we have a previous turn, we assume any pending tool calls were already flushed or irrelevant for this batch.
-        // However, if we were splitting processing in the middle of tool accumulation, this would be complex.
-        // Given we split at turn boundaries, previous turn's tools should be handled.
-
-        func flushPendingToolCalls(into turnBlocks: inout [ContentBlock]) {
-            guard !pendingToolCalls.isEmpty, let turnId = pendingToolTurnId else { return }
-            turnBlocks.append(.toolCallGroup(turnId: turnId, calls: pendingToolCalls, position: .middle))
-            pendingToolCalls = []
-            pendingToolTurnId = nil
-        }
 
         let filteredTurns = turns.filter { $0.role != .tool }
 
-        for (index, turn) in filteredTurns.enumerated() {
+        for turn in filteredTurns {
             let isStreaming = turn.id == streamingTurnId
             // For user messages, always show header (each message is distinct input)
             // For assistant messages, group consecutive turns (continuing responses)
             let isFirstInGroup = turn.role != previousRole || turn.role == .user
-            let isToolOnly = isToolOnlyTurn(turn)
-            let nextTurn = index + 1 < filteredTurns.count ? filteredTurns[index + 1] : nil
-            let nextIsToolOnly = nextTurn.map { isToolOnlyTurn($0) && $0.role == .assistant } ?? false
 
             if isFirstInGroup, let prevId = previousTurnId {
                 // Use the previous turn ID for the stable block ID (referencing the gap)
@@ -290,7 +257,6 @@ extension ContentBlock {
             }
 
             if !turn.contentIsEmpty {
-                flushPendingToolCalls(into: &turnBlocks)
                 turnBlocks.append(
                     .paragraph(
                         turnId: turn.id,
@@ -305,13 +271,12 @@ extension ContentBlock {
                 turnBlocks.append(.typingIndicator(turnId: turn.id, position: .middle))
             }
 
+            // Emit tool calls inline per turn to preserve chronological order.
+            // Multiple tool calls within a single turn (parallel calls) are still
+            // grouped together, but tool calls from different turns are not merged.
             if let toolCalls = turn.toolCalls, !toolCalls.isEmpty {
                 let items = toolCalls.map { ToolCallItem(call: $0, result: turn.toolResults[$0.id]) }
-                if pendingToolTurnId == nil { pendingToolTurnId = turn.id }
-                pendingToolCalls.append(contentsOf: items)
-                if !nextIsToolOnly || !isToolOnly {
-                    flushPendingToolCalls(into: &turnBlocks)
-                }
+                turnBlocks.append(.toolCallGroup(turnId: turn.id, calls: items, position: .middle))
             }
 
             blocks.append(contentsOf: assignPositions(to: turnBlocks))
