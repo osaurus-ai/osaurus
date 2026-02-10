@@ -89,13 +89,6 @@ public final class AgentSession: ObservableObject {
         blockMemoizer.groupHeaderMap
     }
 
-    /// The actual turn count for the selected issue (used for scroll triggers)
-    /// Unlike issueBlocks.count, this only changes when a new turn is added,
-    /// not when content within a turn is updated during streaming.
-    var issueTurnsCount: Int {
-        currentTurns.count
-    }
-
     /// Returns the appropriate turns based on current state
     private var currentTurns: [ChatTurn] {
         // Use live data if viewing the actively executing issue

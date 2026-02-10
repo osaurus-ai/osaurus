@@ -1540,7 +1540,6 @@ struct ChatView: View {
                 width: width,
                 personaName: displayName,
                 isStreaming: session.isStreaming,
-                scrollTrigger: session.turns.count,
                 lastAssistantTurnId: lastAssistantTurnId,
                 onCopy: copyTurnContent,
                 onRegenerate: regenerateTurn,

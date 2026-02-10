@@ -14,7 +14,6 @@ struct MessageThreadView: View {
     let width: CGFloat
     let personaName: String
     let isStreaming: Bool
-    let scrollTrigger: Int
     let lastAssistantTurnId: UUID?
     var autoScrollEnabled: Bool = true
 
@@ -96,7 +95,7 @@ struct MessageThreadView: View {
             }
             .scrollContentBackground(.hidden)
             .scrollIndicators(.visible)
-            .onChange(of: scrollTrigger) { _, _ in
+            .onChange(of: lastAssistantTurnId) { _, _ in
                 if autoScrollEnabled {
                     scrollToResponseStart(proxy: proxy)
                 }
