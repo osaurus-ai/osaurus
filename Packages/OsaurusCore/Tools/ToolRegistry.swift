@@ -238,7 +238,17 @@ final class ToolRegistry: ObservableObject {
                 }
             }
         }
-        return try await tool.execute(argumentsJSON: argumentsJSON)
+        // Run the tool body off MainActor so long-running tools (file I/O,
+        // network, shell) don't contend with SwiftUI layout on the main thread.
+        return try await Self.runToolBody(tool, argumentsJSON: argumentsJSON)
+    }
+
+    /// Trampoline that executes the tool outside of MainActor isolation.
+    private nonisolated static func runToolBody(
+        _ tool: OsaurusTool,
+        argumentsJSON: String
+    ) async throws -> String {
+        try await tool.execute(argumentsJSON: argumentsJSON)
     }
 
     // MARK: - Listing / Enablement

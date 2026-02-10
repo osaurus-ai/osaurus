@@ -103,6 +103,10 @@ public final class AgentSession: ObservableObject {
     /// Preserves live execution turns to selected turns (call before clearing activeIssue)
     private func preserveLiveExecutionTurns() {
         selectedIssueTurns = liveExecutionTurns
+        // Cancel any pending debounced write and flush immediately so
+        // the final state is guaranteed to be persisted.
+        persistDebounceTask?.cancel()
+        persistDebounceTask = nil
         persistCurrentTurns()
         notifyTurnsChanged()
     }
@@ -119,8 +123,22 @@ public final class AgentSession: ObservableObject {
         }
     }
 
+    /// Debounced persistence — coalesces rapid tool-call updates into a
+    /// single write after 500 ms of inactivity, reducing main-thread I/O
+    /// churn during fast tool execution sequences.
+    private func schedulePersistence() {
+        persistDebounceTask?.cancel()
+        persistDebounceTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: 500_000_000)  // 500 ms
+            guard !Task.isCancelled, let self else { return }
+            self.persistCurrentTurns()
+        }
+    }
+
     /// Clears all turns state and block cache
     private func clearTurns() {
+        persistDebounceTask?.cancel()
+        persistDebounceTask = nil
         liveExecutionTurns = []
         selectedIssueTurns = []
         clearBlockCache()
@@ -298,6 +316,7 @@ public final class AgentSession: ObservableObject {
     // MARK: - Private
 
     private var executionTask: Task<Void, Never>?
+    private var persistDebounceTask: Task<Void, Never>?
 
     /// The agent engine instance for this session (each session owns its own engine)
     private let engine: AgentEngine
@@ -1160,8 +1179,8 @@ extension AgentSession: AgentEngineDelegate {
         assistantTurn.notifyContentChanged()
         notifyIfSelected(issue.id)
 
-        // Persist conversation state after each tool call
-        persistCurrentTurns()
+        // Debounce persistence so rapid tool calls don't hammer the DB
+        schedulePersistence()
     }
 
     public func agentEngine(_ engine: AgentEngine, didUpdateStatus status: String, forIssue issue: Issue) {

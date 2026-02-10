@@ -137,7 +137,11 @@ final class BlockMemoizer {
     }
 
     private func limited(streaming: Bool) -> [ContentBlock] {
-        streaming && cached.count > maxBlocks ? Array(cached.suffix(maxBlocks)) : cached
+        // Tight cap during streaming to prevent layout thrash on every delta.
+        // Generous cap otherwise so users can still scroll back through history
+        // while bounding pathological layout cost in very long conversations.
+        let limit = streaming ? maxBlocks : maxBlocks * 5
+        return cached.count > limit ? Array(cached.suffix(limit)) : cached
     }
 
     func clear() {

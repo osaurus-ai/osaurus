@@ -9,13 +9,31 @@
 import AppKit
 import Foundation
 
+// Lock-protected cache for the folder root path, accessible from any isolation domain.
+// Lives outside the @MainActor class so the lock and storage are never actor-isolated.
+// Concurrency safety is enforced manually via _folderRootPathLock.
+private let _folderRootPathLock = NSLock()
+private nonisolated(unsafe) var _folderCachedRootPath: URL?
+
 /// Service for managing agent folder context
 @MainActor
 public final class AgentFolderContextService: ObservableObject {
     public static let shared = AgentFolderContextService()
 
-    @Published public private(set) var currentContext: AgentFolderContext?
+    @Published public private(set) var currentContext: AgentFolderContext? {
+        didSet {
+            _folderRootPathLock.withLock {
+                _folderCachedRootPath = currentContext?.rootPath
+            }
+        }
+    }
     @Published public private(set) var hasActiveFolder: Bool = false
+
+    /// Thread-safe accessor for the current folder root path.
+    /// Reads a lock-protected cache so callers never need to hop to MainActor.
+    public nonisolated static var cachedRootPath: URL? {
+        _folderRootPathLock.withLock { _folderCachedRootPath }
+    }
 
     private let bookmarkKey = "AgentFolderContextBookmark"
     private var securityScopedResource: URL?

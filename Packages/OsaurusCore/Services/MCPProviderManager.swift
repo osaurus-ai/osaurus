@@ -267,13 +267,16 @@ public final class MCPProviderManager: ObservableObject {
             throw MCPProviderError.providerNotFound
         }
 
-        // Convert arguments
         let arguments = try MCPProviderTool.convertArgumentsToMCPValues(argumentsJSON)
+        let timeout = provider.toolCallTimeout
 
-        // Execute with timeout
-        let (content, isError) = try await withTimeout(seconds: provider.toolCallTimeout) {
-            try await client.callTool(name: toolName, arguments: arguments)
-        }
+        // Run the network call off MainActor so it doesn't block the UI thread.
+        let (content, isError) = try await Self.callMCPTool(
+            client: client,
+            toolName: toolName,
+            arguments: arguments,
+            timeout: timeout
+        )
 
         // Check for error
         if let isError = isError, isError {
@@ -286,6 +289,29 @@ public final class MCPProviderManager: ObservableObject {
 
         // Convert content to string
         return MCPProviderTool.convertMCPContent(content)
+    }
+
+    /// Trampoline that runs the MCP network call outside MainActor isolation.
+    private nonisolated static func callMCPTool(
+        client: MCP.Client,
+        toolName: String,
+        arguments: [String: MCP.Value],
+        timeout: TimeInterval
+    ) async throws -> ([MCP.Tool.Content], Bool?) {
+        try await withThrowingTaskGroup(of: ([MCP.Tool.Content], Bool?).self) { group in
+            group.addTask {
+                try await client.callTool(name: toolName, arguments: arguments)
+            }
+            group.addTask {
+                try await Task.sleep(nanoseconds: UInt64(timeout * 1_000_000_000))
+                throw MCPProviderError.timeout
+            }
+            guard let result = try await group.next() else {
+                throw MCPProviderError.timeout
+            }
+            group.cancelAll()
+            return result
+        }
     }
 
     // MARK: - Test Connection
