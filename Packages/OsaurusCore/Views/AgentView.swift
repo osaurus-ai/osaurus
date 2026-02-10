@@ -505,7 +505,6 @@ extension AgentView {
                 width: contentWidth,
                 personaName: personaName,
                 isStreaming: session.isExecuting && session.activeIssue?.id == session.selectedIssueId,
-                scrollTrigger: session.issueTurnsCount,
                 lastAssistantTurnId: blocks.last?.turnId,
                 autoScrollEnabled: false,
                 onCopy: { _ in },

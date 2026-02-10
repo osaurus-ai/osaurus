@@ -3,7 +3,12 @@
 //  osaurus
 //
 //  Memoizes content block generation with incremental updates during streaming.
-//  Only regenerates the last turn's blocks during streaming (O(1) vs O(n)).
+//  Supports four cache paths to minimize SwiftUI LazyVStack re-layout:
+//    1. Fast path   – nothing changed, return cached blocks
+//    2. Incremental – only last turn's content changed (streaming)
+//    3. Append      – exactly one turn was added at the end
+//    4. Truncate    – turns were removed from the end (regeneration/deletion)
+//  Falls back to full rebuild when none of the above apply.
 //
 
 import Foundation
@@ -46,6 +51,26 @@ final class BlockMemoizer {
             streamingTurnId != nil && count == lastCount
             && lastId == lastTurnId && lastId != nil && !cached.isEmpty
 
+        // Append path: one or more turns were added at the end.
+        // Preserves existing cached blocks and only generates blocks for new turns,
+        // preventing LazyVStack from re-laying out all existing items.
+        // Handles single turn additions (user sends message) and multi-turn additions
+        // (tool call loop appends tool turn + new assistant turn together).
+        let canAppend =
+            !canIncrement
+            && count > lastCount
+            && !cached.isEmpty
+            && lastCount >= 1
+            && turns[lastCount - 1].id == lastTurnId
+
+        // Truncate path: turns were removed from the end (regeneration / deletion).
+        // Keeps cached blocks for remaining turns and regenerates the last turn's blocks
+        // to handle potential content edits (e.g. editAndRegenerate).
+        let canTruncate =
+            !canIncrement && !canAppend
+            && count > 0 && count < lastCount
+            && !cached.isEmpty
+
         let blocks: [ContentBlock]
         if canIncrement {
             let turnId = lastId!
@@ -57,6 +82,22 @@ final class BlockMemoizer {
                 previousTurn: turns.dropLast().last { $0.role != .tool }
             )
             blocks = Array(cached.prefix(prefixEnd)) + lastTurnBlocks
+        } else if canAppend {
+            let newTurns = Array(turns.suffix(count - lastCount))
+            let previousNonToolTurn = turns.prefix(lastCount).last { $0.role != .tool }
+            let newTurnBlocks = ContentBlock.generateBlocks(
+                from: newTurns,
+                streamingTurnId: streamingTurnId,
+                personaName: personaName,
+                previousTurn: previousNonToolTurn
+            )
+            blocks = cached + newTurnBlocks
+        } else if canTruncate {
+            blocks = truncateBlocks(
+                turns: turns,
+                streamingTurnId: streamingTurnId,
+                personaName: personaName
+            )
         } else {
             blocks = ContentBlock.generateBlocks(
                 from: turns,
@@ -75,6 +116,44 @@ final class BlockMemoizer {
         cachedGroupHeaderMap = Self.buildGroupHeaderMap(from: cached)
 
         return limited(streaming: streamingTurnId != nil)
+    }
+
+    // MARK: - Truncate Path
+
+    /// Removes blocks belonging to turns that no longer exist, and regenerates
+    /// the last remaining turn's blocks to handle potential content edits.
+    private func truncateBlocks(
+        turns: [ChatTurn],
+        streamingTurnId: UUID?,
+        personaName: String
+    ) -> [ContentBlock] {
+        let currentTurnIds = Set(turns.map(\.id))
+
+        // Blocks are generated in turn order, so find the first block belonging
+        // to a removed turn — everything before that point is a stable prefix.
+        let cutoff = cached.firstIndex { !currentTurnIds.contains($0.turnId) } ?? cached.count
+
+        guard let lastTurn = turns.last else { return [] }
+
+        // Within the stable prefix, find where the last remaining turn's blocks
+        // start.  We regenerate them so that editAndRegenerate (which modifies
+        // the last turn's content before truncating) produces fresh blocks.
+        let lastTurnStart = cached.prefix(cutoff).firstIndex { $0.turnId == lastTurn.id } ?? cutoff
+        let stablePrefix = Array(cached.prefix(lastTurnStart))
+
+        let previousNonToolTurn: ChatTurn? =
+            turns.count >= 2
+            ? turns.dropLast().last { $0.role != .tool }
+            : nil
+
+        let freshBlocks = ContentBlock.generateBlocks(
+            from: [lastTurn],
+            streamingTurnId: streamingTurnId,
+            personaName: personaName,
+            previousTurn: previousNonToolTurn
+        )
+
+        return stablePrefix + freshBlocks
     }
 
     private func limited(streaming: Bool) -> [ContentBlock] {
