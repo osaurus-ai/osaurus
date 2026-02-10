@@ -3,11 +3,10 @@
 //  osaurus
 //
 //  Memoizes content block generation with incremental updates during streaming.
-//  Supports four cache paths to minimize SwiftUI LazyVStack re-layout:
+//  Supports three cache paths to minimize SwiftUI LazyVStack re-layout:
 //    1. Fast path   – nothing changed, return cached blocks
 //    2. Incremental – only last turn's content changed (streaming)
 //    3. Append      – one or more turns added at the end
-//    4. Truncate    – turns removed from the end (regeneration/deletion)
 //  Falls back to full rebuild when none of the above apply.
 //
 
@@ -58,18 +57,10 @@ final class BlockMemoizer {
             && count > lastCount && !cached.isEmpty
             && lastCount >= 1 && turns[lastCount - 1].id == lastTurnId
 
-        // Truncate: turns removed from the end (regeneration / deletion)
-        let canTruncate =
-            !canIncrement && !canAppend
-            && count > 0 && count < lastCount && !cached.isEmpty
-
         let blocks: [ContentBlock]
 
-        if canIncrement || canTruncate {
-            // Both paths regenerate from the (current) last turn onwards.
-            // Incremental: last turn's content changed during streaming.
-            // Truncate: turns were removed; regenerate the new last turn to
-            //   handle potential content edits (e.g. editAndRegenerate).
+        if canIncrement {
+            // Last turn's content changed during streaming.
             blocks = regenerateFromTurn(
                 at: count - 1,
                 in: turns,
@@ -110,6 +101,8 @@ final class BlockMemoizer {
 
     /// Preserves all cached blocks **before** the turn at `turnIndex`, then
     /// regenerates blocks from that turn through the end of `turns`.
+    /// Falls back to a full rebuild if the turn ID is not found in the cache
+    /// (e.g. after history reload with new ChatTurn objects).
     private func regenerateFromTurn(
         at turnIndex: Int,
         in turns: [ChatTurn],
@@ -117,7 +110,17 @@ final class BlockMemoizer {
         personaName: String
     ) -> [ContentBlock] {
         let turnId = turns[turnIndex].id
-        let prefixEnd = cached.firstIndex { $0.turnId == turnId } ?? cached.count
+
+        // Guard: if the turn ID is not in the cache, the cache is stale.
+        // Fall back to full rebuild rather than mixing stale and fresh blocks.
+        guard let prefixEnd = cached.firstIndex(where: { $0.turnId == turnId }) else {
+            return ContentBlock.generateBlocks(
+                from: turns,
+                streamingTurnId: streamingTurnId,
+                personaName: personaName
+            )
+        }
+
         let stablePrefix = Array(cached.prefix(prefixEnd))
 
         let turnsToGenerate = Array(turns.suffix(from: turnIndex))
@@ -159,7 +162,7 @@ final class BlockMemoizer {
     private static func buildGroupHeaderMap(from blocks: [ContentBlock]) -> [UUID: UUID] {
         var map: [UUID: UUID] = [:]
         map.reserveCapacity(blocks.count)
-        var currentGroupHeaderId: UUID? = nil
+        var currentGroupHeaderId: UUID?
 
         for block in blocks {
             if case .groupSpacer = block.kind {

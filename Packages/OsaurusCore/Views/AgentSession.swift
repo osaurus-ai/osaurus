@@ -851,6 +851,13 @@ public final class AgentSession: ObservableObject {
             return
         }
 
+        // Already viewing this issue with loaded turns — nothing to do.
+        // Prevents refreshIssues() -> selectIssue() -> loadIssueHistory()
+        // from overwriting good in-memory turns after task completion.
+        if selectedIssueId == issue.id, !selectedIssueTurns.isEmpty {
+            return
+        }
+
         // Clear cache when switching issues for clean regeneration
         if selectedIssueId != issue.id {
             clearBlockCache()

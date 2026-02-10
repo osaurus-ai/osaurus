@@ -357,6 +357,8 @@ struct InlineToolCallView: View {
                     Text(call.function.name)
                         .font(theme.monoFont(size: 12, weight: .semibold))
                         .foregroundColor(theme.primaryText)
+                        .lineLimit(1)
+                        .fixedSize(horizontal: true, vertical: false)
 
                     // Arg preview
                     if let preview = argPreview {
@@ -364,6 +366,7 @@ struct InlineToolCallView: View {
                             .font(theme.font(size: 11, weight: .regular))
                             .foregroundColor(theme.tertiaryText)
                             .lineLimit(1)
+                            .truncationMode(.tail)
                     }
 
                     Spacer()
