@@ -112,6 +112,14 @@ final class ToolRegistry: ObservableObject {
             .map { $0.asOpenAITool() }
     }
 
+    /// Tool specs excluding agent-specific and folder tools.
+    /// Use this for chat mode where agent/folder tools should not be available.
+    func userSpecs(withOverrides overrides: [String: Bool]?) -> [Tool] {
+        let excluded = Self.agentToolNames.union(Self.folderToolNames)
+        return specs(withOverrides: overrides)
+            .filter { !excluded.contains($0.function.name) }
+    }
+
     /// Get specs for specific tools by name (ignores enabled state)
     func specs(forTools toolNames: [String]) -> [Tool] {
         return toolNames.compactMap { name in

@@ -769,7 +769,7 @@ final class ChatSession: ObservableObject {
             return ToolRegistry.shared.specs(forTools: toolNames)
         } else {
             // Default: All enabled tools + select_capabilities (if capabilities exist)
-            var specs = ToolRegistry.shared.specs(withOverrides: overrides)
+            var specs = ToolRegistry.shared.userSpecs(withOverrides: overrides)
             if hasCapabilities && !specs.contains(where: { $0.function.name == "select_capabilities" }) {
                 specs.append(contentsOf: ToolRegistry.shared.selectCapabilitiesSpec())
             }
