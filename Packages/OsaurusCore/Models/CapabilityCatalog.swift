@@ -239,7 +239,7 @@ public struct CapabilityCatalogBuilder {
 extension ToolRegistry {
     /// Get catalog entries for all enabled tools (metadata only)
     public func enabledCatalogEntries() -> [CapabilityEntry] {
-        listTools()
+        listUserTools(withOverrides: nil)
             .filter { $0.enabled }
             .map { tool in
                 CapabilityEntry(
@@ -252,7 +252,7 @@ extension ToolRegistry {
 
     /// Get catalog entries with persona-level overrides applied
     public func enabledCatalogEntries(withOverrides overrides: [String: Bool]?) -> [CapabilityEntry] {
-        listTools()
+        listUserTools(withOverrides: overrides)
             .filter { tool in
                 // Check override first, then fall back to global state
                 if let overrides = overrides, let override = overrides[tool.name] {
