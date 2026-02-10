@@ -2,30 +2,34 @@
 //  BackgroundTaskManager.swift
 //  osaurus
 //
-//  Manages agent sessions that continue running after their window is closed.
-//  Provides toast integration and window restoration for background tasks.
+//  Single owner of all backgrounded agent work: dispatched tasks (from schedules,
+//  shortcuts, etc.) and detached tasks (window closed while agent is running).
+//  Drives BackgroundTaskToastView, provides completion signaling, and handles
+//  lazy window creation.
 //
 
 import Combine
 import Foundation
-import SwiftUI
 
 // MARK: - Background Task Manager
 
-/// Manages detached agent sessions running in background mode
+/// Single owner of all backgrounded agent work (dispatched and detached)
 @MainActor
 public final class BackgroundTaskManager: ObservableObject {
     public static let shared = BackgroundTaskManager()
 
     // MARK: - Published State
 
-    /// All background tasks keyed by their original window ID
+    /// All background tasks keyed by task ID (window ID for detached, context ID for dispatched)
     @Published public private(set) var backgroundTasks: [UUID: BackgroundTaskState] = [:]
 
     // MARK: - Private State
 
     /// Combined cancellables for each task (session + state observers)
     private var taskObservers: [UUID: Set<AnyCancellable>] = [:]
+
+    /// Continuations for callers awaiting task completion (e.g. ScheduleManager)
+    private var completionContinuations: [UUID: CheckedContinuation<DispatchResult, Never>] = [:]
 
     /// Subject for batching view updates with throttling
     private let viewUpdateSubject = PassthroughSubject<Void, Never>()
@@ -84,20 +88,20 @@ public final class BackgroundTaskManager: ObservableObject {
         return state
     }
 
-    /// Check if a window is a background task
-    public func isBackgroundTask(_ windowId: UUID) -> Bool {
-        backgroundTasks[windowId] != nil
+    /// Check if a task ID corresponds to a background task
+    public func isBackgroundTask(_ id: UUID) -> Bool {
+        backgroundTasks[id] != nil
     }
 
-    /// Get background task state for a window
-    public func taskState(for windowId: UUID) -> BackgroundTaskState? {
-        backgroundTasks[windowId]
+    /// Get background task state by ID
+    public func taskState(for id: UUID) -> BackgroundTaskState? {
+        backgroundTasks[id]
     }
 
-    /// Register an ExecutionContext for background task management (used by TaskDispatcher).
-    /// Creates a BackgroundTaskState from the context's agent session without requiring a window.
+    /// Create a BackgroundTaskState from an ExecutionContext's agent session.
+    /// Called internally by `dispatchAgent(_:)` after starting the context.
     @discardableResult
-    func registerContext(_ context: ExecutionContext) -> BackgroundTaskState? {
+    private func registerContext(_ context: ExecutionContext) -> BackgroundTaskState? {
         guard backgroundTasks[context.id] == nil else {
             return backgroundTasks[context.id]
         }
@@ -162,6 +166,9 @@ public final class BackgroundTaskManager: ObservableObject {
     public func finalizeTask(_ backgroundId: UUID) {
         guard backgroundTasks[backgroundId] != nil else { return }
 
+        // Resume any pending continuation (e.g. task opened in window before completion)
+        resumeCompletion(for: backgroundId, result: .cancelled)
+
         // Clean up all observers for this task
         taskObservers[backgroundId]?.forEach { $0.cancel() }
         taskObservers.removeValue(forKey: backgroundId)
@@ -174,6 +181,7 @@ public final class BackgroundTaskManager: ObservableObject {
         guard let state = backgroundTasks[backgroundId] else { return }
         state.session.stopExecution()
         state.status = .cancelled
+        resumeCompletion(for: backgroundId, result: .cancelled)
     }
 
     /// Submit a clarification response
@@ -181,6 +189,68 @@ public final class BackgroundTaskManager: ObservableObject {
         guard let state = backgroundTasks[backgroundId] else { return }
         Task {
             await state.session.submitClarification(response)
+        }
+    }
+
+    // MARK: - Agent Dispatch
+
+    /// Create an ExecutionContext for an agent task, start it, register it for background tracking, and return a handle.
+    /// This is the single entry point for all dispatched agent work.
+    public func dispatchAgent(_ request: DispatchRequest) async -> DispatchHandle? {
+        let personaId = request.personaId ?? Persona.defaultId
+
+        let context = ExecutionContext(
+            id: request.id,
+            mode: .agent,
+            personaId: personaId,
+            title: request.title,
+            folderBookmark: request.folderBookmark
+        )
+
+        await context.prepare()
+        await context.start(prompt: request.prompt)
+
+        // Register drives BackgroundTaskToastView automatically
+        registerContext(context)
+
+        print("[BackgroundTaskManager] Dispatched agent task: \(request.title ?? "untitled")")
+        return DispatchHandle(id: request.id, request: request)
+    }
+
+    // MARK: - Completion Signaling
+
+    /// Await completion of a background agent task. Suspends until the task completes, is cancelled, or is finalized.
+    public func awaitCompletion(_ id: UUID) async -> DispatchResult {
+        // If already completed, return immediately
+        if let state = backgroundTasks[id], !state.status.isActive {
+            return resultFromState(state)
+        }
+        // If no task exists at all, return failure
+        guard backgroundTasks[id] != nil else {
+            return .failed("Background task not found")
+        }
+        return await withCheckedContinuation { continuation in
+            completionContinuations[id] = continuation
+        }
+    }
+
+    /// Build a DispatchResult from a completed BackgroundTaskState.
+    private func resultFromState(_ state: BackgroundTaskState) -> DispatchResult {
+        switch state.status {
+        case .completed:
+            let sessionId = state.executionContext?.chatSession.sessionId
+            return .completed(sessionId: sessionId)
+        case .cancelled:
+            return .cancelled
+        default:
+            return .failed("Task ended unexpectedly")
+        }
+    }
+
+    /// Resume and remove a pending completion continuation.
+    private func resumeCompletion(for id: UUID, result: DispatchResult) {
+        if let continuation = completionContinuations.removeValue(forKey: id) {
+            continuation.resume(returning: result)
         }
     }
 
@@ -217,7 +287,7 @@ public final class BackgroundTaskManager: ObservableObject {
 
     private func observeTask(_ state: BackgroundTaskState, session: AgentSession) {
         var cancellables = Set<AnyCancellable>()
-        let windowId = state.id
+        let taskId = state.id
 
         // Forward state changes with throttling
         state.objectWillChange
@@ -235,7 +305,7 @@ public final class BackgroundTaskManager: ObservableObject {
         .receive(on: DispatchQueue.main)
         .sink { [weak self] isExecuting, clarification, task in
             self?.handleExecutionChange(
-                windowId: windowId,
+                taskId: taskId,
                 isExecuting: isExecuting,
                 clarification: clarification,
                 task: task,
@@ -252,7 +322,7 @@ public final class BackgroundTaskManager: ObservableObject {
         .receive(on: DispatchQueue.main)
         .sink { [weak self] issues, loopState in
             self?.handleProgressChange(
-                windowId: windowId,
+                taskId: taskId,
                 issues: issues,
                 loopState: loopState,
                 session: session
@@ -264,7 +334,7 @@ public final class BackgroundTaskManager: ObservableObject {
         session.$activeIssue
             .receive(on: DispatchQueue.main)
             .sink { [weak self] issue in
-                guard let state = self?.backgroundTasks[windowId] else { return }
+                guard let state = self?.backgroundTasks[taskId] else { return }
                 state.activeIssueId = issue?.id
             }
             .store(in: &cancellables)
@@ -273,12 +343,12 @@ public final class BackgroundTaskManager: ObservableObject {
         session.activityPublisher
             .receive(on: DispatchQueue.main)
             .sink { [weak self] event in
-                guard let self, let state = self.backgroundTasks[windowId] else { return }
+                guard let self, let state = self.backgroundTasks[taskId] else { return }
                 self.recordActivityEvent(event, into: state)
             }
             .store(in: &cancellables)
 
-        taskObservers[windowId] = cancellables
+        taskObservers[taskId] = cancellables
     }
 
     // MARK: - Private: Activity Event Mapping
@@ -316,18 +386,16 @@ public final class BackgroundTaskManager: ObservableObject {
     // MARK: - Private: State Update Handlers
 
     private func handleExecutionChange(
-        windowId: UUID,
+        taskId: UUID,
         isExecuting: Bool,
         clarification: ClarificationRequest?,
         task: AgentTask?,
         session: AgentSession
     ) {
-        guard let state = backgroundTasks[windowId] else { return }
+        guard let state = backgroundTasks[taskId] else { return }
 
-        // Update clarification
         state.pendingClarification = clarification
 
-        // Determine status
         if task?.status == .cancelled {
             state.status = .cancelled
         } else if clarification != nil {
@@ -338,18 +406,17 @@ public final class BackgroundTaskManager: ObservableObject {
                 state.currentStep = "Working..."
             }
         } else {
-            // Execution stopped - check completion
             checkTaskCompletion(state: state, session: session)
         }
     }
 
     private func handleProgressChange(
-        windowId: UUID,
+        taskId: UUID,
         issues: [Issue],
         loopState: LoopState?,
         session: AgentSession
     ) {
-        guard let state = backgroundTasks[windowId] else { return }
+        guard let state = backgroundTasks[taskId] else { return }
 
         // Update raw state
         state.issues = issues
@@ -463,6 +530,9 @@ public final class BackgroundTaskManager: ObservableObject {
             state.status = .completed(success: true, summary: "Task completed successfully")
             state.progress = 1.0
             state.currentStep = nil
+            // Persist chat session so result toast "View" action can reload from disk
+            state.executionContext?.chatSession.save()
+            resumeCompletion(for: state.id, result: resultFromState(state))
         } else if session.currentTask == nil {
             let closedCount = issues.filter { $0.status == .closed }.count
             let summary =
@@ -470,6 +540,7 @@ public final class BackgroundTaskManager: ObservableObject {
                 ? "Completed \(closedCount)/\(issues.count) issues"
                 : "Task ended"
             state.status = .completed(success: closedCount == issues.count, summary: summary)
+            resumeCompletion(for: state.id, result: resultFromState(state))
         }
     }
 }

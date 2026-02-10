@@ -2,9 +2,9 @@
 //  DispatchRequest.swift
 //  osaurus
 //
-//  Defines the async dispatch trigger types for executing Chat or Agent tasks
-//  programmatically. Any trigger (schedules, webhooks, shortcuts, etc.) creates
-//  a DispatchRequest and hands it to TaskDispatcher.
+//  Async dispatch trigger types for executing Chat or Agent tasks.
+//  Any trigger (schedules, webhooks, shortcuts, etc.) creates a
+//  DispatchRequest and hands it to TaskDispatcher.
 //
 
 import Foundation
@@ -52,7 +52,6 @@ public struct DispatchRequest: Sendable {
 /// Returned after dispatch; used for observation and cancellation
 public struct DispatchHandle: Sendable {
     public let id: UUID
-    public let windowId: UUID?
     public let request: DispatchRequest
 }
 

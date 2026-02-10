@@ -349,7 +349,8 @@ public final class ScheduleManager: ObservableObject {
 
     // MARK: - Result Handling
 
-    /// Update schedule metadata and show result toast via TaskDispatcher.
+    /// Update schedule metadata and show result toast for chat mode.
+    /// Agent mode result UI is already handled by BackgroundTaskToastView.
     private func handleResult(_ result: DispatchResult, schedule: Schedule, request: DispatchRequest) {
         defer {
             executionTasks.removeValue(forKey: schedule.id)
@@ -368,7 +369,10 @@ public final class ScheduleManager: ObservableObject {
             ScheduleStore.save(updatedSchedule)
             refresh()
 
-            TaskDispatcher.shared.showResultToast(for: request, result: result)
+            // Only show result toast for chat mode; agent mode uses BackgroundTaskToastView
+            if request.mode == .chat {
+                TaskDispatcher.shared.showChatResultToast(for: request, result: result)
+            }
 
             NotificationCenter.default.post(
                 name: .scheduleExecutionCompleted,
@@ -386,7 +390,10 @@ public final class ScheduleManager: ObservableObject {
 
         case .failed(let error):
             print("[Osaurus] Schedule failed: \(schedule.name) - \(error)")
-            TaskDispatcher.shared.showResultToast(for: request, result: result)
+            // Only show failure toast for chat mode; agent failures surface via BackgroundTaskToastView
+            if request.mode == .chat {
+                TaskDispatcher.shared.showChatResultToast(for: request, result: result)
+            }
         }
     }
 }
