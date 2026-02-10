@@ -315,6 +315,8 @@ public actor RemoteProviderService: ToolCapableService {
                                                 continuation.finish(throwing: invocation)
                                                 return
                                             }
+                                            continuation.finish()
+                                            return
                                         }
                                     } else if providerType == .anthropic {
                                         // Parse Anthropic SSE event
@@ -766,6 +768,8 @@ public actor RemoteProviderService: ToolCapableService {
                                                     continuation.finish(throwing: invocation)
                                                     return
                                                 }
+                                                continuation.finish()
+                                                return
                                             }
                                         }
                                     } else if providerType == .anthropic {
