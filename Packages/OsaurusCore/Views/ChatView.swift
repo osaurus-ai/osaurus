@@ -1035,12 +1035,14 @@ final class ChatSession: ObservableObject {
                         assistantTurn.toolResults[callId] = resultText
                         let toolTurn = ChatTurn(role: .tool, content: resultText)
                         toolTurn.toolCallId = callId
-                        turns.append(toolTurn)
 
                         // Create a new assistant turn for subsequent content
                         // This ensures tool calls and text are rendered sequentially
                         let newAssistantTurn = ChatTurn(role: .assistant, content: "")
-                        turns.append(newAssistantTurn)
+
+                        // Batch both appends into a single mutation to reduce
+                        // the number of @Published change signals and SwiftUI layout passes.
+                        turns.append(contentsOf: [toolTurn, newAssistantTurn])
                         assistantTurn = newAssistantTurn
 
                         // Continue loop with new history
