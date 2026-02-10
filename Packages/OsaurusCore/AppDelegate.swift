@@ -118,6 +118,18 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
         _ = WhisperConfigurationStore.load()
         ChatSession.prewarmLocalModelsOnly()
 
+        // Invalidate ChatSession model cache whenever remote provider models change,
+        // even if no ChatSession instance currently exists (e.g. during onboarding)
+        NotificationCenter.default.addObserver(
+            forName: .remoteProviderModelsChanged,
+            object: nil,
+            queue: .main
+        ) { _ in
+            Task { @MainActor in
+                ChatSession.invalidateModelCache()
+            }
+        }
+
         // Auto-connect to enabled providers, then update model cache with remote models
         Task { @MainActor in
             await MCPProviderManager.shared.connectEnabledProviders()

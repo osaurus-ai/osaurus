@@ -317,6 +317,7 @@ public final class AgentSession: ObservableObject {
 
     private var executionTask: Task<Void, Never>?
     private var persistDebounceTask: Task<Void, Never>?
+    nonisolated(unsafe) private var modelOptionsCancellable: AnyCancellable?
 
     /// The agent engine instance for this session (each session owns its own engine)
     private let engine: AgentEngine
@@ -340,10 +341,24 @@ public final class AgentSession: ObservableObject {
         self.windowState = windowState
         self.engine = AgentEngine()
 
-        // Initialize model options from window state's session
+        // Initialize model options from ChatSession and subscribe to keep in sync
+        // after provider changes (add/remove/enable/disable)
         if let windowState = windowState {
             self.modelOptions = windowState.session.modelOptions
             self.selectedModel = windowState.session.selectedModel
+
+            modelOptionsCancellable = windowState.session.$modelOptions
+                .dropFirst()
+                .receive(on: RunLoop.main)
+                .sink { [weak self] updatedOptions in
+                    guard let self = self else { return }
+                    self.modelOptions = updatedOptions
+                    if let selected = self.selectedModel,
+                        !updatedOptions.contains(where: { $0.id == selected })
+                    {
+                        self.selectedModel = updatedOptions.first?.id
+                    }
+                }
         }
 
         // Initialize database and issue manager
@@ -353,6 +368,7 @@ public final class AgentSession: ObservableObject {
     }
 
     deinit {
+        modelOptionsCancellable?.cancel()
         executionTask?.cancel()
         let engineToCancel = engine
         Task { await engineToCancel.cancel() }

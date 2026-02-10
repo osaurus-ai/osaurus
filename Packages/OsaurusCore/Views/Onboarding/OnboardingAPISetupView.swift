@@ -560,15 +560,13 @@ struct OnboardingAPISetupView: View {
             timeout: 60
         )
 
+        // addProvider() already starts connect() internally for enabled providers,
+        // and the app-level cache invalidation observer ensures model options update
+        // when connection completes. No need to call connect() again.
         RemoteProviderManager.shared.addProvider(remoteProvider, apiKey: apiKey)
 
-        Task {
-            try? await RemoteProviderManager.shared.connect(providerId: remoteProvider.id)
-            await MainActor.run {
-                isSaving = false
-                onComplete()
-            }
-        }
+        isSaving = false
+        onComplete()
     }
 }
 
