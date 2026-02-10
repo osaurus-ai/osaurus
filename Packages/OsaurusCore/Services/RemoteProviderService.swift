@@ -1472,32 +1472,17 @@ private struct RemoteChatRequest: Encodable {
 // MARK: - Static Factory for Creating Services
 
 extension RemoteProviderService {
-    /// Known Anthropic models (Anthropic doesn't have a /models endpoint)
-    /// Using aliases where available for cleaner names
-    private static let anthropicModels = [
-        // Claude 4.5 (current)
-        "claude-sonnet-4-5",
-        "claude-haiku-4-5",
-        "claude-opus-4-5",
-        // Claude 4.1 (legacy)
-        "claude-opus-4-1",
-        // Claude 4 (legacy)
-        "claude-sonnet-4-0",
-        "claude-opus-4-0",
-        // Claude 3.7 (legacy)
-        "claude-3-7-sonnet-latest",
-        // Claude 3 (legacy)
-        "claude-3-haiku-20240307",
-    ]
-
     /// Fetch models from a remote provider and create a service instance
     public static func fetchModels(from provider: RemoteProvider) async throws -> [String] {
-        // Anthropic doesn't have a /models endpoint, so we return known models
-        // and validate the API key with a minimal request
         if provider.providerType == .anthropic {
-            // Validate the API key by making a minimal request
-            try await validateAnthropicConnection(provider: provider)
-            return anthropicModels
+            guard let baseURL = provider.url(for: "/models") else {
+                throw RemoteProviderServiceError.invalidURL
+            }
+            return try await fetchAnthropicModels(
+                baseURL: baseURL,
+                headers: provider.resolvedHeaders(),
+                timeout: min(provider.timeout, 30)
+            )
         }
 
         // OpenAI-compatible providers use /models endpoint
@@ -1534,6 +1519,66 @@ extension RemoteProviderService {
         return modelsResponse.data.map { $0.id }
     }
 
+    /// Fetch all models from the Anthropic `/v1/models` endpoint, handling pagination.
+    ///
+    /// Shared between `fetchModels(from:)` and `RemoteProviderManager.testAnthropicConnection`.
+    static func fetchAnthropicModels(
+        baseURL: URL,
+        headers: [String: String],
+        timeout: TimeInterval = 30
+    ) async throws -> [String] {
+        let config = URLSessionConfiguration.default
+        config.timeoutIntervalForRequest = timeout
+        let session = URLSession(configuration: config)
+
+        var allModels: [String] = []
+        var afterId: String? = nil
+
+        while true {
+            guard var components = URLComponents(url: baseURL, resolvingAgainstBaseURL: false) else {
+                throw RemoteProviderServiceError.invalidURL
+            }
+            var queryItems = [URLQueryItem(name: "limit", value: "1000")]
+            if let afterId = afterId {
+                queryItems.append(URLQueryItem(name: "after_id", value: afterId))
+            }
+            components.queryItems = queryItems
+
+            guard let url = components.url else {
+                throw RemoteProviderServiceError.invalidURL
+            }
+
+            var request = URLRequest(url: url)
+            request.httpMethod = "GET"
+            request.setValue("application/json", forHTTPHeaderField: "Accept")
+            for (key, value) in headers {
+                request.setValue(value, forHTTPHeaderField: key)
+            }
+
+            let (data, response) = try await session.data(for: request)
+
+            guard let httpResponse = response as? HTTPURLResponse else {
+                throw RemoteProviderServiceError.invalidResponse
+            }
+
+            if httpResponse.statusCode >= 400 {
+                let errorMessage = extractErrorMessage(from: data, statusCode: httpResponse.statusCode)
+                throw RemoteProviderServiceError.requestFailed(errorMessage)
+            }
+
+            let modelsResponse = try JSONDecoder().decode(AnthropicModelsResponse.self, from: data)
+            allModels.append(contentsOf: modelsResponse.data.map { $0.id })
+
+            if modelsResponse.has_more, let lastId = modelsResponse.last_id {
+                afterId = lastId
+            } else {
+                break
+            }
+        }
+
+        return allModels
+    }
+
     /// Extract a human-readable error message from API error response data
     private static func extractErrorMessage(from data: Data, statusCode: Int) -> String {
         // Try to parse as JSON error response (OpenAI/xAI format)
@@ -1566,52 +1611,5 @@ extension RemoteProviderService {
         }
 
         return "HTTP \(statusCode): Unknown error"
-    }
-
-    /// Validate Anthropic connection by making a minimal API request
-    private static func validateAnthropicConnection(provider: RemoteProvider) async throws {
-        guard let url = provider.url(for: "/messages") else {
-            throw RemoteProviderServiceError.invalidURL
-        }
-
-        var request = URLRequest(url: url)
-        request.httpMethod = "POST"
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-
-        // Add provider headers
-        for (key, value) in provider.resolvedHeaders() {
-            request.setValue(value, forHTTPHeaderField: key)
-        }
-
-        // Minimal valid request to test authentication
-        let testBody: [String: Any] = [
-            "model": "claude-3-haiku-20240307",
-            "max_tokens": 1,
-            "messages": [
-                ["role": "user", "content": "Hi"]
-            ],
-        ]
-        request.httpBody = try JSONSerialization.data(withJSONObject: testBody)
-
-        let config = URLSessionConfiguration.default
-        config.timeoutIntervalForRequest = min(provider.timeout, 30)
-        let session = URLSession(configuration: config)
-
-        let (data, response) = try await session.data(for: request)
-
-        guard let httpResponse = response as? HTTPURLResponse else {
-            throw RemoteProviderServiceError.invalidResponse
-        }
-
-        // 401 = invalid API key, 400 = might be rate limit or other issue
-        // 200 = success (we made a valid request)
-        // 529 = overloaded (but connection works)
-        if httpResponse.statusCode == 401 {
-            throw RemoteProviderServiceError.requestFailed("Invalid API key")
-        } else if httpResponse.statusCode >= 500 {
-            let errorMessage = String(data: data, encoding: .utf8) ?? "Server error"
-            throw RemoteProviderServiceError.requestFailed("HTTP \(httpResponse.statusCode): \(errorMessage)")
-        }
-        // Any 2xx or 4xx (except 401) means the connection works
     }
 }

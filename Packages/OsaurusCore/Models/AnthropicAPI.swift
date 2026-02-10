@@ -892,3 +892,21 @@ extension AnthropicMessagesRequest {
         )
     }
 }
+
+// MARK: - Models API Response
+
+/// Response from the Anthropic `/v1/models` endpoint
+struct AnthropicModelsResponse: Codable, Sendable {
+    let data: [AnthropicModelInfo]
+    let has_more: Bool
+    let first_id: String?
+    let last_id: String?
+}
+
+/// A single model entry from the Anthropic Models API
+struct AnthropicModelInfo: Codable, Sendable {
+    let id: String
+    let display_name: String
+    let created_at: String
+    let type: String
+}
