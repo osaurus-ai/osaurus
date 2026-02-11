@@ -520,7 +520,7 @@ final class ChatSession: ObservableObject {
         }
 
         let data = toSessionData()
-        ChatSessionStore.save(data)
+        ChatSessionsManager.shared.save(data)
         onSessionChanged?()
     }
 
@@ -798,7 +798,7 @@ final class ChatSession: ObservableObject {
                 let turnData = turns.map { ChatTurnData(from: $0) }
                 title = ChatSessionData.generateTitle(from: turnData)
                 let data = toSessionData()
-                ChatSessionStore.save(data)
+                ChatSessionsManager.shared.save(data)
                 onSessionChanged?()
             }
         }
