@@ -87,6 +87,34 @@ public final class InstalledPluginsStore: @unchecked Sendable {
         return versions.sorted(by: >)
     }
 
+    /// Returns all installed plugin IDs by scanning the Tools root directory.
+    /// A plugin ID is included if its directory contains at least one valid version with a receipt.
+    public func allInstalledPluginIds() -> [String] {
+        let fm = FileManager.default
+        let root = ToolsPaths.toolsRootDirectory()
+
+        guard
+            let entries = try? fm.contentsOfDirectory(
+                at: root,
+                includingPropertiesForKeys: [.isDirectoryKey],
+                options: [.skipsHiddenFiles]
+            )
+        else {
+            return []
+        }
+
+        var pluginIds: [String] = []
+        for entry in entries {
+            guard entry.hasDirectoryPath else { continue }
+            let pluginId = entry.lastPathComponent
+            // Only include if at least one valid version is installed
+            if !installedVersions(pluginId: pluginId).isEmpty {
+                pluginIds.append(pluginId)
+            }
+        }
+        return pluginIds
+    }
+
     /// Returns the latest installed version for a plugin.
     /// First checks the "current" symlink, then falls back to highest version.
     public func latestInstalledVersion(pluginId: String) -> SemanticVersion? {

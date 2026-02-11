@@ -9,15 +9,28 @@ import Combine
 import Foundation
 import OsaurusRepository
 
-/// Represents a plugin's installation state and available updates
+/// Represents a plugin's display metadata, installation state, and available updates.
+/// Self-contained -- views use properties directly without reaching into PluginSpec.
 struct PluginState: Identifiable, Equatable {
-    var id: String { spec.plugin_id }
-    let spec: PluginSpec
+    let pluginId: String
+    var id: String { pluginId }
+
+    // Display metadata (resolved from repo spec or loaded plugin manifest)
+    let name: String?
+    let pluginDescription: String?
+    let authors: [String]?
+    let license: String?
+    let capabilities: RegistryCapabilities?
+
+    // Installation & update state
     var installedVersion: SemanticVersion?
     var latestVersion: SemanticVersion?
     var isInstalling: Bool = false
     /// Error message if the plugin failed to load (installed but not functional)
     var loadError: String?
+
+    /// Display name, falling back to the plugin ID.
+    var displayName: String { name ?? pluginId }
 
     var hasUpdate: Bool {
         guard let installed = installedVersion, let latest = latestVersion else { return false }
@@ -76,6 +89,9 @@ final class PluginRepositoryService: ObservableObject {
 
     /// Start the background refresh timer
     func startBackgroundRefresh() {
+        // Immediately populate installed plugins from disk before any network call
+        loadInstalledPluginsFromDisk()
+
         // Initial refresh
         Task {
             await refresh()
@@ -103,24 +119,33 @@ final class PluginRepositoryService: ObservableObject {
         isRefreshing = true
         lastError = nil
 
+        // Ensure installed plugins are visible immediately, before any network call
+        if plugins.isEmpty {
+            loadInstalledPluginsFromDisk()
+        }
+
         // Run git operations on background thread
-        await Task.detached(priority: .utility) {
+        let gitSuccess = await Task.detached(priority: .utility) {
             CentralRepositoryManager.shared.refresh()
         }.value
 
-        // Parse specs on background thread
+        if !gitSuccess {
+            lastError = "Unable to reach plugin repository"
+        }
+
+        // Parse specs on background thread (reads from local cache even if git failed)
         let specs = await Task.detached(priority: .utility) {
             CentralRepositoryManager.shared.listAllSpecs()
         }.value
 
-        // Update state (already on main actor)
+        // Update state (already on main actor), merging with installed plugins
         updatePlugins(from: specs)
         lastRefreshed = Date()
         isRefreshing = false
 
         // Check for updates and notify if any
         if updatesAvailableCount > 0 {
-            let outdatedNames = plugins.filter { $0.hasUpdate }.map { $0.spec.name ?? $0.spec.plugin_id }
+            let outdatedNames = plugins.filter { $0.hasUpdate }.map { $0.displayName }
             NotificationService.shared.postPluginUpdatesAvailable(
                 count: updatesAvailableCount,
                 pluginNames: outdatedNames
@@ -130,126 +155,193 @@ final class PluginRepositoryService: ObservableObject {
 
     /// Install a plugin by ID
     func install(pluginId: String) async throws {
-        guard let index = plugins.firstIndex(where: { $0.spec.plugin_id == pluginId }) else {
-            throw PluginInstallError.specNotFound(pluginId)
-        }
-
-        plugins[index].isInstalling = true
-
-        do {
-            let result = try await PluginInstallManager.shared.install(pluginId: pluginId)
-            plugins[index].installedVersion = result.receipt.version
-            plugins[index].isInstalling = false
-
-            // Reload plugins in the app
-            PluginManager.shared.loadAll()
-
-            // Update load error state from PluginManager
-            plugins[index].loadError = PluginManager.shared.loadError(for: pluginId)
-
-            // Post notification synchronously to ensure all views update
-            NotificationCenter.default.post(name: .toolsListChanged, object: nil)
-
-            updateUpdatesCount()
-
-            // Check if the installed plugin requires secrets configuration
-            checkForPendingSecrets(pluginId: pluginId)
-        } catch {
-            plugins[index].isInstalling = false
-            throw error
-        }
+        try await performInstall(pluginId: pluginId)
+        checkForPendingSecrets(pluginId: pluginId)
     }
 
     /// Upgrade a plugin to the latest version
     func upgrade(pluginId: String) async throws {
-        guard let index = plugins.firstIndex(where: { $0.spec.plugin_id == pluginId }),
-            let latestVersion = plugins[index].latestVersion
-        else {
+        guard let latestVersion = plugins.first(where: { $0.pluginId == pluginId })?.latestVersion else {
             throw PluginInstallError.specNotFound(pluginId)
         }
-
-        plugins[index].isInstalling = true
-
-        do {
-            let result = try await PluginInstallManager.shared.install(
-                pluginId: pluginId,
-                preferredVersion: latestVersion
-            )
-            plugins[index].installedVersion = result.receipt.version
-            plugins[index].isInstalling = false
-
-            // Reload plugins in the app
-            PluginManager.shared.loadAll()
-
-            // Update load error state from PluginManager
-            plugins[index].loadError = PluginManager.shared.loadError(for: pluginId)
-
-            // Post notification synchronously to ensure all views update
-            NotificationCenter.default.post(name: .toolsListChanged, object: nil)
-
-            updateUpdatesCount()
-        } catch {
-            plugins[index].isInstalling = false
-            throw error
-        }
+        try await performInstall(pluginId: pluginId, version: latestVersion)
     }
 
     /// Uninstall a plugin by ID
-    func uninstall(pluginId: String) throws {
-        let fm = FileManager.default
+    func uninstall(pluginId: String) async throws {
         let pluginDir = PluginInstallManager.toolsPluginDirectory(pluginId: pluginId)
-
-        if fm.fileExists(atPath: pluginDir.path) {
-            try fm.removeItem(at: pluginDir)
+        if FileManager.default.fileExists(atPath: pluginDir.path) {
+            try FileManager.default.removeItem(at: pluginDir)
         }
 
-        // Clean up any secrets stored in Keychain for this plugin
         ToolSecretsKeychain.deleteAllSecrets(for: pluginId)
-
-        // Remove plugin skills from SkillManager
         SkillManager.shared.unregisterPluginSkills(pluginId: pluginId)
 
-        // Update state to ensure UI reflects uninstallation immediately
-        if let index = plugins.firstIndex(where: { $0.spec.plugin_id == pluginId }) {
+        // Update state immediately so the UI reflects uninstallation
+        if let index = plugins.firstIndex(where: { $0.pluginId == pluginId }) {
             plugins[index].installedVersion = nil
             plugins[index].loadError = nil
         }
 
-        // Reload plugins (this will unregister tools from ToolRegistry)
-        PluginManager.shared.loadAll()
-
-        // Post notification synchronously to ensure all views update
-        NotificationCenter.default.post(name: .toolsListChanged, object: nil)
-
+        // Reload plugins (unregisters tools from ToolRegistry, posts .toolsListChanged)
+        await PluginManager.shared.loadAll()
         updateUpdatesCount()
     }
 
-    // MARK: - Private Helpers
+    // MARK: - Install / Upgrade Helpers
 
-    private func updatePlugins(from specs: [PluginSpec]) {
-        plugins = specs.map { spec in
-            let installedVersion = InstalledPluginsStore.shared.latestInstalledVersion(pluginId: spec.plugin_id)
-            let latestVersion = spec.versions.map(\.version).sorted(by: >).first
-            let loadError = PluginManager.shared.loadError(for: spec.plugin_id)
+    /// Safely mutate the PluginState for a given ID.
+    /// Re-looks up the index each time, which is necessary because the `plugins` array
+    /// can be reordered by `updateInstalledState()` during `await` suspension points.
+    private func updatePlugin(id: String, _ mutate: (inout PluginState) -> Void) {
+        guard let index = plugins.firstIndex(where: { $0.pluginId == id }) else { return }
+        mutate(&plugins[index])
+    }
 
-            return PluginState(
-                spec: spec,
-                installedVersion: installedVersion,
-                latestVersion: latestVersion,
-                isInstalling: false,
-                loadError: loadError
+    /// Shared implementation for install and upgrade.
+    /// Downloads the plugin, reloads the plugin manager, and updates local state.
+    private func performInstall(pluginId: String, version: SemanticVersion? = nil) async throws {
+        guard plugins.contains(where: { $0.pluginId == pluginId }) else {
+            throw PluginInstallError.specNotFound(pluginId)
+        }
+
+        updatePlugin(id: pluginId) { $0.isInstalling = true }
+
+        do {
+            let result = try await PluginInstallManager.shared.install(
+                pluginId: pluginId,
+                preferredVersion: version
             )
-        }.sorted { ($0.spec.name ?? $0.spec.plugin_id) < ($1.spec.name ?? $1.spec.plugin_id) }
+
+            // Re-lookup after await -- the array may have been reordered during suspension
+            updatePlugin(id: pluginId) {
+                $0.installedVersion = result.receipt.version
+                $0.isInstalling = false
+            }
+
+            // Reload plugins (heavy work runs on background thread, posts .toolsListChanged)
+            await PluginManager.shared.loadAll()
+
+            // Re-lookup again after second await
+            updatePlugin(id: pluginId) {
+                $0.loadError = PluginManager.shared.loadError(for: pluginId)
+            }
+            updateUpdatesCount()
+        } catch {
+            updatePlugin(id: pluginId) { $0.isInstalling = false }
+            throw error
+        }
+    }
+
+    // MARK: - State Construction
+
+    /// Creates a PluginState from a repository spec, enriched with local install state.
+    private static func makeState(from spec: PluginSpec) -> PluginState {
+        PluginState(
+            pluginId: spec.plugin_id,
+            name: spec.name,
+            pluginDescription: spec.description,
+            authors: spec.authors,
+            license: spec.license,
+            capabilities: spec.capabilities,
+            installedVersion: InstalledPluginsStore.shared.latestInstalledVersion(pluginId: spec.plugin_id),
+            latestVersion: spec.versions.map(\.version).sorted(by: >).first,
+            loadError: PluginManager.shared.loadError(for: spec.plugin_id)
+        )
+    }
+
+    /// Creates a PluginState for a locally installed plugin using manifest data.
+    /// Used when no repo spec is available (offline / plugin not in repository).
+    private static func makeInstalledState(for pluginId: String) -> PluginState {
+        var name: String?
+        var desc: String?
+        var authors: [String]?
+        var license: String?
+        var capabilities: RegistryCapabilities?
+
+        if let loaded = PluginManager.shared.plugins.first(where: { $0.plugin.id == pluginId }) {
+            let manifest = loaded.plugin.manifest
+            name = manifest.name
+            desc = manifest.description
+            authors = manifest.authors
+            license = manifest.license
+            capabilities = RegistryCapabilities(
+                tools: manifest.capabilities.tools?.map {
+                    RegistryCapabilities.ToolSummary(name: $0.id, description: $0.description)
+                },
+                skills: loaded.skills.isEmpty
+                    ? nil
+                    : loaded.skills.map {
+                        RegistryCapabilities.SkillSummary(name: $0.name, description: $0.description)
+                    }
+            )
+        }
+
+        return PluginState(
+            pluginId: pluginId,
+            name: name,
+            pluginDescription: desc,
+            authors: authors,
+            license: license,
+            capabilities: capabilities,
+            installedVersion: InstalledPluginsStore.shared.latestInstalledVersion(pluginId: pluginId),
+            loadError: PluginManager.shared.loadError(for: pluginId)
+        )
+    }
+
+    // MARK: - State Updates
+
+    /// Populates the plugins list from locally installed plugins on disk.
+    /// Called eagerly before any network operation so the Installed tab is always available.
+    private func loadInstalledPluginsFromDisk() {
+        let installedIds = InstalledPluginsStore.shared.allInstalledPluginIds()
+        guard !installedIds.isEmpty else { return }
+
+        let installingIds = Set(plugins.filter { $0.isInstalling }.map { $0.id })
+
+        plugins = installedIds.map { pluginId in
+            var state = Self.makeInstalledState(for: pluginId)
+            state.isInstalling = installingIds.contains(pluginId)
+            return state
+        }.sorted { $0.displayName < $1.displayName }
 
         updateUpdatesCount()
     }
 
+    /// Merges repo specs with locally installed plugins into a single list.
+    private func updatePlugins(from specs: [PluginSpec]) {
+        var specPluginIds = Set<String>()
+        var result: [PluginState] = specs.map { spec in
+            specPluginIds.insert(spec.plugin_id)
+            return Self.makeState(from: spec)
+        }
+
+        // Append installed plugins that have no matching repo spec
+        for pluginId in InstalledPluginsStore.shared.allInstalledPluginIds()
+        where !specPluginIds.contains(pluginId) {
+            result.append(Self.makeInstalledState(for: pluginId))
+        }
+
+        plugins = result.sorted { $0.displayName < $1.displayName }
+        updateUpdatesCount()
+    }
+
+    /// Refreshes install/error state and picks up newly installed plugins.
     private func updateInstalledState() {
+        let currentIds = Set(plugins.map { $0.id })
+
+        for pluginId in InstalledPluginsStore.shared.allInstalledPluginIds()
+        where !currentIds.contains(pluginId) {
+            plugins.append(Self.makeInstalledState(for: pluginId))
+        }
+
         for i in plugins.indices {
-            let pluginId = plugins[i].spec.plugin_id
+            let pluginId = plugins[i].pluginId
             plugins[i].installedVersion = InstalledPluginsStore.shared.latestInstalledVersion(pluginId: pluginId)
             plugins[i].loadError = PluginManager.shared.loadError(for: pluginId)
         }
+
+        plugins.sort { $0.displayName < $1.displayName }
         updateUpdatesCount()
     }
 

@@ -99,9 +99,9 @@ struct CapabilitiesSelectorView: View {
 
         // Single pass over installed plugins: build tool groups and detect compound plugins
         for plugin in PluginRepositoryService.shared.plugins where plugin.isInstalled {
-            let pluginId = plugin.spec.plugin_id
-            let displayName = plugin.spec.name ?? pluginId
-            let specToolNames = (plugin.spec.capabilities?.tools ?? []).map { $0.name }
+            let pluginId = plugin.pluginId
+            let displayName = plugin.displayName
+            let specToolNames = (plugin.capabilities?.tools ?? []).map { $0.name }
             let matched = tools.filter { specToolNames.contains($0.name) }
 
             if !matched.isEmpty {
