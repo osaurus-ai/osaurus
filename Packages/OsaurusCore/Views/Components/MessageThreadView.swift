@@ -17,12 +17,14 @@ struct MessageThreadView: View {
     let lastAssistantTurnId: UUID?
     var autoScrollEnabled: Bool = true
 
-    // Action callbacks
-    let onCopy: (UUID) -> Void
-    let onRegenerate: (UUID) -> Void
-    let onEdit: (UUID) -> Void
+    // Scroll callbacks
     let onScrolledToBottom: () -> Void
     let onScrolledAwayFromBottom: () -> Void
+
+    // Message action callbacks
+    let onCopy: (UUID) -> Void
+    var onRegenerate: ((UUID) -> Void)? = nil
+    var onEdit: ((UUID) -> Void)? = nil
     var onClarificationSubmit: ((String) -> Void)? = nil
 
     // Inline editing state (optional; unused in AgentView)

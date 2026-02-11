@@ -507,11 +507,9 @@ extension AgentView {
                 isStreaming: session.isExecuting && session.activeIssue?.id == session.selectedIssueId,
                 lastAssistantTurnId: blocks.last?.turnId,
                 autoScrollEnabled: false,
-                onCopy: { _ in },
-                onRegenerate: { _ in },
-                onEdit: { _ in },
                 onScrolledToBottom: { isPinnedToBottom = true },
                 onScrolledAwayFromBottom: { isPinnedToBottom = false },
+                onCopy: copyTurnContent,
                 onClarificationSubmit: { response in
                     Task {
                         await session.submitClarification(response)
@@ -530,6 +528,22 @@ extension AgentView {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .padding(.horizontal, Self.contentHorizontalPadding)
         .padding(.top, 16)
+    }
+
+    /// Copy a turn's content to the clipboard
+    private func copyTurnContent(turnId: UUID) {
+        guard let turn = session.turn(withId: turnId) else { return }
+        var textToCopy = ""
+        if turn.hasThinking {
+            textToCopy += turn.thinking
+        }
+        if !turn.contentIsEmpty {
+            if !textToCopy.isEmpty { textToCopy += "\n\n" }
+            textToCopy += turn.content
+        }
+        guard !textToCopy.isEmpty else { return }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(textToCopy, forType: .string)
     }
 
     private var issueEmptyDetailView: some View {

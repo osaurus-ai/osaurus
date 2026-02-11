@@ -1546,11 +1546,11 @@ struct ChatView: View {
                 personaName: displayName,
                 isStreaming: session.isStreaming,
                 lastAssistantTurnId: lastAssistantTurnId,
+                onScrolledToBottom: { isPinnedToBottom = true },
+                onScrolledAwayFromBottom: { isPinnedToBottom = false },
                 onCopy: copyTurnContent,
                 onRegenerate: regenerateTurn,
                 onEdit: beginEditingTurn,
-                onScrolledToBottom: { isPinnedToBottom = true },
-                onScrolledAwayFromBottom: { isPinnedToBottom = false },
                 editingTurnId: editingTurnId,
                 editText: $editText,
                 onConfirmEdit: confirmEditAndRegenerate,
@@ -1575,26 +1575,18 @@ struct ChatView: View {
         }
     }
 
-    /// Stable callback for copy action - prevents closure recreation
+    /// Copy a turn's thinking + content to the clipboard
     private func copyTurnContent(turnId: UUID) {
         guard let turn = session.turns.first(where: { $0.id == turnId }) else { return }
-
-        // Build copyable text: thinking + content
         var textToCopy = ""
-
         if turn.hasThinking {
             textToCopy += turn.thinking
         }
-
         if !turn.contentIsEmpty {
-            if !textToCopy.isEmpty {
-                textToCopy += "\n\n"
-            }
+            if !textToCopy.isEmpty { textToCopy += "\n\n" }
             textToCopy += turn.content
         }
-
         guard !textToCopy.isEmpty else { return }
-
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(textToCopy, forType: .string)
     }

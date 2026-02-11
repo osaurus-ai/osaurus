@@ -98,6 +98,11 @@ public final class AgentSession: ObservableObject {
         return selectedIssueTurns
     }
 
+    /// Find a turn by ID in the currently visible turns (for copy, etc.)
+    func turn(withId id: UUID) -> ChatTurn? {
+        currentTurns.first(where: { $0.id == id })
+    }
+
     // MARK: - Turns Management
 
     /// Preserves live execution turns to selected turns (call before clearing activeIssue)
