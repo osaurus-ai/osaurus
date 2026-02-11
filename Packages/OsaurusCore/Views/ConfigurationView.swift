@@ -48,6 +48,7 @@ struct ConfigurationView: View {
     @State private var tempToastTimeout: String = ""
     @State private var tempToastEnabled: Bool = true
     @State private var tempToastMaxVisible: String = ""
+    @State private var tempToastMaxConcurrent: String = ""
 
     // Search (passed from sidebar)
     @Binding var searchText: String
@@ -412,7 +413,15 @@ struct ConfigurationView: View {
                         }
 
                         // MARK: - Notifications Section
-                        if matchesSearch("Notifications", "Toast", "Position", "Timeout", "Alerts") {
+                        if matchesSearch(
+                            "Notifications",
+                            "Toast",
+                            "Position",
+                            "Timeout",
+                            "Alerts",
+                            "Concurrent",
+                            "Background"
+                        ) {
                             SettingsSection(title: "Notifications", icon: "bell") {
                                 VStack(alignment: .leading, spacing: 20) {
                                     // Enable Toasts Toggle
@@ -455,6 +464,17 @@ struct ConfigurationView: View {
                                         help: "Maximum toasts shown at once. Empty uses default 5"
                                     )
                                     .onChange(of: tempToastMaxVisible) { _, _ in
+                                        saveToastConfig()
+                                    }
+
+                                    // Max Concurrent Background Tasks
+                                    StyledSettingsTextField(
+                                        label: "Max Concurrent Tasks",
+                                        text: $tempToastMaxConcurrent,
+                                        placeholder: "5",
+                                        help: "Maximum background tasks running at once. Empty uses default 5"
+                                    )
+                                    .onChange(of: tempToastMaxConcurrent) { _, _ in
                                         saveToastConfig()
                                     }
 
@@ -585,6 +605,9 @@ struct ConfigurationView: View {
         tempToastMaxVisible =
             toastConfig.maxVisibleToasts == toastDefaults.maxVisibleToasts
             ? "" : String(toastConfig.maxVisibleToasts)
+        tempToastMaxConcurrent =
+            toastConfig.maxConcurrentTasks == toastDefaults.maxConcurrentTasks
+            ? "" : String(toastConfig.maxConcurrentTasks)
     }
 
     // MARK: - Reset to Defaults
@@ -981,12 +1004,21 @@ extension ConfigurationView {
             return max(1, min(10, v))
         }()
 
+        let trimmedMaxConcurrent = tempToastMaxConcurrent.trimmingCharacters(in: .whitespacesAndNewlines)
+        let parsedMaxConcurrent: Int = {
+            guard !trimmedMaxConcurrent.isEmpty, let v = Int(trimmedMaxConcurrent) else {
+                return defaults.maxConcurrentTasks
+            }
+            return max(1, min(20, v))
+        }()
+
         let config = ToastConfiguration(
             position: tempToastPosition,
             defaultTimeout: parsedTimeout,
             maxVisibleToasts: parsedMaxVisible,
             groupByPersona: true,
-            enabled: tempToastEnabled
+            enabled: tempToastEnabled,
+            maxConcurrentTasks: parsedMaxConcurrent
         )
 
         ToastManager.shared.updateConfiguration(config)

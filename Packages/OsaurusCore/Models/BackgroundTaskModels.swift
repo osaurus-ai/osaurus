@@ -107,10 +107,10 @@ public final class BackgroundTaskState: ObservableObject, Identifiable {
     public let mode: ChatMode
 
     /// Agent task ID (empty string for chat mode)
-    public let taskId: String
+    public var taskId: String
 
     /// Display title for the task
-    public let taskTitle: String
+    public var taskTitle: String
 
     /// Persona ID associated with this task
     public let personaId: UUID

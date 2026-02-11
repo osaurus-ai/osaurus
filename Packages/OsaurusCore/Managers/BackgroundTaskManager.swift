@@ -34,6 +34,9 @@ public final class BackgroundTaskManager: ObservableObject {
     /// Tracks the number of turns already processed per chat task so we only log new tool calls.
     private var chatTurnCounts: [UUID: Int] = [:]
 
+    /// Scheduled auto-finalize timers for completed/cancelled tasks
+    private var autoFinalizeTasks: [UUID: Task<Void, Never>] = [:]
+
     /// Subject for batching view updates with throttling
     private let viewUpdateSubject = PassthroughSubject<Void, Never>()
     private var viewUpdateCancellable: AnyCancellable?
@@ -81,9 +84,8 @@ public final class BackgroundTaskManager: ObservableObject {
         state.activeIssueId = session.activeIssue?.id
         state.loopState = session.loopState
 
-        backgroundTasks[windowId] = state
+        registerTask(state)
         observeAgentTask(state, session: session)
-        state.appendActivity(kind: .info, title: "Running in background")
 
         print("[BackgroundTaskManager] Detached window \(windowId) with task '\(currentTask.title)'")
         return state
@@ -116,11 +118,12 @@ public final class BackgroundTaskManager: ObservableObject {
         finalizeTask(backgroundId)
     }
 
-    /// Finalize a background task (remove from background management)
+    /// Remove a background task from management, cancelling all observers and timers.
     public func finalizeTask(_ backgroundId: UUID) {
         guard backgroundTasks[backgroundId] != nil else { return }
 
         resumeCompletion(for: backgroundId, result: .cancelled)
+        cancelAutoFinalize(backgroundId)
 
         taskObservers[backgroundId]?.forEach { $0.cancel() }
         taskObservers.removeValue(forKey: backgroundId)
@@ -139,8 +142,8 @@ public final class BackgroundTaskManager: ObservableObject {
         }
 
         state.status = .cancelled
-        chatTurnCounts.removeValue(forKey: backgroundId)
         resumeCompletion(for: backgroundId, result: .cancelled)
+        scheduleAutoFinalize(backgroundId)
     }
 
     /// Submit a clarification response (agent mode only)
@@ -153,34 +156,46 @@ public final class BackgroundTaskManager: ObservableObject {
 
     /// Dispatch an agent task for background execution.
     public func dispatchAgent(_ request: DispatchRequest) async -> DispatchHandle? {
+        guard canDispatchNewTask() else { return nil }
+
         let context = createContext(for: request)
         await context.prepare()
-        await context.start(prompt: request.prompt)
 
-        guard let agentSession = context.agentSession,
-            let currentTask = agentSession.currentTask
-        else { return nil }
+        guard let agentSession = context.agentSession else { return nil }
 
+        // Register placeholder state before starting so awaitCompletion always finds the task.
+        // taskId and taskTitle are updated once the agent creates its task.
         let state = BackgroundTaskState(
             id: context.id,
-            taskId: currentTask.id,
-            taskTitle: currentTask.title,
+            taskId: "",
+            taskTitle: request.title ?? "Agent",
             personaId: context.personaId,
             session: agentSession,
             executionContext: context,
-            status: agentSession.hasPendingClarification ? .awaitingClarification : .running,
-            progress: calculateProgress(session: agentSession),
-            currentStep: getCurrentStep(session: agentSession),
-            pendingClarification: agentSession.pendingClarification
+            status: .running,
+            progress: -1,
+            currentStep: "Starting..."
         )
 
+        registerTask(state)
+        observeAgentTask(state, session: agentSession)
+
+        await context.start(prompt: request.prompt)
+
+        // Update with real task info now that the agent has created its task
+        if let currentTask = agentSession.currentTask {
+            state.taskId = currentTask.id
+            state.taskTitle = currentTask.title
+        }
         state.issues = agentSession.issues
         state.activeIssueId = agentSession.activeIssue?.id
         state.loopState = agentSession.loopState
-
-        backgroundTasks[context.id] = state
-        observeAgentTask(state, session: agentSession)
-        state.appendActivity(kind: .info, title: "Running in background")
+        state.progress = calculateProgress(session: agentSession)
+        state.currentStep = getCurrentStep(session: agentSession)
+        if agentSession.hasPendingClarification {
+            state.status = .awaitingClarification
+            state.pendingClarification = agentSession.pendingClarification
+        }
 
         print("[BackgroundTaskManager] Dispatched agent task: \(request.title ?? "untitled")")
         return DispatchHandle(id: request.id, request: request)
@@ -188,10 +203,12 @@ public final class BackgroundTaskManager: ObservableObject {
 
     /// Dispatch a chat task for background execution.
     public func dispatchChat(_ request: DispatchRequest) async -> DispatchHandle? {
+        guard canDispatchNewTask() else { return nil }
+
         let context = createContext(for: request)
         await context.prepare()
-        await context.start(prompt: request.prompt)
 
+        // Register state before starting so awaitCompletion always finds the task
         let state = BackgroundTaskState(
             id: context.id,
             taskTitle: context.title ?? "Chat",
@@ -202,9 +219,10 @@ public final class BackgroundTaskManager: ObservableObject {
             currentStep: "Running..."
         )
 
-        backgroundTasks[context.id] = state
+        registerTask(state)
         observeChatTask(state, session: context.chatSession)
-        state.appendActivity(kind: .info, title: "Running in background")
+
+        await context.start(prompt: request.prompt)
 
         print("[BackgroundTaskManager] Dispatched chat task: \(request.title ?? "untitled")")
         return DispatchHandle(id: request.id, request: request)
@@ -225,7 +243,24 @@ public final class BackgroundTaskManager: ObservableObject {
         }
     }
 
-    // MARK: - Private: Context Factory
+    // MARK: - Private: Dispatch Helpers
+
+    /// Check whether a new task can be dispatched without exceeding the configured limit.
+    private func canDispatchNewTask() -> Bool {
+        let limit = ToastConfigurationStore.load().maxConcurrentTasks
+        let activeCount = backgroundTasks.values.filter { $0.status.isActive }.count
+        guard activeCount < limit else {
+            print("[BackgroundTaskManager] Task limit reached (\(limit)), rejecting dispatch")
+            return false
+        }
+        return true
+    }
+
+    /// Register a new task state and log an initial activity entry.
+    private func registerTask(_ state: BackgroundTaskState) {
+        backgroundTasks[state.id] = state
+        state.appendActivity(kind: .info, title: "Running in background")
+    }
 
     private func createContext(for request: DispatchRequest) -> ExecutionContext {
         ExecutionContext(
@@ -252,6 +287,35 @@ public final class BackgroundTaskManager: ObservableObject {
 
     private func resumeCompletion(for id: UUID, result: DispatchResult) {
         completionContinuations.removeValue(forKey: id)?.resume(returning: result)
+    }
+
+    /// Mark a task as completed, signal callers, and schedule auto-cleanup.
+    private func markCompleted(_ state: BackgroundTaskState, success: Bool, summary: String) {
+        state.status = .completed(success: success, summary: summary)
+        state.currentStep = nil
+        state.executionContext?.chatSession.save()
+        resumeCompletion(for: state.id, result: resultFromState(state))
+        scheduleAutoFinalize(state.id)
+    }
+
+    // MARK: - Private: Auto-Finalize
+
+    /// Schedule automatic toast removal after 15 seconds.
+    /// Called when a task completes or is cancelled. If the user opens the
+    /// task window before the timer fires, `finalizeTask` cancels it.
+    private func scheduleAutoFinalize(_ taskId: UUID) {
+        cancelAutoFinalize(taskId)
+        autoFinalizeTasks[taskId] = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 15_000_000_000)
+            guard !Task.isCancelled else { return }
+            guard let state = backgroundTasks[taskId], !state.status.isActive else { return }
+            finalizeTask(taskId)
+        }
+    }
+
+    private func cancelAutoFinalize(_ taskId: UUID) {
+        autoFinalizeTasks[taskId]?.cancel()
+        autoFinalizeTasks.removeValue(forKey: taskId)
     }
 
     // MARK: - Private: Agent Observation
@@ -362,15 +426,16 @@ public final class BackgroundTaskManager: ObservableObject {
             state.status = .running
             state.currentStep = "Running..."
         } else if state.status == .running {
-            state.status = .completed(success: true, summary: "Chat completed")
-            state.currentStep = nil
-            state.chatSession?.save()
-            chatTurnCounts.removeValue(forKey: taskId)
-            resumeCompletion(for: taskId, result: resultFromState(state))
+            markCompleted(state, success: true, summary: "Chat completed")
         }
     }
 
     /// Scan newly added turns for tool calls and record them as activity.
+    ///
+    /// Tool calls are appended to an existing assistant turn *before* the tool-result
+    /// and next-assistant turns are added. By the time the turn count changes, the
+    /// assistant turn we previously scanned (empty at the time) now has `toolCalls`.
+    /// To catch them, we also re-check the turn immediately before the new range.
     private func handleChatTurnCountChange(taskId: UUID, newCount: Int, session: ChatSession) {
         guard let state = backgroundTasks[taskId] else { return }
 
@@ -378,7 +443,8 @@ public final class BackgroundTaskManager: ObservableObject {
         guard newCount > previousCount else { return }
 
         let turns = session.turns
-        for turn in turns[previousCount ..< min(newCount, turns.count)] {
+        let scanStart = max(0, previousCount - 1)  // re-check the last previously-seen turn
+        for turn in turns[scanStart ..< min(newCount, turns.count)] {
             if let toolCalls = turn.toolCalls {
                 for call in toolCalls {
                     state.appendActivity(kind: .tool, title: "Tool", detail: call.function.name)
@@ -537,19 +603,16 @@ public final class BackgroundTaskManager: ObservableObject {
         let taskCompleted = session.currentTask?.status == .completed
 
         if allIssuesClosed || taskCompleted {
-            state.status = .completed(success: true, summary: "Task completed successfully")
             state.progress = 1.0
-            state.currentStep = nil
-            state.executionContext?.chatSession.save()
-            resumeCompletion(for: state.id, result: resultFromState(state))
+            markCompleted(state, success: true, summary: "Task completed successfully")
         } else if session.currentTask == nil {
             let closedCount = issues.filter { $0.status == .closed }.count
+            let success = !issues.isEmpty && closedCount == issues.count
             let summary =
                 !issues.isEmpty
                 ? "Completed \(closedCount)/\(issues.count) issues"
                 : "Task ended"
-            state.status = .completed(success: closedCount == issues.count, summary: summary)
-            resumeCompletion(for: state.id, result: resultFromState(state))
+            markCompleted(state, success: success, summary: summary)
         }
     }
 }
