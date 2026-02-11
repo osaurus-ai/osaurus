@@ -451,9 +451,8 @@ public final class AgentSession: ObservableObject {
         cumulativeInputTokens = 0
         cumulativeOutputTokens = 0
 
-        // Refresh UI
+        // Refresh UI (windowState is nil for headless/background execution)
         await refreshIssues()
-        assert(windowState != nil, "[AgentSession] windowState is nil, sidebar won't refresh")
         windowState?.refreshAgentTasks()
 
         // Start execution

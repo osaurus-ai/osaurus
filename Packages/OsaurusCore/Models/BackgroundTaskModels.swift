@@ -103,17 +103,25 @@ public final class BackgroundTaskState: ObservableObject, Identifiable {
     /// Original window ID (unique identifier for this background task)
     public let id: UUID
 
-    /// Agent task ID
-    public let taskId: String
+    /// Whether this is a chat or agent background task
+    public let mode: ChatMode
+
+    /// Agent task ID (empty string for chat mode)
+    public var taskId: String
 
     /// Display title for the task
-    public let taskTitle: String
+    public var taskTitle: String
 
     /// Persona ID associated with this task
     public let personaId: UUID
 
-    /// The agent session (retained reference, keeps task executing)
-    let session: AgentSession
+    /// The agent session (retained reference, keeps task executing).
+    /// Present for agent mode; nil for chat mode.
+    let session: AgentSession?
+
+    /// The chat session (retained reference for chat mode observation).
+    /// Present for chat mode; nil for agent mode (use executionContext.chatSession instead).
+    let chatSession: ChatSession?
 
     /// The execution context (retained for lazy window creation).
     /// Present for dispatched tasks; nil for tasks detached from an existing window.
@@ -132,13 +140,13 @@ public final class BackgroundTaskState: ObservableObject, Identifiable {
     /// Description of current step being executed
     @Published public var currentStep: String?
 
-    /// Issues for the task
+    /// Issues for the task (agent mode only)
     @Published public var issues: [Issue] = []
 
-    /// ID of the currently active issue
+    /// ID of the currently active issue (agent mode only)
     @Published public var activeIssueId: String?
 
-    /// Current reasoning loop state (iteration progress, tool usage, etc.)
+    /// Current reasoning loop state (agent mode only)
     @Published public var loopState: LoopState?
 
     /// Pending clarification request (when status is .awaitingClarification)
@@ -148,7 +156,7 @@ public final class BackgroundTaskState: ObservableObject, Identifiable {
     /// Bounded to avoid unbounded growth and excessive re-renders.
     @Published public private(set) var activityFeed: [BackgroundTaskActivityItem] = []
 
-    /// Timestamp of the most recent activity item (for subtle “fresh update” animations).
+    /// Timestamp of the most recent activity item (for subtle "fresh update" animations).
     @Published public private(set) var lastActivityAt: Date?
 
     /// When the background task was created
@@ -156,6 +164,7 @@ public final class BackgroundTaskState: ObservableObject, Identifiable {
 
     private let maxActivityItems: Int = 40
 
+    /// Agent mode initializer
     init(
         id: UUID,
         taskId: String,
@@ -170,16 +179,44 @@ public final class BackgroundTaskState: ObservableObject, Identifiable {
         pendingClarification: ClarificationRequest? = nil
     ) {
         self.id = id
+        self.mode = .agent
         self.taskId = taskId
         self.taskTitle = taskTitle
         self.personaId = personaId
         self.session = session
+        self.chatSession = nil
         self.executionContext = executionContext
         self.windowState = windowState
         self.status = status
         self.progress = progress
         self.currentStep = currentStep
         self.pendingClarification = pendingClarification
+        self.createdAt = Date()
+    }
+
+    /// Chat mode initializer
+    init(
+        id: UUID,
+        taskTitle: String,
+        personaId: UUID,
+        chatSession: ChatSession,
+        executionContext: ExecutionContext,
+        status: BackgroundTaskStatus = .running,
+        currentStep: String? = nil
+    ) {
+        self.id = id
+        self.mode = .chat
+        self.taskId = ""
+        self.taskTitle = taskTitle
+        self.personaId = personaId
+        self.session = nil
+        self.chatSession = chatSession
+        self.executionContext = executionContext
+        self.windowState = nil
+        self.status = status
+        self.progress = -1  // Indeterminate for chat
+        self.currentStep = currentStep
+        self.pendingClarification = nil
         self.createdAt = Date()
     }
 

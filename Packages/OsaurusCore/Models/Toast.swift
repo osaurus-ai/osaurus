@@ -119,22 +119,40 @@ public struct ToastConfiguration: Codable, Equatable, Sendable {
     /// Whether toasts are enabled
     public var enabled: Bool
 
+    /// Maximum number of background tasks allowed to run concurrently
+    public var maxConcurrentTasks: Int
+
     public init(
         position: ToastPosition = .topRight,
         defaultTimeout: TimeInterval = 5.0,
         maxVisibleToasts: Int = 5,
         groupByPersona: Bool = true,
-        enabled: Bool = true
+        enabled: Bool = true,
+        maxConcurrentTasks: Int = 5
     ) {
         self.position = position
         self.defaultTimeout = defaultTimeout
         self.maxVisibleToasts = maxVisibleToasts
         self.groupByPersona = groupByPersona
         self.enabled = enabled
+        self.maxConcurrentTasks = maxConcurrentTasks
     }
 
     public static var `default`: ToastConfiguration {
         ToastConfiguration()
+    }
+
+    // Custom decoder so existing configs without newer keys decode gracefully
+    public init(from decoder: Decoder) throws {
+        let defaults = ToastConfiguration()
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        position = try container.decode(ToastPosition.self, forKey: .position)
+        defaultTimeout = try container.decode(TimeInterval.self, forKey: .defaultTimeout)
+        maxVisibleToasts = try container.decode(Int.self, forKey: .maxVisibleToasts)
+        groupByPersona = try container.decode(Bool.self, forKey: .groupByPersona)
+        enabled = try container.decode(Bool.self, forKey: .enabled)
+        maxConcurrentTasks =
+            try container.decodeIfPresent(Int.self, forKey: .maxConcurrentTasks) ?? defaults.maxConcurrentTasks
     }
 }
 

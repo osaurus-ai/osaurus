@@ -138,7 +138,7 @@ public final class ExecutionContext: ObservableObject {
     /// Stop the running execution.
     public func cancel() {
         switch mode {
-        case .chat: break
+        case .chat: chatSession.stop()
         case .agent: agentSession?.stopExecution()
         }
     }

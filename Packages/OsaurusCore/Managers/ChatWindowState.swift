@@ -128,9 +128,10 @@ final class ChatWindowState: ObservableObject {
         notificationObservers.forEach { NotificationCenter.default.removeObserver($0) }
     }
 
-    /// Stops any running agent execution - call when window is closing
+    /// Stops any running execution - call when window is closing
     func cleanup() {
         agentSession?.stopExecution()
+        session.stop()
     }
 
     // MARK: - API
