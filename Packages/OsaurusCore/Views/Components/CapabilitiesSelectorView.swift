@@ -735,7 +735,7 @@ private struct GroupHeader: View {
         .contentShape(Rectangle())
         .onTapGesture { onToggle() }
         .modifier(HoverRowStyle(isHovered: isHovered, showAccent: true))
-        .onHover { hovering in
+        .onPopoverHover { hovering in
             withAnimation(.easeOut(duration: 0.15)) { isHovered = hovering }
         }
         .animation(.easeOut(duration: 0.15), value: isExpanded)
@@ -802,7 +802,7 @@ private struct ToolRowItem: View {
                 ? "Available in Chat Mode only. Agent Mode includes equivalent built-in tools."
                 : ""
         )
-        .onHover { hovering in
+        .onPopoverHover { hovering in
             withAnimation(.easeOut(duration: 0.15)) { isHovered = hovering }
         }
     }
@@ -856,7 +856,7 @@ private struct SkillRowItem: View {
         .contentShape(Rectangle())
         .onTapGesture { onToggle() }
         .modifier(HoverRowStyle(isHovered: isHovered, showAccent: isEnabled))
-        .onHover { hovering in
+        .onPopoverHover { hovering in
             withAnimation(.easeOut(duration: 0.15)) { isHovered = hovering }
         }
     }
@@ -947,7 +947,7 @@ private struct CompoundPluginRow: View {
         .contentShape(Rectangle())
         .onTapGesture { onToggle() }
         .modifier(HoverRowStyle(isHovered: isHovered, showAccent: isActive))
-        .onHover { hovering in
+        .onPopoverHover { hovering in
             withAnimation(.easeOut(duration: 0.15)) { isHovered = hovering }
         }
     }
@@ -1127,7 +1127,7 @@ private struct CapabilityActionButton: View {
             )
         }
         .buttonStyle(.plain)
-        .onHover { hovering in
+        .onPopoverHover { hovering in
             withAnimation(.easeOut(duration: 0.15)) { isHovered = hovering }
         }
     }
