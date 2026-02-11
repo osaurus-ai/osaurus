@@ -448,6 +448,7 @@ public final class AgentSession: ObservableObject {
 
         // Refresh UI
         await refreshIssues()
+        assert(windowState != nil, "[AgentSession] windowState is nil, sidebar won't refresh")
         windowState?.refreshAgentTasks()
 
         // Start execution
