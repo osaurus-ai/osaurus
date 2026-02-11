@@ -1072,6 +1072,9 @@ struct ChatView: View {
     @State private var isPinnedToBottom: Bool = true
     @State private var hostWindow: NSWindow?
     @State private var keyMonitor: Any?
+    // Inline editing state
+    @State private var editingTurnId: UUID?
+    @State private var editText: String = ""
 
     /// Convenience accessor for the window's theme
     private var theme: ThemeProtocol { windowState.theme }
@@ -1543,10 +1546,15 @@ struct ChatView: View {
                 personaName: displayName,
                 isStreaming: session.isStreaming,
                 lastAssistantTurnId: lastAssistantTurnId,
+                onScrolledToBottom: { isPinnedToBottom = true },
+                onScrolledAwayFromBottom: { isPinnedToBottom = false },
                 onCopy: copyTurnContent,
                 onRegenerate: regenerateTurn,
-                onScrolledToBottom: { isPinnedToBottom = true },
-                onScrolledAwayFromBottom: { isPinnedToBottom = false }
+                onEdit: beginEditingTurn,
+                editingTurnId: editingTurnId,
+                editText: $editText,
+                onConfirmEdit: confirmEditAndRegenerate,
+                onCancelEdit: cancelEditing
             )
             .onReceive(NotificationCenter.default.publisher(for: .chatOverlayActivated)) { _ in
                 isPinnedToBottom = true
@@ -1567,26 +1575,18 @@ struct ChatView: View {
         }
     }
 
-    /// Stable callback for copy action - prevents closure recreation
+    /// Copy a turn's thinking + content to the clipboard
     private func copyTurnContent(turnId: UUID) {
         guard let turn = session.turns.first(where: { $0.id == turnId }) else { return }
-
-        // Build copyable text: thinking + content
         var textToCopy = ""
-
         if turn.hasThinking {
             textToCopy += turn.thinking
         }
-
         if !turn.contentIsEmpty {
-            if !textToCopy.isEmpty {
-                textToCopy += "\n\n"
-            }
+            if !textToCopy.isEmpty { textToCopy += "\n\n" }
             textToCopy += turn.content
         }
-
         guard !textToCopy.isEmpty else { return }
-
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(textToCopy, forType: .string)
     }
@@ -1594,6 +1594,33 @@ struct ChatView: View {
     /// Stable callback for regenerate action - prevents closure recreation
     private func regenerateTurn(turnId: UUID) {
         session.regenerate(turnId: turnId)
+    }
+
+    // MARK: - Inline Editing
+
+    /// Begin inline editing of a user message
+    private func beginEditingTurn(turnId: UUID) {
+        guard let turn = session.turns.first(where: { $0.id == turnId }),
+            turn.role == .user
+        else { return }
+        editText = turn.content
+        editingTurnId = turnId
+    }
+
+    /// Confirm the edit and regenerate the assistant response
+    private func confirmEditAndRegenerate() {
+        guard let turnId = editingTurnId else { return }
+        let trimmed = editText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        session.editAndRegenerate(turnId: turnId, newContent: trimmed)
+        editingTurnId = nil
+        editText = ""
+    }
+
+    /// Dismiss the inline editor without changes
+    private func cancelEditing() {
+        editingTurnId = nil
+        editText = ""
     }
 
     // MARK: - Helpers

@@ -14,13 +14,23 @@ struct ContentBlockView: View, Equatable {
     let width: CGFloat  // Content width (already adjusted by parent)
     let personaName: String
     var isTurnHovered: Bool = false
+
+    // Action callbacks
     var onCopy: ((UUID) -> Void)?
     var onRegenerate: ((UUID) -> Void)?
+    var onEdit: ((UUID) -> Void)?
     var onClarificationSubmit: ((String) -> Void)?
+
+    // Inline editing state
+    var editingTurnId: UUID? = nil
+    var editText: Binding<String>? = nil
+    var onConfirmEdit: (() -> Void)? = nil
+    var onCancelEdit: (() -> Void)? = nil
 
     nonisolated static func == (lhs: ContentBlockView, rhs: ContentBlockView) -> Bool {
         lhs.block == rhs.block && lhs.width == rhs.width
             && lhs.personaName == rhs.personaName && lhs.isTurnHovered == rhs.isTurnHovered
+            && lhs.editingTurnId == rhs.editingTurnId
     }
 
     @Environment(\.theme) private var theme
@@ -63,20 +73,33 @@ struct ContentBlockView: View, Equatable {
                 name: name,
                 isTurnHovered: isTurnHovered,
                 onCopy: onCopy,
-                onRegenerate: onRegenerate
+                onRegenerate: onRegenerate,
+                onEdit: onEdit,
+                isEditing: editingTurnId == block.turnId,
+                onCancelEdit: onCancelEdit
             )
             .padding(.top, 12)
             .padding(.bottom, isLastInTurn ? 8 : 2)
 
         case let .paragraph(_, text, isStreaming, _):
-            MarkdownMessageView(
-                text: text,
-                baseWidth: width,
-                cacheKey: block.id,
-                isStreaming: isStreaming
-            )
-            .padding(.top, 4)
-            .padding(.bottom, isLastInTurn ? 16 : 4)
+            if isUserMessage, editingTurnId == block.turnId, let editText, let onConfirmEdit, let onCancelEdit {
+                InlineEditView(
+                    text: editText,
+                    onConfirm: onConfirmEdit,
+                    onCancel: onCancelEdit
+                )
+                .padding(.top, 4)
+                .padding(.bottom, isLastInTurn ? 16 : 4)
+            } else {
+                MarkdownMessageView(
+                    text: text,
+                    baseWidth: width,
+                    cacheKey: block.id,
+                    isStreaming: isStreaming
+                )
+                .padding(.top, 4)
+                .padding(.bottom, isLastInTurn ? 16 : 4)
+            }
 
         case let .toolCallGroup(calls):
             GroupedToolCallsContainerView(calls: calls)
@@ -232,6 +255,9 @@ private struct HeaderBlockContent: View {
     var isTurnHovered: Bool = false
     var onCopy: ((UUID) -> Void)?
     var onRegenerate: ((UUID) -> Void)?
+    var onEdit: ((UUID) -> Void)?
+    var isEditing: Bool = false
+    var onCancelEdit: (() -> Void)?
 
     @Environment(\.theme) private var theme
 
@@ -241,29 +267,136 @@ private struct HeaderBlockContent: View {
                 .font(theme.font(size: CGFloat(theme.captionSize) + 1, weight: .semibold))
                 .foregroundColor(role == .user ? theme.accentColor : theme.secondaryText)
 
+            if isEditing {
+                Text("Editing")
+                    .font(theme.font(size: CGFloat(theme.captionSize) - 1, weight: .medium))
+                    .foregroundColor(theme.accentColor.opacity(0.7))
+            }
+
             Spacer()
 
             actionButtons
-                .opacity(isTurnHovered ? 1 : 0)
+                .opacity(isTurnHovered || isEditing ? 1 : 0)
         }
         .frame(height: 28)
         .contentShape(Rectangle())
         .animation(theme.animationQuick(), value: isTurnHovered)
+        .animation(theme.animationQuick(), value: isEditing)
     }
 
     @ViewBuilder
     private var actionButtons: some View {
         HStack(spacing: 4) {
+            if isEditing, let onCancelEdit {
+                ActionButton(icon: "xmark", help: "Cancel edit") {
+                    onCancelEdit()
+                }
+            } else if role == .user, let onEdit {
+                ActionButton(icon: "pencil", help: "Edit") {
+                    onEdit(turnId)
+                }
+            }
             if role == .assistant, let onRegenerate {
                 ActionButton(icon: "arrow.clockwise", help: "Regenerate") {
                     onRegenerate(turnId)
                 }
             }
-            if let onCopy {
+            if !isEditing, let onCopy {
                 ActionButton(icon: "doc.on.doc", help: "Copy") {
                     onCopy(turnId)
                 }
             }
+        }
+    }
+}
+
+// MARK: - Inline Edit View
+
+/// Inline editor that replaces the message paragraph when editing.
+/// Enter submits, Shift+Enter inserts a newline.
+private struct InlineEditView: View {
+    @Binding var text: String
+    let onConfirm: () -> Void
+    let onCancel: () -> Void
+
+    @Environment(\.theme) private var theme
+    @State private var isFocused: Bool = true
+
+    private var isEmpty: Bool {
+        text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            editableArea
+            actionButtons
+        }
+    }
+
+    // MARK: - Subviews
+
+    private var editableArea: some View {
+        EditableTextView(
+            text: $text,
+            fontSize: CGFloat(theme.bodySize),
+            textColor: theme.primaryText,
+            cursorColor: theme.accentColor,
+            isFocused: $isFocused,
+            maxHeight: 240,
+            onCommit: { if !isEmpty { onConfirm() } }
+        )
+        .frame(minHeight: 40, maxHeight: 240)
+        .padding(.horizontal, 8)
+        .padding(.vertical, 6)
+        .background(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(theme.primaryBackground)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .strokeBorder(theme.accentColor.opacity(0.5), lineWidth: 1)
+        )
+    }
+
+    private var actionButtons: some View {
+        HStack(spacing: 8) {
+            Spacer()
+
+            Button(action: onCancel) {
+                Text("Cancel")
+                    .font(theme.font(size: CGFloat(theme.captionSize), weight: .medium))
+                    .foregroundColor(theme.secondaryText)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 5)
+                    .background(
+                        RoundedRectangle(cornerRadius: 6, style: .continuous)
+                            .fill(theme.secondaryBackground)
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 6, style: .continuous)
+                            .strokeBorder(theme.primaryBorder.opacity(0.3), lineWidth: 1)
+                    )
+            }
+            .buttonStyle(.plain)
+            .keyboardShortcut(.cancelAction)
+
+            Button(action: onConfirm) {
+                HStack(spacing: 4) {
+                    Image(systemName: "arrow.clockwise")
+                        .font(theme.font(size: CGFloat(theme.captionSize) - 1, weight: .semibold))
+                    Text("Save & Regenerate")
+                        .font(theme.font(size: CGFloat(theme.captionSize), weight: .semibold))
+                }
+                .foregroundColor(isEmpty ? theme.secondaryText : .white)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 5)
+                .background(
+                    RoundedRectangle(cornerRadius: 6, style: .continuous)
+                        .fill(isEmpty ? theme.secondaryBackground : theme.accentColor)
+                )
+            }
+            .buttonStyle(.plain)
+            .disabled(isEmpty)
         }
     }
 }
