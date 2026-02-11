@@ -509,6 +509,7 @@ extension AgentView {
                 autoScrollEnabled: false,
                 onCopy: { _ in },
                 onRegenerate: { _ in },
+                onEdit: { _ in },
                 onScrolledToBottom: { isPinnedToBottom = true },
                 onScrolledAwayFromBottom: { isPinnedToBottom = false },
                 onClarificationSubmit: { response in
