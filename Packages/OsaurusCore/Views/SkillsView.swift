@@ -568,8 +568,8 @@ private struct SkillRow: View {
     /// Display name of the source plugin, or "Plugin" as fallback
     private var pluginDisplayName: String {
         guard let pluginId = skill.pluginId else { return "Plugin" }
-        if let plugin = PluginRepositoryService.shared.plugins.first(where: { $0.spec.plugin_id == pluginId }) {
-            return "From: \(plugin.spec.name ?? pluginId)"
+        if let plugin = PluginRepositoryService.shared.plugins.first(where: { $0.pluginId == pluginId }) {
+            return "From: \(plugin.displayName)"
         }
         return "Plugin"
     }

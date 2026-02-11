@@ -29,7 +29,10 @@ public final class CentralRepositoryManager: @unchecked Sendable {
         ToolsPaths.pluginSpecsRoot().appendingPathComponent("central", isDirectory: true)
     }
 
-    public func refresh() {
+    /// Refreshes the local clone of the central plugin repository.
+    /// Returns `true` if git operations succeeded, `false` if they failed (e.g. network unreachable).
+    @discardableResult
+    public func refresh() -> Bool {
         let fm = FileManager.default
         let root = ToolsPaths.pluginSpecsRoot()
         if !fm.fileExists(atPath: root.path) {
@@ -37,17 +40,19 @@ public final class CentralRepositoryManager: @unchecked Sendable {
         }
         let cloneDir = tapCloneDirectory()
         if fm.fileExists(atPath: cloneDir.appendingPathComponent(".git").path) {
-            _ = runGit(in: cloneDir, args: ["fetch", "--all", "--tags"])
-            _ = runGit(in: cloneDir, args: ["pull", "--ff-only", "origin"])
+            let (fetchStatus, _) = runGit(in: cloneDir, args: ["fetch", "--all", "--tags"])
+            let (pullStatus, _) = runGit(in: cloneDir, args: ["pull", "--ff-only", "origin"])
             if let branch = central.branch {
                 _ = runGit(in: cloneDir, args: ["checkout", branch])
             }
+            return fetchStatus == 0 && pullStatus == 0
         } else {
             var args = ["clone", "--depth", "1", central.url, cloneDir.path]
             if let branch = central.branch {
                 args = ["clone", "--depth", "1", "--branch", branch, central.url, cloneDir.path]
             }
-            _ = runGit(in: root, args: args)
+            let (cloneStatus, _) = runGit(in: root, args: args)
+            return cloneStatus == 0
         }
     }
 

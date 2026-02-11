@@ -23,6 +23,7 @@ struct PluginsView: View {
     // Snapshot values from service (updated via .onReceive / reload)
     @State private var isRepoRefreshing = false
     @State private var updatesAvailableCount = 0
+    @State private var repoLastError: String?
     @State private var missingPermissionsPerPlugin: [String: [SystemPermission]] = [:]
 
     // Cached filtered results
@@ -79,6 +80,7 @@ struct PluginsView: View {
         }
         .onReceive(PluginRepositoryService.shared.$isRefreshing) { isRepoRefreshing = $0 }
         .onReceive(PluginRepositoryService.shared.$updatesAvailableCount) { updatesAvailableCount = $0 }
+        .onReceive(PluginRepositoryService.shared.$lastError) { repoLastError = $0 }
         .onReceive(PluginRepositoryService.shared.$pendingSecretsPlugin) { newValue in
             if let pluginId = newValue {
                 showSecretsSheetForPlugin(pluginId: pluginId)
@@ -132,7 +134,7 @@ struct PluginsView: View {
                 Task {
                     isRefreshButtonLoading = true
                     await repoService.refresh()
-                    PluginManager.shared.loadAll()
+                    await PluginManager.shared.loadAll()
                     reload()
                     isRefreshButtonLoading = false
                 }
@@ -179,9 +181,9 @@ struct PluginsView: View {
                     ForEach(installedPlugins, id: \.id) { plugin in
                         InstalledPluginCard(
                             plugin: plugin,
-                            missingPermissions: missingPermissionsPerPlugin[plugin.spec.plugin_id] ?? [],
-                            onUpgrade: { try await repoService.upgrade(pluginId: plugin.spec.plugin_id) },
-                            onUninstall: { try repoService.uninstall(pluginId: plugin.spec.plugin_id) }
+                            missingPermissions: missingPermissionsPerPlugin[plugin.pluginId] ?? [],
+                            onUpgrade: { try await repoService.upgrade(pluginId: plugin.pluginId) },
+                            onUninstall: { try await repoService.uninstall(pluginId: plugin.pluginId) }
                         ) {
                             reload()
                         }
@@ -204,7 +206,11 @@ struct PluginsView: View {
                 )
                 .padding(.bottom, 4)
 
-                if isRepoRefreshing && repoService.plugins.isEmpty {
+                if let errorMessage = repoLastError {
+                    offlineBanner(message: errorMessage)
+                }
+
+                if isRepoRefreshing && filteredPlugins.isEmpty {
                     loadingState
                 } else if filteredPlugins.isEmpty {
                     emptyState(
@@ -216,9 +222,9 @@ struct PluginsView: View {
                     ForEach(filteredPlugins, id: \.id) { plugin in
                         PluginBrowseRow(
                             plugin: plugin,
-                            onInstall: { try await repoService.install(pluginId: plugin.spec.plugin_id) },
-                            onUpgrade: { try await repoService.upgrade(pluginId: plugin.spec.plugin_id) },
-                            onUninstall: { try repoService.uninstall(pluginId: plugin.spec.plugin_id) }
+                            onInstall: { try await repoService.install(pluginId: plugin.pluginId) },
+                            onUpgrade: { try await repoService.upgrade(pluginId: plugin.pluginId) },
+                            onUninstall: { try await repoService.uninstall(pluginId: plugin.pluginId) }
                         )
                     }
                 }
@@ -262,6 +268,43 @@ struct PluginsView: View {
         .padding(.vertical, 60)
     }
 
+    private func offlineBanner(message: String) -> some View {
+        HStack(spacing: 10) {
+            Image(systemName: "wifi.slash")
+                .font(.system(size: 14))
+                .foregroundColor(theme.warningColor)
+
+            Text(message)
+                .font(.system(size: 13))
+                .foregroundColor(theme.secondaryText)
+
+            Spacer()
+
+            Button(action: {
+                Task {
+                    isRefreshButtonLoading = true
+                    await repoService.refresh()
+                    isRefreshButtonLoading = false
+                }
+            }) {
+                Text("Retry")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundColor(theme.accentColor)
+            }
+            .buttonStyle(PlainButtonStyle())
+            .disabled(isRepoRefreshing)
+        }
+        .padding(12)
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(theme.warningColor.opacity(0.08))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8)
+                        .stroke(theme.warningColor.opacity(0.2), lineWidth: 1)
+                )
+        )
+    }
+
     // MARK: - Helpers
 
     /// Whether a plugin matches the current search query.
@@ -269,9 +312,9 @@ struct PluginsView: View {
         guard !query.isEmpty else { return true }
         let queryLower = query.lowercased()
         return [
-            plugin.spec.plugin_id.lowercased(),
-            (plugin.spec.name ?? "").lowercased(),
-            (plugin.spec.description ?? "").lowercased(),
+            plugin.pluginId.lowercased(),
+            (plugin.name ?? "").lowercased(),
+            (plugin.pluginDescription ?? "").lowercased(),
         ].contains { SearchService.fuzzyMatch(query: queryLower, in: $0) }
     }
 
@@ -285,7 +328,7 @@ struct PluginsView: View {
                 let installed =
                     currentPlugins
                     .filter { $0.isInstalled && Self.pluginMatchesQuery($0, query: query) }
-                    .sorted { ($0.spec.name ?? $0.spec.plugin_id) < ($1.spec.name ?? $1.spec.plugin_id) }
+                    .sorted { $0.displayName < $1.displayName }
                 return (browse, installed)
             }.value
 
@@ -294,11 +337,11 @@ struct PluginsView: View {
         filteredPlugins = browseResult
         installedPlugins = installedResult
 
-        // Calculate per-plugin missing permissions from spec tool names
+        // Calculate per-plugin missing permissions from capability tool names
         var permissionCount = 0
         var missingPerms: [String: [SystemPermission]] = [:]
         for plugin in installedResult {
-            let toolNames = (plugin.spec.capabilities?.tools ?? []).map { $0.name }
+            let toolNames = (plugin.capabilities?.tools ?? []).map { $0.name }
             var missing = Set<SystemPermission>()
             for name in toolNames {
                 if let info = ToolRegistry.shared.policyInfo(for: name) {
@@ -308,7 +351,7 @@ struct PluginsView: View {
                 }
             }
             if !missing.isEmpty {
-                missingPerms[plugin.spec.plugin_id] = Array(missing).sorted { $0.rawValue < $1.rawValue }
+                missingPerms[plugin.pluginId] = Array(missing).sorted { $0.rawValue < $1.rawValue }
                 permissionCount += 1
             }
         }
@@ -333,7 +376,7 @@ private struct InstalledPluginCard: View {
     let plugin: PluginState
     let missingPermissions: [SystemPermission]
     let onUpgrade: () async throws -> Void
-    let onUninstall: () throws -> Void
+    let onUninstall: () async throws -> Void
     let onChange: () -> Void
 
     @State private var isExpanded: Bool = false
@@ -397,7 +440,7 @@ private struct InstalledPluginCard: View {
 
                         VStack(alignment: .leading, spacing: 4) {
                             HStack(spacing: 8) {
-                                Text(plugin.spec.name ?? plugin.spec.plugin_id)
+                                Text(plugin.displayName)
                                     .font(.system(size: 15, weight: .semibold, design: .rounded))
                                     .foregroundColor(theme.primaryText)
 
@@ -436,7 +479,7 @@ private struct InstalledPluginCard: View {
                                 }
                             }
 
-                            if let description = plugin.spec.description {
+                            if let description = plugin.pluginDescription {
                                 Text(description)
                                     .font(.system(size: 13))
                                     .foregroundColor(theme.secondaryText)
@@ -447,8 +490,8 @@ private struct InstalledPluginCard: View {
                         Spacer()
 
                         PluginCapabilitiesBadge(
-                            toolCount: plugin.spec.capabilities?.tools?.count ?? 0,
-                            skillCount: plugin.spec.capabilities?.skills?.count ?? 0
+                            toolCount: plugin.capabilities?.tools?.count ?? 0,
+                            skillCount: plugin.capabilities?.skills?.count ?? 0
                         )
 
                         Image(systemName: "chevron.right")
@@ -701,8 +744,8 @@ private struct InstalledPluginCard: View {
 
             // Read-only capabilities summary
             if isExpanded && !plugin.hasLoadError {
-                let specTools = plugin.spec.capabilities?.tools ?? []
-                let specSkills = plugin.spec.capabilities?.skills ?? []
+                let specTools = plugin.capabilities?.tools ?? []
+                let specSkills = plugin.capabilities?.skills ?? []
                 if !specTools.isEmpty || !specSkills.isEmpty {
                     Divider()
                         .padding(.vertical, 4)
@@ -717,7 +760,7 @@ private struct InstalledPluginCard: View {
         .background(PluginCardBackground(isHovering: isHovering))
         .onHover { isHovering = $0 }
         .onAppear {
-            if let loaded = PluginManager.shared.plugins.first(where: { $0.plugin.id == plugin.spec.plugin_id }) {
+            if let loaded = PluginManager.shared.plugins.first(where: { $0.plugin.id == plugin.pluginId }) {
                 cachedSecrets = loaded.plugin.manifest.secrets ?? []
             }
             updateSecretsStatus()
@@ -730,8 +773,8 @@ private struct InstalledPluginCard: View {
         )
         .sheet(isPresented: $showSecretsSheet) {
             ToolSecretsSheet(
-                pluginId: plugin.spec.plugin_id,
-                pluginName: plugin.spec.name ?? plugin.spec.plugin_id,
+                pluginId: plugin.pluginId,
+                pluginName: plugin.displayName,
                 pluginVersion: plugin.installedVersion?.description,
                 secrets: cachedSecrets,
                 onSave: {
@@ -745,12 +788,14 @@ private struct InstalledPluginCard: View {
     private func updateSecretsStatus() {
         hasMissingSecrets =
             !cachedSecrets.isEmpty
-            && !ToolSecretsKeychain.hasAllRequiredSecrets(specs: cachedSecrets, for: plugin.spec.plugin_id)
+            && !ToolSecretsKeychain.hasAllRequiredSecrets(specs: cachedSecrets, for: plugin.pluginId)
     }
 
     private func retryLoad() {
-        PluginManager.shared.loadAll()
-        onChange()
+        Task {
+            await PluginManager.shared.loadAll()
+            onChange()
+        }
     }
 
     private func upgrade() {
@@ -765,11 +810,13 @@ private struct InstalledPluginCard: View {
     }
 
     private func uninstall() {
-        do {
-            try onUninstall()
-        } catch {
-            errorMessage = error.localizedDescription
-            showError = true
+        Task {
+            do {
+                try await onUninstall()
+            } catch {
+                errorMessage = error.localizedDescription
+                showError = true
+            }
         }
     }
 }
@@ -781,7 +828,7 @@ private struct PluginBrowseRow: View {
     let plugin: PluginState
     let onInstall: () async throws -> Void
     let onUpgrade: () async throws -> Void
-    let onUninstall: () throws -> Void
+    let onUninstall: () async throws -> Void
 
     @State private var errorMessage: String?
     @State private var showError: Bool = false
@@ -808,7 +855,7 @@ private struct PluginBrowseRow: View {
 
                         VStack(alignment: .leading, spacing: 4) {
                             HStack(spacing: 8) {
-                                Text(plugin.spec.name ?? plugin.spec.plugin_id)
+                                Text(plugin.displayName)
                                     .font(.system(size: 15, weight: .semibold, design: .rounded))
                                     .foregroundColor(theme.primaryText)
 
@@ -829,7 +876,7 @@ private struct PluginBrowseRow: View {
                                 }
                             }
 
-                            if let description = plugin.spec.description {
+                            if let description = plugin.pluginDescription {
                                 Text(description)
                                     .font(.system(size: 13))
                                     .foregroundColor(theme.secondaryText)
@@ -840,8 +887,8 @@ private struct PluginBrowseRow: View {
                         Spacer()
 
                         PluginCapabilitiesBadge(
-                            toolCount: plugin.spec.capabilities?.tools?.count ?? 0,
-                            skillCount: plugin.spec.capabilities?.skills?.count ?? 0
+                            toolCount: plugin.capabilities?.tools?.count ?? 0,
+                            skillCount: plugin.capabilities?.skills?.count ?? 0
                         )
 
                         Image(systemName: "chevron.right")
@@ -858,13 +905,13 @@ private struct PluginBrowseRow: View {
 
             if isExpanded {
                 HStack(spacing: 12) {
-                    if let authors = plugin.spec.authors, !authors.isEmpty {
+                    if let authors = plugin.authors, !authors.isEmpty {
                         Label(authors.joined(separator: ", "), systemImage: "person")
                             .font(.system(size: 11))
                             .foregroundColor(theme.tertiaryText)
                     }
 
-                    if let license = plugin.spec.license {
+                    if let license = plugin.license {
                         Label(license, systemImage: "doc.text")
                             .font(.system(size: 11))
                             .foregroundColor(theme.tertiaryText)
@@ -872,8 +919,8 @@ private struct PluginBrowseRow: View {
                 }
                 .padding(.leading, 58)
 
-                let specTools = plugin.spec.capabilities?.tools ?? []
-                let specSkills = plugin.spec.capabilities?.skills ?? []
+                let specTools = plugin.capabilities?.tools ?? []
+                let specSkills = plugin.capabilities?.skills ?? []
                 if !specTools.isEmpty || !specSkills.isEmpty {
                     Divider()
                         .padding(.vertical, 4)
@@ -986,11 +1033,13 @@ private struct PluginBrowseRow: View {
     }
 
     private func uninstall() {
-        do {
-            try onUninstall()
-        } catch {
-            errorMessage = error.localizedDescription
-            showError = true
+        Task {
+            do {
+                try await onUninstall()
+            } catch {
+                errorMessage = error.localizedDescription
+                showError = true
+            }
         }
     }
 }

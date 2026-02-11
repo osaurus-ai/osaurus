@@ -112,7 +112,9 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
         let _ = DirectoryPickerService.shared
 
         // Load external tool plugins at launch (after core is initialized)
-        PluginManager.shared.loadAll()
+        Task { @MainActor in
+            await PluginManager.shared.loadAll()
+        }
 
         // Pre-warm caches immediately for instant first window (no async deps)
         _ = WhisperConfigurationStore.load()
@@ -684,7 +686,7 @@ extension AppDelegate {
 
     @objc private func handleToolsReloadCommand(_ note: Notification) {
         Task { @MainActor in
-            PluginManager.shared.loadAll()
+            await PluginManager.shared.loadAll()
         }
     }
 }
