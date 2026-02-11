@@ -321,7 +321,7 @@ private struct ModelGroupHeader: View {
         .contentShape(Rectangle())
         .onTapGesture { onToggle() }
         .modifier(ModelHoverRowStyle(isHovered: isHovered, showAccent: true))
-        .onHover { hovering in
+        .onPopoverHover { hovering in
             withAnimation(.easeOut(duration: 0.15)) { isHovered = hovering }
         }
         .animation(.easeOut(duration: 0.15), value: isExpanded)
@@ -395,7 +395,7 @@ private struct ModelRowItem: View {
         .contentShape(Rectangle())
         .onTapGesture { onSelect() }
         .modifier(ModelHoverRowStyle(isHovered: isHovered || isHighlighted || isSelected, showAccent: isSelected))
-        .onHover { hovering in
+        .onPopoverHover { hovering in
             withAnimation(.easeOut(duration: 0.15)) { isHovered = hovering }
         }
         .animation(.easeOut(duration: 0.15), value: isSelected)
