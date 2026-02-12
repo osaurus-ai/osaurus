@@ -82,23 +82,23 @@ struct RemoteProvidersView: View {
             return "\(totalCount) provider\(totalCount == 1 ? "" : "s") configured"
         } else {
             let modelCount = manager.providerStates.values.reduce(0) { $0 + $1.modelCount }
-            return "\(connectedCount) connected • \(modelCount) model\(modelCount == 1 ? "" : "s") available"
+            return "\(connectedCount) connected \u{2022} \(modelCount) model\(modelCount == 1 ? "" : "s") available"
         }
     }
 
     // MARK: - Empty State
 
     private var emptyStateView: some View {
-        VStack(spacing: 20) {
-            Spacer()
+        VStack(spacing: 24) {
+            Spacer().frame(height: 20)
 
             ZStack {
                 Circle()
                     .fill(theme.accentColor.opacity(0.1))
-                    .frame(width: 80, height: 80)
+                    .frame(width: 72, height: 72)
 
                 Image(systemName: "cloud.fill")
-                    .font(.system(size: 36))
+                    .font(.system(size: 32))
                     .foregroundColor(theme.accentColor)
             }
 
@@ -107,30 +107,34 @@ struct RemoteProvidersView: View {
                     .font(.system(size: 18, weight: .semibold))
                     .foregroundColor(theme.primaryText)
 
-                Text(
-                    "Connect to Anthropic, OpenAI, xAI,\nor other compatible APIs to access remote models."
-                )
-                .font(.system(size: 14))
-                .foregroundColor(theme.secondaryText)
-                .multilineTextAlignment(.center)
+                Text("Connect a provider to access remote models.")
+                    .font(.system(size: 14))
+                    .foregroundColor(theme.secondaryText)
+                    .multilineTextAlignment(.center)
             }
 
-            Button(action: { showAddSheet = true }) {
-                HStack(spacing: 6) {
-                    Image(systemName: "plus")
-                        .font(.system(size: 12, weight: .semibold))
-                    Text("Add Your First Provider")
-                        .font(.system(size: 14, weight: .medium))
+            // Quick-add provider cards
+            VStack(spacing: 8) {
+                ForEach(ProviderPreset.knownPresets) { preset in
+                    EmptyStateProviderCard(preset: preset) {
+                        showAddSheet = true
+                    }
                 }
-                .foregroundColor(.white)
-                .padding(.horizontal, 20)
-                .padding(.vertical, 12)
-                .background(
-                    RoundedRectangle(cornerRadius: 10)
-                        .fill(theme.accentColor)
-                )
+
+                // Custom option
+                EmptyStateProviderCard(preset: .custom) {
+                    showAddSheet = true
+                }
             }
-            .buttonStyle(PlainButtonStyle())
+            .padding(.horizontal, 20)
+
+            HStack(spacing: 4) {
+                Image(systemName: "lock.fill")
+                    .font(.system(size: 10))
+                Text("Your API keys are stored securely in Keychain.")
+                    .font(.system(size: 12))
+            }
+            .foregroundColor(theme.tertiaryText)
 
             Spacer()
         }
@@ -156,6 +160,73 @@ struct RemoteProvidersView: View {
     }
 }
 
+// MARK: - Empty State Provider Card
+
+private struct EmptyStateProviderCard: View {
+    @Environment(\.theme) private var theme
+    let preset: ProviderPreset
+    let action: () -> Void
+
+    @State private var isHovered = false
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 12) {
+                ZStack {
+                    RoundedRectangle(cornerRadius: 8)
+                        .fill(
+                            LinearGradient(
+                                colors: isHovered
+                                    ? preset.gradient : [theme.tertiaryBackground, theme.tertiaryBackground],
+                                startPoint: .topLeading,
+                                endPoint: .bottomTrailing
+                            )
+                        )
+                        .frame(width: 36, height: 36)
+
+                    Image(systemName: preset.icon)
+                        .font(.system(size: 14, weight: .medium))
+                        .foregroundColor(isHovered ? .white : theme.secondaryText)
+                }
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(preset.name)
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundColor(theme.primaryText)
+                    Text(preset.description)
+                        .font(.system(size: 11))
+                        .foregroundColor(theme.secondaryText)
+                }
+
+                Spacer()
+
+                Image(systemName: "plus")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundColor(theme.tertiaryText)
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 10)
+            .background(
+                RoundedRectangle(cornerRadius: 10)
+                    .fill(theme.secondaryBackground)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 10)
+                            .stroke(
+                                isHovered ? theme.accentColor.opacity(0.4) : theme.primaryBorder,
+                                lineWidth: 1
+                            )
+                    )
+            )
+        }
+        .buttonStyle(PlainButtonStyle())
+        .onHover { hovering in
+            withAnimation(.spring(response: 0.25, dampingFraction: 0.8)) {
+                isHovered = hovering
+            }
+        }
+    }
+}
+
 // MARK: - Provider Card View
 
 private struct ProviderCardView: View {
@@ -171,6 +242,15 @@ private struct ProviderCardView: View {
 
     private var isConnected: Bool { state?.isConnected ?? false }
     private var isConnecting: Bool { state?.isConnecting ?? false }
+
+    /// Match to a known preset for icon/color
+    private var matchedPreset: ProviderPreset? {
+        ProviderPreset.matching(provider: provider)
+    }
+
+    private var providerIcon: String {
+        matchedPreset?.icon ?? "cloud.fill"
+    }
 
     private var statusColor: Color {
         if !provider.enabled {
@@ -192,11 +272,11 @@ private struct ProviderCardView: View {
             HStack(spacing: 16) {
                 // Icon
                 ZStack {
-                    RoundedRectangle(cornerRadius: 12)
-                        .fill(statusColor.opacity(0.12))
-                    Image(systemName: "cloud.fill")
+                    iconBackground
+                        .clipShape(RoundedRectangle(cornerRadius: 12))
+                    Image(systemName: providerIcon)
                         .font(.system(size: 22))
-                        .foregroundColor(statusColor)
+                        .foregroundColor(iconForeground)
                 }
                 .frame(width: 52, height: 52)
 
@@ -304,6 +384,27 @@ private struct ProviderCardView: View {
             primaryButton: .destructive("Delete") { onDelete() },
             secondaryButton: .cancel("Cancel")
         )
+    }
+
+    /// Icon background: use preset gradient if connected, otherwise status-tinted fill
+    @ViewBuilder
+    private var iconBackground: some View {
+        if let preset = matchedPreset, isConnected {
+            LinearGradient(
+                colors: preset.gradient,
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            )
+        } else {
+            statusColor.opacity(0.12)
+        }
+    }
+
+    private var iconForeground: Color {
+        if matchedPreset != nil, isConnected {
+            return .white
+        }
+        return statusColor
     }
 
     @ViewBuilder

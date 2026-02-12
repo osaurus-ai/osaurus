@@ -79,6 +79,7 @@ enum GeminiPart: Codable, Sendable {
 struct GeminiFunctionCall: Codable, Sendable {
     let name: String
     let args: [String: AnyCodableValue]?
+    let thoughtSignature: String?
 }
 
 /// Gemini function response (user providing tool output)

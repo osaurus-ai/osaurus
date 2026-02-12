@@ -213,7 +213,8 @@ public actor RemoteProviderService: ToolCapableService {
                 }
 
                 // Track accumulated tool calls by index (even in streamDeltas for robustness)
-                var accumulatedToolCalls: [Int: (id: String?, name: String?, args: String)] = [:]
+                var accumulatedToolCalls: [Int: (id: String?, name: String?, args: String, thoughtSignature: String?)] =
+                    [:]
 
                 // Parse SSE stream with UTF-8 decoding and inactivity timeout
                 var buffer = ""
@@ -305,7 +306,8 @@ public actor RemoteProviderService: ToolCapableService {
                                                     accumulatedToolCalls[idx] = (
                                                         id: "gemini-\(UUID().uuidString.prefix(8))",
                                                         name: funcCall.name,
-                                                        args: argsString
+                                                        args: argsString,
+                                                        thoughtSignature: funcCall.thoughtSignature
                                                     )
                                                 case .functionResponse:
                                                     break
@@ -361,7 +363,9 @@ public actor RemoteProviderService: ToolCapableService {
                                                         // Accumulate tool call JSON
                                                         let idx = deltaEvent.index
                                                         var current =
-                                                            accumulatedToolCalls[idx] ?? (id: nil, name: nil, args: "")
+                                                            accumulatedToolCalls[idx] ?? (
+                                                                id: nil, name: nil, args: "", thoughtSignature: nil
+                                                            )
                                                         current.args += jsonDelta.partial_json
                                                         accumulatedToolCalls[idx] = current
                                                     }
@@ -374,7 +378,8 @@ public actor RemoteProviderService: ToolCapableService {
                                                     if case .toolUse(let toolBlock) = startEvent.content_block {
                                                         let idx = startEvent.index
                                                         accumulatedToolCalls[idx] = (
-                                                            id: toolBlock.id, name: toolBlock.name, args: ""
+                                                            id: toolBlock.id, name: toolBlock.name, args: "",
+                                                            thoughtSignature: nil
                                                         )
                                                     }
                                                 }
@@ -421,7 +426,8 @@ public actor RemoteProviderService: ToolCapableService {
                                                     if case .functionCall(let funcCall) = addedEvent.item {
                                                         let idx = addedEvent.output_index
                                                         accumulatedToolCalls[idx] = (
-                                                            id: funcCall.call_id, name: funcCall.name, args: ""
+                                                            id: funcCall.call_id, name: funcCall.name, args: "",
+                                                            thoughtSignature: nil
                                                         )
                                                     }
                                                 }
@@ -433,7 +439,8 @@ public actor RemoteProviderService: ToolCapableService {
                                                     let idx = deltaEvent.output_index
                                                     var current =
                                                         accumulatedToolCalls[idx] ?? (
-                                                            id: deltaEvent.call_id, name: nil, args: ""
+                                                            id: deltaEvent.call_id, name: nil, args: "",
+                                                            thoughtSignature: nil
                                                         )
                                                     current.args += deltaEvent.delta
                                                     accumulatedToolCalls[idx] = current
@@ -460,7 +467,9 @@ public actor RemoteProviderService: ToolCapableService {
                                             for toolCall in toolCalls {
                                                 let idx = toolCall.index ?? 0
                                                 var current =
-                                                    accumulatedToolCalls[idx] ?? (id: nil, name: nil, args: "")
+                                                    accumulatedToolCalls[idx] ?? (
+                                                        id: nil, name: nil, args: "", thoughtSignature: nil
+                                                    )
 
                                                 if let id = toolCall.id {
                                                     current.id = id
@@ -561,7 +570,8 @@ public actor RemoteProviderService: ToolCapableService {
                                                 accumulatedToolCalls[idx] = (
                                                     id: "gemini-\(UUID().uuidString.prefix(8))",
                                                     name: funcCall.name,
-                                                    args: argsString
+                                                    args: argsString,
+                                                    thoughtSignature: nil
                                                 )
                                                 print(
                                                     "[Osaurus] Gemini tool call detected: index=\(idx), name=\(funcCall.name)"
@@ -629,7 +639,8 @@ public actor RemoteProviderService: ToolCapableService {
                                                 accumulatedToolCalls[idx] = (
                                                     id: "gemini-\(UUID().uuidString.prefix(8))",
                                                     name: funcCall.name,
-                                                    args: argsString
+                                                    args: argsString,
+                                                    thoughtSignature: nil
                                                 )
                                             case .functionResponse:
                                                 break
@@ -771,7 +782,8 @@ public actor RemoteProviderService: ToolCapableService {
 
                 // Track accumulated tool calls by index (supports multiple parallel tool calls)
                 // Structure: [index: (id, name, arguments)]
-                var accumulatedToolCalls: [Int: (id: String?, name: String?, args: String)] = [:]
+                var accumulatedToolCalls: [Int: (id: String?, name: String?, args: String, thoughtSignature: String?)] =
+                    [:]
 
                 // Track if we've seen any finish reason (for edge case handling)
                 var lastFinishReason: String?
@@ -889,7 +901,8 @@ public actor RemoteProviderService: ToolCapableService {
                                                     accumulatedToolCalls[idx] = (
                                                         id: "gemini-\(UUID().uuidString.prefix(8))",
                                                         name: funcCall.name,
-                                                        args: argsString
+                                                        args: argsString,
+                                                        thoughtSignature: funcCall.thoughtSignature
                                                     )
                                                     print(
                                                         "[Osaurus] Gemini tool call detected: index=\(idx), name=\(funcCall.name)"
@@ -953,7 +966,9 @@ public actor RemoteProviderService: ToolCapableService {
                                                         // Accumulate tool call JSON
                                                         let idx = deltaEvent.index
                                                         var current =
-                                                            accumulatedToolCalls[idx] ?? (id: nil, name: nil, args: "")
+                                                            accumulatedToolCalls[idx] ?? (
+                                                                id: nil, name: nil, args: "", thoughtSignature: nil
+                                                            )
                                                         current.args += jsonDelta.partial_json
                                                         accumulatedToolCalls[idx] = current
                                                     }
@@ -966,7 +981,8 @@ public actor RemoteProviderService: ToolCapableService {
                                                     if case .toolUse(let toolBlock) = startEvent.content_block {
                                                         let idx = startEvent.index
                                                         accumulatedToolCalls[idx] = (
-                                                            id: toolBlock.id, name: toolBlock.name, args: ""
+                                                            id: toolBlock.id, name: toolBlock.name, args: "",
+                                                            thoughtSignature: nil
                                                         )
                                                         print(
                                                             "[Osaurus] Tool call detected: index=\(idx), name=\(toolBlock.name)"
@@ -1028,7 +1044,8 @@ public actor RemoteProviderService: ToolCapableService {
                                                     if case .functionCall(let funcCall) = addedEvent.item {
                                                         let idx = addedEvent.output_index
                                                         accumulatedToolCalls[idx] = (
-                                                            id: funcCall.call_id, name: funcCall.name, args: ""
+                                                            id: funcCall.call_id, name: funcCall.name, args: "",
+                                                            thoughtSignature: nil
                                                         )
                                                         print(
                                                             "[Osaurus] Open Responses tool call detected: index=\(idx), name=\(funcCall.name)"
@@ -1043,7 +1060,8 @@ public actor RemoteProviderService: ToolCapableService {
                                                     let idx = deltaEvent.output_index
                                                     var current =
                                                         accumulatedToolCalls[idx] ?? (
-                                                            id: deltaEvent.call_id, name: nil, args: ""
+                                                            id: deltaEvent.call_id, name: nil, args: "",
+                                                            thoughtSignature: nil
                                                         )
                                                     current.args += deltaEvent.delta
                                                     accumulatedToolCalls[idx] = current
@@ -1074,7 +1092,9 @@ public actor RemoteProviderService: ToolCapableService {
                                             for toolCall in toolCalls {
                                                 let idx = toolCall.index ?? 0
                                                 var current =
-                                                    accumulatedToolCalls[idx] ?? (id: nil, name: nil, args: "")
+                                                    accumulatedToolCalls[idx] ?? (
+                                                        id: nil, name: nil, args: "", thoughtSignature: nil
+                                                    )
 
                                                 // Preserve tool call ID from the stream
                                                 if let id = toolCall.id {
@@ -1220,7 +1240,7 @@ public actor RemoteProviderService: ToolCapableService {
     /// validating the JSON arguments. Returns `nil` if there are no accumulated calls
     /// or the first entry has no name.
     private static func makeToolInvocation(
-        from accumulated: [Int: (id: String?, name: String?, args: String)]
+        from accumulated: [Int: (id: String?, name: String?, args: String, thoughtSignature: String?)]
     ) -> ServiceToolInvocation? {
         guard let first = accumulated.sorted(by: { $0.key < $1.key }).first,
             let name = first.value.name
@@ -1229,7 +1249,8 @@ public actor RemoteProviderService: ToolCapableService {
         return ServiceToolInvocation(
             toolName: name,
             jsonArguments: validateToolCallJSON(first.value.args),
-            toolCallId: first.value.id
+            toolCallId: first.value.id,
+            geminiThoughtSignature: first.value.thoughtSignature
         )
     }
 
@@ -1487,7 +1508,8 @@ public actor RemoteProviderService: ToolCapableService {
                             ToolCall(
                                 id: "gemini-\(UUID().uuidString.prefix(8))",
                                 type: "function",
-                                function: ToolCallFunction(name: funcCall.name, arguments: argsString)
+                                function: ToolCallFunction(name: funcCall.name, arguments: argsString),
+                                geminiThoughtSignature: funcCall.thoughtSignature
                             )
                         )
                     case .functionResponse:
@@ -1730,7 +1752,15 @@ private struct RemoteChatRequest: Encodable {
                         {
                             args = argsDict.mapValues { AnyCodableValue($0) }
                         }
-                        parts.append(.functionCall(GeminiFunctionCall(name: toolCall.function.name, args: args)))
+                        parts.append(
+                            .functionCall(
+                                GeminiFunctionCall(
+                                    name: toolCall.function.name,
+                                    args: args,
+                                    thoughtSignature: toolCall.geminiThoughtSignature
+                                )
+                            )
+                        )
                     }
                 }
 

@@ -2,218 +2,91 @@
 //  RemoteProviderEditSheet.swift
 //  osaurus
 //
-//  Sheet for adding/editing remote API providers (OpenAI, Anthropic, etc.).
+//  Sheet for adding/editing remote API providers.
+//  Add mode: stepped flow (pick provider -> API key -> test -> save).
+//  Edit mode: simplified form based on known vs custom provider.
 //
 
+import AppKit
 import SwiftUI
-
-// MARK: - Provider Presets
-
-enum ProviderPreset: String, CaseIterable, Identifiable {
-    case anthropic = "Anthropic"
-    case openai = "OpenAI"
-    case google = "Google"
-    case xai = "xAI"
-    case openrouter = "OpenRouter"
-    case custom = "Custom"
-
-    var id: String { rawValue }
-
-    var icon: String {
-        switch self {
-        case .anthropic: return "brain.head.profile"
-        case .openai: return "sparkles"
-        case .google: return "globe"
-        case .xai: return "bolt.fill"
-        case .openrouter: return "arrow.triangle.branch"
-        case .custom: return "slider.horizontal.3"
-        }
-    }
-
-    var description: String {
-        switch self {
-        case .anthropic: return "Claude models"
-        case .openai: return "GPT-4o, o1, etc."
-        case .google: return "Gemini models"
-        case .xai: return "Grok models"
-        case .openrouter: return "Multi-provider"
-        case .custom: return "Custom endpoint"
-        }
-    }
-
-    var gradient: [Color] {
-        switch self {
-        case .anthropic: return [Color(red: 0.85, green: 0.55, blue: 0.35), Color(red: 0.75, green: 0.4, blue: 0.25)]
-        case .openai: return [Color(red: 0.0, green: 0.65, blue: 0.52), Color(red: 0.0, green: 0.5, blue: 0.4)]
-        case .google: return [Color(red: 0.26, green: 0.52, blue: 0.96), Color(red: 0.18, green: 0.38, blue: 0.85)]
-        case .xai: return [Color(red: 0.1, green: 0.1, blue: 0.1), Color(red: 0.2, green: 0.2, blue: 0.2)]
-        case .openrouter: return [Color(red: 0.95, green: 0.55, blue: 0.25), Color(red: 0.85, green: 0.4, blue: 0.2)]
-        case .custom: return [Color(red: 0.55, green: 0.55, blue: 0.6), Color(red: 0.4, green: 0.4, blue: 0.45)]
-        }
-    }
-
-    struct Configuration {
-        let name: String
-        let host: String
-        let providerProtocol: RemoteProviderProtocol
-        let port: Int?
-        let basePath: String
-        let authType: RemoteProviderAuthType
-        let providerType: RemoteProviderType
-    }
-
-    var configuration: Configuration {
-        switch self {
-        case .anthropic:
-            return Configuration(
-                name: "Anthropic",
-                host: "api.anthropic.com",
-                providerProtocol: .https,
-                port: nil,
-                basePath: "/v1",
-                authType: .apiKey,
-                providerType: .anthropic
-            )
-        case .openai:
-            return Configuration(
-                name: "OpenAI",
-                host: "api.openai.com",
-                providerProtocol: .https,
-                port: nil,
-                basePath: "/v1",
-                authType: .apiKey,
-                providerType: .openai
-            )
-        case .google:
-            return Configuration(
-                name: "Google",
-                host: "generativelanguage.googleapis.com",
-                providerProtocol: .https,
-                port: nil,
-                basePath: "/v1beta",
-                authType: .apiKey,
-                providerType: .gemini
-            )
-        case .xai:
-            return Configuration(
-                name: "xAI",
-                host: "api.x.ai",
-                providerProtocol: .https,
-                port: nil,
-                basePath: "/v1",
-                authType: .apiKey,
-                providerType: .openai
-            )
-        case .openrouter:
-            return Configuration(
-                name: "OpenRouter",
-                host: "openrouter.ai",
-                providerProtocol: .https,
-                port: nil,
-                basePath: "/api/v1",
-                authType: .apiKey,
-                providerType: .openai
-            )
-        case .custom:
-            return Configuration(
-                name: "",
-                host: "",
-                providerProtocol: .https,
-                port: nil,
-                basePath: "/v1",
-                authType: .none,
-                providerType: .openai
-            )
-        }
-    }
-}
 
 // MARK: - Main View
 
 struct RemoteProviderEditSheet: View {
     @ObservedObject private var themeManager = ThemeManager.shared
-    @Environment(\.dismiss) private var dismiss
-
-    private var theme: ThemeProtocol { themeManager.currentTheme }
 
     let provider: RemoteProvider?
     let onSave: (RemoteProvider, String?) -> Void
 
-    // Preset selection (only for new providers)
+    var body: some View {
+        Group {
+            if let provider {
+                EditProviderFlow(provider: provider, onSave: onSave)
+            } else {
+                AddProviderFlow(onSave: onSave)
+            }
+        }
+        .environment(\.theme, themeManager.currentTheme)
+    }
+}
+
+// MARK: - Add Provider Flow (stepped)
+
+private struct AddProviderFlow: View {
+    @ObservedObject private var themeManager = ThemeManager.shared
+    @Environment(\.dismiss) private var dismiss
+
+    private var theme: ThemeProtocol { themeManager.currentTheme }
+
+    let onSave: (RemoteProvider, String?) -> Void
+
     @State private var selectedPreset: ProviderPreset? = nil
-
-    // Basic settings
-    @State private var name: String = ""
-    @State private var host: String = ""
-    @State private var providerProtocol: RemoteProviderProtocol = .https
-    @State private var portString: String = ""
-    @State private var basePath: String = "/v1"
-
-    // Authentication
-    @State private var authType: RemoteProviderAuthType = .none
     @State private var apiKey: String = ""
+    @State private var isTesting = false
+    @State private var testResult: ProviderTestResult? = nil
+    @State private var hasAppeared = false
 
-    // Provider type
-    @State private var providerType: RemoteProviderType = .openai
-
-    // Custom headers
-    @State private var customHeaders: [HeaderEntry] = []
+    // Custom provider fields
+    @State private var customName: String = ""
+    @State private var customHost: String = ""
+    @State private var customProtocol: RemoteProviderProtocol = .https
+    @State private var customPort: String = ""
+    @State private var customBasePath: String = "/v1"
 
     // Advanced settings
+    @State private var showAdvanced = false
     @State private var timeout: Double = 60
+    @State private var customHeaders: [HeaderEntry] = []
 
-    // UI state
-    @State private var isTesting: Bool = false
-    @State private var testResult: TestResult?
-    @State private var showAdvanced: Bool = false
-    @State private var hasAppeared: Bool = false
-
-    private var isEditing: Bool { provider != nil }
-
-    struct HeaderEntry: Identifiable {
-        let id = UUID()
-        var key: String
-        var value: String
-        var isSecret: Bool
-    }
-
-    enum TestResult {
-        case success([String])
-        case failure(String)
-
-        var isSuccess: Bool {
-            if case .success = self { return true }
-            return false
+    private var canTest: Bool {
+        guard let preset = selectedPreset else { return false }
+        if preset == .custom {
+            return !customHost.trimmingCharacters(in: .whitespaces).isEmpty
         }
+        return !apiKey.isEmpty && apiKey.count > 5
     }
 
     var body: some View {
         VStack(spacing: 0) {
-            // Header
+            // Header bar
             sheetHeader
 
-            // Content
-            ScrollView {
-                VStack(alignment: .leading, spacing: 20) {
-                    // Preset selector (only for new providers)
-                    if !isEditing {
-                        presetSelectorSection
-                            .opacity(hasAppeared ? 1 : 0)
-                            .offset(y: hasAppeared ? 0 : 10)
-                    }
-
-                    // Form sections in a card
-                    formCard
-                        .opacity(hasAppeared ? 1 : 0)
-                        .offset(y: hasAppeared ? 0 : 10)
+            // Content - stepped flow
+            ZStack {
+                if selectedPreset == nil {
+                    providerSelectionStep
+                        .transition(stepTransition)
+                } else if selectedPreset == .custom {
+                    customProviderStep
+                        .transition(stepTransition)
+                } else {
+                    knownProviderStep
+                        .transition(stepTransition)
                 }
-                .padding(20)
             }
-
-            // Footer
-            sheetFooter
+            .animation(.spring(response: 0.35, dampingFraction: 0.85), value: selectedPreset)
         }
-        .frame(width: 580, height: isEditing ? 580 : 720)
+        .frame(width: 540, height: 620)
         .background(theme.primaryBackground)
         .clipShape(RoundedRectangle(cornerRadius: 16))
         .overlay(
@@ -224,38 +97,35 @@ struct RemoteProviderEditSheet: View {
         .scaleEffect(hasAppeared ? 1 : 0.95)
         .animation(.spring(response: 0.3, dampingFraction: 0.8), value: hasAppeared)
         .onAppear {
-            loadProvider()
-            withAnimation {
-                hasAppeared = true
-            }
+            withAnimation { hasAppeared = true }
         }
+    }
+
+    private var stepTransition: AnyTransition {
+        .asymmetric(
+            insertion: .opacity.combined(with: .offset(x: 30)).combined(with: .scale(scale: 0.98)),
+            removal: .opacity.combined(with: .offset(x: -30)).combined(with: .scale(scale: 0.98))
+        )
     }
 
     // MARK: - Header
 
     private var sheetHeader: some View {
         HStack(spacing: 12) {
-            // Icon with gradient background
             ZStack {
                 Circle()
                     .fill(
                         LinearGradient(
-                            colors: [
-                                theme.accentColor.opacity(0.2),
-                                theme.accentColor.opacity(0.05),
-                            ],
+                            colors: [theme.accentColor.opacity(0.2), theme.accentColor.opacity(0.05)],
                             startPoint: .topLeading,
                             endPoint: .bottomTrailing
                         )
                     )
-                Image(systemName: isEditing ? "pencil.circle.fill" : "cloud.fill")
+                Image(systemName: "cloud.fill")
                     .font(.system(size: 18, weight: .semibold))
                     .foregroundStyle(
                         LinearGradient(
-                            colors: [
-                                theme.accentColor,
-                                theme.accentColor.opacity(0.7),
-                            ],
+                            colors: [theme.accentColor, theme.accentColor.opacity(0.7)],
                             startPoint: .topLeading,
                             endPoint: .bottomTrailing
                         )
@@ -264,11 +134,10 @@ struct RemoteProviderEditSheet: View {
             .frame(width: 40, height: 40)
 
             VStack(alignment: .leading, spacing: 2) {
-                Text(isEditing ? "Edit Provider" : "Add Provider")
+                Text("Add Provider")
                     .font(.system(size: 16, weight: .semibold))
                     .foregroundColor(theme.primaryText)
-
-                Text(isEditing ? "Modify your API connection" : "Connect to a remote API provider")
+                Text("Connect to a remote API provider")
                     .font(.system(size: 12))
                     .foregroundColor(theme.secondaryText)
             }
@@ -280,10 +149,7 @@ struct RemoteProviderEditSheet: View {
                     .font(.system(size: 12, weight: .semibold))
                     .foregroundColor(theme.secondaryText)
                     .frame(width: 28, height: 28)
-                    .background(
-                        Circle()
-                            .fill(theme.tertiaryBackground)
-                    )
+                    .background(Circle().fill(theme.tertiaryBackground))
             }
             .buttonStyle(PlainButtonStyle())
             .keyboardShortcut(.escape, modifiers: [])
@@ -294,10 +160,7 @@ struct RemoteProviderEditSheet: View {
             theme.secondaryBackground
                 .overlay(
                     LinearGradient(
-                        colors: [
-                            theme.accentColor.opacity(0.03),
-                            Color.clear,
-                        ],
+                        colors: [theme.accentColor.opacity(0.03), Color.clear],
                         startPoint: .topLeading,
                         endPoint: .bottomTrailing
                     )
@@ -305,39 +168,240 @@ struct RemoteProviderEditSheet: View {
         )
     }
 
-    // MARK: - Preset Selector
+    // MARK: - Step 1: Provider Selection
 
-    private var presetSelectorSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: ProviderPreset.allCases.count > 4 ? 8 : 10) {
-                ForEach(ProviderPreset.allCases) { preset in
-                    PresetPill(
-                        preset: preset,
-                        isSelected: selectedPreset == preset,
-                        action: { selectPreset(preset) }
-                    )
+    private var providerSelectionStep: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                Text("Choose a provider")
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundColor(theme.primaryText)
+                    .padding(.horizontal, 4)
+
+                VStack(spacing: 10) {
+                    ForEach(ProviderPreset.allCases) { preset in
+                        ProviderSelectionCard(preset: preset) {
+                            withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
+                                selectedPreset = preset
+                            }
+                        }
+                    }
+                }
+
+                HStack(spacing: 4) {
+                    Image(systemName: "lock.fill")
+                        .font(.system(size: 10))
+                    Text("Your API key never leaves your device.")
+                        .font(.system(size: 12))
+                }
+                .foregroundColor(theme.tertiaryText)
+                .padding(.top, 4)
+            }
+            .padding(24)
+        }
+    }
+
+    // MARK: - Step 2a: Known Provider (API key only)
+
+    private var knownProviderStep: some View {
+        VStack(spacing: 0) {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 20) {
+                    // Back button
+                    backToSelectionButton
+
+                    // Title
+                    HStack(spacing: 12) {
+                        ZStack {
+                            Circle()
+                                .fill(
+                                    LinearGradient(
+                                        colors: selectedPreset?.gradient ?? [theme.tertiaryBackground],
+                                        startPoint: .topLeading,
+                                        endPoint: .bottomTrailing
+                                    )
+                                )
+                                .frame(width: 40, height: 40)
+                            Image(systemName: selectedPreset?.icon ?? "cloud")
+                                .font(.system(size: 16, weight: .medium))
+                                .foregroundColor(.white)
+                        }
+
+                        Text("Connect \(selectedPreset?.name ?? "Provider")")
+                            .font(.system(size: 20, weight: .semibold))
+                            .foregroundColor(theme.primaryText)
+                    }
+
+                    // API Key field
+                    apiKeySection
+
+                    // Help section
+                    if let preset = selectedPreset, preset.isKnown, !preset.consoleURL.isEmpty {
+                        helpSection(for: preset)
+                    }
+
+                    // Advanced settings toggle
+                    advancedSettingsSection
+                }
+                .padding(24)
+            }
+
+            // Footer
+            sheetFooter(canProceed: canTest) {
+                if testResult?.isSuccess == true {
+                    saveKnownProvider()
+                } else {
+                    testKnownProvider()
                 }
             }
         }
     }
 
-    // MARK: - Form Card
+    // MARK: - Step 2b: Custom Provider
 
-    private var formCard: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            // Connection section
-            connectionSection
+    private var customProviderStep: some View {
+        VStack(spacing: 0) {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 20) {
+                    // Back button
+                    backToSelectionButton
 
-            sectionDivider
+                    // Title
+                    Text("Connect custom provider")
+                        .font(.system(size: 20, weight: .semibold))
+                        .foregroundColor(theme.primaryText)
 
-            // Authentication section
-            authenticationSection
+                    // Connection form card
+                    VStack(alignment: .leading, spacing: 0) {
+                        connectionFormSection
 
-            sectionDivider
+                        sectionDivider
 
-            // Advanced section (collapsed by default)
-            advancedSection
+                        // API Key section inside card
+                        VStack(alignment: .leading, spacing: 12) {
+                            HStack(spacing: 8) {
+                                Image(systemName: "key.fill")
+                                    .font(.system(size: 12, weight: .semibold))
+                                    .foregroundColor(theme.accentColor)
+                                Text("AUTHENTICATION")
+                                    .font(.system(size: 11, weight: .bold))
+                                    .foregroundColor(theme.secondaryText)
+                                    .tracking(0.5)
+                            }
+
+                            ProviderSecureField(placeholder: "sk-...", text: $apiKey)
+                                .onChange(of: apiKey) { _, _ in testResult = nil }
+                        }
+                        .padding(16)
+                    }
+                    .background(
+                        RoundedRectangle(cornerRadius: 12)
+                            .fill(theme.cardBackground)
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 12)
+                                    .stroke(theme.cardBorder, lineWidth: 1)
+                            )
+                    )
+
+                    // Advanced settings toggle
+                    advancedSettingsSection
+                }
+                .padding(24)
+            }
+
+            // Footer
+            sheetFooter(canProceed: canTestCustom) {
+                if testResult?.isSuccess == true {
+                    saveCustomProvider()
+                } else {
+                    testCustomProvider()
+                }
+            }
         }
+    }
+
+    // MARK: - Shared Components
+
+    private var backToSelectionButton: some View {
+        Button {
+            withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
+                selectedPreset = nil
+                apiKey = ""
+                testResult = nil
+                customName = ""
+                customHost = ""
+                customPort = ""
+                customBasePath = "/v1"
+                customProtocol = .https
+                showAdvanced = false
+                timeout = 60
+                customHeaders = []
+            }
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: "chevron.left")
+                    .font(.system(size: 11, weight: .semibold))
+                Text("Back")
+                    .font(.system(size: 13, weight: .medium))
+            }
+            .foregroundColor(theme.secondaryText)
+        }
+        .buttonStyle(PlainButtonStyle())
+    }
+
+    private var apiKeySection: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Text("API KEY")
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundColor(theme.tertiaryText)
+                    .tracking(0.5)
+                Spacer()
+                HStack(spacing: 4) {
+                    Image(systemName: "lock.fill")
+                        .font(.system(size: 9))
+                    Text("Stored in Keychain")
+                        .font(.system(size: 10))
+                }
+                .foregroundColor(theme.tertiaryText)
+            }
+
+            ProviderSecureField(placeholder: "sk-...", text: $apiKey)
+                .onChange(of: apiKey) { _, _ in testResult = nil }
+        }
+    }
+
+    private func helpSection(for preset: ProviderPreset) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Don't have a key?")
+                .font(.system(size: 14, weight: .medium))
+                .foregroundColor(theme.secondaryText)
+
+            VStack(alignment: .leading, spacing: 8) {
+                helpStep(number: 1, text: "Go to \(preset.name) console")
+                helpStep(number: 2, text: "Sign in or create an account")
+                helpStep(number: 3, text: "Click \"API Keys\" \u{2192} \"Create Key\"")
+                helpStep(number: 4, text: "Copy and paste it here")
+            }
+
+            Button {
+                if let url = URL(string: preset.consoleURL) {
+                    NSWorkspace.shared.open(url)
+                }
+            } label: {
+                HStack(spacing: 6) {
+                    Text("Open \(preset.name) Console")
+                        .font(.system(size: 13, weight: .medium))
+                    Image(systemName: "arrow.up.right")
+                        .font(.system(size: 11, weight: .semibold))
+                }
+                .foregroundColor(theme.accentColor)
+            }
+            .buttonStyle(.plain)
+            .padding(.top, 4)
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
         .background(
             RoundedRectangle(cornerRadius: 12)
                 .fill(theme.cardBackground)
@@ -348,39 +412,35 @@ struct RemoteProviderEditSheet: View {
         )
     }
 
-    private var sectionDivider: some View {
-        Rectangle()
-            .fill(theme.cardBorder)
-            .frame(height: 1)
-            .padding(.horizontal, 16)
+    private func helpStep(number: Int, text: String) -> some View {
+        HStack(alignment: .top, spacing: 10) {
+            Text("\(number).")
+                .font(.system(size: 12, weight: .medium, design: .monospaced))
+                .foregroundColor(theme.tertiaryText)
+                .frame(width: 16, alignment: .trailing)
+            Text(text)
+                .font(.system(size: 12))
+                .foregroundColor(theme.secondaryText)
+        }
     }
 
-    // MARK: - Connection Section
+    // MARK: - Connection Form (Custom Provider)
 
-    private var connectionSection: some View {
+    private var connectionFormSection: some View {
         VStack(alignment: .leading, spacing: 16) {
-            // Section header
             HStack(spacing: 8) {
                 Image(systemName: "network")
                     .font(.system(size: 12, weight: .semibold))
                     .foregroundColor(theme.accentColor)
-
                 Text("CONNECTION")
                     .font(.system(size: 11, weight: .bold))
                     .foregroundColor(theme.secondaryText)
                     .tracking(0.5)
             }
 
-            // Name field
-            ProviderTextField(
-                label: "Name",
-                placeholder: "e.g. My OpenAI",
-                text: $name
-            )
+            ProviderTextField(label: "Name", placeholder: "e.g. My Provider", text: $customName)
 
-            // Host row
             HStack(spacing: 12) {
-                // Protocol
                 VStack(alignment: .leading, spacing: 6) {
                     Text("PROTOCOL")
                         .font(.system(size: 10, weight: .bold))
@@ -388,8 +448,8 @@ struct RemoteProviderEditSheet: View {
                         .tracking(0.5)
 
                     HStack(spacing: 0) {
-                        protocolButton("HTTPS", protocol: .https)
-                        protocolButton("HTTP", protocol: .http)
+                        protocolButton("HTTPS", proto: .https)
+                        protocolButton("HTTP", proto: .http)
                     }
                     .background(
                         RoundedRectangle(cornerRadius: 10)
@@ -402,21 +462,14 @@ struct RemoteProviderEditSheet: View {
                 }
                 .frame(width: 140)
 
-                // Host
-                ProviderTextField(
-                    label: "Host",
-                    placeholder: "api.openai.com",
-                    text: $host,
-                    isMonospaced: true
-                )
+                ProviderTextField(label: "Host", placeholder: "api.example.com", text: $customHost, isMonospaced: true)
             }
 
-            // Port and Path row
             HStack(spacing: 12) {
                 ProviderTextField(
                     label: "Port",
-                    placeholder: providerProtocol == .https ? "443" : "80",
-                    text: $portString,
+                    placeholder: customProtocol == .https ? "443" : "80",
+                    text: $customPort,
                     isMonospaced: true
                 )
                 .frame(width: 90)
@@ -424,128 +477,73 @@ struct RemoteProviderEditSheet: View {
                 ProviderTextField(
                     label: "Base Path",
                     placeholder: "/v1",
-                    text: $basePath,
+                    text: $customBasePath,
                     isMonospaced: true
                 )
             }
 
-            // Endpoint preview
-            if !host.isEmpty {
-                HStack(spacing: 8) {
-                    Image(systemName: "link")
-                        .font(.system(size: 11))
-                        .foregroundColor(theme.accentColor)
-
-                    Text(buildEndpointPreview())
-                        .font(.system(size: 12, design: .monospaced))
-                        .foregroundColor(theme.secondaryText)
-                }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 8)
-                .background(
-                    RoundedRectangle(cornerRadius: 8)
-                        .fill(theme.accentColor.opacity(0.1))
-                )
+            if !customHost.trimmingCharacters(in: .whitespaces).isEmpty {
+                endpointPreview
             }
         }
         .padding(16)
     }
 
-    private func protocolButton(_ label: String, protocol proto: RemoteProviderProtocol) -> some View {
-        Button(action: { providerProtocol = proto }) {
+    private func protocolButton(_ label: String, proto: RemoteProviderProtocol) -> some View {
+        Button(action: { customProtocol = proto }) {
             Text(label)
-                .font(.system(size: 11, weight: providerProtocol == proto ? .semibold : .medium))
-                .foregroundColor(providerProtocol == proto ? theme.primaryText : theme.tertiaryText)
+                .font(.system(size: 11, weight: customProtocol == proto ? .semibold : .medium))
+                .foregroundColor(customProtocol == proto ? theme.primaryText : theme.tertiaryText)
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 10)
                 .background(
                     RoundedRectangle(cornerRadius: 8)
-                        .fill(providerProtocol == proto ? theme.tertiaryBackground : Color.clear)
+                        .fill(customProtocol == proto ? theme.tertiaryBackground : Color.clear)
                 )
         }
         .buttonStyle(PlainButtonStyle())
         .padding(2)
     }
 
-    // MARK: - Authentication Section
-
-    private var authenticationSection: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            // Section header
-            HStack(spacing: 8) {
-                Image(systemName: "key.fill")
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundColor(theme.accentColor)
-
-                Text("AUTHENTICATION")
-                    .font(.system(size: 11, weight: .bold))
-                    .foregroundColor(theme.secondaryText)
-                    .tracking(0.5)
-            }
-
-            HStack(spacing: 0) {
-                authButton("No Auth", authType: .none)
-                authButton("API Key", authType: .apiKey)
-            }
-            .background(
-                RoundedRectangle(cornerRadius: 10)
-                    .fill(theme.inputBackground)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 10)
-                            .stroke(theme.inputBorder, lineWidth: 1)
-                    )
-            )
-
-            if authType == .apiKey {
-                VStack(alignment: .leading, spacing: 6) {
-                    HStack {
-                        Text("API KEY")
-                            .font(.system(size: 10, weight: .bold))
-                            .foregroundColor(theme.tertiaryText)
-                            .tracking(0.5)
-
-                        Spacer()
-
-                        HStack(spacing: 4) {
-                            Image(systemName: "lock.fill")
-                                .font(.system(size: 9))
-                            Text("Stored in Keychain")
-                                .font(.system(size: 10))
-                        }
-                        .foregroundColor(theme.tertiaryText)
-                    }
-
-                    ProviderSecureField(
-                        placeholder: "sk-...",
-                        text: $apiKey
-                    )
-                }
-                .transition(.opacity.combined(with: .move(edge: .top)))
-            }
+    private var endpointPreview: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "link")
+                .font(.system(size: 11))
+                .foregroundColor(theme.accentColor)
+            Text(buildEndpointPreview())
+                .font(.system(size: 12, design: .monospaced))
+                .foregroundColor(theme.secondaryText)
         }
-        .padding(16)
-        .animation(.spring(response: 0.3, dampingFraction: 0.8), value: authType)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(theme.accentColor.opacity(0.1))
+        )
     }
 
-    private func authButton(_ label: String, authType type: RemoteProviderAuthType) -> some View {
-        Button(action: { authType = type }) {
-            Text(label)
-                .font(.system(size: 11, weight: authType == type ? .semibold : .medium))
-                .foregroundColor(authType == type ? theme.primaryText : theme.tertiaryText)
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 10)
-                .background(
-                    RoundedRectangle(cornerRadius: 8)
-                        .fill(authType == type ? theme.tertiaryBackground : Color.clear)
-                )
+    private func buildEndpointPreview() -> String {
+        var result = customProtocol == .https ? "https://" : "http://"
+        result += customHost.trimmingCharacters(in: .whitespaces)
+        if !customPort.trimmingCharacters(in: .whitespaces).isEmpty {
+            result += ":\(customPort.trimmingCharacters(in: .whitespaces))"
         }
-        .buttonStyle(PlainButtonStyle())
-        .padding(2)
+        let path = customBasePath.trimmingCharacters(in: .whitespaces)
+        result += path.isEmpty ? "/v1" : (path.hasPrefix("/") ? path : "/" + path)
+        return result
     }
 
-    // MARK: - Advanced Section
+    private var sectionDivider: some View {
+        Rectangle()
+            .fill(theme.cardBorder)
+            .frame(height: 1)
+            .padding(.horizontal, 16)
+    }
 
-    private var advancedSection: some View {
+    // MARK: - Advanced Settings
+
+    private var advancedSettingsSection: some View {
         VStack(alignment: .leading, spacing: 0) {
             Button(action: {
                 withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
@@ -573,11 +571,10 @@ struct RemoteProviderEditSheet: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(PlainButtonStyle())
-            .padding(16)
 
             if showAdvanced {
                 VStack(alignment: .leading, spacing: 16) {
-                    // Timeout slider
+                    // Timeout
                     VStack(alignment: .leading, spacing: 8) {
                         HStack {
                             Text("REQUEST TIMEOUT")
@@ -595,7 +592,6 @@ struct RemoteProviderEditSheet: View {
                                         .fill(theme.inputBackground)
                                 )
                         }
-
                         Slider(value: $timeout, in: 10 ... 300, step: 10)
                             .tint(theme.accentColor)
                     }
@@ -607,9 +603,7 @@ struct RemoteProviderEditSheet: View {
                                 .font(.system(size: 10, weight: .bold))
                                 .foregroundColor(theme.tertiaryText)
                                 .tracking(0.5)
-
                             Spacer()
-
                             Button(action: {
                                 customHeaders.append(HeaderEntry(key: "", value: "", isSecret: false))
                             }) {
@@ -617,10 +611,7 @@ struct RemoteProviderEditSheet: View {
                                     .font(.system(size: 10, weight: .semibold))
                                     .foregroundColor(theme.accentColor)
                                     .frame(width: 24, height: 24)
-                                    .background(
-                                        Circle()
-                                            .fill(theme.accentColor.opacity(0.1))
-                                    )
+                                    .background(Circle().fill(theme.accentColor.opacity(0.1)))
                             }
                             .buttonStyle(PlainButtonStyle())
                         }
@@ -639,8 +630,748 @@ struct RemoteProviderEditSheet: View {
                         }
                     }
                 }
+                .padding(.top, 12)
+                .transition(.opacity.combined(with: .move(edge: .top)))
+            }
+        }
+    }
+
+    // MARK: - Footer
+
+    private func sheetFooter(canProceed: Bool, onAction: @escaping () -> Void) -> some View {
+        HStack(spacing: 12) {
+            testResultBadge
+
+            Spacer()
+
+            Button("Cancel") { dismiss() }
+                .font(.system(size: 13, weight: .medium))
+                .foregroundColor(theme.primaryText)
                 .padding(.horizontal, 16)
-                .padding(.bottom, 16)
+                .padding(.vertical, 10)
+                .background(
+                    RoundedRectangle(cornerRadius: 8)
+                        .fill(theme.tertiaryBackground)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 8)
+                                .stroke(theme.inputBorder, lineWidth: 1)
+                        )
+                )
+                .buttonStyle(PlainButtonStyle())
+
+            Button(action: onAction) {
+                HStack(spacing: 6) {
+                    if isTesting {
+                        ProgressView()
+                            .scaleEffect(0.5)
+                            .frame(width: 14, height: 14)
+                    }
+                    Text(actionButtonTitle)
+                        .font(.system(size: 13, weight: .medium))
+                }
+                .foregroundColor(.white)
+                .padding(.horizontal, 18)
+                .padding(.vertical, 10)
+                .background(
+                    RoundedRectangle(cornerRadius: 8)
+                        .fill(canProceed ? actionButtonColor : theme.accentColor.opacity(0.4))
+                )
+            }
+            .buttonStyle(PlainButtonStyle())
+            .disabled(!canProceed || isTesting)
+            .keyboardShortcut(.return, modifiers: .command)
+        }
+        .padding(.horizontal, 24)
+        .padding(.vertical, 16)
+        .background(
+            theme.secondaryBackground
+                .overlay(
+                    Rectangle().fill(theme.primaryBorder).frame(height: 1),
+                    alignment: .top
+                )
+        )
+    }
+
+    @ViewBuilder
+    private var testResultBadge: some View {
+        if let result = testResult {
+            HStack(spacing: 6) {
+                switch result {
+                case .success(let models):
+                    Image(systemName: "checkmark.circle.fill")
+                        .font(.system(size: 12))
+                        .foregroundColor(theme.successColor)
+                    Text("\(models.count) model\(models.count == 1 ? "" : "s") found")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundColor(theme.successColor)
+                case .failure(let error):
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.system(size: 12))
+                        .foregroundColor(theme.errorColor)
+                    Text(error)
+                        .font(.system(size: 11))
+                        .foregroundColor(theme.errorColor)
+                        .lineLimit(2)
+                }
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
+            .background(
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(result.isSuccess ? theme.successColor.opacity(0.1) : theme.errorColor.opacity(0.1))
+            )
+        }
+    }
+
+    private var actionButtonTitle: String {
+        if isTesting { return "Testing..." }
+        if testResult?.isSuccess == true { return "Add Provider" }
+        if case .failure = testResult { return "Retry" }
+        return "Test Connection"
+    }
+
+    private var actionButtonColor: Color {
+        if testResult?.isSuccess == true { return theme.successColor }
+        if case .failure = testResult { return theme.errorColor }
+        return theme.accentColor
+    }
+
+    private var canTestCustom: Bool {
+        !customHost.trimmingCharacters(in: .whitespaces).isEmpty
+    }
+
+    // MARK: - Actions
+
+    private func testKnownProvider() {
+        guard let preset = selectedPreset else { return }
+        let config = preset.configuration
+
+        isTesting = true
+        testResult = nil
+
+        Task {
+            do {
+                let models = try await RemoteProviderManager.shared.testConnection(
+                    host: config.host,
+                    providerProtocol: config.providerProtocol,
+                    port: config.port,
+                    basePath: config.basePath,
+                    authType: .apiKey,
+                    providerType: config.providerType,
+                    apiKey: apiKey,
+                    headers: HeaderEntry.buildHeaders(from: customHeaders)
+                )
+                await MainActor.run {
+                    withAnimation {
+                        testResult = .success(models); isTesting = false
+                    }
+                }
+            } catch {
+                await MainActor.run {
+                    withAnimation {
+                        testResult = .failure(error.localizedDescription); isTesting = false
+                    }
+                }
+            }
+        }
+    }
+
+    private func saveKnownProvider() {
+        guard let preset = selectedPreset else { return }
+        let config = preset.configuration
+        let (regularHeaders, secretKeys) = HeaderEntry.partition(customHeaders)
+
+        let remoteProvider = RemoteProvider(
+            name: config.name,
+            host: config.host,
+            providerProtocol: config.providerProtocol,
+            port: config.port,
+            basePath: config.basePath,
+            customHeaders: regularHeaders,
+            authType: .apiKey,
+            providerType: config.providerType,
+            enabled: true,
+            autoConnect: true,
+            timeout: timeout,
+            secretHeaderKeys: secretKeys
+        )
+
+        saveSecretHeaders(for: remoteProvider.id)
+        onSave(remoteProvider, apiKey.isEmpty ? nil : apiKey)
+        dismiss()
+    }
+
+    private func testCustomProvider() {
+        let trimmedHost = customHost.trimmingCharacters(in: .whitespaces)
+        let trimmedBasePath = customBasePath.trimmingCharacters(in: .whitespaces)
+        let port: Int? = customPort.trimmingCharacters(in: .whitespaces).isEmpty ? nil : Int(customPort)
+        let testApiKey = apiKey.isEmpty ? nil : apiKey
+
+        isTesting = true
+        testResult = nil
+
+        Task {
+            do {
+                let models = try await RemoteProviderManager.shared.testConnection(
+                    host: trimmedHost,
+                    providerProtocol: customProtocol,
+                    port: port,
+                    basePath: trimmedBasePath.isEmpty ? "/v1" : trimmedBasePath,
+                    authType: testApiKey != nil ? .apiKey : .none,
+                    providerType: .openai,
+                    apiKey: testApiKey,
+                    headers: HeaderEntry.buildHeaders(from: customHeaders)
+                )
+                await MainActor.run {
+                    withAnimation {
+                        testResult = .success(models); isTesting = false
+                    }
+                }
+            } catch {
+                await MainActor.run {
+                    withAnimation {
+                        testResult = .failure(error.localizedDescription); isTesting = false
+                    }
+                }
+            }
+        }
+    }
+
+    private func saveCustomProvider() {
+        let trimmedName = customName.trimmingCharacters(in: .whitespaces)
+        let trimmedHost = customHost.trimmingCharacters(in: .whitespaces)
+        let trimmedBasePath = customBasePath.trimmingCharacters(in: .whitespaces)
+        let (regularHeaders, secretKeys) = HeaderEntry.partition(customHeaders)
+
+        let remoteProvider = RemoteProvider(
+            name: trimmedName.isEmpty ? "Custom Provider" : trimmedName,
+            host: trimmedHost,
+            providerProtocol: customProtocol,
+            port: Int(customPort),
+            basePath: trimmedBasePath.isEmpty ? "/v1" : trimmedBasePath,
+            customHeaders: regularHeaders,
+            authType: apiKey.isEmpty ? .none : .apiKey,
+            providerType: .openai,
+            enabled: true,
+            autoConnect: true,
+            timeout: timeout,
+            secretHeaderKeys: secretKeys
+        )
+
+        saveSecretHeaders(for: remoteProvider.id)
+        onSave(remoteProvider, apiKey.isEmpty ? nil : apiKey)
+        dismiss()
+    }
+
+    private func saveSecretHeaders(for providerId: UUID) {
+        for header in customHeaders where header.isSecret && !header.key.isEmpty && !header.value.isEmpty {
+            RemoteProviderKeychain.saveHeaderSecret(header.value, key: header.key, for: providerId)
+        }
+    }
+}
+
+// MARK: - Edit Provider Flow (simplified)
+
+private struct EditProviderFlow: View {
+    @ObservedObject private var themeManager = ThemeManager.shared
+    @Environment(\.dismiss) private var dismiss
+
+    private var theme: ThemeProtocol { themeManager.currentTheme }
+
+    let provider: RemoteProvider
+    let onSave: (RemoteProvider, String?) -> Void
+
+    // Detect known preset
+    private var matchedPreset: ProviderPreset? {
+        ProviderPreset.matching(provider: provider)
+    }
+
+    // Basic settings (only shown in advanced for known providers)
+    @State private var name: String = ""
+    @State private var host: String = ""
+    @State private var providerProtocol: RemoteProviderProtocol = .https
+    @State private var portString: String = ""
+    @State private var basePath: String = "/v1"
+    @State private var authType: RemoteProviderAuthType = .none
+    @State private var providerType: RemoteProviderType = .openai
+
+    // Editable fields
+    @State private var apiKey: String = ""
+
+    // Advanced
+    @State private var showAdvanced = false
+    @State private var timeout: Double = 60
+    @State private var customHeaders: [HeaderEntry] = []
+
+    // UI state
+    @State private var isTesting = false
+    @State private var testResult: ProviderTestResult?
+    @State private var hasAppeared = false
+
+    var body: some View {
+        VStack(spacing: 0) {
+            sheetHeader
+
+            ScrollView {
+                VStack(alignment: .leading, spacing: 20) {
+                    if let preset = matchedPreset {
+                        knownProviderEditContent(preset: preset)
+                    } else {
+                        customProviderEditContent
+                    }
+                }
+                .padding(24)
+            }
+
+            sheetFooter
+        }
+        .frame(width: 540, height: matchedPreset != nil ? 520 : 580)
+        .background(theme.primaryBackground)
+        .clipShape(RoundedRectangle(cornerRadius: 16))
+        .overlay(
+            RoundedRectangle(cornerRadius: 16)
+                .stroke(theme.primaryBorder.opacity(0.5), lineWidth: 1)
+        )
+        .opacity(hasAppeared ? 1 : 0)
+        .scaleEffect(hasAppeared ? 1 : 0.95)
+        .animation(.spring(response: 0.3, dampingFraction: 0.8), value: hasAppeared)
+        .onAppear {
+            loadProvider()
+            withAnimation { hasAppeared = true }
+        }
+    }
+
+    // MARK: - Header
+
+    private var sheetHeader: some View {
+        HStack(spacing: 12) {
+            if let preset = matchedPreset {
+                ZStack {
+                    Circle()
+                        .fill(
+                            LinearGradient(
+                                colors: preset.gradient,
+                                startPoint: .topLeading,
+                                endPoint: .bottomTrailing
+                            )
+                        )
+                    Image(systemName: preset.icon)
+                        .font(.system(size: 16, weight: .medium))
+                        .foregroundColor(.white)
+                }
+                .frame(width: 40, height: 40)
+            } else {
+                ZStack {
+                    Circle()
+                        .fill(
+                            LinearGradient(
+                                colors: [theme.accentColor.opacity(0.2), theme.accentColor.opacity(0.05)],
+                                startPoint: .topLeading,
+                                endPoint: .bottomTrailing
+                            )
+                        )
+                    Image(systemName: "pencil.circle.fill")
+                        .font(.system(size: 18, weight: .semibold))
+                        .foregroundStyle(
+                            LinearGradient(
+                                colors: [theme.accentColor, theme.accentColor.opacity(0.7)],
+                                startPoint: .topLeading,
+                                endPoint: .bottomTrailing
+                            )
+                        )
+                }
+                .frame(width: 40, height: 40)
+            }
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Edit \(provider.name)")
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundColor(theme.primaryText)
+                Text("Modify your API connection")
+                    .font(.system(size: 12))
+                    .foregroundColor(theme.secondaryText)
+            }
+
+            Spacer()
+
+            Button(action: { dismiss() }) {
+                Image(systemName: "xmark")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundColor(theme.secondaryText)
+                    .frame(width: 28, height: 28)
+                    .background(Circle().fill(theme.tertiaryBackground))
+            }
+            .buttonStyle(PlainButtonStyle())
+            .keyboardShortcut(.escape, modifiers: [])
+        }
+        .padding(.horizontal, 24)
+        .padding(.vertical, 20)
+        .background(
+            theme.secondaryBackground
+                .overlay(
+                    LinearGradient(
+                        colors: [theme.accentColor.opacity(0.03), Color.clear],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    )
+                )
+        )
+    }
+
+    // MARK: - Known Provider Edit
+
+    private func knownProviderEditContent(preset: ProviderPreset) -> some View {
+        VStack(alignment: .leading, spacing: 20) {
+            // API Key section
+            VStack(alignment: .leading, spacing: 6) {
+                HStack {
+                    Text("API KEY")
+                        .font(.system(size: 10, weight: .bold))
+                        .foregroundColor(theme.tertiaryText)
+                        .tracking(0.5)
+                    Spacer()
+                    HStack(spacing: 4) {
+                        Image(systemName: "lock.fill")
+                            .font(.system(size: 9))
+                        Text("Stored in Keychain")
+                            .font(.system(size: 10))
+                    }
+                    .foregroundColor(theme.tertiaryText)
+                }
+
+                ProviderSecureField(placeholder: "Leave blank to keep current", text: $apiKey)
+            }
+
+            // Help section
+            if !preset.consoleURL.isEmpty {
+                helpSection(for: preset)
+            }
+
+            // Advanced settings (connection details + timeout + headers)
+            advancedSettingsSection(showConnectionDetails: true)
+        }
+    }
+
+    // MARK: - Custom Provider Edit
+
+    private var customProviderEditContent: some View {
+        VStack(alignment: .leading, spacing: 20) {
+            // Connection form
+            VStack(alignment: .leading, spacing: 0) {
+                connectionFormSection
+
+                sectionDivider
+
+                // Authentication
+                VStack(alignment: .leading, spacing: 12) {
+                    HStack(spacing: 8) {
+                        Image(systemName: "key.fill")
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundColor(theme.accentColor)
+                        Text("AUTHENTICATION")
+                            .font(.system(size: 11, weight: .bold))
+                            .foregroundColor(theme.secondaryText)
+                            .tracking(0.5)
+                    }
+
+                    HStack(spacing: 0) {
+                        authButton("No Auth", type: .none)
+                        authButton("API Key", type: .apiKey)
+                    }
+                    .background(
+                        RoundedRectangle(cornerRadius: 10)
+                            .fill(theme.inputBackground)
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 10)
+                                    .stroke(theme.inputBorder, lineWidth: 1)
+                            )
+                    )
+
+                    if authType == .apiKey {
+                        ProviderSecureField(placeholder: "Leave blank to keep current", text: $apiKey)
+                            .transition(.opacity.combined(with: .move(edge: .top)))
+                    }
+                }
+                .padding(16)
+                .animation(.spring(response: 0.3, dampingFraction: 0.8), value: authType)
+            }
+            .background(
+                RoundedRectangle(cornerRadius: 12)
+                    .fill(theme.cardBackground)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 12)
+                            .stroke(theme.cardBorder, lineWidth: 1)
+                    )
+            )
+
+            // Advanced settings (timeout + headers only)
+            advancedSettingsSection(showConnectionDetails: false)
+        }
+    }
+
+    // MARK: - Connection Form (Edit)
+
+    private var connectionFormSection: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            HStack(spacing: 8) {
+                Image(systemName: "network")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundColor(theme.accentColor)
+                Text("CONNECTION")
+                    .font(.system(size: 11, weight: .bold))
+                    .foregroundColor(theme.secondaryText)
+                    .tracking(0.5)
+            }
+
+            ProviderTextField(label: "Name", placeholder: "e.g. My Provider", text: $name)
+
+            HStack(spacing: 12) {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("PROTOCOL")
+                        .font(.system(size: 10, weight: .bold))
+                        .foregroundColor(theme.tertiaryText)
+                        .tracking(0.5)
+
+                    HStack(spacing: 0) {
+                        editProtocolButton("HTTPS", proto: .https)
+                        editProtocolButton("HTTP", proto: .http)
+                    }
+                    .background(
+                        RoundedRectangle(cornerRadius: 10)
+                            .fill(theme.inputBackground)
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 10)
+                                    .stroke(theme.inputBorder, lineWidth: 1)
+                            )
+                    )
+                }
+                .frame(width: 140)
+
+                ProviderTextField(label: "Host", placeholder: "api.example.com", text: $host, isMonospaced: true)
+            }
+
+            HStack(spacing: 12) {
+                ProviderTextField(
+                    label: "Port",
+                    placeholder: providerProtocol == .https ? "443" : "80",
+                    text: $portString,
+                    isMonospaced: true
+                )
+                .frame(width: 90)
+
+                ProviderTextField(label: "Base Path", placeholder: "/v1", text: $basePath, isMonospaced: true)
+            }
+
+            if !host.trimmingCharacters(in: .whitespaces).isEmpty {
+                HStack(spacing: 8) {
+                    Image(systemName: "link")
+                        .font(.system(size: 11))
+                        .foregroundColor(theme.accentColor)
+                    Text(buildEditEndpointPreview())
+                        .font(.system(size: 12, design: .monospaced))
+                        .foregroundColor(theme.secondaryText)
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(
+                    RoundedRectangle(cornerRadius: 8)
+                        .fill(theme.accentColor.opacity(0.1))
+                )
+            }
+        }
+        .padding(16)
+    }
+
+    private func editProtocolButton(_ label: String, proto: RemoteProviderProtocol) -> some View {
+        Button(action: { providerProtocol = proto }) {
+            Text(label)
+                .font(.system(size: 11, weight: providerProtocol == proto ? .semibold : .medium))
+                .foregroundColor(providerProtocol == proto ? theme.primaryText : theme.tertiaryText)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 10)
+                .background(
+                    RoundedRectangle(cornerRadius: 8)
+                        .fill(providerProtocol == proto ? theme.tertiaryBackground : Color.clear)
+                )
+        }
+        .buttonStyle(PlainButtonStyle())
+        .padding(2)
+    }
+
+    private func authButton(_ label: String, type: RemoteProviderAuthType) -> some View {
+        Button(action: { authType = type }) {
+            Text(label)
+                .font(.system(size: 11, weight: authType == type ? .semibold : .medium))
+                .foregroundColor(authType == type ? theme.primaryText : theme.tertiaryText)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 10)
+                .background(
+                    RoundedRectangle(cornerRadius: 8)
+                        .fill(authType == type ? theme.tertiaryBackground : Color.clear)
+                )
+        }
+        .buttonStyle(PlainButtonStyle())
+        .padding(2)
+    }
+
+    private var sectionDivider: some View {
+        Rectangle()
+            .fill(theme.cardBorder)
+            .frame(height: 1)
+            .padding(.horizontal, 16)
+    }
+
+    private func buildEditEndpointPreview() -> String {
+        var result = "\(providerProtocol.rawValue)://\(host.trimmingCharacters(in: .whitespaces))"
+        if let port = Int(portString), port != providerProtocol.defaultPort {
+            result += ":\(port)"
+        }
+        let normalizedPath = basePath.hasPrefix("/") ? basePath : "/" + basePath
+        result += normalizedPath
+        return result
+    }
+
+    // MARK: - Help Section (Edit)
+
+    private func helpSection(for preset: ProviderPreset) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Need a new key?")
+                .font(.system(size: 14, weight: .medium))
+                .foregroundColor(theme.secondaryText)
+
+            Button {
+                if let url = URL(string: preset.consoleURL) {
+                    NSWorkspace.shared.open(url)
+                }
+            } label: {
+                HStack(spacing: 6) {
+                    Text("Open \(preset.name) Console")
+                        .font(.system(size: 13, weight: .medium))
+                    Image(systemName: "arrow.up.right")
+                        .font(.system(size: 11, weight: .semibold))
+                }
+                .foregroundColor(theme.accentColor)
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 12)
+                .fill(theme.cardBackground)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 12)
+                        .stroke(theme.cardBorder, lineWidth: 1)
+                )
+        )
+    }
+
+    // MARK: - Advanced Settings (Edit)
+
+    private func advancedSettingsSection(showConnectionDetails: Bool) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Button(action: {
+                withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+                    showAdvanced.toggle()
+                }
+            }) {
+                HStack(spacing: 8) {
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundColor(theme.tertiaryText)
+                        .rotationEffect(.degrees(showAdvanced ? 90 : 0))
+
+                    Text(showAdvanced ? "Hide advanced settings" : "Show advanced settings")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundColor(theme.secondaryText)
+
+                    Spacer()
+                }
+                .padding(.vertical, 10)
+                .padding(.horizontal, 14)
+                .background(
+                    RoundedRectangle(cornerRadius: 8)
+                        .fill(theme.tertiaryBackground.opacity(0.5))
+                )
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(PlainButtonStyle())
+
+            if showAdvanced {
+                VStack(alignment: .leading, spacing: 16) {
+                    // Connection details (for known provider edit)
+                    if showConnectionDetails {
+                        VStack(alignment: .leading, spacing: 0) {
+                            connectionFormSection
+                        }
+                        .background(
+                            RoundedRectangle(cornerRadius: 12)
+                                .fill(theme.cardBackground)
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 12)
+                                        .stroke(theme.cardBorder, lineWidth: 1)
+                                )
+                        )
+                    }
+
+                    // Timeout
+                    VStack(alignment: .leading, spacing: 8) {
+                        HStack {
+                            Text("REQUEST TIMEOUT")
+                                .font(.system(size: 10, weight: .bold))
+                                .foregroundColor(theme.tertiaryText)
+                                .tracking(0.5)
+                            Spacer()
+                            Text("\(Int(timeout))s")
+                                .font(.system(size: 12, weight: .medium, design: .monospaced))
+                                .foregroundColor(theme.secondaryText)
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 4)
+                                .background(
+                                    RoundedRectangle(cornerRadius: 6)
+                                        .fill(theme.inputBackground)
+                                )
+                        }
+                        Slider(value: $timeout, in: 10 ... 300, step: 10)
+                            .tint(theme.accentColor)
+                    }
+
+                    // Custom headers
+                    VStack(alignment: .leading, spacing: 10) {
+                        HStack {
+                            Text("CUSTOM HEADERS")
+                                .font(.system(size: 10, weight: .bold))
+                                .foregroundColor(theme.tertiaryText)
+                                .tracking(0.5)
+                            Spacer()
+                            Button(action: {
+                                customHeaders.append(HeaderEntry(key: "", value: "", isSecret: false))
+                            }) {
+                                Image(systemName: "plus")
+                                    .font(.system(size: 10, weight: .semibold))
+                                    .foregroundColor(theme.accentColor)
+                                    .frame(width: 24, height: 24)
+                                    .background(Circle().fill(theme.accentColor.opacity(0.1)))
+                            }
+                            .buttonStyle(PlainButtonStyle())
+                        }
+
+                        if customHeaders.isEmpty {
+                            Text("No custom headers configured")
+                                .font(.system(size: 12))
+                                .foregroundColor(theme.tertiaryText)
+                                .padding(.vertical, 6)
+                        } else {
+                            ForEach($customHeaders) { $header in
+                                CompactHeaderRow(header: $header) {
+                                    customHeaders.removeAll { $0.id == header.id }
+                                }
+                            }
+                        }
+                    }
+                }
+                .padding(.top, 12)
                 .transition(.opacity.combined(with: .move(edge: .top)))
             }
         }
@@ -650,86 +1381,28 @@ struct RemoteProviderEditSheet: View {
 
     private var sheetFooter: some View {
         HStack(spacing: 12) {
-            // Test connection button
-            Button(action: {
-                if testResult != nil {
-                    testResult = nil
-                } else {
-                    testConnection()
-                }
-            }) {
-                HStack(spacing: 6) {
-                    Group {
-                        if isTesting {
-                            ProgressView()
-                                .scaleEffect(0.5)
-                                .frame(width: 14, height: 14)
-                        } else if let result = testResult {
-                            Image(systemName: result.isSuccess ? "checkmark.circle.fill" : "xmark.circle.fill")
-                                .font(.system(size: 12))
-                        } else {
-                            Image(systemName: "bolt.fill")
-                                .font(.system(size: 11))
-                        }
-                    }
-
-                    Text(testButtonLabel)
-                        .font(.system(size: 12, weight: .medium))
-                }
-                .foregroundColor(testButtonColor)
-                .padding(.horizontal, 14)
-                .padding(.vertical, 10)
-                .background(
-                    RoundedRectangle(cornerRadius: 8)
-                        .fill(testButtonBackground)
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 8)
-                                .stroke(testButtonColor.opacity(0.3), lineWidth: 1)
-                        )
-                )
-            }
-            .buttonStyle(PlainButtonStyle())
-            .disabled(host.isEmpty || isTesting)
-            .opacity(host.isEmpty ? 0.5 : 1)
-
-            // Keyboard hint
-            HStack(spacing: 4) {
-                Text("⌘")
-                    .font(.system(size: 10, weight: .medium, design: .rounded))
-                    .padding(.horizontal, 4)
-                    .padding(.vertical, 2)
-                    .background(
-                        RoundedRectangle(cornerRadius: 4)
-                            .fill(theme.tertiaryBackground)
-                    )
-                Text("+ Enter to save")
-                    .font(.system(size: 11))
-            }
-            .foregroundColor(theme.tertiaryText)
+            // Test result badge
+            testResultBadge
 
             Spacer()
 
-            // Cancel button
-            Button("Cancel") {
-                dismiss()
-            }
-            .font(.system(size: 13, weight: .medium))
-            .foregroundColor(theme.primaryText)
-            .padding(.horizontal, 16)
-            .padding(.vertical, 10)
-            .background(
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(theme.tertiaryBackground)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 8)
-                            .stroke(theme.inputBorder, lineWidth: 1)
-                    )
-            )
-            .buttonStyle(PlainButtonStyle())
+            Button("Cancel") { dismiss() }
+                .font(.system(size: 13, weight: .medium))
+                .foregroundColor(theme.primaryText)
+                .padding(.horizontal, 16)
+                .padding(.vertical, 10)
+                .background(
+                    RoundedRectangle(cornerRadius: 8)
+                        .fill(theme.tertiaryBackground)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 8)
+                                .stroke(theme.inputBorder, lineWidth: 1)
+                        )
+                )
+                .buttonStyle(PlainButtonStyle())
 
-            // Save/Add button
             Button(action: save) {
-                Text(isEditing ? "Save Changes" : "Add Provider")
+                Text("Save Changes")
                     .font(.system(size: 13, weight: .medium))
                     .foregroundColor(.white)
                     .padding(.horizontal, 18)
@@ -748,15 +1421,50 @@ struct RemoteProviderEditSheet: View {
         .background(
             theme.secondaryBackground
                 .overlay(
-                    Rectangle()
-                        .fill(theme.primaryBorder)
-                        .frame(height: 1),
+                    Rectangle().fill(theme.primaryBorder).frame(height: 1),
                     alignment: .top
                 )
         )
     }
 
+    @ViewBuilder
+    private var testResultBadge: some View {
+        // Test button
+        Button(action: {
+            if testResult != nil { testResult = nil } else { testConnection() }
+        }) {
+            HStack(spacing: 6) {
+                if isTesting {
+                    ProgressView().scaleEffect(0.5).frame(width: 14, height: 14)
+                } else if let result = testResult {
+                    Image(systemName: result.isSuccess ? "checkmark.circle.fill" : "xmark.circle.fill")
+                        .font(.system(size: 12))
+                } else {
+                    Image(systemName: "bolt.fill")
+                        .font(.system(size: 11))
+                }
+
+                Text(testButtonLabel)
+                    .font(.system(size: 12, weight: .medium))
+            }
+            .foregroundColor(testButtonColor)
+            .padding(.horizontal, 14)
+            .padding(.vertical, 10)
+            .background(
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(testButtonBackground)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 8)
+                            .stroke(testButtonColor.opacity(0.3), lineWidth: 1)
+                    )
+            )
+        }
+        .buttonStyle(PlainButtonStyle())
+        .disabled(isTesting)
+    }
+
     private var testButtonLabel: String {
+        if isTesting { return "Testing..." }
         if let result = testResult {
             switch result {
             case .success(let models): return "\(models.count) models"
@@ -777,46 +1485,21 @@ struct RemoteProviderEditSheet: View {
     }
 
     private var canSave: Bool {
-        !name.trimmingCharacters(in: .whitespaces).isEmpty
-            && !host.trimmingCharacters(in: .whitespaces).isEmpty
-    }
-
-    private func buildEndpointPreview() -> String {
-        var result = "\(providerProtocol.rawValue)://\(host)"
-        if let port = Int(portString), port != providerProtocol.defaultPort {
-            result += ":\(port)"
+        if matchedPreset != nil {
+            // Known provider: always saveable (name/host come from preset or advanced)
+            return true
         }
-        let normalizedPath = basePath.hasPrefix("/") ? basePath : "/" + basePath
-        result += normalizedPath
-        return result
+        return !name.trimmingCharacters(in: .whitespaces).isEmpty
+            && !host.trimmingCharacters(in: .whitespaces).isEmpty
     }
 
     // MARK: - Actions
 
-    private func selectPreset(_ preset: ProviderPreset) {
-        withAnimation(.spring(response: 0.25, dampingFraction: 0.8)) {
-            selectedPreset = preset
-        }
-
-        let config = preset.configuration
-        name = config.name
-        host = config.host
-        providerProtocol = config.providerProtocol
-        portString = config.port.map { String($0) } ?? ""
-        basePath = config.basePath
-        authType = config.authType
-        providerType = config.providerType
-        testResult = nil
-    }
-
     private func loadProvider() {
-        guard let provider = provider else { return }
         name = provider.name
         host = provider.host
         providerProtocol = provider.providerProtocol
-        if let port = provider.port {
-            portString = String(port)
-        }
+        if let port = provider.port { portString = String(port) }
         basePath = provider.basePath
         authType = provider.authType
         providerType = provider.providerType
@@ -831,11 +1514,10 @@ struct RemoteProviderEditSheet: View {
         isTesting = true
         testResult = nil
 
-        let headers = buildHeaders()
-        let testApiKey = authType == .apiKey && !apiKey.isEmpty ? apiKey : nil
-        let port: Int? = portString.trimmingCharacters(in: .whitespaces).isEmpty ? nil : Int(portString)
         let trimmedHost = host.trimmingCharacters(in: .whitespaces)
         let trimmedBasePath = basePath.trimmingCharacters(in: .whitespaces)
+        let port: Int? = portString.trimmingCharacters(in: .whitespaces).isEmpty ? nil : Int(portString)
+        let testApiKey = authType == .apiKey && !apiKey.isEmpty ? apiKey : nil
 
         Task {
             do {
@@ -847,7 +1529,7 @@ struct RemoteProviderEditSheet: View {
                     authType: authType,
                     providerType: providerType,
                     apiKey: testApiKey,
-                    headers: headers
+                    headers: HeaderEntry.buildHeaders(from: customHeaders)
                 )
                 await MainActor.run {
                     testResult = .success(models)
@@ -865,30 +1547,19 @@ struct RemoteProviderEditSheet: View {
     private func save() {
         let trimmedName = name.trimmingCharacters(in: .whitespaces)
         let trimmedHost = host.trimmingCharacters(in: .whitespaces)
-        let port = Int(portString)
-
-        var regularHeaders: [String: String] = [:]
-        var secretKeys: [String] = []
-
-        for header in customHeaders where !header.key.isEmpty {
-            if header.isSecret {
-                secretKeys.append(header.key)
-            } else {
-                regularHeaders[header.key] = header.value
-            }
-        }
+        let (regularHeaders, secretKeys) = HeaderEntry.partition(customHeaders)
 
         let updatedProvider = RemoteProvider(
-            id: provider?.id ?? UUID(),
+            id: provider.id,
             name: trimmedName,
             host: trimmedHost,
             providerProtocol: providerProtocol,
-            port: port,
+            port: Int(portString),
             basePath: basePath,
             customHeaders: regularHeaders,
             authType: authType,
             providerType: providerType,
-            enabled: provider?.enabled ?? true,
+            enabled: provider.enabled,
             autoConnect: true,
             timeout: timeout,
             secretHeaderKeys: secretKeys
@@ -898,88 +1569,119 @@ struct RemoteProviderEditSheet: View {
             RemoteProviderKeychain.saveHeaderSecret(header.value, key: header.key, for: updatedProvider.id)
         }
 
-        let apiKeyToSave: String? = apiKey.isEmpty ? nil : apiKey
-        onSave(updatedProvider, apiKeyToSave)
+        onSave(updatedProvider, apiKey.isEmpty ? nil : apiKey)
         dismiss()
-    }
-
-    private func buildHeaders() -> [String: String] {
-        var headers: [String: String] = [:]
-        for header in customHeaders where !header.key.isEmpty && !header.value.isEmpty {
-            headers[header.key] = header.value
-        }
-        return headers
     }
 }
 
-// MARK: - Preset Pill
+// MARK: - Provider Selection Card
 
-private struct PresetPill: View {
+private struct ProviderSelectionCard: View {
     @ObservedObject private var themeManager = ThemeManager.shared
     let preset: ProviderPreset
-    let isSelected: Bool
     let action: () -> Void
 
     @State private var isHovered = false
 
+    private var theme: ThemeProtocol { themeManager.currentTheme }
+
     var body: some View {
         Button(action: action) {
-            VStack(spacing: 6) {
+            HStack(spacing: 14) {
+                // Icon
                 ZStack {
-                    Circle()
+                    RoundedRectangle(cornerRadius: 10)
                         .fill(
                             LinearGradient(
-                                colors: isSelected
-                                    ? preset.gradient
-                                    : [
-                                        themeManager.currentTheme.tertiaryBackground,
-                                        themeManager.currentTheme.tertiaryBackground,
-                                    ],
+                                colors: isHovered
+                                    ? preset.gradient : [theme.tertiaryBackground, theme.tertiaryBackground],
                                 startPoint: .topLeading,
                                 endPoint: .bottomTrailing
                             )
                         )
-                        .frame(width: 38, height: 38)
+                        .frame(width: 42, height: 42)
 
                     Image(systemName: preset.icon)
-                        .font(.system(size: 14, weight: .medium))
-                        .foregroundColor(isSelected ? .white : themeManager.currentTheme.tertiaryText)
+                        .font(.system(size: 16, weight: .medium))
+                        .foregroundColor(isHovered ? .white : theme.secondaryText)
                 }
 
-                VStack(spacing: 2) {
-                    Text(preset.rawValue)
-                        .font(.system(size: 10, weight: .semibold))
-                        .foregroundColor(
-                            isSelected ? themeManager.currentTheme.primaryText : themeManager.currentTheme.secondaryText
-                        )
-
+                // Text
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(preset.name)
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundColor(theme.primaryText)
                     Text(preset.description)
-                        .font(.system(size: 9))
-                        .foregroundColor(themeManager.currentTheme.tertiaryText)
-                        .lineLimit(1)
+                        .font(.system(size: 12))
+                        .foregroundColor(theme.secondaryText)
                 }
+
+                Spacer()
+
+                // Arrow
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundColor(theme.tertiaryText)
             }
-            .frame(maxWidth: .infinity)
+            .padding(.horizontal, 14)
             .padding(.vertical, 12)
             .background(
                 RoundedRectangle(cornerRadius: 12)
-                    .fill(isSelected ? preset.gradient[0].opacity(0.1) : Color.clear)
+                    .fill(theme.cardBackground)
                     .overlay(
                         RoundedRectangle(cornerRadius: 12)
                             .stroke(
-                                isSelected
-                                    ? preset.gradient[0].opacity(0.4)
-                                    : themeManager.currentTheme.inputBorder.opacity(0.5),
-                                lineWidth: isSelected ? 1.5 : 1
+                                isHovered ? theme.accentColor.opacity(0.4) : theme.cardBorder,
+                                lineWidth: 1
                             )
                     )
             )
-            .scaleEffect(isHovered && !isSelected ? 1.02 : 1.0)
+            .scaleEffect(isHovered ? 1.01 : 1.0)
         }
         .buttonStyle(PlainButtonStyle())
-        .onHover { isHovered = $0 }
-        .animation(.spring(response: 0.2, dampingFraction: 0.7), value: isHovered)
-        .animation(.spring(response: 0.25, dampingFraction: 0.8), value: isSelected)
+        .onHover { hovering in
+            withAnimation(.spring(response: 0.25, dampingFraction: 0.8)) {
+                isHovered = hovering
+            }
+        }
+    }
+}
+
+// MARK: - Shared Helper Types
+
+private enum ProviderTestResult {
+    case success([String])
+    case failure(String)
+
+    var isSuccess: Bool {
+        if case .success = self { return true }
+        return false
+    }
+}
+
+struct HeaderEntry: Identifiable {
+    let id = UUID()
+    var key: String
+    var value: String
+    var isSecret: Bool
+
+    /// Build a flat dictionary of non-empty headers.
+    static func buildHeaders(from entries: [HeaderEntry]) -> [String: String] {
+        var headers: [String: String] = [:]
+        for entry in entries where !entry.key.isEmpty && !entry.value.isEmpty {
+            headers[entry.key] = entry.value
+        }
+        return headers
+    }
+
+    /// Partition entries into regular headers dict and secret key names.
+    static func partition(_ entries: [HeaderEntry]) -> (regular: [String: String], secretKeys: [String]) {
+        var regular: [String: String] = [:]
+        var secretKeys: [String] = []
+        for entry in entries where !entry.key.isEmpty {
+            if entry.isSecret { secretKeys.append(entry.key) } else { regular[entry.key] = entry.value }
+        }
+        return (regular, secretKeys)
     }
 }
 
@@ -987,7 +1689,7 @@ private struct PresetPill: View {
 
 private struct CompactHeaderRow: View {
     @ObservedObject private var themeManager = ThemeManager.shared
-    @Binding var header: RemoteProviderEditSheet.HeaderEntry
+    @Binding var header: HeaderEntry
     let onDelete: () -> Void
 
     var body: some View {
@@ -1036,10 +1738,7 @@ private struct CompactHeaderRow: View {
                         header.isSecret ? themeManager.currentTheme.accentColor : themeManager.currentTheme.tertiaryText
                     )
                     .frame(width: 26, height: 26)
-                    .background(
-                        Circle()
-                            .fill(themeManager.currentTheme.tertiaryBackground)
-                    )
+                    .background(Circle().fill(themeManager.currentTheme.tertiaryBackground))
             }
             .buttonStyle(PlainButtonStyle())
             .help(header.isSecret ? "This value is stored securely" : "Click to make this a secret value")
@@ -1049,10 +1748,7 @@ private struct CompactHeaderRow: View {
                     .font(.system(size: 9, weight: .semibold))
                     .foregroundColor(themeManager.currentTheme.tertiaryText)
                     .frame(width: 22, height: 22)
-                    .background(
-                        Circle()
-                            .fill(themeManager.currentTheme.tertiaryBackground)
-                    )
+                    .background(Circle().fill(themeManager.currentTheme.tertiaryBackground))
             }
             .buttonStyle(PlainButtonStyle())
         }
@@ -1128,8 +1824,6 @@ private struct ProviderSecureField: View {
     let placeholder: String
     @Binding var text: String
 
-    @State private var isFocused = false
-
     var body: some View {
         HStack(spacing: 10) {
             ZStack(alignment: .leading) {
@@ -1158,6 +1852,8 @@ private struct ProviderSecureField: View {
         )
     }
 }
+
+// MARK: - Preview
 
 #Preview {
     RemoteProviderEditSheet(provider: nil) { _, _ in }

@@ -3,82 +3,12 @@
 //  osaurus
 //
 //  Provider selection and API key entry for onboarding.
+//  Uses the shared ProviderPreset model for provider definitions.
 //  Includes full custom provider configuration for "Other provider" option.
 //
 
 import AppKit
 import SwiftUI
-
-// MARK: - Provider Option
-
-/// Provider options for onboarding
-enum OnboardingProviderOption: String, CaseIterable, Identifiable {
-    case anthropic
-    case openai
-    case google
-    case xai
-    case other
-
-    var id: String { rawValue }
-
-    var name: String {
-        switch self {
-        case .anthropic: return "Anthropic"
-        case .openai: return "OpenAI"
-        case .google: return "Google"
-        case .xai: return "xAI"
-        case .other: return "Any OpenAI-compatible API"
-        }
-    }
-
-    var description: String {
-        switch self {
-        case .anthropic: return "Claude models"
-        case .openai: return "ChatGPT models"
-        case .google: return "Gemini models"
-        case .xai: return "Grok models"
-        case .other: return "OpenRouter, MiniMax, etc."
-        }
-    }
-
-    var icon: String {
-        switch self {
-        case .anthropic: return "brain.head.profile"
-        case .openai: return "sparkles"
-        case .google: return "globe"
-        case .xai: return "bolt.fill"
-        case .other: return "slider.horizontal.3"
-        }
-    }
-
-    var consoleURL: String {
-        switch self {
-        case .anthropic: return "https://console.anthropic.com/settings/keys"
-        case .openai: return "https://platform.openai.com/api-keys"
-        case .google: return "https://aistudio.google.com/apikey"
-        case .xai: return "https://console.x.ai/"
-        case .other: return ""
-        }
-    }
-
-    var host: String {
-        switch self {
-        case .anthropic: return "api.anthropic.com"
-        case .openai: return "api.openai.com"
-        case .google: return "generativelanguage.googleapis.com"
-        case .xai: return "api.x.ai"
-        case .other: return ""
-        }
-    }
-
-    var providerType: RemoteProviderType {
-        switch self {
-        case .anthropic: return .anthropic
-        case .google: return .gemini
-        case .openai, .xai, .other: return .openai
-        }
-    }
-}
 
 // MARK: - API Setup View
 
@@ -87,7 +17,7 @@ struct OnboardingAPISetupView: View {
     let onBack: () -> Void
 
     @Environment(\.theme) private var theme
-    @State private var selectedProvider: OnboardingProviderOption? = nil
+    @State private var selectedProvider: ProviderPreset? = nil
     @State private var apiKey: String = ""
     @State private var isTesting = false
     @State private var isSaving = false
@@ -101,6 +31,11 @@ struct OnboardingAPISetupView: View {
     @State private var customPort: String = ""
     @State private var customBasePath: String = "/v1"
 
+    /// Presets shown in onboarding (subset of all presets - excludes OpenRouter for simplicity)
+    private static let onboardingPresets: [ProviderPreset] = [
+        .anthropic, .openai, .google, .xai, .custom,
+    ]
+
     private enum TestResult {
         case success
         case error(String)
@@ -109,7 +44,7 @@ struct OnboardingAPISetupView: View {
     private var canTest: Bool {
         guard let provider = selectedProvider else { return false }
 
-        if provider == .other {
+        if provider == .custom {
             return !customHost.isEmpty && !apiKey.isEmpty && apiKey.count > 5
         }
         return !apiKey.isEmpty && apiKey.count > 10
@@ -145,7 +80,7 @@ struct OnboardingAPISetupView: View {
             if selectedProvider == nil {
                 providerSelectionView
                     .transition(nestedTransition)
-            } else if selectedProvider == .other {
+            } else if selectedProvider == .custom {
                 customProviderEntryView
                     .transition(nestedTransition)
             } else {
@@ -204,8 +139,8 @@ struct OnboardingAPISetupView: View {
 
             // Provider cards
             VStack(spacing: 12) {
-                ForEach(Array(OnboardingProviderOption.allCases.enumerated()), id: \.element.id) { index, provider in
-                    ProviderCard(provider: provider) {
+                ForEach(Array(Self.onboardingPresets.enumerated()), id: \.element.id) { index, provider in
+                    OnboardingProviderCard(preset: provider) {
                         withAnimation(theme.springAnimation(responseMultiplier: 0.8)) {
                             selectedProvider = provider
                         }
@@ -261,7 +196,7 @@ struct OnboardingAPISetupView: View {
             Spacer().frame(height: 28)
 
             // Help section
-            if let provider = selectedProvider, provider != .other {
+            if let provider = selectedProvider, provider != .custom {
                 helpSection(for: provider)
                     .padding(.horizontal, OnboardingStyle.backButtonHorizontalPadding + 5)
             }
@@ -429,7 +364,7 @@ struct OnboardingAPISetupView: View {
         return endpoint
     }
 
-    private func helpSection(for provider: OnboardingProviderOption) -> some View {
+    private func helpSection(for preset: ProviderPreset) -> some View {
         OnboardingGlassCard {
             VStack(alignment: .leading, spacing: 12) {
                 Text("Don't have a key?")
@@ -437,19 +372,19 @@ struct OnboardingAPISetupView: View {
                     .foregroundColor(theme.secondaryText)
 
                 VStack(alignment: .leading, spacing: 8) {
-                    HelpStep(number: 1, text: "Go to \(provider.name) console")
+                    HelpStep(number: 1, text: "Go to \(preset.name) console")
                     HelpStep(number: 2, text: "Sign in or create an account")
-                    HelpStep(number: 3, text: "Click \"API Keys\" → \"Create Key\"")
+                    HelpStep(number: 3, text: "Click \"API Keys\" \u{2192} \"Create Key\"")
                     HelpStep(number: 4, text: "Copy and paste it here")
                 }
 
                 Button {
-                    if let url = URL(string: provider.consoleURL) {
+                    if let url = URL(string: preset.consoleURL) {
                         NSWorkspace.shared.open(url)
                     }
                 } label: {
                     HStack(spacing: 6) {
-                        Text("Open \(provider.name) Console")
+                        Text("Open \(preset.name) Console")
                             .font(theme.font(size: 13, weight: .medium))
                         Image(systemName: "arrow.up.right")
                             .font(.system(size: 11, weight: .semibold))
@@ -491,7 +426,7 @@ struct OnboardingAPISetupView: View {
     )? {
         guard let provider = selectedProvider else { return nil }
 
-        if provider == .other {
+        if provider == .custom {
             return (
                 name: customName.isEmpty ? "Custom Provider" : customName,
                 host: customHost,
@@ -501,14 +436,14 @@ struct OnboardingAPISetupView: View {
                 providerProtocol: customProtocol
             )
         } else {
-            let basePath = provider == .google ? "/v1beta" : "/v1"
+            let config = provider.configuration
             return (
-                name: provider.name,
-                host: provider.host,
-                port: nil,
-                basePath: basePath,
-                providerType: provider.providerType,
-                providerProtocol: .https
+                name: config.name,
+                host: config.host,
+                port: config.port,
+                basePath: config.basePath,
+                providerType: config.providerType,
+                providerProtocol: config.providerProtocol
             )
         }
     }
@@ -620,14 +555,24 @@ private struct OnboardingProtocolToggle: View {
     }
 }
 
-// MARK: - Provider Card
+// MARK: - Onboarding Provider Card
 
-private struct ProviderCard: View {
-    let provider: OnboardingProviderOption
+private struct OnboardingProviderCard: View {
+    let preset: ProviderPreset
     let action: () -> Void
 
     @Environment(\.theme) private var theme
     @State private var isHovered = false
+
+    /// Display name override for custom preset in onboarding context
+    private var displayName: String {
+        preset == .custom ? "Any OpenAI-compatible API" : preset.name
+    }
+
+    /// Description override for custom preset in onboarding context
+    private var displayDescription: String {
+        preset == .custom ? "OpenRouter, MiniMax, etc." : preset.description
+    }
 
     var body: some View {
         Button(action: action) {
@@ -639,18 +584,18 @@ private struct ProviderCard: View {
                             .fill(theme.cardBackground)
                             .frame(width: 44, height: 44)
 
-                        Image(systemName: provider.icon)
+                        Image(systemName: preset.icon)
                             .font(.system(size: 18, weight: .medium))
                             .foregroundColor(isHovered ? theme.accentColor : theme.secondaryText)
                     }
 
                     // Text
                     VStack(alignment: .leading, spacing: 4) {
-                        Text(provider.name)
+                        Text(displayName)
                             .font(theme.font(size: 15, weight: .semibold))
                             .foregroundColor(theme.primaryText)
 
-                        Text(provider.description)
+                        Text(displayDescription)
                             .font(theme.font(size: 13))
                             .foregroundColor(theme.secondaryText)
                     }
