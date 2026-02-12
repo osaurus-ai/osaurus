@@ -113,14 +113,15 @@ final class ChatSession: ObservableObject {
 
         // Only load models if cache wasn't valid (first window or after invalidation)
         if !Self.cacheValid {
-            Task {
-                await refreshModelOptions()
+            Task { [weak self] in
+                await self?.refreshModelOptions()
             }
         }
     }
 
     deinit {
-        // Clean up notification observers to prevent leaks
+        print("[ChatSession] deinit")
+        currentTask?.cancel()
         if let observer = remoteModelsObserver {
             NotificationCenter.default.removeObserver(observer)
         }
@@ -520,7 +521,7 @@ final class ChatSession: ObservableObject {
         }
 
         let data = toSessionData()
-        ChatSessionStore.save(data)
+        ChatSessionsManager.shared.save(data)
         onSessionChanged?()
     }
 
@@ -637,7 +638,7 @@ final class ChatSession: ObservableObject {
 
         // Validate and collect tools (respecting persona overrides)
         let enabledToolNames = Set(
-            ToolRegistry.shared.listTools(withOverrides: toolOverrides)
+            ToolRegistry.shared.listUserTools(withOverrides: toolOverrides)
                 .filter { tool in
                     if let override = toolOverrides?[tool.name] { return override }
                     return tool.enabled
@@ -798,12 +799,13 @@ final class ChatSession: ObservableObject {
                 let turnData = turns.map { ChatTurnData(from: $0) }
                 title = ChatSessionData.generateTitle(from: turnData)
                 let data = toSessionData()
-                ChatSessionStore.save(data)
+                ChatSessionsManager.shared.save(data)
                 onSessionChanged?()
             }
         }
 
-        currentTask = Task { @MainActor in
+        currentTask = Task { @MainActor [weak self] in
+            guard let self else { return }
             isStreaming = true
             ServerController.signalGenerationStart()
             defer {
@@ -991,6 +993,7 @@ final class ChatSession: ObservableObject {
                             // Handle select_capabilities specially for two-phase loading
                             if inv.toolName == "select_capabilities" {
                                 resultText = try await handleSelectCapabilities(argumentsJSON: inv.jsonArguments)
+                                if Task.isCancelled { break }
 
                                 // Rebuild system prompt and tool specs using helper methods
                                 sys = buildSystemPrompt(
@@ -1016,6 +1019,7 @@ final class ChatSession: ObservableObject {
                                     argumentsJSON: inv.jsonArguments,
                                     overrides: executionOverrides.isEmpty ? nil : executionOverrides
                                 )
+                                if Task.isCancelled { break }
                             }
 
                             // Log tool success (truncated result)
@@ -1070,8 +1074,10 @@ struct ChatView: View {
 
     @State private var focusTrigger: Int = 0
     @State private var isPinnedToBottom: Bool = true
-    @State private var hostWindow: NSWindow?
     @State private var keyMonitor: Any?
+    // Inline editing state
+    @State private var editingTurnId: UUID?
+    @State private var editText: String = ""
 
     /// Convenience accessor for the window's theme
     private var theme: ThemeProtocol { windowState.theme }
@@ -1325,12 +1331,10 @@ struct ChatView: View {
             idealHeight: session.turns.isEmpty ? 610 : 760,
             maxHeight: .infinity
         )
-        .compositingGroup()
         .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
         .ignoresSafeArea()
         .animation(theme.animationMedium(), value: session.turns.isEmpty)
         .animation(theme.springAnimation(responseMultiplier: 0.9), value: windowState.showSidebar)
-        .background(WindowAccessor(window: $hostWindow))
         .onReceive(NotificationCenter.default.publisher(for: .chatOverlayActivated)) { _ in
             // Lightweight state updates only - refreshAll() removed to prevent excessive re-renders
             focusTrigger &+= 1
@@ -1382,22 +1386,15 @@ struct ChatView: View {
                 )
                 .allowsHitTesting(false)
 
-                // Solid backing layer for text contrast - uses theme glass opacity to determine
-                // how solid the background should be (higher glass opacity = more solid backing)
-                // Minimum backing ensures readable text even with low theme opacity settings
+                // Combined solid backing + gradient overlay in a single layer for text contrast and depth
                 let baseBackingOpacity = theme.isDark ? 0.6 : 0.7
-                let themeBoost = theme.glassOpacityPrimary * 0.8  // Theme can add up to ~0.15 more
+                let themeBoost = theme.glassOpacityPrimary * 0.8
                 let backingOpacity = min(0.92, baseBackingOpacity + themeBoost)
 
-                backgroundShape
-                    .fill(theme.primaryBackground.opacity(backingOpacity))
-                    .allowsHitTesting(false)
-
-                // Gradient overlay for depth and polish - scales with theme settings
                 LinearGradient(
                     colors: [
-                        theme.primaryBackground.opacity(theme.glassOpacityPrimary * 1.5),
-                        theme.primaryBackground.opacity(theme.glassOpacitySecondary),
+                        theme.primaryBackground.opacity(backingOpacity + theme.glassOpacityPrimary * 1.5),
+                        theme.primaryBackground.opacity(backingOpacity + theme.glassOpacitySecondary),
                     ],
                     startPoint: .top,
                     endPoint: .bottom
@@ -1543,10 +1540,15 @@ struct ChatView: View {
                 personaName: displayName,
                 isStreaming: session.isStreaming,
                 lastAssistantTurnId: lastAssistantTurnId,
+                onScrolledToBottom: { isPinnedToBottom = true },
+                onScrolledAwayFromBottom: { isPinnedToBottom = false },
                 onCopy: copyTurnContent,
                 onRegenerate: regenerateTurn,
-                onScrolledToBottom: { isPinnedToBottom = true },
-                onScrolledAwayFromBottom: { isPinnedToBottom = false }
+                onEdit: beginEditingTurn,
+                editingTurnId: editingTurnId,
+                editText: $editText,
+                onConfirmEdit: confirmEditAndRegenerate,
+                onCancelEdit: cancelEditing
             )
             .onReceive(NotificationCenter.default.publisher(for: .chatOverlayActivated)) { _ in
                 isPinnedToBottom = true
@@ -1567,26 +1569,18 @@ struct ChatView: View {
         }
     }
 
-    /// Stable callback for copy action - prevents closure recreation
+    /// Copy a turn's thinking + content to the clipboard
     private func copyTurnContent(turnId: UUID) {
         guard let turn = session.turns.first(where: { $0.id == turnId }) else { return }
-
-        // Build copyable text: thinking + content
         var textToCopy = ""
-
         if turn.hasThinking {
             textToCopy += turn.thinking
         }
-
         if !turn.contentIsEmpty {
-            if !textToCopy.isEmpty {
-                textToCopy += "\n\n"
-            }
+            if !textToCopy.isEmpty { textToCopy += "\n\n" }
             textToCopy += turn.content
         }
-
         guard !textToCopy.isEmpty else { return }
-
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(textToCopy, forType: .string)
     }
@@ -1594,6 +1588,33 @@ struct ChatView: View {
     /// Stable callback for regenerate action - prevents closure recreation
     private func regenerateTurn(turnId: UUID) {
         session.regenerate(turnId: turnId)
+    }
+
+    // MARK: - Inline Editing
+
+    /// Begin inline editing of a user message
+    private func beginEditingTurn(turnId: UUID) {
+        guard let turn = session.turns.first(where: { $0.id == turnId }),
+            turn.role == .user
+        else { return }
+        editText = turn.content
+        editingTurnId = turnId
+    }
+
+    /// Confirm the edit and regenerate the assistant response
+    private func confirmEditAndRegenerate() {
+        guard let turnId = editingTurnId else { return }
+        let trimmed = editText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        session.editAndRegenerate(turnId: turnId, newContent: trimmed)
+        editingTurnId = nil
+        editText = ""
+    }
+
+    /// Dismiss the inline editor without changes
+    private func cancelEditing() {
+        editingTurnId = nil
+        editText = ""
     }
 
     // MARK: - Helpers
@@ -1606,7 +1627,7 @@ struct ChatView: View {
     }
 
     private func resizeWindowForContent(isEmpty: Bool) {
-        guard let window = hostWindow else { return }
+        guard let window = ChatWindowManager.shared.getNSWindow(id: windowId) else { return }
 
         let targetHeight: CGFloat = isEmpty ? 610 : 760
         let currentFrame = window.frame
@@ -1632,13 +1653,10 @@ struct ChatView: View {
     private func setupKeyMonitor() {
         if keyMonitor != nil { return }
 
-        // Capture windowId for use in closure
         let capturedWindowId = windowState.windowId
-        // Capture session to check overlay state
-        let capturedSession = windowState.session
+        let session = windowState.session
 
-        // Monitor for KeyDown events in the local event loop
-        keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+        keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak session] event in
             // Esc key code is 53
             if event.keyCode == 53 {
                 // Only handle Esc if this event is for our specific window
@@ -1649,9 +1667,11 @@ struct ChatView: View {
                     return event
                 }
 
+                // Session deallocated means the window is gone — pass through
+                guard let session else { return event }
+
                 // Check if voice input is active AND overlay is visible
-                // We check overlay visibility to avoid trapping Esc if recording is stuck/zombie but UI is hidden
-                if WhisperKitService.shared.isRecording && capturedSession.showVoiceOverlay {
+                if WhisperKitService.shared.isRecording && session.showVoiceOverlay {
                     // Stage 1: Cancel voice input
                     print("[ChatView] Esc pressed: Cancelling voice input")
                     Task {
@@ -1693,25 +1713,3 @@ struct ChatView: View {
 
 // MARK: - Shared Header Components
 // HeaderActionButton, SettingsButton, CloseButton, PinButton are now in SharedHeaderComponents.swift
-
-// MARK: - Window Accessor Helper
-
-struct WindowAccessor: NSViewRepresentable {
-    @Binding var window: NSWindow?
-
-    func makeNSView(context: Context) -> NSView {
-        let view = NSView()
-        Task { @MainActor in
-            self.window = view.window
-        }
-        return view
-    }
-
-    func updateNSView(_ nsView: NSView, context: Context) {
-        if window == nil {
-            Task { @MainActor in
-                self.window = nsView.window
-            }
-        }
-    }
-}

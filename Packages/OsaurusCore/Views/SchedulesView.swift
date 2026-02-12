@@ -178,7 +178,6 @@ private struct ScheduleEmptyState: View {
         VStack(spacing: 24) {
             Spacer()
 
-            // Glowing icon
             ZStack {
                 Circle()
                     .fill(theme.accentColor)
@@ -219,7 +218,6 @@ private struct ScheduleEmptyState: View {
             .scaleEffect(hasAppeared ? 1 : 0.8)
             .animation(.spring(response: 0.5, dampingFraction: 0.7).delay(0.1), value: hasAppeared)
 
-            // Text content
             VStack(spacing: 8) {
                 Text("Create Your First Schedule")
                     .font(.system(size: 22, weight: .bold, design: .rounded))
@@ -235,7 +233,6 @@ private struct ScheduleEmptyState: View {
             .offset(y: hasAppeared ? 0 : 15)
             .animation(.spring(response: 0.5, dampingFraction: 0.8).delay(0.2), value: hasAppeared)
 
-            // Example use cases
             VStack(spacing: 8) {
                 ScheduleUseCaseRow(
                     icon: "sun.max",
@@ -258,7 +255,6 @@ private struct ScheduleEmptyState: View {
             .offset(y: hasAppeared ? 0 : 20)
             .animation(.spring(response: 0.5, dampingFraction: 0.8).delay(0.3), value: hasAppeared)
 
-            // Action button
             Button(action: onCreate) {
                 HStack(spacing: 6) {
                     Image(systemName: "plus")
@@ -290,7 +286,7 @@ private struct ScheduleEmptyState: View {
     }
 }
 
-// MARK: - Use Case Row (matching PersonaUseCaseRow horizontal pattern)
+// MARK: - Use Case Row
 
 private struct ScheduleUseCaseRow: View {
     @Environment(\.theme) private var theme
@@ -354,7 +350,7 @@ private struct ScheduleCard: View {
         return personaManager.persona(for: personaId)
     }
 
-    /// Generate a consistent color based on schedule name (matching PersonaCard pattern)
+    /// Consistent color derived from the schedule name
     private var scheduleColor: Color {
         let hash = abs(schedule.name.hashValue)
         let hue = Double(hash % 360) / 360.0
@@ -362,73 +358,54 @@ private struct ScheduleCard: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            // Header row - matching PersonaCard pattern
-            HStack(alignment: .center, spacing: 12) {
-                // Avatar with letter (matching PersonaCard)
-                ZStack {
-                    if isRunning {
-                        Circle()
-                            .fill(theme.accentColor.opacity(0.2))
-                        ProgressView()
-                            .scaleEffect(0.5)
-                    } else {
-                        Circle()
-                            .fill(
-                                LinearGradient(
-                                    colors: [scheduleColor.opacity(0.15), scheduleColor.opacity(0.05)],
-                                    startPoint: .topLeading,
-                                    endPoint: .bottomTrailing
+        Button(action: onEdit) {
+            VStack(alignment: .leading, spacing: 12) {
+                // Header
+                HStack(alignment: .center, spacing: 12) {
+                    ZStack {
+                        if isRunning {
+                            Circle()
+                                .fill(theme.accentColor.opacity(0.2))
+                            ProgressView()
+                                .scaleEffect(0.5)
+                        } else {
+                            Circle()
+                                .fill(
+                                    LinearGradient(
+                                        colors: [scheduleColor.opacity(0.15), scheduleColor.opacity(0.05)],
+                                        startPoint: .topLeading,
+                                        endPoint: .bottomTrailing
+                                    )
                                 )
-                            )
 
-                        Circle()
-                            .strokeBorder(scheduleColor.opacity(0.4), lineWidth: 2)
+                            Circle()
+                                .strokeBorder(scheduleColor.opacity(0.4), lineWidth: 2)
 
-                        Text(schedule.name.prefix(1).uppercased())
-                            .font(.system(size: 16, weight: .bold, design: .rounded))
-                            .foregroundColor(scheduleColor)
+                            Text(schedule.name.prefix(1).uppercased())
+                                .font(.system(size: 16, weight: .bold, design: .rounded))
+                                .foregroundColor(scheduleColor)
+                        }
                     }
-                }
-                .frame(width: 36, height: 36)
+                    .frame(width: 36, height: 36)
 
-                // Name with enabled indicator (matching PersonaCard active state)
-                HStack(spacing: 8) {
-                    Text(schedule.name)
-                        .font(.system(size: 15, weight: .semibold))
-                        .foregroundColor(theme.primaryText)
-                        .lineLimit(1)
+                    VStack(alignment: .leading, spacing: 2) {
+                        HStack(spacing: 6) {
+                            Text(schedule.name)
+                                .font(.system(size: 15, weight: .semibold))
+                                .foregroundColor(theme.primaryText)
+                                .lineLimit(1)
 
-                    if schedule.isEnabled && !isRunning {
-                        Image(systemName: "checkmark.circle.fill")
-                            .font(.system(size: 13))
-                            .foregroundColor(theme.successColor)
+                            statusBadge
+                        }
+
+                        Text(schedule.frequency.displayDescription)
+                            .font(.system(size: 11))
+                            .foregroundColor(theme.secondaryText)
+                            .lineLimit(1)
                     }
 
-                    if isRunning {
-                        Text("Running")
-                            .font(.system(size: 9, weight: .semibold))
-                            .foregroundColor(theme.accentColor)
-                            .padding(.horizontal, 6)
-                            .padding(.vertical, 2)
-                            .background(
-                                Capsule()
-                                    .fill(theme.accentColor.opacity(0.1))
-                            )
-                    }
-                }
+                    Spacer(minLength: 8)
 
-                Spacer(minLength: 8)
-
-                // Quick actions (visible on hover) - matching PersonaCard
-                HStack(spacing: 4) {
-                    ScheduleQuickActionButton(icon: "pencil", help: "Edit") {
-                        onEdit()
-                    }
-                    .opacity(isHovered ? 1 : 0)
-                    .animation(.easeOut(duration: 0.15), value: isHovered)
-
-                    // More menu (always visible)
                     Menu {
                         Button(action: onEdit) {
                             Label("Edit", systemImage: "pencil")
@@ -437,6 +414,15 @@ private struct ScheduleCard: View {
                             Label("Run Now", systemImage: "play.fill")
                         }
                         .disabled(isRunning)
+                        Divider()
+                        Button {
+                            onToggle(!schedule.isEnabled)
+                        } label: {
+                            Label(
+                                schedule.isEnabled ? "Pause" : "Resume",
+                                systemImage: schedule.isEnabled ? "pause.circle" : "play.circle"
+                            )
+                        }
                         Divider()
                         Button(role: .destructive) {
                             showDeleteConfirm = true
@@ -457,111 +443,43 @@ private struct ScheduleCard: View {
                     .menuIndicator(.hidden)
                     .frame(width: 24)
                 }
-            }
 
-            // Instructions section - matching PersonaCard's "SYSTEM PROMPT" styling
-            VStack(alignment: .leading, spacing: 6) {
-                Text("INSTRUCTIONS")
-                    .font(.system(size: 9, weight: .bold))
-                    .foregroundColor(theme.tertiaryText)
-                    .tracking(0.5)
-
-                if schedule.instructions.isEmpty {
-                    Text("No instructions defined")
-                        .font(.system(size: 11))
-                        .foregroundColor(theme.tertiaryText)
-                        .italic()
-                        .frame(maxWidth: .infinity, minHeight: 52, alignment: .topLeading)
-                } else {
+                // Instructions excerpt
+                if !schedule.instructions.isEmpty {
                     Text(schedule.instructions)
-                        .font(.system(size: 11))
+                        .font(.system(size: 12))
                         .foregroundColor(theme.secondaryText)
-                        .lineLimit(4)
-                        .lineSpacing(3)
-                        .frame(maxWidth: .infinity, minHeight: 52, alignment: .topLeading)
+                        .lineLimit(2)
+                        .lineSpacing(2)
+                        .frame(maxWidth: .infinity, alignment: .leading)
                 }
+
+                Spacer(minLength: 0)
+
+                compactStats
             }
-            .padding(10)
-            .background(
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(theme.inputBackground.opacity(0.5))
+            .padding(16)
+            .frame(maxHeight: .infinity, alignment: .top)
+            .background(cardBackground)
+            .overlay(hoverGradient)
+            .clipShape(RoundedRectangle(cornerRadius: 12))
+            .overlay(cardBorder)
+            .shadow(
+                color: isRunning ? theme.accentColor.opacity(0.15) : Color.black.opacity(isHovered ? 0.08 : 0.04),
+                radius: isHovered ? 10 : 5,
+                x: 0,
+                y: isHovered ? 3 : 2
             )
-
-            // Configuration badges - matching PersonaCard pattern
-            configurationBadges
-                .frame(minHeight: 26)
-
-            // Action button row
-            HStack(spacing: 8) {
-                Button(action: onRunNow) {
-                    HStack(spacing: 4) {
-                        Image(systemName: "play.fill")
-                            .font(.system(size: 9))
-                        Text("Run Now")
-                            .font(.system(size: 11, weight: .medium))
-                    }
-                    .foregroundColor(theme.accentColor)
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 6)
-                    .background(
-                        RoundedRectangle(cornerRadius: 6)
-                            .fill(theme.accentColor.opacity(0.1))
-                    )
-                }
-                .buttonStyle(PlainButtonStyle())
-                .disabled(isRunning)
-                .opacity(isRunning ? 0.5 : 1)
-
-                Spacer()
-
-                // Enable toggle
-                Toggle(
-                    "",
-                    isOn: Binding(
-                        get: { schedule.isEnabled },
-                        set: { onToggle($0) }
-                    )
-                )
-                .toggleStyle(.switch)
-                .controlSize(.small)
-                .labelsHidden()
-            }
+            .contentShape(Rectangle())
         }
-        .padding(14)
-        .background(
-            RoundedRectangle(cornerRadius: 12)
-                .fill(theme.cardBackground)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 12)
-                        .stroke(
-                            isRunning ? theme.accentColor.opacity(0.4) : theme.cardBorder,
-                            lineWidth: isRunning ? 1.5 : 1
-                        )
-                )
-                .shadow(
-                    color: isRunning ? theme.accentColor.opacity(0.15) : Color.black.opacity(isHovered ? 0.08 : 0.04),
-                    radius: isHovered ? 10 : 5,
-                    x: 0,
-                    y: isHovered ? 3 : 2
-                )
-        )
+        .buttonStyle(PlainButtonStyle())
         .scaleEffect(isHovered ? 1.01 : 1.0)
         .animation(.spring(response: 0.3, dampingFraction: 0.7), value: isHovered)
         .opacity(hasAppeared ? 1 : 0)
         .offset(y: hasAppeared ? 0 : 20)
         .animation(.spring(response: 0.4, dampingFraction: 0.8).delay(animationDelay), value: hasAppeared)
-        .contentShape(Rectangle())
-        .onTapGesture {
-            // Toggle enabled state on click (matching PersonaCard's activate behavior)
-            onToggle(!schedule.isEnabled)
-        }
         .onHover { hovering in
-            isHovered = hovering
-            if hovering {
-                NSCursor.pointingHand.push()
-            } else {
-                NSCursor.pop()
-            }
+            withAnimation(.easeOut(duration: 0.15)) { isHovered = hovering }
         }
         .themedAlert(
             "Delete Schedule",
@@ -572,151 +490,103 @@ private struct ScheduleCard: View {
         )
     }
 
-    // MARK: - Configuration Badges
+    // MARK: - Card Background
+
+    private var cardBackground: some View {
+        RoundedRectangle(cornerRadius: 12)
+            .fill(theme.cardBackground)
+    }
+
+    private var cardBorder: some View {
+        RoundedRectangle(cornerRadius: 12)
+            .strokeBorder(
+                isHovered
+                    ? scheduleColor.opacity(0.25)
+                    : (isRunning ? theme.accentColor.opacity(0.3) : theme.cardBorder),
+                lineWidth: isRunning || isHovered ? 1.5 : 1
+            )
+    }
+
+    private var hoverGradient: some View {
+        RoundedRectangle(cornerRadius: 12)
+            .fill(
+                LinearGradient(
+                    colors: [
+                        scheduleColor.opacity(isHovered ? 0.06 : 0),
+                        Color.clear,
+                    ],
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing
+                )
+            )
+            .allowsHitTesting(false)
+            .animation(.easeOut(duration: 0.15), value: isHovered)
+    }
+
+    // MARK: - Status Badge
 
     @ViewBuilder
-    private var configurationBadges: some View {
-        let hasBadges = persona != nil || !schedule.isEnabled || schedule.mode == .agent || schedule.folderPath != nil
-
-        if hasBadges {
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 6) {
-                    // Mode badge (only for agent mode; chat is default)
-                    if schedule.mode == .agent {
-                        ScheduleConfigBadge(
-                            icon: "bolt.fill",
-                            text: "Agent",
-                            color: .orange
-                        )
-                    }
-
-                    // Folder badge (agent mode with folder)
-                    if let folderPath = schedule.folderPath {
-                        ScheduleConfigBadge(
-                            icon: "folder.fill",
-                            text: URL(fileURLWithPath: folderPath).lastPathComponent,
-                            color: .cyan
-                        )
-                    }
-
-                    // Frequency badge
-                    ScheduleConfigBadge(
-                        icon: schedule.frequency.frequencyType.icon,
-                        text: schedule.frequency.frequencyType.rawValue,
-                        color: .blue
-                    )
-
-                    // Next run badge
-                    if let nextRun = schedule.nextRunDescription {
-                        ScheduleConfigBadge(
-                            icon: "clock",
-                            text: nextRun,
-                            color: .green
-                        )
-                    }
-
-                    // Persona badge (if assigned)
-                    if let personaName = persona?.name, persona?.isBuiltIn == false {
-                        ScheduleConfigBadge(
-                            icon: "person.fill",
-                            text: personaName,
-                            color: .purple
-                        )
-                    }
-
-                    // Paused badge (if disabled)
-                    if !schedule.isEnabled {
-                        ScheduleConfigBadge(
-                            icon: "pause.circle",
-                            text: "Paused",
-                            color: .orange
-                        )
-                    }
-                }
-            }
+    private var statusBadge: some View {
+        if isRunning {
+            badgeLabel("Running", color: theme.accentColor)
+        } else if schedule.isEnabled {
+            badgeLabel("Enabled", color: theme.successColor)
         } else {
-            // Default state - show frequency info
-            HStack(spacing: 6) {
-                ScheduleConfigBadge(
-                    icon: schedule.frequency.frequencyType.icon,
-                    text: schedule.frequency.frequencyType.rawValue,
-                    color: .blue
-                )
-
-                if let nextRun = schedule.nextRunDescription {
-                    ScheduleConfigBadge(
-                        icon: "clock",
-                        text: nextRun,
-                        color: .green
-                    )
-                }
-            }
+            badgeLabel("Paused", color: .orange)
         }
     }
-}
 
-// MARK: - Quick Action Button
-
-private struct ScheduleQuickActionButton: View {
-    @Environment(\.theme) private var theme
-
-    let icon: String
-    let help: String
-    let action: () -> Void
-
-    @State private var isHovered = false
-
-    var body: some View {
-        Button(action: action) {
-            Image(systemName: icon)
-                .font(.system(size: 11, weight: .medium))
-                .foregroundColor(isHovered ? theme.primaryText : theme.secondaryText)
-                .frame(width: 26, height: 26)
-                .background(
-                    Circle()
-                        .fill(isHovered ? theme.tertiaryBackground : theme.tertiaryBackground.opacity(0.5))
-                )
-        }
-        .buttonStyle(PlainButtonStyle())
-        .onHover { hovering in
-            withAnimation(.easeOut(duration: 0.1)) {
-                isHovered = hovering
-            }
-        }
-        .help(help)
+    private func badgeLabel(_ text: String, color: Color) -> some View {
+        Text(text)
+            .font(.system(size: 9, weight: .bold))
+            .foregroundColor(color)
+            .padding(.horizontal, 6)
+            .padding(.vertical, 2)
+            .background(Capsule().fill(color.opacity(0.12)))
     }
-}
 
-// MARK: - Config Badge (matching PersonaCard pattern)
+    // MARK: - Compact Stats
 
-private struct ScheduleConfigBadge: View {
-    @Environment(\.theme) private var theme
+    @ViewBuilder
+    private var compactStats: some View {
+        HStack(spacing: 0) {
+            if schedule.mode == .agent {
+                statItem(icon: "bolt.fill", text: "Agent")
+                statDot
+            }
 
-    let icon: String
-    let text: String
-    let color: Color
+            statItem(icon: schedule.frequency.frequencyType.icon, text: schedule.frequency.shortDescription)
 
-    var body: some View {
-        HStack(spacing: 4) {
+            if let nextRun = schedule.nextRunDescription {
+                statDot
+                statItem(icon: "clock", text: nextRun)
+            }
+
+            if let personaName = persona?.name, persona?.isBuiltIn == false {
+                statDot
+                statItem(icon: "person.fill", text: personaName)
+            }
+
+            Spacer(minLength: 0)
+        }
+    }
+
+    private func statItem(icon: String, text: String) -> some View {
+        HStack(spacing: 3) {
             Image(systemName: icon)
-                .font(.system(size: 8, weight: .semibold))
-                .foregroundColor(color)
-
-            Text(text)
                 .font(.system(size: 9, weight: .medium))
-                .foregroundColor(theme.secondaryText)
+            Text(text)
+                .font(.system(size: 10, weight: .medium))
                 .lineLimit(1)
         }
-        .padding(.horizontal, 6)
-        .padding(.vertical, 4)
-        .background(
-            Capsule()
-                .fill(color.opacity(0.1))
-                .overlay(
-                    Capsule()
-                        .stroke(color.opacity(0.2), lineWidth: 0.5)
-                )
-        )
+        .foregroundColor(theme.tertiaryText)
+    }
+
+    private var statDot: some View {
+        Circle()
+            .fill(theme.tertiaryText.opacity(0.4))
+            .frame(width: 3, height: 3)
+            .padding(.horizontal, 8)
     }
 }
 
@@ -828,13 +698,11 @@ private struct ScheduleTimePicker: View {
 
     var body: some View {
         HStack(spacing: 4) {
-            // Clock icon
             Image(systemName: "clock")
                 .font(.system(size: 12, weight: .medium))
                 .foregroundColor(theme.accentColor)
                 .padding(.leading, 10)
 
-            // Hour input
             TextField("", text: $hourText)
                 .textFieldStyle(.plain)
                 .font(.system(size: 13, weight: .medium))
@@ -860,7 +728,6 @@ private struct ScheduleTimePicker: View {
                 .font(.system(size: 13, weight: .medium))
                 .foregroundColor(theme.secondaryText)
 
-            // Minute input
             TextField("", text: $minuteText)
                 .textFieldStyle(.plain)
                 .font(.system(size: 13, weight: .medium))
@@ -882,7 +749,6 @@ private struct ScheduleTimePicker: View {
                     if !focused { validateMinute() }
                 }
 
-            // AM/PM toggle
             Button(action: togglePeriod) {
                 Text(period)
                     .font(.system(size: 11, weight: .semibold))
@@ -1114,13 +980,11 @@ private struct OnceTimePicker: View {
 
     var body: some View {
         HStack(spacing: 4) {
-            // Clock icon
             Image(systemName: "clock")
                 .font(.system(size: 12, weight: .medium))
                 .foregroundColor(theme.accentColor)
                 .padding(.leading, 10)
 
-            // Hour input
             TextField("", text: $hourText)
                 .textFieldStyle(.plain)
                 .font(.system(size: 13, weight: .medium))
@@ -1146,7 +1010,6 @@ private struct OnceTimePicker: View {
                 .font(.system(size: 13, weight: .medium))
                 .foregroundColor(theme.secondaryText)
 
-            // Minute input
             TextField("", text: $minuteText)
                 .textFieldStyle(.plain)
                 .font(.system(size: 13, weight: .medium))
@@ -1168,7 +1031,6 @@ private struct OnceTimePicker: View {
                     if !focused { validateMinute() }
                 }
 
-            // AM/PM toggle
             Button(action: togglePeriod) {
                 Text(period)
                     .font(.system(size: 11, weight: .semibold))
@@ -1387,7 +1249,6 @@ private struct DayOfMonthPicker: View {
                     }
                 }
 
-            // Stepper buttons
             VStack(spacing: 0) {
                 Button(action: { incrementDay() }) {
                     Image(systemName: "chevron.up")
@@ -1483,7 +1344,6 @@ private struct PersonaPicker: View {
     var body: some View {
         Button(action: { showingPopover.toggle() }) {
             HStack(spacing: 12) {
-                // Persona avatar
                 Circle()
                     .fill(personaColor(for: selectedPersonaName).opacity(0.2))
                     .frame(width: 32, height: 32)
@@ -1542,7 +1402,6 @@ private struct PersonaPicker: View {
         }
         .popover(isPresented: $showingPopover, arrowEdge: .bottom) {
             VStack(alignment: .leading, spacing: 0) {
-                // Default option
                 PersonaOptionRow(
                     name: "Default",
                     description: "Uses the default system behavior",
@@ -1813,7 +1672,6 @@ struct ScheduleEditorSheet: View {
     private var scheduleInfoSection: some View {
         ScheduleEditorSection(title: "Schedule Info", icon: "info.circle.fill") {
             VStack(alignment: .leading, spacing: 16) {
-                // Name field with label
                 VStack(alignment: .leading, spacing: 6) {
                     Text("Name")
                         .font(.system(size: 11, weight: .medium))
@@ -1826,7 +1684,6 @@ struct ScheduleEditorSheet: View {
                     )
                 }
 
-                // Enabled toggle
                 HStack {
                     HStack(spacing: 8) {
                         Image(systemName: isEnabled ? "checkmark.circle.fill" : "circle")
@@ -2088,10 +1945,7 @@ struct ScheduleEditorSheet: View {
     private var frequencySection: some View {
         ScheduleEditorSection(title: "Frequency", icon: "clock.fill") {
             VStack(spacing: 16) {
-                // Frequency type selector with animated pills
                 FrequencyTabSelector(selection: $frequencyType)
-
-                // Frequency-specific options
                 frequencyOptionsView
                     .animation(.easeInOut(duration: 0.2), value: frequencyType)
             }
@@ -2116,9 +1970,7 @@ struct ScheduleEditorSheet: View {
 
     private var onceOptions: some View {
         VStack(alignment: .leading, spacing: 16) {
-            // Combined Date & Time in a nice row
             HStack(spacing: 16) {
-                // Date selection
                 VStack(alignment: .leading, spacing: 6) {
                     Text("Date")
                         .font(.system(size: 11, weight: .medium))
@@ -2127,7 +1979,6 @@ struct ScheduleEditorSheet: View {
                     OnceDatePicker(selectedDate: $selectedDate)
                 }
 
-                // Time selection
                 VStack(alignment: .leading, spacing: 6) {
                     Text("Time")
                         .font(.system(size: 11, weight: .medium))
@@ -2139,7 +1990,6 @@ struct ScheduleEditorSheet: View {
                 Spacer()
             }
 
-            // Preview of when it will run
             oncePreview
         }
     }
@@ -2189,7 +2039,6 @@ struct ScheduleEditorSheet: View {
 
     private var dailyOptions: some View {
         VStack(alignment: .leading, spacing: 16) {
-            // Time selection
             VStack(alignment: .leading, spacing: 6) {
                 Text("Time")
                     .font(.system(size: 11, weight: .medium))
@@ -2198,7 +2047,6 @@ struct ScheduleEditorSheet: View {
                 timePicker
             }
 
-            // Preview
             schedulePreview(text: dailyPreviewText)
         }
     }
@@ -2219,7 +2067,6 @@ struct ScheduleEditorSheet: View {
 
     private var weeklyOptions: some View {
         VStack(alignment: .leading, spacing: 16) {
-            // Day of week selection
             VStack(alignment: .leading, spacing: 8) {
                 Text("Day of Week")
                     .font(.system(size: 11, weight: .medium))
@@ -2240,7 +2087,6 @@ struct ScheduleEditorSheet: View {
                 }
             }
 
-            // Time selection
             VStack(alignment: .leading, spacing: 6) {
                 Text("Time")
                     .font(.system(size: 11, weight: .medium))
@@ -2249,7 +2095,6 @@ struct ScheduleEditorSheet: View {
                 timePicker
             }
 
-            // Preview
             schedulePreview(text: weeklyPreviewText)
         }
     }
@@ -2271,9 +2116,7 @@ struct ScheduleEditorSheet: View {
 
     private var monthlyOptions: some View {
         VStack(alignment: .leading, spacing: 16) {
-            // Day and Time selection in a row
             HStack(spacing: 16) {
-                // Day picker
                 VStack(alignment: .leading, spacing: 6) {
                     Text("Day of Month")
                         .font(.system(size: 11, weight: .medium))
@@ -2282,7 +2125,6 @@ struct ScheduleEditorSheet: View {
                     DayOfMonthPicker(selectedDay: $selectedDayOfMonth)
                 }
 
-                // Time picker
                 VStack(alignment: .leading, spacing: 6) {
                     Text("Time")
                         .font(.system(size: 11, weight: .medium))
@@ -2299,7 +2141,6 @@ struct ScheduleEditorSheet: View {
                 .foregroundColor(theme.tertiaryText)
                 .padding(.horizontal, 4)
 
-            // Preview
             schedulePreview(text: monthlyPreviewText)
         }
     }
@@ -2330,9 +2171,7 @@ struct ScheduleEditorSheet: View {
 
     private var yearlyOptions: some View {
         VStack(alignment: .leading, spacing: 16) {
-            // Month, Day, and Time selection
             HStack(spacing: 12) {
-                // Month picker
                 VStack(alignment: .leading, spacing: 6) {
                     Text("Month")
                         .font(.system(size: 11, weight: .medium))
@@ -2341,7 +2180,6 @@ struct ScheduleEditorSheet: View {
                     MonthPicker(selectedMonth: $selectedMonth)
                 }
 
-                // Day picker
                 VStack(alignment: .leading, spacing: 6) {
                     Text("Day")
                         .font(.system(size: 11, weight: .medium))
@@ -2350,7 +2188,6 @@ struct ScheduleEditorSheet: View {
                     DayOfMonthPicker(selectedDay: $selectedDay)
                 }
 
-                // Time picker
                 VStack(alignment: .leading, spacing: 6) {
                     Text("Time")
                         .font(.system(size: 11, weight: .medium))
@@ -2362,7 +2199,6 @@ struct ScheduleEditorSheet: View {
                 Spacer()
             }
 
-            // Preview
             schedulePreview(text: yearlyPreviewText)
         }
     }

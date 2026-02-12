@@ -551,30 +551,26 @@ public final class ChatWindowManager: NSObject, ObservableObject {
     fileprivate func windowWillClose(id: UUID) {
         print("[ChatWindowManager] Window \(id) will close")
 
-        // Check if this window was just detached to background mode
-        // In this case, we don't clean up the windowState as BackgroundTaskManager now owns it
         let isDetachedToBackground = BackgroundTaskManager.shared.isBackgroundTask(id)
 
-        // Regular window cleanup
         // Only invoke save callback and cleanup if NOT detached to background
         // (background task needs the session to keep running)
         if !isDetachedToBackground {
-            // Invoke save callback before cleanup
             if let callback = sessionCallbacks[id] {
                 callback()
             }
             windowStates[id]?.cleanup()
         }
 
-        // Clean up local references
+        // Clean up all local references. BackgroundTaskState independently retains
+        // the ChatWindowState it needs, so removing it here is always safe.
         sessionCallbacks.removeValue(forKey: id)
         windowDelegates.removeValue(forKey: id)
+        windowStates.removeValue(forKey: id)
 
-        // Only remove windowState if not detached to background
-        if !isDetachedToBackground {
-            windowStates.removeValue(forKey: id)
-        }
-
+        // Sever NSWindow -> NSHostingController link so the SwiftUI view tree
+        // and its @State storage are released even if the panel lingers briefly.
+        nsWindows[id]?.contentViewController = nil
         nsWindows.removeValue(forKey: id)
         windows.removeValue(forKey: id)
 

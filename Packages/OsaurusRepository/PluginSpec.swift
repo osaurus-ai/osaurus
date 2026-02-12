@@ -39,13 +39,28 @@ public struct RegistryCapabilities: Codable, Equatable, Sendable {
     public struct ToolSummary: Codable, Equatable, Sendable {
         public let name: String
         public let description: String
+
+        public init(name: String, description: String) {
+            self.name = name
+            self.description = description
+        }
     }
     public struct SkillSummary: Codable, Equatable, Sendable {
         public let name: String
         public let description: String
+
+        public init(name: String, description: String) {
+            self.name = name
+            self.description = description
+        }
     }
     public let tools: [ToolSummary]?
     public let skills: [SkillSummary]?
+
+    public init(tools: [ToolSummary]? = nil, skills: [SkillSummary]? = nil) {
+        self.tools = tools
+        self.skills = skills
+    }
 }
 
 public struct PluginSpec: Codable, Equatable, Sendable {
@@ -59,6 +74,28 @@ public struct PluginSpec: Codable, Equatable, Sendable {
     public let capabilities: RegistryCapabilities?
 
     public let versions: [PluginVersionEntry]
+
+    public init(
+        plugin_id: String,
+        name: String? = nil,
+        description: String? = nil,
+        homepage: String? = nil,
+        license: String? = nil,
+        authors: [String]? = nil,
+        public_keys: [String: String]? = nil,
+        capabilities: RegistryCapabilities? = nil,
+        versions: [PluginVersionEntry] = []
+    ) {
+        self.plugin_id = plugin_id
+        self.name = name
+        self.description = description
+        self.homepage = homepage
+        self.license = license
+        self.authors = authors
+        self.public_keys = public_keys
+        self.capabilities = capabilities
+        self.versions = versions
+    }
 }
 
 public enum Platform: String {

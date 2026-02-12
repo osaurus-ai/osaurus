@@ -92,7 +92,6 @@ struct AgentView: View {
             }
         }
         .frame(minWidth: 800, idealWidth: 950)
-        .compositingGroup()
         .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
         .ignoresSafeArea()
         .animation(theme.springAnimation(responseMultiplier: 0.9), value: windowState.showSidebar)
@@ -209,20 +208,15 @@ struct AgentView: View {
                 )
                 .allowsHitTesting(false)
 
-                // Solid backing layer for text contrast
+                // Combined solid backing + gradient overlay in a single layer for text contrast and depth
                 let baseBackingOpacity = theme.isDark ? 0.6 : 0.7
                 let themeBoost = theme.glassOpacityPrimary * 0.8
                 let backingOpacity = min(0.92, baseBackingOpacity + themeBoost)
 
-                backgroundShape
-                    .fill(theme.primaryBackground.opacity(backingOpacity))
-                    .allowsHitTesting(false)
-
-                // Gradient overlay for depth and polish
                 LinearGradient(
                     colors: [
-                        theme.primaryBackground.opacity(theme.glassOpacityPrimary * 1.5),
-                        theme.primaryBackground.opacity(theme.glassOpacitySecondary),
+                        theme.primaryBackground.opacity(backingOpacity + theme.glassOpacityPrimary * 1.5),
+                        theme.primaryBackground.opacity(backingOpacity + theme.glassOpacitySecondary),
                     ],
                     startPoint: .top,
                     endPoint: .bottom
@@ -507,10 +501,9 @@ extension AgentView {
                 isStreaming: session.isExecuting && session.activeIssue?.id == session.selectedIssueId,
                 lastAssistantTurnId: blocks.last?.turnId,
                 autoScrollEnabled: false,
-                onCopy: { _ in },
-                onRegenerate: { _ in },
                 onScrolledToBottom: { isPinnedToBottom = true },
                 onScrolledAwayFromBottom: { isPinnedToBottom = false },
+                onCopy: copyTurnContent,
                 onClarificationSubmit: { response in
                     Task {
                         await session.submitClarification(response)
@@ -529,6 +522,22 @@ extension AgentView {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .padding(.horizontal, Self.contentHorizontalPadding)
         .padding(.top, 16)
+    }
+
+    /// Copy a turn's content to the clipboard
+    private func copyTurnContent(turnId: UUID) {
+        guard let turn = session.turn(withId: turnId) else { return }
+        var textToCopy = ""
+        if turn.hasThinking {
+            textToCopy += turn.thinking
+        }
+        if !turn.contentIsEmpty {
+            if !textToCopy.isEmpty { textToCopy += "\n\n" }
+            textToCopy += turn.content
+        }
+        guard !textToCopy.isEmpty else { return }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(textToCopy, forType: .string)
     }
 
     private var issueEmptyDetailView: some View {
@@ -1046,7 +1055,7 @@ struct ArtifactViewerSheet: View {
         let lines = artifact.content.components(separatedBy: "\n")
         return HStack(alignment: .top, spacing: 0) {
             // Line numbers
-            VStack(alignment: .trailing, spacing: 0) {
+            LazyVStack(alignment: .trailing, spacing: 0) {
                 ForEach(Array(lines.enumerated()), id: \.offset) { index, _ in
                     Text("\(index + 1)")
                         .font(.system(size: CGFloat(theme.captionSize), design: .monospaced))
@@ -1061,7 +1070,7 @@ struct ArtifactViewerSheet: View {
 
             // Scrollable code content
             ScrollView(.horizontal, showsIndicators: true) {
-                VStack(alignment: .leading, spacing: 0) {
+                LazyVStack(alignment: .leading, spacing: 0) {
                     ForEach(Array(lines.enumerated()), id: \.offset) { _, line in
                         Text(line.isEmpty ? " " : line)
                             .font(.system(size: CGFloat(theme.captionSize), design: .monospaced))

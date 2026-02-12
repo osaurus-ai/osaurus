@@ -2,10 +2,10 @@
 //  BackgroundTaskManager.swift
 //  osaurus
 //
-//  Single owner of all backgrounded agent work: dispatched tasks (from schedules,
+//  Single owner of all backgrounded work: dispatched tasks (from schedules,
 //  shortcuts, etc.) and detached tasks (window closed while agent is running).
 //  Drives BackgroundTaskToastView, provides completion signaling, and handles
-//  lazy window creation.
+//  lazy window creation. Supports both chat and agent modes.
 //
 
 import Combine
@@ -13,7 +13,7 @@ import Foundation
 
 // MARK: - Background Task Manager
 
-/// Single owner of all backgrounded agent work (dispatched and detached)
+/// Single owner of all backgrounded work (dispatched and detached)
 @MainActor
 public final class BackgroundTaskManager: ObservableObject {
     public static let shared = BackgroundTaskManager()
@@ -31,6 +31,12 @@ public final class BackgroundTaskManager: ObservableObject {
     /// Continuations for callers awaiting task completion (e.g. ScheduleManager)
     private var completionContinuations: [UUID: CheckedContinuation<DispatchResult, Never>] = [:]
 
+    /// Tracks the number of turns already processed per chat task so we only log new tool calls.
+    private var chatTurnCounts: [UUID: Int] = [:]
+
+    /// Scheduled auto-finalize timers for completed/cancelled tasks
+    private var autoFinalizeTasks: [UUID: Task<Void, Never>] = [:]
+
     /// Subject for batching view updates with throttling
     private let viewUpdateSubject = PassthroughSubject<Void, Never>()
     private var viewUpdateCancellable: AnyCancellable?
@@ -38,11 +44,6 @@ public final class BackgroundTaskManager: ObservableObject {
     // MARK: - Initialization
 
     private init() {
-        setupThrottledViewUpdates()
-    }
-
-    /// Setup throttled view updates to prevent excessive re-renders
-    private func setupThrottledViewUpdates() {
         viewUpdateCancellable =
             viewUpdateSubject
             .throttle(for: .milliseconds(50), scheduler: DispatchQueue.main, latest: true)
@@ -64,25 +65,27 @@ public final class BackgroundTaskManager: ObservableObject {
             return backgroundTasks[windowId]
         }
 
-        guard let currentTask = session.currentTask else {
-            return nil
-        }
+        guard let currentTask = session.currentTask else { return nil }
 
-        // Create background task state with initial values
-        let state = createInitialState(
-            windowId: windowId,
-            task: currentTask,
+        let state = BackgroundTaskState(
+            id: windowId,
+            taskId: currentTask.id,
+            taskTitle: currentTask.title,
+            personaId: windowState.personaId,
             session: session,
-            windowState: windowState
+            windowState: windowState,
+            status: session.hasPendingClarification ? .awaitingClarification : .running,
+            progress: calculateProgress(session: session),
+            currentStep: getCurrentStep(session: session),
+            pendingClarification: session.pendingClarification
         )
 
-        backgroundTasks[windowId] = state
+        state.issues = session.issues
+        state.activeIssueId = session.activeIssue?.id
+        state.loopState = session.loopState
 
-        // Setup consolidated observation
-        observeTask(state, session: session)
-
-        // Seed the activity feed so the toast has immediate context
-        state.appendActivity(kind: .info, title: "Running in background")
+        registerTask(state)
+        observeAgentTask(state, session: session)
 
         print("[BackgroundTaskManager] Detached window \(windowId) with task '\(currentTask.title)'")
         return state
@@ -98,80 +101,35 @@ public final class BackgroundTaskManager: ObservableObject {
         backgroundTasks[id]
     }
 
-    /// Create a BackgroundTaskState from an ExecutionContext's agent session.
-    /// Called internally by `dispatchAgent(_:)` after starting the context.
-    @discardableResult
-    private func registerContext(_ context: ExecutionContext) -> BackgroundTaskState? {
-        guard backgroundTasks[context.id] == nil else {
-            return backgroundTasks[context.id]
-        }
-
-        guard let agentSession = context.agentSession,
-            let currentTask = agentSession.currentTask
-        else {
-            return nil
-        }
-
-        let state = BackgroundTaskState(
-            id: context.id,
-            taskId: currentTask.id,
-            taskTitle: currentTask.title,
-            personaId: context.personaId,
-            session: agentSession,
-            executionContext: context,
-            status: agentSession.hasPendingClarification ? .awaitingClarification : .running,
-            progress: calculateProgress(session: agentSession),
-            currentStep: getCurrentStep(session: agentSession),
-            pendingClarification: agentSession.pendingClarification
-        )
-
-        // Copy additional state
-        state.issues = agentSession.issues
-        state.activeIssueId = agentSession.activeIssue?.id
-        state.loopState = agentSession.loopState
-
-        backgroundTasks[context.id] = state
-
-        // Setup consolidated observation
-        observeTask(state, session: agentSession)
-
-        // Seed the activity feed
-        state.appendActivity(kind: .info, title: "Running in background")
-
-        print("[BackgroundTaskManager] Registered context \(context.id) with task '\(currentTask.title)'")
-        return state
-    }
-
     /// Open a window for a background task
     public func openTaskWindow(_ backgroundId: UUID) {
         guard let state = backgroundTasks[backgroundId] else { return }
 
         if let context = state.executionContext {
-            // Context-based: create window lazily from execution context
             ChatWindowManager.shared.createWindowForContext(context, showImmediately: true)
-        } else if let windowState = state.windowState {
-            // Window-based: restore from detached window state
+        } else if let windowState = state.windowState, let session = state.session {
             ChatWindowManager.shared.createWindowForBackgroundTask(
                 backgroundId: backgroundId,
-                session: state.session,
+                session: session,
                 windowState: windowState
             )
         }
 
-        // Remove from background management - will re-detach if closed while running
         finalizeTask(backgroundId)
     }
 
-    /// Finalize a background task (remove from background management)
+    /// Remove a background task from management, cancelling all observers and timers.
     public func finalizeTask(_ backgroundId: UUID) {
-        guard backgroundTasks[backgroundId] != nil else { return }
+        guard let state = backgroundTasks[backgroundId] else { return }
 
-        // Resume any pending continuation (e.g. task opened in window before completion)
         resumeCompletion(for: backgroundId, result: .cancelled)
+        cancelAutoFinalize(backgroundId)
 
-        // Clean up all observers for this task
         taskObservers[backgroundId]?.forEach { $0.cancel() }
         taskObservers.removeValue(forKey: backgroundId)
+        chatTurnCounts.removeValue(forKey: backgroundId)
+
+        state.releaseReferences()
 
         backgroundTasks.removeValue(forKey: backgroundId)
     }
@@ -179,67 +137,162 @@ public final class BackgroundTaskManager: ObservableObject {
     /// Cancel a background task
     public func cancelTask(_ backgroundId: UUID) {
         guard let state = backgroundTasks[backgroundId] else { return }
-        state.session.stopExecution()
+
+        switch state.mode {
+        case .agent: state.session?.stopExecution()
+        case .chat: state.chatSession?.stop()
+        }
+
         state.status = .cancelled
         resumeCompletion(for: backgroundId, result: .cancelled)
+        scheduleAutoFinalize(backgroundId)
     }
 
-    /// Submit a clarification response
+    /// Submit a clarification response (agent mode only)
     public func submitClarification(_ backgroundId: UUID, response: String) {
-        guard let state = backgroundTasks[backgroundId] else { return }
-        Task {
-            await state.session.submitClarification(response)
-        }
+        guard let state = backgroundTasks[backgroundId], let session = state.session else { return }
+        Task { await session.submitClarification(response) }
     }
 
-    // MARK: - Agent Dispatch
+    // MARK: - Dispatch
 
-    /// Create an ExecutionContext for an agent task, start it, register it for background tracking, and return a handle.
-    /// This is the single entry point for all dispatched agent work.
+    /// Dispatch an agent task for background execution.
     public func dispatchAgent(_ request: DispatchRequest) async -> DispatchHandle? {
-        let personaId = request.personaId ?? Persona.defaultId
+        guard canDispatchNewTask() else { return nil }
 
-        let context = ExecutionContext(
-            id: request.id,
-            mode: .agent,
-            personaId: personaId,
-            title: request.title,
-            folderBookmark: request.folderBookmark
+        let context = createContext(for: request)
+        await context.prepare()
+
+        guard let agentSession = context.agentSession else { return nil }
+
+        // Register placeholder state before starting so awaitCompletion always finds the task.
+        // taskId and taskTitle are updated once the agent creates its task.
+        let state = BackgroundTaskState(
+            id: context.id,
+            taskId: "",
+            taskTitle: request.title ?? "Agent",
+            personaId: context.personaId,
+            session: agentSession,
+            executionContext: context,
+            status: .running,
+            progress: -1,
+            currentStep: "Starting..."
         )
 
-        await context.prepare()
+        registerTask(state)
+        observeAgentTask(state, session: agentSession)
+
         await context.start(prompt: request.prompt)
 
-        // Register drives BackgroundTaskToastView automatically
-        registerContext(context)
+        // Update with real task info now that the agent has created its task
+        if let currentTask = agentSession.currentTask {
+            state.taskId = currentTask.id
+            state.taskTitle = currentTask.title
+        }
+        state.issues = agentSession.issues
+        state.activeIssueId = agentSession.activeIssue?.id
+        state.loopState = agentSession.loopState
+        state.progress = calculateProgress(session: agentSession)
+        state.currentStep = getCurrentStep(session: agentSession)
+        if agentSession.hasPendingClarification {
+            state.status = .awaitingClarification
+            state.pendingClarification = agentSession.pendingClarification
+        }
 
         print("[BackgroundTaskManager] Dispatched agent task: \(request.title ?? "untitled")")
         return DispatchHandle(id: request.id, request: request)
     }
 
+    /// Dispatch a chat task for background execution.
+    public func dispatchChat(_ request: DispatchRequest) async -> DispatchHandle? {
+        guard canDispatchNewTask() else { return nil }
+
+        let context = createContext(for: request)
+        await context.prepare()
+
+        // Register state before starting so awaitCompletion always finds the task
+        let state = BackgroundTaskState(
+            id: context.id,
+            taskTitle: context.title ?? "Chat",
+            personaId: context.personaId,
+            chatSession: context.chatSession,
+            executionContext: context,
+            status: .running,
+            currentStep: "Running..."
+        )
+
+        registerTask(state)
+        observeChatTask(state, session: context.chatSession)
+
+        await context.start(prompt: request.prompt)
+
+        print("[BackgroundTaskManager] Dispatched chat task: \(request.title ?? "untitled")")
+        return DispatchHandle(id: request.id, request: request)
+    }
+
     // MARK: - Completion Signaling
 
-    /// Await completion of a background agent task. Suspends until the task completes, is cancelled, or is finalized.
-    public func awaitCompletion(_ id: UUID) async -> DispatchResult {
-        // If already completed, return immediately
+    /// Await completion of a background task. Suspends until the task completes, is cancelled, finalized, or times out.
+    /// A 30-minute timeout prevents indefinite hangs if a task never reaches a terminal state.
+    public func awaitCompletion(_ id: UUID, timeoutSeconds: UInt64 = 1800) async -> DispatchResult {
         if let state = backgroundTasks[id], !state.status.isActive {
             return resultFromState(state)
         }
-        // If no task exists at all, return failure
         guard backgroundTasks[id] != nil else {
             return .failed("Background task not found")
         }
-        return await withCheckedContinuation { continuation in
+
+        // Start a watchdog that will resume the continuation with a timeout error
+        // if the task doesn't complete within the deadline.
+        let timeoutTask = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: timeoutSeconds * 1_000_000_000)
+            guard !Task.isCancelled else { return }
+            completionContinuations.removeValue(forKey: id)?.resume(returning: .failed("Background task timed out"))
+        }
+
+        let result = await withCheckedContinuation { continuation in
             completionContinuations[id] = continuation
         }
+
+        timeoutTask.cancel()
+        return result
     }
 
-    /// Build a DispatchResult from a completed BackgroundTaskState.
+    // MARK: - Private: Dispatch Helpers
+
+    /// Check whether a new task can be dispatched without exceeding the configured limit.
+    private func canDispatchNewTask() -> Bool {
+        let limit = ToastConfigurationStore.load().maxConcurrentTasks
+        let activeCount = backgroundTasks.values.filter { $0.status.isActive }.count
+        guard activeCount < limit else {
+            print("[BackgroundTaskManager] Task limit reached (\(limit)), rejecting dispatch")
+            return false
+        }
+        return true
+    }
+
+    /// Register a new task state and log an initial activity entry.
+    private func registerTask(_ state: BackgroundTaskState) {
+        backgroundTasks[state.id] = state
+        state.appendActivity(kind: .info, title: "Running in background")
+    }
+
+    private func createContext(for request: DispatchRequest) -> ExecutionContext {
+        ExecutionContext(
+            id: request.id,
+            mode: request.mode,
+            personaId: request.personaId ?? Persona.defaultId,
+            title: request.title,
+            folderBookmark: request.folderBookmark
+        )
+    }
+
+    // MARK: - Private: Completion Helpers
+
     private func resultFromState(_ state: BackgroundTaskState) -> DispatchResult {
         switch state.status {
         case .completed:
-            let sessionId = state.executionContext?.chatSession.sessionId
-            return .completed(sessionId: sessionId)
+            return .completed(sessionId: state.executionContext?.chatSession.sessionId)
         case .cancelled:
             return .cancelled
         default:
@@ -247,62 +300,56 @@ public final class BackgroundTaskManager: ObservableObject {
         }
     }
 
-    /// Resume and remove a pending completion continuation.
     private func resumeCompletion(for id: UUID, result: DispatchResult) {
-        if let continuation = completionContinuations.removeValue(forKey: id) {
-            continuation.resume(returning: result)
+        completionContinuations.removeValue(forKey: id)?.resume(returning: result)
+    }
+
+    /// Mark a task as completed, signal callers, and schedule auto-cleanup.
+    private func markCompleted(_ state: BackgroundTaskState, success: Bool, summary: String) {
+        state.status = .completed(success: success, summary: summary)
+        state.currentStep = nil
+        state.executionContext?.chatSession.save()
+        resumeCompletion(for: state.id, result: resultFromState(state))
+        scheduleAutoFinalize(state.id)
+    }
+
+    // MARK: - Private: Auto-Finalize
+
+    /// Schedule automatic toast removal after 15 seconds.
+    /// Called when a task completes or is cancelled. If the user opens the
+    /// task window before the timer fires, `finalizeTask` cancels it.
+    private func scheduleAutoFinalize(_ taskId: UUID) {
+        cancelAutoFinalize(taskId)
+        autoFinalizeTasks[taskId] = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 15_000_000_000)
+            guard !Task.isCancelled else { return }
+            guard let state = backgroundTasks[taskId], !state.status.isActive else { return }
+            finalizeTask(taskId)
         }
     }
 
-    // MARK: - Private: State Creation
-
-    private func createInitialState(
-        windowId: UUID,
-        task: AgentTask,
-        session: AgentSession,
-        windowState: ChatWindowState
-    ) -> BackgroundTaskState {
-        let state = BackgroundTaskState(
-            id: windowId,
-            taskId: task.id,
-            taskTitle: task.title,
-            personaId: windowState.personaId,
-            session: session,
-            windowState: windowState,
-            status: session.hasPendingClarification ? .awaitingClarification : .running,
-            progress: calculateProgress(session: session),
-            currentStep: getCurrentStep(session: session),
-            pendingClarification: session.pendingClarification
-        )
-
-        // Copy additional state
-        state.issues = session.issues
-        state.activeIssueId = session.activeIssue?.id
-        state.loopState = session.loopState
-
-        return state
+    private func cancelAutoFinalize(_ taskId: UUID) {
+        autoFinalizeTasks[taskId]?.cancel()
+        autoFinalizeTasks.removeValue(forKey: taskId)
     }
 
-    // MARK: - Private: Consolidated Observation
+    // MARK: - Private: Agent Observation
 
-    private func observeTask(_ state: BackgroundTaskState, session: AgentSession) {
+    private func observeAgentTask(_ state: BackgroundTaskState, session: AgentSession) {
         var cancellables = Set<AnyCancellable>()
         let taskId = state.id
 
         // Forward state changes with throttling
         state.objectWillChange
-            .sink { [weak self] _ in
-                self?.viewUpdateSubject.send()
-            }
+            .sink { [weak self] _ in self?.viewUpdateSubject.send() }
             .store(in: &cancellables)
 
-        // Combine execution-related publishers for batched updates
+        // Batch execution-related publishers
         Publishers.CombineLatest3(
             session.$isExecuting,
             session.$pendingClarification,
             session.$currentTask
         )
-        .receive(on: DispatchQueue.main)
         .sink { [weak self] isExecuting, clarification, task in
             self?.handleExecutionChange(
                 taskId: taskId,
@@ -314,12 +361,11 @@ public final class BackgroundTaskManager: ObservableObject {
         }
         .store(in: &cancellables)
 
-        // Combine progress-related publishers (loop state + issues)
+        // Batch progress-related publishers
         Publishers.CombineLatest(
             session.$issues,
             session.$loopState
         )
-        .receive(on: DispatchQueue.main)
         .sink { [weak self] issues, loopState in
             self?.handleProgressChange(
                 taskId: taskId,
@@ -330,18 +376,14 @@ public final class BackgroundTaskManager: ObservableObject {
         }
         .store(in: &cancellables)
 
-        // Observe active issue separately (less frequent)
         session.$activeIssue
-            .receive(on: DispatchQueue.main)
             .sink { [weak self] issue in
-                guard let state = self?.backgroundTasks[taskId] else { return }
-                state.activeIssueId = issue?.id
+                self?.backgroundTasks[taskId]?.activeIssueId = issue?.id
             }
             .store(in: &cancellables)
 
-        // Observe activity events for the toast mini-log
+        // Activity events for the toast mini-log
         session.activityPublisher
-            .receive(on: DispatchQueue.main)
             .sink { [weak self] event in
                 guard let self, let state = self.backgroundTasks[taskId] else { return }
                 self.recordActivityEvent(event, into: state)
@@ -351,39 +393,99 @@ public final class BackgroundTaskManager: ObservableObject {
         taskObservers[taskId] = cancellables
     }
 
-    // MARK: - Private: Activity Event Mapping
+    // MARK: - Private: Chat Observation
+
+    private func observeChatTask(_ state: BackgroundTaskState, session: ChatSession) {
+        var cancellables = Set<AnyCancellable>()
+        let taskId = state.id
+
+        // Snapshot current turn count so we don't replay history
+        chatTurnCounts[taskId] = session.turns.count
+
+        // Forward state changes with throttling
+        state.objectWillChange
+            .sink { [weak self] _ in self?.viewUpdateSubject.send() }
+            .store(in: &cancellables)
+
+        // Streaming state drives running/completed transitions
+        session.$isStreaming
+            .sink { [weak self] isStreaming in
+                self?.handleChatStreamingChange(taskId: taskId, isStreaming: isStreaming)
+            }
+            .store(in: &cancellables)
+
+        // Observe turn count changes for tool call activity.
+        // Map to count + removeDuplicates avoids processing when only content within
+        // existing turns changes (e.g. streaming text into an assistant turn).
+        session.$turns
+            .map(\.count)
+            .removeDuplicates()
+            .sink { [weak self] newCount in
+                self?.handleChatTurnCountChange(taskId: taskId, newCount: newCount, session: session)
+            }
+            .store(in: &cancellables)
+
+        taskObservers[taskId] = cancellables
+    }
+
+    private func handleChatStreamingChange(taskId: UUID, isStreaming: Bool) {
+        guard let state = backgroundTasks[taskId] else { return }
+
+        if isStreaming {
+            state.status = .running
+            state.currentStep = "Running..."
+        } else if state.status == .running {
+            markCompleted(state, success: true, summary: "Chat completed")
+        }
+    }
+
+    /// Scan newly added turns for tool calls and record them as activity.
+    ///
+    /// Tool calls are appended to an existing assistant turn *before* the tool-result
+    /// and next-assistant turns are added. By the time the turn count changes, the
+    /// assistant turn we previously scanned (empty at the time) now has `toolCalls`.
+    /// To catch them, we also re-check the turn immediately before the new range.
+    private func handleChatTurnCountChange(taskId: UUID, newCount: Int, session: ChatSession) {
+        guard let state = backgroundTasks[taskId] else { return }
+
+        let previousCount = chatTurnCounts[taskId] ?? 0
+        guard newCount > previousCount else { return }
+
+        let turns = session.turns
+        let scanStart = max(0, previousCount - 1)  // re-check the last previously-seen turn
+        for turn in turns[scanStart ..< min(newCount, turns.count)] {
+            if let toolCalls = turn.toolCalls {
+                for call in toolCalls {
+                    state.appendActivity(kind: .tool, title: "Tool", detail: call.function.name)
+                }
+            }
+        }
+
+        chatTurnCounts[taskId] = newCount
+    }
+
+    // MARK: - Private: Agent Activity Event Mapping
 
     private func recordActivityEvent(_ event: AgentActivityEvent, into state: BackgroundTaskState) {
         switch event {
         case .startedIssue(let title):
             state.appendActivity(kind: .info, title: "Issue", detail: title)
-
-        case .willExecuteStep:
-            // Step info is shown in the toast header + progress bar; skip mini-log entry
-            return
-
-        case .completedStep:
-            // Step completion is reflected via the progress bar; skip mini-log entry
-            return
-
+        case .willExecuteStep, .completedStep:
+            break  // Reflected via progress bar; skip mini-log entry
         case .toolExecuted(let name):
             state.appendActivity(kind: .tool, title: "Tool", detail: name)
-
         case .needsClarification:
             state.appendActivity(kind: .warning, title: "Needs input")
-
         case .retrying(let attempt, let waitSeconds):
             state.appendActivity(kind: .warning, title: "Retrying", detail: "Attempt \(attempt), wait \(waitSeconds)s")
-
         case .generatedArtifact(let filename, let isFinal):
             state.appendActivity(kind: .info, title: isFinal ? "Final artifact" : "Artifact", detail: filename)
-
         case .completedIssue(let success):
             state.appendActivity(kind: success ? .success : .error, title: success ? "Issue completed" : "Issue failed")
         }
     }
 
-    // MARK: - Private: State Update Handlers
+    // MARK: - Private: Agent State Handlers
 
     private func handleExecutionChange(
         taskId: UUID,
@@ -402,11 +504,9 @@ public final class BackgroundTaskManager: ObservableObject {
             state.status = .awaitingClarification
         } else if isExecuting {
             state.status = .running
-            if state.currentStep == nil {
-                state.currentStep = "Working..."
-            }
+            if state.currentStep == nil { state.currentStep = "Working..." }
         } else {
-            checkTaskCompletion(state: state, session: session)
+            checkAgentCompletion(state: state, session: session)
         }
     }
 
@@ -418,11 +518,9 @@ public final class BackgroundTaskManager: ObservableObject {
     ) {
         guard let state = backgroundTasks[taskId] else { return }
 
-        // Update raw state
         state.issues = issues
         state.loopState = loopState
 
-        // Calculate and update progress
         let newProgress = calculateProgress(
             issues: issues,
             loopState: loopState,
@@ -430,18 +528,20 @@ public final class BackgroundTaskManager: ObservableObject {
         )
 
         // Only update if progress changed significantly (reduces re-renders)
-        let significantChange = abs(state.progress - newProgress) > 0.01
-        let indeterminateChanged = (state.progress < 0) != (newProgress < 0)
-        if significantChange || indeterminateChanged {
+        if abs(state.progress - newProgress) > 0.01 || (state.progress < 0) != (newProgress < 0) {
             state.progress = newProgress
         }
 
-        // Update current step description
         state.currentStep = getCurrentStep(
             loopState: loopState,
             issues: issues,
             isExecuting: session.isExecuting
         )
+
+        // Retry completion check — isExecuting may fire before issues update
+        if !session.isExecuting && state.status.isActive {
+            checkAgentCompletion(state: state, session: session)
+        }
     }
 
     // MARK: - Private: Progress Calculation
@@ -465,18 +565,15 @@ public final class BackgroundTaskManager: ObservableObject {
             let closedIssues = issues.filter { $0.status == .closed }.count
             var progress = Double(closedIssues) / Double(totalIssues)
 
-            // Add fractional progress from reasoning loop iteration
             if let ls = loopState, ls.maxIterations > 0 {
-                let iterationProgress = ls.progress  // iteration / maxIterations
-                progress += iterationProgress / Double(totalIssues)
+                progress += ls.progress / Double(totalIssues)
             }
 
             return progress
         } else if let ls = loopState, ls.maxIterations > 0, ls.iteration > 0 {
-            // Single-issue or no-issue task: use loop progress directly
             return ls.progress
         } else if isExecuting {
-            return -1  // Indeterminate (not yet started iterating)
+            return -1  // Indeterminate
         }
 
         return 0
@@ -496,30 +593,23 @@ public final class BackgroundTaskManager: ObservableObject {
         isExecuting: Bool
     ) -> String? {
         if let ls = loopState {
-            // Use status message if available
-            if let msg = ls.statusMessage, !msg.isEmpty {
-                return msg
-            }
-            // Build a description from iteration info
+            if let msg = ls.statusMessage, !msg.isEmpty { return msg }
             if ls.iteration > 0 {
                 let toolCount = ls.toolCallCount
-                if toolCount > 0 {
-                    return "Iteration \(ls.iteration) \u{00B7} \(toolCount) tool call\(toolCount == 1 ? "" : "s")"
-                }
-                return "Iteration \(ls.iteration)"
+                return toolCount > 0
+                    ? "Iteration \(ls.iteration) \u{00B7} \(toolCount) tool call\(toolCount == 1 ? "" : "s")"
+                    : "Iteration \(ls.iteration)"
             }
-            if isExecuting {
-                return "Starting..."
-            }
+            if isExecuting { return "Starting..." }
         } else if isExecuting {
             return "Working..."
         }
         return nil
     }
 
-    // MARK: - Private: Completion Check
+    // MARK: - Private: Agent Completion Check
 
-    private func checkTaskCompletion(state: BackgroundTaskState, session: AgentSession) {
+    private func checkAgentCompletion(state: BackgroundTaskState, session: AgentSession) {
         guard !session.hasPendingClarification else { return }
 
         let issues = session.issues
@@ -527,20 +617,16 @@ public final class BackgroundTaskManager: ObservableObject {
         let taskCompleted = session.currentTask?.status == .completed
 
         if allIssuesClosed || taskCompleted {
-            state.status = .completed(success: true, summary: "Task completed successfully")
             state.progress = 1.0
-            state.currentStep = nil
-            // Persist chat session so result toast "View" action can reload from disk
-            state.executionContext?.chatSession.save()
-            resumeCompletion(for: state.id, result: resultFromState(state))
+            markCompleted(state, success: true, summary: "Task completed successfully")
         } else if session.currentTask == nil {
             let closedCount = issues.filter { $0.status == .closed }.count
+            let success = !issues.isEmpty && closedCount == issues.count
             let summary =
                 !issues.isEmpty
                 ? "Completed \(closedCount)/\(issues.count) issues"
                 : "Task ended"
-            state.status = .completed(success: closedCount == issues.count, summary: summary)
-            resumeCompletion(for: state.id, result: resultFromState(state))
+            markCompleted(state, success: success, summary: summary)
         }
     }
 }

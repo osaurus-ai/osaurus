@@ -16,7 +16,6 @@ struct AgentEmptyState: View {
     let onSelectPersona: (UUID) -> Void
 
     @State private var hasAppeared = false
-    @State private var isVisible = false
     @Environment(\.theme) private var theme
 
     private var activePersona: Persona {
@@ -32,26 +31,21 @@ struct AgentEmptyState: View {
 
     var body: some View {
         GeometryReader { geometry in
-            ZStack {
-                AmbientOrbsView(isVisible: isVisible, hasAppeared: hasAppeared)
-
-                ScrollView(.vertical, showsIndicators: false) {
-                    VStack(spacing: 0) {
-                        Spacer(minLength: 20)
-                        if hasModels { readyState } else { noModelsState }
-                        Spacer(minLength: 20)
-                    }
-                    .frame(maxWidth: .infinity, minHeight: geometry.size.height)
+            ScrollView(.vertical, showsIndicators: false) {
+                VStack(spacing: 0) {
+                    Spacer(minLength: 20)
+                    if hasModels { readyState } else { noModelsState }
+                    Spacer(minLength: 20)
                 }
+                .frame(maxWidth: .infinity, minHeight: geometry.size.height)
             }
         }
         .onAppear {
-            isVisible = true
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
                 withAnimation(theme.animationSlow()) { hasAppeared = true }
             }
         }
-        .onDisappear { isVisible = false }
+        .onDisappear { hasAppeared = false }
     }
 
     // MARK: - Ready State

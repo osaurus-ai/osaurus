@@ -184,6 +184,14 @@ struct InsightsStats {
 // MARK: - Nonisolated Logging Interface
 
 extension InsightsService {
+    /// Maximum stored body size (4 KB) to cap ring buffer memory usage.
+    private nonisolated static let maxBodySize = 4096
+
+    private nonisolated static func truncateBody(_ body: String?) -> String? {
+        guard let body, body.count > maxBodySize else { return body }
+        return String(body.prefix(maxBodySize)) + "…[truncated]"
+    }
+
     /// Thread-safe logging from non-main-actor contexts
     nonisolated static func logRequest(
         source: RequestSource,
@@ -203,6 +211,10 @@ extension InsightsService {
         finishReason: RequestLog.FinishReason? = nil,
         errorMessage: String? = nil
     ) {
+        // Truncate bodies before crossing actor boundary to limit memory
+        let trimmedRequest = truncateBody(requestBody)
+        let trimmedResponse = truncateBody(responseBody)
+
         Task { @MainActor in
             let log = RequestLog(
                 source: source,
@@ -210,8 +222,8 @@ extension InsightsService {
                 path: path,
                 statusCode: statusCode,
                 durationMs: durationMs,
-                requestBody: requestBody,
-                responseBody: responseBody,
+                requestBody: trimmedRequest,
+                responseBody: trimmedResponse,
                 userAgent: userAgent,
                 model: model,
                 inputTokens: inputTokens,

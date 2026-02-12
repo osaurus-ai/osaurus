@@ -326,10 +326,10 @@ private struct SystemPermissionRow: View {
         isTesting = true
         testResult = nil
 
-        DispatchQueue.global(qos: .userInitiated).async {
+        Task.detached(priority: .userInitiated) {
             let result: String
             if permission == .automationCalendar {
-                result = SystemPermissionService.debugTestCalendarAccess()
+                result = await SystemPermissionService.debugTestCalendarAccess()
             } else if permission == .calendar {
                 result = SystemPermissionService.debugTestCalendarEventKitAccess()
             } else if permission == .reminders {
@@ -346,7 +346,7 @@ private struct SystemPermissionRow: View {
                 result = "Test not available"
             }
 
-            DispatchQueue.main.async {
+            await MainActor.run {
                 testResult = result
                 isTesting = false
 

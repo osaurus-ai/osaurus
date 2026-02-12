@@ -108,15 +108,34 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
         statusItem = item
         updateStatusItemAndMenu()
 
+        // Start main thread watchdog in debug builds to detect UI hangs
+        #if DEBUG
+            MainThreadWatchdog.shared.start()
+        #endif
+
         // Initialize directory access early so security-scoped bookmark is active
         let _ = DirectoryPickerService.shared
 
         // Load external tool plugins at launch (after core is initialized)
-        PluginManager.shared.loadAll()
+        Task { @MainActor in
+            await PluginManager.shared.loadAll()
+        }
 
         // Pre-warm caches immediately for instant first window (no async deps)
         _ = WhisperConfigurationStore.load()
         ChatSession.prewarmLocalModelsOnly()
+
+        // Invalidate ChatSession model cache whenever remote provider models change,
+        // even if no ChatSession instance currently exists (e.g. during onboarding)
+        NotificationCenter.default.addObserver(
+            forName: .remoteProviderModelsChanged,
+            object: nil,
+            queue: .main
+        ) { _ in
+            Task { @MainActor in
+                ChatSession.invalidateModelCache()
+            }
+        }
 
         // Auto-connect to enabled providers, then update model cache with remote models
         Task { @MainActor in
@@ -672,7 +691,7 @@ extension AppDelegate {
 
     @objc private func handleToolsReloadCommand(_ note: Notification) {
         Task { @MainActor in
-            PluginManager.shared.loadAll()
+            await PluginManager.shared.loadAll()
         }
     }
 }

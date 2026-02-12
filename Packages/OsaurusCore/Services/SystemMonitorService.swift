@@ -18,8 +18,17 @@ class SystemMonitorService: ObservableObject {
     @Published var totalMemoryGB: Double = 0.0
     @Published var usedMemoryGB: Double = 0.0
 
+    /// App's own physical memory footprint in MB (via task_vm_info).
+    /// Useful for detecting memory leaks in the app process itself.
+    @Published var appMemoryMB: Double = 0.0
+
     private var timer: Timer?
     private var previousCPUInfo: host_cpu_load_info?
+
+    /// Cached Mach host port to avoid leaking send rights.
+    /// Each call to mach_host_self() allocates a new send right that must be
+    /// deallocated with mach_port_deallocate(). Caching avoids the leak entirely.
+    private let hostPort: mach_port_t = mach_host_self()
 
     private init() {
         startMonitoring()
@@ -48,6 +57,7 @@ class SystemMonitorService: ObservableObject {
         memoryUsage = memInfo.percentage
         totalMemoryGB = memInfo.totalGB
         usedMemoryGB = memInfo.usedGB
+        appMemoryMB = getAppMemoryMB()
     }
 
     private func getCPUUsage() -> Double {
@@ -59,7 +69,7 @@ class SystemMonitorService: ObservableObject {
 
         let result = withUnsafeMutablePointer(to: &cpuInfo) {
             $0.withMemoryRebound(to: integer_t.self, capacity: 1) {
-                host_statistics(mach_host_self(), HOST_CPU_LOAD_INFO, $0, &count)
+                host_statistics(hostPort, HOST_CPU_LOAD_INFO, $0, &count)
             }
         }
 
@@ -118,14 +128,14 @@ class SystemMonitorService: ObservableObject {
 
         let vmResult = withUnsafeMutablePointer(to: &vmInfo) {
             $0.withMemoryRebound(to: integer_t.self, capacity: 1) {
-                host_statistics64(mach_host_self(), HOST_VM_INFO64, $0, &vmCount)
+                host_statistics64(hostPort, HOST_VM_INFO64, $0, &vmCount)
             }
         }
 
         guard vmResult == KERN_SUCCESS else { return (0.0, 0.0, 0.0) }
 
         var rawPage: vm_size_t = 0
-        host_page_size(mach_host_self(), &rawPage)
+        host_page_size(hostPort, &rawPage)
         let pageSize = rawPage
         let totalMemory = Double(ProcessInfo.processInfo.physicalMemory)
         let freeMemory = Double(vmInfo.free_count) * Double(pageSize)
@@ -140,6 +150,24 @@ class SystemMonitorService: ObservableObject {
         let usedGB = usedMemory / (1024 * 1024 * 1024)
 
         return (min(100.0, max(0.0, percentage)), totalGB, usedGB)
+    }
+
+    /// Returns the app's own physical memory footprint in MB.
+    /// Uses task_vm_info's phys_footprint which matches Activity Monitor's "Memory" column.
+    private func getAppMemoryMB() -> Double {
+        var info = task_vm_info_data_t()
+        var count = mach_msg_type_number_t(
+            MemoryLayout<task_vm_info_data_t>.size / MemoryLayout<natural_t>.size
+        )
+
+        let result = withUnsafeMutablePointer(to: &info) {
+            $0.withMemoryRebound(to: integer_t.self, capacity: Int(count)) {
+                task_info(mach_task_self_, task_flavor_t(TASK_VM_INFO), $0, &count)
+            }
+        }
+
+        guard result == KERN_SUCCESS else { return 0.0 }
+        return Double(info.phys_footprint) / (1024 * 1024)
     }
 
 }

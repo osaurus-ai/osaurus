@@ -17,11 +17,21 @@ struct MessageThreadView: View {
     let lastAssistantTurnId: UUID?
     var autoScrollEnabled: Bool = true
 
-    let onCopy: (UUID) -> Void
-    let onRegenerate: (UUID) -> Void
+    // Scroll callbacks
     let onScrolledToBottom: () -> Void
     let onScrolledAwayFromBottom: () -> Void
+
+    // Message action callbacks
+    let onCopy: (UUID) -> Void
+    var onRegenerate: ((UUID) -> Void)? = nil
+    var onEdit: ((UUID) -> Void)? = nil
     var onClarificationSubmit: ((String) -> Void)? = nil
+
+    // Inline editing state (optional; unused in AgentView)
+    var editingTurnId: UUID? = nil
+    var editText: Binding<String>? = nil
+    var onConfirmEdit: (() -> Void)? = nil
+    var onCancelEdit: (() -> Void)? = nil
 
     @Environment(\.theme) private var theme
     @State private var hoveredGroupId: UUID? = nil
@@ -69,7 +79,12 @@ struct MessageThreadView: View {
                             isTurnHovered: hoveredGroupId == groupId,
                             onCopy: onCopy,
                             onRegenerate: onRegenerate,
-                            onClarificationSubmit: onClarificationSubmit
+                            onEdit: onEdit,
+                            onClarificationSubmit: onClarificationSubmit,
+                            editingTurnId: editingTurnId,
+                            editText: editText,
+                            onConfirmEdit: onConfirmEdit,
+                            onCancelEdit: onCancelEdit
                         )
                         .equatable()
                         .id(block.id)

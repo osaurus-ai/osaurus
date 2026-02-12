@@ -463,7 +463,7 @@ public enum LoopResult: Sendable {
     /// Model needs clarification from user
     case needsClarification(ClarificationRequest)
     /// Hit the iteration limit
-    case iterationLimitReached(totalIterations: Int, totalToolCalls: Int)
+    case iterationLimitReached(totalIterations: Int, totalToolCalls: Int, lastResponseContent: String)
 }
 
 /// Tracks the state of an active reasoning loop (for UI updates)

@@ -14,7 +14,7 @@ import OsaurusRepository
 final class PluginManager {
     static let shared = PluginManager()
 
-    struct LoadedPlugin {
+    struct LoadedPlugin: @unchecked Sendable {
         let plugin: ExternalPlugin
         let handle: UnsafeMutableRawPointer
         let tools: [ExternalTool]  // Keep track of tools to unregister later
@@ -28,7 +28,7 @@ final class PluginManager {
     }
 
     /// Error type for plugin loading failures
-    struct PluginLoadError: Error, CustomStringConvertible {
+    struct PluginLoadError: Error, CustomStringConvertible, Sendable {
         let message: String
         var description: String { message }
     }
@@ -46,20 +46,38 @@ final class PluginManager {
         return failedPlugins[pluginId]?.error
     }
 
+    // MARK: - Loading
+
+    /// Result of heavy plugin scanning performed on a background thread.
+    private struct PluginScanResult: @unchecked Sendable {
+        let allURLs: [URL]
+        let verificationFailures: [String: String]
+        let loadResults: [(url: URL, result: Result<LoadedPlugin, PluginLoadError>)]
+    }
+
     /// Scans the tools directory and loads all plugins found.
-    func loadAll() {
+    /// Heavy work (filesystem scanning, SHA256 verification, dlopen) runs on a background thread.
+    func loadAll() async {
         Self.ensureToolsDirectoryExists()
 
         // Clear previous failures before scanning
         failedPlugins.removeAll()
 
-        // Get dylib URLs and track verification failures
-        let (urls, verificationFailures) = Self.toolsDirectoryURLsWithFailures()
-        for (pluginId, error) in verificationFailures {
+        // Capture current state needed for background work
+        let alreadyLoadedPaths = self.loadedPluginPaths
+
+        // Heavy work on background thread: filesystem scan, SHA256 verify, dlopen, plugin init
+        let scanResult = await Task.detached(priority: .userInitiated) {
+            Self.performPluginScan(alreadyLoadedPaths: alreadyLoadedPaths)
+        }.value
+
+        // --- Everything below runs on main thread (registry & state mutations) ---
+
+        for (pluginId, error) in scanResult.verificationFailures {
             failedPlugins[pluginId] = FailedPlugin(pluginId: pluginId, error: error)
         }
 
-        let currentPaths = Set(urls.map { $0.path })
+        let currentPaths = Set(scanResult.allURLs.map { $0.path })
 
         // Unload removed plugins
         var remaining: [LoadedPlugin] = []
@@ -86,16 +104,13 @@ final class PluginManager {
         }
         plugins = remaining
 
-        // Load new plugins
+        // Register newly loaded plugins
         var loadedNew = false
-        for url in urls {
-            if loadedPluginPaths.contains(url.path) { continue }
-
-            let result = loadPluginWithError(at: url)
-            switch result {
+        for entry in scanResult.loadResults {
+            switch entry.result {
             case .success(let loaded):
                 plugins.append(loaded)
-                loadedPluginPaths.insert(url.path)
+                loadedPluginPaths.insert(entry.url.path)
                 loadedNew = true
 
                 // Register tools
@@ -112,29 +127,50 @@ final class PluginManager {
                 failedPlugins.removeValue(forKey: loaded.plugin.id)
 
             case .failure(let error):
-                let pluginId = Self.extractPluginId(from: url)
+                let pluginId = Self.extractPluginId(from: entry.url)
                 failedPlugins[pluginId] = FailedPlugin(pluginId: pluginId, error: error.message)
             }
         }
 
         if loadedNew || removedSomething || !failedPlugins.isEmpty {
-            Task { @MainActor in
-                await MCPServerManager.shared.notifyToolsListChanged()
-                NotificationCenter.default.post(name: .toolsListChanged, object: nil)
-            }
+            await MCPServerManager.shared.notifyToolsListChanged()
+            NotificationCenter.default.post(name: .toolsListChanged, object: nil)
         }
+    }
+
+    // MARK: - Background Scanning & Loading (nonisolated)
+
+    /// Performs the heavy plugin scanning work on a background thread.
+    /// Scans filesystem for dylibs, verifies checksums, loads plugins via dlopen.
+    nonisolated private static func performPluginScan(
+        alreadyLoadedPaths: Set<String>
+    ) -> PluginScanResult {
+        let (urls, verificationFailures) = toolsDirectoryURLsWithFailures()
+
+        var loadResults: [(url: URL, result: Result<LoadedPlugin, PluginLoadError>)] = []
+        for url in urls {
+            if alreadyLoadedPaths.contains(url.path) { continue }
+            loadResults.append((url: url, result: loadPluginWithError(at: url)))
+        }
+
+        return PluginScanResult(
+            allURLs: urls,
+            verificationFailures: verificationFailures,
+            loadResults: loadResults
+        )
     }
 
     /// Extracts the plugin ID from a dylib URL path
     /// Expected path: .../Tools/{pluginId}/{version}/plugin.dylib
-    private static func extractPluginId(from url: URL) -> String {
+    nonisolated private static func extractPluginId(from url: URL) -> String {
         // Go up from dylib -> version dir -> plugin dir
         let versionDir = url.deletingLastPathComponent()
         let pluginDir = versionDir.deletingLastPathComponent()
         return pluginDir.lastPathComponent
     }
 
-    private func loadPluginWithError(at url: URL) -> Result<LoadedPlugin, PluginLoadError> {
+    /// Loads a single plugin from a dylib URL via dlopen + C ABI handshake.
+    nonisolated private static func loadPluginWithError(at url: URL) -> Result<LoadedPlugin, PluginLoadError> {
         let flags = RTLD_NOW | RTLD_LOCAL
         guard let handle = dlopen(url.path, Int32(flags)) else {
             let errorMsg: String
@@ -203,26 +239,15 @@ final class PluginManager {
             return .failure(PluginLoadError(message: errorMsg))
         }
 
-        // Create ExternalPlugin wrapper
         let plugin = ExternalPlugin(handle: handle, api: api, ctx: ctx, manifest: manifest, path: url.path)
-
-        // Create Tools
-        var tools: [ExternalTool] = []
-        if let toolSpecs = manifest.capabilities.tools {
-            for spec in toolSpecs {
-                let tool = ExternalTool(plugin: plugin, spec: spec)
-                tools.append(tool)
-            }
-        }
-
-        // Load bundled SKILL.md files
-        let skills = Self.loadPluginSkills(from: url, pluginId: manifest.plugin_id)
+        let tools = (manifest.capabilities.tools ?? []).map { ExternalTool(plugin: plugin, spec: $0) }
+        let skills = loadPluginSkills(from: url, pluginId: manifest.plugin_id)
 
         return .success(LoadedPlugin(plugin: plugin, handle: handle, tools: tools, skills: skills))
     }
 
     /// Scans the plugin install directory for SKILL.md files and parses them into Skills
-    private static func loadPluginSkills(from dylibURL: URL, pluginId: String) -> [Skill] {
+    nonisolated private static func loadPluginSkills(from dylibURL: URL, pluginId: String) -> [Skill] {
         let versionDir = dylibURL.deletingLastPathComponent()
         let skillsDir = versionDir.appendingPathComponent("skills", isDirectory: true)
 
@@ -279,11 +304,11 @@ final class PluginManager {
     }
 
     // MARK: - Tools directory helpers
-    static func toolsRootDirectory() -> URL {
+    nonisolated static func toolsRootDirectory() -> URL {
         return ToolsPaths.toolsRootDirectory()
     }
 
-    static func ensureToolsDirectoryExists() {
+    nonisolated static func ensureToolsDirectoryExists() {
         let root = toolsRootDirectory()
         let fm = FileManager.default
         if !fm.fileExists(atPath: root.path) {
@@ -291,12 +316,12 @@ final class PluginManager {
         }
     }
 
-    static func toolsDirectoryURLs() -> [URL] {
+    nonisolated static func toolsDirectoryURLs() -> [URL] {
         return toolsDirectoryURLsWithFailures().urls
     }
 
     /// Returns dylib URLs to load and a dictionary of verification failures (pluginId -> error message)
-    static func toolsDirectoryURLsWithFailures() -> (urls: [URL], failures: [String: String]) {
+    nonisolated static func toolsDirectoryURLsWithFailures() -> (urls: [URL], failures: [String: String]) {
         let fm = FileManager.default
         let root = toolsRootDirectory()
         var dylibURLs: [URL] = []
@@ -368,7 +393,7 @@ final class PluginManager {
     }
 
     /// Verifies a dylib before loading, returning success or an error message
-    private static func verifyDylibBeforeLoadWithError(_ dylibURL: URL) -> Result<Void, PluginLoadError> {
+    nonisolated private static func verifyDylibBeforeLoadWithError(_ dylibURL: URL) -> Result<Void, PluginLoadError> {
         let fm = FileManager.default
         let receiptURL = dylibURL.deletingLastPathComponent().appendingPathComponent("receipt.json", isDirectory: false)
 
@@ -387,13 +412,8 @@ final class PluginManager {
             return .failure(PluginLoadError(message: "Failed to read plugin library file"))
         }
 
-        let sha: String
-        if #available(macOS 10.15, *) {
-            let digest = CryptoKit.SHA256.hash(data: dylibData)
-            sha = Data(digest).map { String(format: "%02x", $0) }.joined()
-        } else {
-            return .failure(PluginLoadError(message: "SHA256 verification requires macOS 10.15+"))
-        }
+        let digest = CryptoKit.SHA256.hash(data: dylibData)
+        let sha = Data(digest).map { String(format: "%02x", $0) }.joined()
 
         if sha.lowercased() != receipt.dylib_sha256.lowercased() {
             return .failure(

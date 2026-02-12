@@ -91,7 +91,7 @@ struct ToolsManagerView: View {
             ) {
                 Task {
                     isRefreshingInstalled = true
-                    PluginManager.shared.loadAll()
+                    await PluginManager.shared.loadAll()
                     reload()
                     isRefreshingInstalled = false
                 }
@@ -225,15 +225,15 @@ struct ToolsManagerView: View {
                     currentPlugins
                     .filter { $0.isInstalled }
                     .compactMap { plugin -> (plugin: PluginState, tools: [ToolRegistry.ToolEntry])? in
-                        let specTools = plugin.spec.capabilities?.tools ?? []
-                        let toolNames = Set(specTools.map { $0.name })
+                        let capabilityTools = plugin.capabilities?.tools ?? []
+                        let toolNames = Set(capabilityTools.map { $0.name })
                         var matchedTools = currentToolEntries.filter { toolNames.contains($0.name) }
 
                         if !query.isEmpty {
                             let pluginMatches = [
-                                plugin.spec.plugin_id.lowercased(),
-                                (plugin.spec.name ?? "").lowercased(),
-                                (plugin.spec.description ?? "").lowercased(),
+                                plugin.pluginId.lowercased(),
+                                (plugin.name ?? "").lowercased(),
+                                (plugin.pluginDescription ?? "").lowercased(),
                             ].contains { SearchService.fuzzyMatch(query: queryLower, in: $0) }
 
                             if !pluginMatches {
@@ -251,8 +251,7 @@ struct ToolsManagerView: View {
                         return (plugin, matchedTools)
                     }
                     .sorted {
-                        ($0.plugin.spec.name ?? $0.plugin.spec.plugin_id)
-                            < ($1.plugin.spec.name ?? $1.plugin.spec.plugin_id)
+                        $0.plugin.displayName < $1.plugin.displayName
                     }
 
                 // 3. Remote Provider Tools (for Available tab)
@@ -460,7 +459,7 @@ private struct ToolPluginCard: View {
 
                         VStack(alignment: .leading, spacing: 4) {
                             HStack(spacing: 8) {
-                                Text(plugin.spec.name ?? plugin.spec.plugin_id)
+                                Text(plugin.displayName)
                                     .font(.system(size: 15, weight: .semibold, design: .rounded))
                                     .foregroundColor(theme.primaryText)
 
@@ -478,7 +477,7 @@ private struct ToolPluginCard: View {
                                 }
                             }
 
-                            if let description = plugin.spec.description {
+                            if let description = plugin.pluginDescription {
                                 Text(description)
                                     .font(.system(size: 13))
                                     .foregroundColor(theme.secondaryText)

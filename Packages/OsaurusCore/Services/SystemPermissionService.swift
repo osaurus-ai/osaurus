@@ -448,7 +448,7 @@ final class SystemPermissionService: NSObject, ObservableObject, CLLocationManag
 
     /// Perform a full Calendar automation check (may launch Calendar.app)
     /// This is called only on explicit user request, not during periodic refresh
-    nonisolated private func performFullCalendarAutomationCheck() -> Bool {
+    nonisolated private func performFullCalendarAutomationCheck() async -> Bool {
         // Ensure Calendar is running using NSWorkspace
         let workspace = NSWorkspace.shared
         let calendarRunning = workspace.runningApplications.contains {
@@ -460,12 +460,10 @@ final class SystemPermissionService: NSObject, ObservableObject, CLLocationManag
                 let config = NSWorkspace.OpenConfiguration()
                 config.activates = false
 
-                let semaphore = DispatchSemaphore(value: 0)
-                workspace.openApplication(at: calendarURL, configuration: config) { _, _ in
-                    semaphore.signal()
-                }
-                _ = semaphore.wait(timeout: .now() + 5.0)
-                Thread.sleep(forTimeInterval: 2.0)
+                // Use async/await instead of blocking semaphore
+                _ = try? await workspace.openApplication(at: calendarURL, configuration: config)
+                // Give Calendar a moment to fully initialize
+                try? await Task.sleep(nanoseconds: 2_000_000_000)
             }
         }
 
@@ -509,11 +507,10 @@ final class SystemPermissionService: NSObject, ObservableObject, CLLocationManag
             }
 
             // Perform full check which will launch Calendar and trigger permission prompt
-            // running on main thread/queue is safer for TCC triggers
-            // We use a detached task to avoid blocking the main thread during the 5s timeout
+            // We use a detached task to avoid blocking the main actor
             let granted: Bool = await Task.detached { [weak self] in
                 guard let self = self else { return false }
-                return self.performFullCalendarAutomationCheck()
+                return await self.performFullCalendarAutomationCheck()
             }.value
 
             setPermission(.automationCalendar, isGranted: granted)
@@ -677,7 +674,7 @@ final class SystemPermissionService: NSObject, ObservableObject, CLLocationManag
     /// Debug function to test if Calendar AppleScript works from this process.
     /// This will launch Calendar.app if not running.
     /// Marked nonisolated so it can be called from background threads.
-    nonisolated static func debugTestCalendarAccess() -> String {
+    nonisolated static func debugTestCalendarAccess() async -> String {
         // Ensure Calendar is running using NSWorkspace
         let workspace = NSWorkspace.shared
         let calendarRunning = workspace.runningApplications.contains {
@@ -690,14 +687,10 @@ final class SystemPermissionService: NSObject, ObservableObject, CLLocationManag
             if let calendarURL = workspace.urlForApplication(withBundleIdentifier: "com.apple.iCal") {
                 let config = NSWorkspace.OpenConfiguration()
                 config.activates = false
-                let semaphore = DispatchSemaphore(value: 0)
-                workspace.openApplication(at: calendarURL, configuration: config) { _, _ in
-                    semaphore.signal()
-                }
-                // Wait up to 5 seconds for launch
-                _ = semaphore.wait(timeout: .now() + 5.0)
+                // Use async/await instead of blocking semaphore
+                _ = try? await workspace.openApplication(at: calendarURL, configuration: config)
                 // Give it a moment to fully initialize
-                Thread.sleep(forTimeInterval: 2.0)
+                try? await Task.sleep(nanoseconds: 2_000_000_000)
             } else {
                 diagnostics += " | Calendar.app not found"
             }

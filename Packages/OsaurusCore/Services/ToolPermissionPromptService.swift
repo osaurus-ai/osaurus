@@ -14,6 +14,7 @@ enum ToolPermissionPromptService {
     private static var permissionWindow: NSPanel?
     private static var localKeyMonitor: Any?
     private static var globalKeyMonitor: Any?
+    private static var closeObserver: NSObjectProtocol?
 
     static func requestApproval(
         toolName: String,
@@ -107,6 +108,18 @@ enum ToolPermissionPromptService {
 
             permissionWindow = panel
 
+            // Safety net: if the panel is closed externally (system, force-quit, etc.)
+            // without the user clicking a button, resume the continuation with deny.
+            // The observer runs on .main queue, matching the @MainActor isolation of this type.
+            nonisolated(unsafe) let onDenyForClose = onDeny
+            closeObserver = NotificationCenter.default.addObserver(
+                forName: NSWindow.willCloseNotification,
+                object: panel,
+                queue: .main
+            ) { _ in
+                onDenyForClose()
+            }
+
             // Handler for keyboard shortcuts
             let handleKeyEvent: (NSEvent) -> Bool = { event in
                 if event.keyCode == 36 {  // Enter key
@@ -149,6 +162,10 @@ enum ToolPermissionPromptService {
     }
 
     private static func dismissWindow() {
+        if let observer = closeObserver {
+            NotificationCenter.default.removeObserver(observer)
+            closeObserver = nil
+        }
         if let monitor = localKeyMonitor {
             NSEvent.removeMonitor(monitor)
             localKeyMonitor = nil

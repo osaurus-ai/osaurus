@@ -2,15 +2,15 @@
 //  BackgroundTaskToastView.swift
 //  osaurus
 //
-//  Toast view for background agent tasks with support for running,
-//  clarification, and completed states.
+//  Toast view for background tasks with support for running,
+//  clarification, and completed states. Supports both chat and agent modes.
 //
 
 import SwiftUI
 
 // MARK: - Background Task Toast View
 
-/// A toast notification for background agent tasks
+/// A toast notification for background tasks (chat and agent)
 struct BackgroundTaskToastView: View {
     @Environment(\.theme) private var theme
     @ObservedObject var taskState: BackgroundTaskState
@@ -41,7 +41,7 @@ struct BackgroundTaskToastView: View {
         .themedAlert(
             "Cancel Background Task?",
             isPresented: $showCancelConfirmation,
-            message: "The agent task is still running. Dismissing will cancel the task.",
+            message: "The task is still running. Dismissing will cancel it.",
             primaryButton: .destructive("Cancel Task") {
                 BackgroundTaskManager.shared.cancelTask(taskState.id)
                 onOpen()
@@ -117,11 +117,42 @@ struct BackgroundTaskToastView: View {
 
     // MARK: - Running State
 
+    @ViewBuilder
     private var runningContent: some View {
+        switch taskState.mode {
+        case .agent:
+            agentRunningContent
+        case .chat:
+            chatRunningContent
+        }
+    }
+
+    /// Agent running: rich content with step counter, progress, and activity feed
+    private var agentRunningContent: some View {
         VStack(alignment: .leading, spacing: 10) {
             runningHeaderRow
             runningProgressRow
             activityFeedView
+        }
+        .padding(.horizontal, 14)
+        .padding(.bottom, 12)
+        .contentShape(Rectangle())
+        .onTapGesture { onOpen() }
+    }
+
+    /// Chat running: simpler content with indeterminate progress and tool call activity
+    private var chatRunningContent: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text(taskState.currentStep ?? "Running...")
+                .font(.system(size: 11.5, weight: .medium))
+                .foregroundColor(theme.secondaryText)
+                .lineLimit(2)
+
+            IndeterminateShimmerProgress(color: accentColor, height: 3.5)
+
+            if hasActivityItems {
+                activityFeedView
+            }
         }
         .padding(.horizontal, 14)
         .padding(.bottom, 12)
@@ -398,9 +429,14 @@ struct BackgroundTaskToastView: View {
                 .foregroundColor(theme.secondaryText)
                 .lineLimit(2)
 
-            activityFeedView
+            if hasActivityItems {
+                activityFeedView
+            }
 
-            ToastActionButton(title: "View Details", accentColor: accentColor) {
+            ToastActionButton(
+                title: taskState.mode == .chat ? "View Chat" : "View Details",
+                accentColor: accentColor
+            ) {
                 onOpen()
                 BackgroundTaskManager.shared.finalizeTask(taskState.id)
             }
@@ -421,6 +457,7 @@ struct BackgroundTaskToastView: View {
                 Spacer()
 
                 Button {
+                    BackgroundTaskManager.shared.finalizeTask(taskState.id)
                     onDismiss()
                 } label: {
                     Text("Dismiss")
@@ -430,13 +467,21 @@ struct BackgroundTaskToastView: View {
                 .buttonStyle(.plain)
             }
 
-            activityFeedView
+            if hasActivityItems {
+                activityFeedView
+            }
         }
         .padding(.horizontal, 14)
         .padding(.bottom, 12)
     }
 
     // MARK: - Helpers
+
+    /// Whether there are meaningful activity items beyond the initial "Running in background" seed.
+    private var hasActivityItems: Bool {
+        taskState.activityFeed.count > 1
+            || (taskState.activityFeed.count == 1 && taskState.activityFeed.first?.kind != .info)
+    }
 
     private func handleDismiss() {
         if taskState.status.isActive {

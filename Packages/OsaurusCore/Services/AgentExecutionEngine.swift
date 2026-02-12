@@ -192,6 +192,7 @@ public actor AgentExecutionEngine {
         var totalToolCalls = 0
         var toolsUsed: [String] = []
         var consecutiveTextOnly = 0
+        var lastResponseContent = ""
 
         while iteration < maxIterations {
             iteration += 1
@@ -234,6 +235,8 @@ public actor AgentExecutionEngine {
             } catch let invocation as ServiceToolInvocation {
                 toolInvoked = invocation
             }
+
+            lastResponseContent = responseContent
 
             // Estimate token consumption for this iteration
             // Rough estimate: ~4 characters per token (varies by model/tokenizer)
@@ -364,7 +367,11 @@ public actor AgentExecutionEngine {
         }
 
         // Hit iteration limit
-        return .iterationLimitReached(totalIterations: iteration, totalToolCalls: totalToolCalls)
+        return .iterationLimitReached(
+            totalIterations: iteration,
+            totalToolCalls: totalToolCalls,
+            lastResponseContent: lastResponseContent
+        )
     }
 
     /// Parses generate_artifact tool result to extract the artifact

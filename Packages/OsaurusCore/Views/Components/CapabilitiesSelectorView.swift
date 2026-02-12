@@ -99,9 +99,9 @@ struct CapabilitiesSelectorView: View {
 
         // Single pass over installed plugins: build tool groups and detect compound plugins
         for plugin in PluginRepositoryService.shared.plugins where plugin.isInstalled {
-            let pluginId = plugin.spec.plugin_id
-            let displayName = plugin.spec.name ?? pluginId
-            let specToolNames = (plugin.spec.capabilities?.tools ?? []).map { $0.name }
+            let pluginId = plugin.pluginId
+            let displayName = plugin.displayName
+            let specToolNames = (plugin.capabilities?.tools ?? []).map { $0.name }
             let matched = tools.filter { specToolNames.contains($0.name) }
 
             if !matched.isEmpty {
@@ -735,7 +735,7 @@ private struct GroupHeader: View {
         .contentShape(Rectangle())
         .onTapGesture { onToggle() }
         .modifier(HoverRowStyle(isHovered: isHovered, showAccent: true))
-        .onHover { hovering in
+        .onPopoverHover { hovering in
             withAnimation(.easeOut(duration: 0.15)) { isHovered = hovering }
         }
         .animation(.easeOut(duration: 0.15), value: isExpanded)
@@ -802,7 +802,7 @@ private struct ToolRowItem: View {
                 ? "Available in Chat Mode only. Agent Mode includes equivalent built-in tools."
                 : ""
         )
-        .onHover { hovering in
+        .onPopoverHover { hovering in
             withAnimation(.easeOut(duration: 0.15)) { isHovered = hovering }
         }
     }
@@ -856,7 +856,7 @@ private struct SkillRowItem: View {
         .contentShape(Rectangle())
         .onTapGesture { onToggle() }
         .modifier(HoverRowStyle(isHovered: isHovered, showAccent: isEnabled))
-        .onHover { hovering in
+        .onPopoverHover { hovering in
             withAnimation(.easeOut(duration: 0.15)) { isHovered = hovering }
         }
     }
@@ -947,7 +947,7 @@ private struct CompoundPluginRow: View {
         .contentShape(Rectangle())
         .onTapGesture { onToggle() }
         .modifier(HoverRowStyle(isHovered: isHovered, showAccent: isActive))
-        .onHover { hovering in
+        .onPopoverHover { hovering in
             withAnimation(.easeOut(duration: 0.15)) { isHovered = hovering }
         }
     }
@@ -1127,7 +1127,7 @@ private struct CapabilityActionButton: View {
             )
         }
         .buttonStyle(.plain)
-        .onHover { hovering in
+        .onPopoverHover { hovering in
             withAnimation(.easeOut(duration: 0.15)) { isHovered = hovering }
         }
     }

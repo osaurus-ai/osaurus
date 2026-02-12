@@ -97,10 +97,12 @@ enum AgentFolderToolHelpers {
         }
     }
 
-    /// Run a git command and return the output
+    /// Run a git command and return the output.
+    /// A 30-second timeout prevents indefinite hangs (e.g. credential prompts, network issues).
     static func runGitCommand(
         arguments: [String],
-        in directory: URL
+        in directory: URL,
+        timeout: Int = 30
     ) async throws -> (output: String, exitCode: Int32) {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
@@ -110,6 +112,18 @@ enum AgentFolderToolHelpers {
         let pipe = Pipe()
         process.standardOutput = pipe
         process.standardError = pipe
+
+        // Set up timeout to terminate hung git processes
+        let timeoutTask = Task {
+            try await Task.sleep(nanoseconds: UInt64(timeout) * 1_000_000_000)
+            if process.isRunning {
+                process.terminate()
+            }
+        }
+
+        defer {
+            timeoutTask.cancel()
+        }
 
         try await runProcessAsync(process)
 

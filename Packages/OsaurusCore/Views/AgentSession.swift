@@ -98,6 +98,11 @@ public final class AgentSession: ObservableObject {
         return selectedIssueTurns
     }
 
+    /// Find a turn by ID in the currently visible turns (for copy, etc.)
+    func turn(withId id: UUID) -> ChatTurn? {
+        currentTurns.first(where: { $0.id == id })
+    }
+
     // MARK: - Turns Management
 
     /// Preserves live execution turns to selected turns (call before clearing activeIssue)
@@ -317,6 +322,7 @@ public final class AgentSession: ObservableObject {
 
     private var executionTask: Task<Void, Never>?
     private var persistDebounceTask: Task<Void, Never>?
+    nonisolated(unsafe) private var modelOptionsCancellable: AnyCancellable?
 
     /// The agent engine instance for this session (each session owns its own engine)
     private let engine: AgentEngine
@@ -340,20 +346,37 @@ public final class AgentSession: ObservableObject {
         self.windowState = windowState
         self.engine = AgentEngine()
 
-        // Initialize model options from window state's session
+        // Initialize model options from ChatSession and subscribe to keep in sync
+        // after provider changes (add/remove/enable/disable)
         if let windowState = windowState {
             self.modelOptions = windowState.session.modelOptions
             self.selectedModel = windowState.session.selectedModel
+
+            modelOptionsCancellable = windowState.session.$modelOptions
+                .dropFirst()
+                .receive(on: RunLoop.main)
+                .sink { [weak self] updatedOptions in
+                    guard let self = self else { return }
+                    self.modelOptions = updatedOptions
+                    if let selected = self.selectedModel,
+                        !updatedOptions.contains(where: { $0.id == selected })
+                    {
+                        self.selectedModel = updatedOptions.first?.id
+                    }
+                }
         }
 
         // Initialize database and issue manager
-        Task {
-            await initialize()
+        Task { [weak self] in
+            await self?.initialize()
         }
     }
 
     deinit {
+        print("[AgentSession] deinit – personaId: \(personaId)")
+        modelOptionsCancellable?.cancel()
         executionTask?.cancel()
+        persistDebounceTask?.cancel()
         let engineToCancel = engine
         Task { await engineToCancel.cancel() }
     }
@@ -430,7 +453,7 @@ public final class AgentSession: ObservableObject {
         cumulativeInputTokens = 0
         cumulativeOutputTokens = 0
 
-        // Refresh UI
+        // Refresh UI (windowState is nil for headless/background execution)
         await refreshIssues()
         windowState?.refreshAgentTasks()
 
@@ -554,7 +577,7 @@ public final class AgentSession: ObservableObject {
         let tools = ToolRegistry.shared.specs(withOverrides: config.toolOverrides)
         let skillCatalog = buildSkillCatalog()
 
-        executionTask = Task { [engine] in
+        executionTask = Task { [weak self, engine] in
             do {
                 let result =
                     if withRetry {
@@ -576,9 +599,9 @@ public final class AgentSession: ObservableObject {
                             skillCatalog: skillCatalog
                         )
                     }
-                await MainActor.run { self.handleExecutionResult(result) }
+                await MainActor.run { self?.handleExecutionResult(result) }
             } catch {
-                await MainActor.run { self.handleExecutionError(error, issue: issue) }
+                await MainActor.run { self?.handleExecutionError(error, issue: issue) }
             }
         }
     }
@@ -588,6 +611,7 @@ public final class AgentSession: ObservableObject {
         isExecuting = true
         activeIssue = issue
         streamingContent = ""
+        deltaProcessor?.finalize()
         deltaProcessor = nil
         currentStep = 0
         loopState = LoopState()
@@ -658,18 +682,18 @@ public final class AgentSession: ObservableObject {
             addArtifact(artifact, isFinal: true)
         }
 
-        Task {
-            await refreshIssues()
-            windowState?.refreshAgentTasks()
+        Task { [weak self] in
+            await self?.refreshIssues()
+            self?.windowState?.refreshAgentTasks()
             if result.success {
-                await executeNextIssue()
+                await self?.executeNextIssue()
 
                 // After all issues are done, auto-send queued message as follow-up
-                if !isExecuting, let queued = pendingQueuedMessage {
-                    pendingQueuedMessage = nil
-                    guard let task = currentTask else { return }
-                    streamingContent = ""
-                    try? await addIssueToTask(query: queued, task: task)
+                if let self, !self.isExecuting, let queued = self.pendingQueuedMessage {
+                    self.pendingQueuedMessage = nil
+                    guard let task = self.currentTask else { return }
+                    self.streamingContent = ""
+                    try? await self.addIssueToTask(query: queued, task: task)
                 }
             }
         }
@@ -685,7 +709,7 @@ public final class AgentSession: ObservableObject {
             failedIssue = issue
         }
 
-        Task { await refreshIssues() }
+        Task { [weak self] in await self?.refreshIssues() }
     }
 
     /// Stops the current execution
@@ -851,6 +875,13 @@ public final class AgentSession: ObservableObject {
             return
         }
 
+        // Already viewing this issue with loaded turns — nothing to do.
+        // Prevents refreshIssues() -> selectIssue() -> loadIssueHistory()
+        // from overwriting good in-memory turns after task completion.
+        if selectedIssueId == issue.id, !selectedIssueTurns.isEmpty {
+            return
+        }
+
         // Clear cache when switching issues for clean regeneration
         if selectedIssueId != issue.id {
             clearBlockCache()
@@ -951,7 +982,7 @@ public final class AgentSession: ObservableObject {
         let tools = ToolRegistry.shared.specs(withOverrides: config.toolOverrides)
         let skillCatalog = buildSkillCatalog()
 
-        executionTask = Task {
+        executionTask = Task { [weak self, engine] in
             do {
                 let result = try await engine.resume(
                     issueId: issue.id,
@@ -961,9 +992,9 @@ public final class AgentSession: ObservableObject {
                     toolOverrides: config.toolOverrides,
                     skillCatalog: skillCatalog
                 )
-                await MainActor.run { self.handleExecutionResult(result) }
+                await MainActor.run { self?.handleExecutionResult(result) }
             } catch {
-                await MainActor.run { self.handleExecutionError(error, issue: issue) }
+                await MainActor.run { self?.handleExecutionError(error, issue: issue) }
             }
         }
     }
@@ -1067,7 +1098,7 @@ extension AgentSession: AgentEngineDelegate {
         liveExecutionTurns.filter { $0.role == .assistant }.forEach { $0.consolidateContent() }
         emitActivity(.completedIssue(success: success))
         notifyIfSelected(issue.id)
-        Task { await refreshIssues() }
+        Task { [weak self] in await self?.refreshIssues() }
     }
 
     public func agentEngine(_ engine: AgentEngine, willRetryIssue issue: Issue, attempt: Int, afterDelay: TimeInterval)
@@ -1123,7 +1154,11 @@ extension AgentSession: AgentEngineDelegate {
         if let prev = liveExecutionTurns.last(where: { $0.role == .assistant }),
             !prev.contentIsEmpty || !(prev.toolCalls?.isEmpty ?? true)
         {
-            liveExecutionTurns.append(ChatTurn(role: .assistant, content: ""))
+            let newTurn = ChatTurn(role: .assistant, content: "")
+            liveExecutionTurns.append(newTurn)
+            // Reset the streaming processor to the new turn so deltas go to the
+            // correct turn instead of accumulating in the first one.
+            deltaProcessor?.reset(turn: newTurn)
         }
 
         notifyIfSelected(issue.id)
