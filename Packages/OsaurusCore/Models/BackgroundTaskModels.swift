@@ -117,19 +117,19 @@ public final class BackgroundTaskState: ObservableObject, Identifiable {
 
     /// The agent session (retained reference, keeps task executing).
     /// Present for agent mode; nil for chat mode.
-    let session: AgentSession?
+    private(set) var session: AgentSession?
 
     /// The chat session (retained reference for chat mode observation).
     /// Present for chat mode; nil for agent mode (use executionContext.chatSession instead).
-    let chatSession: ChatSession?
+    private(set) var chatSession: ChatSession?
 
     /// The execution context (retained for lazy window creation).
     /// Present for dispatched tasks; nil for tasks detached from an existing window.
-    let executionContext: ExecutionContext?
+    private(set) var executionContext: ExecutionContext?
 
     /// The window state (retained for window recreation when detached from an existing window).
     /// Present for window-detached tasks; nil for dispatched tasks.
-    let windowState: ChatWindowState?
+    private(set) var windowState: ChatWindowState?
 
     /// Current status of the background task
     @Published public var status: BackgroundTaskStatus
@@ -218,6 +218,18 @@ public final class BackgroundTaskState: ObservableObject, Identifiable {
         self.currentStep = currentStep
         self.pendingClarification = nil
         self.createdAt = Date()
+    }
+
+    deinit {
+        print("[BackgroundTaskState] deinit – id: \(id), mode: \(mode)")
+    }
+
+    /// Release retained session/window references so memory is freed immediately.
+    func releaseReferences() {
+        session = nil
+        chatSession = nil
+        executionContext = nil
+        windowState = nil
     }
 
     // MARK: - Activity Feed

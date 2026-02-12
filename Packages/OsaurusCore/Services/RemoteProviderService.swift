@@ -66,6 +66,12 @@ public actor RemoteProviderService: ToolCapableService {
     /// assume the provider has stalled and end the stream.
     private static let streamInactivityTimeout: TimeInterval = 60
 
+    /// Invalidate the URLSession to release its strong delegate reference.
+    /// Must be called before discarding this service instance to avoid leaking.
+    public func invalidateSession() {
+        session.invalidateAndCancel()
+    }
+
     /// Update available models (called when connection refreshes)
     public func updateModels(_ models: [String]) {
         self.availableModels = models
@@ -1499,11 +1505,7 @@ extension RemoteProviderService {
             request.setValue(value, forHTTPHeaderField: key)
         }
 
-        let config = URLSessionConfiguration.default
-        config.timeoutIntervalForRequest = min(provider.timeout, 30)
-        let session = URLSession(configuration: config)
-
-        let (data, response) = try await session.data(for: request)
+        let (data, response) = try await URLSession.shared.data(for: request)
 
         guard let httpResponse = response as? HTTPURLResponse else {
             throw RemoteProviderServiceError.invalidResponse
@@ -1527,10 +1529,6 @@ extension RemoteProviderService {
         headers: [String: String],
         timeout: TimeInterval = 30
     ) async throws -> [String] {
-        let config = URLSessionConfiguration.default
-        config.timeoutIntervalForRequest = timeout
-        let session = URLSession(configuration: config)
-
         var allModels: [String] = []
         var afterId: String? = nil
 
@@ -1555,7 +1553,7 @@ extension RemoteProviderService {
                 request.setValue(value, forHTTPHeaderField: key)
             }
 
-            let (data, response) = try await session.data(for: request)
+            let (data, response) = try await URLSession.shared.data(for: request)
 
             guard let httpResponse = response as? HTTPURLResponse else {
                 throw RemoteProviderServiceError.invalidResponse

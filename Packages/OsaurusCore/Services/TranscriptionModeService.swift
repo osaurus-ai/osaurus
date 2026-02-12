@@ -68,7 +68,6 @@ public final class TranscriptionModeService: ObservableObject {
 
         // Listen for configuration changes
         NotificationCenter.default.publisher(for: .transcriptionConfigurationChanged)
-            .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in
                 self?.loadConfiguration()
                 self?.registerHotkeyIfNeeded()
@@ -156,7 +155,6 @@ public final class TranscriptionModeService: ObservableObject {
 
         // Re-add configuration listener
         NotificationCenter.default.publisher(for: .transcriptionConfigurationChanged)
-            .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in
                 self?.loadConfiguration()
                 self?.registerHotkeyIfNeeded()
@@ -217,7 +215,6 @@ public final class TranscriptionModeService: ObservableObject {
     private func subscribeToTranscriptionUpdates() {
         // Subscribe to current transcription changes
         whisperService.$currentTranscription
-            .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in
                 self?.handleTranscriptionUpdate()
             }
@@ -225,7 +222,6 @@ public final class TranscriptionModeService: ObservableObject {
 
         // Subscribe to confirmed transcription changes
         whisperService.$confirmedTranscription
-            .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in
                 self?.handleTranscriptionUpdate()
             }
@@ -233,7 +229,6 @@ public final class TranscriptionModeService: ObservableObject {
 
         // Subscribe to audio level for overlay
         whisperService.$audioLevel
-            .receive(on: DispatchQueue.main)
             .sink { [weak self] level in
                 self?.overlayService.updateAudioLevel(level)
             }

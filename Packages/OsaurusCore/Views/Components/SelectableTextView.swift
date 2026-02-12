@@ -858,26 +858,30 @@ struct SelectableTextView: NSViewRepresentable {
 
     // MARK: - Font Caching
 
-    /// Thread-local font cache to avoid repeated font creation
-    private static var fontCache: [String: NSFont] = [:]
+    /// Bounded font cache — evicts automatically under memory pressure.
+    private static let fontCache: NSCache<NSString, NSFont> = {
+        let cache = NSCache<NSString, NSFont>()
+        cache.countLimit = 50
+        return cache
+    }()
 
     private func cachedFont(size: CGFloat, weight: NSFont.Weight, italic: Bool) -> NSFont {
-        let key = "\(theme.primaryFontName)-\(size)-\(weight.rawValue)-\(italic)"
-        if let cached = Self.fontCache[key] {
+        let key = "\(theme.primaryFontName)-\(size)-\(weight.rawValue)-\(italic)" as NSString
+        if let cached = Self.fontCache.object(forKey: key) {
             return cached
         }
         let font = nsFont(size: size, weight: weight, italic: italic)
-        Self.fontCache[key] = font
+        Self.fontCache.setObject(font, forKey: key)
         return font
     }
 
     private func cachedMonoFont(size: CGFloat, weight: NSFont.Weight) -> NSFont {
-        let key = "mono-\(theme.monoFontName)-\(size)-\(weight.rawValue)"
-        if let cached = Self.fontCache[key] {
+        let key = "mono-\(theme.monoFontName)-\(size)-\(weight.rawValue)" as NSString
+        if let cached = Self.fontCache.object(forKey: key) {
             return cached
         }
         let font = nsMonoFont(size: size, weight: weight)
-        Self.fontCache[key] = font
+        Self.fontCache.setObject(font, forKey: key)
         return font
     }
 
@@ -1012,6 +1016,18 @@ struct SelectableTextView: NSViewRepresentable {
 
     // MARK: - Syntax Highlighting
 
+    // MARK: - Regex Cache
+
+    private static let regexCache = NSCache<NSString, NSRegularExpression>()
+
+    private static func cachedRegex(_ pattern: String) -> NSRegularExpression? {
+        let key = pattern as NSString
+        if let cached = regexCache.object(forKey: key) { return cached }
+        guard let regex = try? NSRegularExpression(pattern: pattern) else { return nil }
+        regexCache.setObject(regex, forKey: key)
+        return regex
+    }
+
     /// Lightweight keyword-based syntax highlighter for code blocks.
     /// Handles comments, strings, numbers, and language-specific keywords.
     private func highlightSyntax(
@@ -1067,14 +1083,14 @@ struct SelectableTextView: NSViewRepresentable {
         }
 
         // 2. Strings (double and single quoted)
-        if let regex = try? NSRegularExpression(pattern: #"(\"[^\"\\]*(?:\\.[^\"\\]*)*\"|'[^'\\]*(?:\\.[^'\\]*)*')"#) {
+        if let regex = Self.cachedRegex(#"(\"[^\"\\]*(?:\\.[^\"\\]*)*\"|'[^'\\]*(?:\\.[^'\\]*)*')"#) {
             for match in regex.matches(in: line, range: fullRange) {
                 result.addAttribute(.foregroundColor, value: stringColor, range: match.range)
             }
         }
 
         // 3. Numbers (integer and float literals)
-        if let regex = try? NSRegularExpression(pattern: #"\b(\d+\.?\d*)\b"#) {
+        if let regex = Self.cachedRegex(#"\b(\d+\.?\d*)\b"#) {
             for match in regex.matches(in: line, range: fullRange) {
                 // Don't colorize if inside a string (check if already colored)
                 var existingColor: NSColor?
@@ -1093,7 +1109,7 @@ struct SelectableTextView: NSViewRepresentable {
         if !keywords.isEmpty {
             for keyword in keywords {
                 let pattern = "\\b\(NSRegularExpression.escapedPattern(for: keyword))\\b"
-                if let regex = try? NSRegularExpression(pattern: pattern) {
+                if let regex = Self.cachedRegex(pattern) {
                     for match in regex.matches(in: line, range: fullRange) {
                         // Only apply if not inside a string
                         var existingColor: NSColor?
@@ -1116,7 +1132,7 @@ struct SelectableTextView: NSViewRepresentable {
         }
 
         // 5. Type names (capitalized identifiers like String, Int, etc.)
-        if let regex = try? NSRegularExpression(pattern: #"\b([A-Z][a-zA-Z0-9_]*)\b"#) {
+        if let regex = Self.cachedRegex(#"\b([A-Z][a-zA-Z0-9_]*)\b"#) {
             for match in regex.matches(in: line, range: fullRange) {
                 var existingColor: NSColor?
                 if match.range.location < result.length {

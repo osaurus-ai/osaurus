@@ -848,13 +848,16 @@ struct ThemeEditorView: View {
         }
     }
 
+    private static let maxImageDimension: CGFloat = 2048
+
     private func handleImageImport(_ result: Result<[URL], Error>) {
         switch result {
         case .success(let urls):
             guard let url = urls.first else { return }
             do {
                 let data = try Data(contentsOf: url)
-                editingTheme.background.imageData = data.base64EncodedString()
+                let resizedData = Self.resizeImageData(data, maxDimension: Self.maxImageDimension) ?? data
+                editingTheme.background.imageData = resizedData.base64EncodedString()
                 editingTheme.background.type = .image
             } catch {
                 print("[Osaurus] Failed to import image: \(error)")
@@ -862,6 +865,36 @@ struct ThemeEditorView: View {
         case .failure(let error):
             print("[Osaurus] Image import failed: \(error)")
         }
+    }
+
+    /// Resize image data to fit within maxDimension x maxDimension, preserving aspect ratio.
+    /// Returns nil if the image is already within bounds or cannot be processed.
+    private static func resizeImageData(_ data: Data, maxDimension: CGFloat) -> Data? {
+        guard let image = NSImage(data: data) else { return nil }
+        let size = image.size
+        guard size.width > maxDimension || size.height > maxDimension else { return nil }
+
+        let scale = min(maxDimension / size.width, maxDimension / size.height)
+        let newSize = NSSize(width: round(size.width * scale), height: round(size.height * scale))
+
+        let newImage = NSImage(size: newSize)
+        newImage.lockFocus()
+        NSGraphicsContext.current?.imageInterpolation = .high
+        image.draw(
+            in: NSRect(origin: .zero, size: newSize),
+            from: NSRect(origin: .zero, size: size),
+            operation: .copy,
+            fraction: 1.0
+        )
+        newImage.unlockFocus()
+
+        guard let tiffData = newImage.tiffRepresentation,
+            let bitmapRep = NSBitmapImageRep(data: tiffData),
+            let pngData = bitmapRep.representation(using: .png, properties: [:])
+        else {
+            return nil
+        }
+        return pngData
     }
 }
 

@@ -108,6 +108,11 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
         statusItem = item
         updateStatusItemAndMenu()
 
+        // Start main thread watchdog in debug builds to detect UI hangs
+        #if DEBUG
+            MainThreadWatchdog.shared.start()
+        #endif
+
         // Initialize directory access early so security-scoped bookmark is active
         let _ = DirectoryPickerService.shared
 

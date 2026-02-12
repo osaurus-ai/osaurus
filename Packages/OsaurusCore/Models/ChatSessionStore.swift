@@ -11,7 +11,8 @@ import Foundation
 enum ChatSessionStore {
     // MARK: - Public API
 
-    /// Load all sessions sorted by updatedAt (most recent first)
+    /// Load all sessions sorted by updatedAt (most recent first).
+    /// Only metadata is loaded (turns are empty). Use `load(id:)` for full session data.
     static func loadAll() -> [ChatSessionData] {
         let directory = sessionsDirectory()
         OsaurusPaths.ensureExistsSilent(directory)
@@ -29,13 +30,32 @@ enum ChatSessionStore {
             .filter { $0.pathExtension == "json" }
             .compactMap { file -> ChatSessionData? in
                 do {
-                    return try decoder.decode(ChatSessionData.self, from: Data(contentsOf: file))
+                    let metadata = try decoder.decode(ChatSessionMetadata.self, from: Data(contentsOf: file))
+                    return ChatSessionData(
+                        id: metadata.id,
+                        title: metadata.title,
+                        createdAt: metadata.createdAt,
+                        updatedAt: metadata.updatedAt,
+                        selectedModel: metadata.selectedModel,
+                        turns: [],
+                        personaId: metadata.personaId
+                    )
                 } catch {
                     print("[Osaurus] Failed to load session from \(file.lastPathComponent): \(error)")
                     return nil
                 }
             }
             .sorted { $0.updatedAt > $1.updatedAt }
+    }
+
+    /// Lightweight struct that skips decoding turns (the heaviest field).
+    private struct ChatSessionMetadata: Decodable {
+        let id: UUID
+        let title: String
+        let createdAt: Date
+        let updatedAt: Date
+        let selectedModel: String?
+        let personaId: UUID?
     }
 
     /// Load a specific session by ID

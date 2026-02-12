@@ -120,7 +120,7 @@ public final class BackgroundTaskManager: ObservableObject {
 
     /// Remove a background task from management, cancelling all observers and timers.
     public func finalizeTask(_ backgroundId: UUID) {
-        guard backgroundTasks[backgroundId] != nil else { return }
+        guard let state = backgroundTasks[backgroundId] else { return }
 
         resumeCompletion(for: backgroundId, result: .cancelled)
         cancelAutoFinalize(backgroundId)
@@ -128,6 +128,8 @@ public final class BackgroundTaskManager: ObservableObject {
         taskObservers[backgroundId]?.forEach { $0.cancel() }
         taskObservers.removeValue(forKey: backgroundId)
         chatTurnCounts.removeValue(forKey: backgroundId)
+
+        state.releaseReferences()
 
         backgroundTasks.removeValue(forKey: backgroundId)
     }
@@ -230,17 +232,30 @@ public final class BackgroundTaskManager: ObservableObject {
 
     // MARK: - Completion Signaling
 
-    /// Await completion of a background task. Suspends until the task completes, is cancelled, or is finalized.
-    public func awaitCompletion(_ id: UUID) async -> DispatchResult {
+    /// Await completion of a background task. Suspends until the task completes, is cancelled, finalized, or times out.
+    /// A 30-minute timeout prevents indefinite hangs if a task never reaches a terminal state.
+    public func awaitCompletion(_ id: UUID, timeoutSeconds: UInt64 = 1800) async -> DispatchResult {
         if let state = backgroundTasks[id], !state.status.isActive {
             return resultFromState(state)
         }
         guard backgroundTasks[id] != nil else {
             return .failed("Background task not found")
         }
-        return await withCheckedContinuation { continuation in
+
+        // Start a watchdog that will resume the continuation with a timeout error
+        // if the task doesn't complete within the deadline.
+        let timeoutTask = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: timeoutSeconds * 1_000_000_000)
+            guard !Task.isCancelled else { return }
+            completionContinuations.removeValue(forKey: id)?.resume(returning: .failed("Background task timed out"))
+        }
+
+        let result = await withCheckedContinuation { continuation in
             completionContinuations[id] = continuation
         }
+
+        timeoutTask.cancel()
+        return result
     }
 
     // MARK: - Private: Dispatch Helpers
@@ -335,7 +350,6 @@ public final class BackgroundTaskManager: ObservableObject {
             session.$pendingClarification,
             session.$currentTask
         )
-        .receive(on: DispatchQueue.main)
         .sink { [weak self] isExecuting, clarification, task in
             self?.handleExecutionChange(
                 taskId: taskId,
@@ -352,7 +366,6 @@ public final class BackgroundTaskManager: ObservableObject {
             session.$issues,
             session.$loopState
         )
-        .receive(on: DispatchQueue.main)
         .sink { [weak self] issues, loopState in
             self?.handleProgressChange(
                 taskId: taskId,
@@ -364,7 +377,6 @@ public final class BackgroundTaskManager: ObservableObject {
         .store(in: &cancellables)
 
         session.$activeIssue
-            .receive(on: DispatchQueue.main)
             .sink { [weak self] issue in
                 self?.backgroundTasks[taskId]?.activeIssueId = issue?.id
             }
@@ -372,7 +384,6 @@ public final class BackgroundTaskManager: ObservableObject {
 
         // Activity events for the toast mini-log
         session.activityPublisher
-            .receive(on: DispatchQueue.main)
             .sink { [weak self] event in
                 guard let self, let state = self.backgroundTasks[taskId] else { return }
                 self.recordActivityEvent(event, into: state)
@@ -398,7 +409,6 @@ public final class BackgroundTaskManager: ObservableObject {
 
         // Streaming state drives running/completed transitions
         session.$isStreaming
-            .receive(on: DispatchQueue.main)
             .sink { [weak self] isStreaming in
                 self?.handleChatStreamingChange(taskId: taskId, isStreaming: isStreaming)
             }
@@ -410,7 +420,6 @@ public final class BackgroundTaskManager: ObservableObject {
         session.$turns
             .map(\.count)
             .removeDuplicates()
-            .receive(on: DispatchQueue.main)
             .sink { [weak self] newCount in
                 self?.handleChatTurnCountChange(taskId: taskId, newCount: newCount, session: session)
             }
@@ -528,6 +537,11 @@ public final class BackgroundTaskManager: ObservableObject {
             issues: issues,
             isExecuting: session.isExecuting
         )
+
+        // Retry completion check — isExecuting may fire before issues update
+        if !session.isExecuting && state.status.isActive {
+            checkAgentCompletion(state: state, session: session)
+        }
     }
 
     // MARK: - Private: Progress Calculation
