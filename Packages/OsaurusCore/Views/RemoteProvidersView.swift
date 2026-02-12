@@ -15,6 +15,7 @@ struct RemoteProvidersView: View {
     private var theme: ThemeProtocol { themeManager.currentTheme }
 
     @State private var showAddSheet = false
+    @State private var addSheetPreset: ProviderPreset?
     @State private var editingProvider: RemoteProvider?
     @State private var hasAppeared = false
 
@@ -47,8 +48,8 @@ struct RemoteProvidersView: View {
                 hasAppeared = true
             }
         }
-        .sheet(isPresented: $showAddSheet) {
-            RemoteProviderEditSheet(provider: nil) { provider, apiKey in
+        .sheet(isPresented: $showAddSheet, onDismiss: { addSheetPreset = nil }) {
+            RemoteProviderEditSheet(provider: nil, initialPreset: addSheetPreset) { provider, apiKey in
                 manager.addProvider(provider, apiKey: apiKey)
             }
         }
@@ -88,6 +89,11 @@ struct RemoteProvidersView: View {
 
     // MARK: - Empty State
 
+    private func presentAddSheet(for preset: ProviderPreset) {
+        addSheetPreset = preset
+        showAddSheet = true
+    }
+
     private var emptyStateView: some View {
         VStack(spacing: 24) {
             Spacer().frame(height: 20)
@@ -117,13 +123,12 @@ struct RemoteProvidersView: View {
             VStack(spacing: 8) {
                 ForEach(ProviderPreset.knownPresets) { preset in
                     EmptyStateProviderCard(preset: preset) {
-                        showAddSheet = true
+                        presentAddSheet(for: preset)
                     }
                 }
 
-                // Custom option
                 EmptyStateProviderCard(preset: .custom) {
-                    showAddSheet = true
+                    presentAddSheet(for: .custom)
                 }
             }
             .padding(.horizontal, 20)

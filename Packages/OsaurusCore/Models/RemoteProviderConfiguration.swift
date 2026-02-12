@@ -119,22 +119,23 @@ public struct RemoteProvider: Codable, Identifiable, Sendable, Equatable {
         self.secretHeaderKeys = secretHeaderKeys
     }
 
-    // Custom decoder to handle missing providerType for backward compatibility
+    /// Custom decoder – uses `decodeIfPresent` for backward compatibility with older config files.
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         id = try container.decode(UUID.self, forKey: .id)
         name = try container.decode(String.self, forKey: .name)
         host = try container.decode(String.self, forKey: .host)
-        providerProtocol = try container.decode(RemoteProviderProtocol.self, forKey: .providerProtocol)
+        providerProtocol =
+            try container.decodeIfPresent(RemoteProviderProtocol.self, forKey: .providerProtocol) ?? .https
         port = try container.decodeIfPresent(Int.self, forKey: .port)
-        basePath = try container.decode(String.self, forKey: .basePath)
-        customHeaders = try container.decode([String: String].self, forKey: .customHeaders)
-        authType = try container.decode(RemoteProviderAuthType.self, forKey: .authType)
+        basePath = try container.decodeIfPresent(String.self, forKey: .basePath) ?? "/v1"
+        customHeaders = try container.decodeIfPresent([String: String].self, forKey: .customHeaders) ?? [:]
+        authType = try container.decodeIfPresent(RemoteProviderAuthType.self, forKey: .authType) ?? .none
         providerType = try container.decodeIfPresent(RemoteProviderType.self, forKey: .providerType) ?? .openai
-        enabled = try container.decode(Bool.self, forKey: .enabled)
-        autoConnect = try container.decode(Bool.self, forKey: .autoConnect)
-        timeout = try container.decode(TimeInterval.self, forKey: .timeout)
-        secretHeaderKeys = try container.decode([String].self, forKey: .secretHeaderKeys)
+        enabled = try container.decodeIfPresent(Bool.self, forKey: .enabled) ?? true
+        autoConnect = try container.decodeIfPresent(Bool.self, forKey: .autoConnect) ?? true
+        timeout = try container.decodeIfPresent(TimeInterval.self, forKey: .timeout) ?? 60
+        secretHeaderKeys = try container.decodeIfPresent([String].self, forKey: .secretHeaderKeys) ?? []
     }
 
     /// Get the effective port (uses protocol default if not specified)
@@ -339,16 +340,22 @@ public struct RemoteProviderConfiguration: Codable, Sendable {
 public enum RemoteProviderConfigurationStore {
     public static func load() -> RemoteProviderConfiguration {
         let url = configurationFileURL()
-        if FileManager.default.fileExists(atPath: url.path) {
-            do {
-                return try JSONDecoder().decode(RemoteProviderConfiguration.self, from: Data(contentsOf: url))
-            } catch {
-                print("[Osaurus] Failed to load RemoteProviderConfiguration: \(error)")
-            }
+
+        guard FileManager.default.fileExists(atPath: url.path) else {
+            // File doesn't exist yet – create an empty default.
+            let defaults = RemoteProviderConfiguration()
+            save(defaults)
+            return defaults
         }
-        let defaults = RemoteProviderConfiguration()
-        save(defaults)
-        return defaults
+
+        do {
+            return try JSONDecoder().decode(RemoteProviderConfiguration.self, from: Data(contentsOf: url))
+        } catch {
+            // Return empty in-memory config but never overwrite the existing file;
+            // that would permanently destroy the user's providers.
+            print("[Osaurus] Failed to load RemoteProviderConfiguration: \(error)")
+            return RemoteProviderConfiguration()
+        }
     }
 
     public static func save(_ configuration: RemoteProviderConfiguration) {
