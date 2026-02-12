@@ -1331,7 +1331,6 @@ struct ChatView: View {
             idealHeight: session.turns.isEmpty ? 610 : 760,
             maxHeight: .infinity
         )
-        .compositingGroup()
         .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
         .ignoresSafeArea()
         .animation(theme.animationMedium(), value: session.turns.isEmpty)
@@ -1387,22 +1386,15 @@ struct ChatView: View {
                 )
                 .allowsHitTesting(false)
 
-                // Solid backing layer for text contrast - uses theme glass opacity to determine
-                // how solid the background should be (higher glass opacity = more solid backing)
-                // Minimum backing ensures readable text even with low theme opacity settings
+                // Combined solid backing + gradient overlay in a single layer for text contrast and depth
                 let baseBackingOpacity = theme.isDark ? 0.6 : 0.7
-                let themeBoost = theme.glassOpacityPrimary * 0.8  // Theme can add up to ~0.15 more
+                let themeBoost = theme.glassOpacityPrimary * 0.8
                 let backingOpacity = min(0.92, baseBackingOpacity + themeBoost)
 
-                backgroundShape
-                    .fill(theme.primaryBackground.opacity(backingOpacity))
-                    .allowsHitTesting(false)
-
-                // Gradient overlay for depth and polish - scales with theme settings
                 LinearGradient(
                     colors: [
-                        theme.primaryBackground.opacity(theme.glassOpacityPrimary * 1.5),
-                        theme.primaryBackground.opacity(theme.glassOpacitySecondary),
+                        theme.primaryBackground.opacity(backingOpacity + theme.glassOpacityPrimary * 1.5),
+                        theme.primaryBackground.opacity(backingOpacity + theme.glassOpacitySecondary),
                     ],
                     startPoint: .top,
                     endPoint: .bottom

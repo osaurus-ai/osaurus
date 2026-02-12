@@ -2,7 +2,7 @@
 //  ChatEmptyState.swift
 //  osaurus
 //
-//  Immersive empty state with ambient floating orbs, prominent persona selector,
+//  Immersive empty state with prominent persona selector
 //  and staggered entrance animations for a polished first impression.
 //
 
@@ -21,7 +21,6 @@ struct ChatEmptyState: View {
     let onOpenOnboarding: (() -> Void)?
 
     @State private var hasAppeared = false
-    @State private var isVisible = false
     @Environment(\.theme) private var theme
     @ObservedObject private var modelManager = ModelManager.shared
 
@@ -98,33 +97,24 @@ struct ChatEmptyState: View {
 
     var body: some View {
         GeometryReader { geometry in
-            ZStack {
-                // Ambient floating orbs background
-                AmbientOrbsView(isVisible: isVisible, hasAppeared: hasAppeared)
+            ScrollView(.vertical, showsIndicators: false) {
+                VStack(spacing: 0) {
+                    Spacer(minLength: 20)
 
-                // Main content
-                ScrollView(.vertical, showsIndicators: false) {
-                    VStack(spacing: 0) {
-                        Spacer(minLength: 20)
-
-                        if hasModels {
-                            readyState
-                        } else if isDownloading {
-                            downloadingState
-                        } else {
-                            noModelsState
-                        }
-
-                        Spacer(minLength: 20)
+                    if hasModels {
+                        readyState
+                    } else if isDownloading {
+                        downloadingState
+                    } else {
+                        noModelsState
                     }
-                    .frame(maxWidth: .infinity, minHeight: geometry.size.height)
+
+                    Spacer(minLength: 20)
                 }
+                .frame(maxWidth: .infinity, minHeight: geometry.size.height)
             }
         }
         .onAppear {
-            isVisible = true
-
-            // Defer expensive orb animations to avoid blocking window appearance
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
                 withAnimation(theme.animationSlow()) {
                     hasAppeared = true
@@ -132,8 +122,6 @@ struct ChatEmptyState: View {
             }
         }
         .onDisappear {
-            // Stop animations when view is hidden
-            isVisible = false
             hasAppeared = false
         }
     }
@@ -444,118 +432,6 @@ private struct GetStartedButton: View {
                 isHovered = hovering
             }
         }
-    }
-}
-
-// MARK: - Ambient Orbs Animation
-
-private struct AmbientOrb: Identifiable {
-    let id = UUID()
-    let baseSize: CGFloat
-    let xOffset: CGFloat  // Normalized -1 to 1
-    let yOffset: CGFloat  // Normalized -1 to 1
-    let phaseOffset: Double
-    let speed: Double
-    let opacity: Double
-    let blurRadius: CGFloat
-}
-
-struct AmbientOrbsView: View {
-    let isVisible: Bool
-    let hasAppeared: Bool
-
-    @Environment(\.theme) private var theme
-
-    // Reduced opacity to complement the hero orb without visual clutter
-    private let orbs: [AmbientOrb] = [
-        AmbientOrb(
-            baseSize: 180,
-            xOffset: -0.35,
-            yOffset: -0.25,
-            phaseOffset: 0,
-            speed: 0.4,
-            opacity: 0.12,
-            blurRadius: 60
-        ),
-        AmbientOrb(
-            baseSize: 140,
-            xOffset: 0.4,
-            yOffset: -0.15,
-            phaseOffset: 1.5,
-            speed: 0.55,
-            opacity: 0.10,
-            blurRadius: 55
-        ),
-        AmbientOrb(
-            baseSize: 160,
-            xOffset: 0.25,
-            yOffset: 0.35,
-            phaseOffset: 3.0,
-            speed: 0.45,
-            opacity: 0.08,
-            blurRadius: 60
-        ),
-        AmbientOrb(
-            baseSize: 100,
-            xOffset: -0.3,
-            yOffset: 0.4,
-            phaseOffset: 4.5,
-            speed: 0.6,
-            opacity: 0.10,
-            blurRadius: 50
-        ),
-    ]
-
-    var body: some View {
-        TimelineView(.animation(minimumInterval: 1.0 / 30.0)) { timeline in
-            GeometryReader { geometry in
-                let time = timeline.date.timeIntervalSinceReferenceDate
-
-                ZStack {
-                    ForEach(orbs) { orb in
-                        orbView(orb: orb, time: time, size: geometry.size)
-                    }
-                }
-            }
-        }
-        .opacity(hasAppeared ? 1 : 0)
-        .animation(.easeOut(duration: 1.0), value: hasAppeared)
-        .allowsHitTesting(false)
-    }
-
-    private func orbView(orb: AmbientOrb, time: TimeInterval, size: CGSize) -> some View {
-        let animatedTime = time * orb.speed + orb.phaseOffset
-
-        // Create gentle floating motion
-        let xDrift = sin(animatedTime * 0.8) * 20 + cos(animatedTime * 0.5) * 10
-        let yDrift = cos(animatedTime * 0.6) * 15 + sin(animatedTime * 0.4) * 8
-
-        // Subtle breathing/pulsing
-        let breathe = 1.0 + sin(animatedTime * 1.2) * 0.08
-
-        // Calculate position from normalized offset
-        let centerX = size.width / 2 + orb.xOffset * size.width * 0.4
-        let centerY = size.height / 2 + orb.yOffset * size.height * 0.35
-
-        return Circle()
-            .fill(
-                RadialGradient(
-                    colors: [
-                        theme.accentColor.opacity(orb.opacity * 2.0),
-                        theme.accentColor.opacity(orb.opacity),
-                        theme.accentColor.opacity(0),
-                    ],
-                    center: .center,
-                    startRadius: 0,
-                    endRadius: orb.baseSize * 0.7
-                )
-            )
-            .frame(width: orb.baseSize * breathe, height: orb.baseSize * breathe)
-            .blur(radius: orb.blurRadius)
-            .position(
-                x: centerX + xDrift,
-                y: centerY + yDrift
-            )
     }
 }
 
