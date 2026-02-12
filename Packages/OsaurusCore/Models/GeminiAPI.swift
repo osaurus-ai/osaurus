@@ -30,7 +30,7 @@ struct GeminiContent: Codable, Sendable {
     }
 }
 
-/// Gemini content part (polymorphic: text, functionCall, functionResponse)
+/// Gemini content part (polymorphic: text, functionCall, functionResponse, inlineData)
 ///
 /// `thoughtSignature` is encoded/decoded at this level (as a sibling of `functionCall`)
 /// per the Gemini API spec, then stored on `GeminiFunctionCall` for convenience.
@@ -38,9 +38,10 @@ enum GeminiPart: Codable, Sendable {
     case text(String)
     case functionCall(GeminiFunctionCall)
     case functionResponse(GeminiFunctionResponse)
+    case inlineData(GeminiInlineData)
 
     private enum CodingKeys: String, CodingKey {
-        case text, functionCall, functionResponse, thoughtSignature
+        case text, functionCall, functionResponse, thoughtSignature, inlineData
     }
 
     init(from decoder: Decoder) throws {
@@ -58,6 +59,8 @@ enum GeminiPart: Codable, Sendable {
             forKey: .functionResponse
         ) {
             self = .functionResponse(funcResponse)
+        } else if let data = try container.decodeIfPresent(GeminiInlineData.self, forKey: .inlineData) {
+            self = .inlineData(data)
         } else {
             // Default to empty text for unknown part types
             self = .text("")
@@ -75,6 +78,8 @@ enum GeminiPart: Codable, Sendable {
             try container.encodeIfPresent(funcCall.thoughtSignature, forKey: .thoughtSignature)
         case .functionResponse(let funcResponse):
             try container.encode(funcResponse, forKey: .functionResponse)
+        case .inlineData(let data):
+            try container.encode(data, forKey: .inlineData)
         }
     }
 }
@@ -122,6 +127,12 @@ struct GeminiFunctionResponse: Codable, Sendable {
     let response: [String: AnyCodableValue]
 }
 
+/// Gemini inline data (images, audio, etc.)
+struct GeminiInlineData: Codable, Sendable {
+    let mimeType: String
+    let data: String  // base64-encoded
+}
+
 // MARK: - Tool Definitions
 
 /// Gemini tool definition
@@ -163,6 +174,7 @@ struct GeminiGenerationConfig: Codable, Sendable {
     let topP: Double?
     let topK: Int?
     let stopSequences: [String]?
+    let responseModalities: [String]?
 }
 
 // MARK: - Response Models

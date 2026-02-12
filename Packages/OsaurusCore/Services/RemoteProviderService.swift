@@ -64,7 +64,8 @@ public actor RemoteProviderService: ToolCapableService {
 
     /// Inactivity timeout for streaming: if no bytes arrive within this interval,
     /// assume the provider has stalled and end the stream.
-    private static let streamInactivityTimeout: TimeInterval = 60
+    /// Uses the provider's configured timeout so slow models (e.g. image generation) don't get killed.
+    private var streamInactivityTimeout: TimeInterval { provider.timeout }
 
     /// Invalidate the URLSession to release its strong delegate reference.
     /// Must be called before discarding this service instance to avoid leaking.
@@ -231,7 +232,7 @@ public actor RemoteProviderService: ToolCapableService {
                     guard
                         let byte = try await Self.nextByte(
                             from: byteRef,
-                            timeout: Self.streamInactivityTimeout
+                            timeout: streamInactivityTimeout
                         )
                     else {
                         break
@@ -309,6 +310,12 @@ public actor RemoteProviderService: ToolCapableService {
                                                         args: argsString,
                                                         thoughtSignature: funcCall.thoughtSignature
                                                     )
+                                                case .inlineData(let imageData):
+                                                    if accumulatedToolCalls.isEmpty {
+                                                        let markdown =
+                                                            "![image](data:\(imageData.mimeType);base64,\(imageData.data))"
+                                                        continuation.yield(markdown)
+                                                    }
                                                 case .functionResponse:
                                                     break
                                                 }
@@ -565,6 +572,12 @@ public actor RemoteProviderService: ToolCapableService {
                                                     args: argsString,
                                                     thoughtSignature: funcCall.thoughtSignature
                                                 )
+                                            case .inlineData(let imageData):
+                                                if accumulatedToolCalls.isEmpty {
+                                                    let markdown =
+                                                        "![image](data:\(imageData.mimeType);base64,\(imageData.data))"
+                                                    continuation.yield(markdown)
+                                                }
                                             case .functionResponse:
                                                 break
                                             }
@@ -735,7 +748,7 @@ public actor RemoteProviderService: ToolCapableService {
                     guard
                         let byte = try await Self.nextByte(
                             from: byteRef,
-                            timeout: Self.streamInactivityTimeout
+                            timeout: streamInactivityTimeout
                         )
                     else {
                         break
@@ -834,6 +847,12 @@ public actor RemoteProviderService: ToolCapableService {
                                                     print(
                                                         "[Osaurus] Gemini tool call detected: index=\(idx), name=\(funcCall.name)"
                                                     )
+                                                case .inlineData(let imageData):
+                                                    if accumulatedToolCalls.isEmpty {
+                                                        let markdown =
+                                                            "![image](data:\(imageData.mimeType);base64,\(imageData.data))"
+                                                        continuation.yield(markdown)
+                                                    }
                                                 case .functionResponse:
                                                     break
                                                 }
@@ -1432,6 +1451,10 @@ public actor RemoteProviderService: ToolCapableService {
                                 geminiThoughtSignature: funcCall.thoughtSignature
                             )
                         )
+                    case .inlineData(let imageData):
+                        let markdown =
+                            "![image](data:\(imageData.mimeType);base64,\(imageData.data))"
+                        textContent += markdown
                     case .functionResponse:
                         break  // Not expected in responses from model
                     }
@@ -1652,8 +1675,34 @@ private struct RemoteChatRequest: Encodable {
 
             case "user":
                 flushFunctionResponses()
-                if let content = msg.content {
-                    geminiContents.append(GeminiContent(role: "user", parts: [.text(content)]))
+                var userParts: [GeminiPart] = []
+
+                // Add text content
+                if let content = msg.content, !content.isEmpty {
+                    userParts.append(.text(content))
+                }
+
+                // Add image content from contentParts
+                if let parts = msg.contentParts {
+                    for part in parts {
+                        if case .imageUrl(let url, _) = part {
+                            // Parse data URLs: "data:<mimeType>;base64,<data>"
+                            if url.hasPrefix("data:"),
+                                let semicolonIdx = url.firstIndex(of: ";"),
+                                let commaIdx = url.firstIndex(of: ",")
+                            {
+                                let mimeType = String(url[url.index(url.startIndex, offsetBy: 5) ..< semicolonIdx])
+                                let base64Data = String(url[url.index(after: commaIdx)...])
+                                userParts.append(
+                                    .inlineData(GeminiInlineData(mimeType: mimeType, data: base64Data))
+                                )
+                            }
+                        }
+                    }
+                }
+
+                if !userParts.isEmpty {
+                    geminiContents.append(GeminiContent(role: "user", parts: userParts))
                 }
 
             case "assistant":
@@ -1751,14 +1800,22 @@ private struct RemoteChatRequest: Encodable {
         }
 
         // Build generation config
+        let modelLower = model.lowercased()
+        let isImageCapable =
+            modelLower.contains("image") || modelLower.contains("nano-banana")
+        let responseModalities: [String]? = isImageCapable ? ["TEXT", "IMAGE"] : nil
+
         var generationConfig: GeminiGenerationConfig? = nil
-        if temperature != nil || max_completion_tokens != nil || top_p != nil || stop != nil {
+        if temperature != nil || max_completion_tokens != nil || top_p != nil || stop != nil
+            || responseModalities != nil
+        {
             generationConfig = GeminiGenerationConfig(
                 temperature: temperature.map { Double($0) },
                 maxOutputTokens: max_completion_tokens,
                 topP: top_p.map { Double($0) },
                 topK: nil,
-                stopSequences: stop
+                stopSequences: stop,
+                responseModalities: responseModalities
             )
         }
 
