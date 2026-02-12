@@ -246,7 +246,7 @@ public actor RemoteProviderService: ToolCapableService {
                     }
 
                     // Process complete lines
-                    while let newlineIndex = buffer.firstIndex(of: "\n") {
+                    while let newlineIndex = buffer.firstIndex(where: { $0.isNewline }) {
                         let line = String(buffer[..<newlineIndex])
                         buffer = String(buffer[buffer.index(after: newlineIndex)...])
 
@@ -314,15 +314,25 @@ public actor RemoteProviderService: ToolCapableService {
                                         }
 
                                         // Check for finish reason
-                                        if let finishReason = chunk.candidates?.first?.finishReason,
-                                            finishReason == "STOP" || finishReason == "MAX_TOKENS"
-                                        {
-                                            if let invocation = Self.makeToolInvocation(from: accumulatedToolCalls) {
-                                                continuation.finish(throwing: invocation)
+                                        if let finishReason = chunk.candidates?.first?.finishReason {
+                                            if finishReason == "SAFETY" {
+                                                continuation.finish(
+                                                    throwing: RemoteProviderServiceError.requestFailed(
+                                                        "Content blocked by safety settings."
+                                                    )
+                                                )
                                                 return
                                             }
-                                            continuation.finish()
-                                            return
+
+                                            if finishReason == "STOP" || finishReason == "MAX_TOKENS" {
+                                                if let invocation = Self.makeToolInvocation(from: accumulatedToolCalls)
+                                                {
+                                                    continuation.finish(throwing: invocation)
+                                                    return
+                                                }
+                                                continuation.finish()
+                                                return
+                                            }
                                         }
                                     } else if providerType == .anthropic {
                                         // Parse Anthropic SSE event
@@ -509,6 +519,133 @@ public actor RemoteProviderService: ToolCapableService {
                     return
                 }
 
+                // Handle leftover buffer content (e.g. if the stream ended without a newline)
+                if !buffer.trimmingCharacters(in: .whitespaces).isEmpty {
+                    let line = buffer
+                    if line.hasPrefix("data: ") {
+                        let dataContent = String(line.dropFirst(6))
+
+                        // Parse JSON chunk based on provider type
+                        if let jsonData = dataContent.data(using: .utf8) {
+                            do {
+                                if providerType == .gemini {
+                                    // Parse Gemini SSE event (each chunk is a GeminiGenerateContentResponse)
+                                    let chunk = try JSONDecoder().decode(
+                                        GeminiGenerateContentResponse.self,
+                                        from: jsonData
+                                    )
+
+                                    if let parts = chunk.candidates?.first?.content?.parts {
+                                        for part in parts {
+                                            switch part {
+                                            case .text(let text):
+                                                if accumulatedToolCalls.isEmpty, !text.isEmpty {
+                                                    var output = text
+                                                    for seq in stopSequences {
+                                                        if let range = output.range(of: seq) {
+                                                            output = String(output[..<range.lowerBound])
+                                                            continuation.yield(output)
+                                                            continuation.finish()
+                                                            return
+                                                        }
+                                                    }
+                                                    continuation.yield(output)
+                                                }
+                                            case .functionCall(let funcCall):
+                                                let idx = accumulatedToolCalls.count
+                                                let argsData = try? JSONSerialization.data(
+                                                    withJSONObject: (funcCall.args ?? [:]).mapValues { $0.value }
+                                                )
+                                                let argsString =
+                                                    argsData.flatMap { String(data: $0, encoding: .utf8) } ?? "{}"
+                                                accumulatedToolCalls[idx] = (
+                                                    id: "gemini-\(UUID().uuidString.prefix(8))",
+                                                    name: funcCall.name,
+                                                    args: argsString
+                                                )
+                                                print(
+                                                    "[Osaurus] Gemini tool call detected: index=\(idx), name=\(funcCall.name)"
+                                                )
+                                            case .functionResponse:
+                                                break
+                                            }
+                                        }
+                                    }
+                                }
+                            } catch {
+                                print(
+                                    "[Osaurus] Warning: Failed to parse leftover SSE chunk: \(error.localizedDescription)"
+                                )
+                            }
+                        }
+                    }
+                }
+
+                // Emit any accumulated tool call data at stream end
+                if let invocation = Self.makeToolInvocation(from: accumulatedToolCalls) {
+                    continuation.finish(throwing: invocation)
+                    return
+                }
+
+                // Handle leftover buffer content (e.g. if the stream ended without a newline)
+                if !buffer.trimmingCharacters(in: .whitespaces).isEmpty {
+                    let line = buffer
+                    if line.hasPrefix("data: ") {
+                        let dataContent = String(line.dropFirst(6))
+
+                        // Parse JSON chunk based on provider type
+                        if let jsonData = dataContent.data(using: .utf8) {
+                            do {
+                                if providerType == .gemini {
+                                    // Parse Gemini SSE event (each chunk is a GeminiGenerateContentResponse)
+                                    let chunk = try JSONDecoder().decode(
+                                        GeminiGenerateContentResponse.self,
+                                        from: jsonData
+                                    )
+
+                                    if let parts = chunk.candidates?.first?.content?.parts {
+                                        for part in parts {
+                                            switch part {
+                                            case .text(let text):
+                                                if accumulatedToolCalls.isEmpty, !text.isEmpty {
+                                                    var output = text
+                                                    for seq in stopSequences {
+                                                        if let range = output.range(of: seq) {
+                                                            output = String(output[..<range.lowerBound])
+                                                            continuation.yield(output)
+                                                            continuation.finish()
+                                                            return
+                                                        }
+                                                    }
+                                                    continuation.yield(output)
+                                                }
+                                            case .functionCall(let funcCall):
+                                                let idx = accumulatedToolCalls.count
+                                                let argsData = try? JSONSerialization.data(
+                                                    withJSONObject: (funcCall.args ?? [:]).mapValues { $0.value }
+                                                )
+                                                let argsString =
+                                                    argsData.flatMap { String(data: $0, encoding: .utf8) } ?? "{}"
+                                                accumulatedToolCalls[idx] = (
+                                                    id: "gemini-\(UUID().uuidString.prefix(8))",
+                                                    name: funcCall.name,
+                                                    args: argsString
+                                                )
+                                            case .functionResponse:
+                                                break
+                                            }
+                                        }
+                                    }
+                                }
+                            } catch {
+                                print(
+                                    "[Osaurus] Warning: Failed to parse leftover SSE chunk: \(error.localizedDescription)"
+                                )
+                            }
+                        }
+                    }
+                }
+
                 continuation.finish()
             } catch {
                 if Task.isCancelled {
@@ -674,7 +811,8 @@ public actor RemoteProviderService: ToolCapableService {
                         utf8Buffer.removeAll()
                     }
 
-                    while let newlineIndex = buffer.firstIndex(of: "\n") {
+                    // Process complete lines
+                    while let newlineIndex = buffer.firstIndex(where: { $0.isNewline }) {
                         let line = String(buffer[..<newlineIndex])
                         buffer = String(buffer[buffer.index(after: newlineIndex)...])
 
@@ -765,6 +903,16 @@ public actor RemoteProviderService: ToolCapableService {
                                         // Check for finish reason
                                         if let finishReason = chunk.candidates?.first?.finishReason {
                                             lastFinishReason = finishReason
+
+                                            if finishReason == "SAFETY" {
+                                                continuation.finish(
+                                                    throwing: RemoteProviderServiceError.requestFailed(
+                                                        "Content blocked by safety settings."
+                                                    )
+                                                )
+                                                return
+                                            }
+
                                             if finishReason == "STOP" || finishReason == "MAX_TOKENS" {
                                                 if let invocation = Self.makeToolInvocation(from: accumulatedToolCalls)
                                                 {
