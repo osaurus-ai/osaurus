@@ -3,23 +3,23 @@
   <channel>
     <title>Osaurus</title>
         <item>
-            <title>0.9.36</title>
-            <pubDate>Thu, 12 Feb 2026 16:13:13 +0000</pubDate>
+            <title>0.9.37</title>
+            <pubDate>Thu, 12 Feb 2026 18:28:12 +0000</pubDate>
             <sparkle:channel>release</sparkle:channel>
-            <sparkle:version>0.9.36</sparkle:version>
-            <sparkle:shortVersionString>0.9.36</sparkle:shortVersionString>
+            <sparkle:version>0.9.37</sparkle:version>
+            <sparkle:shortVersionString>0.9.37</sparkle:shortVersionString>
             <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
             <sparkle:releaseNotesLink>https://dinoki-ai.github.io/osaurus/Osaurus-latest.html</sparkle:releaseNotesLink>
-            <enclosure url="https://github.com/dinoki-ai/osaurus/releases/download/0.9.36/Osaurus-0.9.36.dmg" length="15295866" type="application/octet-stream" sparkle:edSignature="R3G8KRwORpECQ3HbCJlDZ1/+QEVse2nLliOmIZEnlDnmOe7lqKYZUCFONduq9ky9eiJKxwTufg48M1Ty2a+LBQ=="/>
+            <enclosure url="https://github.com/dinoki-ai/osaurus/releases/download/0.9.37/Osaurus-0.9.37.dmg" length="15297725" type="application/octet-stream" sparkle:edSignature="d5c+LERxsC2fsW3yezGqPQO6aKHYEa+nVVC6+GfdEchS1fj+KDw0+9uIoWE2Pmp48Iefo4eoIEbrY/E30f4RAw=="/>
         </item>
         <item>
             <title>0.0.9</title>
-            <pubDate>Thu, 12 Feb 2026 16:13:13 +0000</pubDate>
+            <pubDate>Thu, 12 Feb 2026 18:28:12 +0000</pubDate>
             <sparkle:channel>release</sparkle:channel>
             <sparkle:version>0.0.9</sparkle:version>
             <sparkle:shortVersionString>0.0.9</sparkle:shortVersionString>
             <sparkle:minimumSystemVersion>15.5</sparkle:minimumSystemVersion>
-            <enclosure url="https://github.com/dinoki-ai/osaurus/releases/download/0.9.36/Osaurus-0.0.9.dmg" length="7520848" type="application/octet-stream"/>
+            <enclosure url="https://github.com/dinoki-ai/osaurus/releases/download/0.9.37/Osaurus-0.0.9.dmg" length="7520848" type="application/octet-stream"/>
         </item>
   </channel>
 </rss>
