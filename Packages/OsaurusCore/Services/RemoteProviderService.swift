@@ -571,7 +571,7 @@ public actor RemoteProviderService: ToolCapableService {
                                                     id: "gemini-\(UUID().uuidString.prefix(8))",
                                                     name: funcCall.name,
                                                     args: argsString,
-                                                    thoughtSignature: nil
+                                                    thoughtSignature: funcCall.thoughtSignature
                                                 )
                                                 print(
                                                     "[Osaurus] Gemini tool call detected: index=\(idx), name=\(funcCall.name)"
@@ -640,7 +640,7 @@ public actor RemoteProviderService: ToolCapableService {
                                                     id: "gemini-\(UUID().uuidString.prefix(8))",
                                                     name: funcCall.name,
                                                     args: argsString,
-                                                    thoughtSignature: nil
+                                                    thoughtSignature: funcCall.thoughtSignature
                                                 )
                                             case .functionResponse:
                                                 break
@@ -781,7 +781,7 @@ public actor RemoteProviderService: ToolCapableService {
                 }
 
                 // Track accumulated tool calls by index (supports multiple parallel tool calls)
-                // Structure: [index: (id, name, arguments)]
+                // Structure: [index: (id, name, arguments, thoughtSignature)]
                 var accumulatedToolCalls: [Int: (id: String?, name: String?, args: String, thoughtSignature: String?)] =
                     [:]
 

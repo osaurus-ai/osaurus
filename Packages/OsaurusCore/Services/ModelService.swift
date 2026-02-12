@@ -22,7 +22,7 @@ struct ServiceToolInvocation: Error, Sendable {
     /// Optional tool call ID preserved from the streaming response (OpenAI format: "call_xxx")
     /// If nil, the caller should generate a new ID
     let toolCallId: String?
-    /// Optional thought signature for Gemini 3
+    /// Optional thought signature for Gemini thinking-mode models (e.g. Gemini 2.5)
     let geminiThoughtSignature: String?
 
     init(toolName: String, jsonArguments: String, toolCallId: String? = nil, geminiThoughtSignature: String? = nil) {
