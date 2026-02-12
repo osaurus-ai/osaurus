@@ -66,7 +66,8 @@ public actor AgentExecutionEngine {
             function: ToolCallFunction(
                 name: invocation.toolName,
                 arguments: invocation.jsonArguments
-            )
+            ),
+            geminiThoughtSignature: invocation.geminiThoughtSignature
         )
 
         return ToolCallResult(toolCall: toolCall, result: result)

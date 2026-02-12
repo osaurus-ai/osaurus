@@ -37,12 +37,14 @@ public enum RemoteProviderType: String, Codable, Sendable, CaseIterable {
     case openai = "openai"  // OpenAI-compatible API (default)
     case anthropic = "anthropic"  // Anthropic Messages API
     case openResponses = "openResponses"  // Open Responses API
+    case gemini = "gemini"  // Google Gemini API
 
     public var displayName: String {
         switch self {
         case .openai: return "OpenAI Compatible"
         case .anthropic: return "Anthropic"
         case .openResponses: return "Open Responses"
+        case .gemini: return "Google Gemini"
         }
     }
 
@@ -51,6 +53,7 @@ public enum RemoteProviderType: String, Codable, Sendable, CaseIterable {
         case .openai: return "/chat/completions"
         case .anthropic: return "/messages"
         case .openResponses: return "/responses"
+        case .gemini: return "/models"  // Actual URL is built dynamically: /models/{model}:generateContent
         }
     }
 
@@ -231,6 +234,8 @@ public struct RemoteProvider: Codable, Identifiable, Sendable, Equatable {
                 if headers["anthropic-version"] == nil {
                     headers["anthropic-version"] = "2023-06-01"
                 }
+            case .gemini:
+                headers["x-goog-api-key"] = apiKey
             case .openai, .openResponses:
                 headers["Authorization"] = "Bearer \(apiKey)"
             }

@@ -517,11 +517,14 @@ public struct ToolCall: Codable, Sendable {
     public let id: String
     public let type: String  // "function"
     public let function: ToolCallFunction
+    /// Optional thought signature for Gemini thinking-mode models (e.g. Gemini 2.5)
+    public let geminiThoughtSignature: String?
 
-    public init(id: String, type: String, function: ToolCallFunction) {
+    public init(id: String, type: String, function: ToolCallFunction, geminiThoughtSignature: String? = nil) {
         self.id = id
         self.type = type
         self.function = function
+        self.geminiThoughtSignature = geminiThoughtSignature
     }
 }
 

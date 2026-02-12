@@ -342,7 +342,8 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
                     let toolCall = ToolCall(
                         id: callId,
                         type: "function",
-                        function: ToolCallFunction(name: inv.toolName, arguments: inv.jsonArguments)
+                        function: ToolCallFunction(name: inv.toolName, arguments: inv.jsonArguments),
+                        geminiThoughtSignature: inv.geminiThoughtSignature
                     )
                     let assistant = ChatMessage(
                         role: "assistant",

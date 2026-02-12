@@ -976,7 +976,8 @@ final class ChatSession: ObservableObject {
                         let call = ToolCall(
                             id: callId,
                             type: "function",
-                            function: ToolCallFunction(name: inv.toolName, arguments: inv.jsonArguments)
+                            function: ToolCallFunction(name: inv.toolName, arguments: inv.jsonArguments),
+                            geminiThoughtSignature: inv.geminiThoughtSignature
                         )
                         if assistantTurn.toolCalls == nil { assistantTurn.toolCalls = [] }
                         assistantTurn.toolCalls!.append(call)

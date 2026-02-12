@@ -64,7 +64,8 @@ public actor RemoteProviderService: ToolCapableService {
 
     /// Inactivity timeout for streaming: if no bytes arrive within this interval,
     /// assume the provider has stalled and end the stream.
-    private static let streamInactivityTimeout: TimeInterval = 60
+    /// Uses the provider's configured timeout so slow models (e.g. image generation) don't get killed.
+    private var streamInactivityTimeout: TimeInterval { provider.timeout }
 
     /// Invalidate the URLSession to release its strong delegate reference.
     /// Must be called before discarding this service instance to avoid leaking.
@@ -213,7 +214,8 @@ public actor RemoteProviderService: ToolCapableService {
                 }
 
                 // Track accumulated tool calls by index (even in streamDeltas for robustness)
-                var accumulatedToolCalls: [Int: (id: String?, name: String?, args: String)] = [:]
+                var accumulatedToolCalls: [Int: (id: String?, name: String?, args: String, thoughtSignature: String?)] =
+                    [:]
 
                 // Parse SSE stream with UTF-8 decoding and inactivity timeout
                 var buffer = ""
@@ -230,7 +232,7 @@ public actor RemoteProviderService: ToolCapableService {
                     guard
                         let byte = try await Self.nextByte(
                             from: byteRef,
-                            timeout: Self.streamInactivityTimeout
+                            timeout: streamInactivityTimeout
                         )
                     else {
                         break
@@ -246,7 +248,7 @@ public actor RemoteProviderService: ToolCapableService {
                     }
 
                     // Process complete lines
-                    while let newlineIndex = buffer.firstIndex(of: "\n") {
+                    while let newlineIndex = buffer.firstIndex(where: { $0.isNewline }) {
                         let line = String(buffer[..<newlineIndex])
                         buffer = String(buffer[buffer.index(after: newlineIndex)...])
 
@@ -272,7 +274,76 @@ public actor RemoteProviderService: ToolCapableService {
                             // Parse JSON chunk based on provider type
                             if let jsonData = dataContent.data(using: .utf8) {
                                 do {
-                                    if providerType == .anthropic {
+                                    if providerType == .gemini {
+                                        // Parse Gemini SSE event (each chunk is a GeminiGenerateContentResponse)
+                                        let chunk = try JSONDecoder().decode(
+                                            GeminiGenerateContentResponse.self,
+                                            from: jsonData
+                                        )
+
+                                        if let parts = chunk.candidates?.first?.content?.parts {
+                                            for part in parts {
+                                                switch part {
+                                                case .text(let text):
+                                                    if accumulatedToolCalls.isEmpty, !text.isEmpty {
+                                                        var output = text
+                                                        for seq in stopSequences {
+                                                            if let range = output.range(of: seq) {
+                                                                output = String(output[..<range.lowerBound])
+                                                                continuation.yield(output)
+                                                                continuation.finish()
+                                                                return
+                                                            }
+                                                        }
+                                                        continuation.yield(output)
+                                                    }
+                                                case .functionCall(let funcCall):
+                                                    let idx = accumulatedToolCalls.count
+                                                    let argsData = try? JSONSerialization.data(
+                                                        withJSONObject: (funcCall.args ?? [:]).mapValues { $0.value }
+                                                    )
+                                                    let argsString =
+                                                        argsData.flatMap { String(data: $0, encoding: .utf8) } ?? "{}"
+                                                    accumulatedToolCalls[idx] = (
+                                                        id: "gemini-\(UUID().uuidString.prefix(8))",
+                                                        name: funcCall.name,
+                                                        args: argsString,
+                                                        thoughtSignature: funcCall.thoughtSignature
+                                                    )
+                                                case .inlineData(let imageData):
+                                                    if accumulatedToolCalls.isEmpty {
+                                                        let markdown =
+                                                            "![image](data:\(imageData.mimeType);base64,\(imageData.data))"
+                                                        continuation.yield(markdown)
+                                                    }
+                                                case .functionResponse:
+                                                    break
+                                                }
+                                            }
+                                        }
+
+                                        // Check for finish reason
+                                        if let finishReason = chunk.candidates?.first?.finishReason {
+                                            if finishReason == "SAFETY" {
+                                                continuation.finish(
+                                                    throwing: RemoteProviderServiceError.requestFailed(
+                                                        "Content blocked by safety settings."
+                                                    )
+                                                )
+                                                return
+                                            }
+
+                                            if finishReason == "STOP" || finishReason == "MAX_TOKENS" {
+                                                if let invocation = Self.makeToolInvocation(from: accumulatedToolCalls)
+                                                {
+                                                    continuation.finish(throwing: invocation)
+                                                    return
+                                                }
+                                                continuation.finish()
+                                                return
+                                            }
+                                        }
+                                    } else if providerType == .anthropic {
                                         // Parse Anthropic SSE event
                                         if let eventType = try? JSONDecoder().decode(
                                             AnthropicSSEEvent.self,
@@ -299,7 +370,9 @@ public actor RemoteProviderService: ToolCapableService {
                                                         // Accumulate tool call JSON
                                                         let idx = deltaEvent.index
                                                         var current =
-                                                            accumulatedToolCalls[idx] ?? (id: nil, name: nil, args: "")
+                                                            accumulatedToolCalls[idx] ?? (
+                                                                id: nil, name: nil, args: "", thoughtSignature: nil
+                                                            )
                                                         current.args += jsonDelta.partial_json
                                                         accumulatedToolCalls[idx] = current
                                                     }
@@ -312,7 +385,8 @@ public actor RemoteProviderService: ToolCapableService {
                                                     if case .toolUse(let toolBlock) = startEvent.content_block {
                                                         let idx = startEvent.index
                                                         accumulatedToolCalls[idx] = (
-                                                            id: toolBlock.id, name: toolBlock.name, args: ""
+                                                            id: toolBlock.id, name: toolBlock.name, args: "",
+                                                            thoughtSignature: nil
                                                         )
                                                     }
                                                 }
@@ -359,7 +433,8 @@ public actor RemoteProviderService: ToolCapableService {
                                                     if case .functionCall(let funcCall) = addedEvent.item {
                                                         let idx = addedEvent.output_index
                                                         accumulatedToolCalls[idx] = (
-                                                            id: funcCall.call_id, name: funcCall.name, args: ""
+                                                            id: funcCall.call_id, name: funcCall.name, args: "",
+                                                            thoughtSignature: nil
                                                         )
                                                     }
                                                 }
@@ -371,7 +446,8 @@ public actor RemoteProviderService: ToolCapableService {
                                                     let idx = deltaEvent.output_index
                                                     var current =
                                                         accumulatedToolCalls[idx] ?? (
-                                                            id: deltaEvent.call_id, name: nil, args: ""
+                                                            id: deltaEvent.call_id, name: nil, args: "",
+                                                            thoughtSignature: nil
                                                         )
                                                     current.args += deltaEvent.delta
                                                     accumulatedToolCalls[idx] = current
@@ -398,7 +474,9 @@ public actor RemoteProviderService: ToolCapableService {
                                             for toolCall in toolCalls {
                                                 let idx = toolCall.index ?? 0
                                                 var current =
-                                                    accumulatedToolCalls[idx] ?? (id: nil, name: nil, args: "")
+                                                    accumulatedToolCalls[idx] ?? (
+                                                        id: nil, name: nil, args: "", thoughtSignature: nil
+                                                    )
 
                                                 if let id = toolCall.id {
                                                     current.id = id
@@ -451,7 +529,69 @@ public actor RemoteProviderService: ToolCapableService {
                     }
                 }
 
-                // Emit any remaining accumulated tool calls at stream end
+                // Handle leftover buffer content (e.g. if the stream ended without a newline)
+                if !buffer.trimmingCharacters(in: .whitespaces).isEmpty {
+                    let line = buffer
+                    if line.hasPrefix("data: ") {
+                        let dataContent = String(line.dropFirst(6))
+
+                        if let jsonData = dataContent.data(using: .utf8) {
+                            do {
+                                if providerType == .gemini {
+                                    let chunk = try JSONDecoder().decode(
+                                        GeminiGenerateContentResponse.self,
+                                        from: jsonData
+                                    )
+
+                                    if let parts = chunk.candidates?.first?.content?.parts {
+                                        for part in parts {
+                                            switch part {
+                                            case .text(let text):
+                                                if accumulatedToolCalls.isEmpty, !text.isEmpty {
+                                                    var output = text
+                                                    for seq in stopSequences {
+                                                        if let range = output.range(of: seq) {
+                                                            output = String(output[..<range.lowerBound])
+                                                            continuation.yield(output)
+                                                            continuation.finish()
+                                                            return
+                                                        }
+                                                    }
+                                                    continuation.yield(output)
+                                                }
+                                            case .functionCall(let funcCall):
+                                                let idx = accumulatedToolCalls.count
+                                                let argsData = try? JSONSerialization.data(
+                                                    withJSONObject: (funcCall.args ?? [:]).mapValues { $0.value }
+                                                )
+                                                let argsString =
+                                                    argsData.flatMap { String(data: $0, encoding: .utf8) } ?? "{}"
+                                                accumulatedToolCalls[idx] = (
+                                                    id: "gemini-\(UUID().uuidString.prefix(8))",
+                                                    name: funcCall.name,
+                                                    args: argsString,
+                                                    thoughtSignature: funcCall.thoughtSignature
+                                                )
+                                            case .inlineData(let imageData):
+                                                if accumulatedToolCalls.isEmpty {
+                                                    let markdown =
+                                                        "![image](data:\(imageData.mimeType);base64,\(imageData.data))"
+                                                    continuation.yield(markdown)
+                                                }
+                                            case .functionResponse:
+                                                break
+                                            }
+                                        }
+                                    }
+                                }
+                            } catch {
+                                // Leftover buffer parse failures are non-fatal
+                            }
+                        }
+                    }
+                }
+
+                // Emit any accumulated tool calls at stream end
                 if let invocation = Self.makeToolInvocation(from: accumulatedToolCalls) {
                     continuation.finish(throwing: invocation)
                     return
@@ -519,7 +659,8 @@ public actor RemoteProviderService: ToolCapableService {
             throw ServiceToolInvocation(
                 toolName: firstCall.function.name,
                 jsonArguments: firstCall.function.arguments,
-                toolCallId: firstCall.id
+                toolCallId: firstCall.id,
+                geminiThoughtSignature: firstCall.geminiThoughtSignature
             )
         }
 
@@ -581,8 +722,8 @@ public actor RemoteProviderService: ToolCapableService {
                 }
 
                 // Track accumulated tool calls by index (supports multiple parallel tool calls)
-                // Structure: [index: (id, name, arguments)]
-                var accumulatedToolCalls: [Int: (id: String?, name: String?, args: String)] = [:]
+                var accumulatedToolCalls: [Int: (id: String?, name: String?, args: String, thoughtSignature: String?)] =
+                    [:]
 
                 // Track if we've seen any finish reason (for edge case handling)
                 var lastFinishReason: String?
@@ -607,7 +748,7 @@ public actor RemoteProviderService: ToolCapableService {
                     guard
                         let byte = try await Self.nextByte(
                             from: byteRef,
-                            timeout: Self.streamInactivityTimeout
+                            timeout: streamInactivityTimeout
                         )
                     else {
                         break
@@ -622,7 +763,8 @@ public actor RemoteProviderService: ToolCapableService {
                         utf8Buffer.removeAll()
                     }
 
-                    while let newlineIndex = buffer.firstIndex(of: "\n") {
+                    // Process complete lines
+                    while let newlineIndex = buffer.firstIndex(where: { $0.isNewline }) {
                         let line = String(buffer[..<newlineIndex])
                         buffer = String(buffer[buffer.index(after: newlineIndex)...])
 
@@ -664,7 +806,86 @@ public actor RemoteProviderService: ToolCapableService {
 
                             if let jsonData = dataContent.data(using: .utf8) {
                                 do {
-                                    if providerType == .anthropic {
+                                    if providerType == .gemini {
+                                        // Parse Gemini SSE event (each chunk is a GeminiGenerateContentResponse)
+                                        let chunk = try JSONDecoder().decode(
+                                            GeminiGenerateContentResponse.self,
+                                            from: jsonData
+                                        )
+
+                                        if let parts = chunk.candidates?.first?.content?.parts {
+                                            for part in parts {
+                                                switch part {
+                                                case .text(let text):
+                                                    if accumulatedToolCalls.isEmpty, !text.isEmpty {
+                                                        var output = text
+                                                        for seq in stopSequences {
+                                                            if let range = output.range(of: seq) {
+                                                                output = String(output[..<range.lowerBound])
+                                                                accumulatedContent += output
+                                                                continuation.yield(output)
+                                                                continuation.finish()
+                                                                return
+                                                            }
+                                                        }
+                                                        accumulatedContent += output
+                                                        continuation.yield(output)
+                                                    }
+                                                case .functionCall(let funcCall):
+                                                    let idx = accumulatedToolCalls.count
+                                                    let argsData = try? JSONSerialization.data(
+                                                        withJSONObject: (funcCall.args ?? [:]).mapValues { $0.value }
+                                                    )
+                                                    let argsString =
+                                                        argsData.flatMap { String(data: $0, encoding: .utf8) } ?? "{}"
+                                                    accumulatedToolCalls[idx] = (
+                                                        id: "gemini-\(UUID().uuidString.prefix(8))",
+                                                        name: funcCall.name,
+                                                        args: argsString,
+                                                        thoughtSignature: funcCall.thoughtSignature
+                                                    )
+                                                    print(
+                                                        "[Osaurus] Gemini tool call detected: index=\(idx), name=\(funcCall.name)"
+                                                    )
+                                                case .inlineData(let imageData):
+                                                    if accumulatedToolCalls.isEmpty {
+                                                        let markdown =
+                                                            "![image](data:\(imageData.mimeType);base64,\(imageData.data))"
+                                                        continuation.yield(markdown)
+                                                    }
+                                                case .functionResponse:
+                                                    break
+                                                }
+                                            }
+                                        }
+
+                                        // Check for finish reason
+                                        if let finishReason = chunk.candidates?.first?.finishReason {
+                                            lastFinishReason = finishReason
+
+                                            if finishReason == "SAFETY" {
+                                                continuation.finish(
+                                                    throwing: RemoteProviderServiceError.requestFailed(
+                                                        "Content blocked by safety settings."
+                                                    )
+                                                )
+                                                return
+                                            }
+
+                                            if finishReason == "STOP" || finishReason == "MAX_TOKENS" {
+                                                if let invocation = Self.makeToolInvocation(from: accumulatedToolCalls)
+                                                {
+                                                    print(
+                                                        "[Osaurus] Gemini stream ended: Emitting tool call '\(invocation.toolName)'"
+                                                    )
+                                                    continuation.finish(throwing: invocation)
+                                                    return
+                                                }
+                                                continuation.finish()
+                                                return
+                                            }
+                                        }
+                                    } else if providerType == .anthropic {
                                         // Parse Anthropic SSE event
                                         if let eventType = try? JSONDecoder().decode(
                                             AnthropicSSEEvent.self,
@@ -691,7 +912,9 @@ public actor RemoteProviderService: ToolCapableService {
                                                         // Accumulate tool call JSON
                                                         let idx = deltaEvent.index
                                                         var current =
-                                                            accumulatedToolCalls[idx] ?? (id: nil, name: nil, args: "")
+                                                            accumulatedToolCalls[idx] ?? (
+                                                                id: nil, name: nil, args: "", thoughtSignature: nil
+                                                            )
                                                         current.args += jsonDelta.partial_json
                                                         accumulatedToolCalls[idx] = current
                                                     }
@@ -704,7 +927,8 @@ public actor RemoteProviderService: ToolCapableService {
                                                     if case .toolUse(let toolBlock) = startEvent.content_block {
                                                         let idx = startEvent.index
                                                         accumulatedToolCalls[idx] = (
-                                                            id: toolBlock.id, name: toolBlock.name, args: ""
+                                                            id: toolBlock.id, name: toolBlock.name, args: "",
+                                                            thoughtSignature: nil
                                                         )
                                                         print(
                                                             "[Osaurus] Tool call detected: index=\(idx), name=\(toolBlock.name)"
@@ -766,7 +990,8 @@ public actor RemoteProviderService: ToolCapableService {
                                                     if case .functionCall(let funcCall) = addedEvent.item {
                                                         let idx = addedEvent.output_index
                                                         accumulatedToolCalls[idx] = (
-                                                            id: funcCall.call_id, name: funcCall.name, args: ""
+                                                            id: funcCall.call_id, name: funcCall.name, args: "",
+                                                            thoughtSignature: nil
                                                         )
                                                         print(
                                                             "[Osaurus] Open Responses tool call detected: index=\(idx), name=\(funcCall.name)"
@@ -781,7 +1006,8 @@ public actor RemoteProviderService: ToolCapableService {
                                                     let idx = deltaEvent.output_index
                                                     var current =
                                                         accumulatedToolCalls[idx] ?? (
-                                                            id: deltaEvent.call_id, name: nil, args: ""
+                                                            id: deltaEvent.call_id, name: nil, args: "",
+                                                            thoughtSignature: nil
                                                         )
                                                     current.args += deltaEvent.delta
                                                     accumulatedToolCalls[idx] = current
@@ -812,7 +1038,9 @@ public actor RemoteProviderService: ToolCapableService {
                                             for toolCall in toolCalls {
                                                 let idx = toolCall.index ?? 0
                                                 var current =
-                                                    accumulatedToolCalls[idx] ?? (id: nil, name: nil, args: "")
+                                                    accumulatedToolCalls[idx] ?? (
+                                                        id: nil, name: nil, args: "", thoughtSignature: nil
+                                                    )
 
                                                 // Preserve tool call ID from the stream
                                                 if let id = toolCall.id {
@@ -867,7 +1095,6 @@ public actor RemoteProviderService: ToolCapableService {
                                     print(
                                         "[Osaurus] Warning: Failed to parse SSE chunk: \(error.localizedDescription)"
                                     )
-                                    print("[Osaurus] Raw chunk data: \(dataContent.prefix(500))")
                                 }
                             }
                         }
@@ -958,7 +1185,7 @@ public actor RemoteProviderService: ToolCapableService {
     /// validating the JSON arguments. Returns `nil` if there are no accumulated calls
     /// or the first entry has no name.
     private static func makeToolInvocation(
-        from accumulated: [Int: (id: String?, name: String?, args: String)]
+        from accumulated: [Int: (id: String?, name: String?, args: String, thoughtSignature: String?)]
     ) -> ServiceToolInvocation? {
         guard let first = accumulated.sorted(by: { $0.key < $1.key }).first,
             let name = first.value.name
@@ -967,7 +1194,8 @@ public actor RemoteProviderService: ToolCapableService {
         return ServiceToolInvocation(
             toolName: name,
             jsonArguments: validateToolCallJSON(first.value.args),
-            toolCallId: first.value.id
+            toolCallId: first.value.id,
+            geminiThoughtSignature: first.value.thoughtSignature
         )
     }
 
@@ -1073,9 +1301,34 @@ public actor RemoteProviderService: ToolCapableService {
 
     /// Build a URLRequest for the chat completions endpoint
     private func buildURLRequest(for request: RemoteChatRequest) throws -> URLRequest {
-        let endpoint = provider.providerType.chatEndpoint
-        guard let url = provider.url(for: endpoint) else {
-            throw RemoteProviderServiceError.invalidURL
+        let url: URL
+
+        if provider.providerType == .gemini {
+            // Gemini uses model-in-URL pattern: /models/{model}:generateContent or :streamGenerateContent
+            let action = request.stream ? "streamGenerateContent" : "generateContent"
+            let endpoint = "/models/\(request.model):\(action)"
+            guard let geminiURL = provider.url(for: endpoint) else {
+                throw RemoteProviderServiceError.invalidURL
+            }
+            if request.stream {
+                // Append ?alt=sse for SSE-formatted streaming
+                guard var components = URLComponents(url: geminiURL, resolvingAgainstBaseURL: false) else {
+                    throw RemoteProviderServiceError.invalidURL
+                }
+                components.queryItems = (components.queryItems ?? []) + [URLQueryItem(name: "alt", value: "sse")]
+                guard let sseURL = components.url else {
+                    throw RemoteProviderServiceError.invalidURL
+                }
+                url = sseURL
+            } else {
+                url = geminiURL
+            }
+        } else {
+            let endpoint = provider.providerType.chatEndpoint
+            guard let standardURL = provider.url(for: endpoint) else {
+                throw RemoteProviderServiceError.invalidURL
+            }
+            url = standardURL
         }
 
         var urlRequest = URLRequest(url: url)
@@ -1108,14 +1361,11 @@ public actor RemoteProviderService: ToolCapableService {
         case .openResponses:
             let openResponsesRequest = request.toOpenResponsesRequest()
             bodyData = try encoder.encode(openResponsesRequest)
+        case .gemini:
+            let geminiRequest = request.toGeminiRequest()
+            bodyData = try encoder.encode(geminiRequest)
         }
         urlRequest.httpBody = bodyData
-
-        // Debug: print the request body
-        if let jsonString = String(data: bodyData, encoding: .utf8) {
-            print("[Osaurus] Remote Provider (\(provider.providerType.rawValue)) Request Body:\n\(jsonString)")
-        }
-
         return urlRequest
     }
 
@@ -1173,6 +1423,41 @@ public actor RemoteProviderService: ToolCapableService {
                             function: ToolCallFunction(name: funcCall.name, arguments: funcCall.arguments)
                         )
                     )
+                }
+            }
+
+            return (textContent.isEmpty ? nil : textContent, toolCalls.isEmpty ? nil : toolCalls)
+
+        case .gemini:
+            let response = try JSONDecoder().decode(GeminiGenerateContentResponse.self, from: data)
+            var textContent = ""
+            var toolCalls: [ToolCall] = []
+
+            if let parts = response.candidates?.first?.content?.parts {
+                for part in parts {
+                    switch part {
+                    case .text(let text):
+                        textContent += text
+                    case .functionCall(let funcCall):
+                        let argsData = try? JSONSerialization.data(
+                            withJSONObject: (funcCall.args ?? [:]).mapValues { $0.value }
+                        )
+                        let argsString = argsData.flatMap { String(data: $0, encoding: .utf8) } ?? "{}"
+                        toolCalls.append(
+                            ToolCall(
+                                id: "gemini-\(UUID().uuidString.prefix(8))",
+                                type: "function",
+                                function: ToolCallFunction(name: funcCall.name, arguments: argsString),
+                                geminiThoughtSignature: funcCall.thoughtSignature
+                            )
+                        )
+                    case .inlineData(let imageData):
+                        let markdown =
+                            "![image](data:\(imageData.mimeType);base64,\(imageData.data))"
+                        textContent += markdown
+                    case .functionResponse:
+                        break  // Not expected in responses from model
+                    }
                 }
             }
 
@@ -1364,6 +1649,186 @@ private struct RemoteChatRequest: Encodable {
         )
     }
 
+    /// Convert to Gemini GenerateContent API request format
+    func toGeminiRequest() -> GeminiGenerateContentRequest {
+        var geminiContents: [GeminiContent] = []
+        var systemInstruction: GeminiContent? = nil
+
+        // Collect consecutive function responses to batch them
+        var pendingFunctionResponses: [GeminiPart] = []
+
+        // Helper to flush pending function responses into a user content
+        func flushFunctionResponses() {
+            if !pendingFunctionResponses.isEmpty {
+                geminiContents.append(GeminiContent(role: "user", parts: pendingFunctionResponses))
+                pendingFunctionResponses = []
+            }
+        }
+
+        for msg in messages {
+            switch msg.role {
+            case "system":
+                // System messages become systemInstruction
+                if let content = msg.content {
+                    systemInstruction = GeminiContent(parts: [.text(content)])
+                }
+
+            case "user":
+                flushFunctionResponses()
+                var userParts: [GeminiPart] = []
+
+                // Add text content
+                if let content = msg.content, !content.isEmpty {
+                    userParts.append(.text(content))
+                }
+
+                // Add image content from contentParts
+                if let parts = msg.contentParts {
+                    for part in parts {
+                        if case .imageUrl(let url, _) = part {
+                            // Parse data URLs: "data:<mimeType>;base64,<data>"
+                            if url.hasPrefix("data:"),
+                                let semicolonIdx = url.firstIndex(of: ";"),
+                                let commaIdx = url.firstIndex(of: ",")
+                            {
+                                let mimeType = String(url[url.index(url.startIndex, offsetBy: 5) ..< semicolonIdx])
+                                let base64Data = String(url[url.index(after: commaIdx)...])
+                                userParts.append(
+                                    .inlineData(GeminiInlineData(mimeType: mimeType, data: base64Data))
+                                )
+                            }
+                        }
+                    }
+                }
+
+                if !userParts.isEmpty {
+                    geminiContents.append(GeminiContent(role: "user", parts: userParts))
+                }
+
+            case "assistant":
+                flushFunctionResponses()
+                var parts: [GeminiPart] = []
+
+                if let content = msg.content, !content.isEmpty {
+                    parts.append(.text(content))
+                }
+
+                if let toolCalls = msg.tool_calls {
+                    for toolCall in toolCalls {
+                        var args: [String: AnyCodableValue] = [:]
+                        if let argsData = toolCall.function.arguments.data(using: .utf8),
+                            let argsDict = try? JSONSerialization.jsonObject(with: argsData) as? [String: Any]
+                        {
+                            args = argsDict.mapValues { AnyCodableValue($0) }
+                        }
+                        parts.append(
+                            .functionCall(
+                                GeminiFunctionCall(
+                                    name: toolCall.function.name,
+                                    args: args,
+                                    thoughtSignature: toolCall.geminiThoughtSignature
+                                )
+                            )
+                        )
+                    }
+                }
+
+                if !parts.isEmpty {
+                    geminiContents.append(GeminiContent(role: "model", parts: parts))
+                }
+
+            case "tool":
+                // Tool results become functionResponse parts in a user message
+                if let content = msg.content {
+                    // Use the tool_call_id to find the function name, or use a placeholder
+                    let funcName = msg.tool_call_id ?? "function"
+                    var responseData: [String: AnyCodableValue] = [:]
+
+                    // Try to parse the content as JSON first
+                    if let data = content.data(using: .utf8),
+                        let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+                    {
+                        responseData = json.mapValues { AnyCodableValue($0) }
+                    } else {
+                        responseData["result"] = AnyCodableValue(content)
+                    }
+
+                    pendingFunctionResponses.append(
+                        .functionResponse(GeminiFunctionResponse(name: funcName, response: responseData))
+                    )
+                }
+
+            default:
+                flushFunctionResponses()
+                if let content = msg.content {
+                    geminiContents.append(GeminiContent(role: "user", parts: [.text(content)]))
+                }
+            }
+        }
+
+        // Flush any remaining function responses
+        flushFunctionResponses()
+
+        // Convert tools
+        var geminiTools: [GeminiTool]? = nil
+        if let tools = tools, !tools.isEmpty {
+            let declarations = tools.map { tool in
+                GeminiFunctionDeclaration(
+                    name: tool.function.name,
+                    description: tool.function.description,
+                    parameters: tool.function.parameters
+                )
+            }
+            geminiTools = [GeminiTool(functionDeclarations: declarations)]
+        }
+
+        // Convert tool choice
+        var toolConfig: GeminiToolConfig? = nil
+        if let choice = tool_choice {
+            let mode: String
+            switch choice {
+            case .auto:
+                mode = "AUTO"
+            case .none:
+                mode = "NONE"
+            case .function:
+                mode = "ANY"
+            }
+            toolConfig = GeminiToolConfig(
+                functionCallingConfig: GeminiFunctionCallingConfig(mode: mode)
+            )
+        }
+
+        // Build generation config
+        let modelLower = model.lowercased()
+        let isImageCapable =
+            modelLower.contains("image") || modelLower.contains("nano-banana")
+        let responseModalities: [String]? = isImageCapable ? ["TEXT", "IMAGE"] : nil
+
+        var generationConfig: GeminiGenerationConfig? = nil
+        if temperature != nil || max_completion_tokens != nil || top_p != nil || stop != nil
+            || responseModalities != nil
+        {
+            generationConfig = GeminiGenerationConfig(
+                temperature: temperature.map { Double($0) },
+                maxOutputTokens: max_completion_tokens,
+                topP: top_p.map { Double($0) },
+                topK: nil,
+                stopSequences: stop,
+                responseModalities: responseModalities
+            )
+        }
+
+        return GeminiGenerateContentRequest(
+            contents: geminiContents,
+            tools: geminiTools,
+            toolConfig: toolConfig,
+            systemInstruction: systemInstruction,
+            generationConfig: generationConfig,
+            safetySettings: nil
+        )
+    }
+
     /// Convert to Open Responses API request format
     func toOpenResponsesRequest() -> OpenResponsesRequest {
         var inputItems: [OpenResponsesInputItem] = []
@@ -1491,6 +1956,11 @@ extension RemoteProviderService {
             )
         }
 
+        // Gemini uses a different models response format
+        if provider.providerType == .gemini {
+            return try await fetchGeminiModels(from: provider)
+        }
+
         // OpenAI-compatible providers use /models endpoint
         guard let url = provider.url(for: "/models") else {
             throw RemoteProviderServiceError.invalidURL
@@ -1519,6 +1989,54 @@ extension RemoteProviderService {
         // Parse models response
         let modelsResponse = try JSONDecoder().decode(ModelsResponse.self, from: data)
         return modelsResponse.data.map { $0.id }
+    }
+
+    /// Fetch models from Gemini API (different response format from OpenAI)
+    private static func fetchGeminiModels(from provider: RemoteProvider) async throws -> [String] {
+        guard let url = provider.url(for: "/models") else {
+            throw RemoteProviderServiceError.invalidURL
+        }
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+
+        // Add provider headers (includes x-goog-api-key)
+        for (key, value) in provider.resolvedHeaders() {
+            request.setValue(value, forHTTPHeaderField: key)
+        }
+
+        let config = URLSessionConfiguration.default
+        config.timeoutIntervalForRequest = min(provider.timeout, 30)
+        let session = URLSession(configuration: config)
+
+        let (data, response) = try await session.data(for: request)
+
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw RemoteProviderServiceError.invalidResponse
+        }
+
+        if httpResponse.statusCode >= 400 {
+            let errorMessage = extractErrorMessage(from: data, statusCode: httpResponse.statusCode)
+            throw RemoteProviderServiceError.requestFailed(errorMessage)
+        }
+
+        // Parse Gemini models response
+        let modelsResponse = try JSONDecoder().decode(GeminiModelsResponse.self, from: data)
+
+        // Filter to models that support generateContent and strip "models/" prefix
+        let models = (modelsResponse.models ?? [])
+            .filter { model in
+                guard let methods = model.supportedGenerationMethods else { return false }
+                return methods.contains("generateContent")
+            }
+            .map { $0.modelId }
+
+        guard !models.isEmpty else {
+            throw RemoteProviderServiceError.noModelsAvailable
+        }
+
+        return models
     }
 
     /// Fetch all models from the Anthropic `/v1/models` endpoint, handling pagination.
