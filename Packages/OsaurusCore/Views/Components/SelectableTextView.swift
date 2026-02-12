@@ -858,26 +858,30 @@ struct SelectableTextView: NSViewRepresentable {
 
     // MARK: - Font Caching
 
-    /// Thread-local font cache to avoid repeated font creation
-    private static var fontCache: [String: NSFont] = [:]
+    /// Bounded font cache — evicts automatically under memory pressure.
+    private static let fontCache: NSCache<NSString, NSFont> = {
+        let cache = NSCache<NSString, NSFont>()
+        cache.countLimit = 50
+        return cache
+    }()
 
     private func cachedFont(size: CGFloat, weight: NSFont.Weight, italic: Bool) -> NSFont {
-        let key = "\(theme.primaryFontName)-\(size)-\(weight.rawValue)-\(italic)"
-        if let cached = Self.fontCache[key] {
+        let key = "\(theme.primaryFontName)-\(size)-\(weight.rawValue)-\(italic)" as NSString
+        if let cached = Self.fontCache.object(forKey: key) {
             return cached
         }
         let font = nsFont(size: size, weight: weight, italic: italic)
-        Self.fontCache[key] = font
+        Self.fontCache.setObject(font, forKey: key)
         return font
     }
 
     private func cachedMonoFont(size: CGFloat, weight: NSFont.Weight) -> NSFont {
-        let key = "mono-\(theme.monoFontName)-\(size)-\(weight.rawValue)"
-        if let cached = Self.fontCache[key] {
+        let key = "mono-\(theme.monoFontName)-\(size)-\(weight.rawValue)" as NSString
+        if let cached = Self.fontCache.object(forKey: key) {
             return cached
         }
         let font = nsMonoFont(size: size, weight: weight)
-        Self.fontCache[key] = font
+        Self.fontCache.setObject(font, forKey: key)
         return font
     }
 

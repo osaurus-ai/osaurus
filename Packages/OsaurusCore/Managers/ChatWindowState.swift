@@ -125,13 +125,16 @@ final class ChatWindowState: ObservableObject {
     }
 
     deinit {
+        print("[ChatWindowState] deinit – windowId: \(windowId)")
         notificationObservers.forEach { NotificationCenter.default.removeObserver($0) }
     }
 
-    /// Stops any running execution - call when window is closing
+    /// Stops any running execution and breaks reference chains — call when window is closing.
     func cleanup() {
         agentSession?.stopExecution()
         session.stop()
+        agentSession = nil
+        session.onSessionChanged = nil
     }
 
     // MARK: - API
@@ -275,11 +278,11 @@ final class ChatWindowState: ObservableObject {
     }
 
     private func decodeBackgroundImageAsync(themeConfig: CustomTheme?) {
-        Task {
+        Task { [weak self] in
             let image = await Task.detached(priority: .utility) {
                 themeConfig?.background.decodedImage()
             }.value
-            self.cachedBackgroundImage = image
+            self?.cachedBackgroundImage = image
         }
     }
 

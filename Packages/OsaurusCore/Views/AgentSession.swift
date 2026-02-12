@@ -367,14 +367,16 @@ public final class AgentSession: ObservableObject {
         }
 
         // Initialize database and issue manager
-        Task {
-            await initialize()
+        Task { [weak self] in
+            await self?.initialize()
         }
     }
 
     deinit {
+        print("[AgentSession] deinit – personaId: \(personaId)")
         modelOptionsCancellable?.cancel()
         executionTask?.cancel()
+        persistDebounceTask?.cancel()
         let engineToCancel = engine
         Task { await engineToCancel.cancel() }
     }
@@ -575,7 +577,7 @@ public final class AgentSession: ObservableObject {
         let tools = ToolRegistry.shared.specs(withOverrides: config.toolOverrides)
         let skillCatalog = buildSkillCatalog()
 
-        executionTask = Task { [engine] in
+        executionTask = Task { [weak self, engine] in
             do {
                 let result =
                     if withRetry {
@@ -597,9 +599,9 @@ public final class AgentSession: ObservableObject {
                             skillCatalog: skillCatalog
                         )
                     }
-                await MainActor.run { self.handleExecutionResult(result) }
+                await MainActor.run { self?.handleExecutionResult(result) }
             } catch {
-                await MainActor.run { self.handleExecutionError(error, issue: issue) }
+                await MainActor.run { self?.handleExecutionError(error, issue: issue) }
             }
         }
     }
@@ -609,6 +611,7 @@ public final class AgentSession: ObservableObject {
         isExecuting = true
         activeIssue = issue
         streamingContent = ""
+        deltaProcessor?.finalize()
         deltaProcessor = nil
         currentStep = 0
         loopState = LoopState()
@@ -679,18 +682,18 @@ public final class AgentSession: ObservableObject {
             addArtifact(artifact, isFinal: true)
         }
 
-        Task {
-            await refreshIssues()
-            windowState?.refreshAgentTasks()
+        Task { [weak self] in
+            await self?.refreshIssues()
+            self?.windowState?.refreshAgentTasks()
             if result.success {
-                await executeNextIssue()
+                await self?.executeNextIssue()
 
                 // After all issues are done, auto-send queued message as follow-up
-                if !isExecuting, let queued = pendingQueuedMessage {
-                    pendingQueuedMessage = nil
-                    guard let task = currentTask else { return }
-                    streamingContent = ""
-                    try? await addIssueToTask(query: queued, task: task)
+                if let self, !self.isExecuting, let queued = self.pendingQueuedMessage {
+                    self.pendingQueuedMessage = nil
+                    guard let task = self.currentTask else { return }
+                    self.streamingContent = ""
+                    try? await self.addIssueToTask(query: queued, task: task)
                 }
             }
         }
@@ -706,7 +709,7 @@ public final class AgentSession: ObservableObject {
             failedIssue = issue
         }
 
-        Task { await refreshIssues() }
+        Task { [weak self] in await self?.refreshIssues() }
     }
 
     /// Stops the current execution
@@ -979,7 +982,7 @@ public final class AgentSession: ObservableObject {
         let tools = ToolRegistry.shared.specs(withOverrides: config.toolOverrides)
         let skillCatalog = buildSkillCatalog()
 
-        executionTask = Task {
+        executionTask = Task { [weak self, engine] in
             do {
                 let result = try await engine.resume(
                     issueId: issue.id,
@@ -989,9 +992,9 @@ public final class AgentSession: ObservableObject {
                     toolOverrides: config.toolOverrides,
                     skillCatalog: skillCatalog
                 )
-                await MainActor.run { self.handleExecutionResult(result) }
+                await MainActor.run { self?.handleExecutionResult(result) }
             } catch {
-                await MainActor.run { self.handleExecutionError(error, issue: issue) }
+                await MainActor.run { self?.handleExecutionError(error, issue: issue) }
             }
         }
     }
@@ -1095,7 +1098,7 @@ extension AgentSession: AgentEngineDelegate {
         liveExecutionTurns.filter { $0.role == .assistant }.forEach { $0.consolidateContent() }
         emitActivity(.completedIssue(success: success))
         notifyIfSelected(issue.id)
-        Task { await refreshIssues() }
+        Task { [weak self] in await self?.refreshIssues() }
     }
 
     public func agentEngine(_ engine: AgentEngine, willRetryIssue issue: Issue, attempt: Int, afterDelay: TimeInterval)

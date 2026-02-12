@@ -201,8 +201,10 @@ public final class RemoteProviderManager: ObservableObject {
             state.discoveredModels = []
             providerStates[providerId] = state
 
-            // Clean up
-            services.removeValue(forKey: providerId)
+            // Clean up — invalidate URLSession before discarding
+            if let service = services.removeValue(forKey: providerId) {
+                Task { await service.invalidateSession() }
+            }
 
             print("[Osaurus] Remote Provider '\(provider.name)': Connection failed - \(error)")
 
@@ -213,8 +215,10 @@ public final class RemoteProviderManager: ObservableObject {
 
     /// Disconnect from a provider
     public func disconnect(providerId: UUID) {
-        // Clean up service
-        services.removeValue(forKey: providerId)
+        // Invalidate the URLSession before discarding the service to prevent leaking
+        if let service = services.removeValue(forKey: providerId) {
+            Task { await service.invalidateSession() }
+        }
 
         // Update state
         if var state = providerStates[providerId] {

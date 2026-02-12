@@ -220,6 +220,10 @@ public final class BackgroundTaskState: ObservableObject, Identifiable {
         self.createdAt = Date()
     }
 
+    deinit {
+        print("[BackgroundTaskState] deinit – id: \(id), mode: \(mode)")
+    }
+
     // MARK: - Activity Feed
 
     public func appendActivity(_ item: BackgroundTaskActivityItem) {

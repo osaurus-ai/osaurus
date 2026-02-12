@@ -61,6 +61,11 @@ public final class VADService: ObservableObject {
     private var lastDetectionTime: Date = .distantPast
     private let detectionCooldown: TimeInterval = 3.0  // Seconds before detecting same persona again
 
+    // Auto-restart management
+    private var restartTask: Task<Void, Never>?
+    private var restartAttempts: Int = 0
+    private let maxRestartAttempts: Int = 5
+
     // Accumulate transcription for better detection
     private var accumulatedTranscription: String = ""
     private var lastTranscriptionUpdate: Date = Date()
@@ -185,7 +190,6 @@ public final class VADService: ObservableObject {
     private func setupObservers() {
         // Observe configuration changes
         NotificationCenter.default.publisher(for: .voiceConfigurationChanged)
-            .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in
                 self?.loadConfiguration()
             }
@@ -193,14 +197,12 @@ public final class VADService: ObservableObject {
 
         // Observe transcription changes from WhisperKitService
         whisperService.$currentTranscription
-            .receive(on: DispatchQueue.main)
             .sink { [weak self] transcription in
                 self?.handleTranscription(transcription, isConfirmed: false)
             }
             .store(in: &cancellables)
 
         whisperService.$confirmedTranscription
-            .receive(on: DispatchQueue.main)
             .sink { [weak self] transcription in
                 self?.handleTranscription(transcription, isConfirmed: true)
             }
@@ -208,7 +210,6 @@ public final class VADService: ObservableObject {
 
         // Observe audio level
         whisperService.$audioLevel
-            .receive(on: DispatchQueue.main)
             .sink { [weak self] level in
                 guard let self = self, self.state == .listening else { return }
                 self.audioLevel = level
@@ -217,7 +218,6 @@ public final class VADService: ObservableObject {
 
         // Observe recording state - auto-restart if stopped unexpectedly
         whisperService.$isRecording
-            .receive(on: DispatchQueue.main)
             .dropFirst()  // Ignore initial value
             .sink { [weak self] isRecording in
                 guard let self = self else { return }
@@ -225,19 +225,34 @@ public final class VADService: ObservableObject {
                 // Update state based on recording
                 if isRecording && self.state == .starting {
                     self.state = .listening
+                    self.restartAttempts = 0  // Reset counter on successful start
                 }
 
                 // If VAD should be running but recording stopped, try to restart after a delay
                 if self.isEnabled && self.configuration.vadModeEnabled && !isRecording {
-                    print("[VADService] Recording stopped unexpectedly. Attempting restart in 1 second...")
+                    // Cancel any previous restart attempt
+                    self.restartTask?.cancel()
+
+                    guard self.restartAttempts < self.maxRestartAttempts else {
+                        print("[VADService] Max restart attempts (\(self.maxRestartAttempts)) reached, giving up.")
+                        self.state = .error("Recording stopped repeatedly")
+                        return
+                    }
+
+                    self.restartAttempts += 1
+                    print(
+                        "[VADService] Recording stopped unexpectedly. Attempting restart \(self.restartAttempts)/\(self.maxRestartAttempts) in 1 second..."
+                    )
 
                     // Force state to idle if we were listening, so restart logic works
                     if self.state == .listening {
                         self.state = .idle
                     }
 
-                    Task { @MainActor in
+                    self.restartTask = Task { @MainActor [weak self] in
                         try? await Task.sleep(nanoseconds: 1_000_000_000)
+                        guard !Task.isCancelled else { return }
+                        guard let self else { return }
                         // Only restart if still supposed to be enabled
                         if self.isEnabled && self.configuration.vadModeEnabled {
                             print("[VADService] Restarting VAD...")
