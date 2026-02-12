@@ -176,6 +176,9 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
         // Initialize ScheduleManager to start scheduled tasks
         _ = ScheduleManager.shared
 
+        // Initialize WatcherManager to start file system watchers
+        _ = WatcherManager.shared
+
         // Show onboarding for first-time users
         if OnboardingService.shared.shouldShowOnboarding {
             // Slight delay to let the app finish launching

@@ -14,6 +14,7 @@ struct osaurusApp: SwiftUI.App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
     @ObservedObject private var themeManager = ThemeManager.shared
     @ObservedObject private var scheduleManager = ScheduleManager.shared
+    @ObservedObject private var watcherManager = WatcherManager.shared
     @ObservedObject private var vadService = VADService.shared
     @ObservedObject private var whisperModelManager = WhisperModelManager.shared
 
@@ -73,6 +74,7 @@ private extension osaurusApp {
             Divider()
 
             schedulesMenu
+            watchersMenu
             personasMenu
         }
     }
@@ -206,6 +208,28 @@ private extension osaurusApp {
 
             Button("Manage Schedules…") {
                 openManagementTab(.schedules)
+            }
+        }
+    }
+
+    var watchersMenu: some View {
+        Menu("Watchers") {
+            ForEach(watcherManager.watchers) { watcher in
+                Button(watcher.name) {
+                    openManagementTab(.watchers)
+                }
+            }
+
+            if !watcherManager.watchers.isEmpty {
+                Divider()
+            }
+
+            Button("New Watcher…") {
+                openManagementTab(.watchers)
+            }
+
+            Button("Manage Watchers…") {
+                openManagementTab(.watchers)
             }
         }
     }
