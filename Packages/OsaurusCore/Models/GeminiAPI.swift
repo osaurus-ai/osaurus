@@ -17,10 +17,6 @@ struct GeminiGenerateContentRequest: Codable, Sendable {
     let systemInstruction: GeminiContent?
     let generationConfig: GeminiGenerationConfig?
     let safetySettings: [GeminiSafetySetting]?
-
-    private enum CodingKeys: String, CodingKey {
-        case contents, tools, toolConfig, systemInstruction, generationConfig, safetySettings
-    }
 }
 
 /// Gemini content object (used for messages and system instructions)
@@ -131,10 +127,6 @@ struct GeminiFunctionResponse: Codable, Sendable {
 /// Gemini tool definition
 struct GeminiTool: Codable, Sendable {
     let functionDeclarations: [GeminiFunctionDeclaration]?
-
-    private enum CodingKeys: String, CodingKey {
-        case functionDeclarations
-    }
 }
 
 /// Gemini function declaration
@@ -147,19 +139,11 @@ struct GeminiFunctionDeclaration: Codable, Sendable {
 /// Gemini tool configuration
 struct GeminiToolConfig: Codable, Sendable {
     let functionCallingConfig: GeminiFunctionCallingConfig?
-
-    private enum CodingKeys: String, CodingKey {
-        case functionCallingConfig
-    }
 }
 
 /// Gemini function calling configuration
 struct GeminiFunctionCallingConfig: Codable, Sendable {
     let mode: String  // "AUTO", "NONE", "ANY"
-
-    private enum CodingKeys: String, CodingKey {
-        case mode
-    }
 }
 
 // MARK: - Safety Settings
@@ -179,10 +163,6 @@ struct GeminiGenerationConfig: Codable, Sendable {
     let topP: Double?
     let topK: Int?
     let stopSequences: [String]?
-
-    private enum CodingKeys: String, CodingKey {
-        case temperature, maxOutputTokens, topP, topK, stopSequences
-    }
 }
 
 // MARK: - Response Models
@@ -191,10 +171,6 @@ struct GeminiGenerationConfig: Codable, Sendable {
 struct GeminiGenerateContentResponse: Codable, Sendable {
     let candidates: [GeminiCandidate]?
     let usageMetadata: GeminiUsageMetadata?
-
-    private enum CodingKeys: String, CodingKey {
-        case candidates, usageMetadata
-    }
 }
 
 /// Gemini response candidate
@@ -202,10 +178,6 @@ struct GeminiCandidate: Codable, Sendable {
     let content: GeminiContent?
     let finishReason: String?
     let index: Int?
-
-    private enum CodingKeys: String, CodingKey {
-        case content, finishReason, index
-    }
 }
 
 /// Gemini token usage metadata
@@ -233,13 +205,7 @@ struct GeminiErrorResponse: Codable, Sendable {
 /// Gemini models list response (GET /models)
 struct GeminiModelsResponse: Codable, Sendable {
     let models: [GeminiModelInfo]?
-
-    /// Support for nextPageToken if paginated
     let nextPageToken: String?
-
-    private enum CodingKeys: String, CodingKey {
-        case models, nextPageToken
-    }
 }
 
 /// Gemini model info from list endpoint
@@ -248,10 +214,6 @@ struct GeminiModelInfo: Codable, Sendable {
     let displayName: String?
     let description: String?
     let supportedGenerationMethods: [String]?
-
-    private enum CodingKeys: String, CodingKey {
-        case name, displayName, description, supportedGenerationMethods
-    }
 
     /// Extract the short model ID (strips "models/" prefix)
     var modelId: String {

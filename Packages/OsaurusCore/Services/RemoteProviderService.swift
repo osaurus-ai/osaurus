@@ -522,92 +522,15 @@ public actor RemoteProviderService: ToolCapableService {
                     }
                 }
 
-                // Emit any remaining accumulated tool calls at stream end
-                if let invocation = Self.makeToolInvocation(from: accumulatedToolCalls) {
-                    continuation.finish(throwing: invocation)
-                    return
-                }
-
                 // Handle leftover buffer content (e.g. if the stream ended without a newline)
                 if !buffer.trimmingCharacters(in: .whitespaces).isEmpty {
                     let line = buffer
                     if line.hasPrefix("data: ") {
                         let dataContent = String(line.dropFirst(6))
 
-                        // Parse JSON chunk based on provider type
                         if let jsonData = dataContent.data(using: .utf8) {
                             do {
                                 if providerType == .gemini {
-                                    // Parse Gemini SSE event (each chunk is a GeminiGenerateContentResponse)
-                                    let chunk = try JSONDecoder().decode(
-                                        GeminiGenerateContentResponse.self,
-                                        from: jsonData
-                                    )
-
-                                    if let parts = chunk.candidates?.first?.content?.parts {
-                                        for part in parts {
-                                            switch part {
-                                            case .text(let text):
-                                                if accumulatedToolCalls.isEmpty, !text.isEmpty {
-                                                    var output = text
-                                                    for seq in stopSequences {
-                                                        if let range = output.range(of: seq) {
-                                                            output = String(output[..<range.lowerBound])
-                                                            continuation.yield(output)
-                                                            continuation.finish()
-                                                            return
-                                                        }
-                                                    }
-                                                    continuation.yield(output)
-                                                }
-                                            case .functionCall(let funcCall):
-                                                let idx = accumulatedToolCalls.count
-                                                let argsData = try? JSONSerialization.data(
-                                                    withJSONObject: (funcCall.args ?? [:]).mapValues { $0.value }
-                                                )
-                                                let argsString =
-                                                    argsData.flatMap { String(data: $0, encoding: .utf8) } ?? "{}"
-                                                accumulatedToolCalls[idx] = (
-                                                    id: "gemini-\(UUID().uuidString.prefix(8))",
-                                                    name: funcCall.name,
-                                                    args: argsString,
-                                                    thoughtSignature: funcCall.thoughtSignature
-                                                )
-                                                print(
-                                                    "[Osaurus] Gemini tool call detected: index=\(idx), name=\(funcCall.name)"
-                                                )
-                                            case .functionResponse:
-                                                break
-                                            }
-                                        }
-                                    }
-                                }
-                            } catch {
-                                print(
-                                    "[Osaurus] Warning: Failed to parse leftover SSE chunk: \(error.localizedDescription)"
-                                )
-                            }
-                        }
-                    }
-                }
-
-                // Emit any accumulated tool call data at stream end
-                if let invocation = Self.makeToolInvocation(from: accumulatedToolCalls) {
-                    continuation.finish(throwing: invocation)
-                    return
-                }
-
-                // Handle leftover buffer content (e.g. if the stream ended without a newline)
-                if !buffer.trimmingCharacters(in: .whitespaces).isEmpty {
-                    let line = buffer
-                    if line.hasPrefix("data: ") {
-                        let dataContent = String(line.dropFirst(6))
-
-                        // Parse JSON chunk based on provider type
-                        if let jsonData = dataContent.data(using: .utf8) {
-                            do {
-                                if providerType == .gemini {
-                                    // Parse Gemini SSE event (each chunk is a GeminiGenerateContentResponse)
                                     let chunk = try JSONDecoder().decode(
                                         GeminiGenerateContentResponse.self,
                                         from: jsonData
@@ -649,12 +572,16 @@ public actor RemoteProviderService: ToolCapableService {
                                     }
                                 }
                             } catch {
-                                print(
-                                    "[Osaurus] Warning: Failed to parse leftover SSE chunk: \(error.localizedDescription)"
-                                )
+                                // Leftover buffer parse failures are non-fatal
                             }
                         }
                     }
+                }
+
+                // Emit any accumulated tool calls at stream end
+                if let invocation = Self.makeToolInvocation(from: accumulatedToolCalls) {
+                    continuation.finish(throwing: invocation)
+                    return
                 }
 
                 continuation.finish()
@@ -719,7 +646,8 @@ public actor RemoteProviderService: ToolCapableService {
             throw ServiceToolInvocation(
                 toolName: firstCall.function.name,
                 jsonArguments: firstCall.function.arguments,
-                toolCallId: firstCall.id
+                toolCallId: firstCall.id,
+                geminiThoughtSignature: firstCall.geminiThoughtSignature
             )
         }
 
@@ -781,7 +709,6 @@ public actor RemoteProviderService: ToolCapableService {
                 }
 
                 // Track accumulated tool calls by index (supports multiple parallel tool calls)
-                // Structure: [index: (id, name, arguments, thoughtSignature)]
                 var accumulatedToolCalls: [Int: (id: String?, name: String?, args: String, thoughtSignature: String?)] =
                     [:]
 
@@ -1149,7 +1076,6 @@ public actor RemoteProviderService: ToolCapableService {
                                     print(
                                         "[Osaurus] Warning: Failed to parse SSE chunk: \(error.localizedDescription)"
                                     )
-                                    print("[Osaurus] Raw chunk data: \(dataContent.prefix(500))")
                                 }
                             }
                         }
@@ -1421,12 +1347,6 @@ public actor RemoteProviderService: ToolCapableService {
             bodyData = try encoder.encode(geminiRequest)
         }
         urlRequest.httpBody = bodyData
-
-        // Debug: print the request body
-        if let jsonString = String(data: bodyData, encoding: .utf8) {
-            print("[Osaurus] Remote Provider (\(provider.providerType.rawValue)) Request Body:\n\(jsonString)")
-        }
-
         return urlRequest
     }
 
