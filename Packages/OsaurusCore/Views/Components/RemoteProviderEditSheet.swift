@@ -16,6 +16,7 @@ struct RemoteProviderEditSheet: View {
     @ObservedObject private var themeManager = ThemeManager.shared
 
     let provider: RemoteProvider?
+    var initialPreset: ProviderPreset? = nil
     let onSave: (RemoteProvider, String?) -> Void
 
     var body: some View {
@@ -23,7 +24,7 @@ struct RemoteProviderEditSheet: View {
             if let provider {
                 EditProviderFlow(provider: provider, onSave: onSave)
             } else {
-                AddProviderFlow(onSave: onSave)
+                AddProviderFlow(initialPreset: initialPreset, onSave: onSave)
             }
         }
         .environment(\.theme, themeManager.currentTheme)
@@ -38,6 +39,7 @@ private struct AddProviderFlow: View {
 
     private var theme: ThemeProtocol { themeManager.currentTheme }
 
+    let initialPreset: ProviderPreset?
     let onSave: (RemoteProvider, String?) -> Void
 
     @State private var selectedPreset: ProviderPreset? = nil
@@ -97,6 +99,7 @@ private struct AddProviderFlow: View {
         .scaleEffect(hasAppeared ? 1 : 0.95)
         .animation(.spring(response: 0.3, dampingFraction: 0.8), value: hasAppeared)
         .onAppear {
+            selectedPreset = initialPreset
             withAnimation { hasAppeared = true }
         }
     }
