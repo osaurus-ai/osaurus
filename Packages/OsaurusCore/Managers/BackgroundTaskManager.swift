@@ -120,7 +120,7 @@ public final class BackgroundTaskManager: ObservableObject {
 
     /// Remove a background task from management, cancelling all observers and timers.
     public func finalizeTask(_ backgroundId: UUID) {
-        guard backgroundTasks[backgroundId] != nil else { return }
+        guard let state = backgroundTasks[backgroundId] else { return }
 
         resumeCompletion(for: backgroundId, result: .cancelled)
         cancelAutoFinalize(backgroundId)
@@ -128,6 +128,8 @@ public final class BackgroundTaskManager: ObservableObject {
         taskObservers[backgroundId]?.forEach { $0.cancel() }
         taskObservers.removeValue(forKey: backgroundId)
         chatTurnCounts.removeValue(forKey: backgroundId)
+
+        state.releaseReferences()
 
         backgroundTasks.removeValue(forKey: backgroundId)
     }
@@ -535,6 +537,11 @@ public final class BackgroundTaskManager: ObservableObject {
             issues: issues,
             isExecuting: session.isExecuting
         )
+
+        // Retry completion check — isExecuting may fire before issues update
+        if !session.isExecuting && state.status.isActive {
+            checkAgentCompletion(state: state, session: session)
+        }
     }
 
     // MARK: - Private: Progress Calculation
