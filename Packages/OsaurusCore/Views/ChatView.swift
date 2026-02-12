@@ -229,44 +229,31 @@ final class ChatSession: ObservableObject {
 
     func refreshModelOptions() async {
         let newOptions = await Self.buildModelOptions()
+        let newOptionIds = newOptions.map { $0.id }
+        let optionsChanged = modelOptions.map({ $0.id }) != newOptionIds
 
-        let prev = selectedModel
-        let newSelected: String?
-
-        // If we have a previous selection that's still valid, keep it
-        if let prev = prev, newOptions.contains(where: { $0.id == prev }) {
-            newSelected = prev
-        } else {
-            // Otherwise try to load from persona's model, falling back to global config
-            let effectiveModel = PersonaManager.shared.effectiveModel(for: personaId ?? Persona.defaultId)
-
-            if let defaultModel = effectiveModel,
-                newOptions.contains(where: { $0.id == defaultModel })
-            {
-                newSelected = defaultModel
-            } else {
-                newSelected = newOptions.first?.id
-            }
-        }
-
-        let newHasAnyModel = !newOptions.isEmpty
-
-        // Always update discovery state
         isDiscoveringModels = false
 
-        // Check if anything changed
-        let optionIds = modelOptions.map { $0.id }
-        let newOptionIds = newOptions.map { $0.id }
-        if optionIds == newOptionIds && selectedModel == newSelected && hasAnyModel == newHasAnyModel {
-            return
+        guard optionsChanged else { return }
+
+        // Options changed (e.g., remote models loaded) - re-check persona's preferred model.
+        // This corrects the initial fallback to "foundation" when remote models weren't yet available.
+        let effectiveModel = PersonaManager.shared.effectiveModel(for: personaId ?? Persona.defaultId)
+        let newSelected: String?
+
+        if let model = effectiveModel, newOptionIds.contains(model) {
+            newSelected = model
+        } else if let prev = selectedModel, newOptionIds.contains(prev) {
+            newSelected = prev
+        } else {
+            newSelected = newOptionIds.first
         }
 
         modelOptions = newOptions
-        // Don't auto-persist when refreshing options (model list changed, not user selection)
         isLoadingModel = true
         selectedModel = newSelected
         isLoadingModel = false
-        hasAnyModel = newHasAnyModel
+        hasAnyModel = !newOptions.isEmpty
     }
 
     /// Check if the currently selected model supports images (VLM)
