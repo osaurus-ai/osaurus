@@ -75,6 +75,8 @@ final class SystemPermissionService: NSObject, ObservableObject, CLLocationManag
             return checkAutomationPermission()
         case .automationCalendar:
             return checkCalendarAutomationPermission()
+        case .automationMail:
+            return checkMailPermission()
         case .calendar:
             return checkCalendarPermission()
         case .reminders:
@@ -108,10 +110,8 @@ final class SystemPermissionService: NSObject, ObservableObject, CLLocationManag
             var newStates: [SystemPermission: Bool] = [:]
 
             for permission in SystemPermission.allCases {
-                if permission == .automationCalendar || permission == .automation || permission == .notes
-                    || permission == .maps
-                {
-                    // Skip Automation to avoid launching apps/running scripts automatically
+                if permission.isAutomationBased {
+                    // Skip automation permissions to avoid launching apps/running scripts
                     // Use last known state
                     await MainActor.run {
                         newStates[permission] = self.permissionStates[permission]
@@ -149,11 +149,9 @@ final class SystemPermissionService: NSObject, ObservableObject, CLLocationManag
     /// Automation checks (Calendar & General) are excluded because they run AppleScript
     private func refreshNonDisruptivePermissions() {
         for permission in SystemPermission.allCases {
-            // Skip Automation checks - they require running AppleScript which can be disruptive
+            // Skip automation permissions - they require running AppleScript which can be disruptive
             // We only check these when the user explicitly clicks "Grant" or "Test"
-            if permission == .automationCalendar || permission == .automation || permission == .notes
-                || permission == .maps
-            {
+            if permission.isAutomationBased {
                 continue
             }
 
@@ -188,6 +186,8 @@ final class SystemPermissionService: NSObject, ObservableObject, CLLocationManag
             requestAutomationPermission()
         case .automationCalendar:
             requestCalendarAutomationPermission()
+        case .automationMail:
+            requestMailPermission()
         case .calendar:
             requestCalendarPermission()
         case .reminders:
@@ -339,6 +339,11 @@ final class SystemPermissionService: NSObject, ObservableObject, CLLocationManag
         return permissionStates[.maps] ?? false
     }
 
+    private func checkMailPermission() -> Bool {
+        // Return cached state for Mail (Automation)
+        return permissionStates[.automationMail] ?? false
+    }
+
     /// Perform full Automation check (runs AppleScript against System Events)
     /// This is called only on explicit user request, not during periodic refresh
     nonisolated private func performFullAutomationCheck() -> Bool {
@@ -433,6 +438,30 @@ final class SystemPermissionService: NSObject, ObservableObject, CLLocationManag
 
             if !granted {
                 self.openSystemSettings(for: .maps)
+            }
+        }
+    }
+
+    // MARK: - Mail Automation Permission
+
+    private func requestMailPermission() {
+        Task { @MainActor in
+            let alreadyGranted = checkMailPermission()
+            if alreadyGranted {
+                refreshAllPermissions()
+                return
+            }
+
+            let granted: Bool = await Task.detached { [weak self] in
+                guard self != nil else { return false }
+                let result = SystemPermissionService.debugTestMailAccess()
+                return result.hasPrefix("SUCCESS")
+            }.value
+
+            setPermission(.automationMail, isGranted: granted)
+
+            if !granted {
+                self.openSystemSettings(for: .automationMail)
             }
         }
     }
@@ -878,6 +907,40 @@ final class SystemPermissionService: NSObject, ObservableObject, CLLocationManag
         let script = NSAppleScript(
             source: """
                 tell application "Maps"
+                    return name
+                end tell
+                """
+        )
+
+        var errorInfo: NSDictionary?
+        let result = script?.executeAndReturnError(&errorInfo)
+
+        if let error = errorInfo {
+            let errorNumber = error[NSAppleScript.errorNumber] as? Int ?? -1
+            let errorMessage = error[NSAppleScript.errorMessage] as? String ?? "Unknown error"
+
+            var guidance = ""
+            if errorNumber == -1743 {
+                guidance = " → Permission denied. Grant in System Settings → Privacy & Security → Automation"
+            }
+
+            return "ERROR [\(errorNumber)]: \(errorMessage)\(guidance)"
+        }
+
+        if let resultValue = result?.stringValue {
+            return "SUCCESS: Connected to \(resultValue)"
+        }
+
+        return "NO RESULT"
+    }
+
+    // MARK: - Debug: Test Mail Access
+
+    /// Debug function to test if Mail access works via AppleScript.
+    nonisolated static func debugTestMailAccess() -> String {
+        let script = NSAppleScript(
+            source: """
+                tell application "Mail"
                     return name
                 end tell
                 """

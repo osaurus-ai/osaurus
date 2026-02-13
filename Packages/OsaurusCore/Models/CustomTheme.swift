@@ -859,14 +859,20 @@ extension Color {
 
     /// Convert Color to hex string
     func toHex(includeAlpha: Bool = false) -> String {
-        guard let components = NSColor(self).cgColor.components else {
+        // Convert to sRGB color space first for consistent round-trip with Color(themeHex:)
+        let nsColor: NSColor
+        if let converted = NSColor(self).usingColorSpace(.sRGB) {
+            nsColor = converted
+        } else if let converted = NSColor(self).usingColorSpace(.deviceRGB) {
+            nsColor = converted
+        } else {
             return "#000000"
         }
 
-        let r = Int((components[0] * 255).rounded())
-        let g = Int(((components.count > 1 ? components[1] : components[0]) * 255).rounded())
-        let b = Int(((components.count > 2 ? components[2] : components[0]) * 255).rounded())
-        let a = Int(((components.count > 3 ? components[3] : 1.0) * 255).rounded())
+        let r = Int((nsColor.redComponent * 255).rounded())
+        let g = Int((nsColor.greenComponent * 255).rounded())
+        let b = Int((nsColor.blueComponent * 255).rounded())
+        let a = Int((nsColor.alphaComponent * 255).rounded())
 
         if includeAlpha && a < 255 {
             return String(format: "#%02X%02X%02X%02X", a, r, g, b)

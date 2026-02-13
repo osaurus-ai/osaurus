@@ -378,17 +378,18 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
     }
 
     public func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
-        // Quit immediately without confirmation; still shut down server gracefully if running
-        guard serverController.isRunning else {
-            return .terminateNow
-        }
-
-        // Delay termination briefly to allow async shutdown
+        // Defer termination so in-flight inference tasks and MLX GPU resources are
+        // released before exit() triggers C++ static destructors.
         Task { @MainActor in
-            await serverController.ensureShutdown()
+            ChatWindowManager.shared.stopAllSessions()
+            BackgroundTaskManager.shared.cancelAllTasks()
+            if serverController.isRunning {
+                await serverController.ensureShutdown()
+            }
+            await MCPServerManager.shared.stopAll()
+            await ModelRuntime.shared.clearAll()
             NSApp.reply(toApplicationShouldTerminate: true)
         }
-
         return .terminateLater
     }
 
@@ -396,9 +397,6 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
         NSLog("Osaurus server app terminating")
         PluginRepositoryService.shared.stopBackgroundRefresh()
         ToastWindowController.shared.teardown()
-        Task { @MainActor in
-            await MCPServerManager.shared.stopAll()
-        }
         SharedConfigurationService.shared.remove()
     }
 

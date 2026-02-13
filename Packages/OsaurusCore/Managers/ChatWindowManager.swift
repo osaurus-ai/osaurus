@@ -115,6 +115,14 @@ public final class ChatWindowManager: NSObject, ObservableObject {
         return windowId
     }
 
+    /// Stop all active sessions (chat and agent) across all windows.
+    /// Called during app termination to prevent crashes from in-flight inference.
+    public func stopAllSessions() {
+        for (_, state) in windowStates {
+            state.cleanup()
+        }
+    }
+
     /// Close a chat window by ID
     public func closeWindow(id: UUID) {
         guard let window = nsWindows[id] else {

@@ -13,15 +13,21 @@ struct ThemeEditorView: View {
     @ObservedObject private var themeManager = ThemeManager.shared
     @Environment(\.dismiss) private var dismiss
 
-    /// Use computed property to always get the current theme from ThemeManager
     private var currentTheme: ThemeProtocol { themeManager.currentTheme }
 
     @State private var editingTheme: CustomTheme
-    let onDismiss: () -> Void
-
     @State private var selectedTab: EditorTab = .colors
     @State private var showImagePicker = false
     @State private var showSaveConfirmation = false
+    @State private var collapsedSections: Set<String> = []
+    @State private var animationPreviewTrigger = false
+
+    let onDismiss: () -> Void
+
+    private let colorSectionNames = [
+        "Text Colors", "Background Colors", "Sidebar Colors", "Accent Colors",
+        "Status Colors", "Border Colors", "Component Colors", "Code & Glass", "Selection",
+    ]
 
     init(theme: CustomTheme, onDismiss: @escaping () -> Void) {
         _editingTheme = State(initialValue: theme)
@@ -46,13 +52,12 @@ struct ThemeEditorView: View {
         }
     }
 
+    // MARK: - Body
+
     var body: some View {
         HSplitView {
-            // Editor panel
             editorPanel
                 .frame(minWidth: 360, idealWidth: 400, maxWidth: 450)
-
-            // Live preview
             previewPanel
                 .frame(minWidth: 500, idealWidth: 600)
         }
@@ -71,32 +76,22 @@ struct ThemeEditorView: View {
 
     private var editorPanel: some View {
         VStack(spacing: 0) {
-            // Header
             editorHeader
-
-            // Tab selector
             tabSelector
 
-            // Tab content
             ScrollView {
                 VStack(alignment: .leading, spacing: 20) {
                     switch selectedTab {
-                    case .colors:
-                        colorsEditor
-                    case .background:
-                        backgroundEditor
-                    case .glass:
-                        glassEditor
-                    case .typography:
-                        typographyEditor
-                    case .animation:
-                        animationEditor
+                    case .colors: colorsEditor
+                    case .background: backgroundEditor
+                    case .glass: glassEditor
+                    case .typography: typographyEditor
+                    case .animation: animationEditor
                     }
                 }
                 .padding(20)
             }
 
-            // Footer actions
             editorFooter
         }
         .background(currentTheme.secondaryBackground)
@@ -123,37 +118,8 @@ struct ThemeEditorView: View {
                 .buttonStyle(PlainButtonStyle())
             }
 
-            // Theme name field
-            TextField("Theme Name", text: $editingTheme.metadata.name)
-                .textFieldStyle(.plain)
-                .font(.system(size: 14, weight: .medium))
-                .padding(.horizontal, 12)
-                .padding(.vertical, 8)
-                .background(
-                    RoundedRectangle(cornerRadius: 8)
-                        .fill(currentTheme.inputBackground)
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 8)
-                                .stroke(currentTheme.inputBorder, lineWidth: 1)
-                        )
-                )
-                .foregroundColor(currentTheme.primaryText)
-
-            // Author name field
-            TextField("Author Name", text: $editingTheme.metadata.author)
-                .textFieldStyle(.plain)
-                .font(.system(size: 13))
-                .padding(.horizontal, 12)
-                .padding(.vertical, 6)
-                .background(
-                    RoundedRectangle(cornerRadius: 6)
-                        .fill(currentTheme.inputBackground)
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 6)
-                                .stroke(currentTheme.inputBorder, lineWidth: 1)
-                        )
-                )
-                .foregroundColor(currentTheme.primaryText)
+            themeTextField("Theme Name", text: $editingTheme.metadata.name, fontSize: 14, weight: .medium, radius: 8)
+            themeTextField("Author Name", text: $editingTheme.metadata.author, fontSize: 13, radius: 6)
         }
         .padding(16)
     }
@@ -164,10 +130,8 @@ struct ThemeEditorView: View {
                 ForEach(EditorTab.allCases, id: \.rawValue) { tab in
                     Button(action: { selectedTab = tab }) {
                         HStack(spacing: 8) {
-                            Image(systemName: tab.icon)
-                                .font(.system(size: 13))
-                            Text(tab.rawValue)
-                                .font(.system(size: 13, weight: .medium))
+                            Image(systemName: tab.icon).font(.system(size: 13))
+                            Text(tab.rawValue).font(.system(size: 13, weight: .medium))
                         }
                         .padding(.horizontal, 14)
                         .padding(.vertical, 10)
@@ -200,16 +164,13 @@ struct ThemeEditorView: View {
 
             HStack(spacing: 12) {
                 Button("Cancel") {
-                    dismiss()
-                    onDismiss()
+                    dismiss(); onDismiss()
                 }
                 .buttonStyle(.bordered)
 
                 Button(action: saveTheme) {
                     HStack(spacing: 4) {
-                        if showSaveConfirmation {
-                            Image(systemName: "checkmark")
-                        }
+                        if showSaveConfirmation { Image(systemName: "checkmark") }
                         Text(showSaveConfirmation ? "Saved!" : (editingTheme.isBuiltIn ? "Save as Copy" : "Save"))
                     }
                 }
@@ -224,43 +185,57 @@ struct ThemeEditorView: View {
 
     private var colorsEditor: some View {
         VStack(alignment: .leading, spacing: 16) {
-            editorSection("Text Colors") {
+            HStack {
+                Spacer()
+                Button(action: {
+                    withAnimation(.easeInOut(duration: 0.2)) {
+                        collapsedSections = collapsedSections.isEmpty ? Set(colorSectionNames) : []
+                    }
+                }) {
+                    Text(collapsedSections.isEmpty ? "Collapse All" : "Expand All")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundColor(currentTheme.accentColor)
+                }
+                .buttonStyle(PlainButtonStyle())
+            }
+
+            editorSection("Text Colors", itemCount: 4) {
                 colorRow("Primary Text", hex: $editingTheme.colors.primaryText)
                 colorRow("Secondary Text", hex: $editingTheme.colors.secondaryText)
                 colorRow("Tertiary Text", hex: $editingTheme.colors.tertiaryText)
                 colorRowOptional("Placeholder Text", hex: $editingTheme.colors.placeholderText)
             }
 
-            editorSection("Background Colors") {
+            editorSection("Background Colors", itemCount: 3) {
                 colorRow("Primary", hex: $editingTheme.colors.primaryBackground)
                 colorRow("Secondary", hex: $editingTheme.colors.secondaryBackground)
                 colorRow("Tertiary", hex: $editingTheme.colors.tertiaryBackground)
             }
 
-            editorSection("Sidebar Colors") {
+            editorSection("Sidebar Colors", itemCount: 2) {
                 colorRow("Background", hex: $editingTheme.colors.sidebarBackground)
                 colorRow("Selected", hex: $editingTheme.colors.sidebarSelectedBackground)
             }
 
-            editorSection("Accent Colors") {
+            editorSection("Accent Colors", itemCount: 2) {
                 colorRow("Primary Accent", hex: $editingTheme.colors.accentColor)
                 colorRow("Light Accent", hex: $editingTheme.colors.accentColorLight)
             }
 
-            editorSection("Status Colors") {
+            editorSection("Status Colors", itemCount: 4) {
                 colorRow("Success", hex: $editingTheme.colors.successColor)
                 colorRow("Warning", hex: $editingTheme.colors.warningColor)
                 colorRow("Error", hex: $editingTheme.colors.errorColor)
                 colorRow("Info", hex: $editingTheme.colors.infoColor)
             }
 
-            editorSection("Border Colors") {
+            editorSection("Border Colors", itemCount: 3) {
                 colorRow("Primary", hex: $editingTheme.colors.primaryBorder)
                 colorRow("Secondary", hex: $editingTheme.colors.secondaryBorder)
                 colorRow("Focus", hex: $editingTheme.colors.focusBorder)
             }
 
-            editorSection("Component Colors") {
+            editorSection("Component Colors", itemCount: 6) {
                 colorRow("Card Background", hex: $editingTheme.colors.cardBackground)
                 colorRow("Card Border", hex: $editingTheme.colors.cardBorder)
                 colorRow("Button Background", hex: $editingTheme.colors.buttonBackground)
@@ -269,12 +244,12 @@ struct ThemeEditorView: View {
                 colorRow("Input Border", hex: $editingTheme.colors.inputBorder)
             }
 
-            editorSection("Code & Glass") {
+            editorSection("Code & Glass", itemCount: 2) {
                 colorRow("Glass Tint", hex: $editingTheme.colors.glassTintOverlay)
                 colorRow("Code Block", hex: $editingTheme.colors.codeBlockBackground)
             }
 
-            editorSection("Selection") {
+            editorSection("Selection", itemCount: 2) {
                 colorRow("Text Selection", hex: $editingTheme.colors.selectionColor)
                 colorRow("Cursor Color", hex: $editingTheme.colors.cursorColor)
             }
@@ -294,7 +269,6 @@ struct ThemeEditorView: View {
                 .pickerStyle(.segmented)
             }
 
-            // Solid color picker
             if editingTheme.background.type == .solid {
                 editorSection("Solid Color") {
                     colorRow(
@@ -324,17 +298,13 @@ struct ThemeEditorView: View {
                                         .stroke(currentTheme.primaryBorder, lineWidth: 1)
                                 )
 
-                            Button("Remove Image") {
-                                editingTheme.background.imageData = nil
-                            }
-                            .buttonStyle(.bordered)
+                            Button("Remove Image") { editingTheme.background.imageData = nil }
+                                .buttonStyle(.bordered)
                         } else {
                             Button(action: { showImagePicker = true }) {
                                 VStack(spacing: 8) {
-                                    Image(systemName: "photo.badge.plus")
-                                        .font(.system(size: 24))
-                                    Text("Choose Image")
-                                        .font(.system(size: 13, weight: .medium))
+                                    Image(systemName: "photo.badge.plus").font(.system(size: 24))
+                                    Text("Choose Image").font(.system(size: 13, weight: .medium))
                                 }
                                 .frame(maxWidth: .infinity)
                                 .frame(height: 80)
@@ -376,7 +346,6 @@ struct ThemeEditorView: View {
             if editingTheme.background.type == .gradient {
                 editorSection("Gradient Colors") {
                     VStack(spacing: 8) {
-                        // Use indices with direct binding to avoid stale captures
                         ForEach(
                             Array((editingTheme.background.gradientColors ?? ["#000000", "#333333"]).enumerated()),
                             id: \.offset
@@ -404,15 +373,11 @@ struct ThemeEditorView: View {
                                 var colors = editingTheme.background.gradientColors ?? ["#000000", "#333333"]
                                 colors.append("#000000")
                                 editingTheme.background.gradientColors = colors
-                            }) {
-                                Label("Add Color", systemImage: "plus")
-                            }
+                            }) { Label("Add Color", systemImage: "plus") }
                             .buttonStyle(.bordered)
 
                             if (editingTheme.background.gradientColors?.count ?? 0) > 2 {
-                                Button(action: {
-                                    editingTheme.background.gradientColors?.removeLast()
-                                }) {
+                                Button(action: { editingTheme.background.gradientColors?.removeLast() }) {
                                     Label("Remove", systemImage: "minus")
                                 }
                                 .buttonStyle(.bordered)
@@ -535,15 +500,11 @@ struct ThemeEditorView: View {
 
     // MARK: - Animation Editor
 
-    @State private var animationPreviewTrigger = false
-
     private var animationEditor: some View {
         VStack(alignment: .leading, spacing: 16) {
-            // Animation Preview
             editorSection("Preview") {
                 VStack(spacing: 12) {
                     HStack {
-                        // Spring animation preview
                         RoundedRectangle(cornerRadius: 8)
                             .fill(Color(themeHex: editingTheme.colors.accentColor))
                             .frame(width: 40, height: 40)
@@ -555,29 +516,20 @@ struct ThemeEditorView: View {
                                 ),
                                 value: animationPreviewTrigger
                             )
-
                         Spacer()
                     }
                     .frame(height: 50)
                     .padding(.horizontal, 8)
-                    .background(
-                        RoundedRectangle(cornerRadius: 8)
-                            .fill(currentTheme.tertiaryBackground.opacity(0.5))
-                    )
+                    .background(RoundedRectangle(cornerRadius: 8).fill(currentTheme.tertiaryBackground.opacity(0.5)))
 
-                    Button("Test Animation") {
-                        animationPreviewTrigger.toggle()
-                    }
-                    .buttonStyle(.bordered)
+                    Button("Test Animation") { animationPreviewTrigger.toggle() }
+                        .buttonStyle(.bordered)
                 }
             }
 
             editorSection("Duration") {
                 Text("Controls how long animations take")
-                    .font(.system(size: 11))
-                    .foregroundColor(currentTheme.tertiaryText)
-                    .padding(.bottom, 4)
-
+                    .font(.system(size: 11)).foregroundColor(currentTheme.tertiaryText).padding(.bottom, 4)
                 sliderRow("Quick", value: $editingTheme.animationConfig.durationQuick, range: 0.05 ... 0.5)
                 sliderRow("Medium", value: $editingTheme.animationConfig.durationMedium, range: 0.1 ... 0.8)
                 sliderRow("Slow", value: $editingTheme.animationConfig.durationSlow, range: 0.2 ... 1.0)
@@ -585,10 +537,7 @@ struct ThemeEditorView: View {
 
             editorSection("Spring Physics") {
                 Text("Response: How fast the spring moves\nDamping: How quickly it settles (lower = more bounce)")
-                    .font(.system(size: 11))
-                    .foregroundColor(currentTheme.tertiaryText)
-                    .padding(.bottom, 4)
-
+                    .font(.system(size: 11)).foregroundColor(currentTheme.tertiaryText).padding(.bottom, 4)
                 sliderRow("Response", value: $editingTheme.animationConfig.springResponse, range: 0.1 ... 1.0)
                 sliderRow("Damping", value: $editingTheme.animationConfig.springDamping, range: 0.3 ... 1.0)
             }
@@ -605,14 +554,11 @@ struct ThemeEditorView: View {
 
     private var previewPanel: some View {
         VStack(spacing: 0) {
-            // Preview header
             HStack {
                 Text("Live Preview")
                     .font(.system(size: 14, weight: .semibold))
                     .foregroundColor(currentTheme.primaryText)
-
                 Spacer()
-
                 Text("Changes are reflected in real-time")
                     .font(.system(size: 11))
                     .foregroundColor(currentTheme.tertiaryText)
@@ -620,113 +566,210 @@ struct ThemeEditorView: View {
             .padding(16)
             .background(currentTheme.secondaryBackground)
 
-            // Chat preview
-            ThemeChatPreview(theme: editingTheme)
-                .clipShape(RoundedRectangle(cornerRadius: 16))
-                .padding(20)
+            ZStack {
+                transparencyBackdrop
+                    .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+
+                ThemeChatPreview(theme: editingTheme)
+                    .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                    .padding(6)
+            }
+            .padding(20)
         }
     }
 
-    // MARK: - Helper Views
+    /// Bright gradient backdrop behind the preview to demonstrate glass transparency
+    private var transparencyBackdrop: some View {
+        let accent = Color(themeHex: editingTheme.colors.accentColor)
+        let accentLight = Color(themeHex: editingTheme.colors.accentColorLight)
+        let success = Color(themeHex: editingTheme.colors.successColor)
 
-    private func editorSection<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text(title)
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundColor(currentTheme.secondaryText)
-                .textCase(.uppercase)
-
-            VStack(alignment: .leading, spacing: 8) {
-                content()
-            }
-            .padding(12)
-            .background(
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(currentTheme.cardBackground)
+        return ZStack {
+            LinearGradient(
+                stops: [
+                    .init(color: accent, location: 0),
+                    .init(color: accentLight.opacity(0.9), location: 0.35),
+                    .init(color: accent.opacity(0.8), location: 0.65),
+                    .init(color: success.opacity(0.7), location: 1.0),
+                ],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
             )
+
+            LinearGradient(
+                colors: [.white.opacity(0.15), .clear, .black.opacity(0.1)],
+                startPoint: .top,
+                endPoint: .bottom
+            )
+        }
+    }
+
+    // MARK: - Reusable Editor Components
+
+    private func editorSection<Content: View>(
+        _ title: String,
+        itemCount: Int? = nil,
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        let isCollapsed = collapsedSections.contains(title)
+
+        return VStack(alignment: .leading, spacing: 10) {
+            Button(action: {
+                withAnimation(.easeInOut(duration: 0.2)) {
+                    if isCollapsed { collapsedSections.remove(title) } else { collapsedSections.insert(title) }
+                }
+            }) {
+                HStack(spacing: 6) {
+                    Text(title)
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundColor(currentTheme.secondaryText)
+                        .textCase(.uppercase)
+
+                    if isCollapsed, let count = itemCount {
+                        Text("\(count)")
+                            .font(.system(size: 10, weight: .medium))
+                            .foregroundColor(currentTheme.tertiaryText)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(Capsule().fill(currentTheme.tertiaryBackground))
+                    }
+
+                    Spacer()
+
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundColor(currentTheme.tertiaryText)
+                        .rotationEffect(.degrees(isCollapsed ? 0 : 90))
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(PlainButtonStyle())
+
+            if !isCollapsed {
+                VStack(alignment: .leading, spacing: 8) {
+                    content()
+                }
+                .padding(12)
+                .background(RoundedRectangle(cornerRadius: 8).fill(currentTheme.cardBackground))
+                .transition(.opacity.combined(with: .move(edge: .top)))
+            }
         }
     }
 
     private func colorRow(_ label: String, hex: Binding<String>) -> some View {
-        HStack {
+        HStack(spacing: 8) {
             Text(label)
                 .font(.system(size: 13))
                 .foregroundColor(currentTheme.primaryText)
 
             Spacer()
 
-            // Color swatch preview
-            RoundedRectangle(cornerRadius: 4)
-                .fill(Color(themeHex: hex.wrappedValue))
-                .frame(width: 24, height: 24)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 4)
-                        .stroke(currentTheme.primaryBorder, lineWidth: 1)
-                )
+            hexTextField(hex: hex)
 
-            ColorPicker(
-                "",
+            colorSwatch(hex: hex.wrappedValue)
+
+            colorPickerButton(
                 selection: Binding(
                     get: { Color(themeHex: hex.wrappedValue) },
-                    set: { newColor in
-                        hex.wrappedValue = newColor.toHex(includeAlpha: true)
-                    }
-                ),
-                supportsOpacity: true
+                    set: { hex.wrappedValue = $0.toHex(includeAlpha: true) }
+                )
             )
-            .labelsHidden()
-            .frame(width: 44)
         }
     }
 
     private func colorRowOptional(_ label: String, hex: Binding<String?>) -> some View {
-        HStack {
+        HStack(spacing: 8) {
             Text(label)
                 .font(.system(size: 13))
                 .foregroundColor(currentTheme.primaryText)
 
             Spacer()
 
-            HStack(spacing: 8) {
-                if hex.wrappedValue != nil {
-                    // Color swatch preview
-                    RoundedRectangle(cornerRadius: 4)
-                        .fill(Color(themeHex: hex.wrappedValue ?? "#000000"))
-                        .frame(width: 24, height: 24)
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 4)
-                                .stroke(currentTheme.primaryBorder, lineWidth: 1)
-                        )
-
-                    ColorPicker(
-                        "",
-                        selection: Binding(
-                            get: { Color(themeHex: hex.wrappedValue ?? "#000000") },
-                            set: { newColor in
-                                hex.wrappedValue = newColor.toHex(includeAlpha: true)
-                            }
-                        ),
-                        supportsOpacity: true
+            if hex.wrappedValue != nil {
+                hexTextField(
+                    hex: Binding(
+                        get: { hex.wrappedValue ?? "#000000" },
+                        set: { hex.wrappedValue = $0 }
                     )
-                    .labelsHidden()
-                    .frame(width: 44)
+                )
 
-                    Button(action: { hex.wrappedValue = nil }) {
-                        Image(systemName: "xmark.circle.fill")
-                            .font(.system(size: 14))
-                            .foregroundColor(currentTheme.tertiaryText)
-                    }
-                    .buttonStyle(PlainButtonStyle())
-                } else {
-                    Button(action: { hex.wrappedValue = "#000000" }) {
-                        Text("Add")
-                            .font(.system(size: 12, weight: .medium))
-                            .foregroundColor(currentTheme.accentColor)
-                    }
-                    .buttonStyle(PlainButtonStyle())
+                colorSwatch(hex: hex.wrappedValue ?? "#000000")
+
+                colorPickerButton(
+                    selection: Binding(
+                        get: { Color(themeHex: hex.wrappedValue ?? "#000000") },
+                        set: { hex.wrappedValue = $0.toHex(includeAlpha: true) }
+                    )
+                )
+
+                Button(action: { hex.wrappedValue = nil }) {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.system(size: 14))
+                        .foregroundColor(currentTheme.tertiaryText)
                 }
+                .buttonStyle(PlainButtonStyle())
+            } else {
+                Button(action: { hex.wrappedValue = "#000000" }) {
+                    Text("Add")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundColor(currentTheme.accentColor)
+                }
+                .buttonStyle(PlainButtonStyle())
             }
         }
+    }
+
+    // MARK: - Shared Primitives
+
+    private func hexTextField(hex: Binding<String>) -> some View {
+        TextField(
+            "",
+            text: Binding(
+                get: { hex.wrappedValue.uppercased() },
+                set: { newValue in
+                    let cleaned = newValue.hasPrefix("#") ? newValue : "#" + newValue
+                    if cleaned.count <= 9 { hex.wrappedValue = cleaned }
+                }
+            )
+        )
+        .textFieldStyle(.plain)
+        .font(.system(size: 11, design: .monospaced))
+        .foregroundColor(currentTheme.tertiaryText)
+        .multilineTextAlignment(.trailing)
+        .frame(width: 72)
+    }
+
+    private func colorSwatch(hex: String) -> some View {
+        RoundedRectangle(cornerRadius: 4)
+            .fill(Color(themeHex: hex))
+            .frame(width: 24, height: 24)
+            .overlay(RoundedRectangle(cornerRadius: 4).stroke(currentTheme.primaryBorder, lineWidth: 1))
+    }
+
+    private func colorPickerButton(selection: Binding<Color>) -> some View {
+        ColorPicker("", selection: selection, supportsOpacity: true)
+            .labelsHidden()
+            .frame(width: 44)
+    }
+
+    private func themeTextField(
+        _ placeholder: String,
+        text: Binding<String>,
+        fontSize: CGFloat,
+        weight: Font.Weight = .regular,
+        radius: CGFloat
+    ) -> some View {
+        TextField(placeholder, text: text)
+            .textFieldStyle(.plain)
+            .font(.system(size: fontSize, weight: weight))
+            .padding(.horizontal, 12)
+            .padding(.vertical, fontSize > 13 ? 8 : 6)
+            .background(
+                RoundedRectangle(cornerRadius: radius)
+                    .fill(currentTheme.inputBackground)
+                    .overlay(RoundedRectangle(cornerRadius: radius).stroke(currentTheme.inputBorder, lineWidth: 1))
+            )
+            .foregroundColor(currentTheme.primaryText)
     }
 
     private func sliderRow(_ label: String, value: Binding<Double>, range: ClosedRange<Double>) -> some View {
@@ -746,19 +789,13 @@ struct ThemeEditorView: View {
         }
     }
 
-    private func fontPicker(_ label: String, fontName: Binding<String>, isMono: Bool = false) -> some View {
+    private func fontPicker(_ label: String, fontName: Binding<String>, isMono: Bool) -> some View {
         HStack {
-            Text(label)
-                .font(.system(size: 13))
-                .foregroundColor(currentTheme.primaryText)
-
+            Text(label).font(.system(size: 13)).foregroundColor(currentTheme.primaryText)
             Spacer()
-
             Picker("", selection: fontName) {
                 ForEach(isMono ? availableMonoFonts : availablePrimaryFonts, id: \.self) { font in
-                    Text(font)
-                        .font(.custom(font, size: 13))
-                        .tag(font)
+                    Text(font).font(.custom(font, size: 13)).tag(font)
                 }
             }
             .labelsHidden()
@@ -766,43 +803,18 @@ struct ThemeEditorView: View {
         }
     }
 
-    // MARK: - Available System Fonts (macOS built-in)
+    // MARK: - System Fonts
 
-    /// Primary fonts - readable sans-serif fonts included with macOS
     private var availablePrimaryFonts: [String] {
         [
-            "SF Pro",  // System default
-            "Helvetica Neue",  // Classic Apple font
-            "Avenir",  // Modern humanist sans
-            "Avenir Next",  // Refined Avenir
-            "Gill Sans",  // British humanist sans
-            "Optima",  // Elegant sans
-            "Futura",  // Geometric sans
-            "Verdana",  // Screen-optimized
-            "Trebuchet MS",  // Friendly sans
-            "Arial",  // Universal sans
-            "Lucida Grande",  // Former macOS system font
-            "Geneva",  // Classic Mac font
-            "Charter",  // Readable serif
-            "Georgia",  // Screen serif
-            "Palatino",  // Elegant serif
-            "Times New Roman",  // Classic serif
-            "Baskerville",  // Traditional serif
-            "Hoefler Text",  // Apple's premium serif
+            "SF Pro", "Helvetica Neue", "Avenir", "Avenir Next", "Gill Sans", "Optima",
+            "Futura", "Verdana", "Trebuchet MS", "Arial", "Lucida Grande", "Geneva",
+            "Charter", "Georgia", "Palatino", "Times New Roman", "Baskerville", "Hoefler Text",
         ]
     }
 
-    /// Monospace fonts - code-friendly fonts included with macOS
     private var availableMonoFonts: [String] {
-        [
-            "SF Mono",  // System mono
-            "Menlo",  // Apple's code font
-            "Monaco",  // Classic Mac mono
-            "Courier New",  // Universal mono
-            "Courier",  // Original mono
-            "Andale Mono",  // Clean mono
-            "PT Mono",  // Pleasant mono
-        ]
+        ["SF Mono", "Menlo", "Monaco", "Courier New", "Courier", "Andale Mono", "PT Mono"]
     }
 
     // MARK: - Actions
@@ -810,39 +822,27 @@ struct ThemeEditorView: View {
     private func saveTheme() {
         var themeToSave = editingTheme
 
-        // If it's a built-in theme, create a copy
         if editingTheme.isBuiltIn {
             themeToSave.metadata.id = UUID()
             themeToSave.isBuiltIn = false
             if !themeToSave.metadata.name.contains("Copy") && !themeToSave.metadata.name.contains("Custom") {
                 themeToSave.metadata.name += " (Custom)"
             }
-            // Set creation date for new themes
             themeToSave.metadata.createdAt = Date()
         }
 
         themeToSave.metadata.updatedAt = Date()
 
-        // Save the theme to disk
         print("[Osaurus] ThemeEditor: Saving theme '\(themeToSave.metadata.name)' (id: \(themeToSave.metadata.id))")
         themeManager.saveTheme(themeToSave)
-
-        // Apply the theme
         themeManager.applyCustomTheme(themeToSave)
-
-        // Refresh themes list to ensure UI is up to date
         themeManager.refreshInstalledThemes()
-
         print("[Osaurus] ThemeEditor: Theme saved and applied successfully")
 
-        withAnimation {
-            showSaveConfirmation = true
-        }
+        withAnimation { showSaveConfirmation = true }
 
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [dismiss, onDismiss] in
-            withAnimation {
-                showSaveConfirmation = false
-            }
+            withAnimation { showSaveConfirmation = false }
             dismiss()
             onDismiss()
         }
@@ -867,8 +867,6 @@ struct ThemeEditorView: View {
         }
     }
 
-    /// Resize image data to fit within maxDimension x maxDimension, preserving aspect ratio.
-    /// Returns nil if the image is already within bounds or cannot be processed.
     private static func resizeImageData(_ data: Data, maxDimension: CGFloat) -> Data? {
         guard let image = NSImage(data: data) else { return nil }
         let size = image.size
@@ -891,9 +889,7 @@ struct ThemeEditorView: View {
         guard let tiffData = newImage.tiffRepresentation,
             let bitmapRep = NSBitmapImageRep(data: tiffData),
             let pngData = bitmapRep.representation(using: .png, properties: [:])
-        else {
-            return nil
-        }
+        else { return nil }
         return pngData
     }
 }
@@ -903,204 +899,143 @@ struct ThemeEditorView: View {
 struct ThemeChatPreview: View {
     let theme: CustomTheme
 
-    // MARK: - Font Helpers using theme font families
+    // MARK: - Font Helpers
 
     private func primaryFont(size: CGFloat, weight: Font.Weight = .regular) -> Font {
-        let fontName = theme.typography.primaryFont
-        if fontName.lowercased().contains("sf pro") || fontName.isEmpty {
-            return .system(size: size, weight: weight)
-        }
-        // Use Font.custom with family name - SwiftUI handles weight variants
-        return .custom(fontName, size: size).weight(weight)
+        let name = theme.typography.primaryFont
+        if name.lowercased().contains("sf pro") || name.isEmpty { return .system(size: size, weight: weight) }
+        return .custom(name, size: size).weight(weight)
     }
 
     private func monoFont(size: CGFloat, weight: Font.Weight = .regular) -> Font {
-        let fontName = theme.typography.monoFont
-        if fontName.lowercased().contains("sf mono") || fontName.isEmpty {
+        let name = theme.typography.monoFont
+        if name.lowercased().contains("sf mono") || name.isEmpty {
             return .system(size: size, weight: weight, design: .monospaced)
         }
-        // Use Font.custom with family name - SwiftUI handles weight variants
-        return .custom(fontName, size: size).weight(weight)
+        return .custom(name, size: size).weight(weight)
     }
 
-    // Convenience computed properties
-    private var bodyFont: Font {
-        primaryFont(size: CGFloat(theme.typography.bodySize))
-    }
+    private var bodyFont: Font { primaryFont(size: CGFloat(theme.typography.bodySize)) }
+    private var captionSize: CGFloat { CGFloat(theme.typography.captionSize) }
+    private var codeFont: Font { monoFont(size: CGFloat(theme.typography.codeSize)) }
 
-    private var captionFont: Font {
-        primaryFont(size: CGFloat(theme.typography.captionSize))
-    }
+    /// Shorthand for theme hex colors
+    private func c(_ hex: String) -> Color { Color(themeHex: hex) }
 
-    private var headingFont: Font {
-        primaryFont(size: CGFloat(theme.typography.headingSize), weight: .semibold)
-    }
-
-    private var codeFont: Font {
-        monoFont(size: CGFloat(theme.typography.codeSize))
-    }
+    // MARK: - Body
 
     var body: some View {
         ZStack {
-            // Background layer with glass effect
             backgroundLayer
 
-            // Glass overlay effect (only if enabled)
-            if theme.glass.enabled {
-                glassOverlay
-            }
+            if theme.glass.enabled { glassOverlay }
 
-            // Content
             VStack(spacing: 0) {
-                // Mock header
                 previewHeader
-                    .padding(.horizontal, 20)
-                    .padding(.top, 16)
-                    .padding(.bottom, 8)
+                    .padding(.horizontal, 16)
+                    .padding(.top, 14)
+                    .padding(.bottom, 6)
 
-                // Mock messages - using actual MessageRow style
                 ScrollView {
-                    VStack(spacing: 8) {
-                        // User message
-                        previewMessageRow(
+                    VStack(spacing: 0) {
+                        previewMessageBlock(
                             role: "You",
                             content: "Hey there! Can you help me with something?",
                             isUser: true
                         )
-
-                        // Assistant message with code block
                         previewAssistantMessage()
                     }
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 12)
+                    .padding(.horizontal, 12)
+                    .padding(.top, 8)
                 }
 
                 Spacer()
 
-                // Mock input - matches FloatingInputCard styling
                 previewInput
-                    .padding(.horizontal, 20)
-                    .padding(.bottom, 20)
+                    .padding(.horizontal, 16)
+                    .padding(.bottom, 16)
             }
         }
-        .background(Color(themeHex: theme.colors.primaryBackground))
+        .background(c(theme.colors.primaryBackground))
         .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: 24, style: .continuous)
-                .stroke(Color(themeHex: theme.glass.edgeLight).opacity(0.5), lineWidth: 0.5)
+                .stroke(c(theme.glass.edgeLight).opacity(0.5), lineWidth: 0.5)
         )
     }
 
-    // MARK: - Message Row (matches actual MessageRow.swift)
+    // MARK: - Messages
 
-    private func previewMessageRow(role: String, content: String, isUser: Bool) -> some View {
-        HStack(alignment: .top, spacing: 0) {
-            // Accent bar indicator
-            RoundedRectangle(cornerRadius: 2)
-                .fill(
-                    isUser
-                        ? Color(themeHex: theme.colors.accentColor)
-                        : Color(themeHex: theme.colors.tertiaryText).opacity(0.4)
-                )
-                .frame(width: 3)
-                .padding(.vertical, 12)
-                .padding(.leading, 12)
-
-            // Message content
-            VStack(alignment: .leading, spacing: 8) {
-                // Role label - uses caption size with theme font
+    private func previewMessageBlock(role: String, content: String, isUser: Bool) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
                 Text(role)
-                    .font(primaryFont(size: CGFloat(theme.typography.captionSize) + 1, weight: .semibold))
-                    .foregroundColor(
-                        isUser ? Color(themeHex: theme.colors.accentColor) : Color(themeHex: theme.colors.secondaryText)
-                    )
-
-                // Content - uses body size with theme font
-                Text(content)
-                    .font(bodyFont)
-                    .foregroundColor(Color(themeHex: theme.colors.primaryText))
+                    .font(primaryFont(size: captionSize + 1, weight: .semibold))
+                    .foregroundColor(isUser ? c(theme.colors.accentColor) : c(theme.colors.secondaryText))
+                Spacer()
             }
-            .padding(.leading, 16)
-            .padding(.trailing, 12)
-            .padding(.vertical, 16)
 
-            Spacer(minLength: 0)
+            Text(content)
+                .font(bodyFont)
+                .foregroundColor(c(theme.colors.primaryText))
         }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 14)
+        .frame(maxWidth: .infinity, alignment: .leading)
         .background(
             isUser
-                ? Color(themeHex: theme.colors.secondaryBackground).opacity(0.5)
-                : Color.clear
+                ? RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(c(theme.colors.secondaryBackground).opacity(0.5))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 8, style: .continuous)
+                            .stroke(c(theme.colors.primaryBorder).opacity(0.3), lineWidth: 1)
+                    )
+                : nil
         )
-        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
     }
 
-    // Assistant message with code block to showcase more typography
     private func previewAssistantMessage() -> some View {
-        HStack(alignment: .top, spacing: 0) {
-            // Accent bar
-            RoundedRectangle(cornerRadius: 2)
-                .fill(Color(themeHex: theme.colors.tertiaryText).opacity(0.4))
-                .frame(width: 3)
-                .padding(.vertical, 12)
-                .padding(.leading, 12)
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Assistant")
+                .font(primaryFont(size: captionSize + 1, weight: .semibold))
+                .foregroundColor(c(theme.colors.secondaryText))
 
-            // Message content with code
-            VStack(alignment: .leading, spacing: 8) {
-                // Role label - uses theme font
-                Text("Assistant")
-                    .font(primaryFont(size: CGFloat(theme.typography.captionSize) + 1, weight: .semibold))
-                    .foregroundColor(Color(themeHex: theme.colors.secondaryText))
+            Text("Sure! Here's an example:")
+                .font(bodyFont)
+                .foregroundColor(c(theme.colors.primaryText))
 
-                // Text content - uses theme font
-                Text("Sure! Here's an example:")
-                    .font(bodyFont)
-                    .foregroundColor(Color(themeHex: theme.colors.primaryText))
+            VStack(alignment: .leading, spacing: 4) {
+                Text("swift")
+                    .font(monoFont(size: captionSize, weight: .medium))
+                    .foregroundColor(c(theme.colors.tertiaryText))
+                    .padding(.horizontal, 10).padding(.top, 8)
 
-                // Code block - uses mono theme font
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("swift")
-                        .font(monoFont(size: CGFloat(theme.typography.captionSize), weight: .medium))
-                        .foregroundColor(Color(themeHex: theme.colors.tertiaryText))
-                        .padding(.horizontal, 8)
-                        .padding(.top, 6)
-
-                    Text("print(\"Hello, World!\")")
-                        .font(codeFont)
-                        .foregroundColor(Color(themeHex: theme.colors.primaryText))
-                        .padding(.horizontal, 8)
-                        .padding(.bottom, 8)
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .background(
-                    RoundedRectangle(cornerRadius: 8)
-                        .fill(Color(themeHex: theme.colors.codeBlockBackground))
-                )
+                Text("print(\"Hello, World!\")")
+                    .font(codeFont)
+                    .foregroundColor(c(theme.colors.primaryText))
+                    .padding(.horizontal, 10).padding(.bottom, 10)
             }
-            .padding(.leading, 16)
-            .padding(.trailing, 12)
-            .padding(.vertical, 16)
-
-            Spacer(minLength: 0)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(RoundedRectangle(cornerRadius: 8).fill(c(theme.colors.codeBlockBackground)))
         }
-        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .padding(.horizontal, 16)
+        .padding(.vertical, 14)
     }
+
+    // MARK: - Background & Glass
 
     @ViewBuilder
     private var backgroundLayer: some View {
         ZStack {
             switch theme.background.type {
             case .solid:
-                Color(themeHex: theme.background.solidColor ?? theme.colors.primaryBackground)
-
+                c(theme.background.solidColor ?? theme.colors.primaryBackground)
             case .gradient:
-                let colors = (theme.background.gradientColors ?? ["#000000", "#333333"])
-                    .map { Color(themeHex: $0) }
                 LinearGradient(
-                    colors: colors,
+                    colors: (theme.background.gradientColors ?? ["#000000", "#333333"]).map { c($0) },
                     startPoint: .top,
                     endPoint: .bottom
                 )
-
             case .image:
                 if let imageData = theme.background.imageData,
                     let data = Data(base64Encoded: imageData),
@@ -1113,10 +1048,8 @@ struct ThemeChatPreview: View {
                 }
             }
 
-            // Overlay (applies to all background types)
             if let overlayColor = theme.background.overlayColor {
-                Color(themeHex: overlayColor)
-                    .opacity(theme.background.overlayOpacity ?? 0.5)
+                c(overlayColor).opacity(theme.background.overlayOpacity ?? 0.5)
             }
         }
     }
@@ -1125,36 +1058,27 @@ struct ThemeChatPreview: View {
     private func imageView(nsImage: NSImage, fit: ThemeBackground.ImageFit, size: CGSize) -> some View {
         switch fit {
         case .fill:
-            Image(nsImage: nsImage)
-                .resizable()
-                .aspectRatio(contentMode: .fill)
-                .frame(width: size.width, height: size.height)
-                .clipped()
+            Image(nsImage: nsImage).resizable().aspectRatio(contentMode: .fill)
+                .frame(width: size.width, height: size.height).clipped()
         case .fit:
-            Image(nsImage: nsImage)
-                .resizable()
-                .aspectRatio(contentMode: .fit)
+            Image(nsImage: nsImage).resizable().aspectRatio(contentMode: .fit)
                 .frame(width: size.width, height: size.height)
         case .stretch:
-            Image(nsImage: nsImage)
-                .resizable()
-                .frame(width: size.width, height: size.height)
+            Image(nsImage: nsImage).resizable().frame(width: size.width, height: size.height)
         case .tile:
             tiledImageView(nsImage: nsImage, size: size)
         }
     }
 
     private func tiledImageView(nsImage: NSImage, size: CGSize) -> some View {
-        let imageSize = nsImage.size
-        let cols = max(1, Int(ceil(size.width / imageSize.width)))
-        let rows = max(1, Int(ceil(size.height / imageSize.height)))
+        let imgSize = nsImage.size
+        let cols = max(1, Int(ceil(size.width / imgSize.width)))
+        let rows = max(1, Int(ceil(size.height / imgSize.height)))
 
         return VStack(spacing: 0) {
             ForEach(0 ..< rows, id: \.self) { _ in
                 HStack(spacing: 0) {
-                    ForEach(0 ..< cols, id: \.self) { _ in
-                        Image(nsImage: nsImage)
-                    }
+                    ForEach(0 ..< cols, id: \.self) { _ in Image(nsImage: nsImage) }
                 }
             }
         }
@@ -1164,22 +1088,18 @@ struct ThemeChatPreview: View {
 
     private var glassOverlay: some View {
         ZStack {
-            // Glass effect simulation
-            RoundedRectangle(cornerRadius: 24, style: .continuous)
-                .fill(.ultraThinMaterial)
+            RoundedRectangle(cornerRadius: 24, style: .continuous).fill(.ultraThinMaterial)
 
-            // Tint overlay if configured
             if let tintColor = theme.glass.tintColor {
                 RoundedRectangle(cornerRadius: 24, style: .continuous)
-                    .fill(Color(themeHex: tintColor).opacity(theme.glass.tintOpacity ?? 0))
+                    .fill(c(tintColor).opacity(theme.glass.tintOpacity ?? 0))
             }
 
-            // Gradient depth overlay using glass opacity
             LinearGradient(
                 colors: [
-                    Color(themeHex: theme.colors.primaryBackground).opacity(theme.glass.opacityPrimary),
-                    Color(themeHex: theme.colors.primaryBackground).opacity(theme.glass.opacitySecondary),
-                    Color.clear,
+                    c(theme.colors.primaryBackground).opacity(theme.glass.opacityPrimary),
+                    c(theme.colors.primaryBackground).opacity(theme.glass.opacitySecondary),
+                    .clear,
                 ],
                 startPoint: .top,
                 endPoint: .bottom
@@ -1187,136 +1107,131 @@ struct ThemeChatPreview: View {
         }
     }
 
+    // MARK: - Header
+
     private var previewHeader: some View {
-        HStack {
-            // Sidebar toggle mock
-            Circle()
-                .fill(Color(themeHex: theme.colors.secondaryBackground).opacity(0.8))
-                .frame(width: 28, height: 28)
-                .overlay(
-                    Image(systemName: "sidebar.left")
-                        .font(primaryFont(size: CGFloat(theme.typography.captionSize), weight: .medium))
-                        .foregroundColor(Color(themeHex: theme.colors.secondaryText))
-                )
+        HStack(spacing: 10) {
+            headerButton("sidebar.left")
+
+            // Chat / Agent mode toggle
+            HStack(spacing: 0) {
+                modeSegment("bubble.left.and.bubble.right", "Chat", isActive: true)
+                modeSegment("bolt.fill", "Agent", isActive: false)
+            }
+            .padding(3)
+            .background(Capsule().fill(c(theme.colors.secondaryBackground).opacity(0.6)))
+
+            // Model badge
+            HStack(spacing: 5) {
+                Circle().fill(c(theme.colors.successColor)).frame(width: 6, height: 6)
+                Text("gpt-4")
+                    .font(primaryFont(size: captionSize - 1, weight: .medium))
+                    .foregroundColor(c(theme.colors.secondaryText))
+            }
 
             Spacer()
 
-            // Actions mock
-            HStack(spacing: 8) {
-                Circle()
-                    .fill(Color(themeHex: theme.colors.secondaryBackground).opacity(0.8))
-                    .frame(width: 28, height: 28)
-                    .overlay(
-                        Image(systemName: "plus")
-                            .font(primaryFont(size: CGFloat(theme.typography.captionSize), weight: .medium))
-                            .foregroundColor(Color(themeHex: theme.colors.secondaryText))
-                    )
-
-                Circle()
-                    .fill(Color(themeHex: theme.colors.secondaryBackground).opacity(0.8))
-                    .frame(width: 28, height: 28)
-                    .overlay(
-                        Image(systemName: "xmark")
-                            .font(primaryFont(size: CGFloat(theme.typography.captionSize) - 2, weight: .semibold))
-                            .foregroundColor(Color(themeHex: theme.colors.secondaryText))
-                    )
-            }
+            headerButton("plus")
+            headerButton("pin")
         }
     }
 
+    private func headerButton(_ icon: String) -> some View {
+        Image(systemName: icon)
+            .font(.system(size: 12, weight: .medium))
+            .foregroundColor(c(theme.colors.secondaryText))
+            .frame(width: 28, height: 28)
+            .background(Circle().fill(c(theme.colors.secondaryBackground).opacity(0.6)))
+    }
+
+    private func modeSegment(_ icon: String, _ label: String, isActive: Bool) -> some View {
+        HStack(spacing: 4) {
+            Image(systemName: icon).font(.system(size: 10, weight: .medium))
+            Text(label).font(primaryFont(size: captionSize - 1, weight: .medium))
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 5)
+        .background(isActive ? Capsule().fill(c(theme.colors.accentColor).opacity(0.15)) : nil)
+        .foregroundColor(isActive ? c(theme.colors.accentColor) : c(theme.colors.tertiaryText))
+    }
+
+    // MARK: - Input
+
     private var previewInput: some View {
-        VStack(spacing: 12) {
-            // Model selector chip
-            HStack {
-                HStack(spacing: 6) {
-                    Circle()
-                        .fill(Color(themeHex: theme.colors.successColor))
-                        .frame(width: 6, height: 6)
-                    Text("gpt-4")
-                        .font(captionFont)
-                        .foregroundColor(Color(themeHex: theme.colors.secondaryText))
-                    Image(systemName: "chevron.up.chevron.down")
-                        .font(primaryFont(size: CGFloat(theme.typography.captionSize) - 3, weight: .semibold))
-                        .foregroundColor(Color(themeHex: theme.colors.tertiaryText))
+        VStack(spacing: 8) {
+            // Selector row
+            HStack(spacing: 10) {
+                selectorChip {
+                    Circle().fill(c(theme.colors.successColor)).frame(width: 6, height: 6)
+                    Text("gpt-4").font(primaryFont(size: captionSize - 1, weight: .medium))
+                    Image(systemName: "chevron.up.chevron.down").font(.system(size: 8, weight: .semibold))
                 }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 6)
-                .background(
-                    Capsule()
-                        .fill(Color(themeHex: theme.colors.secondaryBackground).opacity(0.8))
-                        .overlay(
-                            Capsule()
-                                .stroke(Color(themeHex: theme.colors.primaryBorder).opacity(0.5), lineWidth: 0.5)
-                        )
-                )
+
+                selectorChip {
+                    Image(systemName: "sparkles").font(.system(size: 9, weight: .medium))
+                    Text("3 tools").font(primaryFont(size: captionSize - 1, weight: .medium))
+                }
 
                 Spacer()
 
-                // Keyboard hint
-                HStack(spacing: 4) {
-                    Text("⏎")
-                        .font(primaryFont(size: CGFloat(theme.typography.captionSize) - 2, weight: .medium))
-                    Text("to send")
-                        .font(primaryFont(size: CGFloat(theme.typography.captionSize) - 1))
+                HStack(spacing: 3) {
+                    Text("⏎").font(primaryFont(size: captionSize - 2, weight: .medium))
+                    Text("to send").font(primaryFont(size: captionSize - 1))
                 }
-                .foregroundColor(Color(themeHex: theme.colors.tertiaryText).opacity(0.7))
+                .foregroundColor(c(theme.colors.tertiaryText).opacity(0.6))
             }
 
             // Input card
-            HStack(alignment: .bottom, spacing: 12) {
+            VStack(alignment: .leading, spacing: 0) {
                 Text("Message or paste image...")
                     .font(bodyFont)
-                    .foregroundColor(
-                        Color(themeHex: theme.colors.placeholderText ?? theme.colors.tertiaryText)
-                    )
+                    .foregroundColor(c(theme.colors.placeholderText ?? theme.colors.tertiaryText))
+                    .padding(.horizontal, 14)
+                    .padding(.top, 12)
+                    .padding(.bottom, 8)
 
-                Spacer()
+                HStack(spacing: 8) {
+                    Image(systemName: "photo.badge.plus").font(.system(size: 13, weight: .medium))
+                        .foregroundColor(c(theme.colors.tertiaryText))
+                    Image(systemName: "mic.fill").font(.system(size: 13, weight: .medium))
+                        .foregroundColor(c(theme.colors.tertiaryText))
 
-                // Send button with gradient
-                Circle()
-                    .fill(
-                        LinearGradient(
-                            colors: [
-                                Color(themeHex: theme.colors.accentColor),
-                                Color(themeHex: theme.colors.accentColor).opacity(0.85),
-                            ],
-                            startPoint: .top,
-                            endPoint: .bottom
+                    Spacer()
+
+                    Circle()
+                        .fill(
+                            LinearGradient(
+                                colors: [c(theme.colors.accentColor), c(theme.colors.accentColor).opacity(0.85)],
+                                startPoint: .top,
+                                endPoint: .bottom
+                            )
                         )
-                    )
-                    .frame(width: 32, height: 32)
-                    .overlay(
-                        Image(systemName: "arrow.up")
-                            .font(primaryFont(size: CGFloat(theme.typography.bodySize), weight: .semibold))
-                            .foregroundColor(.white)
-                    )
-                    .shadow(
-                        color: Color(themeHex: theme.colors.accentColor).opacity(theme.shadows.shadowOpacity),
-                        radius: CGFloat(theme.shadows.cardShadowRadius),
-                        x: 0,
-                        y: CGFloat(theme.shadows.cardShadowY)
-                    )
+                        .frame(width: 30, height: 30)
+                        .overlay(
+                            Image(systemName: "arrow.up").font(.system(size: 13, weight: .bold)).foregroundColor(.white)
+                        )
+                        .shadow(
+                            color: c(theme.colors.accentColor).opacity(theme.shadows.shadowOpacity * 0.5),
+                            radius: 4,
+                            x: 0,
+                            y: 2
+                        )
+                }
+                .padding(.horizontal, 14)
+                .padding(.bottom, 10)
             }
-            .padding(12)
             .background(
                 ZStack {
-                    // Glass background
+                    RoundedRectangle(cornerRadius: 20, style: .continuous).fill(.ultraThinMaterial)
                     RoundedRectangle(cornerRadius: 20, style: .continuous)
-                        .fill(.ultraThinMaterial)
-
-                    // Tint overlay
-                    RoundedRectangle(cornerRadius: 20, style: .continuous)
-                        .fill(Color(themeHex: theme.colors.primaryBackground).opacity(0.6))
+                        .fill(c(theme.colors.primaryBackground).opacity(0.6))
                 }
             )
             .overlay(
                 RoundedRectangle(cornerRadius: 20, style: .continuous)
                     .stroke(
                         LinearGradient(
-                            colors: [
-                                Color(themeHex: theme.glass.edgeLight),
-                                Color(themeHex: theme.glass.edgeLight).opacity(0.3),
-                            ],
+                            colors: [c(theme.glass.edgeLight), c(theme.glass.edgeLight).opacity(0.3)],
                             startPoint: .topLeading,
                             endPoint: .bottomTrailing
                         ),
@@ -1324,11 +1239,23 @@ struct ThemeChatPreview: View {
                     )
             )
             .shadow(
-                color: Color(themeHex: theme.colors.shadowColor).opacity(theme.shadows.shadowOpacity),
+                color: c(theme.colors.shadowColor).opacity(theme.shadows.shadowOpacity),
                 radius: CGFloat(theme.shadows.cardShadowRadius),
                 x: 0,
                 y: CGFloat(theme.shadows.cardShadowY)
             )
         }
+    }
+
+    private func selectorChip<Content: View>(@ViewBuilder content: () -> Content) -> some View {
+        HStack(spacing: 5) { content() }
+            .foregroundColor(c(theme.colors.secondaryText))
+            .padding(.horizontal, 10)
+            .padding(.vertical, 5)
+            .background(
+                Capsule()
+                    .fill(c(theme.colors.secondaryBackground).opacity(0.8))
+                    .overlay(Capsule().stroke(c(theme.colors.primaryBorder).opacity(0.4), lineWidth: 0.5))
+            )
     }
 }

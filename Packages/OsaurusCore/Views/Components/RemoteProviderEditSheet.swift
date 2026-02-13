@@ -1520,7 +1520,8 @@ private struct EditProviderFlow: View {
         let trimmedHost = host.trimmingCharacters(in: .whitespaces)
         let trimmedBasePath = basePath.trimmingCharacters(in: .whitespaces)
         let port: Int? = portString.trimmingCharacters(in: .whitespaces).isEmpty ? nil : Int(portString)
-        let testApiKey = authType == .apiKey && !apiKey.isEmpty ? apiKey : nil
+        let testApiKey =
+            authType == .apiKey ? (!apiKey.isEmpty ? apiKey : RemoteProviderKeychain.getAPIKey(for: provider.id)) : nil
 
         Task {
             do {
