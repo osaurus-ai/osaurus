@@ -114,10 +114,15 @@ private struct SystemPermissionRow: View {
         permissionService.permissionStates[permission] ?? false
     }
 
-    // Only automation permissions support the diagnostic test
+    // Permissions that support the diagnostic test button
     private var canTest: Bool {
-        permission == .automation || permission == .automationCalendar || permission == .contacts
-            || permission == .calendar || permission == .reminders || permission == .location || permission == .notes
+        switch permission {
+        case .automation, .automationCalendar, .automationMail, .notes,
+            .contacts, .calendar, .reminders, .location:
+            return true
+        default:
+            return false
+        }
     }
 
     var body: some View {
@@ -328,21 +333,24 @@ private struct SystemPermissionRow: View {
 
         Task.detached(priority: .userInitiated) {
             let result: String
-            if permission == .automationCalendar {
-                result = await SystemPermissionService.debugTestCalendarAccess()
-            } else if permission == .calendar {
-                result = SystemPermissionService.debugTestCalendarEventKitAccess()
-            } else if permission == .reminders {
-                result = SystemPermissionService.debugTestRemindersAccess()
-            } else if permission == .location {
-                result = SystemPermissionService.debugTestLocationAccess()
-            } else if permission == .notes {
-                result = SystemPermissionService.debugTestNotesAccess()
-            } else if permission == .automation {
+            switch permission {
+            case .automation:
                 result = SystemPermissionService.debugTestAutomationAccess()
-            } else if permission == .contacts {
+            case .automationCalendar:
+                result = await SystemPermissionService.debugTestCalendarAccess()
+            case .automationMail:
+                result = SystemPermissionService.debugTestMailAccess()
+            case .calendar:
+                result = SystemPermissionService.debugTestCalendarEventKitAccess()
+            case .reminders:
+                result = SystemPermissionService.debugTestRemindersAccess()
+            case .location:
+                result = SystemPermissionService.debugTestLocationAccess()
+            case .notes:
+                result = SystemPermissionService.debugTestNotesAccess()
+            case .contacts:
                 result = SystemPermissionService.debugTestContactsAccess()
-            } else {
+            default:
                 result = "Test not available"
             }
 
