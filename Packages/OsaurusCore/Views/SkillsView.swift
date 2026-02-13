@@ -36,9 +36,29 @@ struct SkillsView: View {
             // Content
             ZStack {
                 if skillManager.skills.isEmpty {
-                    SkillEmptyState(
-                        hasAppeared: hasAppeared,
-                        onCreate: { isCreating = true }
+                    SettingsEmptyState(
+                        icon: "sparkles",
+                        title: "Create Your First Skill",
+                        subtitle: "Skills provide specialized knowledge and guidance to the AI.",
+                        examples: [
+                            .init(
+                                icon: "magnifyingglass",
+                                title: "Research Analyst",
+                                description: "Fact-checking and balanced analysis"
+                            ),
+                            .init(
+                                icon: "lightbulb.fill",
+                                title: "Creative Brainstormer",
+                                description: "Generate ideas and explore possibilities"
+                            ),
+                            .init(
+                                icon: "checklist",
+                                title: "Productivity Coach",
+                                description: "Task management and goal setting"
+                            ),
+                        ],
+                        primaryAction: .init(title: "Create Skill", icon: "plus", handler: { isCreating = true }),
+                        hasAppeared: hasAppeared
                     )
                 } else {
                     ScrollView {
@@ -378,173 +398,6 @@ private struct ImportMenuRow: View {
         .onHover { hovering in
             isHovering = hovering
         }
-    }
-}
-
-// MARK: - Empty State
-
-private struct SkillEmptyState: View {
-    @Environment(\.theme) private var theme
-
-    let hasAppeared: Bool
-    let onCreate: () -> Void
-
-    @State private var glowIntensity: CGFloat = 0.6
-
-    var body: some View {
-        VStack(spacing: 24) {
-            Spacer()
-
-            // Glowing icon
-            ZStack {
-                Circle()
-                    .fill(theme.accentColor)
-                    .frame(width: 88, height: 88)
-                    .blur(radius: 25)
-                    .opacity(glowIntensity * 0.25)
-
-                Circle()
-                    .fill(theme.accentColor)
-                    .frame(width: 88, height: 88)
-                    .blur(radius: 12)
-                    .opacity(glowIntensity * 0.15)
-
-                Circle()
-                    .fill(
-                        LinearGradient(
-                            colors: [
-                                theme.accentColor.opacity(0.15),
-                                theme.accentColor.opacity(0.05),
-                            ],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        )
-                    )
-                    .frame(width: 88, height: 88)
-
-                Image(systemName: "sparkles")
-                    .font(.system(size: 36, weight: .medium))
-                    .foregroundStyle(
-                        LinearGradient(
-                            colors: [theme.accentColor, theme.accentColor.opacity(0.7)],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        )
-                    )
-            }
-            .opacity(hasAppeared ? 1 : 0)
-            .scaleEffect(hasAppeared ? 1 : 0.8)
-            .animation(.spring(response: 0.5, dampingFraction: 0.7).delay(0.1), value: hasAppeared)
-
-            // Text content
-            VStack(spacing: 8) {
-                Text("Create Your First Skill")
-                    .font(.system(size: 22, weight: .bold, design: .rounded))
-                    .foregroundColor(theme.primaryText)
-
-                Text("Skills provide specialized knowledge and guidance to the AI.")
-                    .font(.system(size: 14))
-                    .foregroundColor(theme.secondaryText)
-                    .multilineTextAlignment(.center)
-                    .lineLimit(2)
-            }
-            .opacity(hasAppeared ? 1 : 0)
-            .offset(y: hasAppeared ? 0 : 15)
-            .animation(.spring(response: 0.5, dampingFraction: 0.8).delay(0.2), value: hasAppeared)
-
-            // Example use cases
-            VStack(spacing: 8) {
-                SkillUseCaseRow(
-                    icon: "magnifyingglass",
-                    title: "Research Analyst",
-                    description: "Fact-checking and balanced analysis"
-                )
-                SkillUseCaseRow(
-                    icon: "lightbulb.fill",
-                    title: "Creative Brainstormer",
-                    description: "Generate ideas and explore possibilities"
-                )
-                SkillUseCaseRow(
-                    icon: "checklist",
-                    title: "Productivity Coach",
-                    description: "Task management and goal setting"
-                )
-            }
-            .frame(maxWidth: 320)
-            .opacity(hasAppeared ? 1 : 0)
-            .offset(y: hasAppeared ? 0 : 20)
-            .animation(.spring(response: 0.5, dampingFraction: 0.8).delay(0.3), value: hasAppeared)
-
-            // Action button
-            Button(action: onCreate) {
-                HStack(spacing: 6) {
-                    Image(systemName: "plus")
-                        .font(.system(size: 11, weight: .semibold))
-                    Text("Create Skill")
-                        .font(.system(size: 13, weight: .semibold))
-                }
-                .foregroundColor(.white)
-                .padding(.horizontal, 18)
-                .padding(.vertical, 10)
-                .background(
-                    RoundedRectangle(cornerRadius: 8)
-                        .fill(theme.accentColor)
-                )
-            }
-            .buttonStyle(PlainButtonStyle())
-            .opacity(hasAppeared ? 1 : 0)
-            .offset(y: hasAppeared ? 0 : 10)
-            .animation(.spring(response: 0.5, dampingFraction: 0.8).delay(0.4), value: hasAppeared)
-
-            Spacer()
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .onAppear {
-            withAnimation(.easeInOut(duration: 2).repeatForever(autoreverses: true)) {
-                glowIntensity = 1.0
-            }
-        }
-    }
-}
-
-// MARK: - Use Case Row
-
-private struct SkillUseCaseRow: View {
-    @Environment(\.theme) private var theme
-
-    let icon: String
-    let title: String
-    let description: String
-
-    var body: some View {
-        HStack(spacing: 12) {
-            Image(systemName: icon)
-                .font(.system(size: 12, weight: .medium))
-                .foregroundColor(theme.accentColor)
-                .frame(width: 28, height: 28)
-                .background(
-                    RoundedRectangle(cornerRadius: 6)
-                        .fill(theme.accentColor.opacity(0.1))
-                )
-
-            VStack(alignment: .leading, spacing: 2) {
-                Text(title)
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundColor(theme.primaryText)
-
-                Text(description)
-                    .font(.system(size: 11))
-                    .foregroundColor(theme.tertiaryText)
-            }
-
-            Spacer(minLength: 0)
-        }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 10)
-        .background(
-            RoundedRectangle(cornerRadius: 8)
-                .fill(theme.secondaryBackground.opacity(0.5))
-        )
     }
 }
 

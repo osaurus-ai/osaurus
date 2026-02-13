@@ -32,9 +32,29 @@ struct WatchersView: View {
             // Content
             ZStack {
                 if watcherManager.watchers.isEmpty {
-                    WatcherEmptyState(
-                        hasAppeared: hasAppeared,
-                        onCreate: { isCreating = true }
+                    SettingsEmptyState(
+                        icon: "eye.fill",
+                        title: "Create Your First Watcher",
+                        subtitle: "Monitor folders for changes and trigger agent tasks automatically.",
+                        examples: [
+                            .init(
+                                icon: "arrow.down.circle",
+                                title: "Downloads Organizer",
+                                description: "Auto-sort files into folders by type"
+                            ),
+                            .init(
+                                icon: "camera",
+                                title: "Screenshot Manager",
+                                description: "Rename and organize screenshots"
+                            ),
+                            .init(
+                                icon: "externaldrive.connected.to.line.below",
+                                title: "Dropbox Automation",
+                                description: "Process shared files on change"
+                            ),
+                        ],
+                        primaryAction: .init(title: "Create Watcher", icon: "plus", handler: { isCreating = true }),
+                        hasAppeared: hasAppeared
                     )
                 } else {
                     ScrollView {
@@ -163,169 +183,6 @@ struct WatchersView: View {
                 successMessage = nil
             }
         }
-    }
-}
-
-// MARK: - Empty State
-
-private struct WatcherEmptyState: View {
-    @Environment(\.theme) private var theme
-
-    let hasAppeared: Bool
-    let onCreate: () -> Void
-
-    @State private var glowIntensity: CGFloat = 0.6
-
-    var body: some View {
-        VStack(spacing: 24) {
-            Spacer()
-
-            ZStack {
-                Circle()
-                    .fill(theme.accentColor)
-                    .frame(width: 88, height: 88)
-                    .blur(radius: 25)
-                    .opacity(glowIntensity * 0.25)
-
-                Circle()
-                    .fill(theme.accentColor)
-                    .frame(width: 88, height: 88)
-                    .blur(radius: 12)
-                    .opacity(glowIntensity * 0.15)
-
-                Circle()
-                    .fill(
-                        LinearGradient(
-                            colors: [
-                                theme.accentColor.opacity(0.15),
-                                theme.accentColor.opacity(0.05),
-                            ],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        )
-                    )
-                    .frame(width: 88, height: 88)
-
-                Image(systemName: "eye.fill")
-                    .font(.system(size: 36, weight: .medium))
-                    .foregroundStyle(
-                        LinearGradient(
-                            colors: [theme.accentColor, theme.accentColor.opacity(0.7)],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        )
-                    )
-            }
-            .opacity(hasAppeared ? 1 : 0)
-            .scaleEffect(hasAppeared ? 1 : 0.8)
-            .animation(.spring(response: 0.5, dampingFraction: 0.7).delay(0.1), value: hasAppeared)
-
-            VStack(spacing: 8) {
-                Text("Create Your First Watcher")
-                    .font(.system(size: 22, weight: .bold, design: .rounded))
-                    .foregroundColor(theme.primaryText)
-
-                Text("Monitor folders for changes and trigger agent tasks automatically.")
-                    .font(.system(size: 14))
-                    .foregroundColor(theme.secondaryText)
-                    .multilineTextAlignment(.center)
-                    .lineLimit(2)
-            }
-            .opacity(hasAppeared ? 1 : 0)
-            .offset(y: hasAppeared ? 0 : 15)
-            .animation(.spring(response: 0.5, dampingFraction: 0.8).delay(0.2), value: hasAppeared)
-
-            VStack(spacing: 8) {
-                WatcherUseCaseRow(
-                    icon: "arrow.down.circle",
-                    title: "Downloads Organizer",
-                    description: "Auto-sort files into folders by type"
-                )
-                WatcherUseCaseRow(
-                    icon: "camera",
-                    title: "Screenshot Manager",
-                    description: "Rename and organize screenshots"
-                )
-                WatcherUseCaseRow(
-                    icon: "externaldrive.connected.to.line.below",
-                    title: "Dropbox Automation",
-                    description: "Process shared files on change"
-                )
-            }
-            .frame(maxWidth: 320)
-            .opacity(hasAppeared ? 1 : 0)
-            .offset(y: hasAppeared ? 0 : 20)
-            .animation(.spring(response: 0.5, dampingFraction: 0.8).delay(0.3), value: hasAppeared)
-
-            Button(action: onCreate) {
-                HStack(spacing: 6) {
-                    Image(systemName: "plus")
-                        .font(.system(size: 11, weight: .semibold))
-                    Text("Create Watcher")
-                        .font(.system(size: 13, weight: .semibold))
-                }
-                .foregroundColor(.white)
-                .padding(.horizontal, 18)
-                .padding(.vertical, 10)
-                .background(
-                    RoundedRectangle(cornerRadius: 8)
-                        .fill(theme.accentColor)
-                )
-            }
-            .buttonStyle(PlainButtonStyle())
-            .opacity(hasAppeared ? 1 : 0)
-            .offset(y: hasAppeared ? 0 : 10)
-            .animation(.spring(response: 0.5, dampingFraction: 0.8).delay(0.4), value: hasAppeared)
-
-            Spacer()
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .onAppear {
-            withAnimation(.easeInOut(duration: 2).repeatForever(autoreverses: true)) {
-                glowIntensity = 1.0
-            }
-        }
-    }
-}
-
-// MARK: - Use Case Row
-
-private struct WatcherUseCaseRow: View {
-    @Environment(\.theme) private var theme
-
-    let icon: String
-    let title: String
-    let description: String
-
-    var body: some View {
-        HStack(spacing: 12) {
-            Image(systemName: icon)
-                .font(.system(size: 12, weight: .medium))
-                .foregroundColor(theme.accentColor)
-                .frame(width: 28, height: 28)
-                .background(
-                    RoundedRectangle(cornerRadius: 6)
-                        .fill(theme.accentColor.opacity(0.1))
-                )
-
-            Text(title)
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundColor(theme.primaryText)
-                .lineLimit(1)
-
-            Text(description)
-                .font(.system(size: 11))
-                .foregroundColor(theme.tertiaryText)
-                .lineLimit(1)
-
-            Spacer(minLength: 0)
-        }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
-        .background(
-            RoundedRectangle(cornerRadius: 8)
-                .fill(theme.secondaryBackground.opacity(0.5))
-        )
     }
 }
 
