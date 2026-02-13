@@ -669,8 +669,10 @@ struct ThemeEditorView: View {
             colorSwatch(hex: hex.wrappedValue)
 
             colorPickerButton(
-                get: { Color(themeHex: hex.wrappedValue) },
-                set: { hex.wrappedValue = $0.toHex(includeAlpha: true) }
+                selection: Binding(
+                    get: { Color(themeHex: hex.wrappedValue) },
+                    set: { hex.wrappedValue = $0.toHex(includeAlpha: true) }
+                )
             )
         }
     }
@@ -694,8 +696,10 @@ struct ThemeEditorView: View {
                 colorSwatch(hex: hex.wrappedValue ?? "#000000")
 
                 colorPickerButton(
-                    get: { Color(themeHex: hex.wrappedValue ?? "#000000") },
-                    set: { hex.wrappedValue = $0.toHex(includeAlpha: true) }
+                    selection: Binding(
+                        get: { Color(themeHex: hex.wrappedValue ?? "#000000") },
+                        set: { hex.wrappedValue = $0.toHex(includeAlpha: true) }
+                    )
                 )
 
                 Button(action: { hex.wrappedValue = nil }) {
@@ -742,8 +746,8 @@ struct ThemeEditorView: View {
             .overlay(RoundedRectangle(cornerRadius: 4).stroke(currentTheme.primaryBorder, lineWidth: 1))
     }
 
-    private func colorPickerButton(get: @escaping () -> Color, set: @escaping (Color) -> Void) -> some View {
-        ColorPicker("", selection: Binding(get: get, set: set), supportsOpacity: true)
+    private func colorPickerButton(selection: Binding<Color>) -> some View {
+        ColorPicker("", selection: selection, supportsOpacity: true)
             .labelsHidden()
             .frame(width: 44)
     }
