@@ -8,28 +8,54 @@
 
 import Foundation
 
-// MARK: - File Change Event
+// MARK: - Responsiveness
 
-/// Represents a single file change detected by a watcher
-public struct FileChangeEvent: Codable, Sendable, Equatable {
-    /// The type of file change
-    public enum ChangeType: String, Codable, Sendable {
-        case added
-        case modified
-        case deleted
+/// How quickly a watcher reacts to filesystem changes.
+/// Maps to debounce window duration internally.
+public enum Responsiveness: String, Codable, Sendable, CaseIterable, Equatable {
+    /// ~200ms -- screenshots, single-file drops
+    case fast
+    /// ~1s -- general use (default)
+    case balanced
+    /// ~3s -- downloads, torrents, build output
+    case patient
+
+    /// The debounce window duration in seconds
+    public var debounceWindow: TimeInterval {
+        switch self {
+        case .fast: return 0.2
+        case .balanced: return 1.0
+        case .patient: return 3.0
+        }
     }
 
-    /// Relative path within the watched folder
-    public let path: String
-    /// What kind of change occurred
-    public let changeType: ChangeType
-    /// When the change was detected
-    public let timestamp: Date
+    /// Human-readable display name
+    public var displayName: String {
+        switch self {
+        case .fast: return "Fast"
+        case .balanced: return "Balanced"
+        case .patient: return "Patient"
+        }
+    }
 
-    public init(path: String, changeType: ChangeType, timestamp: Date = Date()) {
-        self.path = path
-        self.changeType = changeType
-        self.timestamp = timestamp
+    /// Description for UI
+    public var displayDescription: String {
+        switch self {
+        case .fast: return "Triggers quickly. Best for screenshots, single-file drops."
+        case .balanced: return "Waits for rapid changes to settle. Good for general use."
+        case .patient: return "Waits longer for downloads and batch operations to finish."
+        }
+    }
+
+    /// Map a legacy debounceSeconds value to the nearest Responsiveness
+    public static func from(debounceSeconds: TimeInterval) -> Responsiveness {
+        if debounceSeconds <= 0.5 {
+            return .fast
+        } else if debounceSeconds <= 2.0 {
+            return .balanced
+        } else {
+            return .patient
+        }
     }
 }
 
@@ -59,8 +85,10 @@ public struct Watcher: Codable, Identifiable, Sendable, Equatable {
     public var isEnabled: Bool
     /// Whether to monitor subdirectories recursively (default: false for performance)
     public var recursive: Bool
-    /// Seconds to wait after last change before triggering (coalesces rapid changes)
-    public var debounceSeconds: TimeInterval
+    /// How quickly the watcher reacts to changes
+    public var responsiveness: Responsiveness
+    /// Seconds to wait after LLM completes before re-fingerprinting (FSEvents latency x2)
+    public var settleSeconds: TimeInterval
     /// When the watcher last triggered an agent task
     public var lastTriggeredAt: Date?
     /// The chat session ID from the last run (for viewing results)
@@ -82,7 +110,8 @@ public struct Watcher: Codable, Identifiable, Sendable, Equatable {
         folderBookmark: Data? = nil,
         isEnabled: Bool = true,
         recursive: Bool = false,
-        debounceSeconds: TimeInterval = 3.0,
+        responsiveness: Responsiveness = .balanced,
+        settleSeconds: TimeInterval = 2.0,
         lastTriggeredAt: Date? = nil,
         lastChatSessionId: UUID? = nil,
         createdAt: Date = Date(),
@@ -99,7 +128,8 @@ public struct Watcher: Codable, Identifiable, Sendable, Equatable {
         self.folderBookmark = folderBookmark
         self.isEnabled = isEnabled
         self.recursive = recursive
-        self.debounceSeconds = debounceSeconds
+        self.responsiveness = responsiveness
+        self.settleSeconds = settleSeconds
         self.lastTriggeredAt = lastTriggeredAt
         self.lastChatSessionId = lastChatSessionId
         self.createdAt = createdAt
@@ -112,7 +142,9 @@ public struct Watcher: Codable, Identifiable, Sendable, Equatable {
         case id, name, instructions, personaId, parameters
         case watchPath, watchBookmark
         case folderPath, folderBookmark
-        case isEnabled, recursive, debounceSeconds
+        case isEnabled, recursive
+        case responsiveness, settleSeconds
+        case debounceSeconds  // legacy key for migration
         case lastTriggeredAt, lastChatSessionId
         case createdAt, updatedAt
     }
@@ -130,11 +162,43 @@ public struct Watcher: Codable, Identifiable, Sendable, Equatable {
         folderBookmark = try container.decodeIfPresent(Data.self, forKey: .folderBookmark)
         isEnabled = try container.decode(Bool.self, forKey: .isEnabled)
         recursive = try container.decodeIfPresent(Bool.self, forKey: .recursive) ?? false
-        debounceSeconds = try container.decodeIfPresent(TimeInterval.self, forKey: .debounceSeconds) ?? 3.0
+
+        // Migration: map legacy debounceSeconds to responsiveness
+        if let resp = try container.decodeIfPresent(Responsiveness.self, forKey: .responsiveness) {
+            responsiveness = resp
+        } else if let legacy = try container.decodeIfPresent(TimeInterval.self, forKey: .debounceSeconds) {
+            responsiveness = Responsiveness.from(debounceSeconds: legacy)
+        } else {
+            responsiveness = .balanced
+        }
+
+        settleSeconds = try container.decodeIfPresent(TimeInterval.self, forKey: .settleSeconds) ?? 2.0
         lastTriggeredAt = try container.decodeIfPresent(Date.self, forKey: .lastTriggeredAt)
         lastChatSessionId = try container.decodeIfPresent(UUID.self, forKey: .lastChatSessionId)
         createdAt = try container.decode(Date.self, forKey: .createdAt)
         updatedAt = try container.decode(Date.self, forKey: .updatedAt)
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(id, forKey: .id)
+        try container.encode(name, forKey: .name)
+        try container.encode(instructions, forKey: .instructions)
+        try container.encodeIfPresent(personaId, forKey: .personaId)
+        try container.encode(parameters, forKey: .parameters)
+        try container.encodeIfPresent(watchPath, forKey: .watchPath)
+        try container.encodeIfPresent(watchBookmark, forKey: .watchBookmark)
+        try container.encodeIfPresent(folderPath, forKey: .folderPath)
+        try container.encodeIfPresent(folderBookmark, forKey: .folderBookmark)
+        try container.encode(isEnabled, forKey: .isEnabled)
+        try container.encode(recursive, forKey: .recursive)
+        try container.encode(responsiveness, forKey: .responsiveness)
+        try container.encode(settleSeconds, forKey: .settleSeconds)
+        try container.encodeIfPresent(lastTriggeredAt, forKey: .lastTriggeredAt)
+        try container.encodeIfPresent(lastChatSessionId, forKey: .lastChatSessionId)
+        try container.encode(createdAt, forKey: .createdAt)
+        try container.encode(updatedAt, forKey: .updatedAt)
+        // Note: debounceSeconds is NOT encoded -- it's a legacy read-only key
     }
 
     // MARK: - Computed Properties
@@ -172,6 +236,20 @@ public struct Watcher: Codable, Identifiable, Sendable, Equatable {
         }
         return path
     }
+}
+
+// MARK: - Watcher Phase
+
+/// The current phase of a watcher's state machine
+public enum WatcherPhase: String, Sendable {
+    /// Waiting for changes
+    case idle
+    /// Coalescing rapid events before processing
+    case debouncing
+    /// LLM is working on the changes
+    case processing
+    /// Waiting for self-caused FSEvents to flush
+    case settling
 }
 
 // MARK: - Watcher Run Info

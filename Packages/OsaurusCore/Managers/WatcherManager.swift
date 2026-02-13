@@ -2,9 +2,11 @@
 //  WatcherManager.swift
 //  osaurus
 //
-//  Manages file system watchers that monitor directories for changes
-//  and dispatch agent tasks with change context.
-//  Uses macOS FSEvents for efficient kernel-level file monitoring.
+//  Reactive file system watcher engine.
+//  Uses a state-based architecture: FSEvents are only a "something changed" signal.
+//  The actual work is driven by directory fingerprint diffs. After the LLM acts,
+//  re-fingerprint and check for convergence. Recursive loops are structurally
+//  impossible because an idempotent LLM on a stable directory produces no changes.
 //
 
 import Combine
@@ -17,7 +19,7 @@ extension Notification.Name {
     public static let watcherExecutionCompleted = Notification.Name("watcherExecutionCompleted")
 }
 
-/// Manages file system watchers with FSEvents-based monitoring
+/// Manages file system watchers with FSEvents-based monitoring and fingerprint convergence
 @MainActor
 public final class WatcherManager: ObservableObject {
     public static let shared = WatcherManager()
@@ -30,41 +32,22 @@ public final class WatcherManager: ObservableObject {
     /// Currently running tasks (watcher ID -> run info)
     @Published public private(set) var runningTasks: [UUID: WatcherRunInfo] = [:]
 
+    /// Current phase per watcher (for UI display)
+    @Published public private(set) var phases: [UUID: WatcherPhase] = [:]
+
     // MARK: - Private State
 
-    /// Active execution tasks
+    /// Active execution tasks (processing loop per watcher)
     private var executionTasks: [UUID: Task<Void, Never>] = [:]
 
     /// FSEvent stream reference (nonisolated(unsafe) so deinit can clean it up)
     private nonisolated(unsafe) var eventStream: FSEventStreamRef?
 
-    /// Per-watcher debounce timers
-    private var debounceTimers: [UUID: Task<Void, Never>] = [:]
+    /// Per-watcher debounce tasks
+    private var debouncers: [UUID: Task<Void, Never>] = [:]
 
-    /// Accumulated events per watcher (during debounce window)
-    private var pendingEvents: [UUID: [FileChangeEvent]] = [:]
-
-    /// Baseline snapshots per watcher (filename -> modification date)
-    private var baselineSnapshots: [UUID: [String: Date]] = [:]
-
-    /// Cooldown end times per watcher (after task completion)
-    private var cooldownEndTimes: [UUID: Date] = [:]
-
-    /// Cooldown duration after task completion (seconds)
-    private let cooldownDuration: TimeInterval = 5.0
-
-    /// Noise patterns to filter out
-    private static let noisePatterns: Set<String> = [
-        ".DS_Store", ".localized", "Thumbs.db", "desktop.ini",
-    ]
-
-    /// Partial download extensions to filter out
-    private static let partialDownloadExtensions: Set<String> = [
-        "crdownload", "download", "part", "tmp", "partial",
-    ]
-
-    /// Hidden file prefixes to filter out
-    private static let hiddenPrefixes: [String] = ["._"]
+    /// Last known fingerprint per watcher (convergence anchor)
+    private var lastKnownFingerprints: [UUID: DirectoryFingerprint] = [:]
 
     // MARK: - Initialization
 
@@ -104,7 +87,7 @@ public final class WatcherManager: ObservableObject {
         folderBookmark: Data? = nil,
         isEnabled: Bool = true,
         recursive: Bool = false,
-        debounceSeconds: TimeInterval = 3.0
+        responsiveness: Responsiveness = .balanced
     ) -> Watcher {
         let watcher = Watcher(
             id: UUID(),
@@ -118,7 +101,7 @@ public final class WatcherManager: ObservableObject {
             folderBookmark: folderBookmark,
             isEnabled: isEnabled,
             recursive: recursive,
-            debounceSeconds: debounceSeconds,
+            responsiveness: responsiveness,
             createdAt: Date(),
             updatedAt: Date()
         )
@@ -149,16 +132,13 @@ public final class WatcherManager: ObservableObject {
     @discardableResult
     public func delete(id: UUID) -> Bool {
         // Cancel any running execution
-        if let task = executionTasks[id] {
-            task.cancel()
-            executionTasks.removeValue(forKey: id)
-        }
+        executionTasks[id]?.cancel()
+        executionTasks.removeValue(forKey: id)
+        debouncers[id]?.cancel()
+        debouncers.removeValue(forKey: id)
         runningTasks.removeValue(forKey: id)
-        debounceTimers[id]?.cancel()
-        debounceTimers.removeValue(forKey: id)
-        pendingEvents.removeValue(forKey: id)
-        baselineSnapshots.removeValue(forKey: id)
-        cooldownEndTimes.removeValue(forKey: id)
+        phases.removeValue(forKey: id)
+        lastKnownFingerprints.removeValue(forKey: id)
 
         guard WatcherStore.delete(id: id) else { return false }
 
@@ -177,6 +157,18 @@ public final class WatcherManager: ObservableObject {
         watcher.isEnabled = enabled
         watcher.updatedAt = Date()
         WatcherStore.save(watcher)
+
+        if !enabled {
+            // Clean up runtime state when disabling
+            debouncers[id]?.cancel()
+            debouncers.removeValue(forKey: id)
+            executionTasks[id]?.cancel()
+            executionTasks.removeValue(forKey: id)
+            runningTasks.removeValue(forKey: id)
+            phases.removeValue(forKey: id)
+            lastKnownFingerprints.removeValue(forKey: id)
+        }
+
         refresh()
         rebuildEventStream()
 
@@ -188,37 +180,58 @@ public final class WatcherManager: ObservableObject {
         watchers.first { $0.id == id }
     }
 
-    /// Check if a watcher is currently running
+    /// Check if a watcher is currently running (has an active execution task)
     public func isRunning(_ watcherId: UUID) -> Bool {
-        runningTasks[watcherId] != nil
+        let p = phases[watcherId] ?? .idle
+        return p == .processing || p == .settling
     }
 
-    /// Manually trigger a watcher to run now (simulates a change detection)
+    /// Get the current phase for a watcher
+    public func phase(for watcherId: UUID) -> WatcherPhase {
+        phases[watcherId] ?? .idle
+    }
+
+    /// Manually trigger a watcher (clears last known fingerprint for full-directory run)
     public func runNow(_ watcherId: UUID) {
         guard let watcher = watchers.first(where: { $0.id == watcherId }) else { return }
 
-        // Build a synthetic event list by scanning the watched folder
-        let events = buildSyntheticEvents(for: watcher)
-        executeWatcher(watcher, events: events)
+        let currentPhase = phases[watcherId] ?? .idle
+        guard currentPhase == .idle else {
+            print("[Osaurus] runNow skipped for \(watcher.name): phase is \(currentPhase.rawValue)")
+            return
+        }
+
+        // Cancel any pending debouncer
+        debouncers[watcherId]?.cancel()
+        debouncers.removeValue(forKey: watcherId)
+
+        // Clear last known fingerprint so the LLM sees the full directory
+        lastKnownFingerprints.removeValue(forKey: watcherId)
+        processCurrentState(for: watcher)
     }
 
     /// Cancel a running watcher execution
     public func cancelExecution(_ watcherId: UUID) {
-        if let task = executionTasks[watcherId] {
-            task.cancel()
-            executionTasks.removeValue(forKey: watcherId)
-        }
+        executionTasks[watcherId]?.cancel()
+        executionTasks.removeValue(forKey: watcherId)
+        debouncers[watcherId]?.cancel()
+        debouncers.removeValue(forKey: watcherId)
         runningTasks.removeValue(forKey: watcherId)
+        phases[watcherId] = .idle
     }
 
     // MARK: - FSEvents Management
 
     /// Start monitoring all enabled watchers
     private func startAllEnabledWatchers() {
-        // Take baseline snapshots for all enabled watchers
+        // Take initial fingerprints for all enabled watchers
         for watcher in watchers where watcher.isEnabled {
             if let path = resolveWatchPath(for: watcher) {
-                baselineSnapshots[watcher.id] = takeSnapshot(at: path, recursive: watcher.recursive)
+                let url = URL(fileURLWithPath: path)
+                let excluded = excludedSubpaths(for: watcher)
+                if let fingerprint = try? DirectoryFingerprint.capture(url, excludedSubpaths: excluded) {
+                    lastKnownFingerprints[watcher.id] = fingerprint
+                }
             }
         }
         rebuildEventStream()
@@ -239,10 +252,6 @@ public final class WatcherManager: ObservableObject {
         for watcher in enabledWatchers {
             if let path = resolveWatchPath(for: watcher) {
                 paths.append(path)
-                // Take baseline snapshot if not already present
-                if baselineSnapshots[watcher.id] == nil {
-                    baselineSnapshots[watcher.id] = takeSnapshot(at: path, recursive: watcher.recursive)
-                }
             }
         }
 
@@ -263,9 +272,10 @@ public final class WatcherManager: ObservableObject {
             copyDescription: nil
         )
 
+        // Directory-level signals only -- no per-file flags needed.
+        // The fingerprint handles change detection.
         let flags: FSEventStreamCreateFlags =
-            UInt32(kFSEventStreamCreateFlagFileEvents)
-            | UInt32(kFSEventStreamCreateFlagUseCFTypes)
+            UInt32(kFSEventStreamCreateFlagUseCFTypes)
             | UInt32(kFSEventStreamCreateFlagNoDefer)
 
         guard
@@ -275,7 +285,7 @@ public final class WatcherManager: ObservableObject {
                 &context,
                 pathsToWatch,
                 FSEventStreamEventId(kFSEventStreamEventIdSinceNow),
-                2.0,  // Kernel-level coalescing latency (seconds)
+                1.0,  // Kernel-level coalescing latency (seconds)
                 flags
             )
         else {
@@ -325,332 +335,228 @@ public final class WatcherManager: ObservableObject {
         }
     }
 
-    // MARK: - Event Processing
-
-    /// Called from the FSEvents callback (on main thread via run loop)
-    fileprivate func handleFSEvents(paths: [String], flags: [FSEventStreamEventFlags]) {
-        let now = Date()
-
-        for (path, eventFlags) in zip(paths, flags) {
-            let fileName = (path as NSString).lastPathComponent
-            let parentDir = (path as NSString).deletingLastPathComponent
-
-            // Skip noise files
-            guard !Self.isNoiseFile(fileName) else { continue }
-
-            // Determine change type from flags
-            let changeType = classifyChange(flags: eventFlags, path: path)
-            guard let change = changeType else { continue }
-
-            // Find matching watcher(s) for this path
-            for watcher in watchers where watcher.isEnabled {
-                guard let watchPath = resolveWatchPath(for: watcher) else { continue }
-
-                let matches: Bool
-                if watcher.recursive {
-                    matches = path.hasPrefix(watchPath)
-                } else {
-                    // Shallow: only match files directly in the watched directory
-                    matches = parentDir == watchPath
-                }
-
-                guard matches else { continue }
-
-                // Skip if in cooldown period
-                if let cooldownEnd = cooldownEndTimes[watcher.id], now < cooldownEnd {
-                    continue
-                }
-
-                // Compute relative path
-                let relativePath: String
-                if path.hasPrefix(watchPath) {
-                    let startIndex = path.index(path.startIndex, offsetBy: watchPath.count)
-                    var rel = String(path[startIndex...])
-                    if rel.hasPrefix("/") { rel = String(rel.dropFirst()) }
-                    relativePath = rel
-                } else {
-                    relativePath = fileName
-                }
-
-                let event = FileChangeEvent(
-                    path: relativePath,
-                    changeType: change,
-                    timestamp: now
-                )
-
-                // Accumulate event
-                pendingEvents[watcher.id, default: []].append(event)
-
-                // Reset debounce timer for this watcher
-                resetDebounceTimer(for: watcher)
-            }
-        }
+    /// Compute excluded subpaths for a watcher (other watched folders nested within it)
+    private func excludedSubpaths(for watcher: Watcher) -> Set<URL> {
+        guard let watchPath = resolveWatchPath(for: watcher) else { return [] }
+        return Set(
+            watchers
+                .filter { $0.id != watcher.id && $0.isEnabled }
+                .compactMap { resolveWatchPath(for: $0) }
+                .filter { $0.hasPrefix(watchPath + "/") }
+                .map { URL(fileURLWithPath: $0) }
+        )
     }
 
-    /// Classify a file change from FSEvent flags
-    private func classifyChange(flags: FSEventStreamEventFlags, path: String) -> FileChangeEvent.ChangeType? {
-        let isFile = (flags & UInt32(kFSEventStreamEventFlagItemIsFile)) != 0
-        let isDir = (flags & UInt32(kFSEventStreamEventFlagItemIsDir)) != 0
+    // MARK: - FSEvent Handling (Phase-Gated)
 
-        // We primarily care about file events (not directories, unless specific)
-        guard isFile || isDir else { return nil }
+    /// Called from the FSEvents callback.
+    /// - idle: start debouncing (transition to debouncing)
+    /// - debouncing: reset the debounce timer (stay in debouncing)
+    /// - processing/settling: ignore entirely (events are self-caused or will be caught post-settle)
+    fileprivate func handleFSEvent(paths: [String]) {
+        for watcher in watchers where watcher.isEnabled {
+            let currentPhase = phases[watcher.id] ?? .idle
 
-        let created = (flags & UInt32(kFSEventStreamEventFlagItemCreated)) != 0
-        let removed = (flags & UInt32(kFSEventStreamEventFlagItemRemoved)) != 0
-        let modified = (flags & UInt32(kFSEventStreamEventFlagItemModified)) != 0
-        let renamed = (flags & UInt32(kFSEventStreamEventFlagItemRenamed)) != 0
+            // Only accept events in idle or debouncing phases
+            guard currentPhase == .idle || currentPhase == .debouncing else { continue }
 
-        if removed {
-            // Verify the file is actually gone
-            if !FileManager.default.fileExists(atPath: path) {
-                return .deleted
-            }
-            // File exists despite removed flag (could be rename target)
-            return .modified
+            guard let watchPath = resolveWatchPath(for: watcher) else { continue }
+            let relevant = paths.contains { $0 == watchPath || $0.hasPrefix(watchPath + "/") }
+            guard relevant else { continue }
+
+            // Start or reset debounce timer
+            phases[watcher.id] = .debouncing
+            signalDebouncer(for: watcher)
         }
-
-        if created || renamed {
-            // Check if the file actually exists (rename creates the new path)
-            if FileManager.default.fileExists(atPath: path) {
-                return .added
-            }
-            // File doesn't exist - this is the "old" side of a rename
-            return .deleted
-        }
-
-        if modified {
-            return .modified
-        }
-
-        return nil
-    }
-
-    /// Check if a filename should be ignored as noise
-    private static func isNoiseFile(_ name: String) -> Bool {
-        if noisePatterns.contains(name) { return true }
-
-        let ext = (name as NSString).pathExtension.lowercased()
-        if partialDownloadExtensions.contains(ext) { return true }
-
-        for prefix in hiddenPrefixes {
-            if name.hasPrefix(prefix) { return true }
-        }
-
-        // Skip hidden files (starting with .)
-        if name.hasPrefix(".") { return true }
-
-        return false
     }
 
     // MARK: - Debouncing
 
-    /// Reset the debounce timer for a watcher
-    private func resetDebounceTimer(for watcher: Watcher) {
-        // Cancel existing timer
-        debounceTimers[watcher.id]?.cancel()
+    /// Cancel and restart the debounce timer for a watcher
+    private func signalDebouncer(for watcher: Watcher) {
+        debouncers[watcher.id]?.cancel()
 
         let watcherId = watcher.id
-        let debounce = watcher.debounceSeconds
+        let window = watcher.responsiveness.debounceWindow
 
-        debounceTimers[watcherId] = Task { @MainActor [weak self] in
+        debouncers[watcherId] = Task { @MainActor [weak self] in
             do {
-                try await Task.sleep(nanoseconds: UInt64(debounce * 1_000_000_000))
+                try await Task.sleep(nanoseconds: UInt64(window * 1_000_000_000))
                 guard !Task.isCancelled else { return }
-                self?.debounceTimerFired(for: watcherId)
+                self?.debouncerFired(for: watcherId)
             } catch {
-                // Task was cancelled
+                // Task was cancelled (new event reset the timer)
             }
         }
     }
 
-    /// Called when a debounce timer fires
-    private func debounceTimerFired(for watcherId: UUID) {
-        debounceTimers.removeValue(forKey: watcherId)
+    /// Called when the debounce window expires without new events
+    private func debouncerFired(for watcherId: UUID) {
+        debouncers.removeValue(forKey: watcherId)
 
-        guard let watcher = watchers.first(where: { $0.id == watcherId }) else { return }
-        guard let events = pendingEvents[watcherId], !events.isEmpty else { return }
-
-        // Dedup events: collapse multiple events on the same path
-        let deduped = deduplicateEvents(events)
-        pendingEvents[watcherId] = nil
-
-        // Skip dispatch if already running -- events stay cleared, we don't re-queue
-        // (a re-scan will catch any remaining changes on next trigger)
-        guard !isRunning(watcherId) else {
-            print("[Osaurus] Watcher \(watcher.name) is already running, skipping \(deduped.count) events")
+        guard let watcher = watchers.first(where: { $0.id == watcherId && $0.isEnabled }) else {
+            phases[watcherId] = .idle
             return
         }
 
-        executeWatcher(watcher, events: deduped)
+        processCurrentState(for: watcher)
     }
 
-    /// Collapse redundant events on the same path
-    private func deduplicateEvents(_ events: [FileChangeEvent]) -> [FileChangeEvent] {
-        var byPath: [String: FileChangeEvent] = [:]
+    // MARK: - Core Convergence Loop
 
-        for event in events {
-            if let existing = byPath[event.path] {
-                // Resolve conflicts:
-                // added + modified = added
-                // added + deleted = (remove entirely)
-                // modified + deleted = deleted
-                // deleted + added = modified (file was replaced)
-                switch (existing.changeType, event.changeType) {
-                case (.added, .modified):
-                    // Keep as added
+    /// Convergence loop. Repeatedly fingerprints the directory, stores the fingerprint
+    /// as lastKnown, dispatches the agent, settles, and loops back. Exits when two
+    /// consecutive fingerprints match (the directory has stabilized). External changes
+    /// during processing are caught on the next iteration because lastKnown represents
+    /// the pre-dispatch state, not the post-settle state.
+    private func processCurrentState(for watcher: Watcher) {
+        let currentPhase = phases[watcher.id] ?? .idle
+
+        // Only enter from debouncing (normal FSEvent path) or idle (runNow path)
+        guard currentPhase == .debouncing || currentPhase == .idle else {
+            print("[Osaurus] [\(watcher.name)] dispatch skipped: phase is \(currentPhase.rawValue)")
+            return
+        }
+
+        // Belt-and-suspenders: reject if an execution task already exists
+        if executionTasks[watcher.id] != nil {
+            print("[Osaurus] [\(watcher.name)] dispatch skipped: execution task exists")
+            phases[watcher.id] = .idle
+            return
+        }
+
+        guard let watchPath = resolveWatchPath(for: watcher) else {
+            phases[watcher.id] = .idle
+            return
+        }
+
+        let watchURL = URL(fileURLWithPath: watchPath)
+        let excluded = excludedSubpaths(for: watcher)
+
+        // Quick phantom check before creating the task
+        guard let initialFingerprint = try? DirectoryFingerprint.capture(watchURL, excludedSubpaths: excluded) else {
+            print("[Osaurus] [\(watcher.name)] fingerprint capture failed")
+            phases[watcher.id] = .idle
+            return
+        }
+
+        if let known = lastKnownFingerprints[watcher.id], !initialFingerprint.changed(from: known) {
+            phases[watcher.id] = .idle
+            return
+        }
+
+        let watcherId = watcher.id
+
+        let task = Task { @MainActor [weak self] in
+            guard let self else { return }
+
+            defer {
+                self.executionTasks.removeValue(forKey: watcherId)
+                self.runningTasks.removeValue(forKey: watcherId)
+                self.phases[watcherId] = .idle
+                print("[Osaurus] [\(watcher.name)] phase → idle")
+            }
+
+            // ── Convergence loop ──
+            // Keep running until two consecutive fingerprints match.
+            // First iteration does real work. Subsequent iterations confirm
+            // convergence or catch external changes that arrived during processing.
+            // Capped to prevent runaway loops (e.g., Dropbox sync, build output).
+            let maxIterations = 5
+            var iteration = 0
+
+            while !Task.isCancelled {
+                iteration += 1
+
+                if iteration > maxIterations {
+                    print("[Osaurus] [\(watcher.name)] hit max iterations (\(maxIterations)), forcing idle")
+                    if let current = try? DirectoryFingerprint.capture(watchURL, excludedSubpaths: excluded) {
+                        self.lastKnownFingerprints[watcherId] = current
+                    }
                     break
-                case (.added, .deleted):
-                    // Cancel out
-                    byPath.removeValue(forKey: event.path)
-                case (.modified, .deleted):
-                    byPath[event.path] = event
-                case (.deleted, .added):
-                    byPath[event.path] = FileChangeEvent(
-                        path: event.path,
-                        changeType: .modified,
-                        timestamp: event.timestamp
-                    )
-                default:
-                    // Use the latest event
-                    byPath[event.path] = event
                 }
-            } else {
-                byPath[event.path] = event
-            }
-        }
 
-        return Array(byPath.values).sorted { $0.path < $1.path }
-    }
+                // Fingerprint current state
+                guard let fingerprint = try? DirectoryFingerprint.capture(watchURL, excludedSubpaths: excluded) else {
+                    print("[Osaurus] [\(watcher.name)] fingerprint capture failed (iteration \(iteration))")
+                    break
+                }
 
-    // MARK: - Snapshot
+                // Convergence check: does directory match last known state?
+                if let known = self.lastKnownFingerprints[watcherId], !fingerprint.changed(from: known) {
+                    if iteration > 1 {
+                        print("[Osaurus] [\(watcher.name)] converged after \(iteration - 1) iteration(s)")
+                    } else {
+                        // Phantom event slipped through (race between initial check and task start)
+                        print("[Osaurus] [\(watcher.name)] phantom event, skipping")
+                    }
+                    break
+                }
 
-    /// Take a shallow snapshot of a directory (filename -> modification date)
-    private func takeSnapshot(at path: String, recursive: Bool) -> [String: Date] {
-        let fm = FileManager.default
-        let url = URL(fileURLWithPath: path)
-        var snapshot: [String: Date] = [:]
+                // Compute change count before overwriting lastKnown
+                let changeCount: Int
+                if let known = self.lastKnownFingerprints[watcherId] {
+                    changeCount = fingerprint.diff(from: known).totalCount
+                } else {
+                    changeCount = fingerprint.entries.count
+                }
 
-        if recursive {
-            guard
-                let enumerator = fm.enumerator(
-                    at: url,
-                    includingPropertiesForKeys: [.contentModificationDateKey],
-                    options: [.skipsHiddenFiles]
+                // Store the fingerprint that triggered this dispatch as lastKnown.
+                // Post-LLM changes (both self-caused and external) will diff
+                // against this, guaranteeing they get processed next iteration.
+                self.lastKnownFingerprints[watcherId] = fingerprint
+
+                // Dispatch the agent
+                self.phases[watcherId] = .processing
+
+                print("[Osaurus] [\(watcher.name)] phase → processing (iteration \(iteration), \(changeCount) changes)")
+
+                let prompt = self.buildDispatchPrompt(for: watcher, iteration: iteration)
+
+                let request = DispatchRequest(
+                    mode: .agent,
+                    prompt: prompt,
+                    personaId: watcher.personaId,
+                    title: watcher.name,
+                    parameters: watcher.parameters,
+                    folderPath: watcher.effectiveFolderPath,
+                    folderBookmark: watcher.effectiveFolderBookmark
                 )
-            else { return snapshot }
 
-            for case let fileURL as URL in enumerator {
-                let name = fileURL.lastPathComponent
-                guard !Self.isNoiseFile(name) else {
-                    enumerator.skipDescendants()
-                    continue
+                guard let handle = await TaskDispatcher.shared.dispatch(request) else {
+                    print("[Osaurus] [\(watcher.name)] dispatch failed (iteration \(iteration))")
+                    break
                 }
-                if let modDate = try? fileURL.resourceValues(forKeys: [.contentModificationDateKey])
-                    .contentModificationDate
-                {
-                    let relativePath =
-                        String(fileURL.path.dropFirst(path.count)).trimmingCharacters(
-                            in: CharacterSet(charactersIn: "/")
-                        )
-                    snapshot[relativePath] = modDate
-                }
-            }
-        } else {
-            guard
-                let contents = try? fm.contentsOfDirectory(
-                    at: url,
-                    includingPropertiesForKeys: [.contentModificationDateKey],
-                    options: [.skipsHiddenFiles]
+
+                self.runningTasks[watcherId] = WatcherRunInfo(
+                    watcherId: watcher.id,
+                    watcherName: watcher.name,
+                    personaId: watcher.personaId,
+                    chatSessionId: UUID(),
+                    changeCount: changeCount
                 )
-            else { return snapshot }
 
-            for fileURL in contents {
-                let name = fileURL.lastPathComponent
-                guard !Self.isNoiseFile(name) else { continue }
-                if let modDate = try? fileURL.resourceValues(forKeys: [.contentModificationDateKey])
-                    .contentModificationDate
-                {
-                    snapshot[name] = modDate
-                }
-            }
-        }
+                let result = await TaskDispatcher.shared.awaitCompletion(handle)
+                self.runningTasks.removeValue(forKey: watcherId)
 
-        return snapshot
-    }
+                self.handleResult(result, watcher: watcher)
 
-    /// Build synthetic events by diffing current state against baseline
-    private func buildSyntheticEvents(for watcher: Watcher) -> [FileChangeEvent] {
-        guard let watchPath = resolveWatchPath(for: watcher) else { return [] }
+                guard !Task.isCancelled else { break }
 
-        let currentSnapshot = takeSnapshot(at: watchPath, recursive: watcher.recursive)
-        let baseline = baselineSnapshots[watcher.id] ?? [:]
-        let now = Date()
-        var events: [FileChangeEvent] = []
+                // Settle: wait for self-caused FSEvents to flush
+                self.phases[watcherId] = .settling
+                print("[Osaurus] [\(watcher.name)] phase → settling (\(watcher.settleSeconds)s)")
 
-        // Find added and modified files
-        for (path, modDate) in currentSnapshot {
-            if let baselineDate = baseline[path] {
-                if modDate > baselineDate {
-                    events.append(FileChangeEvent(path: path, changeType: .modified, timestamp: now))
-                }
-            } else {
-                events.append(FileChangeEvent(path: path, changeType: .added, timestamp: now))
-            }
-        }
+                try? await Task.sleep(nanoseconds: UInt64(watcher.settleSeconds * 1_000_000_000))
+                guard !Task.isCancelled else { break }
 
-        // Find deleted files
-        for path in baseline.keys where currentSnapshot[path] == nil {
-            events.append(FileChangeEvent(path: path, changeType: .deleted, timestamp: now))
-        }
-
-        // Update baseline
-        baselineSnapshots[watcher.id] = currentSnapshot
-
-        return events.sorted { $0.path < $1.path }
-    }
-
-    // MARK: - Execution
-
-    /// Execute a watcher by dispatching to TaskDispatcher
-    private func executeWatcher(_ watcher: Watcher, events: [FileChangeEvent]) {
-        guard !events.isEmpty else {
-            print("[Osaurus] No changes to dispatch for watcher: \(watcher.name)")
-            return
-        }
-
-        // Build the prompt with change context
-        let prompt = buildDispatchPrompt(for: watcher, events: events)
-
-        let request = DispatchRequest(
-            mode: .agent,
-            prompt: prompt,
-            personaId: watcher.personaId,
-            title: watcher.name,
-            parameters: watcher.parameters,
-            folderPath: watcher.effectiveFolderPath,
-            folderBookmark: watcher.effectiveFolderBookmark
-        )
-
-        print(
-            "[Osaurus] Executing watcher: \(watcher.name) with \(events.count) change(s)"
-        )
-
-        let task = Task { @MainActor in
-            guard let handle = await TaskDispatcher.shared.dispatch(request) else {
-                print("[Osaurus] Failed to dispatch watcher: \(watcher.name)")
-                return
+                // Loop back. Next iteration fingerprints fresh and compares
+                // against the pre-dispatch lastKnown. LLM's own changes will
+                // cause a diff → one more dispatch → LLM says "nothing to do"
+                // → next iteration matches → converged.
             }
 
-            self.runningTasks[watcher.id] = WatcherRunInfo(
-                watcherId: watcher.id,
-                watcherName: watcher.name,
-                personaId: watcher.personaId,
-                chatSessionId: UUID(),
-                changeCount: events.count
-            )
-
-            let result = await TaskDispatcher.shared.awaitCompletion(handle)
-            self.handleResult(result, watcher: watcher, request: handle.request)
+            // defer handles cleanup → idle
         }
 
         executionTasks[watcher.id] = task
@@ -659,20 +565,7 @@ public final class WatcherManager: ObservableObject {
     // MARK: - Result Handling
 
     /// Update watcher metadata after task completion
-    private func handleResult(_ result: DispatchResult, watcher: Watcher, request: DispatchRequest) {
-        defer {
-            executionTasks.removeValue(forKey: watcher.id)
-            runningTasks.removeValue(forKey: watcher.id)
-
-            // Set cooldown period to ignore self-triggered events
-            cooldownEndTimes[watcher.id] = Date().addingTimeInterval(cooldownDuration)
-
-            // Update baseline snapshot after task completes
-            if let path = resolveWatchPath(for: watcher) {
-                baselineSnapshots[watcher.id] = takeSnapshot(at: path, recursive: watcher.recursive)
-            }
-        }
-
+    private func handleResult(_ result: DispatchResult, watcher: Watcher) {
         switch result {
         case .completed(let sessionId):
             let chatSessionId = sessionId ?? UUID()
@@ -703,211 +596,26 @@ public final class WatcherManager: ObservableObject {
         }
     }
 
-    // MARK: - Prompt Builder (Tiered Context)
+    // MARK: - Prompt Builder
 
-    /// Build the dispatch prompt with file change context
-    private func buildDispatchPrompt(for watcher: Watcher, events: [FileChangeEvent]) -> String {
+    /// Build the dispatch prompt. The agent gets the full directory tree via
+    /// AgentFolderContext when the folder is set, so we only need to provide
+    /// the user's instructions and the idempotency footer.
+    private func buildDispatchPrompt(for watcher: Watcher, iteration: Int = 1) -> String {
         var prompt = watcher.instructions
 
-        prompt += "\n\n## File Changes Detected\n\n"
-        prompt += "The following changes were detected in \(watcher.watchPath ?? "the watched folder"):\n\n"
-
-        // Summary line
-        let addedCount = events.filter { $0.changeType == .added }.count
-        let modifiedCount = events.filter { $0.changeType == .modified }.count
-        let deletedCount = events.filter { $0.changeType == .deleted }.count
-
-        var summaryParts: [String] = []
-        if addedCount > 0 { summaryParts.append("\(addedCount) file(s) added") }
-        if modifiedCount > 0 { summaryParts.append("\(modifiedCount) file(s) modified") }
-        if deletedCount > 0 { summaryParts.append("\(deletedCount) file(s) deleted") }
-        prompt += "Summary: \(summaryParts.joined(separator: ", "))\n"
-
-        let totalEvents = events.count
-
-        if totalEvents <= 20 {
-            // Tier: Full metadata + text previews for small files
-            prompt += buildDetailedChangeList(events: events, watchPath: watcher.watchPath, includePreview: true)
-        } else if totalEvents <= 100 {
-            // Tier: Full metadata, no previews
-            prompt += buildDetailedChangeList(events: events, watchPath: watcher.watchPath, includePreview: false)
+        if iteration == 1 {
+            prompt +=
+                "\n\nChanges were detected in the watched folder. Use `file_tree` and other file tools to inspect the current state of the directory and take action.\n"
         } else {
-            // Tier: Grouped summary + first 30 individually
-            prompt += buildGroupedChangeSummary(events: events, watchPath: watcher.watchPath)
+            prompt +=
+                "\n\nThis is a follow-up check after a previous organizing pass. Quickly verify the directory state with a single `file_tree` call. If everything looks organized, return immediately without further inspection. Only take action if you see clearly unorganized files.\n"
         }
 
         prompt +=
-            "\nYou have file tools available (file_read, file_move, file_tree, etc.) to inspect and act on these files. The working directory is already set to the watched folder.\n"
+            "\nIf all files are already properly organized, return without making changes. Do not re-organize files that are already in their correct location.\n"
 
         return prompt
-    }
-
-    /// Build detailed change list with optional previews
-    private func buildDetailedChangeList(
-        events: [FileChangeEvent],
-        watchPath: String?,
-        includePreview: Bool
-    ) -> String {
-        var result = ""
-
-        let added = events.filter { $0.changeType == .added }
-        let modified = events.filter { $0.changeType == .modified }
-        let deleted = events.filter { $0.changeType == .deleted }
-
-        if !added.isEmpty {
-            result += "\n### Added\n"
-            for event in added {
-                result += formatFileEntry(event, watchPath: watchPath, includePreview: includePreview)
-            }
-        }
-
-        if !modified.isEmpty {
-            result += "\n### Modified\n"
-            for event in modified {
-                result += formatFileEntry(event, watchPath: watchPath, includePreview: includePreview)
-            }
-        }
-
-        if !deleted.isEmpty {
-            result += "\n### Deleted\n"
-            for event in deleted {
-                result += "- \(event.path)\n"
-            }
-        }
-
-        return result
-    }
-
-    /// Format a single file entry with metadata and optional preview
-    private func formatFileEntry(
-        _ event: FileChangeEvent,
-        watchPath: String?,
-        includePreview: Bool
-    ) -> String {
-        var entry = ""
-        let fullPath = watchPath.map { ($0 as NSString).appendingPathComponent(event.path) }
-
-        let ext = (event.path as NSString).pathExtension.uppercased()
-        let fileType = ext.isEmpty ? "File" : ext
-
-        // Get file size if the file exists
-        var sizeStr = ""
-        if let fp = fullPath, FileManager.default.fileExists(atPath: fp),
-            let attrs = try? FileManager.default.attributesOfItem(atPath: fp),
-            let size = attrs[.size] as? Int64
-        {
-            sizeStr = formatBytes(size)
-        }
-
-        if sizeStr.isEmpty {
-            entry += "- \(event.path) (\(fileType))\n"
-        } else {
-            entry += "- \(event.path) (\(fileType), \(sizeStr))\n"
-        }
-
-        // Include text preview for small text files
-        if includePreview, let fp = fullPath {
-            let previewText = getTextPreview(at: fp, maxLines: 20, maxBytes: 4096)
-            if let preview = previewText {
-                entry += "  Preview:\n"
-                for line in preview.components(separatedBy: .newlines).prefix(20) {
-                    entry += "  > \(line)\n"
-                }
-                entry += "\n"
-            }
-        }
-
-        return entry
-    }
-
-    /// Build grouped summary for large change batches (100+)
-    private func buildGroupedChangeSummary(events: [FileChangeEvent], watchPath: String?) -> String {
-        var result = ""
-
-        let added = events.filter { $0.changeType == .added }
-        let modified = events.filter { $0.changeType == .modified }
-        let deleted = events.filter { $0.changeType == .deleted }
-
-        // Group by extension
-        func groupByExtension(_ items: [FileChangeEvent]) -> [(ext: String, count: Int)] {
-            var groups: [String: Int] = [:]
-            for item in items {
-                let ext = (item.path as NSString).pathExtension.lowercased()
-                let key = ext.isEmpty ? "other" : ".\(ext)"
-                groups[key, default: 0] += 1
-            }
-            return groups.sorted { $0.value > $1.value }.map { (ext: $0.key, count: $0.value) }
-        }
-
-        if !added.isEmpty {
-            result += "\n### Added (\(added.count) files)\n"
-            let groups = groupByExtension(added)
-            for group in groups {
-                result += "- \(group.count) \(group.ext) files\n"
-            }
-            // List first 30 individually
-            result += "\nFirst \(min(30, added.count)) files:\n"
-            for event in added.prefix(30) {
-                result += "- \(event.path)\n"
-            }
-            if added.count > 30 {
-                result += "- ... and \(added.count - 30) more\n"
-            }
-        }
-
-        if !modified.isEmpty {
-            result += "\n### Modified (\(modified.count) files)\n"
-            let groups = groupByExtension(modified)
-            for group in groups {
-                result += "- \(group.count) \(group.ext) files\n"
-            }
-        }
-
-        if !deleted.isEmpty {
-            result += "\n### Deleted (\(deleted.count) files)\n"
-            let groups = groupByExtension(deleted)
-            for group in groups {
-                result += "- \(group.count) \(group.ext) files\n"
-            }
-        }
-
-        return result
-    }
-
-    /// Try to read a text preview of a file
-    private func getTextPreview(at path: String, maxLines: Int, maxBytes: Int) -> String? {
-        let url = URL(fileURLWithPath: path)
-        let ext = url.pathExtension.lowercased()
-
-        // Only preview known text file extensions
-        let textExtensions: Set<String> = [
-            "txt", "md", "markdown", "json", "xml", "csv", "tsv",
-            "yaml", "yml", "toml", "ini", "cfg", "conf", "log",
-            "swift", "py", "js", "ts", "rb", "go", "rs", "java",
-            "c", "cpp", "h", "hpp", "cs", "sh", "bash", "zsh",
-            "html", "css", "scss", "less", "sql", "r", "m",
-        ]
-
-        guard textExtensions.contains(ext) else { return nil }
-
-        // Check file size first
-        guard let attrs = try? FileManager.default.attributesOfItem(atPath: path),
-            let size = attrs[.size] as? Int64,
-            size <= maxBytes
-        else { return nil }
-
-        guard let content = try? String(contentsOf: url, encoding: .utf8) else { return nil }
-
-        let lines = content.components(separatedBy: .newlines)
-        let preview = lines.prefix(maxLines).joined(separator: "\n")
-        return preview.isEmpty ? nil : preview
-    }
-
-    /// Format byte count to human-readable string
-    private func formatBytes(_ bytes: Int64) -> String {
-        let formatter = ByteCountFormatter()
-        formatter.countStyle = .file
-        return formatter.string(fromByteCount: bytes)
     }
 }
 
@@ -931,18 +639,15 @@ private func fsEventsCallback(
     let count = CFArrayGetCount(cfArray)
 
     var paths: [String] = []
-    var flags: [FSEventStreamEventFlags] = []
-
     for i in 0 ..< min(count, numEvents) {
         if let cfStr = CFArrayGetValueAtIndex(cfArray, i) {
             let str = Unmanaged<CFString>.fromOpaque(cfStr).takeUnretainedValue() as String
             paths.append(str)
-            flags.append(eventFlags[i])
         }
     }
 
-    // Dispatch to main actor
+    // Dispatch to main actor -- paths only, no flags needed
     Task { @MainActor in
-        manager.handleFSEvents(paths: paths, flags: flags)
+        manager.handleFSEvent(paths: paths)
     }
 }

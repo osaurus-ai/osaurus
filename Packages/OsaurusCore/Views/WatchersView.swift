@@ -104,7 +104,7 @@ struct WatchersView: View {
                         folderBookmark: watcher.folderBookmark,
                         isEnabled: watcher.isEnabled,
                         recursive: watcher.recursive,
-                        debounceSeconds: watcher.debounceSeconds
+                        responsiveness: watcher.responsiveness
                     )
                     isCreating = false
                     showSuccess("Created \"\(watcher.name)\"")
@@ -619,7 +619,7 @@ struct WatcherEditorSheet: View {
     @State private var selectedPersonaId: UUID?
     @State private var isEnabled = true
     @State private var recursive = false
-    @State private var debounceSeconds: Double = 3.0
+    @State private var responsiveness: Responsiveness = .balanced
     @State private var selectedWatchPath: String?
     @State private var selectedWatchBookmark: Data?
     @State private var selectedFolderPath: String?
@@ -1159,28 +1159,24 @@ struct WatcherEditorSheet: View {
                         )
                 )
 
-                // Debounce slider
-                VStack(alignment: .leading, spacing: 6) {
-                    HStack {
-                        Text("Debounce")
-                            .font(.system(size: 11, weight: .medium))
-                            .foregroundColor(theme.secondaryText)
+                // Responsiveness picker
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Responsiveness")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundColor(theme.secondaryText)
 
-                        Spacer()
-
-                        Text("\(String(format: "%.1f", debounceSeconds))s")
-                            .font(.system(size: 12, weight: .semibold, design: .monospaced))
-                            .foregroundColor(theme.accentColor)
+                    Picker("Responsiveness", selection: $responsiveness) {
+                        ForEach(Responsiveness.allCases, id: \.self) { level in
+                            Text(level.displayName).tag(level)
+                        }
                     }
+                    .pickerStyle(.segmented)
+                    .labelsHidden()
 
-                    Slider(value: $debounceSeconds, in: 1 ... 15, step: 0.5)
-                        .tint(theme.accentColor)
-
-                    Text(
-                        "Wait this long after the last change before triggering the agent. Higher values reduce noise from rapid file writes."
-                    )
-                    .font(.system(size: 11))
-                    .foregroundColor(theme.tertiaryText)
+                    Text(responsiveness.displayDescription)
+                        .font(.system(size: 11))
+                        .foregroundColor(theme.tertiaryText)
+                        .animation(.easeOut(duration: 0.15), value: responsiveness)
                 }
             }
         }
@@ -1246,7 +1242,7 @@ struct WatcherEditorSheet: View {
         selectedPersonaId = watcher.personaId
         isEnabled = watcher.isEnabled
         recursive = watcher.recursive
-        debounceSeconds = watcher.debounceSeconds
+        responsiveness = watcher.responsiveness
         selectedWatchPath = watcher.watchPath
         selectedWatchBookmark = watcher.watchBookmark
         selectedFolderPath = watcher.folderPath
@@ -1272,7 +1268,7 @@ struct WatcherEditorSheet: View {
             folderBookmark: useCustomWorkspace ? selectedFolderBookmark : nil,
             isEnabled: isEnabled,
             recursive: recursive,
-            debounceSeconds: debounceSeconds,
+            responsiveness: responsiveness,
             lastTriggeredAt: existingLastTriggeredAt,
             lastChatSessionId: existingLastChatSessionId,
             createdAt: existingCreatedAt ?? Date(),
