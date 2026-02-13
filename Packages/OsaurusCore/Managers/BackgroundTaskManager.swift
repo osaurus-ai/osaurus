@@ -134,6 +134,13 @@ public final class BackgroundTaskManager: ObservableObject {
         backgroundTasks.removeValue(forKey: backgroundId)
     }
 
+    /// Cancel all active background tasks. Called during app termination.
+    public func cancelAllTasks() {
+        for id in backgroundTasks.keys {
+            cancelTask(id)
+        }
+    }
+
     /// Cancel a background task
     public func cancelTask(_ backgroundId: UUID) {
         guard let state = backgroundTasks[backgroundId] else { return }
