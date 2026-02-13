@@ -350,7 +350,7 @@ public final class ScheduleManager: ObservableObject {
     // MARK: - Result Handling
 
     /// Update schedule metadata after task completion.
-    /// Result UI is handled by BackgroundTaskToastView for both chat and agent modes.
+    /// Result UI is handled by the NotchView for both chat and agent modes.
     private func handleResult(_ result: DispatchResult, schedule: Schedule, request: DispatchRequest) {
         defer {
             executionTasks.removeValue(forKey: schedule.id)

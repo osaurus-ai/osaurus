@@ -173,6 +173,9 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
         // Setup global toast notification system
         ToastWindowController.shared.setup()
 
+        // Setup notch background task indicator
+        NotchWindowController.shared.setup()
+
         // Initialize ScheduleManager to start scheduled tasks
         _ = ScheduleManager.shared
 
@@ -397,6 +400,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
         NSLog("Osaurus server app terminating")
         PluginRepositoryService.shared.stopBackgroundRefresh()
         ToastWindowController.shared.teardown()
+        NotchWindowController.shared.teardown()
         SharedConfigurationService.shared.remove()
     }
 
