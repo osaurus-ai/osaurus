@@ -204,29 +204,37 @@ public final class AgentFolderContextService: ObservableObject {
 
     // MARK: - File Tree Building
 
-    private func buildFileTree(_ url: URL, options: AgentFileTreeOptions) -> String {
-        var result = ""
-        var fileCount = 0
-        let maxFiles = options.maxFiles
-
-        func shouldIgnore(_ name: String, patterns: [String]) -> Bool {
-            for pattern in patterns {
-                if pattern.contains("*") {
-                    // Simple wildcard matching
-                    let regex = pattern.replacingOccurrences(of: ".", with: "\\.")
-                        .replacingOccurrences(of: "*", with: ".*")
-                    if let _ = name.range(of: "^\(regex)$", options: .regularExpression) {
-                        return true
-                    }
-                } else if name == pattern {
+    /// Check if a filename matches any ignore pattern (wildcard or exact)
+    private func shouldIgnore(_ name: String, patterns: [String]) -> Bool {
+        for pattern in patterns {
+            if pattern.contains("*") {
+                let regex = pattern.replacingOccurrences(of: ".", with: "\\.")
+                    .replacingOccurrences(of: "*", with: ".*")
+                if name.range(of: "^\(regex)$", options: .regularExpression) != nil {
                     return true
                 }
+            } else if name == pattern {
+                return true
             }
-            return false
         }
+        return false
+    }
+
+    private func buildFileTree(_ url: URL, options: AgentFileTreeOptions) -> String {
+        // Adaptive depth: inspect top-level item count to choose depth automatically.
+        // This prevents bloated trees for broad directories like ~/Downloads (2000+ files)
+        // while preserving full detail for well-structured projects (e.g., a Swift package).
+        let adaptiveMaxDepth = computeAdaptiveDepth(url, options: options)
+        var adaptiveOptions = options
+        adaptiveOptions.maxDepth = adaptiveMaxDepth
+
+        var result = ""
+        var fileCount = 0
+        let maxFiles = adaptiveOptions.maxFiles
+        let patterns = adaptiveOptions.ignorePatterns
 
         func traverse(_ currentURL: URL, depth: Int, prefix: String) {
-            guard depth <= options.maxDepth else { return }
+            guard depth <= adaptiveOptions.maxDepth else { return }
             guard fileCount < maxFiles else { return }
 
             let fm = FileManager.default
@@ -238,58 +246,91 @@ public final class AgentFolderContextService: ObservableObject {
                 )
             else { return }
 
+            // Filter out ignored items first
+            let visible = contents.filter {
+                !shouldIgnore($0.lastPathComponent, patterns: patterns)
+            }
+
             // Sort: directories first, then files, both alphabetically
-            let sorted = contents.sorted { a, b in
+            let sorted = visible.sorted { a, b in
                 let aIsDir = (try? a.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) ?? false
                 let bIsDir = (try? b.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) ?? false
                 if aIsDir != bIsDir { return aIsDir }
                 return a.lastPathComponent.lowercased() < b.lastPathComponent.lowercased()
             }
 
-            for (index, item) in sorted.enumerated() {
-                guard fileCount < maxFiles else {
-                    if options.summarizeAboveThreshold {
-                        result += "\(prefix)... (truncated, >\(maxFiles) files)\n"
-                    }
-                    return
-                }
+            // Separate directories and files
+            let directories = sorted.filter {
+                (try? $0.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) ?? false
+            }
+            let files = sorted.filter {
+                !((try? $0.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) ?? false)
+            }
 
-                let name = item.lastPathComponent
-                if shouldIgnore(name, patterns: options.ignorePatterns) {
-                    continue
-                }
+            // If this level has > 50 visible files, use extension-grouped summary
+            if files.count > 50 {
+                // List directories individually
+                for (index, dir) in directories.enumerated() {
+                    guard fileCount < maxFiles else { break }
+                    let name = dir.lastPathComponent
+                    let isLastOverall = index == directories.count - 1 && files.isEmpty
+                    let connector = isLastOverall ? "└── " : "├── "
+                    let childPrefix = isLastOverall ? "    " : "│   "
 
-                let isLast = index == sorted.count - 1
-                let connector = isLast ? "└── " : "├── "
-                let childPrefix = isLast ? "    " : "│   "
+                    let visibleSubCount = visibleChildCount(of: dir, patterns: patterns)
 
-                let isDirectory =
-                    (try? item.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) ?? false
-
-                if isDirectory {
-                    // Count items in directory for summary
-                    let subContents =
-                        (try? fm.contentsOfDirectory(
-                            at: item,
-                            includingPropertiesForKeys: nil,
-                            options: [.skipsHiddenFiles]
-                        )) ?? []
-
-                    let visibleContents = subContents.filter {
-                        !shouldIgnore($0.lastPathComponent, patterns: options.ignorePatterns)
-                    }
-
-                    if depth == options.maxDepth || visibleContents.count > 50 {
-                        // Summarize large or deep directories
-                        let (files, dirs) = countContents(item, patterns: options.ignorePatterns)
-                        result += "\(prefix)\(connector)\(name)/     (\(files) files, \(dirs) folders)\n"
+                    if depth == adaptiveOptions.maxDepth || visibleSubCount > 50 {
+                        let (f, d) = countContents(dir, patterns: patterns)
+                        result += "\(prefix)\(connector)\(name)/     (\(f) files, \(d) folders)\n"
                     } else {
                         result += "\(prefix)\(connector)\(name)/\n"
-                        traverse(item, depth: depth + 1, prefix: prefix + childPrefix)
+                        traverse(dir, depth: depth + 1, prefix: prefix + childPrefix)
                     }
-                } else {
-                    result += "\(prefix)\(connector)\(name)\n"
-                    fileCount += 1
+                }
+
+                // Render extension-grouped summary for files
+                let groups = groupFilesByExtension(files)
+                for (groupIndex, group) in groups.enumerated() {
+                    let isLast = groupIndex == groups.count - 1
+                    let connector = isLast ? "└── " : "├── "
+                    result += "\(prefix)\(connector)\(group.count) \(group.ext) files\n"
+                }
+                result += "\(prefix)    (\(files.count) files total)\n"
+                fileCount += files.count
+
+            } else {
+                // Standard per-item listing
+                for (index, item) in sorted.enumerated() {
+                    guard fileCount < maxFiles else {
+                        if adaptiveOptions.summarizeAboveThreshold {
+                            result += "\(prefix)... (truncated, >\(maxFiles) files)\n"
+                        }
+                        return
+                    }
+
+                    let name = item.lastPathComponent
+                    let isLast = index == sorted.count - 1
+                    let connector = isLast ? "└── " : "├── "
+                    let childPrefix = isLast ? "    " : "│   "
+
+                    let isDirectory =
+                        (try? item.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) ?? false
+
+                    if isDirectory {
+                        let visibleSubCount = visibleChildCount(of: item, patterns: patterns)
+
+                        if depth == adaptiveOptions.maxDepth || visibleSubCount > 50 {
+                            let (f, d) = countContents(item, patterns: patterns)
+                            result +=
+                                "\(prefix)\(connector)\(name)/     (\(f) files, \(d) folders)\n"
+                        } else {
+                            result += "\(prefix)\(connector)\(name)/\n"
+                            traverse(item, depth: depth + 1, prefix: prefix + childPrefix)
+                        }
+                    } else {
+                        result += "\(prefix)\(connector)\(name)\n"
+                        fileCount += 1
+                    }
                 }
             }
         }
@@ -300,25 +341,48 @@ public final class AgentFolderContextService: ObservableObject {
         return result
     }
 
+    /// Count visible (non-ignored) children of a directory
+    private func visibleChildCount(of url: URL, patterns: [String]) -> Int {
+        let subContents =
+            (try? FileManager.default.contentsOfDirectory(
+                at: url,
+                includingPropertiesForKeys: nil,
+                options: [.skipsHiddenFiles]
+            )) ?? []
+        return subContents.filter { !shouldIgnore($0.lastPathComponent, patterns: patterns) }.count
+    }
+
+    /// Compute adaptive max depth based on top-level item count.
+    /// Well-structured projects (<=50 top-level items): depth 3 (full detail)
+    /// Medium directories (51-200): depth 2
+    /// Broad flat directories (>200, e.g. Downloads): depth 1 + extension grouping
+    private func computeAdaptiveDepth(_ url: URL, options: AgentFileTreeOptions) -> Int {
+        let visibleCount = visibleChildCount(of: url, patterns: options.ignorePatterns)
+
+        if visibleCount <= 50 {
+            return min(options.maxDepth, 3)
+        } else if visibleCount <= 200 {
+            return min(options.maxDepth, 2)
+        } else {
+            return min(options.maxDepth, 1)
+        }
+    }
+
+    /// Group files by extension for dense directory summaries
+    private func groupFilesByExtension(_ files: [URL]) -> [(ext: String, count: Int)] {
+        var groups: [String: Int] = [:]
+        for file in files {
+            let ext = file.pathExtension.lowercased()
+            let key = ext.isEmpty ? "other" : ".\(ext)"
+            groups[key, default: 0] += 1
+        }
+        return groups.sorted { $0.value > $1.value }.map { (ext: $0.key, count: $0.value) }
+    }
+
     private func countContents(_ url: URL, patterns: [String]) -> (files: Int, dirs: Int) {
         let fm = FileManager.default
         var files = 0
         var dirs = 0
-
-        func shouldIgnore(_ name: String) -> Bool {
-            for pattern in patterns {
-                if pattern.contains("*") {
-                    let regex = pattern.replacingOccurrences(of: ".", with: "\\.")
-                        .replacingOccurrences(of: "*", with: ".*")
-                    if let _ = name.range(of: "^\(regex)$", options: .regularExpression) {
-                        return true
-                    }
-                } else if name == pattern {
-                    return true
-                }
-            }
-            return false
-        }
 
         guard
             let enumerator = fm.enumerator(
@@ -332,7 +396,7 @@ public final class AgentFolderContextService: ObservableObject {
 
         for case let fileURL as URL in enumerator {
             let name = fileURL.lastPathComponent
-            if shouldIgnore(name) {
+            if shouldIgnore(name, patterns: patterns) {
                 enumerator.skipDescendants()
                 continue
             }

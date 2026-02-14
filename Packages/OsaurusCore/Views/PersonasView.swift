@@ -149,10 +149,22 @@ struct PersonasView: View {
 
             // Content
             if customPersonas.isEmpty {
-                PersonaEmptyState(
-                    hasAppeared: hasAppeared,
-                    onCreate: { isCreating = true },
-                    onImport: { showImportPicker = true }
+                SettingsEmptyState(
+                    icon: "theatermasks.fill",
+                    title: "Create Your First Persona",
+                    subtitle: "Custom AI assistants with unique prompts, tools, and styles.",
+                    examples: [
+                        .init(icon: "calendar", title: "Daily Planner", description: "Manage your schedule"),
+                        .init(icon: "message.fill", title: "Message Assistant", description: "Draft and send texts"),
+                        .init(icon: "map.fill", title: "Local Guide", description: "Find places nearby"),
+                    ],
+                    primaryAction: .init(title: "Create Persona", icon: "plus", handler: { isCreating = true }),
+                    secondaryAction: .init(
+                        title: "Import",
+                        icon: "square.and.arrow.down",
+                        handler: { showImportPicker = true }
+                    ),
+                    hasAppeared: hasAppeared
                 )
             } else {
                 ScrollView {
@@ -312,202 +324,6 @@ struct PersonasView: View {
         } catch {
             print("[Osaurus] Failed to export persona: \(error)")
         }
-    }
-}
-
-// MARK: - Empty State
-
-private struct PersonaEmptyState: View {
-    @Environment(\.theme) private var theme
-
-    let hasAppeared: Bool
-    let onCreate: () -> Void
-    let onImport: () -> Void
-
-    @State private var glowIntensity: CGFloat = 0.6
-
-    var body: some View {
-        VStack(spacing: 24) {
-            Spacer()
-
-            // Glowing icon
-            ZStack {
-                // Outer glow
-                Circle()
-                    .fill(theme.accentColor)
-                    .frame(width: 88, height: 88)
-                    .blur(radius: 25)
-                    .opacity(glowIntensity * 0.25)
-
-                // Inner glow
-                Circle()
-                    .fill(theme.accentColor)
-                    .frame(width: 88, height: 88)
-                    .blur(radius: 12)
-                    .opacity(glowIntensity * 0.15)
-
-                // Base circle with gradient
-                Circle()
-                    .fill(
-                        LinearGradient(
-                            colors: [
-                                theme.accentColor.opacity(0.15),
-                                theme.accentColor.opacity(0.05),
-                            ],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        )
-                    )
-                    .frame(width: 88, height: 88)
-
-                // Icon
-                Image(systemName: "theatermasks.fill")
-                    .font(.system(size: 36, weight: .medium))
-                    .foregroundStyle(
-                        LinearGradient(
-                            colors: [theme.accentColor, theme.accentColor.opacity(0.7)],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        )
-                    )
-            }
-            .opacity(hasAppeared ? 1 : 0)
-            .scaleEffect(hasAppeared ? 1 : 0.8)
-            .animation(.spring(response: 0.5, dampingFraction: 0.7).delay(0.1), value: hasAppeared)
-
-            // Text content
-            VStack(spacing: 8) {
-                Text("Create Your First Persona")
-                    .font(.system(size: 22, weight: .bold, design: .rounded))
-                    .foregroundColor(theme.primaryText)
-
-                Text("Custom AI assistants with unique prompts, tools, and styles.")
-                    .font(.system(size: 14))
-                    .foregroundColor(theme.secondaryText)
-                    .multilineTextAlignment(.center)
-                    .lineLimit(2)
-            }
-            .opacity(hasAppeared ? 1 : 0)
-            .offset(y: hasAppeared ? 0 : 15)
-            .animation(.spring(response: 0.5, dampingFraction: 0.8).delay(0.2), value: hasAppeared)
-
-            // Example use cases
-            VStack(spacing: 8) {
-                PersonaUseCaseRow(
-                    icon: "calendar",
-                    title: "Daily Planner",
-                    description: "Manage your schedule"
-                )
-                PersonaUseCaseRow(
-                    icon: "message.fill",
-                    title: "Message Assistant",
-                    description: "Draft and send texts"
-                )
-                PersonaUseCaseRow(
-                    icon: "map.fill",
-                    title: "Local Guide",
-                    description: "Find places nearby"
-                )
-            }
-            .frame(maxWidth: 320)
-            .opacity(hasAppeared ? 1 : 0)
-            .offset(y: hasAppeared ? 0 : 20)
-            .animation(.spring(response: 0.5, dampingFraction: 0.8).delay(0.3), value: hasAppeared)
-
-            // Action buttons
-            HStack(spacing: 12) {
-                Button(action: onImport) {
-                    HStack(spacing: 6) {
-                        Image(systemName: "square.and.arrow.down")
-                            .font(.system(size: 11, weight: .medium))
-                        Text("Import")
-                            .font(.system(size: 13, weight: .medium))
-                    }
-                    .foregroundColor(theme.primaryText)
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 10)
-                    .background(
-                        RoundedRectangle(cornerRadius: 8)
-                            .fill(theme.tertiaryBackground)
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 8)
-                                    .stroke(theme.inputBorder, lineWidth: 1)
-                            )
-                    )
-                }
-                .buttonStyle(PlainButtonStyle())
-
-                Button(action: onCreate) {
-                    HStack(spacing: 6) {
-                        Image(systemName: "plus")
-                            .font(.system(size: 11, weight: .semibold))
-                        Text("Create Persona")
-                            .font(.system(size: 13, weight: .semibold))
-                    }
-                    .foregroundColor(.white)
-                    .padding(.horizontal, 18)
-                    .padding(.vertical, 10)
-                    .background(
-                        RoundedRectangle(cornerRadius: 8)
-                            .fill(theme.accentColor)
-                    )
-                }
-                .buttonStyle(PlainButtonStyle())
-            }
-            .opacity(hasAppeared ? 1 : 0)
-            .offset(y: hasAppeared ? 0 : 10)
-            .animation(.spring(response: 0.5, dampingFraction: 0.8).delay(0.4), value: hasAppeared)
-
-            Spacer()
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .onAppear {
-            // Start glow animation
-            withAnimation(.easeInOut(duration: 2).repeatForever(autoreverses: true)) {
-                glowIntensity = 1.0
-            }
-        }
-    }
-}
-
-// MARK: - Use Case Row
-
-private struct PersonaUseCaseRow: View {
-    @Environment(\.theme) private var theme
-
-    let icon: String
-    let title: String
-    let description: String
-
-    var body: some View {
-        HStack(spacing: 12) {
-            Image(systemName: icon)
-                .font(.system(size: 12, weight: .medium))
-                .foregroundColor(theme.accentColor)
-                .frame(width: 28, height: 28)
-                .background(
-                    RoundedRectangle(cornerRadius: 6)
-                        .fill(theme.accentColor.opacity(0.1))
-                )
-
-            Text(title)
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundColor(theme.primaryText)
-                .lineLimit(1)
-
-            Text(description)
-                .font(.system(size: 11))
-                .foregroundColor(theme.tertiaryText)
-                .lineLimit(1)
-
-            Spacer(minLength: 0)
-        }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
-        .background(
-            RoundedRectangle(cornerRadius: 8)
-                .fill(theme.secondaryBackground.opacity(0.5))
-        )
     }
 }
 

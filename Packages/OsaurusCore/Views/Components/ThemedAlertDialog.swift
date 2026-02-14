@@ -53,6 +53,8 @@ public enum ThemedAlertScope: Hashable, Sendable {
     case content
     /// Alert scoped to toast overlay panels
     case toastOverlay
+    /// Alert scoped to the notch overlay panel
+    case notchOverlay
     /// Alert scoped to a specific tool permission dialog
     case toolPermission(UUID)
     /// Fallback scope for unspecified contexts

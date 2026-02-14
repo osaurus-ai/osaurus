@@ -67,6 +67,11 @@ public enum OsaurusPaths {
         appSupportRoot().appendingPathComponent("schedules", isDirectory: true)
     }
 
+    /// Watchers directory
+    public static func watchers() -> URL {
+        appSupportRoot().appendingPathComponent("watchers", isDirectory: true)
+    }
+
     /// Plugins root directory
     public static func plugins() -> URL {
         appSupportRoot().appendingPathComponent("plugins", isDirectory: true)
@@ -147,6 +152,10 @@ public enum OsaurusPaths {
         schedules().appendingPathComponent("\(id.uuidString).json")
     }
 
+    public static func watcherFile(for id: UUID) -> URL {
+        watchers().appendingPathComponent("\(id.uuidString).json")
+    }
+
     public static func pluginDirectory(for pluginId: String) -> URL {
         legacyTools().appendingPathComponent(pluginId, isDirectory: true)
     }
@@ -198,7 +207,7 @@ public enum OsaurusPaths {
     public static func ensureAllDirectoriesExist() {
         [
             config(), voiceConfig(), providers(), personas(), themes(),
-            sessions(), schedules(), plugins(), pluginSpecs(), runtime(),
+            sessions(), schedules(), watchers(), plugins(), pluginSpecs(), runtime(),
             legacyTools(), legacyPluginSpecs(), agentData(),
         ].forEach { ensureExistsSilent($0) }
     }

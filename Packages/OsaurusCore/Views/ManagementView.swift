@@ -21,6 +21,7 @@ public enum ManagementTab: String, CaseIterable, Identifiable {
     case skills
     case personas
     case schedules
+    case watchers
     case voice
     case themes
     case insights
@@ -39,6 +40,7 @@ public enum ManagementTab: String, CaseIterable, Identifiable {
         case .skills: "sparkles"
         case .personas: "person.2.fill"
         case .schedules: "calendar.badge.clock"
+        case .watchers: "eye.fill"
         case .voice: "waveform"
         case .themes: "paintpalette.fill"
         case .insights: "chart.bar.doc.horizontal"
@@ -57,6 +59,7 @@ public enum ManagementTab: String, CaseIterable, Identifiable {
         case .skills: "Skills"
         case .personas: "Personas"
         case .schedules: "Schedules"
+        case .watchers: "Watchers"
         case .voice: "Voice"
         case .themes: "Themes"
         case .insights: "Insights"
@@ -90,6 +93,7 @@ struct ManagementView: View {
     @ObservedObject private var personaManager = PersonaManager.shared
     @ObservedObject private var skillManager = SkillManager.shared
     @ObservedObject private var scheduleManager = ScheduleManager.shared
+    @ObservedObject private var watcherManager = WatcherManager.shared
     @ObservedObject private var modelManager = ModelManager.shared
     @ObservedObject private var whisperModelManager = WhisperModelManager.shared
 
@@ -194,6 +198,8 @@ private extension ManagementView {
             PersonasView()
         case .schedules:
             SchedulesView()
+        case .watchers:
+            WatchersView()
         case .voice:
             VoiceView()
         case .themes:
@@ -242,6 +248,8 @@ private extension ManagementView {
             count = personaManager.personas.filter { !$0.isBuiltIn }.count
         case .schedules:
             count = scheduleManager.schedules.count
+        case .watchers:
+            count = watcherManager.watchers.count
         case .voice:
             count = whisperModelManager.downloadedModelsCount
         case .themes:

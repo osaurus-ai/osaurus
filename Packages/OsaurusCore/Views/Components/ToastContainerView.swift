@@ -26,10 +26,11 @@ final class ToastPassThroughView: NSView {
 
 // MARK: - Toast Container View
 
-/// Container that positions and animates toasts based on configuration
+/// Container that positions and animates toasts based on configuration.
+/// Note: Background tasks are now rendered by the NotchView (via NotchWindowController),
+/// not by this container. This only handles regular toasts.
 public struct ToastContainerView: View {
     @ObservedObject private var toastManager = ToastManager.shared
-    @ObservedObject private var backgroundTaskManager = BackgroundTaskManager.shared
     @Environment(\.theme) private var theme
 
     public init() {}
@@ -53,21 +54,6 @@ public struct ToastContainerView: View {
     @ViewBuilder
     private var toastStack: some View {
         VStack(spacing: 10) {
-            // Background task toasts first (they're more important/persistent)
-            ForEach(orderedBackgroundTasks) { taskState in
-                BackgroundTaskToastView(
-                    taskState: taskState,
-                    onDismiss: {
-                        // Handled inside BackgroundTaskToastView
-                    },
-                    onOpen: {
-                        BackgroundTaskManager.shared.openTaskWindow(taskState.id)
-                    }
-                )
-                .transition(toastTransition)
-                .id(taskState.id)
-            }
-
             // Regular toasts ordered based on position
             ForEach(orderedToasts) { toast in
                 ToastView(
@@ -86,26 +72,9 @@ public struct ToastContainerView: View {
         .animation(.spring(response: 0.4, dampingFraction: 0.8), value: allToastIds)
     }
 
-    /// Combined IDs for animation tracking
+    /// Toast IDs for animation tracking
     private var allToastIds: [UUID] {
-        let backgroundIds = Array(backgroundTaskManager.backgroundTasks.keys)
-        let toastIds = toastManager.toasts.map { $0.id }
-        return backgroundIds + toastIds
-    }
-
-    /// Background tasks ordered for display
-    private var orderedBackgroundTasks: [BackgroundTaskState] {
-        let position = toastManager.configuration.position
-        let tasks = Array(backgroundTaskManager.backgroundTasks.values)
-            .sorted { $0.createdAt < $1.createdAt }
-
-        // For top positions, newest should appear at top (so reverse order)
-        // For bottom positions, newest should appear at bottom (natural order)
-        if position.isTop {
-            return tasks.reversed()
-        } else {
-            return tasks
-        }
+        toastManager.toasts.map { $0.id }
     }
 
     // MARK: - Computed Properties

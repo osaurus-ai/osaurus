@@ -4,7 +4,7 @@
 //
 //  Single owner of all backgrounded work: dispatched tasks (from schedules,
 //  shortcuts, etc.) and detached tasks (window closed while agent is running).
-//  Drives BackgroundTaskToastView, provides completion signaling, and handles
+//  Drives NotchView (background task indicator), provides completion signaling, and handles
 //  lazy window creation. Supports both chat and agent modes.
 //
 
