@@ -3,18 +3,16 @@
 //  osaurus
 //
 //  Dynamic Island-inspired notch UI for background tasks.
-//  Extends from the top edge of the screen with a custom notch shape
-//  (flat top, ear curves, rounded bottom) and black background that
-//  blends with the display bezel.
+//  Cup-shaped overlay that blends with the display bezel and expands
+//  on hover with a bouncy swing animation and staggered content reveal.
 //
 
 import SwiftUI
 
 // MARK: - Notch Shape
 
-/// Custom shape that mimics the MacBook hardware notch: flat top edge,
-/// small "ear" curves at the top corners, and larger rounded bottom corners.
-/// Both corner radii are animatable for smooth morphing between states.
+/// Cup-shaped notch using cubic Bezier curves for smooth concave ears
+/// at the top and convex rounded corners at the bottom.
 struct NotchShape: Shape {
     var topCornerRadius: CGFloat
     var bottomCornerRadius: CGFloat
@@ -32,46 +30,41 @@ struct NotchShape: Shape {
         let h = rect.height
         let topR = min(topCornerRadius, min(w, h) / 2)
         let botR = min(bottomCornerRadius, min(w, h) / 2)
+        let earDepth = topR * 0.35
 
         var path = Path()
-
-        // Start just after the top-left ear
         path.move(to: CGPoint(x: topR, y: 0))
-
-        // Flat top edge
         path.addLine(to: CGPoint(x: w - topR, y: 0))
 
-        // Top-right ear curve
-        path.addQuadCurve(
+        // Top-right ear
+        path.addCurve(
             to: CGPoint(x: w, y: topR),
-            control: CGPoint(x: w, y: 0)
+            control1: CGPoint(x: w - earDepth, y: 0),
+            control2: CGPoint(x: w, y: earDepth)
         )
-
-        // Right side
         path.addLine(to: CGPoint(x: w, y: h - botR))
 
         // Bottom-right corner
-        path.addQuadCurve(
+        path.addCurve(
             to: CGPoint(x: w - botR, y: h),
-            control: CGPoint(x: w, y: h)
+            control1: CGPoint(x: w, y: h - botR * 0.45),
+            control2: CGPoint(x: w - botR * 0.45, y: h)
         )
-
-        // Bottom edge
         path.addLine(to: CGPoint(x: botR, y: h))
 
         // Bottom-left corner
-        path.addQuadCurve(
+        path.addCurve(
             to: CGPoint(x: 0, y: h - botR),
-            control: CGPoint(x: 0, y: h)
+            control1: CGPoint(x: botR * 0.45, y: h),
+            control2: CGPoint(x: 0, y: h - botR * 0.45)
         )
-
-        // Left side
         path.addLine(to: CGPoint(x: 0, y: topR))
 
-        // Top-left ear curve
-        path.addQuadCurve(
+        // Top-left ear
+        path.addCurve(
             to: CGPoint(x: topR, y: 0),
-            control: CGPoint(x: 0, y: 0)
+            control1: CGPoint(x: 0, y: earDepth),
+            control2: CGPoint(x: earDepth, y: 0)
         )
 
         path.closeSubpath()
@@ -79,51 +72,46 @@ struct NotchShape: Shape {
     }
 }
 
-// MARK: - Notch Expansion State
+// MARK: - Expansion State
 
-/// Controls the visual expansion level of the notch.
 private enum NotchExpansion: Equatable {
-    case hidden
-    case compact
-    case expanded
-    case interactive
+    case hidden, compact, expanded, interactive
 }
 
 // MARK: - Notch View
 
-/// A Dynamic Island-inspired background task indicator that morphs between states.
-/// Uses a black background and custom NotchShape to blend with the display bezel.
 struct NotchView: View {
     @ObservedObject private var taskManager = BackgroundTaskManager.shared
     @ObservedObject private var windowController = NotchWindowController.shared
     @Environment(\.theme) private var theme
 
-    // MARK: - Local State
+    // MARK: - State
 
-    @State private var isHovering = false
+    /// Split hover tracking: trigger zone (top strip) + body (expanded content).
+    @State private var isHoveringTrigger = false
+    @State private var isHoveringBody = false
     @State private var activeTaskIndex: Int = 0
     @State private var selectedOption: String?
     @State private var showCancelConfirmation = false
+    @State private var contentRevealed = false
+    @State private var absorbingTaskIds: Set<UUID> = []
 
-    // MARK: - Screen Metrics
+    private var isHovering: Bool { isHoveringTrigger || isHoveringBody }
+
+    // MARK: - Metrics & Colors
 
     private var metrics: NotchScreenMetrics { windowController.metrics }
-
-    // MARK: - Notch Colors (white-based for dark notch surface)
-
     private var notchPrimaryText: Color { .white }
     private var notchSecondaryText: Color { Color.white.opacity(0.7) }
     private var notchTertiaryText: Color { Color.white.opacity(0.45) }
 
-    // MARK: - Computed
+    // MARK: - Derived Properties
 
-    /// Sorted tasks: clarification first, then running (newest first), then completed.
     private var sortedTasks: [BackgroundTaskState] {
         Array(taskManager.backgroundTasks.values)
             .sorted { a, b in
-                let aPriority = statusPriority(a.status)
-                let bPriority = statusPriority(b.status)
-                if aPriority != bPriority { return aPriority < bPriority }
+                let ap = statusPriority(a.status), bp = statusPriority(b.status)
+                if ap != bp { return ap < bp }
                 return a.createdAt > b.createdAt
             }
     }
@@ -137,22 +125,18 @@ struct NotchView: View {
         }
     }
 
-    /// The currently featured task.
     private var activeTask: BackgroundTaskState? {
         guard !sortedTasks.isEmpty else { return nil }
         let idx = min(activeTaskIndex, sortedTasks.count - 1)
         return sortedTasks[max(0, idx)]
     }
 
-    /// Current expansion state of the notch.
     private var expansion: NotchExpansion {
         guard let task = activeTask else { return .hidden }
         if case .awaitingClarification = task.status { return .interactive }
-        if isHovering { return .expanded }
-        return .compact
+        return isHovering ? .expanded : .compact
     }
 
-    /// Accent color derived from active task status.
     private var accentColor: Color {
         guard let task = activeTask else { return theme.accentColorLight }
         switch task.status {
@@ -168,69 +152,52 @@ struct NotchView: View {
     private var notchWidth: CGFloat {
         switch expansion {
         case .hidden: return 0
-        // Compact extends slightly beyond the hardware notch so it's subtly visible
         case .compact: return metrics.notchWidth + 60
-        case .expanded: return max(340, metrics.notchWidth + 140)
-        case .interactive: return max(340, metrics.notchWidth + 140)
+        case .expanded, .interactive: return max(340, metrics.notchWidth + 140)
         }
     }
 
+    /// Compact: flush with bezel. Expanded/interactive: content-driven via fixedSize.
     private var notchHeight: CGFloat {
         switch expansion {
         case .hidden: return 0
-        // Compact uses exact hardware notch height to stay flush
         case .compact: return metrics.notchHeight
-        case .expanded: return expandedHeight
-        case .interactive: return interactiveHeight
+        case .expanded, .interactive: return 0
         }
     }
-
-    private var expandedHeight: CGFloat {
-        guard let task = activeTask else { return metrics.notchHeight + 100 }
-        let isTerminal = !task.status.isActive
-        let base: CGFloat = isTerminal ? 130 : 160
-        let activityExtra: CGFloat = hasActivityItems ? 80 : 0
-        let multiExtra: CGFloat = sortedTasks.count > 1 ? 24 : 0
-        // Add notch height so content starts below the bezel area
-        return metrics.notchHeight + base + activityExtra + multiExtra
-    }
-
-    private var interactiveHeight: CGFloat {
-        guard let task = activeTask, let clarification = task.pendingClarification else { return expandedHeight }
-        let optionCount = CGFloat(clarification.options?.count ?? 0)
-        let base: CGFloat = 170
-        let optionsHeight = optionCount * 36
-        let submitHeight: CGFloat = optionCount > 0 ? 36 : 40
-        // Add notch height so content starts below the bezel area
-        return metrics.notchHeight + base + optionsHeight + submitHeight
-    }
-
-    // MARK: - Shape Radii
 
     private var topCornerRadius: CGFloat {
         switch expansion {
         case .hidden: return 4
-        // Compact: very small ear curves to blend seamlessly with bezel
         case .compact: return 5
-        // Expanded: slightly larger ears for the wider shape
-        case .expanded: return 10
-        case .interactive: return 10
+        case .expanded, .interactive: return 0  // square — looks like it slid out
         }
     }
 
     private var bottomCornerRadius: CGFloat {
         switch expansion {
         case .hidden: return 10
-        // Compact: moderate rounding for the small visible bottom edge
         case .compact: return 12
-        // Expanded: larger rounding for the full-size notch
-        case .expanded: return 20
-        case .interactive: return 20
+        case .expanded, .interactive: return 22
+        }
+    }
+
+    private var orbSize: CGFloat {
+        switch expansion {
+        case .hidden: return 10
+        case .compact: return 14
+        case .expanded, .interactive: return 24
         }
     }
 
     private var currentShape: NotchShape {
         NotchShape(topCornerRadius: topCornerRadius, bottomCornerRadius: bottomCornerRadius)
+    }
+
+    // MARK: - Animation
+
+    private var swingSpring: Animation {
+        .spring(response: 0.45, dampingFraction: 0.68, blendDuration: 0.1)
     }
 
     // MARK: - Body
@@ -247,12 +214,21 @@ struct NotchView: View {
                     )
             }
         }
-        .animation(notchSpring, value: expansion)
-        .animation(notchSpring, value: sortedTasks.map(\.id))
-        .animation(notchSpring, value: activeTaskIndex)
+        .animation(swingSpring, value: expansion)
+        .animation(swingSpring, value: sortedTasks.map(\.id))
+        .animation(swingSpring, value: activeTaskIndex)
         .onChange(of: sortedTasks.count) { _, newCount in
             if activeTaskIndex >= newCount {
                 activeTaskIndex = max(0, newCount - 1)
+            }
+        }
+        .onChange(of: isHoveringTrigger) { _, _ in handleHoverChange() }
+        .onChange(of: isHoveringBody) { _, _ in handleHoverChange() }
+        .onChange(of: expansion) { _, newExpansion in
+            if newExpansion == .interactive {
+                withAnimation(.easeOut(duration: 0.2)) {
+                    contentRevealed = true
+                }
             }
         }
     }
@@ -261,13 +237,14 @@ struct NotchView: View {
 
     private var notchBody: some View {
         notchContent
-            .frame(width: notchWidth)
-            .frame(minHeight: notchHeight)
+            .frame(width: notchWidth, alignment: .top)
+            .frame(minHeight: notchHeight, alignment: .top)
             .fixedSize(horizontal: false, vertical: true)
             .background(notchBackground)
             .clipShape(currentShape)
+            .contentShape(currentShape)
             .overlay(notchBorderOverlay)
-            // Shadow only cast downward and only when expanded (compact blends with bezel)
+            .overlay(alignment: .top) { hoverTriggerZone }
             .shadow(
                 color: Color.black.opacity(expansion == .compact ? 0 : (isHovering ? 0.6 : 0.4)),
                 radius: expansion == .compact ? 0 : (isHovering ? 20 : 12),
@@ -275,11 +252,6 @@ struct NotchView: View {
                 y: expansion == .compact ? 0 : (isHovering ? 10 : 6)
             )
             .glow(color: accentColor, radius: expansion == .interactive ? 10 : 0, isActive: expansion == .interactive)
-            .onHover { hovering in
-                withAnimation(notchSpring) {
-                    isHovering = hovering
-                }
-            }
             .themedAlert(
                 "Cancel Background Task?",
                 isPresented: $showCancelConfirmation,
@@ -295,89 +267,87 @@ struct NotchView: View {
             )
     }
 
-    /// Switches between expansion-specific content with smooth transitions.
+    /// Thin strip at the top that triggers hover — the only entry point for expansion.
+    private var hoverTriggerZone: some View {
+        Color.clear
+            .frame(width: metrics.notchWidth + 60, height: metrics.notchHeight)
+            .contentShape(Rectangle())
+            .onHover { hovering in
+                withAnimation(swingSpring) { isHoveringTrigger = hovering }
+            }
+    }
+
+    // MARK: - Content Switching
+
     @ViewBuilder
     private var notchContent: some View {
+        let isAbsorbing = activeTask.map { absorbingTaskIds.contains($0.id) } ?? false
+
         switch expansion {
         case .hidden:
             EmptyView()
         case .compact:
-            compactContent
-                .transition(.opacity)
+            compactContent.transition(.opacity)
         case .expanded:
-            expandedContent
-                .transition(.opacity)
+            expandedContent.transition(
+                isAbsorbing
+                    ? .asymmetric(
+                        insertion: .opacity,
+                        removal: .move(edge: .top)
+                            .combined(with: .scale(scale: 0.6, anchor: .top))
+                            .combined(with: .opacity)
+                    )
+                    : .opacity
+            )
         case .interactive:
-            interactiveContent
-                .transition(.opacity)
+            interactiveContent.transition(.opacity)
         }
     }
 
     // MARK: - Compact Content
 
     private var compactContent: some View {
-        HStack(spacing: 8) {
-            // Status icon
-            MorphingStatusIcon(state: statusIconState, accentColor: accentColor, size: 14)
-
-            // Task title or completion summary
-            if let task = activeTask {
-                compactLabel(for: task)
-            }
-
-            Spacer(minLength: 4)
-
-            // Progress ring / count badge
-            compactTrailing
+        HStack(spacing: 0) {
+            compactLeading.frame(width: 24, alignment: .center)
+            Spacer(minLength: 0)
+            compactTrailing.frame(width: 24, alignment: .center)
         }
-        .padding(.horizontal, 16)
-        // Center content vertically within the hardware notch height
+        .padding(.horizontal, 12)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .contentShape(Rectangle())
-        .onTapGesture {
-            if let task = activeTask {
-                BackgroundTaskManager.shared.openTaskWindow(task.id)
-            }
-        }
     }
 
     @ViewBuilder
-    private func compactLabel(for task: BackgroundTaskState) -> some View {
-        switch task.status {
-        case .completed(let success, _):
-            Text(success ? "Completed" : "Failed")
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundColor(accentColor)
-                .lineLimit(1)
-        case .cancelled:
-            Text("Cancelled")
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundColor(notchTertiaryText)
-                .lineLimit(1)
-        default:
-            Text(task.taskTitle)
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundColor(notchPrimaryText)
-                .lineLimit(1)
+    private var compactLeading: some View {
+        if activeTask != nil {
+            AnimatedOrb(
+                color: accentColor,
+                size: .custom(orbSize),
+                showGlow: false,
+                showFloat: false,
+                isInteractive: false
+            )
+            .animation(swingSpring, value: orbSize)
+            .transition(.opacity.combined(with: .scale(scale: 0.5)))
         }
     }
 
     @ViewBuilder
     private var compactTrailing: some View {
-        if sortedTasks.count > 1 {
-            Text("\(sortedTasks.count)")
-                .font(.system(size: 9, weight: .bold, design: .rounded))
-                .foregroundColor(.white)
-                .frame(width: 18, height: 18)
-                .background(Circle().fill(accentColor))
-        } else if let task = activeTask {
-            if task.status.isActive {
-                NotchProgressRing(
-                    progress: task.progress,
-                    color: accentColor,
-                    size: 16,
-                    lineWidth: 2
+        if let task = activeTask {
+            switch task.status {
+            case .running, .awaitingClarification:
+                NotchProgressRing(progress: task.progress, color: accentColor, size: 14, lineWidth: 1.5)
+                    .transition(.opacity.combined(with: .scale(scale: 0.5)))
+            case .completed(let success, _):
+                MorphingStatusIcon(
+                    state: success ? .completed : .failed,
+                    accentColor: success ? theme.successColor : theme.errorColor,
+                    size: 14
                 )
+                .transition(.opacity.combined(with: .scale(scale: 0.5)))
+            case .cancelled:
+                MorphingStatusIcon(state: .failed, accentColor: notchTertiaryText, size: 14)
+                    .transition(.opacity.combined(with: .scale(scale: 0.5)))
             }
         }
     }
@@ -386,110 +356,45 @@ struct NotchView: View {
 
     private var expandedContent: some View {
         VStack(alignment: .leading, spacing: 0) {
-            // Reserve the hardware notch area as empty black at the top
-            // so content only appears below the bezel line
-            Color.clear
-                .frame(height: metrics.notchHeight)
+            Color.clear.frame(height: metrics.notchHeight)
 
             VStack(alignment: .leading, spacing: 8) {
                 expandedHeader
 
                 if let task = activeTask {
                     switch task.status {
-                    case .running:
+                    case .running, .awaitingClarification:
                         expandedRunningBody(task: task)
                     case .completed(_, let summary):
                         expandedCompletedBody(summary: summary, task: task)
                     case .cancelled:
                         expandedCancelledBody(task: task)
-                    case .awaitingClarification:
-                        expandedRunningBody(task: task)
                     }
                 }
 
-                if sortedTasks.count > 1 {
-                    taskDotIndicators
-                }
+                if sortedTasks.count > 1 { taskDotIndicators }
             }
             .padding(.horizontal, 16)
             .padding(.top, 6)
             .padding(.bottom, 14)
+            .opacity(contentRevealed ? 1 : 0)
+            .offset(y: contentRevealed ? 0 : 8)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .contentShape(Rectangle())
-        .onTapGesture {
-            if let task = activeTask {
-                BackgroundTaskManager.shared.openTaskWindow(task.id)
-            }
-        }
-    }
-
-    private func expandedRunningBody(task: BackgroundTaskState) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            if let step = task.currentStep {
-                Text(step)
-                    .font(.system(size: 10.5, weight: .medium))
-                    .foregroundColor(notchSecondaryText)
-                    .lineLimit(2)
-            }
-
-            expandedProgress(task: task)
-
-            if hasActivityItems {
-                expandedActivityFeed(task: task)
-            }
-        }
-    }
-
-    private func expandedCompletedBody(summary: String, task: BackgroundTaskState) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text(summary)
-                .font(.system(size: 11, weight: .medium))
-                .foregroundColor(notchSecondaryText)
-                .lineLimit(3)
-
-            if hasActivityItems {
-                expandedActivityFeed(task: task)
-            }
-
-            // View details button
-            Button {
-                BackgroundTaskManager.shared.openTaskWindow(task.id)
-                BackgroundTaskManager.shared.finalizeTask(task.id)
-            } label: {
-                Text(task.mode == .chat ? "View Chat" : "View Details")
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundColor(accentColor)
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 6)
-                    .background(
-                        RoundedRectangle(cornerRadius: 6)
-                            .fill(accentColor.opacity(0.15))
-                    )
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 6)
-                            .strokeBorder(accentColor.opacity(0.25), lineWidth: 1)
-                    )
-            }
-            .buttonStyle(.plain)
-        }
-    }
-
-    private func expandedCancelledBody(task: BackgroundTaskState) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("Task was cancelled")
-                .font(.system(size: 11, weight: .medium))
-                .foregroundColor(notchSecondaryText)
-
-            if hasActivityItems {
-                expandedActivityFeed(task: task)
-            }
+        .onHover { hovering in
+            withAnimation(swingSpring) { isHoveringBody = hovering }
         }
     }
 
     private var expandedHeader: some View {
         HStack(spacing: 8) {
-            MorphingStatusIcon(state: statusIconState, accentColor: accentColor, size: 14)
+            AnimatedOrb(
+                color: accentColor,
+                size: .custom(orbSize),
+                showGlow: false,
+                showFloat: false,
+                isInteractive: false
+            )
 
             if let task = activeTask {
                 VStack(alignment: .leading, spacing: 1) {
@@ -497,7 +402,6 @@ struct NotchView: View {
                         .font(.system(size: 12, weight: .semibold))
                         .foregroundColor(notchPrimaryText)
                         .lineLimit(1)
-
                     Text(task.status.displayName)
                         .font(.system(size: 9.5, weight: .medium))
                         .foregroundColor(notchTertiaryText)
@@ -506,11 +410,8 @@ struct NotchView: View {
 
             Spacer(minLength: 4)
 
-            if let task = activeTask {
-                expandedStepInfo(task: task)
-            }
+            if let task = activeTask { expandedStepInfo(task: task) }
 
-            // Dismiss button (notch-styled)
             Button(action: handleDismiss) {
                 Image(systemName: "xmark")
                     .font(.system(size: 9, weight: .semibold))
@@ -533,8 +434,57 @@ struct NotchView: View {
                 .font(.system(size: 10, weight: .medium, design: .monospaced))
                 .foregroundColor(notchTertiaryText)
                 .contentTransition(.numericText())
-                .animation(notchSpring, value: task.progress)
+                .animation(swingSpring, value: task.progress)
                 .fixedSize()
+        }
+    }
+
+    private func expandedRunningBody(task: BackgroundTaskState) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            if let step = task.currentStep {
+                Text(step)
+                    .font(.system(size: 10.5, weight: .medium))
+                    .foregroundColor(notchSecondaryText)
+                    .lineLimit(2)
+            }
+            expandedProgress(task: task)
+            if hasActivityItems { expandedActivityFeed(task: task) }
+        }
+    }
+
+    private func expandedCompletedBody(summary: String, task: BackgroundTaskState) -> some View {
+        VStack(spacing: 8) {
+            Text(summary)
+                .font(.system(size: 11, weight: .medium))
+                .foregroundColor(notchSecondaryText)
+                .lineLimit(3)
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+            if hasActivityItems { expandedActivityFeed(task: task) }
+
+            Button {
+                BackgroundTaskManager.shared.openTaskWindow(task.id)
+                BackgroundTaskManager.shared.finalizeTask(task.id)
+            } label: {
+                Text(task.mode == .chat ? "View Chat" : "View Details")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundColor(accentColor)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 6)
+                    .frame(maxWidth: .infinity)
+                    .background(RoundedRectangle(cornerRadius: 6).fill(accentColor.opacity(0.15)))
+                    .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(accentColor.opacity(0.25), lineWidth: 1))
+            }
+            .buttonStyle(.plain)
+        }
+    }
+
+    private func expandedCancelledBody(task: BackgroundTaskState) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Task was cancelled")
+                .font(.system(size: 11, weight: .medium))
+                .foregroundColor(notchSecondaryText)
+            if hasActivityItems { expandedActivityFeed(task: task) }
         }
     }
 
@@ -549,7 +499,6 @@ struct NotchView: View {
 
     private func expandedActivityFeed(task: BackgroundTaskState) -> some View {
         let items = collapsedActivityItems(from: task, maxLines: 3)
-
         return VStack(alignment: .leading, spacing: 4) {
             ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
                 NotchActivityRow(item: item.item, accent: accentColor, count: item.count)
@@ -558,13 +507,9 @@ struct NotchView: View {
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 6)
-        .background(
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .fill(Color.white.opacity(0.06))
-        )
+        .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Color.white.opacity(0.06)))
         .overlay(
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .strokeBorder(Color.white.opacity(0.08), lineWidth: 1)
+            RoundedRectangle(cornerRadius: 8, style: .continuous).strokeBorder(Color.white.opacity(0.08), lineWidth: 1)
         )
     }
 
@@ -574,21 +519,16 @@ struct NotchView: View {
     private var interactiveContent: some View {
         if let task = activeTask, let clarification = task.pendingClarification {
             VStack(alignment: .leading, spacing: 0) {
-                // Reserve the hardware notch area as empty black
-                Color.clear
-                    .frame(height: metrics.notchHeight)
+                Color.clear.frame(height: metrics.notchHeight)
 
                 VStack(alignment: .leading, spacing: 8) {
                     HStack(spacing: 8) {
                         PulsingStatusDot(color: theme.warningColor, isPulsing: true, size: 7)
-
                         Text(task.taskTitle)
                             .font(.system(size: 12, weight: .semibold))
                             .foregroundColor(notchPrimaryText)
                             .lineLimit(1)
-
                         Spacer(minLength: 4)
-
                         Text("Needs input")
                             .font(.system(size: 9.5, weight: .semibold))
                             .foregroundColor(theme.warningColor)
@@ -603,8 +543,7 @@ struct NotchView: View {
                     if let options = clarification.options, !options.isEmpty {
                         notchOptionsView(options: options)
                         HStack {
-                            Spacer()
-                            notchSubmitButton(taskId: task.id)
+                            Spacer(); notchSubmitButton(taskId: task.id)
                         }
                     } else {
                         notchRespondButton(taskId: task.id)
@@ -613,22 +552,26 @@ struct NotchView: View {
                 .padding(.horizontal, 16)
                 .padding(.top, 6)
                 .padding(.bottom, 14)
+                .opacity(contentRevealed ? 1 : 0)
+                .offset(y: contentRevealed ? 0 : 8)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
+            .onHover { hovering in
+                withAnimation(swingSpring) { isHoveringBody = hovering }
+            }
         }
     }
 
+    // MARK: - Clarification Controls
+
     private func notchOptionsView(options: [String]) -> some View {
         VStack(alignment: .leading, spacing: 4) {
-            ForEach(options, id: \.self) { option in
-                notchOptionButton(option)
-            }
+            ForEach(options, id: \.self) { notchOptionButton($0) }
         }
     }
 
     private func notchOptionButton(_ option: String) -> some View {
         let isSelected = selectedOption == option
-
         return Button {
             withAnimation(theme.animationQuick()) {
                 selectedOption = isSelected ? nil : option
@@ -636,20 +579,14 @@ struct NotchView: View {
         } label: {
             HStack(spacing: 6) {
                 ZStack {
-                    Circle()
-                        .strokeBorder(isSelected ? accentColor : notchTertiaryText, lineWidth: 1.5)
+                    Circle().strokeBorder(isSelected ? accentColor : notchTertiaryText, lineWidth: 1.5)
                         .frame(width: 14, height: 14)
-
-                    if isSelected {
-                        Circle().fill(accentColor).frame(width: 7, height: 7)
-                    }
+                    if isSelected { Circle().fill(accentColor).frame(width: 7, height: 7) }
                 }
-
                 Text(option)
                     .font(.system(size: 11, weight: isSelected ? .medium : .regular))
                     .foregroundColor(isSelected ? notchPrimaryText : notchSecondaryText)
                     .lineLimit(1)
-
                 Spacer()
             }
             .padding(.horizontal, 8)
@@ -664,7 +601,6 @@ struct NotchView: View {
 
     private func notchSubmitButton(taskId: UUID) -> some View {
         let canSubmit = selectedOption != nil
-
         return Button {
             if let option = selectedOption {
                 BackgroundTaskManager.shared.submitClarification(taskId, response: option)
@@ -672,10 +608,8 @@ struct NotchView: View {
             }
         } label: {
             HStack(spacing: 4) {
-                Text("Continue")
-                    .font(.system(size: 10.5, weight: .semibold))
-                Image(systemName: "arrow.right")
-                    .font(.system(size: 9, weight: .semibold))
+                Text("Continue").font(.system(size: 10.5, weight: .semibold))
+                Image(systemName: "arrow.right").font(.system(size: 9, weight: .semibold))
             }
             .foregroundColor(canSubmit ? .white : notchTertiaryText)
             .padding(.horizontal, 10)
@@ -706,7 +640,7 @@ struct NotchView: View {
         .buttonStyle(.plain)
     }
 
-    // MARK: - Multi-Task Dot Indicators
+    // MARK: - Multi-Task Dots
 
     private var taskDotIndicators: some View {
         HStack(spacing: 6) {
@@ -717,9 +651,7 @@ struct NotchView: View {
                     .frame(width: 6, height: 6)
                     .scaleEffect(index == activeTaskIndex ? 1.2 : 1.0)
                     .onTapGesture {
-                        withAnimation(notchSpring) {
-                            activeTaskIndex = index
-                        }
+                        withAnimation(swingSpring) { activeTaskIndex = index }
                     }
             }
             Spacer()
@@ -731,59 +663,29 @@ struct NotchView: View {
 
     private var notchBackground: some View {
         ZStack {
-            // Pure black base — blends with the display bezel / hardware notch
             Color.black
-
-            // Only add a subtle surface tint BELOW the hardware notch line
-            // so the upper portion stays pure black and seamless
             if expansion == .expanded || expansion == .interactive {
-                LinearGradient(
-                    colors: [
-                        Color.clear,
-                        Color.white.opacity(0.04),
-                    ],
-                    startPoint: .top,
-                    endPoint: .bottom
-                )
-
-                // Very subtle accent bleed at the bottom
-                LinearGradient(
-                    colors: [
-                        Color.clear,
-                        accentColor.opacity(0.06),
-                    ],
-                    startPoint: .top,
-                    endPoint: .bottom
-                )
+                LinearGradient(colors: [.clear, Color.white.opacity(0.04)], startPoint: .top, endPoint: .bottom)
+                LinearGradient(colors: [.clear, accentColor.opacity(0.06)], startPoint: .top, endPoint: .bottom)
             }
         }
     }
 
-    /// Border that only appears on the bottom and sides -- the top edge stays
-    /// invisible so the notch blends seamlessly with the hardware bezel.
     private var notchBorderOverlay: some View {
         currentShape
             .stroke(
                 LinearGradient(
-                    colors: [
-                        Color.white.opacity(0.0),
-                        Color.white.opacity(expansion == .compact ? 0.06 : 0.14),
-                    ],
+                    colors: [Color.white.opacity(0.0), Color.white.opacity(expansion == .compact ? 0.06 : 0.14)],
                     startPoint: .top,
                     endPoint: .bottom
                 ),
                 lineWidth: 1
             )
-            // Mask away the top portion so no border is visible at the screen edge
             .mask(
                 VStack(spacing: 0) {
                     Color.clear.frame(height: max(metrics.notchHeight - 6, 0))
-                    LinearGradient(
-                        colors: [Color.white.opacity(0), Color.white],
-                        startPoint: .top,
-                        endPoint: .bottom
-                    )
-                    .frame(height: 10)
+                    LinearGradient(colors: [Color.white.opacity(0), .white], startPoint: .top, endPoint: .bottom)
+                        .frame(height: 10)
                     Color.white
                 }
             )
@@ -791,20 +693,21 @@ struct NotchView: View {
 
     // MARK: - Helpers
 
-    private var statusIconState: StatusIconState {
-        guard let task = activeTask else { return .pending }
-        switch task.status {
-        case .running: return .active
-        case .awaitingClarification: return .pending
-        case .completed(let success, _): return success ? .completed : .failed
-        case .cancelled: return .failed
-        }
-    }
-
     private var hasActivityItems: Bool {
         guard let task = activeTask else { return false }
         return task.activityFeed.count > 1
             || (task.activityFeed.count == 1 && task.activityFeed.first?.kind != .info)
+    }
+
+    private func handleHoverChange() {
+        if isHovering {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) {
+                guard isHovering else { return }
+                withAnimation(.easeOut(duration: 0.25)) { contentRevealed = true }
+            }
+        } else {
+            withAnimation(.easeOut(duration: 0.15)) { contentRevealed = false }
+        }
     }
 
     private func handleDismiss() {
@@ -812,15 +715,15 @@ struct NotchView: View {
         if task.status.isActive {
             showCancelConfirmation = true
         } else {
-            BackgroundTaskManager.shared.finalizeTask(task.id)
+            _ = withAnimation(swingSpring) { absorbingTaskIds.insert(task.id) }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) {
+                BackgroundTaskManager.shared.finalizeTask(task.id)
+                absorbingTaskIds.remove(task.id)
+            }
         }
     }
 
-    private var notchSpring: Animation {
-        .spring(response: 0.4, dampingFraction: 0.82)
-    }
-
-    // MARK: - Activity Item Collapsing
+    // MARK: - Activity Collapsing
 
     private struct CollapsedActivityItem: Identifiable {
         let id: UUID
@@ -834,9 +737,9 @@ struct NotchView: View {
         out.reserveCapacity(maxLines)
 
         var current: BackgroundTaskActivityItem?
-        var currentCount: Int = 0
+        var currentCount = 0
 
-        func flushCurrent() {
+        func flush() {
             guard let item = current else { return }
             out.append(CollapsedActivityItem(id: item.id, item: item, count: currentCount))
             current = nil
@@ -844,42 +747,35 @@ struct NotchView: View {
         }
 
         for item in recent {
-            if let currentItem = current {
-                if currentItem.kind == item.kind, currentItem.title == item.title, currentItem.detail == item.detail {
-                    currentCount += 1
-                } else {
-                    flushCurrent()
-                    current = item
-                    currentCount = 1
-                }
+            if let cur = current,
+                cur.kind == item.kind, cur.title == item.title, cur.detail == item.detail
+            {
+                currentCount += 1
             } else {
+                flush()
                 current = item
                 currentCount = 1
             }
-
             if out.count >= maxLines { break }
         }
-
-        if out.count < maxLines { flushCurrent() }
+        if out.count < maxLines { flush() }
         return out
     }
 }
 
 // MARK: - Notch Progress Ring
 
-/// A small circular progress indicator for the compact notch state.
 private struct NotchProgressRing: View {
     let progress: Double
     let color: Color
     var size: CGFloat = 16
     var lineWidth: CGFloat = 2
 
-    @State private var indeterminateRotation: Double = 0
+    @State private var rotation: Double = 0
 
     var body: some View {
         ZStack {
-            Circle()
-                .stroke(color.opacity(0.25), lineWidth: lineWidth)
+            Circle().stroke(color.opacity(0.25), lineWidth: lineWidth)
                 .frame(width: size, height: size)
 
             if progress >= 0 {
@@ -894,10 +790,10 @@ private struct NotchProgressRing: View {
                     .trim(from: 0, to: 0.3)
                     .stroke(color, style: StrokeStyle(lineWidth: lineWidth, lineCap: .round))
                     .frame(width: size, height: size)
-                    .rotationEffect(.degrees(indeterminateRotation))
+                    .rotationEffect(.degrees(rotation))
                     .onAppear {
                         withAnimation(.linear(duration: 1.0).repeatForever(autoreverses: false)) {
-                            indeterminateRotation = 360
+                            rotation = 360
                         }
                     }
             }
@@ -907,7 +803,6 @@ private struct NotchProgressRing: View {
 
 // MARK: - Notch Activity Row
 
-/// Compact activity row styled for the dark notch surface.
 private struct NotchActivityRow: View {
     let item: BackgroundTaskActivityItem
     let accent: Color
@@ -915,10 +810,7 @@ private struct NotchActivityRow: View {
 
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: 6) {
-            Circle()
-                .fill(dotColor)
-                .frame(width: 5, height: 5)
-                .padding(.top, 3)
+            Circle().fill(dotColor).frame(width: 5, height: 5).padding(.top, 3)
 
             (Text(item.title)
                 .font(.system(size: 10, weight: .semibold))
@@ -947,11 +839,8 @@ private struct NotchActivityRow: View {
     }
 }
 
-// MARK: - Notch Content View (Window Root)
+// MARK: - Window Root
 
-/// Root content view hosted by the NotchWindowController.
-/// Aligns the NotchView to the top with zero padding so the flat top
-/// sits flush with the screen edge.
 struct NotchContentView: View {
     @ObservedObject private var themeManager = ThemeManager.shared
 
