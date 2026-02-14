@@ -51,6 +51,7 @@ Osaurus is the AI edge runtime for macOS. It brings together:
 - **Personas** — Create custom AI assistants with unique prompts, tools, and visual themes
 - **Skills** — Import reusable AI capabilities from GitHub or files ([Agent Skills](https://agentskills.io/) compatible)
 - **Schedules** — Automate recurring AI tasks with timed execution
+- **Watchers** — Monitor folders for changes and trigger AI tasks automatically
 - **Agents** — Autonomous task execution with issue tracking, parallel tasks, and file operations
 - **Multi-Window Chat** — Multiple independent chat windows with per-window personas
 - **Developer Tools** — Built-in insights and server explorer for debugging
@@ -74,6 +75,7 @@ Osaurus is the AI edge runtime for macOS. It brings together:
 | **Skills**               | Import AI capabilities from GitHub or files, with smart context saving |
 | **Personas**             | Custom AI assistants with unique prompts, tools, and themes            |
 | **Schedules**            | Automate AI tasks with daily, weekly, monthly, or yearly runs          |
+| **Watchers**             | Monitor folders and trigger AI tasks on file system changes            |
 | **Agents**               | Autonomous multi-step task execution with parallel task support        |
 | **Custom Themes**        | Create, import, and export themes with full color customization        |
 | **Developer Tools**      | Request insights, API explorer, and live endpoint testing              |
@@ -271,6 +273,30 @@ Automate recurring AI tasks that run at specified intervals.
 - **Recurring Analysis** — Automate data insights at regular intervals
 
 Access via Management window (`⌘ Shift M`) → **Schedules**.
+
+### Watchers
+
+Monitor folders for file system changes and automatically trigger AI tasks when files are added, modified, or removed.
+
+**Features:**
+
+- **Folder Monitoring** — Watch any directory for file system changes using FSEvents
+- **Configurable Responsiveness** — Fast (~200ms), Balanced (~1s), or Patient (~3s) debounce timing
+- **Recursive Monitoring** — Optionally monitor subdirectories
+- **Persona Integration** — Assign a persona to handle triggered tasks
+- **Manual Trigger** — Run any watcher immediately with "Trigger Now"
+- **Convergence Loop** — Smart re-checking ensures the directory stabilizes before stopping
+- **Pause/Resume** — Temporarily disable watchers without deleting them
+
+**Use Cases:**
+
+- **Downloads Organizer** — Automatically sort downloaded files by type into folders
+- **Screenshot Manager** — Rename and organize screenshots as they're captured
+- **Dropbox Automation** — Process shared files automatically when they change
+
+Access via Management window (`⌘ Shift M`) → **Watchers**.
+
+See [Watchers Guide](docs/WATCHERS.md) for details.
 
 ### Agents
 

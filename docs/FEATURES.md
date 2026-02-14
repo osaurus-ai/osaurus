@@ -18,6 +18,7 @@ Canonical reference for all Osaurus features, their status, and documentation.
 | Skills                           | Stable    | "Skills"           | SKILLS.md                     | Managers/SkillManager.swift, Views/SkillsView.swift, Services/CapabilityService.swift |
 | Personas                         | Stable    | "Personas"         | (in README)                   | Managers/PersonaManager.swift, Models/Persona.swift, Views/PersonasView.swift         |
 | Schedules                        | Stable    | "Schedules"        | (in README)                   | Managers/ScheduleManager.swift, Models/Schedule.swift, Views/SchedulesView.swift      |
+| Watchers                         | Stable    | "Watchers"         | WATCHERS.md                   | Managers/WatcherManager.swift, Models/Watcher.swift, Views/WatchersView.swift         |
 | Agents                           | Stable    | "Agents"           | AGENTS.md                     | Agent/, Services/AgentEngine.swift, Views/AgentView.swift                             |
 | Developer Tools: Insights        | Stable    | "Developer Tools"  | DEVELOPER_TOOLS.md            | Views/InsightsView.swift, Services/InsightsService.swift                              |
 | Developer Tools: Server Explorer | Stable    | "Developer Tools"  | DEVELOPER_TOOLS.md            | Views/ServerView.swift                                                                |
@@ -55,6 +56,7 @@ Canonical reference for all Osaurus features, their status, and documentation.
 │  │   ├── PersonasView (Personas)                                         │
 │  │   ├── SkillsView (Skills)                                             │
 │  │   ├── SchedulesView (Schedules)                                       │
+│  │   ├── WatchersView (Watchers)                                         │
 │  │   ├── ThemesView (Themes)                                             │
 │  │   ├── InsightsView (Developer: Insights)                              │
 │  │   ├── ServerView (Developer: Server Explorer)                         │
@@ -82,6 +84,10 @@ Canonical reference for all Osaurus features, their status, and documentation.
 │  │   └── GitHubSkillService (GitHub import)                              │
 │  ├── Scheduling                                                          │
 │  │   └── ScheduleManager (Schedule lifecycle and execution)              │
+│  ├── Watchers                                                            │
+│  │   ├── WatcherManager (FSEvents monitoring and convergence loop)       │
+│  │   ├── WatcherStore (Watcher persistence)                              │
+│  │   └── DirectoryFingerprint (Change detection via Merkle hashing)      │
 │  ├── Agents                                                              │
 │  │   ├── AgentEngine (Task execution coordinator)                        │
 │  │   ├── AgentExecutionEngine (Plan generation and execution)            │
@@ -378,6 +384,71 @@ Canonical reference for all Osaurus features, their status, and documentation.
 | Weekly  | Run on a specific day each week      | "Every Monday at 9:00 AM"        |
 | Monthly | Run on a specific day each month     | "Monthly on the 1st at 10:00 AM" |
 | Yearly  | Run on a specific date each year     | "Yearly on Jan 1st at 12:00 PM"  |
+
+---
+
+### Watchers
+
+**Purpose:** Monitor folders for file system changes and automatically trigger AI agent tasks.
+
+**Components:**
+
+- `Models/Watcher.swift` — Watcher data model
+- `Models/WatcherStore.swift` — Watcher persistence (JSON files)
+- `Managers/WatcherManager.swift` — FSEvents monitoring, debouncing, and convergence loop
+- `Services/DirectoryFingerprint.swift` — Merkle hash-based change detection
+- `Views/WatchersView.swift` — Watcher management UI
+
+**Features:**
+
+- **Folder Monitoring** — Watch any directory using FSEvents with a single shared stream
+- **Configurable Responsiveness** — Fast (~200ms), Balanced (~1s), or Patient (~3s) debounce
+- **Recursive Monitoring** — Optionally monitor subdirectories
+- **Persona Integration** — Assign a persona to handle triggered tasks
+- **Enable/Disable** — Toggle watchers on or off without deleting
+- **Manual Trigger** — "Trigger Now" option to run a watcher immediately
+- **Convergence Loop** — Re-checks directory fingerprint after agent completes; loops until stable (max 5 iterations)
+- **Smart Exclusion** — Automatically excludes nested watched folders to prevent conflicts
+
+**Watcher Properties:**
+
+| Property         | Description                                        |
+| ---------------- | -------------------------------------------------- |
+| `name`           | Display name (required)                            |
+| `instructions`   | Prompt sent to the AI when changes are detected    |
+| `watchedFolder`  | Directory to monitor (security-scoped bookmark)    |
+| `personaId`      | Optional persona to use for the task               |
+| `isEnabled`      | Whether the watcher is active                      |
+| `recursive`      | Whether to monitor subdirectories (default: false) |
+| `responsiveness` | Debounce timing: fast, balanced, or patient        |
+| `lastTriggeredAt`| When the watcher last ran                          |
+| `lastChatSessionId` | Chat session ID from the last run               |
+
+**Responsiveness Options:**
+
+| Option   | Debounce Window | Best For                                  |
+| -------- | --------------- | ----------------------------------------- |
+| Fast     | ~200ms          | Screenshots, single-file drops            |
+| Balanced | ~1s             | General use (default)                     |
+| Patient  | ~3s             | Downloads, batch operations               |
+
+**Change Detection:**
+
+- FSEvents detects file system events across all enabled watchers
+- Directory fingerprinting uses a Merkle hash of file metadata (path + size + modification time)
+- Only stat() calls are used — no file content is read during detection
+- Convergence loop ensures the agent doesn't run unnecessarily after self-caused changes
+
+**State Machine:**
+
+| State       | Description                                     |
+| ----------- | ----------------------------------------------- |
+| `idle`      | Waiting for file system changes                 |
+| `debouncing`| Coalescing rapid events within the debounce window |
+| `processing`| Agent task is running                           |
+| `settling`  | Waiting for self-caused FSEvents to flush       |
+
+**Storage:** `~/Library/Application Support/com.dinoki.osaurus/watchers/{uuid}.json`
 
 ---
 
@@ -692,6 +763,7 @@ A context optimization system that reduces token usage by ~80%:
 | -------------------------------------------------------------- | ------------------------------------------------- |
 | [README.md](../README.md)                                      | Project overview, quick start, feature highlights |
 | [FEATURES.md](FEATURES.md)                                     | Feature inventory and architecture (this file)    |
+| [WATCHERS.md](WATCHERS.md)                                     | Watchers and folder monitoring guide              |
 | [AGENTS.md](AGENTS.md)                                         | Agents and autonomous task execution guide        |
 | [REMOTE_PROVIDERS.md](REMOTE_PROVIDERS.md)                     | Remote provider setup and configuration           |
 | [REMOTE_MCP_PROVIDERS.md](REMOTE_MCP_PROVIDERS.md)             | Remote MCP provider setup                         |
