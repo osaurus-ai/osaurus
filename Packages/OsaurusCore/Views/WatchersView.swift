@@ -120,8 +120,6 @@ struct WatchersView: View {
                         parameters: watcher.parameters,
                         watchPath: watcher.watchPath,
                         watchBookmark: watcher.watchBookmark,
-                        folderPath: watcher.folderPath,
-                        folderBookmark: watcher.folderBookmark,
                         isEnabled: watcher.isEnabled,
                         recursive: watcher.recursive,
                         responsiveness: watcher.responsiveness
@@ -479,9 +477,6 @@ struct WatcherEditorSheet: View {
     @State private var responsiveness: Responsiveness = .balanced
     @State private var selectedWatchPath: String?
     @State private var selectedWatchBookmark: Data?
-    @State private var selectedFolderPath: String?
-    @State private var selectedFolderBookmark: Data?
-    @State private var useCustomWorkspace = false
     @State private var hasAppeared = false
 
     private var isEditing: Bool {
@@ -514,20 +509,19 @@ struct WatcherEditorSheet: View {
             headerView
 
             ScrollView {
-                VStack(alignment: .leading, spacing: 24) {
-                    watcherInfoSection
+                VStack(alignment: .leading, spacing: 20) {
+                    watcherNameField
                     watchedFolderSection
-                    workspaceFolderSection
                     instructionsSection
-                    monitoringSection
                     personaSection
+                    monitoringSection
                 }
                 .padding(24)
             }
 
             footerView
         }
-        .frame(width: 580, height: 680)
+        .frame(width: 580, height: 640)
         .background(theme.primaryBackground)
         .clipShape(RoundedRectangle(cornerRadius: 16))
         .overlay(
@@ -593,6 +587,11 @@ struct WatcherEditorSheet: View {
 
             Spacer()
 
+            Toggle("", isOn: $isEnabled)
+                .toggleStyle(.switch)
+                .controlSize(.small)
+                .labelsHidden()
+
             Button(action: onCancel) {
                 Image(systemName: "xmark")
                     .font(.system(size: 12, weight: .semibold))
@@ -623,64 +622,19 @@ struct WatcherEditorSheet: View {
         )
     }
 
-    // MARK: - Watcher Info Section
+    // MARK: - Watcher Name Field
 
-    private var watcherInfoSection: some View {
-        WatcherEditorSection(title: "Watcher Info", icon: "info.circle.fill") {
-            VStack(alignment: .leading, spacing: 16) {
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("Name")
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundColor(theme.secondaryText)
+    private var watcherNameField: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Name")
+                .font(.system(size: 11, weight: .medium))
+                .foregroundColor(theme.secondaryText)
 
-                    WatcherTextField(
-                        placeholder: "e.g., Downloads Organizer",
-                        text: $name,
-                        icon: "textformat"
-                    )
-                }
-
-                HStack {
-                    HStack(spacing: 8) {
-                        Image(systemName: isEnabled ? "checkmark.circle.fill" : "circle")
-                            .font(.system(size: 14, weight: .medium))
-                            .foregroundColor(
-                                isEnabled
-                                    ? theme.successColor : theme.tertiaryText
-                            )
-
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text("Enabled")
-                                .font(.system(size: 13, weight: .medium))
-                                .foregroundColor(theme.primaryText)
-                            Text(isEnabled ? "Watcher is active" : "Watcher is paused")
-                                .font(.system(size: 11))
-                                .foregroundColor(theme.tertiaryText)
-                        }
-                    }
-
-                    Spacer()
-
-                    Toggle("", isOn: $isEnabled)
-                        .toggleStyle(.switch)
-                        .controlSize(.small)
-                        .labelsHidden()
-                }
-                .padding(12)
-                .background(
-                    RoundedRectangle(cornerRadius: 8)
-                        .fill(theme.inputBackground)
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 8)
-                                .stroke(
-                                    isEnabled
-                                        ? theme.successColor.opacity(0.3)
-                                        : theme.inputBorder,
-                                    lineWidth: 1
-                                )
-                        )
-                )
-            }
+            WatcherTextField(
+                placeholder: "e.g., Downloads Organizer",
+                text: $name,
+                icon: "textformat"
+            )
         }
     }
 
@@ -799,133 +753,6 @@ struct WatcherEditorSheet: View {
         }
     }
 
-    // MARK: - Workspace Folder Section
-
-    private var workspaceFolderSection: some View {
-        WatcherEditorSection(title: "Agent Workspace", icon: "folder.fill") {
-            VStack(alignment: .leading, spacing: 8) {
-                HStack {
-                    HStack(spacing: 8) {
-                        Image(
-                            systemName: useCustomWorkspace
-                                ? "folder.badge.gearshape" : "checkmark.circle.fill"
-                        )
-                        .font(.system(size: 14, weight: .medium))
-                        .foregroundColor(
-                            useCustomWorkspace ? theme.secondaryText : theme.successColor
-                        )
-
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(
-                                useCustomWorkspace
-                                    ? "Custom workspace" : "Use watched folder"
-                            )
-                            .font(.system(size: 13, weight: .medium))
-                            .foregroundColor(theme.primaryText)
-                            Text(
-                                useCustomWorkspace
-                                    ? "Agent works in a different directory"
-                                    : "Agent works in the watched folder"
-                            )
-                            .font(.system(size: 11))
-                            .foregroundColor(theme.tertiaryText)
-                        }
-                    }
-
-                    Spacer()
-
-                    Toggle("", isOn: $useCustomWorkspace)
-                        .toggleStyle(.switch)
-                        .controlSize(.small)
-                        .labelsHidden()
-                }
-                .padding(12)
-                .background(
-                    RoundedRectangle(cornerRadius: 8)
-                        .fill(theme.inputBackground)
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 8)
-                                .stroke(theme.inputBorder, lineWidth: 1)
-                        )
-                )
-
-                if useCustomWorkspace {
-                    HStack(spacing: 12) {
-                        if let path = selectedFolderPath {
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(URL(fileURLWithPath: path).lastPathComponent)
-                                    .font(.system(size: 13, weight: .medium))
-                                    .foregroundColor(theme.primaryText)
-                                    .lineLimit(1)
-                                Text(path)
-                                    .font(.system(size: 10))
-                                    .foregroundColor(theme.tertiaryText)
-                                    .lineLimit(1)
-                                    .truncationMode(.middle)
-                            }
-                        } else {
-                            Text("No workspace folder selected")
-                                .font(.system(size: 13))
-                                .foregroundColor(theme.placeholderText)
-                        }
-
-                        Spacer()
-
-                        Button(action: selectWorkspaceFolder) {
-                            Text("Browse")
-                                .font(.system(size: 12, weight: .medium))
-                                .foregroundColor(theme.accentColor)
-                                .padding(.horizontal, 12)
-                                .padding(.vertical, 6)
-                                .background(
-                                    RoundedRectangle(cornerRadius: 6)
-                                        .fill(theme.accentColor.opacity(0.1))
-                                )
-                        }
-                        .buttonStyle(.plain)
-                    }
-                    .padding(10)
-                    .background(
-                        RoundedRectangle(cornerRadius: 10)
-                            .fill(theme.inputBackground)
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 10)
-                                    .stroke(theme.inputBorder, lineWidth: 1)
-                            )
-                    )
-                    .transition(.opacity.combined(with: .move(edge: .top)))
-                }
-            }
-            .animation(.spring(response: 0.35, dampingFraction: 0.85), value: useCustomWorkspace)
-        }
-    }
-
-    private func selectWorkspaceFolder() {
-        let panel = NSOpenPanel()
-        panel.canChooseFiles = false
-        panel.canChooseDirectories = true
-        panel.canCreateDirectories = false
-        panel.allowsMultipleSelection = false
-        panel.title = "Select Agent Workspace"
-        panel.prompt = "Select"
-
-        guard panel.runModal() == .OK, let url = panel.url else { return }
-
-        do {
-            let bookmark = try url.bookmarkData(
-                options: .withSecurityScope,
-                includingResourceValuesForKeys: nil,
-                relativeTo: nil
-            )
-            withAnimation(.easeOut(duration: 0.2)) {
-                selectedFolderPath = url.path
-                selectedFolderBookmark = bookmark
-            }
-        } catch {
-            print("[WatcherEditor] Failed to create workspace bookmark: \(error)")
-        }
-    }
-
     // MARK: - Instructions Section
 
     private var instructionsSection: some View {
@@ -971,33 +798,23 @@ struct WatcherEditorSheet: View {
     // MARK: - Monitoring Section
 
     private var monitoringSection: some View {
-        WatcherEditorSection(title: "Monitoring Options", icon: "gear") {
-            VStack(alignment: .leading, spacing: 16) {
-                // Recursive toggle
-                HStack {
-                    HStack(spacing: 8) {
-                        Image(
-                            systemName: recursive
-                                ? "arrow.triangle.2.circlepath" : "arrow.right"
-                        )
-                        .font(.system(size: 14, weight: .medium))
-                        .foregroundColor(
-                            recursive ? theme.accentColor : theme.tertiaryText
-                        )
+        WatcherEditorSection(title: "Monitoring", icon: "gear") {
+            VStack(alignment: .leading, spacing: 14) {
+                // Recursive toggle (compact inline)
+                HStack(spacing: 8) {
+                    Image(
+                        systemName: recursive
+                            ? "arrow.triangle.2.circlepath" : "arrow.right"
+                    )
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundColor(
+                        recursive ? theme.accentColor : theme.tertiaryText
+                    )
+                    .frame(width: 16)
 
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(recursive ? "Recursive" : "Shallow")
-                                .font(.system(size: 13, weight: .medium))
-                                .foregroundColor(theme.primaryText)
-                            Text(
-                                recursive
-                                    ? "Monitor all subdirectories"
-                                    : "Monitor top-level files only"
-                            )
-                            .font(.system(size: 11))
-                            .foregroundColor(theme.tertiaryText)
-                        }
-                    }
+                    Text("Recursive monitoring")
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundColor(theme.primaryText)
 
                     Spacer()
 
@@ -1006,15 +823,6 @@ struct WatcherEditorSheet: View {
                         .controlSize(.small)
                         .labelsHidden()
                 }
-                .padding(12)
-                .background(
-                    RoundedRectangle(cornerRadius: 8)
-                        .fill(theme.inputBackground)
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 8)
-                                .stroke(theme.inputBorder, lineWidth: 1)
-                        )
-                )
 
                 // Responsiveness picker
                 VStack(alignment: .leading, spacing: 8) {
@@ -1102,9 +910,6 @@ struct WatcherEditorSheet: View {
         responsiveness = watcher.responsiveness
         selectedWatchPath = watcher.watchPath
         selectedWatchBookmark = watcher.watchBookmark
-        selectedFolderPath = watcher.folderPath
-        selectedFolderBookmark = watcher.folderBookmark
-        useCustomWorkspace = watcher.folderPath != nil && watcher.folderPath != watcher.watchPath
     }
 
     private func saveWatcher() {
@@ -1121,8 +926,6 @@ struct WatcherEditorSheet: View {
             personaId: selectedPersonaId,
             watchPath: selectedWatchPath,
             watchBookmark: selectedWatchBookmark,
-            folderPath: useCustomWorkspace ? selectedFolderPath : nil,
-            folderBookmark: useCustomWorkspace ? selectedFolderBookmark : nil,
             isEnabled: isEnabled,
             recursive: recursive,
             responsiveness: responsiveness,
@@ -1234,6 +1037,41 @@ private struct WatcherTextField: View {
     }
 }
 
+// MARK: - Persona Capability Helpers
+
+/// Counts enabled tools for a persona (nil = default/global config)
+@MainActor
+private func enabledToolCount(for persona: Persona?) -> Int {
+    let overrides = persona.map { PersonaManager.shared.effectiveToolOverrides(for: $0.id) } ?? nil
+    return ToolRegistry.shared.listUserTools(withOverrides: overrides, excludeInternal: true)
+        .filter { $0.enabled }.count
+}
+
+/// Counts enabled skills for a persona (nil = default/global config)
+@MainActor
+private func enabledSkillCount(for persona: Persona?) -> Int {
+    let skills = SkillManager.shared.skills
+    guard let persona = persona,
+        let overrides = PersonaManager.shared.effectiveSkillOverrides(for: persona.id)
+    else {
+        return skills.filter { $0.enabled }.count
+    }
+    return skills.filter { skill in
+        if let value = overrides[skill.name] { return value }
+        return skill.enabled
+    }.count
+}
+
+@MainActor
+private var totalToolCount: Int {
+    ToolRegistry.shared.listTools().count
+}
+
+@MainActor
+private var totalSkillCount: Int {
+    SkillManager.shared.skills.count
+}
+
 // MARK: - Persona Picker
 
 private struct WatcherPersonaPicker: View {
@@ -1273,9 +1111,27 @@ private struct WatcherPersonaPicker: View {
                             .foregroundColor(personaColor(for: selectedPersonaName))
                     )
 
-                Text(selectedPersonaName)
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundColor(theme.primaryText)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(selectedPersonaName)
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundColor(theme.primaryText)
+
+                    HStack(spacing: 8) {
+                        HStack(spacing: 3) {
+                            Image(systemName: "wrench.and.screwdriver")
+                                .font(.system(size: 9, weight: .medium))
+                            Text("\(enabledToolCount(for: selectedPersona)) tools")
+                                .font(.system(size: 10, weight: .medium))
+                        }
+                        HStack(spacing: 3) {
+                            Image(systemName: "sparkles")
+                                .font(.system(size: 9, weight: .medium))
+                            Text("\(enabledSkillCount(for: selectedPersona)) skills")
+                                .font(.system(size: 10, weight: .medium))
+                        }
+                    }
+                    .foregroundColor(theme.tertiaryText)
+                }
 
                 Spacer(minLength: 0)
 
@@ -1310,8 +1166,7 @@ private struct WatcherPersonaPicker: View {
         .popover(isPresented: $showingPopover, arrowEdge: .bottom) {
             VStack(alignment: .leading, spacing: 0) {
                 WatcherPersonaOptionRow(
-                    name: "Default",
-                    description: "Uses the default system behavior",
+                    persona: nil,
                     isSelected: selectedPersonaId == nil,
                     action: {
                         selectedPersonaId = nil
@@ -1325,8 +1180,7 @@ private struct WatcherPersonaPicker: View {
 
                     ForEach(personas, id: \.id) { persona in
                         WatcherPersonaOptionRow(
-                            name: persona.name,
-                            description: persona.description,
+                            persona: persona,
                             isSelected: selectedPersonaId == persona.id,
                             action: {
                                 selectedPersonaId = persona.id
@@ -1337,7 +1191,7 @@ private struct WatcherPersonaPicker: View {
                 }
             }
             .padding(8)
-            .frame(minWidth: 280)
+            .frame(minWidth: 320)
             .background(theme.cardBackground)
         }
     }
@@ -1346,27 +1200,50 @@ private struct WatcherPersonaPicker: View {
 private struct WatcherPersonaOptionRow: View {
     @Environment(\.theme) private var theme
 
-    let name: String
-    let description: String
+    let persona: Persona?
     let isSelected: Bool
     let action: () -> Void
 
     @State private var isHovering = false
 
+    private var displayName: String {
+        persona?.name ?? "Default"
+    }
+
+    private var displayDescription: String {
+        persona?.description ?? "Uses the default system behavior"
+    }
+
     var body: some View {
         Button(action: action) {
             HStack(spacing: 10) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(name)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(displayName)
                         .font(.system(size: 13, weight: .medium))
                         .foregroundColor(theme.primaryText)
 
-                    if !description.isEmpty {
-                        Text(description)
+                    if !displayDescription.isEmpty {
+                        Text(displayDescription)
                             .font(.system(size: 11))
                             .foregroundColor(theme.tertiaryText)
-                            .lineLimit(2)
+                            .lineLimit(1)
                     }
+
+                    HStack(spacing: 10) {
+                        HStack(spacing: 3) {
+                            Image(systemName: "wrench.and.screwdriver")
+                                .font(.system(size: 9, weight: .medium))
+                            Text("\(enabledToolCount(for: persona))/\(totalToolCount)")
+                                .font(.system(size: 10, weight: .medium))
+                        }
+                        HStack(spacing: 3) {
+                            Image(systemName: "sparkles")
+                                .font(.system(size: 9, weight: .medium))
+                            Text("\(enabledSkillCount(for: persona))/\(totalSkillCount)")
+                                .font(.system(size: 10, weight: .medium))
+                        }
+                    }
+                    .foregroundColor(theme.tertiaryText.opacity(0.8))
                 }
 
                 Spacer()

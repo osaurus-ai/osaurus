@@ -77,10 +77,6 @@ public struct Watcher: Codable, Identifiable, Sendable, Equatable {
     public var watchPath: String?
     /// Security-scoped bookmark for the watched directory
     public var watchBookmark: Data?
-    /// Agent working directory path (defaults to watched folder if nil)
-    public var folderPath: String?
-    /// Security-scoped bookmark for the agent working directory (defaults to watchBookmark if nil)
-    public var folderBookmark: Data?
     /// Whether the watcher is active
     public var isEnabled: Bool
     /// Whether to monitor subdirectories recursively (default: false for performance)
@@ -106,8 +102,6 @@ public struct Watcher: Codable, Identifiable, Sendable, Equatable {
         parameters: [String: String] = [:],
         watchPath: String? = nil,
         watchBookmark: Data? = nil,
-        folderPath: String? = nil,
-        folderBookmark: Data? = nil,
         isEnabled: Bool = true,
         recursive: Bool = false,
         responsiveness: Responsiveness = .balanced,
@@ -124,8 +118,6 @@ public struct Watcher: Codable, Identifiable, Sendable, Equatable {
         self.parameters = parameters
         self.watchPath = watchPath
         self.watchBookmark = watchBookmark
-        self.folderPath = folderPath
-        self.folderBookmark = folderBookmark
         self.isEnabled = isEnabled
         self.recursive = recursive
         self.responsiveness = responsiveness
@@ -141,7 +133,6 @@ public struct Watcher: Codable, Identifiable, Sendable, Equatable {
     private enum CodingKeys: String, CodingKey {
         case id, name, instructions, personaId, parameters
         case watchPath, watchBookmark
-        case folderPath, folderBookmark
         case isEnabled, recursive
         case responsiveness, settleSeconds
         case debounceSeconds  // legacy key for migration
@@ -158,8 +149,6 @@ public struct Watcher: Codable, Identifiable, Sendable, Equatable {
         parameters = try container.decodeIfPresent([String: String].self, forKey: .parameters) ?? [:]
         watchPath = try container.decodeIfPresent(String.self, forKey: .watchPath)
         watchBookmark = try container.decodeIfPresent(Data.self, forKey: .watchBookmark)
-        folderPath = try container.decodeIfPresent(String.self, forKey: .folderPath)
-        folderBookmark = try container.decodeIfPresent(Data.self, forKey: .folderBookmark)
         isEnabled = try container.decode(Bool.self, forKey: .isEnabled)
         recursive = try container.decodeIfPresent(Bool.self, forKey: .recursive) ?? false
 
@@ -188,8 +177,6 @@ public struct Watcher: Codable, Identifiable, Sendable, Equatable {
         try container.encode(parameters, forKey: .parameters)
         try container.encodeIfPresent(watchPath, forKey: .watchPath)
         try container.encodeIfPresent(watchBookmark, forKey: .watchBookmark)
-        try container.encodeIfPresent(folderPath, forKey: .folderPath)
-        try container.encodeIfPresent(folderBookmark, forKey: .folderBookmark)
         try container.encode(isEnabled, forKey: .isEnabled)
         try container.encode(recursive, forKey: .recursive)
         try container.encode(responsiveness, forKey: .responsiveness)
@@ -202,16 +189,6 @@ public struct Watcher: Codable, Identifiable, Sendable, Equatable {
     }
 
     // MARK: - Computed Properties
-
-    /// The effective folder bookmark for the agent workspace (falls back to watch bookmark)
-    public var effectiveFolderBookmark: Data? {
-        folderBookmark ?? watchBookmark
-    }
-
-    /// The effective folder path for the agent workspace (falls back to watch path)
-    public var effectiveFolderPath: String? {
-        folderPath ?? watchPath
-    }
 
     /// Human-readable status description
     public var statusDescription: String {

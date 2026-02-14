@@ -83,8 +83,6 @@ public final class WatcherManager: ObservableObject {
         parameters: [String: String] = [:],
         watchPath: String? = nil,
         watchBookmark: Data? = nil,
-        folderPath: String? = nil,
-        folderBookmark: Data? = nil,
         isEnabled: Bool = true,
         recursive: Bool = false,
         responsiveness: Responsiveness = .balanced
@@ -97,8 +95,6 @@ public final class WatcherManager: ObservableObject {
             parameters: parameters,
             watchPath: watchPath,
             watchBookmark: watchBookmark,
-            folderPath: folderPath,
-            folderBookmark: folderBookmark,
             isEnabled: isEnabled,
             recursive: recursive,
             responsiveness: responsiveness,
@@ -519,8 +515,8 @@ public final class WatcherManager: ObservableObject {
                     personaId: watcher.personaId,
                     title: watcher.name,
                     parameters: watcher.parameters,
-                    folderPath: watcher.effectiveFolderPath,
-                    folderBookmark: watcher.effectiveFolderBookmark
+                    folderPath: watcher.watchPath,
+                    folderBookmark: watcher.watchBookmark
                 )
 
                 guard let handle = await TaskDispatcher.shared.dispatch(request) else {
