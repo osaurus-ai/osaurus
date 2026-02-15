@@ -14,6 +14,7 @@ struct AgentView: View {
     @ObservedObject var session: AgentSession
 
     @State private var isPinnedToBottom: Bool = true
+    @State private var scrollToBottomTrigger: Int = 0
 
     @State private var progressSidebarWidth: CGFloat = 280
     @State private var isProgressSidebarCollapsed: Bool = false
@@ -501,6 +502,8 @@ extension AgentView {
                 isStreaming: session.isExecuting && session.activeIssue?.id == session.selectedIssueId,
                 lastAssistantTurnId: blocks.last?.turnId,
                 autoScrollEnabled: false,
+                expandedBlocksStore: session.expandedBlocksStore,
+                scrollToBottomTrigger: scrollToBottomTrigger,
                 onScrolledToBottom: { isPinnedToBottom = true },
                 onScrolledAwayFromBottom: { isPinnedToBottom = false },
                 onCopy: copyTurnContent,
@@ -516,7 +519,10 @@ extension AgentView {
             ScrollToBottomButton(
                 isPinnedToBottom: isPinnedToBottom,
                 hasTurns: !blocks.isEmpty,
-                onTap: { isPinnedToBottom = true }
+                onTap: {
+                    isPinnedToBottom = true
+                    scrollToBottomTrigger += 1
+                }
             )
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)

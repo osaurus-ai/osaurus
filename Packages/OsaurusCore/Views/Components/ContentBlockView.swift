@@ -3,7 +3,8 @@
 //  osaurus
 //
 //  Renders a single content block in the flattened chat view.
-//  Optimized for LazyVStack recycling with Equatable conformance.
+//  Equatable conformance enables efficient cell reuse in the
+//  NSTableView-backed message thread.
 //
 
 import AppKit
@@ -111,7 +112,8 @@ struct ContentBlockView: View, Equatable {
                 thinking: text,
                 baseWidth: width,
                 isStreaming: isStreaming,
-                thinkingLength: text.count
+                thinkingLength: text.count,
+                blockId: block.id
             )
             .padding(.top, 6)
             .padding(.bottom, isLastInTurn ? 16 : 6)

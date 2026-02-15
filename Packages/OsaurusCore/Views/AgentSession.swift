@@ -41,6 +41,9 @@ public final class AgentSession: ObservableObject {
     /// Current active task
     @Published public var currentTask: AgentTask?
 
+    /// Tracks expand/collapse state for tool calls, thinking blocks, etc.
+    let expandedBlocksStore = ExpandedBlocksStore()
+
     /// Issues for the current task
     @Published public var issues: [Issue] = []
 

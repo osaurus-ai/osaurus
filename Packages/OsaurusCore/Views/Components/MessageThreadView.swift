@@ -2,7 +2,9 @@
 //  MessageThreadView.swift
 //  osaurus
 //
-//  Renders the message thread with optimized block recycling.
+//  Renders the message thread using an NSTableView-backed
+//  NSViewRepresentable for true cell reuse, explicit height
+//  management, and stable scroll anchoring during streaming.
 //
 
 import SwiftUI
@@ -16,8 +18,10 @@ struct MessageThreadView: View {
     let isStreaming: Bool
     let lastAssistantTurnId: UUID?
     var autoScrollEnabled: Bool = true
+    var expandedBlocksStore: ExpandedBlocksStore = ExpandedBlocksStore()
 
-    // Scroll callbacks
+    // Scroll
+    var scrollToBottomTrigger: Int = 0
     let onScrolledToBottom: () -> Void
     let onScrolledAwayFromBottom: () -> Void
 
@@ -34,9 +38,6 @@ struct MessageThreadView: View {
     var onCancelEdit: (() -> Void)? = nil
 
     @Environment(\.theme) private var theme
-    @State private var hoveredGroupId: UUID? = nil
-
-    private var contentWidth: CGFloat { max(100, width - 64) }
 
     private var resolvedGroupHeaderMap: [UUID: UUID] {
         if let precomputed = groupHeaderMap { return precomputed }
@@ -64,67 +65,28 @@ struct MessageThreadView: View {
     }
 
     var body: some View {
-        let headerMap = resolvedGroupHeaderMap
-
-        ScrollViewReader { proxy in
-            ScrollView {
-                LazyVStack(spacing: 0) {
-                    ForEach(blocks) { block in
-                        let groupId = headerMap[block.turnId] ?? block.turnId
-
-                        ContentBlockView(
-                            block: block,
-                            width: contentWidth,
-                            personaName: personaName,
-                            isTurnHovered: hoveredGroupId == groupId,
-                            onCopy: onCopy,
-                            onRegenerate: onRegenerate,
-                            onEdit: onEdit,
-                            onClarificationSubmit: onClarificationSubmit,
-                            editingTurnId: editingTurnId,
-                            editText: editText,
-                            onConfirmEdit: onConfirmEdit,
-                            onCancelEdit: onCancelEdit
-                        )
-                        .equatable()
-                        .id(block.id)
-                        .padding(.horizontal, 12)
-                        .onHover { hovering in
-                            if hovering {
-                                hoveredGroupId = groupId
-                            } else if hoveredGroupId == groupId {
-                                hoveredGroupId = nil
-                            }
-                        }
-                    }
-                }
-                .padding(.top, 8)
-
-                Color.clear.frame(height: 24)
-
-                Color.clear
-                    .frame(height: 1)
-                    .id("BOTTOM")
-                    .onAppear { onScrolledToBottom() }
-                    .onDisappear { if !isStreaming { onScrolledAwayFromBottom() } }
-            }
-            .scrollContentBackground(.hidden)
-            .scrollIndicators(.visible)
-            .onChange(of: lastAssistantTurnId) { _, _ in
-                if autoScrollEnabled {
-                    scrollToResponseStart(proxy: proxy)
-                }
-            }
-        }
-    }
-
-    private func scrollToResponseStart(proxy: ScrollViewProxy) {
-        guard let turnId = lastAssistantTurnId else { return }
-        DispatchQueue.main.async {
-            withAnimation(theme.animationQuick()) {
-                proxy.scrollTo("header-\(turnId.uuidString)", anchor: .top)
-            }
-        }
+        MessageTableRepresentable(
+            blocks: blocks,
+            groupHeaderMap: resolvedGroupHeaderMap,
+            width: width,
+            personaName: personaName,
+            isStreaming: isStreaming,
+            lastAssistantTurnId: lastAssistantTurnId,
+            autoScrollEnabled: autoScrollEnabled,
+            theme: theme,
+            expandedBlocksStore: expandedBlocksStore,
+            scrollToBottomTrigger: scrollToBottomTrigger,
+            onScrolledToBottom: onScrolledToBottom,
+            onScrolledAwayFromBottom: onScrolledAwayFromBottom,
+            onCopy: onCopy,
+            onRegenerate: onRegenerate,
+            onEdit: onEdit,
+            onClarificationSubmit: onClarificationSubmit,
+            editingTurnId: editingTurnId,
+            editText: editText,
+            onConfirmEdit: onConfirmEdit,
+            onCancelEdit: onCancelEdit
+        )
     }
 }
 
