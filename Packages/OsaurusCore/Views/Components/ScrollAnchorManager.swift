@@ -77,6 +77,7 @@ final class ScrollAnchorManager {
     // MARK: - Anchor Save / Restore
 
     /// Save the topmost visible row + offset. Call **before** applying a snapshot.
+    /// When pinned to bottom, no anchor is saved -- `scrollToBottom()` handles that case.
     func saveAnchor() {
         guard let tableView, let scrollView, !isPinnedToBottom else {
             savedAnchor = nil
@@ -101,34 +102,40 @@ final class ScrollAnchorManager {
 
         let rowRect = tableView.rect(ofRow: clampedRow)
         let targetY = rowRect.origin.y + anchor.offsetFromRowTop
-        let clipView = scrollView.contentView
 
         // Skip if already at the target (within 1pt). This breaks a potential
         // feedback loop where setBoundsOrigin → boundsDidChange → SwiftUI
         // re-render → updateNSView → applyBlocks → restoreAnchor → ...
-        guard abs(clipView.bounds.origin.y - targetY) > 1.0 else { return }
+        guard abs(scrollView.contentView.bounds.origin.y - targetY) > 1.0 else { return }
 
-        clipView.setBoundsOrigin(NSPoint(x: clipView.bounds.origin.x, y: targetY))
-        scrollView.reflectScrolledClipView(clipView)
+        setScrollOriginY(targetY)
     }
 
     // MARK: - Scroll Actions
 
+    /// Scroll to the very bottom of the content.
+    /// Uses clip view bounds directly rather than `scrollRowToVisible`,
+    /// which only ensures a row is visible but won't fully scroll to the end.
     func scrollToBottom(animated: Bool = false) {
-        guard let tableView, tableView.numberOfRows > 0 else { return }
-        let lastRow = tableView.numberOfRows - 1
-        performScroll(to: lastRow, animated: animated)
+        guard let scrollView, let documentView = scrollView.documentView else { return }
+        let clipView = scrollView.contentView
+        let maxY = max(0, documentView.frame.height - clipView.bounds.height)
+
+        if animated {
+            NSAnimationContext.runAnimationGroup { ctx in
+                ctx.duration = 0.2
+                ctx.allowsImplicitAnimation = true
+                clipView.setBoundsOrigin(NSPoint(x: clipView.bounds.origin.x, y: maxY))
+            }
+            scrollView.reflectScrolledClipView(clipView)
+        } else {
+            setScrollOriginY(maxY)
+        }
     }
 
+    /// Scroll so that the given row is visible.
     func scrollToRow(_ row: Int, animated: Bool = false) {
         guard let tableView, row >= 0, row < tableView.numberOfRows else { return }
-        performScroll(to: row, animated: animated)
-    }
-
-    // MARK: - Private Helpers
-
-    private func performScroll(to row: Int, animated: Bool) {
-        guard let tableView else { return }
         if animated {
             NSAnimationContext.runAnimationGroup { ctx in
                 ctx.duration = 0.2
@@ -138,6 +145,24 @@ final class ScrollAnchorManager {
         } else {
             tableView.scrollRowToVisible(row)
         }
+    }
+
+    /// Re-check pinned state against the current scroll position.
+    /// Call after the initial snapshot or any layout that doesn't trigger
+    /// `boundsDidChangeNotification` (e.g. content growing while the
+    /// clip view stays at origin 0,0).
+    func checkPinnedState() {
+        handleBoundsChanged()
+    }
+
+    // MARK: - Private Helpers
+
+    /// Set the clip view's vertical scroll origin and notify the scroll view.
+    private func setScrollOriginY(_ y: CGFloat) {
+        guard let scrollView else { return }
+        let clipView = scrollView.contentView
+        clipView.setBoundsOrigin(NSPoint(x: clipView.bounds.origin.x, y: y))
+        scrollView.reflectScrolledClipView(clipView)
     }
 
     /// Called on every clip-view bounds change (i.e. scroll). Fires pinned-state

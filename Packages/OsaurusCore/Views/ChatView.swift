@@ -1062,6 +1062,7 @@ struct ChatView: View {
 
     @State private var focusTrigger: Int = 0
     @State private var isPinnedToBottom: Bool = true
+    @State private var scrollToBottomTrigger: Int = 0
     @State private var keyMonitor: Any?
     // Inline editing state
     @State private var editingTurnId: UUID?
@@ -1098,18 +1099,6 @@ struct ChatView: View {
             windowId: windowId,
             personaId: personaId,
             sessionData: initialSessionData
-        )
-        _windowState = ObservedObject(wrappedValue: state)
-        _observedSession = ObservedObject(wrappedValue: state.session)
-    }
-
-    /// Legacy single-window initializer (for backward compatibility)
-    init() {
-        let windowId = UUID()
-        let state = ChatWindowState(
-            windowId: windowId,
-            personaId: Persona.defaultId,
-            sessionData: nil
         )
         _windowState = ObservedObject(wrappedValue: state)
         _observedSession = ObservedObject(wrappedValue: state.session)
@@ -1528,6 +1517,7 @@ struct ChatView: View {
                 personaName: displayName,
                 isStreaming: session.isStreaming,
                 lastAssistantTurnId: lastAssistantTurnId,
+                scrollToBottomTrigger: scrollToBottomTrigger,
                 onScrolledToBottom: { isPinnedToBottom = true },
                 onScrolledAwayFromBottom: { isPinnedToBottom = false },
                 onCopy: copyTurnContent,
@@ -1550,7 +1540,10 @@ struct ChatView: View {
                     ScrollToBottomButton(
                         isPinnedToBottom: isPinnedToBottom,
                         hasTurns: !session.turns.isEmpty,
-                        onTap: { isPinnedToBottom = true }
+                        onTap: {
+                            isPinnedToBottom = true
+                            scrollToBottomTrigger += 1
+                        }
                     )
                 }
             }

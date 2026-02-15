@@ -11,7 +11,7 @@
 //  - Three update paths in `applyBlocks`:
 //      1. No-change early return (skip if blocks are identical).
 //      2. Streaming fast path (update a single cell in place).
-//      3. Full snapshot (apply diff, restore scroll anchor).
+//      3. Full snapshot (apply diff, handle scroll anchoring).
 //  - Streaming row heights are debounced via `noteHeightOfRows` so the
 //    table re-measures at most once per `streamingHeightInterval`.
 //
@@ -87,7 +87,8 @@ struct MessageTableRepresentable: NSViewRepresentable {
     let autoScrollEnabled: Bool
     let theme: ThemeProtocol
 
-    // Scroll callbacks
+    // Scroll
+    let scrollToBottomTrigger: Int
     let onScrolledToBottom: () -> Void
     let onScrolledAwayFromBottom: () -> Void
 
@@ -138,6 +139,12 @@ struct MessageTableRepresentable: NSViewRepresentable {
         coordinator.scrollAnchor.onScrolledToBottom = onScrolledToBottom
         coordinator.scrollAnchor.onScrolledAwayFromBottom = onScrolledAwayFromBottom
 
+        // Detect scroll-to-bottom button tap.
+        if scrollToBottomTrigger != coordinator.lastScrollToBottomTrigger {
+            coordinator.lastScrollToBottomTrigger = scrollToBottomTrigger
+            coordinator.scrollAnchor.scrollToBottom(animated: true)
+        }
+
         coordinator.applyBlocks(
             blocks,
             context: renderingContext,
@@ -147,7 +154,7 @@ struct MessageTableRepresentable: NSViewRepresentable {
         )
     }
 
-    // MARK: - Private Helpers
+    // MARK: - View Factory Helpers
 
     private var renderingContext: CellRenderingContext {
         CellRenderingContext(
@@ -213,9 +220,11 @@ extension MessageTableRepresentable {
         weak var scrollView: NSScrollView?
         private(set) var dataSource: NSTableViewDiffableDataSource<MessageSection, String>?
 
-        // MARK: Scroll
+        // MARK: Scroll State
 
         let scrollAnchor = ScrollAnchorManager()
+        /// Tracks the last observed trigger value so we only scroll once per tap.
+        var lastScrollToBottomTrigger: Int = 0
 
         // MARK: Block State
 
@@ -230,7 +239,6 @@ extension MessageTableRepresentable {
 
         // MARK: Rendering Context
 
-        /// Current cell rendering context, updated every `applyBlocks` call.
         private var ctx = CellRenderingContext(
             groupHeaderMap: [:],
             width: 400,
@@ -290,7 +298,10 @@ extension MessageTableRepresentable {
         // MARK: - Apply Blocks (Main Entry Point)
 
         /// Called from both `makeNSView` and `updateNSView`. Determines which
-        /// update path to take (no-change / streaming fast path / full snapshot).
+        /// update path to take:
+        ///   1. No-change early return
+        ///   2. Streaming fast path (single cell update)
+        ///   3. Full snapshot (diffable data source apply + scroll anchoring)
         func applyBlocks(
             _ blocks: [ContentBlock],
             context: CellRenderingContext,
@@ -341,7 +352,6 @@ extension MessageTableRepresentable {
 
         // MARK: - Update Paths (Private)
 
-        /// Checks whether any block content differs from the current lookup.
         private func hasContentChanges(newLookup: [String: ContentBlock]) -> Bool {
             for id in blockIds {
                 if newLookup[id] != blockLookup[id] { return true }
@@ -387,8 +397,11 @@ extension MessageTableRepresentable {
             }
         }
 
-        /// After a snapshot is applied, either scroll to the new assistant
-        /// header (once) or restore the previous scroll position.
+        /// Decide where to scroll after a snapshot is applied:
+        ///   1. New assistant turn → scroll to the header (once).
+        ///   2. Pinned to bottom → re-scroll to bottom (snapshot may shift position).
+        ///   3. Reading mid-thread → restore saved anchor.
+        /// Finally, re-check pinned state so the scroll-to-bottom button updates.
         private func handlePostSnapshotScroll(
             lastAssistantTurnId: UUID?,
             autoScrollEnabled: Bool
@@ -402,14 +415,17 @@ extension MessageTableRepresentable {
                 if let row = blockIds.firstIndex(of: headerId) {
                     scrollAnchor.scrollToRow(row, animated: true)
                 }
+            } else if scrollAnchor.isPinnedToBottom {
+                scrollAnchor.scrollToBottom()
             } else {
                 scrollAnchor.restoreAnchor()
             }
+
+            scrollAnchor.checkPinnedState()
         }
 
         // MARK: - Cell Factory
 
-        /// Dequeues or creates a cell, then configures it for the given block.
         private func dequeueAndConfigure(tableView: NSTableView, row: Int, blockId: String) -> NSView {
             let cell: MessageCellView
             if let reused = tableView.makeView(
@@ -428,7 +444,6 @@ extension MessageTableRepresentable {
             return cell
         }
 
-        /// Configures a cell with the current rendering context and hover state.
         private func configureCell(_ cell: MessageCellView, with block: ContentBlock) {
             let groupId = ctx.groupHeaderMap[block.turnId] ?? block.turnId
             cell.configure(
@@ -450,7 +465,6 @@ extension MessageTableRepresentable {
 
         // MARK: - Streaming Height Updates
 
-        /// Tell the table to re-measure the streaming row after a short delay.
         private func scheduleStreamingHeightUpdate(row: Int) {
             streamingHeightWorkItem?.cancel()
             let work = DispatchWorkItem { [weak self] in
@@ -464,7 +478,6 @@ extension MessageTableRepresentable {
             DispatchQueue.main.asyncAfter(deadline: .now() + streamingHeightInterval, execute: work)
         }
 
-        /// Immediately flush any pending streaming height update.
         private func flushPendingHeightUpdate() {
             guard let work = streamingHeightWorkItem else { return }
             work.cancel()
@@ -483,7 +496,7 @@ extension MessageTableRepresentable {
 
         // MARK: - Hover Tracking
 
-        func handleMouseMoved(with event: NSEvent) {
+        private func handleMouseMoved(with event: NSEvent) {
             guard let tableView else { return setHoveredGroup(nil) }
             let point = tableView.convert(event.locationInWindow, from: nil)
             let row = tableView.row(at: point)
@@ -496,7 +509,7 @@ extension MessageTableRepresentable {
             setHoveredGroup(ctx.groupHeaderMap[block.turnId] ?? block.turnId)
         }
 
-        func setHoveredGroup(_ newGroupId: UUID?) {
+        private func setHoveredGroup(_ newGroupId: UUID?) {
             guard hoveredGroupId != newGroupId else { return }
             let oldGroupId = hoveredGroupId
             hoveredGroupId = newGroupId
@@ -521,7 +534,6 @@ extension MessageTableRepresentable {
 
         // MARK: - Helpers
 
-        /// Finds the block ID that is currently streaming (last paragraph/thinking marked streaming).
         private static func detectStreamingBlockId(in blocks: [ContentBlock], isStreaming: Bool) -> String? {
             guard isStreaming else { return nil }
             return blocks.last(where: {

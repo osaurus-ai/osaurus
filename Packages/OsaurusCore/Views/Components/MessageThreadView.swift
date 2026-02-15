@@ -19,7 +19,8 @@ struct MessageThreadView: View {
     let lastAssistantTurnId: UUID?
     var autoScrollEnabled: Bool = true
 
-    // Scroll callbacks
+    // Scroll
+    var scrollToBottomTrigger: Int = 0
     let onScrolledToBottom: () -> Void
     let onScrolledAwayFromBottom: () -> Void
 
@@ -72,6 +73,7 @@ struct MessageThreadView: View {
             lastAssistantTurnId: lastAssistantTurnId,
             autoScrollEnabled: autoScrollEnabled,
             theme: theme,
+            scrollToBottomTrigger: scrollToBottomTrigger,
             onScrolledToBottom: onScrolledToBottom,
             onScrolledAwayFromBottom: onScrolledAwayFromBottom,
             onCopy: onCopy,

@@ -3,7 +3,8 @@
 //  osaurus
 //
 //  Renders a single content block in the flattened chat view.
-//  Optimized for LazyVStack recycling with Equatable conformance.
+//  Equatable conformance enables efficient cell reuse in the
+//  NSTableView-backed message thread.
 //
 
 import AppKit
