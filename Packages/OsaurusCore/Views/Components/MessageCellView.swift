@@ -3,8 +3,12 @@
 //  osaurus
 //
 //  NSTableCellView subclass that hosts a SwiftUI ContentBlockView
-//  via NSHostingView. Supports efficient cell reuse by updating
-//  the hosting view's rootView on reconfiguration.
+//  via NSHostingView. Supports efficient cell reuse: on reconfiguration
+//  we update `rootView` in place rather than tearing down the hosting view.
+//
+//  Row heights are derived automatically via `usesAutomaticRowHeights`
+//  on the table view -- the hosting view's intrinsic content size drives
+//  the row height through pinned Auto Layout constraints.
 //
 
 import AppKit
@@ -15,13 +19,15 @@ final class MessageCellView: NSTableCellView {
 
     static let reuseIdentifier = NSUserInterfaceItemIdentifier("MessageCellView")
 
-    /// The embedded hosting view that renders the SwiftUI ContentBlockView.
+    // MARK: - Private State
+
+    /// The embedded hosting view rendering the SwiftUI content.
     private var hostingView: NSHostingView<AnyView>?
 
-    /// The block ID currently displayed, used to detect reuse.
+    /// Block ID currently displayed; used to detect reuse externally.
     private(set) var blockId: String?
 
-    /// Horizontal padding applied by the parent (mirrors `.padding(.horizontal, 12)` from original).
+    /// Horizontal padding (mirrors the original `.padding(.horizontal, 12)`).
     private let horizontalPadding: CGFloat = 12
 
     // MARK: - Initialization
@@ -38,9 +44,10 @@ final class MessageCellView: NSTableCellView {
 
     // MARK: - Configuration
 
-    /// Configure this cell with a content block and all required context.
-    /// If the cell already has a hosting view, it updates `rootView` in place
-    /// (avoiding teardown / rebuild). Otherwise, it creates the hosting view.
+    /// Configure with a content block and all required rendering context.
+    ///
+    /// If a hosting view already exists it updates `rootView` in place,
+    /// which is significantly cheaper than recreating the view hierarchy.
     func configure(
         block: ContentBlock,
         width: CGFloat,
@@ -75,36 +82,13 @@ final class MessageCellView: NSTableCellView {
         .environment(\.theme, theme)
         .padding(.horizontal, horizontalPadding)
 
-        let wrappedView = AnyView(contentView)
+        let wrapped = AnyView(contentView)
 
-        if let hostingView = hostingView {
-            hostingView.rootView = wrappedView
+        if let hostingView {
+            hostingView.rootView = wrapped
         } else {
-            let hv = NSHostingView(rootView: wrappedView)
-            hv.translatesAutoresizingMaskIntoConstraints = false
-            // Transparent background so the table view's own background shows through.
-            hv.layer?.backgroundColor = NSColor.clear.cgColor
-            addSubview(hv)
-            NSLayoutConstraint.activate([
-                hv.topAnchor.constraint(equalTo: topAnchor),
-                hv.leadingAnchor.constraint(equalTo: leadingAnchor),
-                hv.trailingAnchor.constraint(equalTo: trailingAnchor),
-                hv.bottomAnchor.constraint(equalTo: bottomAnchor),
-            ])
-            hostingView = hv
+            createHostingView(rootView: wrapped)
         }
-    }
-
-    // MARK: - Height Measurement
-
-    /// Measures the intrinsic height of the hosted SwiftUI content for the given width.
-    /// Returns `nil` if the hosting view has not been created yet.
-    func measuredHeight(forWidth width: CGFloat) -> CGFloat? {
-        guard let hostingView else { return nil }
-        let fitting = hostingView.fittingSize
-        // fittingSize can return zero before first layout pass
-        guard fitting.height > 0 else { return nil }
-        return fitting.height
     }
 
     // MARK: - Reuse
@@ -112,8 +96,28 @@ final class MessageCellView: NSTableCellView {
     override func prepareForReuse() {
         super.prepareForReuse()
         blockId = nil
-        // We intentionally do NOT remove the hosting view here.
-        // It will be reconfigured via configure() which is cheaper
-        // than tearing down and re-creating the NSHostingView.
+        // Intentionally keep the hosting view alive -- updating rootView
+        // on the next configure() is much cheaper than teardown + rebuild.
+    }
+
+    // MARK: - Private Helpers
+
+    private func createHostingView(rootView: AnyView) {
+        let hv = NSHostingView(rootView: rootView)
+        hv.translatesAutoresizingMaskIntoConstraints = false
+        hv.layer?.backgroundColor = NSColor.clear.cgColor
+
+        addSubview(hv)
+
+        // Pin all four edges. The table's `usesAutomaticRowHeights` derives
+        // row height from these constraints + the hosting view's intrinsic
+        // content size, so the row is always exactly as tall as its content.
+        NSLayoutConstraint.activate([
+            hv.topAnchor.constraint(equalTo: topAnchor),
+            hv.leadingAnchor.constraint(equalTo: leadingAnchor),
+            hv.trailingAnchor.constraint(equalTo: trailingAnchor),
+            hv.bottomAnchor.constraint(equalTo: bottomAnchor),
+        ])
+        hostingView = hv
     }
 }
