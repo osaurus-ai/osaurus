@@ -80,7 +80,7 @@ enum ContentBlockKind: Equatable {
 // MARK: - ContentBlock
 
 /// A single content block in the flattened chat view.
-struct ContentBlock: Identifiable, Equatable {
+struct ContentBlock: Identifiable, Equatable, Hashable {
     let id: String
     let turnId: UUID
     let kind: ContentBlockKind
@@ -99,6 +99,12 @@ struct ContentBlock: Identifiable, Equatable {
     static func == (lhs: ContentBlock, rhs: ContentBlock) -> Bool {
         // Check id first (cheapest), then position, then kind (most expensive)
         lhs.id == rhs.id && lhs.position == rhs.position && lhs.kind == rhs.kind
+    }
+
+    /// Hash on `id` only — used by NSDiffableDataSource for item identity.
+    /// Content equality is handled separately by the Equatable conformance.
+    func hash(into hasher: inout Hasher) {
+        hasher.combine(id)
     }
 
     func withPosition(_ newPosition: BlockPosition) -> ContentBlock {
