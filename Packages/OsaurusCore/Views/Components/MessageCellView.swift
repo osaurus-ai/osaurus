@@ -54,6 +54,7 @@ final class MessageCellView: NSTableCellView {
         personaName: String,
         isTurnHovered: Bool,
         theme: ThemeProtocol,
+        expandedBlocksStore: ExpandedBlocksStore,
         onCopy: ((UUID) -> Void)?,
         onRegenerate: ((UUID) -> Void)?,
         onEdit: ((UUID) -> Void)?,
@@ -80,6 +81,7 @@ final class MessageCellView: NSTableCellView {
             onCancelEdit: onCancelEdit
         )
         .environment(\.theme, theme)
+        .environmentObject(expandedBlocksStore)
         .padding(.horizontal, horizontalPadding)
 
         let wrapped = AnyView(contentView)

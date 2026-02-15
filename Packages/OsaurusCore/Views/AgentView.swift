@@ -502,6 +502,7 @@ extension AgentView {
                 isStreaming: session.isExecuting && session.activeIssue?.id == session.selectedIssueId,
                 lastAssistantTurnId: blocks.last?.turnId,
                 autoScrollEnabled: false,
+                expandedBlocksStore: session.expandedBlocksStore,
                 scrollToBottomTrigger: scrollToBottomTrigger,
                 onScrolledToBottom: { isPinnedToBottom = true },
                 onScrolledAwayFromBottom: { isPinnedToBottom = false },

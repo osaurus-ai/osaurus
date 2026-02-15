@@ -15,10 +15,16 @@ struct ThinkingBlockView: View {
     let isStreaming: Bool
     /// Optional cached length to avoid calling thinking.count (which forces lazy join)
     var thinkingLength: Int?
+    /// Stable block ID used to persist expand/collapse state across cell reuse.
+    var blockId: String = ""
 
-    @State private var isExpanded: Bool = false
     @State private var isHovered: Bool = false
     @Environment(\.theme) private var theme
+    @EnvironmentObject private var expandedStore: ExpandedBlocksStore
+
+    private var isExpanded: Bool {
+        expandedStore.isExpanded(blockId)
+    }
 
     /// Character count - uses cached length if provided, otherwise falls back to string count
     private var characterCount: Int {
@@ -87,7 +93,7 @@ struct ThinkingBlockView: View {
     private var header: some View {
         Button(action: {
             withAnimation(theme.springAnimation()) {
-                isExpanded.toggle()
+                expandedStore.toggle(blockId)
             }
         }) {
             HStack(spacing: 8) {
@@ -100,7 +106,6 @@ struct ThinkingBlockView: View {
                     Image(systemName: "brain.head.profile")
                         .font(theme.font(size: CGFloat(theme.captionSize) - 1, weight: .medium))
                         .foregroundColor(thinkingColor)
-                        .opacity(isStreaming ? pulseOpacity : 1.0)
                 }
 
                 // Title
@@ -141,8 +146,6 @@ struct ThinkingBlockView: View {
         }
         .buttonStyle(.plain)
     }
-
-    @State private var pulseOpacity: Double = 1.0
 
     private var content: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -208,6 +211,7 @@ struct ThinkingBlockView: View {
             .frame(width: 500)
             .padding()
             .background(Color(hex: "0f0f10"))
+            .environmentObject(ExpandedBlocksStore())
         }
     }
 #endif

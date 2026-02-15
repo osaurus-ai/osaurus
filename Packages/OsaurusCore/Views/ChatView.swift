@@ -13,6 +13,9 @@ import SwiftUI
 final class ChatSession: ObservableObject {
     @Published var turns: [ChatTurn] = []
     @Published var isStreaming: Bool = false
+    /// Tracks expand/collapse state for tool calls, thinking blocks, etc.
+    /// Lives on the session so state survives NSTableView cell reuse.
+    let expandedBlocksStore = ExpandedBlocksStore()
     @Published var input: String = ""
     @Published var pendingImages: [Data] = []
     @Published var selectedModel: String? = nil
@@ -1517,6 +1520,7 @@ struct ChatView: View {
                 personaName: displayName,
                 isStreaming: session.isStreaming,
                 lastAssistantTurnId: lastAssistantTurnId,
+                expandedBlocksStore: session.expandedBlocksStore,
                 scrollToBottomTrigger: scrollToBottomTrigger,
                 onScrolledToBottom: { isPinnedToBottom = true },
                 onScrolledAwayFromBottom: { isPinnedToBottom = false },

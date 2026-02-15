@@ -112,7 +112,8 @@ struct ContentBlockView: View, Equatable {
                 thinking: text,
                 baseWidth: width,
                 isStreaming: isStreaming,
-                thinkingLength: text.count
+                thinkingLength: text.count,
+                blockId: block.id
             )
             .padding(.top, 6)
             .padding(.bottom, isLastInTurn ? 16 : 6)

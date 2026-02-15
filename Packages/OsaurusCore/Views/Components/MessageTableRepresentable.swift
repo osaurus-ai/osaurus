@@ -17,6 +17,7 @@
 //
 
 import AppKit
+import Combine
 import SwiftUI
 
 // MARK: - Supporting Types
@@ -33,6 +34,7 @@ struct CellRenderingContext {
     let width: CGFloat
     let personaName: String
     let theme: ThemeProtocol
+    let expandedBlocksStore: ExpandedBlocksStore
     let onCopy: ((UUID) -> Void)?
     let onRegenerate: ((UUID) -> Void)?
     let onEdit: ((UUID) -> Void)?
@@ -86,6 +88,7 @@ struct MessageTableRepresentable: NSViewRepresentable {
     let lastAssistantTurnId: UUID?
     let autoScrollEnabled: Bool
     let theme: ThemeProtocol
+    let expandedBlocksStore: ExpandedBlocksStore
 
     // Scroll
     let scrollToBottomTrigger: Int
@@ -123,6 +126,7 @@ struct MessageTableRepresentable: NSViewRepresentable {
             onScrolledAwayFromBottom: onScrolledAwayFromBottom
         )
         coordinator.setupHoverTracking(on: tableView)
+        coordinator.subscribeToExpandedStore(expandedBlocksStore)
 
         coordinator.applyBlocks(
             blocks,
@@ -162,6 +166,7 @@ struct MessageTableRepresentable: NSViewRepresentable {
             width: max(100, width - 64),
             personaName: personaName,
             theme: theme,
+            expandedBlocksStore: expandedBlocksStore,
             onCopy: onCopy,
             onRegenerate: onRegenerate,
             onEdit: onEdit,
@@ -244,6 +249,7 @@ extension MessageTableRepresentable {
             width: 400,
             personaName: "",
             theme: LightTheme(),
+            expandedBlocksStore: ExpandedBlocksStore(),
             onCopy: nil,
             onRegenerate: nil,
             onEdit: nil,
@@ -257,6 +263,10 @@ extension MessageTableRepresentable {
         // MARK: Hover
 
         private var hoveredGroupId: UUID?
+
+        // MARK: Expand/Collapse Observation
+
+        private var expandedStoreSubscription: AnyCancellable?
 
         // MARK: Streaming Height Debounce
 
@@ -293,6 +303,30 @@ extension MessageTableRepresentable {
             tableView.onMouseExited = { [weak self] in
                 self?.setHoveredGroup(nil)
             }
+        }
+
+        /// Subscribe to the expand/collapse store so we can re-measure row
+        /// heights when a block's expanded state changes.
+        func subscribeToExpandedStore(_ store: ExpandedBlocksStore) {
+            expandedStoreSubscription?.cancel()
+            expandedStoreSubscription = store.objectWillChange
+                .sink { [weak self] _ in
+                    // `objectWillChange` fires *before* the mutation, so defer
+                    // to the next run-loop tick to let the hosting view relayout.
+                    DispatchQueue.main.async { [weak self] in
+                        self?.noteVisibleRowHeightsChanged()
+                    }
+                }
+        }
+
+        /// Tell the table to re-measure all currently visible rows.
+        private func noteVisibleRowHeightsChanged() {
+            guard let tableView else { return }
+            let visible = tableView.rows(in: tableView.visibleRect)
+            guard visible.length > 0 else { return }
+            tableView.noteHeightOfRows(
+                withIndexesChanged: IndexSet(integersIn: visible.location ..< visible.location + visible.length)
+            )
         }
 
         // MARK: - Apply Blocks (Main Entry Point)
@@ -452,6 +486,7 @@ extension MessageTableRepresentable {
                 personaName: ctx.personaName,
                 isTurnHovered: hoveredGroupId == groupId,
                 theme: ctx.theme,
+                expandedBlocksStore: ctx.expandedBlocksStore,
                 onCopy: ctx.onCopy,
                 onRegenerate: ctx.onRegenerate,
                 onEdit: ctx.onEdit,

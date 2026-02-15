@@ -316,10 +316,14 @@ struct InlineToolCallView: View {
     let result: String?
     var showAccentStrip = false
 
-    @State private var isExpanded = false
     @State private var isHovered = false
     @State private var formattedArgs: String?
     @Environment(\.theme) private var theme
+    @EnvironmentObject private var expandedStore: ExpandedBlocksStore
+
+    private var isExpanded: Bool {
+        expandedStore.isExpanded(call.id)
+    }
 
     private var isComplete: Bool {
         result != nil
@@ -343,7 +347,15 @@ struct InlineToolCallView: View {
             // Compact header row
             Button(action: {
                 withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
-                    isExpanded.toggle()
+                    expandedStore.toggle(call.id)
+                }
+                // Lazily format arguments on first expand.
+                if expandedStore.isExpanded(call.id), formattedArgs == nil {
+                    let rawArgs = call.function.arguments
+                    Task.detached(priority: .userInitiated) {
+                        let formatted = JSONFormatter.prettyJSON(rawArgs)
+                        await MainActor.run { formattedArgs = formatted }
+                    }
                 }
             }) {
                 HStack(spacing: 10) {
@@ -417,15 +429,6 @@ struct InlineToolCallView: View {
         )
         .contentShape(Rectangle())
         .onHover { isHovered = $0 }
-        .onChange(of: isExpanded) { _, expanded in
-            if expanded && formattedArgs == nil {
-                let rawArgs = call.function.arguments
-                Task.detached(priority: .userInitiated) {
-                    let formatted = JSONFormatter.prettyJSON(rawArgs)
-                    await MainActor.run { formattedArgs = formatted }
-                }
-            }
-        }
         .id(call.id)
     }
 
@@ -522,12 +525,17 @@ struct CollapsibleCodeSection: View {
     // Max height for expanded content
     private static let maxContentHeight: CGFloat = 200
 
-    @State private var isCollapsed = true
     @State private var isHovered = false
     @State private var isCopied = false
     @State private var preparedContent: PreparedContent?
     @State private var isLoading = false
     @Environment(\.theme) private var theme
+    @EnvironmentObject private var expandedStore: ExpandedBlocksStore
+
+    /// Collapsed = NOT expanded in the store.
+    private var isCollapsed: Bool {
+        !expandedStore.isExpanded(sectionId)
+    }
 
     init(title: String, text: String, language: String?, previewText: String?, sectionId: String = UUID().uuidString) {
         self.title = title
@@ -642,8 +650,8 @@ struct CollapsibleCodeSection: View {
     }
 
     private func toggleCollapse() {
-        isCollapsed.toggle()
-        // Prepare content when expanding
+        expandedStore.toggle(sectionId)
+        // Prepare content when expanding.
         if !isCollapsed && preparedContent == nil {
             prepareContent()
         }
@@ -1054,6 +1062,7 @@ struct GroupedToolCallsContainerView: View {
             }
             .frame(width: 600, height: 600)
             .background(Color(hex: "0c0c0b"))
+            .environmentObject(ExpandedBlocksStore())
         }
     }
 #endif
