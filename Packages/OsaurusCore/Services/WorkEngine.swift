@@ -344,6 +344,20 @@ public actor WorkEngine {
         // Load work generation settings from configuration
         let agentCfg = await ChatConfigurationStore.load()
 
+        // Resolve model context length for budget management.
+        // Priority: local model config > user chat config > default (128k).
+        let resolvedContextLength: Int
+        if let m = model, let info = ModelInfo.load(modelId: m),
+            let ctx = info.model.contextLength
+        {
+            resolvedContextLength = ctx
+        } else {
+            resolvedContextLength = agentCfg.contextLength ?? 128_000
+        }
+
+        // Estimate token overhead for tool definitions
+        let toolTokenEstimate = await ToolRegistry.shared.totalEstimatedTokens(withOverrides: toolOverrides)
+
         // Run the reasoning loop
         let loopResult = try await executionEngine.executeLoop(
             issue: issue,
@@ -355,6 +369,8 @@ public actor WorkEngine {
             temperature: agentCfg.workTemperature,
             maxTokens: agentCfg.workMaxTokens,
             topPOverride: agentCfg.workTopPOverride,
+            contextLength: resolvedContextLength,
+            toolTokenEstimate: toolTokenEstimate,
             maxIterations: agentCfg.workMaxIterations ?? WorkExecutionEngine.defaultMaxIterations,
             onIterationStart: { [weak self] iteration in
                 guard let self = self else { return }
