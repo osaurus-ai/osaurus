@@ -65,6 +65,9 @@ public struct ServerConfiguration: Codable, Equatable, Sendable {
     /// Memory management policy for loaded models
     public var modelEvictionPolicy: ModelEvictionPolicy
 
+    /// Wired memory mode for local inference (off, auto, max)
+    public var wiredMemoryMode: WiredMemoryMode
+
     private enum CodingKeys: String, CodingKey {
         case port
         case exposeToNetwork
@@ -81,6 +84,7 @@ public struct ServerConfiguration: Codable, Equatable, Sendable {
         case genPrefillStepSize
         case allowedOrigins
         case modelEvictionPolicy
+        case wiredMemoryMode
     }
 
     public init(from decoder: Decoder) throws {
@@ -115,6 +119,9 @@ public struct ServerConfiguration: Codable, Equatable, Sendable {
         self.modelEvictionPolicy =
             try container.decodeIfPresent(ModelEvictionPolicy.self, forKey: .modelEvictionPolicy)
             ?? defaults.modelEvictionPolicy
+        self.wiredMemoryMode =
+            try container.decodeIfPresent(WiredMemoryMode.self, forKey: .wiredMemoryMode)
+            ?? defaults.wiredMemoryMode
     }
 
     public init(
@@ -132,7 +139,8 @@ public struct ServerConfiguration: Codable, Equatable, Sendable {
         genMaxKVSize: Int?,
         genPrefillStepSize: Int,
         allowedOrigins: [String] = [],
-        modelEvictionPolicy: ModelEvictionPolicy = .strictSingleModel
+        modelEvictionPolicy: ModelEvictionPolicy = .strictSingleModel,
+        wiredMemoryMode: WiredMemoryMode = .auto
     ) {
         self.port = port
         self.exposeToNetwork = exposeToNetwork
@@ -149,6 +157,7 @@ public struct ServerConfiguration: Codable, Equatable, Sendable {
         self.genPrefillStepSize = genPrefillStepSize
         self.allowedOrigins = allowedOrigins
         self.modelEvictionPolicy = modelEvictionPolicy
+        self.wiredMemoryMode = wiredMemoryMode
     }
 
     /// Default configuration
@@ -168,13 +177,32 @@ public struct ServerConfiguration: Codable, Equatable, Sendable {
             genMaxKVSize: 8192,
             genPrefillStepSize: 512,
             allowedOrigins: [],
-            modelEvictionPolicy: .strictSingleModel
+            modelEvictionPolicy: .strictSingleModel,
+            wiredMemoryMode: .auto
         )
     }
 
     /// Validates if the port is in valid range
     public var isValidPort: Bool {
         (1 ..< 65536).contains(port)
+    }
+}
+
+/// Wired memory mode for local inference
+public enum WiredMemoryMode: String, Codable, CaseIterable, Sendable {
+    case off = "Off"
+    case auto = "Auto"
+    case max = "Max"
+
+    public var description: String {
+        switch self {
+        case .off:
+            return "Disabled. System manages memory paging normally."
+        case .auto:
+            return "Wires memory based on measured model size. Recommended for large models."
+        case .max:
+            return "Wires maximum available memory. Best for models near your RAM limit."
+        }
     }
 }
 

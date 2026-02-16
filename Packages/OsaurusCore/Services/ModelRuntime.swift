@@ -25,6 +25,24 @@ actor ModelRuntime {
         let isCurrent: Bool
     }
 
+    /// Memory footprint information for a loaded model
+    struct ModelMemoryInfo: Sendable {
+        /// Weight bytes from safetensors on disk
+        let weightBytes: Int64
+        /// Measured weight bytes via MLX nbytes (populated after tune)
+        let measuredWeightBytes: Int?
+        /// Measured KV cache bytes (populated after tune)
+        let measuredKVBytes: Int?
+        /// Measured workspace bytes (populated after tune)
+        let measuredWorkspaceBytes: Int?
+        /// Total measured bytes (weights + KV + workspace)
+        var totalBytes: Int {
+            (measuredWeightBytes ?? Int(weightBytes))
+                + (measuredKVBytes ?? 0)
+                + (measuredWorkspaceBytes ?? 0)
+        }
+    }
+
     private final class SessionHolder: NSObject, @unchecked Sendable {
         let name: String
         let container: ModelContainer
@@ -48,6 +66,9 @@ actor ModelRuntime {
     private var loadingTasks: [String: Task<SessionHolder, Error>] = [:]
     private var currentModelName: String?
 
+    /// Cached memory measurements per model name (populated after load)
+    private var memoryMeasurements: [String: ModelMemoryInfo] = [:]
+
     private init() {}
 
     // MARK: - Public API
@@ -65,6 +86,16 @@ actor ModelRuntime {
         }
     }
 
+    /// Get memory info for a model by name or full repo ID
+    func memoryInfo(for identifier: String) -> ModelMemoryInfo? {
+        if let info = memoryMeasurements[identifier] { return info }
+        // Models are keyed by lowercased repo component internally
+        let repoName =
+            identifier.split(separator: "/").last
+            .map { $0.lowercased() } ?? identifier.lowercased()
+        return memoryMeasurements[repoName]
+    }
+
     func unload(name: String) {
         // Remove from cache within autoreleasepool to encourage immediate ARC deallocation
         autoreleasepool {
@@ -72,6 +103,7 @@ actor ModelRuntime {
         }
         loadingTasks[name]?.cancel()
         loadingTasks.removeValue(forKey: name)
+        memoryMeasurements.removeValue(forKey: name)
         if currentModelName == name { currentModelName = nil }
 
         // Synchronize GPU stream to ensure all operations complete, then release Metal buffer pool
@@ -86,6 +118,7 @@ actor ModelRuntime {
         }
         for task in loadingTasks.values { task.cancel() }
         loadingTasks.removeAll()
+        memoryMeasurements.removeAll()
         currentModelName = nil
 
         // Synchronize GPU stream to ensure all operations complete, then release Metal buffer pool
@@ -241,11 +274,56 @@ actor ModelRuntime {
             modelCache[name] = holder
             loadingTasks[name] = nil
             currentModelName = name
+
+            // Store initial memory info from disk-based weight measurement
+            if memoryMeasurements[name] == nil {
+                memoryMeasurements[name] = ModelMemoryInfo(
+                    weightBytes: holder.weightsSizeBytes,
+                    measuredWeightBytes: nil,
+                    measuredKVBytes: nil,
+                    measuredWorkspaceBytes: nil
+                )
+            }
+
+            // Run async memory measurement for more accurate data
+            Task {
+                await self.measureMemory(name: name, container: holder.container)
+            }
+
             return holder
         } catch {
             loadingTasks[name] = nil
             throw error
         }
+    }
+
+    /// Measure actual memory usage of a loaded model via WiredMemoryUtils.tune()
+    private func measureMemory(name: String, container: ModelContainer) async {
+        do {
+            let measurement: WiredMemoryMeasurement = try await container.perform { context in
+                try await WiredMemoryUtils.tune(
+                    context: context,
+                    tokenCount: 64,
+                    parameters: MLXLMCommon.GenerateParameters(maxTokens: 1)
+                )
+            }
+            memoryMeasurements[name] = ModelMemoryInfo(
+                weightBytes: Int64(measurement.weightBytes),
+                measuredWeightBytes: measurement.weightBytes,
+                measuredKVBytes: measurement.kvBytes,
+                measuredWorkspaceBytes: measurement.workspaceBytes
+            )
+            let w = Self.formatBytes(measurement.weightBytes)
+            let kv = Self.formatBytes(measurement.kvBytes)
+            let ws = Self.formatBytes(measurement.workspaceBytes)
+            print("[ModelRuntime] Memory for \(name): weights=\(w), kv=\(kv), workspace=\(ws)")
+        } catch {
+            print("[ModelRuntime] Memory measurement failed for \(name): \(error)")
+        }
+    }
+
+    private nonisolated static func formatBytes(_ bytes: Int) -> String {
+        ByteCountFormatter.string(fromByteCount: Int64(bytes), countStyle: .memory)
     }
 
     // MARK: - Driver helpers (actor-isolated)
@@ -262,14 +340,34 @@ actor ModelRuntime {
     ) async throws -> AsyncThrowingStream<ModelRuntimeEvent, Error> {
         let cfg = await RuntimeConfig.snapshot()
         let holder = try await loadContainer(id: modelId, name: modelName)
+
+        // Create wired memory ticket based on configured mode
+        let ticket = makeWiredMemoryTicket(mode: cfg.wiredMemoryMode, modelName: modelName)
+
         let events = try await MLXGenerationEngine.prepareAndGenerate(
             container: holder.container,
             buildChat: chatBuilder,
             buildToolsSpec: { ModelRuntime.makeTokenizerTools(tools: tools, toolChoice: toolChoice) },
             generation: parameters,
-            runtime: cfg
+            runtime: cfg,
+            wiredMemoryTicket: ticket
         )
         return StreamAccumulator.accumulate(events: events, stopSequences: stopSequences, tools: tools)
+    }
+
+    /// Create a wired memory ticket for the current generation request
+    private func makeWiredMemoryTicket(mode: WiredMemoryMode, modelName: String) -> WiredMemoryTicket? {
+        let info = memoryMeasurements[modelName]
+        switch mode {
+        case .off:
+            return nil
+        case .auto:
+            guard let budget = info?.totalBytes, budget > 0 else { return nil }
+            return MLXLMCommon.WiredBudgetPolicy(baseBytes: budget).ticket(size: 0)
+        case .max:
+            let size = info?.totalBytes ?? Int(GPU.maxRecommendedWorkingSetBytes() ?? 0)
+            return MLXLMCommon.WiredSumPolicy().ticket(size: size)
+        }
     }
 
     // MARK: - New message-based (OpenAI ChatMessage) APIs
