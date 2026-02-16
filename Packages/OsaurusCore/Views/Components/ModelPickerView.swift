@@ -230,278 +230,53 @@ struct ModelPickerView: View {
         .padding()
     }
 
+    // MARK: - Flattened Rows
+
+    private var flattenedRows: [ModelPickerRow] {
+        var rows: [ModelPickerRow] = []
+        for group in filteredGroups {
+            let expanded = isGroupExpanded(group.source)
+            rows.append(.groupHeader(
+                sourceKey: group.source.displayName,
+                displayName: group.source.displayName,
+                sourceType: group.source,
+                count: group.models.count,
+                isExpanded: expanded
+            ))
+            if expanded {
+                for model in group.models {
+                    rows.append(.model(
+                        id: model.id,
+                        displayName: model.displayName,
+                        description: model.description,
+                        parameterCount: model.parameterCount,
+                        quantization: model.quantization,
+                        isVLM: model.isVLM,
+                        isSelected: selectedModel == model.id,
+                        isHighlighted: model.id == highlightedModelId
+                    ))
+                }
+            }
+        }
+        return rows
+    }
+
     // MARK: - Model List
 
     private var modelList: some View {
-        ScrollViewReader { proxy in
-            ScrollView {
-                LazyVStack(spacing: 2) {
-                    ForEach(filteredGroups, id: \.source) { group in
-                        Section {
-                            if isGroupExpanded(group.source) {
-                                ForEach(group.models) { model in
-                                    ModelRowItem(
-                                        model: model,
-                                        isSelected: selectedModel == model.id,
-                                        isHighlighted: model.id == highlightedModelId,
-                                        onSelect: {
-                                            selectedModel = model.id
-                                            onDismiss()
-                                        }
-                                    )
-                                    .id(model.id)
-                                }
-                            }
-                        } header: {
-                            ModelGroupHeader(
-                                source: group.source,
-                                count: group.models.count,
-                                isExpanded: isGroupExpanded(group.source),
-                                onToggle: { toggleGroup(group.source) }
-                            )
-                        }
-                    }
+        ModelPickerTableRepresentable(
+            rows: flattenedRows,
+            theme: theme,
+            scrollToModelId: highlightedModelId,
+            onToggleGroup: { sourceKey in
+                if let group = filteredGroups.first(where: { $0.source.displayName == sourceKey }) {
+                    toggleGroup(group.source)
                 }
-                .padding(.vertical, 6)
-                .padding(.horizontal, 4)
+            },
+            onSelectModel: { modelId in
+                selectedModel = modelId
+                onDismiss()
             }
-            .onChange(of: highlightedIndex) { _, newIndex in
-                guard let index = newIndex, index >= 0, index < flatFilteredModels.count else { return }
-                withAnimation(.easeOut(duration: 0.1)) {
-                    proxy.scrollTo(flatFilteredModels[index].id, anchor: .center)
-                }
-            }
-        }
-    }
-}
-
-// MARK: - Model Group Header
-
-private struct ModelGroupHeader: View {
-    let source: ModelOption.Source
-    let count: Int
-    let isExpanded: Bool
-    let onToggle: () -> Void
-
-    @State private var isHovered = false
-    @Environment(\.theme) private var theme
-
-    var body: some View {
-        HStack(spacing: 8) {
-            Image(systemName: "chevron.right")
-                .font(.system(size: 10, weight: .semibold))
-                .foregroundColor(theme.tertiaryText)
-                .frame(width: 12)
-                .rotationEffect(.degrees(isExpanded ? 90 : 0))
-
-            sourceIcon
-                .font(.system(size: 11))
-                .foregroundColor(isHovered ? theme.accentColor : theme.secondaryText)
-
-            Text(source.displayName)
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundColor(theme.primaryText)
-                .lineLimit(1)
-
-            Spacer()
-
-            Text("\(count)")
-                .font(.system(size: 10, weight: .medium))
-                .foregroundColor(theme.tertiaryText)
-                .padding(.horizontal, 8)
-                .padding(.vertical, 3)
-                .background(
-                    Capsule()
-                        .fill(theme.secondaryBackground)
-                        .overlay(Capsule().strokeBorder(theme.primaryBorder.opacity(0.1), lineWidth: 1))
-                )
-        }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 12)
-        .contentShape(Rectangle())
-        .onTapGesture { onToggle() }
-        .modifier(ModelHoverRowStyle(isHovered: isHovered, showAccent: true))
-        .onPopoverHover { hovering in
-            withAnimation(.easeOut(duration: 0.15)) { isHovered = hovering }
-        }
-        .animation(.easeOut(duration: 0.15), value: isExpanded)
-    }
-
-    @ViewBuilder
-    private var sourceIcon: some View {
-        switch source {
-        case .foundation: Image(systemName: "apple.logo")
-        case .local: Image(systemName: "internaldrive")
-        case .remote: Image(systemName: "cloud")
-        }
-    }
-}
-
-// MARK: - Model Row Item
-
-private struct ModelRowItem: View {
-    let model: ModelOption
-    let isSelected: Bool
-    let isHighlighted: Bool
-    let onSelect: () -> Void
-
-    @State private var isHovered = false
-    @Environment(\.theme) private var theme
-
-    var body: some View {
-        HStack(spacing: 12) {
-            VStack(alignment: .leading, spacing: 3) {
-                HStack(spacing: 6) {
-                    Text(model.displayName)
-                        .font(.system(size: 12, weight: isSelected ? .semibold : .medium))
-                        .foregroundColor(isSelected ? theme.primaryText : theme.secondaryText)
-                        .lineLimit(1)
-
-                    if model.isVLM {
-                        ModelSmallBadge(text: "Vision", icon: "eye")
-                    }
-                }
-
-                if let description = model.description, !description.isEmpty {
-                    Text(description)
-                        .font(.system(size: 10))
-                        .foregroundColor(theme.tertiaryText)
-                        .lineLimit(2)
-                }
-
-                if model.parameterCount != nil || model.quantization != nil {
-                    HStack(spacing: 4) {
-                        if let params = model.parameterCount {
-                            ModelMetadataBadge(text: params, style: .accent)
-                        }
-                        if let quant = model.quantization {
-                            ModelMetadataBadge(text: quant, style: .subtle)
-                        }
-                    }
-                }
-            }
-
-            Spacer()
-
-            if isSelected {
-                Image(systemName: "checkmark")
-                    .font(.system(size: 11, weight: .bold))
-                    .foregroundColor(theme.accentColor)
-                    .transition(.scale.combined(with: .opacity))
-            }
-        }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 10)
-        .contentShape(Rectangle())
-        .onTapGesture { onSelect() }
-        .modifier(ModelHoverRowStyle(isHovered: isHovered || isHighlighted || isSelected, showAccent: isSelected))
-        .onPopoverHover { hovering in
-            withAnimation(.easeOut(duration: 0.15)) { isHovered = hovering }
-        }
-        .animation(.easeOut(duration: 0.15), value: isSelected)
-    }
-}
-
-// MARK: - Shared Components
-
-/// Hover background + border applied to row items and group headers.
-private struct ModelHoverRowStyle: ViewModifier {
-    let isHovered: Bool
-    let showAccent: Bool
-
-    @Environment(\.theme) private var theme
-
-    func body(content: Content) -> some View {
-        content
-            .background(
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .fill(isHovered ? theme.secondaryBackground.opacity(0.7) : Color.clear)
-                    .overlay(
-                        isHovered && showAccent
-                            ? RoundedRectangle(cornerRadius: 8, style: .continuous)
-                                .fill(
-                                    LinearGradient(
-                                        colors: [theme.accentColor.opacity(0.06), Color.clear],
-                                        startPoint: .leading,
-                                        endPoint: .trailing
-                                    )
-                                )
-                            : nil
-                    )
-            )
-            .overlay(
-                isHovered
-                    ? RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .strokeBorder(
-                            LinearGradient(
-                                colors: [
-                                    showAccent ? theme.accentColor.opacity(0.2) : theme.glassEdgeLight.opacity(0.12),
-                                    showAccent ? theme.accentColor.opacity(0.08) : theme.primaryBorder.opacity(0.08),
-                                ],
-                                startPoint: .topLeading,
-                                endPoint: .bottomTrailing
-                            ),
-                            lineWidth: 1
-                        )
-                    : nil
-            )
-    }
-}
-
-/// Theme-aware metadata badge for parameter count and quantization.
-private struct ModelMetadataBadge: View {
-    enum Style {
-        case accent, subtle
-    }
-
-    let text: String
-    let style: Style
-
-    @Environment(\.theme) private var theme
-
-    private var badgeColor: Color {
-        switch style {
-        case .accent: return theme.accentColor
-        case .subtle: return theme.secondaryText
-        }
-    }
-
-    var body: some View {
-        Text(text)
-            .font(.system(size: 9, weight: .medium))
-            .foregroundColor(badgeColor.opacity(0.9))
-            .padding(.horizontal, 5)
-            .padding(.vertical, 2)
-            .background(
-                RoundedRectangle(cornerRadius: 4, style: .continuous)
-                    .fill(badgeColor.opacity(0.12))
-            )
-    }
-}
-
-/// Small capsule badge with optional icon (e.g. "Vision" with eye icon).
-private struct ModelSmallBadge: View {
-    let text: String
-    var icon: String? = nil
-
-    @Environment(\.theme) private var theme
-
-    var body: some View {
-        HStack(spacing: 3) {
-            if let icon {
-                Image(systemName: icon)
-                    .font(.system(size: 8))
-            }
-            Text(text)
-                .font(.system(size: 8, weight: .medium))
-        }
-        .foregroundColor(theme.accentColor)
-        .padding(.horizontal, 5)
-        .padding(.vertical, 2)
-        .background(
-            Capsule()
-                .fill(theme.accentColor.opacity(0.12))
-                .overlay(Capsule().strokeBorder(theme.accentColor.opacity(0.15), lineWidth: 1))
         )
     }
 }

@@ -47,34 +47,6 @@ struct CellRenderingContext {
 
 // MARK: - Hover-Tracking Table View
 
-/// NSTableView subclass that forwards mouse tracking events
-/// to closures (wired to the coordinator) for hover state.
-@MainActor
-fileprivate final class HoverTrackingTableView: NSTableView {
-
-    var onMouseMoved: ((NSEvent) -> Void)?
-    var onMouseExited: (() -> Void)?
-
-    override func updateTrackingAreas() {
-        super.updateTrackingAreas()
-        for area in trackingAreas where area.owner === self {
-            removeTrackingArea(area)
-        }
-        addTrackingArea(
-            NSTrackingArea(
-                rect: .zero,
-                options: [.mouseMoved, .mouseEnteredAndExited, .activeInActiveApp, .inVisibleRect],
-                owner: self,
-                userInfo: nil
-            )
-        )
-    }
-
-    override func mouseMoved(with event: NSEvent) { onMouseMoved?(event) }
-    override func mouseEntered(with event: NSEvent) { onMouseMoved?(event) }
-    override func mouseExited(with event: NSEvent) { onMouseExited?() }
-}
-
 // MARK: - MessageTableRepresentable
 
 struct MessageTableRepresentable: NSViewRepresentable {
@@ -296,7 +268,7 @@ extension MessageTableRepresentable {
             scrollAnchor.attach(to: scrollView, tableView: tableView)
         }
 
-        fileprivate func setupHoverTracking(on tableView: HoverTrackingTableView) {
+        func setupHoverTracking(on tableView: HoverTrackingTableView) {
             tableView.onMouseMoved = { [weak self] event in
                 self?.handleMouseMoved(with: event)
             }
