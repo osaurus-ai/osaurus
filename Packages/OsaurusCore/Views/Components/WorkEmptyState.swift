@@ -67,7 +67,7 @@ struct WorkEmptyState: View {
                         .offset(y: hasAppeared ? 0 : 20)
                         .animation(theme.springAnimation().delay(0.1), value: hasAppeared)
 
-                    Text("One goal. It handles the rest.")
+                    Text("Describe what you need.")
                         .font(theme.font(size: CGFloat(theme.bodySize) + 2))
                         .foregroundColor(theme.secondaryText)
                         .opacity(hasAppeared ? 1 : 0)

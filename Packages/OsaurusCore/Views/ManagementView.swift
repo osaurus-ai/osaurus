@@ -16,10 +16,10 @@ import SwiftUI
 public enum ManagementTab: String, CaseIterable, Identifiable {
     case models
     case providers
+    case agents
     case plugins
     case tools
     case skills
-    case agents
     case schedules
     case watchers
     case voice
@@ -35,10 +35,10 @@ public enum ManagementTab: String, CaseIterable, Identifiable {
         switch self {
         case .models: "cube.box.fill"
         case .providers: "cloud.fill"
+        case .agents: "person.2.fill"
         case .plugins: "puzzlepiece.extension.fill"
         case .tools: "wrench.and.screwdriver.fill"
         case .skills: "sparkles"
-        case .agents: "person.2.fill"
         case .schedules: "calendar.badge.clock"
         case .watchers: "eye.fill"
         case .voice: "waveform"
@@ -54,10 +54,10 @@ public enum ManagementTab: String, CaseIterable, Identifiable {
         switch self {
         case .models: "Models"
         case .providers: "Providers"
+        case .agents: "Agents"
         case .plugins: "Plugins"
         case .tools: "Tools"
         case .skills: "Skills"
-        case .agents: "Agents"
         case .schedules: "Schedules"
         case .watchers: "Watchers"
         case .voice: "Voice"
@@ -188,14 +188,14 @@ private extension ManagementView {
             )
         case .providers:
             RemoteProvidersView()
+        case .agents:
+            AgentsView()
         case .plugins:
             PluginsView()
         case .tools:
             ToolsManagerView()
         case .skills:
             SkillsView()
-        case .agents:
-            AgentsView()
         case .schedules:
             SchedulesView()
         case .watchers:
