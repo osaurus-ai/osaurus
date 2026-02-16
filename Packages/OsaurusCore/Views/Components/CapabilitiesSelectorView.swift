@@ -612,392 +612,103 @@ struct CapabilitiesSelectorView: View {
         .padding()
     }
 
+    // MARK: - Flattened Rows
+
+    private var flattenedRows: [CapabilityRow] {
+        var rows: [CapabilityRow] = []
+        switch selectedTab {
+        case .plugins:
+            for group in filteredCompoundPlugins {
+                rows.append(.compoundPlugin(
+                    id: group.pluginId,
+                    name: group.name,
+                    toolCount: group.toolNames.count,
+                    skillCount: group.skillNames.count,
+                    isActive: isCompoundPluginActive(group)
+                ))
+            }
+
+        case .tools:
+            let restricted = agentRestrictedTools
+            for group in filteredGroups {
+                let expanded = isGroupExpanded(group.id)
+                rows.append(.groupHeader(
+                    id: group.id,
+                    name: group.displayName,
+                    icon: group.icon,
+                    enabledCount: group.enabledCount,
+                    totalCount: group.tools.count,
+                    isExpanded: expanded
+                ))
+                if expanded {
+                    for tool in group.tools {
+                        rows.append(.tool(
+                            id: tool.name,
+                            name: tool.name,
+                            description: tool.description,
+                            enabled: tool.enabled,
+                            isAgentRestricted: restricted.contains(tool.name),
+                            catalogTokens: tool.catalogEntryTokens,
+                            estimatedTokens: tool.estimatedTokens
+                        ))
+                    }
+                }
+            }
+
+        case .skills:
+            for skill in filteredSkills {
+                let enabled = isSkillEnabled(skill.name)
+                rows.append(.skill(
+                    id: skill.name,
+                    name: skill.name,
+                    description: skill.description,
+                    enabled: enabled,
+                    isBuiltIn: skill.isBuiltIn,
+                    isFromPlugin: skill.isFromPlugin,
+                    estimatedTokens: max(5, (skill.name.count + skill.description.count + 6) / 4)
+                ))
+            }
+        }
+        return rows
+    }
+
     // MARK: - Item List
 
     private var itemList: some View {
-        ScrollView {
-            LazyVStack(spacing: 2) {
-                switch selectedTab {
-                case .plugins:
-                    ForEach(filteredCompoundPlugins) { group in
-                        CompoundPluginRow(
-                            group: group,
-                            isActive: isCompoundPluginActive(group),
-                            onToggle: { toggleCompoundPlugin(group) }
-                        )
-                    }
-
-                case .tools:
-                    ForEach(filteredGroups) { group in
-                        Section {
-                            if isGroupExpanded(group.id) {
-                                ForEach(group.tools) { tool in
-                                    ToolRowItem(
-                                        tool: tool,
-                                        isAgentRestricted: agentRestrictedTools.contains(tool.name)
-                                    ) { toggleTool(tool.name, enabled: tool.enabled) }
-                                    .padding(.leading, 20)
-                                }
-                            }
-                        } header: {
-                            GroupHeader(
-                                group: group,
-                                isExpanded: isGroupExpanded(group.id),
-                                onToggle: { toggleGroup(group) },
-                                onEnableAll: { enableAllInGroup(group) },
-                                onDisableAll: { disableAllInGroup(group) }
-                            )
-                        }
-                    }
-
-                case .skills:
-                    ForEach(filteredSkills) { skill in
-                        SkillRowItem(skill: skill, isEnabled: isSkillEnabled(skill.name)) {
-                            toggleSkill(skill.name)
-                        }
-                    }
+        CapabilitiesTableRepresentable(
+            rows: flattenedRows,
+            theme: theme,
+            onToggleGroup: { groupId in
+                if let group = cachedGroups.first(where: { $0.id == groupId }) {
+                    toggleGroup(group)
+                }
+            },
+            onEnableAllInGroup: { groupId in
+                if let group = cachedGroups.first(where: { $0.id == groupId }) {
+                    enableAllInGroup(group)
+                }
+            },
+            onDisableAllInGroup: { groupId in
+                if let group = cachedGroups.first(where: { $0.id == groupId }) {
+                    disableAllInGroup(group)
+                }
+            },
+            onToggleTool: { name, enabled in
+                toggleTool(name, enabled: enabled)
+            },
+            onToggleSkill: { name in
+                toggleSkill(name)
+            },
+            onToggleCompoundPlugin: { pluginId in
+                if let group = cachedCompoundPlugins.first(where: { $0.pluginId == pluginId }) {
+                    toggleCompoundPlugin(group)
                 }
             }
-            .padding(.vertical, 6)
-            .padding(.horizontal, 4)
-        }
-    }
-}
-
-// MARK: - Group Header
-
-private struct GroupHeader: View {
-    let group: ToolGroup
-    let isExpanded: Bool
-    let onToggle: () -> Void
-    let onEnableAll: () -> Void
-    let onDisableAll: () -> Void
-
-    @State private var isHovered = false
-    @Environment(\.theme) private var theme
-
-    private var allEnabled: Bool { group.enabledCount == group.tools.count }
-    private var noneEnabled: Bool { group.enabledCount == 0 }
-
-    var body: some View {
-        HStack(spacing: 8) {
-            Image(systemName: "chevron.right")
-                .font(.system(size: 10, weight: .semibold))
-                .foregroundColor(theme.tertiaryText)
-                .frame(width: 12)
-                .rotationEffect(.degrees(isExpanded ? 90 : 0))
-
-            Image(systemName: group.icon)
-                .font(.system(size: 11))
-                .foregroundColor(isHovered ? theme.accentColor : theme.secondaryText)
-
-            Text(group.displayName)
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundColor(theme.primaryText)
-                .lineLimit(1)
-
-            Spacer()
-
-            // All/None — always rendered, visibility controlled by opacity
-            HStack(spacing: 4) {
-                Button {
-                    onEnableAll()
-                } label: {
-                    Text("All")
-                        .font(.system(size: 9, weight: allEnabled ? .bold : .medium))
-                        .foregroundColor(allEnabled ? theme.accentColor : theme.tertiaryText)
-                }
-                Text("/").font(.system(size: 9)).foregroundColor(theme.tertiaryText)
-                Button {
-                    onDisableAll()
-                } label: {
-                    Text("None")
-                        .font(.system(size: 9, weight: noneEnabled ? .bold : .medium))
-                        .foregroundColor(noneEnabled ? theme.accentColor : theme.tertiaryText)
-                }
-            }
-            .buttonStyle(.plain)
-            .padding(.horizontal, 8)
-            .padding(.vertical, 3)
-            .background(
-                Capsule()
-                    .fill(theme.primaryBackground)
-                    .overlay(Capsule().strokeBorder(theme.primaryBorder.opacity(0.15), lineWidth: 1))
-            )
-            .opacity(isHovered ? 1 : 0)
-            .allowsHitTesting(isHovered)
-
-            // Count badge
-            CountBadge(enabled: group.enabledCount, total: group.tools.count)
-        }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 12)
-        .contentShape(Rectangle())
-        .onTapGesture { onToggle() }
-        .modifier(HoverRowStyle(isHovered: isHovered, showAccent: true))
-        .onPopoverHover { hovering in
-            withAnimation(.easeOut(duration: 0.15)) { isHovered = hovering }
-        }
-        .animation(.easeOut(duration: 0.15), value: isExpanded)
-    }
-}
-
-// MARK: - Row Items
-
-private struct ToolRowItem: View {
-    let tool: ToolRegistry.ToolEntry
-    var isAgentRestricted: Bool = false
-    let onToggle: () -> Void
-
-    @State private var isHovered = false
-    @Environment(\.theme) private var theme
-
-    private var nameColor: Color {
-        if isAgentRestricted { return theme.tertiaryText }
-        return tool.enabled ? theme.primaryText : theme.secondaryText
-    }
-
-    var body: some View {
-        HStack(spacing: 12) {
-            Toggle("", isOn: Binding(get: { tool.enabled }, set: { _ in onToggle() }))
-                .toggleStyle(SwitchToggleStyle(tint: theme.accentColor))
-                .scaleEffect(0.7)
-                .frame(width: 36)
-                .disabled(isAgentRestricted)
-                .opacity(isAgentRestricted ? 0.4 : 1.0)
-
-            VStack(alignment: .leading, spacing: 3) {
-                HStack(spacing: 6) {
-                    Text(tool.name)
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundColor(nameColor)
-                        .lineLimit(1)
-
-                    if isAgentRestricted {
-                        SmallCapsuleBadge(text: "Chat Mode only")
-                    }
-                }
-                Text(tool.description)
-                    .font(.system(size: 10))
-                    .foregroundColor(theme.tertiaryText)
-                    .lineLimit(2)
-            }
-
-            Spacer()
-
-            if !isAgentRestricted {
-                TokenBadge(count: tool.catalogEntryTokens)
-                    .help("Catalog: ~\(tool.catalogEntryTokens), Full: ~\(tool.estimatedTokens) tokens")
-            }
-        }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 10)
-        .contentShape(Rectangle())
-        .onTapGesture {
-            if !isAgentRestricted { onToggle() }
-        }
-        .modifier(HoverRowStyle(isHovered: isHovered, showAccent: tool.enabled && !isAgentRestricted))
-        .help(
-            isAgentRestricted
-                ? "Available in Chat Mode only. Agent Mode includes equivalent built-in tools."
-                : ""
         )
-        .onPopoverHover { hovering in
-            withAnimation(.easeOut(duration: 0.15)) { isHovered = hovering }
-        }
     }
 }
 
-private struct SkillRowItem: View {
-    let skill: Skill
-    let isEnabled: Bool
-    let onToggle: () -> Void
-
-    @State private var isHovered = false
-    @Environment(\.theme) private var theme
-
-    private var estimatedTokens: Int {
-        max(5, (skill.name.count + skill.description.count + 6) / 4)
-    }
-
-    var body: some View {
-        HStack(spacing: 12) {
-            Toggle("", isOn: Binding(get: { isEnabled }, set: { _ in onToggle() }))
-                .toggleStyle(SwitchToggleStyle(tint: theme.accentColor))
-                .scaleEffect(0.7)
-                .frame(width: 36)
-
-            VStack(alignment: .leading, spacing: 3) {
-                HStack(spacing: 6) {
-                    Text(skill.name)
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundColor(isEnabled ? theme.primaryText : theme.secondaryText)
-                        .lineLimit(1)
-
-                    if skill.isBuiltIn {
-                        SmallCapsuleBadge(text: "Built-in")
-                    } else if skill.isFromPlugin {
-                        SmallCapsuleBadge(text: "Plugin", icon: "puzzlepiece.extension")
-                    }
-                }
-                Text(skill.description)
-                    .font(.system(size: 10))
-                    .foregroundColor(theme.tertiaryText)
-                    .lineLimit(2)
-            }
-
-            Spacer()
-
-            TokenBadge(count: estimatedTokens)
-                .help("Catalog entry tokens")
-        }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 10)
-        .contentShape(Rectangle())
-        .onTapGesture { onToggle() }
-        .modifier(HoverRowStyle(isHovered: isHovered, showAccent: isEnabled))
-        .onPopoverHover { hovering in
-            withAnimation(.easeOut(duration: 0.15)) { isHovered = hovering }
-        }
-    }
-}
-
-// MARK: - Compound Plugin Views
-
-/// A row for a compound plugin (has both tools and skills) with a master toggle
-private struct CompoundPluginRow: View {
-    let group: CompoundPluginGroup
-    let isActive: Bool
-    let onToggle: () -> Void
-
-    @State private var isHovered = false
-    @Environment(\.theme) private var theme
-
-    var body: some View {
-        HStack(spacing: 12) {
-            Toggle("", isOn: Binding(get: { isActive }, set: { _ in onToggle() }))
-                .toggleStyle(SwitchToggleStyle(tint: theme.accentColor))
-                .scaleEffect(0.7)
-                .frame(width: 36)
-
-            // Plugin icon with sparkle overlay
-            ZStack {
-                Image(systemName: "puzzlepiece.extension.fill")
-                    .font(.system(size: 14))
-                    .foregroundColor(isActive ? theme.accentColor : theme.tertiaryText)
-
-                Image(systemName: "sparkle")
-                    .font(.system(size: 7, weight: .bold))
-                    .foregroundColor(isActive ? theme.accentColor : theme.tertiaryText)
-                    .offset(x: 8, y: -8)
-            }
-            .frame(width: 20)
-
-            VStack(alignment: .leading, spacing: 3) {
-                Text(group.name)
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(isActive ? theme.primaryText : theme.secondaryText)
-                    .lineLimit(1)
-
-                HStack(spacing: 4) {
-                    HStack(spacing: 2) {
-                        Image(systemName: "wrench.and.screwdriver")
-                            .font(.system(size: 8))
-                        Text("\(group.toolNames.count)")
-                            .font(.system(size: 9, weight: .medium))
-                    }
-                    .foregroundColor(theme.tertiaryText)
-
-                    Text("+")
-                        .font(.system(size: 8))
-                        .foregroundColor(theme.tertiaryText)
-
-                    HStack(spacing: 2) {
-                        Image(systemName: "lightbulb")
-                            .font(.system(size: 8))
-                        Text("\(group.skillNames.count)")
-                            .font(.system(size: 9, weight: .medium))
-                    }
-                    .foregroundColor(theme.tertiaryText)
-                }
-            }
-
-            Spacer()
-
-            // Active/inactive badge
-            Text(isActive ? "Active" : "Inactive")
-                .font(.system(size: 9, weight: .medium))
-                .foregroundColor(isActive ? theme.accentColor : theme.tertiaryText)
-                .padding(.horizontal, 8)
-                .padding(.vertical, 3)
-                .background(
-                    Capsule()
-                        .fill(isActive ? theme.accentColor.opacity(0.15) : theme.secondaryBackground.opacity(0.5))
-                        .overlay(
-                            Capsule()
-                                .strokeBorder(
-                                    isActive ? theme.accentColor.opacity(0.2) : theme.primaryBorder.opacity(0.1),
-                                    lineWidth: 1
-                                )
-                        )
-                )
-        }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 10)
-        .contentShape(Rectangle())
-        .onTapGesture { onToggle() }
-        .modifier(HoverRowStyle(isHovered: isHovered, showAccent: isActive))
-        .onPopoverHover { hovering in
-            withAnimation(.easeOut(duration: 0.15)) { isHovered = hovering }
-        }
-    }
-}
-
-// MARK: - Shared Components
-
-/// Hover background + border applied to row items and group headers.
-private struct HoverRowStyle: ViewModifier {
-    let isHovered: Bool
-    let showAccent: Bool
-
-    @Environment(\.theme) private var theme
-
-    func body(content: Content) -> some View {
-        content
-            .background(
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .fill(isHovered ? theme.secondaryBackground.opacity(0.7) : Color.clear)
-                    .overlay(
-                        isHovered && showAccent
-                            ? RoundedRectangle(cornerRadius: 8, style: .continuous)
-                                .fill(
-                                    LinearGradient(
-                                        colors: [theme.accentColor.opacity(0.06), Color.clear],
-                                        startPoint: .leading,
-                                        endPoint: .trailing
-                                    )
-                                )
-                            : nil
-                    )
-            )
-            .overlay(
-                isHovered
-                    ? RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .strokeBorder(
-                            LinearGradient(
-                                colors: [
-                                    theme.glassEdgeLight.opacity(0.12),
-                                    theme.primaryBorder.opacity(0.08),
-                                ],
-                                startPoint: .topLeading,
-                                endPoint: .bottomTrailing
-                            ),
-                            lineWidth: 1
-                        )
-                    : nil
-            )
-    }
-}
+// MARK: - Token Badge (used in header)
 
 /// Token count badge (e.g. "~42 tokens").
 private struct TokenBadge: View {
@@ -1014,60 +725,6 @@ private struct TokenBadge: View {
         .padding(.horizontal, 6)
         .padding(.vertical, 2)
         .background(Capsule().fill(theme.secondaryBackground.opacity(0.5)))
-    }
-}
-
-/// Small capsule label (e.g. "Built-in", "Chat Mode only", "Plugin").
-private struct SmallCapsuleBadge: View {
-    let text: String
-    var icon: String? = nil
-
-    @Environment(\.theme) private var theme
-
-    var body: some View {
-        HStack(spacing: 3) {
-            if let icon = icon {
-                Image(systemName: icon)
-                    .font(.system(size: 7))
-            }
-            Text(text)
-                .font(.system(size: 8, weight: .medium))
-        }
-        .foregroundColor(theme.secondaryText)
-        .padding(.horizontal, 5)
-        .padding(.vertical, 2)
-        .background(
-            Capsule()
-                .fill(theme.secondaryBackground)
-                .overlay(Capsule().strokeBorder(theme.primaryBorder.opacity(0.1), lineWidth: 1))
-        )
-    }
-}
-
-/// Enabled/total count badge (e.g. "3/5").
-private struct CountBadge: View {
-    let enabled: Int
-    let total: Int
-
-    @Environment(\.theme) private var theme
-
-    var body: some View {
-        Text("\(enabled)/\(total)")
-            .font(.system(size: 10, weight: .medium))
-            .foregroundColor(enabled > 0 ? theme.accentColor : theme.tertiaryText)
-            .padding(.horizontal, 8)
-            .padding(.vertical, 3)
-            .background(
-                Capsule()
-                    .fill(enabled > 0 ? theme.accentColor.opacity(0.15) : theme.primaryBackground)
-                    .overlay(
-                        Capsule()
-                            .strokeBorder(
-                                enabled > 0 ? theme.accentColor.opacity(0.2) : theme.primaryBorder.opacity(0.1),
-                                lineWidth: 1
-                            )
-                    )
-            )
     }
 }
 
