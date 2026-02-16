@@ -51,12 +51,6 @@ struct ModelDetailView: View, Identifiable {
     /// Whether the required files section is expanded
     @State private var isFilesExpanded = false
 
-    /// Memory info for the loaded model (fetched from ModelRuntime)
-    @State private var memoryInfo: ModelRuntime.ModelMemoryInfo? = nil
-
-    /// Disk-based weight size from safetensors files (loaded once on appear)
-    @State private var diskWeightsSize: Int64? = nil
-
     /// Normalized model ID for API usage
     private var apiModelId: String {
         let last = model.id.split(separator: "/").last.map(String.init) ?? model.name
@@ -82,11 +76,6 @@ struct ModelDetailView: View, Identifiable {
                     // Model Details Card
                     modelDetailsCard
 
-                    // Memory Requirements Card (downloaded models only)
-                    if model.isDownloaded {
-                        memoryRequirementsCard
-                    }
-
                     // Download Info Card
                     downloadInfoCard
                 }
@@ -110,7 +99,6 @@ struct ModelDetailView: View, Identifiable {
             Task {
                 await estimateIfNeeded()
                 await loadHFDetails()
-                await loadMemoryInfo()
             }
         }
     }
@@ -124,39 +112,6 @@ struct ModelDetailView: View, Identifiable {
             self.hfDetails = details
             self.isLoadingHFDetails = false
         }
-    }
-
-    /// Load memory info from ModelRuntime for downloaded models
-    private func loadMemoryInfo() async {
-        guard model.isDownloaded else { return }
-        let info = await ModelRuntime.shared.memoryInfo(for: model.id)
-        let disk = Self.computeDiskWeightsSize(for: model)
-        await MainActor.run {
-            self.memoryInfo = info
-            self.diskWeightsSize = disk
-        }
-    }
-
-    /// Sum safetensors file sizes on disk (called off main thread)
-    private static func computeDiskWeightsSize(for model: MLXModel) -> Int64? {
-        guard model.isDownloaded else { return nil }
-        let fm = FileManager.default
-        guard
-            let items = try? fm.contentsOfDirectory(
-                at: model.localDirectory,
-                includingPropertiesForKeys: [.fileSizeKey]
-            )
-        else { return nil }
-
-        var total: Int64 = 0
-        for item in items where item.pathExtension.lowercased() == "safetensors" {
-            if let values = try? item.resourceValues(forKeys: [.fileSizeKey]),
-                let size = values.fileSize
-            {
-                total += Int64(size)
-            }
-        }
-        return total > 0 ? total : nil
     }
 
     // MARK: - Hero Header
@@ -364,108 +319,6 @@ struct ModelDetailView: View, Identifiable {
 
             // Repository URL
             RepositoryLinkRow(url: model.downloadURL)
-        }
-        .padding(16)
-        .background(
-            RoundedRectangle(cornerRadius: 12)
-                .fill(theme.cardBackground)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 12)
-                        .stroke(theme.cardBorder, lineWidth: 1)
-                )
-        )
-    }
-
-    // MARK: - Memory Requirements Card
-
-    private var memoryRequirementsCard: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            // Card Header
-            HStack {
-                Text("Memory Requirements")
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundColor(theme.primaryText)
-
-                Spacer()
-
-                if memoryInfo?.measuredWeightBytes != nil {
-                    HStack(spacing: 4) {
-                        Image(systemName: "checkmark.seal.fill")
-                            .font(.system(size: 10))
-                        Text("Measured")
-                            .font(.system(size: 10, weight: .medium))
-                    }
-                    .foregroundColor(theme.successColor)
-                }
-            }
-
-            if let info = memoryInfo {
-                VStack(spacing: 10) {
-                    // Weights row
-                    MemoryInfoRow(
-                        label: "Model Weights",
-                        bytes: Int64(info.measuredWeightBytes ?? Int(info.weightBytes)),
-                        icon: "cube.fill",
-                        color: theme.accentColor
-                    )
-
-                    if let kvBytes = info.measuredKVBytes, kvBytes > 0 {
-                        MemoryInfoRow(
-                            label: "KV Cache (est.)",
-                            bytes: Int64(kvBytes),
-                            icon: "memorychip",
-                            color: .orange
-                        )
-                    }
-
-                    if let workspaceBytes = info.measuredWorkspaceBytes, workspaceBytes > 0 {
-                        MemoryInfoRow(
-                            label: "Workspace (peak)",
-                            bytes: Int64(workspaceBytes),
-                            icon: "bolt.fill",
-                            color: .yellow
-                        )
-                    }
-
-                    Divider()
-
-                    // Total row
-                    HStack {
-                        HStack(spacing: 8) {
-                            Image(systemName: "sum")
-                                .font(.system(size: 12))
-                                .foregroundColor(theme.primaryText)
-                            Text("Total")
-                                .font(.system(size: 13, weight: .semibold))
-                                .foregroundColor(theme.primaryText)
-                        }
-
-                        Spacer()
-
-                        Text(ByteCountFormatter.string(fromByteCount: Int64(info.totalBytes), countStyle: .memory))
-                            .font(.system(size: 14, weight: .bold))
-                            .foregroundColor(theme.primaryText)
-                    }
-                }
-            } else {
-                HStack {
-                    Text("Load the model to see memory details")
-                        .font(.system(size: 12))
-                        .foregroundColor(theme.tertiaryText)
-                    Spacer()
-                    // Show disk-based estimate from safetensors
-                    if let diskSize = diskWeightsSize {
-                        VStack(alignment: .trailing, spacing: 2) {
-                            Text(ByteCountFormatter.string(fromByteCount: diskSize, countStyle: .memory))
-                                .font(.system(size: 13, weight: .medium))
-                                .foregroundColor(theme.secondaryText)
-                            Text("weights on disk")
-                                .font(.system(size: 10))
-                                .foregroundColor(theme.tertiaryText)
-                        }
-                    }
-                }
-            }
         }
         .padding(16)
         .background(
@@ -879,36 +732,6 @@ private struct CopyModelIdButton: View {
                 showCopied = false
             }
         }
-    }
-}
-
-/// Memory info row showing a label, byte count, and icon
-private struct MemoryInfoRow: View {
-    @Environment(\.theme) private var theme
-
-    let label: String
-    let bytes: Int64
-    let icon: String
-    let color: Color
-
-    var body: some View {
-        HStack {
-            HStack(spacing: 8) {
-                Image(systemName: icon)
-                    .font(.system(size: 12))
-                    .foregroundColor(color)
-                Text(label)
-                    .font(.system(size: 13))
-                    .foregroundColor(theme.secondaryText)
-            }
-
-            Spacer()
-
-            Text(ByteCountFormatter.string(fromByteCount: bytes, countStyle: .memory))
-                .font(.system(size: 13, weight: .medium))
-                .foregroundColor(theme.primaryText)
-        }
-        .padding(.vertical, 2)
     }
 }
 
