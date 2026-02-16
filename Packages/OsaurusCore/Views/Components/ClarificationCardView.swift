@@ -18,43 +18,37 @@ struct ClarificationCardView: View {
 
     @Environment(\.theme) private var theme
 
-    /// Whether options are provided
     private var hasOptions: Bool {
-        request.options != nil && !(request.options?.isEmpty ?? true)
+        request.options?.isEmpty == false
     }
 
-    /// The response to submit (selected option or custom text)
     private var responseToSubmit: String {
-        if let selected = selectedOption {
-            return selected
-        }
-        return customResponse.trimmingCharacters(in: .whitespacesAndNewlines)
+        selectedOption ?? customResponse.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    /// Whether submit is enabled
     private var canSubmit: Bool {
         !responseToSubmit.isEmpty
     }
 
     var body: some View {
-        HStack(spacing: 0) {
-            // Left accent strip
-            accentStrip
-
-            // Main content
-            VStack(alignment: .leading, spacing: 0) {
-                header
-                divider
-                questionContent
-                if hasOptions {
-                    optionsContent
-                } else {
-                    textInputContent
-                }
-                submitButton
+        VStack(alignment: .leading, spacing: 0) {
+            header
+            divider
+            questionContent
+            if hasOptions {
+                optionsContent
+            } else {
+                textInputContent
             }
+            submitButton
         }
         .background(cardBackground)
+        .overlay(alignment: .leading) {
+            // Accent strip rendered as an overlay so it doesn't
+            // participate in intrinsic height calculation.
+            theme.accentColor
+                .frame(width: 4)
+        }
         .overlay(cardBorder)
         .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
         .animation(theme.animationQuick(), value: isHovered)
@@ -62,32 +56,18 @@ struct ClarificationCardView: View {
         .onHover { isHovered = $0 }
     }
 
-    // MARK: - Accent Strip
-
-    private var accentStrip: some View {
-        UnevenRoundedRectangle(
-            cornerRadii: .init(topLeading: 10, bottomLeading: 10),
-            style: .continuous
-        )
-        .fill(theme.accentColor)
-        .frame(width: 4)
-    }
-
     // MARK: - Header
 
     private var header: some View {
         HStack(spacing: 10) {
-            // Question icon
             questionIcon
 
-            // Title
             Text("Clarification Needed")
                 .font(theme.font(size: CGFloat(theme.captionSize), weight: .semibold))
                 .foregroundColor(theme.secondaryText)
 
             Spacer()
 
-            // Paused indicator
             HStack(spacing: 4) {
                 Circle()
                     .fill(theme.warningColor)
@@ -132,14 +112,12 @@ struct ClarificationCardView: View {
 
     private var questionContent: some View {
         VStack(alignment: .leading, spacing: 8) {
-            // Question text
             Text(request.question)
                 .font(theme.font(size: CGFloat(theme.bodySize), weight: .medium))
                 .foregroundColor(theme.primaryText)
                 .lineLimit(nil)
                 .fixedSize(horizontal: false, vertical: true)
 
-            // Context if provided
             if let context = request.context, !context.isEmpty {
                 Text(context)
                     .font(theme.font(size: CGFloat(theme.captionSize), weight: .regular))
@@ -177,7 +155,6 @@ struct ClarificationCardView: View {
             }
         } label: {
             HStack(spacing: 10) {
-                // Selection indicator
                 ZStack {
                     Circle()
                         .strokeBorder(
@@ -193,7 +170,6 @@ struct ClarificationCardView: View {
                     }
                 }
 
-                // Option text
                 Text(option)
                     .font(theme.font(size: CGFloat(theme.bodySize) - 1, weight: isSelected ? .medium : .regular))
                     .foregroundColor(isSelected ? theme.primaryText : theme.secondaryText)
@@ -222,14 +198,6 @@ struct ClarificationCardView: View {
     // MARK: - Text Input Content
 
     private var textInputContent: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            textInputField
-        }
-        .padding(.horizontal, 12)
-        .padding(.bottom, 12)
-    }
-
-    private var textInputField: some View {
         TextField("", text: $customResponse, axis: .vertical)
             .font(theme.font(size: CGFloat(theme.bodySize) - 1, weight: .regular))
             .foregroundColor(theme.primaryText)
@@ -256,10 +224,10 @@ struct ClarificationCardView: View {
                     .strokeBorder(theme.primaryBorder.opacity(0.2), lineWidth: 0.5)
             )
             .onSubmit {
-                if canSubmit {
-                    onSubmit(responseToSubmit)
-                }
+                if canSubmit { onSubmit(responseToSubmit) }
             }
+            .padding(.horizontal, 12)
+            .padding(.bottom, 12)
     }
 
     // MARK: - Submit Button
