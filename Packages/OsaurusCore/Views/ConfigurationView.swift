@@ -42,6 +42,7 @@ struct ConfigurationView: View {
     @State private var tempMaxKV: String = ""
     @State private var tempPrefillStep: String = ""
     @State private var tempEvictionPolicy: ModelEvictionPolicy = .strictSingleModel
+    @State private var tempWiredMemoryMode: WiredMemoryMode = .off
 
     // Toast settings state
     @State private var tempToastPosition: ToastPosition = .topRight
@@ -314,7 +315,8 @@ struct ConfigurationView: View {
                             "Prefill",
                             "Max KV",
                             "CPU",
-                            "Memory"
+                            "Memory",
+                            "Wired"
                         ) {
                             SettingsSection(title: "Local Inference", icon: "bolt") {
                                 VStack(alignment: .leading, spacing: 20) {
@@ -382,6 +384,23 @@ struct ConfigurationView: View {
                                                 step: 64,
                                                 defaultValue: 512
                                             )
+                                        }
+                                    }
+
+                                    // Wired Memory
+                                    SettingsSubsection(label: "Wired Memory") {
+                                        VStack(alignment: .leading, spacing: 10) {
+                                            Picker("", selection: $tempWiredMemoryMode) {
+                                                ForEach(WiredMemoryMode.allCases, id: \.self) { mode in
+                                                    Text(mode.rawValue).tag(mode)
+                                                }
+                                            }
+                                            .pickerStyle(.segmented)
+                                            .labelsHidden()
+
+                                            Text(tempWiredMemoryMode.description)
+                                                .font(.system(size: 11))
+                                                .foregroundColor(theme.tertiaryText)
                                         }
                                     }
 
@@ -593,6 +612,7 @@ struct ConfigurationView: View {
             ? "" : String(configuration.genPrefillStepSize)
         tempAllowedOrigins = configuration.allowedOrigins.joined(separator: ", ")
         tempEvictionPolicy = configuration.modelEvictionPolicy
+        tempWiredMemoryMode = configuration.wiredMemoryMode
 
         // Load toast configuration
         let toastConfig = ToastConfigurationStore.load()
@@ -647,6 +667,7 @@ struct ConfigurationView: View {
         tempMaxKV = ""
         tempPrefillStep = ""
         tempEvictionPolicy = serverDefaults.modelEvictionPolicy
+        tempWiredMemoryMode = serverDefaults.wiredMemoryMode
 
         // Show success toast
         showSuccess("Settings reset to defaults")
@@ -705,6 +726,9 @@ struct ConfigurationView: View {
         // Save eviction policy
         configuration.modelEvictionPolicy = tempEvictionPolicy
 
+        // Save wired memory mode
+        configuration.wiredMemoryMode = tempWiredMemoryMode
+
         // Save CORS allowed origins
         let parsedOrigins: [String] =
             tempAllowedOrigins
@@ -727,6 +751,7 @@ struct ConfigurationView: View {
             || previousServerCfg.genMaxKVSize != configuration.genMaxKVSize
             || previousServerCfg.genPrefillStepSize != configuration.genPrefillStepSize
             || previousServerCfg.modelEvictionPolicy != configuration.modelEvictionPolicy
+            || previousServerCfg.wiredMemoryMode != configuration.wiredMemoryMode
 
         // Persist to disk
         ServerConfigurationStore.save(configuration)

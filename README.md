@@ -95,6 +95,7 @@ Osaurus is the AI edge runtime for macOS. It brings together:
 | **Voice Input**          | Speech-to-text with WhisperKit, real-time transcription                |
 | **VAD Mode**             | Always-on listening with wake-word agent activation                    |
 | **Transcription Mode**   | Global hotkey to dictate into any focused text field                   |
+| **Wired Memory**         | Pin GPU memory to prevent paging for fast large-model inference        |
 | **Model Manager**        | Download and manage models from Hugging Face                           |
 
 ---
@@ -149,6 +150,24 @@ curl http://127.0.0.1:1337/v1/chat/completions \
   -H "Content-Type: application/json" \
   -d '{"model": "llama-3.2-3b-instruct-4bit", "messages": [{"role": "user", "content": "Hello!"}]}'
 ```
+
+### Wired Memory
+
+Osaurus can wire (pin) GPU memory to prevent macOS from paging it to disk during inference. This is especially important for large models where memory pressure can cause severe slowdowns.
+
+| Mode     | Behavior                                                                 | Best For                                      |
+| -------- | ------------------------------------------------------------------------ | --------------------------------------------- |
+| **Auto** | Wires memory proportional to the loaded model's measured footprint       | Most users (default)                           |
+| **Max**  | Wires as much memory as possible while any model is loaded               | Models that approach your system's RAM limit   |
+| **Off**  | No wiring; macOS manages memory paging normally                          | Small models or when running other memory-heavy apps |
+
+**Trade-offs:**
+
+- **Auto** (recommended) measures the model's actual weight, KV cache, and workspace sizes after loading, then pins exactly that amount. This gives strong inference speed without over-committing memory, leaving room for other apps.
+- **Max** provides the best inference speed by requesting the maximum GPU working set, but it can starve other applications of memory. Use this when you're dedicating the machine to inference.
+- **Off** is safest for multitasking but may result in significantly slower inference for large models if macOS pages GPU memory to disk.
+
+Configure in **Settings** → **Local Inference** → **Wired Memory**, or leave on **Auto** for the best balance of speed and system responsiveness.
 
 ### Remote Providers
 

@@ -14,6 +14,7 @@ struct RuntimeConfig: Sendable {
     let quantStart: Int
     let maxKV: Int?
     let prefillStep: Int
+    let wiredMemoryMode: WiredMemoryMode
 
     static func snapshot() async -> RuntimeConfig {
         let cfg = await ServerController.sharedConfiguration()
@@ -23,7 +24,8 @@ struct RuntimeConfig: Sendable {
             kvGroup: cfg?.genKVGroupSize ?? 64,
             quantStart: cfg?.genQuantizedKVStart ?? 0,
             maxKV: cfg?.genMaxKVSize ?? 8192,
-            prefillStep: cfg?.genPrefillStepSize ?? 512
+            prefillStep: cfg?.genPrefillStepSize ?? 512,
+            wiredMemoryMode: cfg?.wiredMemoryMode ?? .auto
         )
     }
 }

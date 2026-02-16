@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import MLX
 import MLXLLM
 import MLXLMCommon
 
@@ -15,7 +16,8 @@ struct MLXGenerationEngine {
         buildChat: @Sendable () -> [MLXLMCommon.Chat.Message],
         buildToolsSpec: @Sendable () -> [[String: any Sendable]]?,
         generation: GenerationParameters,
-        runtime: RuntimeConfig
+        runtime: RuntimeConfig,
+        wiredMemoryTicket: WiredMemoryTicket? = nil
     ) async throws -> AsyncStream<MLXLMCommon.Generation> {
         let stream: AsyncStream<MLXLMCommon.Generation> = try await container.perform {
             (context: MLXLMCommon.ModelContext) in
@@ -44,7 +46,8 @@ struct MLXGenerationEngine {
                 input: fullLMInput,
                 cache: nil,
                 parameters: parameters,
-                context: contextWithEOS
+                context: contextWithEOS,
+                wiredMemoryTicket: wiredMemoryTicket
             )
         }
         return stream
