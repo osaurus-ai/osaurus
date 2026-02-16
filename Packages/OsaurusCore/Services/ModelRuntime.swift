@@ -160,17 +160,27 @@ actor ModelRuntime {
                 // ignore errors; best-effort warm-up / streaming
             }
             continuation.finish()
+            ModelRuntime.releaseGenerationMemory()
         }
 
         // Cancel producer task when consumer stops consuming
         continuation.onTermination = { @Sendable _ in
             producerTask.cancel()
+            ModelRuntime.releaseGenerationMemory()
         }
 
         return stream
     }
 
     // MARK: - Internals
+
+    /// Release GPU memory pooled by MLX after generation completes.
+    /// Synchronizes the GPU stream first to ensure all operations finish,
+    /// then frees unused Metal buffers from the allocator cache.
+    private nonisolated static func releaseGenerationMemory() {
+        Stream.gpu.synchronize()
+        MLX.Memory.clearCache()
+    }
 
     private func loadContainer(id: String, name: String) async throws -> SessionHolder {
         // 1. Check cache
@@ -293,14 +303,21 @@ actor ModelRuntime {
             modelId: modelId,
             modelName: modelName
         )
-        for try await ev in events {
-            switch ev {
-            case .tokens(let s):
-                accumulated += s
-            case .toolInvocation(let name, let argsJSON):
-                throw ServiceToolInvocation(toolName: name, jsonArguments: argsJSON)
+        do {
+            for try await ev in events {
+                switch ev {
+                case .tokens(let s):
+                    accumulated += s
+                case .toolInvocation(let name, let argsJSON):
+                    ModelRuntime.releaseGenerationMemory()
+                    throw ServiceToolInvocation(toolName: name, jsonArguments: argsJSON)
+                }
             }
+        } catch {
+            ModelRuntime.releaseGenerationMemory()
+            throw error
         }
+        ModelRuntime.releaseGenerationMemory()
         return accumulated
     }
 
@@ -329,6 +346,7 @@ actor ModelRuntime {
                     // Check for task cancellation to allow early termination
                     if Task.isCancelled {
                         continuation.finish()
+                        ModelRuntime.releaseGenerationMemory()
                         return
                     }
                     switch ev {
@@ -338,6 +356,7 @@ actor ModelRuntime {
                         continuation.finish(
                             throwing: ServiceToolInvocation(toolName: name, jsonArguments: argsJSON)
                         )
+                        ModelRuntime.releaseGenerationMemory()
                         return
                     }
                 }
@@ -350,11 +369,13 @@ actor ModelRuntime {
                     continuation.finish(throwing: error)
                 }
             }
+            ModelRuntime.releaseGenerationMemory()
         }
 
         // Cancel producer task when consumer stops consuming
         continuation.onTermination = { @Sendable _ in
             producerTask.cancel()
+            ModelRuntime.releaseGenerationMemory()
         }
 
         return stream
