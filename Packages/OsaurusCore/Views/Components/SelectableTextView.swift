@@ -327,7 +327,7 @@ struct SelectableTextView: NSViewRepresentable {
         nsView.textContainer?.containerSize = NSSize(width: width, height: .greatestFiniteMagnitude)
         guard let tc = nsView.textContainer, let lm = nsView.layoutManager else { return nil }
         lm.ensureLayout(for: tc)
-        let measured = ceil(lm.usedRect(for: tc).height) + 4
+        let measured = ceil(lm.usedRect(for: tc).height) + 8
 
         coord.lastWidth = width
         coord.lastMeasuredHeight = measured

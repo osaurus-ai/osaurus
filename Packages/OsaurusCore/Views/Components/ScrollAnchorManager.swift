@@ -79,7 +79,7 @@ final class ScrollAnchorManager {
     /// Save the topmost visible row + offset. Call **before** applying a snapshot.
     /// When pinned to bottom, no anchor is saved -- `scrollToBottom()` handles that case.
     func saveAnchor() {
-        guard let tableView, let scrollView, !isPinnedToBottom else {
+        guard let tableView, let scrollView else {
             savedAnchor = nil
             return
         }
