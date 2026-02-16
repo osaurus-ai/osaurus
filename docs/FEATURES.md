@@ -309,7 +309,7 @@ Canonical reference for all Osaurus features, their status, and documentation.
 
 ### Agents
 
-**Purpose:** Create custom AI assistant agentlities with unique behaviors, capabilities, and visual styles.
+**Purpose:** Create custom AI assistants with unique behaviors, capabilities, and visual styles.
 
 **Components:**
 

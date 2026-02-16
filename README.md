@@ -26,11 +26,12 @@ Created by Dinoki Labs ([dinoki.ai](https://dinoki.ai))
 
 ---
 
-> ⚠️ **Naming Changes in This Release**
+> ⚠️ **Naming Changes in This Release** ⚠️
 >
 > We've renamed two core concepts to better reflect their purpose:
-> - **Agents** are now called **Agents** — custom AI assistants with unique prompts, tools, and themes.
-> - **Work Mode** is now called **Work Mode** — autonomous task execution with issue tracking and file operations.
+>
+> - **Personas** are now called **Agents** — custom AI assistants with unique prompts, tools, and themes.
+> - **Agent Mode** is now called **Work Mode** — autonomous task execution with issue tracking and file operations.
 >
 > All existing data is automatically migrated. This notice will be removed in a future release.
 
@@ -83,16 +84,16 @@ Osaurus is the AI edge runtime for macOS. It brings together:
 | **Remote MCP Providers** | Aggregate tools from external MCP servers                              |
 | **Tools & Plugins**      | Browser automation, file system, git, web search, and more             |
 | **Skills**               | Import AI capabilities from GitHub or files, with smart context saving |
-| **Agents**             | Custom AI assistants with unique prompts, tools, and themes            |
+| **Agents**               | Custom AI assistants with unique prompts, tools, and themes            |
 | **Schedules**            | Automate AI tasks with daily, weekly, monthly, or yearly runs          |
 | **Watchers**             | Monitor folders and trigger AI tasks on file system changes            |
 | **Work Mode**            | Autonomous multi-step task execution with parallel task support        |
 | **Custom Themes**        | Create, import, and export themes with full color customization        |
 | **Developer Tools**      | Request insights, API explorer, and live endpoint testing              |
-| **Multi-Window Chat**    | Multiple independent chat windows with per-window agents             |
+| **Multi-Window Chat**    | Multiple independent chat windows with per-window agents               |
 | **Menu Bar Chat**        | Chat overlay with session history, context tracking (`⌘;`)             |
 | **Voice Input**          | Speech-to-text with WhisperKit, real-time transcription                |
-| **VAD Mode**             | Always-on listening with wake-word agent activation                  |
+| **VAD Mode**             | Always-on listening with wake-word agent activation                    |
 | **Transcription Mode**   | Global hotkey to dictate into any focused text field                   |
 | **Model Manager**        | Download and manage models from Hugging Face                           |
 
@@ -221,11 +222,11 @@ See the [Plugin Authoring Guide](docs/PLUGIN_AUTHORING.md) for details.
 
 ### Agents
 
-Create custom AI assistant agentlities with unique behaviors, capabilities, and styles.
+Create custom AI assistants with unique behaviors, capabilities, and styles.
 
 Each agent can have:
 
-- **Custom System Prompt** — Define unique instructions and agentlity
+- **Custom System Prompt** — Define unique instructions and personality
 - **Tool Configuration** — Enable or disable specific tools per agent
 - **Visual Theme** — Assign a custom theme that activates with the agent
 - **Model & Generation Settings** — Set default model, temperature, and max tokens
@@ -332,7 +333,7 @@ Execute complex, multi-step tasks autonomously with built-in issue tracking and 
 
 Access via Chat window → **Work Mode** tab.
 
-See [Agents Guide](docs/WORK.md) for details.
+See [Work Mode Guide](docs/WORK.md) for details.
 
 ### Multi-Window Chat
 
