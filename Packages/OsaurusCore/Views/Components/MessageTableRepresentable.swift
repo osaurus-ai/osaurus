@@ -439,8 +439,6 @@ extension MessageTableRepresentable {
                 if let row = blockIds.firstIndex(of: headerId) {
                     scrollAnchor.scrollToRow(row, animated: true)
                 }
-            } else if scrollAnchor.isPinnedToBottom {
-                scrollAnchor.scrollToBottom()
             } else {
                 scrollAnchor.restoreAnchor()
             }
@@ -550,10 +548,6 @@ extension MessageTableRepresentable {
                 NSAnimationContext.current.duration = 0
                 tv.noteHeightOfRows(withIndexesChanged: IndexSet(integer: row))
                 NSAnimationContext.endGrouping()
-
-                if self.scrollAnchor.isPinnedToBottom {
-                    self.scrollAnchor.scrollToBottom()
-                }
             }
         }
 
