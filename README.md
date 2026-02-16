@@ -155,11 +155,20 @@ curl http://127.0.0.1:1337/v1/chat/completions \
 
 Osaurus can wire (pin) GPU memory to prevent macOS from paging it to disk during inference. This is especially important for large models where memory pressure can cause severe slowdowns.
 
-| Mode     | Behavior                                                                 | Best For                                      |
-| -------- | ------------------------------------------------------------------------ | --------------------------------------------- |
-| **Auto** | Wires memory proportional to the loaded model's measured footprint       | Most users (default)                           |
-| **Max**  | Wires as much memory as possible while any model is loaded               | Models that approach your system's RAM limit   |
-| **Off**  | No wiring; macOS manages memory paging normally                          | Small models or when running other memory-heavy apps |
+| Mode     | Behavior                                                           | Best For                                             |
+| -------- | ------------------------------------------------------------------ | ---------------------------------------------------- |
+| **Auto** | Wires memory proportional to the loaded model's measured footprint | Most users (default)                                 |
+| **Max**  | Wires as much memory as possible while any model is loaded         | Models that approach your system's RAM limit         |
+| **Off**  | No wiring; macOS manages memory paging normally                    | Small models or when running other memory-heavy apps |
+
+**Why it matters:** When a large model's memory gets paged to disk, inference speed drops dramatically. Upstream benchmarks on Qwen3-Next-80B (~42 GB) show the difference wiring makes:
+
+| Metric             | Without Wiring | With Wiring | Speedup |
+| ------------------ | -------------- | ----------- | ------- |
+| Generation (tok/s) | 0.62           | 41          | **66x** |
+| Prompt (tok/s)     | 6              | 113         | **19x** |
+
+> Benchmark from [mlx-swift-lm PR #72](https://github.com/ml-explore/mlx-swift-lm/pull/72). Results are most pronounced for models that approach your system's total RAM. Smaller models that fit comfortably in memory will see little to no difference.
 
 **Trade-offs:**
 
