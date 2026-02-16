@@ -3,7 +3,7 @@
 //  osaurus
 //
 //  Centralized toast notification management with intelligent stacking,
-//  independent timeouts, and persona support.
+//  independent timeouts, and agent support.
 //
 
 import AppKit
@@ -245,7 +245,7 @@ public final class ToastManager: ObservableObject {
         _ type: ToastType = .info,
         title: String,
         message: String? = nil,
-        personaId: UUID? = nil,
+        agentId: UUID? = nil,
         avatarImageData: Data? = nil,
         buttonTitle: String = "Open Chat",
         timeout: TimeInterval? = nil
@@ -256,23 +256,23 @@ public final class ToastManager: ObservableObject {
                 title: title,
                 message: message,
                 timeout: timeout,
-                personaId: personaId,
+                agentId: agentId,
                 avatarImageData: avatarImageData,
                 actionTitle: buttonTitle,
-                action: .openChat(personaId: personaId)
+                action: .openChat(agentId: agentId)
             )
         )
     }
 
-    // MARK: - Persona Support
+    // MARK: - Agent Support
 
-    /// Show a toast with persona avatar
+    /// Show a toast with agent avatar
     @discardableResult
-    public func showForPersona(
+    public func showForAgent(
         _ type: ToastType,
         title: String,
         message: String? = nil,
-        personaId: UUID,
+        agentId: UUID,
         avatarImageData: Data? = nil,
         customThemeId: UUID? = nil,
         timeout: TimeInterval? = nil
@@ -283,19 +283,19 @@ public final class ToastManager: ObservableObject {
                 title: title,
                 message: message,
                 timeout: timeout,
-                personaId: personaId,
+                agentId: agentId,
                 avatarImageData: avatarImageData,
                 customThemeId: customThemeId
             )
         )
     }
 
-    /// Show a loading toast for a persona task
+    /// Show a loading toast for an agent task
     @discardableResult
-    public func loadingForPersona(
+    public func loadingForAgent(
         _ title: String,
         message: String? = nil,
-        personaId: UUID,
+        agentId: UUID,
         avatarImageData: Data? = nil,
         customThemeId: UUID? = nil,
         progress: Double? = nil
@@ -305,7 +305,7 @@ public final class ToastManager: ObservableObject {
                 type: .loading,
                 title: title,
                 message: message,
-                personaId: personaId,
+                agentId: agentId,
                 avatarImageData: avatarImageData,
                 customThemeId: customThemeId,
                 progress: progress
@@ -352,20 +352,20 @@ public final class ToastManager: ObservableObject {
     /// Handle built-in actions automatically
     private func handleBuiltInAction(_ action: ToastAction) {
         switch action {
-        case .openChat(let personaId):
-            // Open chat window with optional persona
-            if let personaId = personaId {
-                // Check if there's already a window for this persona
-                if let existingWindow = ChatWindowManager.shared.findWindows(byPersonaId: personaId).first {
+        case .openChat(let agentId):
+            // Open chat window with optional agent
+            if let agentId = agentId {
+                // Check if there's already a window for this agent
+                if let existingWindow = ChatWindowManager.shared.findWindows(byAgentId: agentId).first {
                     ChatWindowManager.shared.showWindow(id: existingWindow.id)
                 } else {
-                    ChatWindowManager.shared.createWindow(personaId: personaId)
+                    ChatWindowManager.shared.createWindow(agentId: agentId)
                 }
             } else {
                 ChatWindowManager.shared.createWindow()
             }
 
-        case .openChatSession(let sessionId, let personaId):
+        case .openChatSession(let sessionId, let agentId):
             // Check if there's already a window with this session open
             if let existingWindow = ChatWindowManager.shared.findWindow(bySessionId: sessionId) {
                 ChatWindowManager.shared.showWindow(id: existingWindow.id)
@@ -374,15 +374,15 @@ public final class ToastManager: ObservableObject {
 
             // Open chat window with specific session
             if let sessionData = ChatSessionStore.load(id: sessionId) {
-                let effectivePersonaId = personaId ?? sessionData.personaId
+                let effectiveAgentId = agentId ?? sessionData.agentId
                 ChatWindowManager.shared.createWindow(
-                    personaId: effectivePersonaId,
+                    agentId: effectiveAgentId,
                     sessionData: sessionData
                 )
             } else {
                 // Session not found, just open a new chat
-                if let personaId = personaId {
-                    ChatWindowManager.shared.createWindow(personaId: personaId)
+                if let agentId = agentId {
+                    ChatWindowManager.shared.createWindow(agentId: agentId)
                 } else {
                     ChatWindowManager.shared.createWindow()
                 }

@@ -113,8 +113,8 @@ public struct ToastConfiguration: Codable, Equatable, Sendable {
     /// Maximum number of toasts visible at once
     public var maxVisibleToasts: Int
 
-    /// Whether to visually group toasts by persona
-    public var groupByPersona: Bool
+    /// Whether to visually group toasts by agent
+    public var groupByAgent: Bool
 
     /// Whether toasts are enabled
     public var enabled: Bool
@@ -126,14 +126,14 @@ public struct ToastConfiguration: Codable, Equatable, Sendable {
         position: ToastPosition = .topRight,
         defaultTimeout: TimeInterval = 5.0,
         maxVisibleToasts: Int = 5,
-        groupByPersona: Bool = true,
+        groupByAgent: Bool = true,
         enabled: Bool = true,
         maxConcurrentTasks: Int = 5
     ) {
         self.position = position
         self.defaultTimeout = defaultTimeout
         self.maxVisibleToasts = maxVisibleToasts
-        self.groupByPersona = groupByPersona
+        self.groupByAgent = groupByAgent
         self.enabled = enabled
         self.maxConcurrentTasks = maxConcurrentTasks
     }
@@ -149,7 +149,7 @@ public struct ToastConfiguration: Codable, Equatable, Sendable {
         position = try container.decode(ToastPosition.self, forKey: .position)
         defaultTimeout = try container.decode(TimeInterval.self, forKey: .defaultTimeout)
         maxVisibleToasts = try container.decode(Int.self, forKey: .maxVisibleToasts)
-        groupByPersona = try container.decode(Bool.self, forKey: .groupByPersona)
+        groupByAgent = try container.decode(Bool.self, forKey: .groupByAgent)
         enabled = try container.decode(Bool.self, forKey: .enabled)
         maxConcurrentTasks =
             try container.decodeIfPresent(Int.self, forKey: .maxConcurrentTasks) ?? defaults.maxConcurrentTasks
@@ -205,8 +205,8 @@ public struct Toast: Identifiable, Sendable {
     /// Custom timeout override (nil uses default, 0 = never auto-dismiss)
     public var timeout: TimeInterval?
 
-    /// Optional persona ID for avatar display
-    public var personaId: UUID?
+    /// Optional agent ID for avatar display
+    public var agentId: UUID?
 
     /// Custom avatar image data (base64 encoded for Sendable)
     public var avatarImageData: Data?
@@ -220,7 +220,7 @@ public struct Toast: Identifiable, Sendable {
     /// Structured action (preferred over actionId)
     public var action: ToastAction?
 
-    /// Custom theme ID override (for persona-specific theming)
+    /// Custom theme ID override (for agent-specific theming)
     public var customThemeId: UUID?
 
     /// When this toast was created
@@ -235,7 +235,7 @@ public struct Toast: Identifiable, Sendable {
         title: String,
         message: String? = nil,
         timeout: TimeInterval? = nil,
-        personaId: UUID? = nil,
+        agentId: UUID? = nil,
         avatarImageData: Data? = nil,
         actionTitle: String? = nil,
         actionId: String? = nil,
@@ -249,7 +249,7 @@ public struct Toast: Identifiable, Sendable {
         self.title = title
         self.message = message
         self.timeout = timeout
-        self.personaId = personaId
+        self.agentId = agentId
         self.avatarImageData = avatarImageData
         self.actionTitle = actionTitle
         self.actionId = actionId
@@ -288,11 +288,11 @@ public struct Toast: Identifiable, Sendable {
 
 /// Predefined actions that can be triggered from toasts
 public enum ToastAction: Equatable, Sendable {
-    /// Open a chat window with optional persona
-    case openChat(personaId: UUID?)
+    /// Open a chat window with optional agent
+    case openChat(agentId: UUID?)
 
     /// Open a chat window and load a specific session
-    case openChatSession(sessionId: UUID, personaId: UUID?)
+    case openChatSession(sessionId: UUID, agentId: UUID?)
 
     /// Show an existing chat window by its window ID
     case showChatWindow(windowId: UUID)
@@ -337,13 +337,13 @@ public enum ToastAction: Equatable, Sendable {
     /// String identifier for serialization/notification
     public var actionId: String {
         switch self {
-        case .openChat(let personaId):
-            if let id = personaId {
+        case .openChat(let agentId):
+            if let id = agentId {
                 return "openChat:\(id.uuidString)"
             }
             return "openChat"
-        case .openChatSession(let sessionId, let personaId):
-            if let pid = personaId {
+        case .openChatSession(let sessionId, let agentId):
+            if let pid = agentId {
                 return "openChatSession:\(sessionId.uuidString):\(pid.uuidString)"
             }
             return "openChatSession:\(sessionId.uuidString)"
@@ -374,14 +374,14 @@ public enum ToastAction: Equatable, Sendable {
         switch command {
         case "openChat":
             if parts.count > 1, let uuid = UUID(uuidString: parts[1]) {
-                return .openChat(personaId: uuid)
+                return .openChat(agentId: uuid)
             }
-            return .openChat(personaId: nil)
+            return .openChat(agentId: nil)
 
         case "openChatSession":
             guard parts.count > 1, let sessionId = UUID(uuidString: parts[1]) else { return nil }
-            let personaId = parts.count > 2 ? UUID(uuidString: parts[2]) : nil
-            return .openChatSession(sessionId: sessionId, personaId: personaId)
+            let agentId = parts.count > 2 ? UUID(uuidString: parts[2]) : nil
+            return .openChatSession(sessionId: sessionId, agentId: agentId)
 
         case "showChatWindow":
             guard parts.count > 1, let windowId = UUID(uuidString: parts[1]) else { return nil }

@@ -3,7 +3,7 @@
 //  osaurus
 //
 //  Data models for background task management.
-//  Used when agent tasks continue running after their window is closed.
+//  Used when work tasks continue running after their window is closed.
 //
 
 import Foundation
@@ -103,24 +103,24 @@ public final class BackgroundTaskState: ObservableObject, Identifiable {
     /// Original window ID (unique identifier for this background task)
     public let id: UUID
 
-    /// Whether this is a chat or agent background task
+    /// Whether this is a chat or work background task
     public let mode: ChatMode
 
-    /// Agent task ID (empty string for chat mode)
+    /// Work task ID (empty string for chat mode)
     public var taskId: String
 
     /// Display title for the task
     public var taskTitle: String
 
-    /// Persona ID associated with this task
-    public let personaId: UUID
+    /// Agent ID associated with this task
+    public let agentId: UUID
 
-    /// The agent session (retained reference, keeps task executing).
-    /// Present for agent mode; nil for chat mode.
-    private(set) var session: AgentSession?
+    /// The work session (retained reference, keeps task executing).
+    /// Present for work mode; nil for chat mode.
+    private(set) var session: WorkSession?
 
     /// The chat session (retained reference for chat mode observation).
-    /// Present for chat mode; nil for agent mode (use executionContext.chatSession instead).
+    /// Present for chat mode; nil for work mode (use executionContext.chatSession instead).
     private(set) var chatSession: ChatSession?
 
     /// The execution context (retained for lazy window creation).
@@ -140,13 +140,13 @@ public final class BackgroundTaskState: ObservableObject, Identifiable {
     /// Description of current step being executed
     @Published public var currentStep: String?
 
-    /// Issues for the task (agent mode only)
+    /// Issues for the task (work mode only)
     @Published public var issues: [Issue] = []
 
-    /// ID of the currently active issue (agent mode only)
+    /// ID of the currently active issue (work mode only)
     @Published public var activeIssueId: String?
 
-    /// Current reasoning loop state (agent mode only)
+    /// Current reasoning loop state (work mode only)
     @Published public var loopState: LoopState?
 
     /// Pending clarification request (when status is .awaitingClarification)
@@ -164,13 +164,13 @@ public final class BackgroundTaskState: ObservableObject, Identifiable {
 
     private let maxActivityItems: Int = 40
 
-    /// Agent mode initializer
+    /// Work mode initializer
     init(
         id: UUID,
         taskId: String,
         taskTitle: String,
-        personaId: UUID,
-        session: AgentSession,
+        agentId: UUID,
+        session: WorkSession,
         executionContext: ExecutionContext? = nil,
         windowState: ChatWindowState? = nil,
         status: BackgroundTaskStatus = .running,
@@ -179,10 +179,10 @@ public final class BackgroundTaskState: ObservableObject, Identifiable {
         pendingClarification: ClarificationRequest? = nil
     ) {
         self.id = id
-        self.mode = .agent
+        self.mode = .work
         self.taskId = taskId
         self.taskTitle = taskTitle
-        self.personaId = personaId
+        self.agentId = agentId
         self.session = session
         self.chatSession = nil
         self.executionContext = executionContext
@@ -198,7 +198,7 @@ public final class BackgroundTaskState: ObservableObject, Identifiable {
     init(
         id: UUID,
         taskTitle: String,
-        personaId: UUID,
+        agentId: UUID,
         chatSession: ChatSession,
         executionContext: ExecutionContext,
         status: BackgroundTaskStatus = .running,
@@ -208,7 +208,7 @@ public final class BackgroundTaskState: ObservableObject, Identifiable {
         self.mode = .chat
         self.taskId = ""
         self.taskTitle = taskTitle
-        self.personaId = personaId
+        self.agentId = agentId
         self.session = nil
         self.chatSession = chatSession
         self.executionContext = executionContext

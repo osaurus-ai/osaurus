@@ -1,5 +1,5 @@
 //
-//  AgentFileOperation.swift
+//  WorkFileOperation.swift
 //  osaurus
 //
 //  Models for tracking file operations for undo capability.
@@ -9,8 +9,8 @@ import Foundation
 
 // MARK: - Operation Type
 
-/// Type of file operation performed by agent tools
-public enum AgentFileOperationType: String, Codable, Sendable {
+/// Type of file operation performed by work tools
+public enum WorkFileOperationType: String, Codable, Sendable {
     case create  // New file created
     case write  // Existing file modified
     case move  // File/directory moved
@@ -22,9 +22,9 @@ public enum AgentFileOperationType: String, Codable, Sendable {
 // MARK: - File Operation
 
 /// A recorded file operation that can be undone
-public struct AgentFileOperation: Codable, Sendable, Identifiable {
+public struct WorkFileOperation: Codable, Sendable, Identifiable {
     public let id: UUID
-    public let type: AgentFileOperationType
+    public let type: WorkFileOperationType
     public let path: String  // Relative path from root
     public let destinationPath: String?  // For move/copy operations
     public let previousContent: String?  // For write/delete (to restore)
@@ -34,7 +34,7 @@ public struct AgentFileOperation: Codable, Sendable, Identifiable {
 
     public init(
         id: UUID = UUID(),
-        type: AgentFileOperationType,
+        type: WorkFileOperationType,
         path: String,
         destinationPath: String? = nil,
         previousContent: String? = nil,
@@ -55,7 +55,7 @@ public struct AgentFileOperation: Codable, Sendable, Identifiable {
 
 // MARK: - Display Helpers
 
-extension AgentFileOperationType {
+extension WorkFileOperationType {
     /// SF Symbol for this operation type
     public var iconName: String {
         switch self {
@@ -81,7 +81,7 @@ extension AgentFileOperationType {
     }
 }
 
-extension AgentFileOperation {
+extension WorkFileOperation {
     /// Display filename (last path component)
     public var filename: String {
         (path as NSString).lastPathComponent

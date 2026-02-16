@@ -276,7 +276,9 @@ public final class SkillManager: ObservableObject {
 
     public func exportSkillAsZip(_ skill: Skill) throws -> URL {
         let skillDir = SkillStore.skillDirectory(for: skill)
-        let zipURL = FileManager.default.temporaryDirectory.appendingPathComponent("\(skill.agentSkillsName).zip")
+        let zipURL = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "\(skill.xplaceholder_agentSkillsNamex).zip"
+        )
         try? FileManager.default.removeItem(at: zipURL)
         try FileManager.default.zipItem(at: skillDir, to: zipURL)
         guard FileManager.default.fileExists(atPath: zipURL.path) else {
@@ -309,7 +311,7 @@ public final class SkillManager: ObservableObject {
             category: skill.category,
             enabled: true,
             instructions: skill.instructions,
-            directoryName: skill.agentSkillsName
+            directoryName: skill.xplaceholder_agentSkillsNamex
         )
 
         SkillStore.save(skill)

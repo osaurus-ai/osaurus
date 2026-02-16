@@ -1,5 +1,5 @@
 //
-//  AgentEngine.swift
+//  WorkEngine.swift
 //  osaurus
 //
 //  Main coordinator for Osaurus Agents execution flow.
@@ -8,10 +8,10 @@
 
 import Foundation
 
-/// Main coordinator for agent execution
-public actor AgentEngine {
+/// Main coordinator for work execution
+public actor WorkEngine {
     /// The execution engine
-    private let executionEngine: AgentExecutionEngine
+    private let executionEngine: WorkExecutionEngine
 
     /// Current execution state
     private var isExecuting = false
@@ -30,10 +30,10 @@ public actor AgentEngine {
     private var retryConfig = RetryConfiguration.default
 
     /// Delegate for execution events
-    public nonisolated(unsafe) weak var delegate: AgentEngineDelegate?
+    public nonisolated(unsafe) weak var delegate: WorkEngineDelegate?
 
     public init() {
-        self.executionEngine = AgentExecutionEngine()
+        self.executionEngine = WorkExecutionEngine()
     }
 
     /// Sets the retry configuration
@@ -54,7 +54,7 @@ public actor AgentEngine {
     // MARK: - Delegate
 
     /// Sets the delegate for receiving execution events
-    public nonisolated func setDelegate(_ delegate: AgentEngineDelegate?) {
+    public nonisolated func setDelegate(_ delegate: WorkEngineDelegate?) {
         self.delegate = delegate
     }
 
@@ -63,7 +63,7 @@ public actor AgentEngine {
     /// Creates and executes a task from a user query
     /// - Parameters:
     ///   - query: The user's query/request
-    ///   - personaId: Optional persona ID
+    ///   - agentId: Optional agent ID
     ///   - model: Model to use for execution
     ///   - systemPrompt: System prompt to use
     ///   - tools: Available tools
@@ -72,7 +72,7 @@ public actor AgentEngine {
     /// - Returns: The execution result
     func run(
         query: String,
-        personaId: UUID? = nil,
+        agentId: UUID? = nil,
         model: String?,
         systemPrompt: String,
         tools: [Tool],
@@ -80,20 +80,20 @@ public actor AgentEngine {
         skillCatalog: [CapabilityEntry] = []
     ) async throws -> ExecutionResult {
         guard !isExecuting else {
-            throw AgentEngineError.alreadyExecuting
+            throw WorkEngineError.alreadyExecuting
         }
 
         // Create task and initial issue (IssueManager is @MainActor)
-        let task = await IssueManager.shared.createTaskSafe(query: query, personaId: personaId)
+        let task = await IssueManager.shared.createTaskSafe(query: query, agentId: agentId)
         guard let task = task else {
-            throw AgentEngineError.noIssueCreated
+            throw WorkEngineError.noIssueCreated
         }
 
         // Get the initial issue
         let issues = try IssueStore.listIssues(forTask: task.id)
 
         guard let issue = issues.first else {
-            throw AgentEngineError.noIssueCreated
+            throw WorkEngineError.noIssueCreated
         }
 
         return try await execute(
@@ -116,11 +116,11 @@ public actor AgentEngine {
         skillCatalog: [CapabilityEntry] = []
     ) async throws -> ExecutionResult {
         guard !isExecuting else {
-            throw AgentEngineError.alreadyExecuting
+            throw WorkEngineError.alreadyExecuting
         }
 
         guard let issue = try IssueStore.getIssue(id: issueId) else {
-            throw AgentEngineError.issueNotFound(issueId)
+            throw WorkEngineError.issueNotFound(issueId)
         }
 
         return try await execute(
@@ -144,7 +144,7 @@ public actor AgentEngine {
         skillCatalog: [CapabilityEntry] = []
     ) async throws -> ExecutionResult? {
         guard !isExecuting else {
-            throw AgentEngineError.alreadyExecuting
+            throw WorkEngineError.alreadyExecuting
         }
 
         let readyIssues = try IssueStore.readyIssues(forTask: taskId)
@@ -179,7 +179,7 @@ public actor AgentEngine {
             type: type
         )
         guard let issue = issue else {
-            throw AgentEngineError.noIssueCreated
+            throw WorkEngineError.noIssueCreated
         }
         return issue
     }
@@ -188,7 +188,7 @@ public actor AgentEngine {
     public func close(issueId: String, reason: String) async throws {
         let success = await IssueManager.shared.closeIssueSafe(issueId, result: reason)
         if !success {
-            throw AgentEngineError.issueNotFound(issueId)
+            throw WorkEngineError.issueNotFound(issueId)
         }
     }
 
@@ -213,11 +213,11 @@ public actor AgentEngine {
     ) async throws -> ExecutionResult {
         // Verify we have a pending clarification for this issue
         guard let awaiting = awaitingClarification, awaiting.issueId == issueId else {
-            throw AgentEngineError.noPendingClarification
+            throw WorkEngineError.noPendingClarification
         }
 
         guard let context = pendingExecutionContext else {
-            throw AgentEngineError.noPendingClarification
+            throw WorkEngineError.noPendingClarification
         }
 
         // Log the clarification response
@@ -234,7 +234,7 @@ public actor AgentEngine {
 
         // Get and update the issue with clarification context
         guard var issue = try IssueStore.getIssue(id: issueId) else {
-            throw AgentEngineError.issueNotFound(issueId)
+            throw WorkEngineError.issueNotFound(issueId)
         }
 
         // Append clarification to issue description for context
@@ -298,7 +298,7 @@ public actor AgentEngine {
 
         // Mark issue as in progress
         _ = await IssueManager.shared.startIssueSafe(issue.id)
-        await delegate?.agentEngine(self, didStartIssue: issue)
+        await delegate?.workEngine(self, didStartIssue: issue)
 
         // Build initial messages
         var messages: [ChatMessage] = []
@@ -312,18 +312,18 @@ public actor AgentEngine {
         messages.append(ChatMessage(role: "user", content: issue.description ?? issue.title))
 
         // Refresh folder context to ensure the file tree and git status are current
-        await AgentFolderContextService.shared.refreshContext()
-        let folderContext = await MainActor.run { AgentFolderContextService.shared.currentContext }
+        await WorkFolderContextService.shared.refreshContext()
+        let folderContext = await MainActor.run { WorkFolderContextService.shared.currentContext }
 
         // Set up file operation log with root path for undo support
         if let rootPath = folderContext?.rootPath {
-            await AgentFileOperationLog.shared.setRootPath(rootPath)
+            await WorkFileOperationLog.shared.setRootPath(rootPath)
         }
 
         // Load skill instructions if any skills are selected
         let skillInstructions = await buildSkillInstructions(from: skillCatalog)
 
-        // Build the agent system prompt using the new method
+        // Build the work system prompt using the new method
         let agentSystemPrompt = await executionEngine.buildAgentSystemPrompt(
             base: systemPrompt,
             issue: issue,
@@ -341,7 +341,7 @@ public actor AgentEngine {
             )
         )
 
-        // Load agent generation settings from configuration
+        // Load work generation settings from configuration
         let agentCfg = await ChatConfigurationStore.load()
 
         // Run the reasoning loop
@@ -352,22 +352,22 @@ public actor AgentEngine {
             model: model,
             tools: tools,
             toolOverrides: toolOverrides,
-            temperature: agentCfg.agentTemperature,
-            maxTokens: agentCfg.agentMaxTokens,
-            topPOverride: agentCfg.agentTopPOverride,
-            maxIterations: agentCfg.agentMaxIterations ?? AgentExecutionEngine.defaultMaxIterations,
+            temperature: agentCfg.workTemperature,
+            maxTokens: agentCfg.workMaxTokens,
+            topPOverride: agentCfg.workTopPOverride,
+            maxIterations: agentCfg.workMaxIterations ?? WorkExecutionEngine.defaultMaxIterations,
             onIterationStart: { [weak self] iteration in
                 guard let self = self else { return }
-                self.delegate?.agentEngine(self, didStartIteration: iteration, forIssue: issue)
+                self.delegate?.workEngine(self, didStartIteration: iteration, forIssue: issue)
             },
             onDelta: { [weak self] delta, iteration in
                 guard let self = self else { return }
-                self.delegate?.agentEngine(self, didReceiveStreamingDelta: delta, forStep: iteration)
+                self.delegate?.workEngine(self, didReceiveStreamingDelta: delta, forStep: iteration)
             },
             onToolCall: { [weak self] toolName, args, result in
                 guard let self = self else { return }
                 // Notify delegate of tool call
-                self.delegate?.agentEngine(
+                self.delegate?.workEngine(
                     self,
                     didCallTool: toolName,
                     withArguments: args,
@@ -377,7 +377,7 @@ public actor AgentEngine {
             },
             onStatusUpdate: { [weak self] status in
                 guard let self = self else { return }
-                self.delegate?.agentEngine(self, didUpdateStatus: status, forIssue: issue)
+                self.delegate?.workEngine(self, didUpdateStatus: status, forIssue: issue)
             },
             onArtifact: { [weak self] artifact in
                 guard let self = self else { return }
@@ -394,11 +394,11 @@ public actor AgentEngine {
                         )
                     )
                 )
-                self.delegate?.agentEngine(self, didGenerateArtifact: artifact, forIssue: issue)
+                self.delegate?.workEngine(self, didGenerateArtifact: artifact, forIssue: issue)
             },
             onTokensConsumed: { [weak self] inputTokens, outputTokens in
                 guard let self = self else { return }
-                self.delegate?.agentEngine(self, didConsumeTokens: inputTokens, output: outputTokens, forIssue: issue)
+                self.delegate?.workEngine(self, didConsumeTokens: inputTokens, output: outputTokens, forIssue: issue)
             }
         )
 
@@ -426,7 +426,7 @@ public actor AgentEngine {
                     )
                 )
 
-                await delegate?.agentEngine(self, didGenerateArtifact: artifact, forIssue: issue)
+                await delegate?.workEngine(self, didGenerateArtifact: artifact, forIssue: issue)
             }
 
             // Log execution completed
@@ -442,7 +442,7 @@ public actor AgentEngine {
                 )
             )
 
-            await delegate?.agentEngine(self, didCompleteIssue: issue, success: true)
+            await delegate?.workEngine(self, didCompleteIssue: issue, success: true)
 
             return ExecutionResult(
                 issue: issue,
@@ -482,7 +482,7 @@ public actor AgentEngine {
             )
 
             // Notify delegate
-            await delegate?.agentEngine(self, needsClarification: request, forIssue: issue)
+            await delegate?.workEngine(self, needsClarification: request, forIssue: issue)
 
             return ExecutionResult(
                 issue: issue,
@@ -539,7 +539,7 @@ public actor AgentEngine {
                 )
             )
 
-            await delegate?.agentEngine(self, didCompleteIssue: issue, success: true)
+            await delegate?.workEngine(self, didCompleteIssue: issue, success: true)
 
             return ExecutionResult(
                 issue: issue,
@@ -584,7 +584,7 @@ public actor AgentEngine {
         skillCatalog: [CapabilityEntry] = []
     ) async throws -> ExecutionResult {
         guard let issue = try IssueStore.getIssue(id: issueId) else {
-            throw AgentEngineError.issueNotFound(issueId)
+            throw WorkEngineError.issueNotFound(issueId)
         }
 
         var lastError: Error?
@@ -592,14 +592,14 @@ public actor AgentEngine {
         for attempt in 0 ..< retryConfig.maxAttempts {
             // Check for cancellation (e.g., window closed)
             guard isExecuting || attempt == 0 else {
-                throw AgentEngineError.cancelled
+                throw WorkEngineError.cancelled
             }
             try Task.checkCancellation()
 
             // Wait before retry (skip delay on first attempt)
             if attempt > 0 {
                 let delay = retryConfig.delay(forAttempt: attempt)
-                await delegate?.agentEngine(self, willRetryIssue: issue, attempt: attempt + 1, afterDelay: delay)
+                await delegate?.workEngine(self, willRetryIssue: issue, attempt: attempt + 1, afterDelay: delay)
                 try await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
             }
 
@@ -617,7 +617,7 @@ public actor AgentEngine {
                 errorStates.removeValue(forKey: issueId)
                 return result
 
-            } catch let error as AgentExecutionError where error.isRetriable {
+            } catch let error as WorkExecutionError where error.isRetriable {
                 lastError = error
                 // Track error state
                 errorStates[issueId] = IssueErrorState(
@@ -643,8 +643,8 @@ public actor AgentEngine {
         }
 
         // Max retries exceeded
-        let finalError = AgentEngineError.maxRetriesExceeded(
-            underlying: lastError ?? AgentExecutionError.unknown("Unknown error"),
+        let finalError = WorkEngineError.maxRetriesExceeded(
+            underlying: lastError ?? WorkExecutionError.unknown("Unknown error"),
             attempts: retryConfig.maxAttempts
         )
         errorStates[issueId] = IssueErrorState(
@@ -672,73 +672,72 @@ public actor AgentEngine {
 
 // MARK: - Delegate Protocol
 
-/// Delegate for receiving agent execution events
+/// Delegate for receiving work execution events
 @MainActor
-public protocol AgentEngineDelegate: AnyObject {
+public protocol WorkEngineDelegate: AnyObject {
     // Issue lifecycle
-    func agentEngine(_ engine: AgentEngine, didStartIssue issue: Issue)
-    func agentEngine(_ engine: AgentEngine, didCompleteIssue issue: Issue, success: Bool)
+    func workEngine(_ engine: WorkEngine, didStartIssue issue: Issue)
+    func workEngine(_ engine: WorkEngine, didCompleteIssue issue: Issue, success: Bool)
 
     // Reasoning loop events (new)
-    func agentEngine(_ engine: AgentEngine, didStartIteration iteration: Int, forIssue issue: Issue)
-    func agentEngine(_ engine: AgentEngine, didReceiveStreamingDelta delta: String, forStep stepIndex: Int)
-    func agentEngine(
-        _ engine: AgentEngine,
+    func workEngine(_ engine: WorkEngine, didStartIteration iteration: Int, forIssue issue: Issue)
+    func workEngine(_ engine: WorkEngine, didReceiveStreamingDelta delta: String, forStep stepIndex: Int)
+    func workEngine(
+        _ engine: WorkEngine,
         didCallTool toolName: String,
         withArguments args: String,
         result: String,
         forIssue issue: Issue
     )
-    func agentEngine(_ engine: AgentEngine, didUpdateStatus status: String, forIssue issue: Issue)
+    func workEngine(_ engine: WorkEngine, didUpdateStatus status: String, forIssue issue: Issue)
 
     // Clarification
-    func agentEngine(_ engine: AgentEngine, needsClarification request: ClarificationRequest, forIssue issue: Issue)
+    func workEngine(_ engine: WorkEngine, needsClarification request: ClarificationRequest, forIssue issue: Issue)
 
     // Artifacts
-    func agentEngine(_ engine: AgentEngine, didGenerateArtifact artifact: Artifact, forIssue issue: Issue)
+    func workEngine(_ engine: WorkEngine, didGenerateArtifact artifact: Artifact, forIssue issue: Issue)
 
     // Token consumption
-    func agentEngine(_ engine: AgentEngine, didConsumeTokens input: Int, output: Int, forIssue issue: Issue)
+    func workEngine(_ engine: WorkEngine, didConsumeTokens input: Int, output: Int, forIssue issue: Issue)
 
     // Retry
-    func agentEngine(_ engine: AgentEngine, willRetryIssue issue: Issue, attempt: Int, afterDelay: TimeInterval)
+    func workEngine(_ engine: WorkEngine, willRetryIssue issue: Issue, attempt: Int, afterDelay: TimeInterval)
 
 }
 
 /// Default implementations for optional delegate methods
-extension AgentEngineDelegate {
+extension WorkEngineDelegate {
     // Issue lifecycle
-    public func agentEngine(_ engine: AgentEngine, didStartIssue issue: Issue) {}
-    public func agentEngine(_ engine: AgentEngine, didCompleteIssue issue: Issue, success: Bool) {}
+    public func workEngine(_ engine: WorkEngine, didStartIssue issue: Issue) {}
+    public func workEngine(_ engine: WorkEngine, didCompleteIssue issue: Issue, success: Bool) {}
 
     // Reasoning loop events
-    public func agentEngine(_ engine: AgentEngine, didStartIteration iteration: Int, forIssue issue: Issue) {}
-    public func agentEngine(_ engine: AgentEngine, didReceiveStreamingDelta delta: String, forStep stepIndex: Int) {}
-    public func agentEngine(
-        _ engine: AgentEngine,
+    public func workEngine(_ engine: WorkEngine, didStartIteration iteration: Int, forIssue issue: Issue) {}
+    public func workEngine(_ engine: WorkEngine, didReceiveStreamingDelta delta: String, forStep stepIndex: Int) {}
+    public func workEngine(
+        _ engine: WorkEngine,
         didCallTool toolName: String,
         withArguments args: String,
         result: String,
         forIssue issue: Issue
     ) {}
-    public func agentEngine(_ engine: AgentEngine, didUpdateStatus status: String, forIssue issue: Issue) {}
+    public func workEngine(_ engine: WorkEngine, didUpdateStatus status: String, forIssue issue: Issue) {}
 
     // Clarification
-    public func agentEngine(
-        _ engine: AgentEngine,
+    public func workEngine(
+        _ engine: WorkEngine,
         needsClarification request: ClarificationRequest,
         forIssue issue: Issue
     ) {}
 
     // Artifacts
-    public func agentEngine(_ engine: AgentEngine, didGenerateArtifact artifact: Artifact, forIssue issue: Issue) {}
+    public func workEngine(_ engine: WorkEngine, didGenerateArtifact artifact: Artifact, forIssue issue: Issue) {}
 
     // Token consumption
-    public func agentEngine(_ engine: AgentEngine, didConsumeTokens input: Int, output: Int, forIssue issue: Issue) {}
+    public func workEngine(_ engine: WorkEngine, didConsumeTokens input: Int, output: Int, forIssue issue: Issue) {}
 
     // Retry
-    public func agentEngine(_ engine: AgentEngine, willRetryIssue issue: Issue, attempt: Int, afterDelay: TimeInterval)
-    {}
+    public func workEngine(_ engine: WorkEngine, willRetryIssue issue: Issue, attempt: Int, afterDelay: TimeInterval) {}
 
 }
 
@@ -755,8 +754,8 @@ struct PendingExecutionContext {
 
 // MARK: - Errors
 
-/// Errors that can occur in the agent engine
-public enum AgentEngineError: Error, LocalizedError {
+/// Errors that can occur in the work engine
+public enum WorkEngineError: Error, LocalizedError {
     case alreadyExecuting
     case issueNotFound(String)
     case noIssueCreated
@@ -768,7 +767,7 @@ public enum AgentEngineError: Error, LocalizedError {
     public var errorDescription: String? {
         switch self {
         case .alreadyExecuting:
-            return "Agent is already executing a task"
+            return "Work is already executing a task"
         case .issueNotFound(let id):
             return "Issue not found: \(id)"
         case .noIssueCreated:

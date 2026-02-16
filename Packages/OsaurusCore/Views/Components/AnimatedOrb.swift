@@ -8,7 +8,7 @@ import SwiftUI
 /// Usage:
 /// ```swift
 /// AnimatedOrb(color: .blue, size: .medium)
-/// AnimatedOrb(color: .purple, size: .small, seed: "MyPersona")
+/// AnimatedOrb(color: .purple, size: .small, seed: "MyAgent")
 /// AnimatedOrb(color: .green, size: .custom(48), showGlow: false)
 /// ```
 struct AnimatedOrb: View {
@@ -567,9 +567,9 @@ private struct OrbParticlesView: View {
                 }
 
                 HStack(spacing: 30) {
-                    AnimatedOrb(color: .red, size: .medium, seed: "Persona A")
-                    AnimatedOrb(color: .red, size: .medium, seed: "Persona B")
-                    AnimatedOrb(color: .red, size: .medium, seed: "Persona C")
+                    AnimatedOrb(color: .red, size: .medium, seed: "Agent A")
+                    AnimatedOrb(color: .red, size: .medium, seed: "Agent B")
+                    AnimatedOrb(color: .red, size: .medium, seed: "Agent C")
                 }
 
                 AnimatedOrb(color: .cyan, size: .small, showGlow: false, showFloat: false, isInteractive: false)

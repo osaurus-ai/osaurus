@@ -2,7 +2,7 @@
 //  DispatchRequest.swift
 //  osaurus
 //
-//  Async dispatch trigger types for executing Chat or Agent tasks.
+//  Async dispatch trigger types for executing Chat or Work tasks.
 //  Any trigger (schedules, webhooks, shortcuts, etc.) creates a
 //  DispatchRequest and hands it to TaskDispatcher.
 //
@@ -11,12 +11,12 @@ import Foundation
 
 // MARK: - Request
 
-/// Describes a task to dispatch to either Chat or Agent mode
+/// Describes a task to dispatch to either Chat or Work mode
 public struct DispatchRequest: Sendable {
     public let id: UUID
     public let mode: ChatMode
     public let prompt: String
-    public let personaId: UUID?
+    public let agentId: UUID?
     public let title: String?
     public let parameters: [String: String]
     public let folderPath: String?
@@ -28,7 +28,7 @@ public struct DispatchRequest: Sendable {
         id: UUID = UUID(),
         mode: ChatMode,
         prompt: String,
-        personaId: UUID? = nil,
+        agentId: UUID? = nil,
         title: String? = nil,
         parameters: [String: String] = [:],
         folderPath: String? = nil,
@@ -38,7 +38,7 @@ public struct DispatchRequest: Sendable {
         self.id = id
         self.mode = mode
         self.prompt = prompt
-        self.personaId = personaId
+        self.agentId = agentId
         self.title = title
         self.parameters = parameters
         self.folderPath = folderPath

@@ -3,7 +3,7 @@
 //  osaurus
 //
 //  Thin dispatch orchestrator. Delegates to BackgroundTaskManager
-//  (single owner of all backgrounded work) for both chat and agent modes.
+//  (single owner of all backgrounded work) for both chat and work modes.
 //  Trigger sources (schedules, shortcuts, etc.) create a DispatchRequest
 //  and hand it here.
 //
@@ -20,7 +20,7 @@ public final class TaskDispatcher {
     public func dispatch(_ request: DispatchRequest) async -> DispatchHandle? {
         let btm = BackgroundTaskManager.shared
         switch request.mode {
-        case .agent: return await btm.dispatchAgent(request)
+        case .work: return await btm.dispatchWork(request)
         case .chat: return await btm.dispatchChat(request)
         }
     }

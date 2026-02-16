@@ -2,7 +2,7 @@
 //  ChatEmptyState.swift
 //  osaurus
 //
-//  Immersive empty state with prominent persona selector
+//  Immersive empty state with prominent agent selector
 //  and staggered entrance animations for a polished first impression.
 //
 
@@ -12,12 +12,12 @@ import SwiftUI
 struct ChatEmptyState: View {
     let hasModels: Bool
     let selectedModel: String?
-    let personas: [Persona]
-    let activePersonaId: UUID
+    let agents: [Agent]
+    let activeAgentId: UUID
     let onOpenModelManager: () -> Void
     let onUseFoundation: (() -> Void)?
     let onQuickAction: (String) -> Void
-    let onSelectPersona: (UUID) -> Void
+    let onSelectAgent: (UUID) -> Void
     let onOpenOnboarding: (() -> Void)?
 
     @State private var hasAppeared = false
@@ -84,8 +84,8 @@ struct ChatEmptyState: View {
         return formatter.string(fromByteCount: bytes)
     }
 
-    private var activePersona: Persona {
-        personas.first { $0.id == activePersonaId } ?? Persona.default
+    private var activeAgent: Agent {
+        agents.first { $0.id == activeAgentId } ?? Agent.default
     }
 
     private let quickActions = [
@@ -131,7 +131,7 @@ struct ChatEmptyState: View {
     private var readyState: some View {
         VStack(spacing: 14) {
             // Hero Orb - mesmerizing animated orb as the focal point
-            AnimatedOrb(color: theme.accentColor, size: .medium, seed: activePersona.name)
+            AnimatedOrb(color: theme.accentColor, size: .medium, seed: activeAgent.name)
                 .frame(width: 88, height: 88)
                 .opacity(hasAppeared ? 1 : 0)
                 .scaleEffect(hasAppeared ? 1 : 0.85)
@@ -156,8 +156,8 @@ struct ChatEmptyState: View {
                         .animation(theme.springAnimation().delay(0.17), value: hasAppeared)
                 }
 
-                // Persona selector - prominent card with delayed entrance
-                personaCard
+                // Agent selector - prominent card with delayed entrance
+                agentCard
                     .opacity(hasAppeared ? 1 : 0)
                     .offset(y: hasAppeared ? 0 : 12)
                     .scaleEffect(hasAppeared ? 1 : 0.97)
@@ -293,13 +293,13 @@ struct ChatEmptyState: View {
         .padding(.horizontal, 40)
     }
 
-    // MARK: - Persona Card (uses shared component)
+    // MARK: - Agent Card (uses shared component)
 
-    private var personaCard: some View {
-        PersonaPill(
-            personas: personas,
-            activePersonaId: activePersonaId,
-            onSelectPersona: onSelectPersona
+    private var agentCard: some View {
+        AgentPill(
+            agents: agents,
+            activeAgentId: activeAgentId,
+            onSelectAgent: onSelectAgent
         )
     }
 
@@ -444,12 +444,12 @@ private struct GetStartedButton: View {
                 ChatEmptyState(
                     hasModels: true,
                     selectedModel: "foundation",
-                    personas: [.default],
-                    activePersonaId: Persona.default.id,
+                    agents: [.default],
+                    activeAgentId: Agent.default.id,
                     onOpenModelManager: {},
                     onUseFoundation: {},
                     onQuickAction: { _ in },
-                    onSelectPersona: { _ in },
+                    onSelectAgent: { _ in },
                     onOpenOnboarding: nil
                 )
             }
@@ -460,12 +460,12 @@ private struct GetStartedButton: View {
                 ChatEmptyState(
                     hasModels: false,
                     selectedModel: nil,
-                    personas: [.default],
-                    activePersonaId: Persona.default.id,
+                    agents: [.default],
+                    activeAgentId: Agent.default.id,
                     onOpenModelManager: {},
                     onUseFoundation: {},
                     onQuickAction: { _ in },
-                    onSelectPersona: { _ in },
+                    onSelectAgent: { _ in },
                     onOpenOnboarding: {}
                 )
             }

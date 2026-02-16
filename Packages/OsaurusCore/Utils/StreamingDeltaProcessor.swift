@@ -3,7 +3,7 @@
 //  osaurus
 //
 //  Shared streaming delta processing pipeline used by both ChatView (chat mode)
-//  and AgentSession (agent mode). Handles delta buffering, <think> tag parsing,
+//  and WorkSession (work mode). Handles delta buffering, <think> tag parsing,
 //  adaptive flush tuning, and throttled UI sync.
 //
 
@@ -22,7 +22,7 @@ final class StreamingDeltaProcessor {
     /// Delta buffering
     private var deltaBuffer = ""
 
-    /// Fallback timer — safety net for push-based consumers (e.g. AgentSession
+    /// Fallback timer — safety net for push-based consumers (e.g. WorkSession
     /// delegate callbacks) where no more deltas may arrive to trigger an inline flush.
     private var flushTimer: Timer?
     private static let fallbackFlushInterval: TimeInterval = 0.1

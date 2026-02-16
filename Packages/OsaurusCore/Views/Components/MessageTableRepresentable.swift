@@ -32,7 +32,7 @@ enum MessageSection: Hashable {
 struct CellRenderingContext {
     let groupHeaderMap: [UUID: UUID]
     let width: CGFloat
-    let personaName: String
+    let agentName: String
     let theme: ThemeProtocol
     let expandedBlocksStore: ExpandedBlocksStore
     let onCopy: ((UUID) -> Void)?
@@ -55,7 +55,7 @@ struct MessageTableRepresentable: NSViewRepresentable {
     let blocks: [ContentBlock]
     let groupHeaderMap: [UUID: UUID]
     let width: CGFloat
-    let personaName: String
+    let agentName: String
     let isStreaming: Bool
     let lastAssistantTurnId: UUID?
     let autoScrollEnabled: Bool
@@ -136,7 +136,7 @@ struct MessageTableRepresentable: NSViewRepresentable {
         CellRenderingContext(
             groupHeaderMap: groupHeaderMap,
             width: max(100, width - 64),
-            personaName: personaName,
+            agentName: agentName,
             theme: theme,
             expandedBlocksStore: expandedBlocksStore,
             onCopy: onCopy,
@@ -219,7 +219,7 @@ extension MessageTableRepresentable {
         private var ctx = CellRenderingContext(
             groupHeaderMap: [:],
             width: 400,
-            personaName: "",
+            agentName: "",
             theme: LightTheme(),
             expandedBlocksStore: ExpandedBlocksStore(),
             onCopy: nil,
@@ -455,7 +455,7 @@ extension MessageTableRepresentable {
             cell.configure(
                 block: block,
                 width: ctx.width,
-                personaName: ctx.personaName,
+                agentName: ctx.agentName,
                 isTurnHovered: hoveredGroupId == groupId,
                 theme: ctx.theme,
                 expandedBlocksStore: ctx.expandedBlocksStore,

@@ -275,7 +275,7 @@ private struct WeatherTool {
 
 ### Folder Context
 
-When a user has a working directory selected in Agent Mode, Osaurus automatically injects the folder context into tool payloads. This allows plugins to resolve relative paths provided by the LLM.
+When a user has a working directory selected in Work Mode, Osaurus automatically injects the folder context into tool payloads. This allows plugins to resolve relative paths provided by the LLM.
 
 **Automatic Injection:**
 

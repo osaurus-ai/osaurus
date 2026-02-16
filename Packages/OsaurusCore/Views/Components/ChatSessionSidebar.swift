@@ -8,7 +8,7 @@
 import SwiftUI
 
 struct ChatSessionSidebar: View {
-    /// Sessions to display (already filtered by persona if needed)
+    /// Sessions to display (already filtered by agent if needed)
     let sessions: [ChatSessionData]
     let currentSessionId: UUID?
     let onSelect: (ChatSessionData) -> Void
@@ -19,7 +19,7 @@ struct ChatSessionSidebar: View {
     var onOpenInNewWindow: ((ChatSessionData) -> Void)? = nil
 
     @Environment(\.theme) private var theme
-    @ObservedObject private var personaManager = PersonaManager.shared
+    @ObservedObject private var agentManager = AgentManager.shared
     @State private var editingSessionId: UUID?
     @State private var editingTitle: String = ""
     @State private var searchQuery: String = ""
@@ -123,7 +123,7 @@ struct ChatSessionSidebar: View {
                 ForEach(filteredSessions) { session in
                     SessionRow(
                         session: session,
-                        persona: personaManager.persona(for: session.personaId ?? Persona.defaultId),
+                        agent: agentManager.agent(for: session.agentId ?? Agent.defaultId),
                         isSelected: session.id == currentSessionId,
                         isEditing: editingSessionId == session.id,
                         editingTitle: $editingTitle,
@@ -176,7 +176,7 @@ struct ChatSessionSidebar: View {
 
 private struct SessionRow: View {
     let session: ChatSessionData
-    let persona: Persona?
+    let agent: Agent?
     let isSelected: Bool
     let isEditing: Bool
     @Binding var editingTitle: String
@@ -192,17 +192,17 @@ private struct SessionRow: View {
     @State private var isHovered = false
     @FocusState private var isTextFieldFocused: Bool
 
-    /// Whether this is the default persona
-    private var isDefaultPersona: Bool {
-        guard let persona = persona else { return true }
-        return persona.isBuiltIn
+    /// Whether this is the default agent
+    private var isDefaultAgent: Bool {
+        guard let agent = agent else { return true }
+        return agent.isBuiltIn
     }
 
-    /// Get a consistent color for the persona based on its ID
-    private var personaColor: Color {
-        guard let persona = persona, !persona.isBuiltIn else { return theme.secondaryText }
-        // Generate a consistent hue from the persona ID
-        let hash = persona.id.hashValue
+    /// Get a consistent color for the agent based on its ID
+    private var agentColor: Color {
+        guard let agent = agent, !agent.isBuiltIn else { return theme.secondaryText }
+        // Generate a consistent hue from the agent ID
+        let hash = agent.id.hashValue
         let hue = Double(abs(hash) % 360) / 360.0
         return Color(hue: hue, saturation: 0.6, brightness: 0.8)
     }
@@ -216,11 +216,11 @@ private struct SessionRow: View {
                 .clipShape(RoundedRectangle(cornerRadius: SidebarStyle.rowCornerRadius, style: .continuous))
         } else {
             HStack(spacing: 10) {
-                // Persona indicator
-                if isDefaultPersona {
-                    defaultPersonaIndicator
-                } else if let persona = persona {
-                    personaIndicatorView(persona)
+                // Agent indicator
+                if isDefaultAgent {
+                    defaultAgentIndicator
+                } else if let agent = agent {
+                    agentIndicatorView(agent)
                 }
 
                 VStack(alignment: .leading, spacing: 2) {
@@ -282,8 +282,8 @@ private struct SessionRow: View {
         }
     }
 
-    /// Default persona indicator with person icon
-    private var defaultPersonaIndicator: some View {
+    /// Default agent indicator with person icon
+    private var defaultAgentIndicator: some View {
         ZStack {
             Circle()
                 .fill(theme.secondaryText.opacity(theme.isDark ? 0.12 : 0.08))
@@ -297,17 +297,17 @@ private struct SessionRow: View {
     }
 
     @ViewBuilder
-    private func personaIndicatorView(_ persona: Persona) -> some View {
+    private func agentIndicatorView(_ agent: Agent) -> some View {
         ZStack {
             Circle()
-                .fill(personaColor.opacity(theme.isDark ? 0.14 : 0.10))
+                .fill(agentColor.opacity(theme.isDark ? 0.14 : 0.10))
                 .frame(width: 24, height: 24)
 
-            Text(persona.name.prefix(1).uppercased())
+            Text(agent.name.prefix(1).uppercased())
                 .font(.system(size: 10, weight: .bold, design: .rounded))
-                .foregroundColor(personaColor)
+                .foregroundColor(agentColor)
         }
-        .help(persona.name)
+        .help(agent.name)
     }
 
     private var editingView: some View {

@@ -9,7 +9,7 @@ Osaurus includes powerful voice input capabilities powered by [WhisperKit](https
 Voice features in Osaurus include:
 
 - **Voice Input in Chat** — Speak instead of type in the chat overlay
-- **VAD Mode** — Always-on listening with wake-word persona activation
+- **VAD Mode** — Always-on listening with wake-word agent activation
 - **Transcription Mode** — Global hotkey to dictate into any focused text field
 - **Multiple Whisper Models** — From tiny (75 MB) to large (3 GB)
 - **Microphone & System Audio** — Transcribe your voice or computer audio
@@ -180,14 +180,14 @@ Transcribe audio from your computer (browser, apps, etc.):
 
 ## VAD Mode (Voice Activity Detection)
 
-VAD Mode enables hands-free persona activation. Say a persona's name (or a custom wake phrase) to open chat with that persona.
+VAD Mode enables hands-free agent activation. Say a agent's name (or a custom wake phrase) to open chat with that agent.
 
 ### Enabling VAD Mode
 
 1. Open Management window (`⌘ Shift M`) → **Voice**
 2. Scroll to "VAD Mode" section
 3. Toggle "Enable VAD Mode" on
-4. Select which personas should respond to wake-words
+4. Select which agents should respond to wake-words
 
 ### How It Works
 
@@ -200,7 +200,7 @@ VAD Mode enables hands-free persona activation. Say a persona's name (or a custo
 │           ↓                                                  │
 │  2. Real-time transcription checked for wake-words          │
 │           ↓                                                  │
-│  3. Match detected → Chat opens with persona                │
+│  3. Match detected → Chat opens with agent                │
 │           ↓                                                  │
 │  4. Voice input starts automatically (if enabled)           │
 │           ↓                                                  │
@@ -211,24 +211,24 @@ VAD Mode enables hands-free persona activation. Say a persona's name (or a custo
 
 ### Wake-Word Options
 
-**Persona Names:**
+**Agent Names:**
 
-- Enable specific personas for VAD
-- Say the persona's name to activate (e.g., "Code Assistant")
+- Enable specific agents for VAD
+- Say the agent's name to activate (e.g., "Code Assistant")
 - Detection uses fuzzy matching for natural speech
 
 **Custom Wake Phrase:**
 
 - Set a phrase like "Hey Osaurus" or "Computer"
-- Works alongside persona names
-- Activates the default persona
+- Works alongside agent names
+- Activates the default agent
 
 ### VAD Settings
 
 | Setting                    | Description                           | Default      |
 | -------------------------- | ------------------------------------- | ------------ |
 | **VAD Mode Enabled**       | Master toggle                         | Off          |
-| **Enabled Personas**       | Which personas respond to wake-words  | None         |
+| **Enabled Agents**       | Which agents respond to wake-words  | None         |
 | **Custom Wake Phrase**     | Optional activation phrase            | Empty        |
 | **Wake-Word Sensitivity**  | Detection threshold                   | Medium       |
 | **Auto-Start Voice Input** | Begin recording after activation      | On           |
@@ -367,7 +367,7 @@ VAD mode settings:
 ```swift
 struct VADConfiguration {
     var vadModeEnabled: Bool           // Master toggle
-    var enabledPersonaIds: [UUID]      // Personas for wake-words
+    var enabledAgentIds: [UUID]      // Agents for wake-words
     var wakeWordSensitivity: VoiceSensitivity
     var autoStartVoiceInput: Bool      // Auto-record after activation
     var customWakePhrase: String       // e.g., "Hey Osaurus"
@@ -452,14 +452,14 @@ Leave empty for auto-detection.
    - Open Voice settings → VAD Mode section
    - Verify toggle is on
 
-2. **Verify personas are enabled for VAD**
+2. **Verify agents are enabled for VAD**
 
-   - At least one persona must be selected
+   - At least one agent must be selected
    - Or set a custom wake phrase
 
 3. **Speak clearly**
 
-   - Say the full persona name
+   - Say the full agent name
    - Wait for detection (2-3 second cooldown between detections)
 
 4. **Check the status indicators**
@@ -553,4 +553,4 @@ Your voice data never leaves your computer.
 
 - [README.md](../README.md) — Project overview
 - [FEATURES.md](FEATURES.md) — Complete feature inventory
-- [Personas](../README.md#personas) — Create custom AI assistants
+- [Agents](../README.md#agents) — Create custom AI assistants

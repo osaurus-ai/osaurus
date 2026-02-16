@@ -214,24 +214,24 @@ You don't need to do anything special. When you start a chat with skills enabled
 
 ---
 
-## Persona Integration
+## Agent Integration
 
-Skills work seamlessly with Personas. Each persona can have its own skill configuration:
+Skills work seamlessly with Agents. Each agent can have its own skill configuration:
 
-1. Open **Personas** in the Management window
-2. Edit a persona
-3. Enable or disable specific skills for that persona
+1. Open **Agents** in the Management window
+2. Edit a agent
+3. Enable or disable specific skills for that agent
 
 **Example configurations:**
 
-| Persona | Enabled Skills |
+| Agent | Enabled Skills |
 |---------|---------------|
 | Code Assistant | Debug Assistant |
 | Research Helper | Research Analyst, Content Summarizer |
 | Creative Writer | Creative Brainstormer |
 | Study Buddy | Study Tutor, Content Summarizer |
 
-When you switch personas, the skill configuration switches too.
+When you switch agents, the skill configuration switches too.
 
 ---
 
@@ -240,7 +240,7 @@ When you switch personas, the skill configuration switches too.
 ### Skills not appearing in chat
 
 - Verify the skill is enabled (toggle is on)
-- Check if the active persona has the skill enabled
+- Check if the active agent has the skill enabled
 - Start a new chat session
 
 ### GitHub import fails
@@ -265,6 +265,6 @@ When you switch personas, the skill configuration switches too.
 
 ## Related Documentation
 
-- [Personas](../README.md#personas) — Custom AI assistants
+- [Agents](../README.md#agents) — Custom AI assistants
 - [Tools & Plugins](PLUGIN_AUTHORING.md) — Extend with custom tools
 - [Agent Skills Specification](https://agentskills.io/) — Open format documentation

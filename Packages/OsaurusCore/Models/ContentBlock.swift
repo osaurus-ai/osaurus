@@ -27,7 +27,7 @@ struct ToolCallItem: Equatable {
 
 /// The kind/type of a content block
 enum ContentBlockKind: Equatable {
-    case header(role: MessageRole, personaName: String, isFirstInGroup: Bool)
+    case header(role: MessageRole, agentName: String, isFirstInGroup: Bool)
     case paragraph(index: Int, text: String, isStreaming: Bool, role: MessageRole)
     case toolCallGroup(calls: [ToolCallItem])
     case thinking(index: Int, text: String, isStreaming: Bool)
@@ -116,14 +116,14 @@ struct ContentBlock: Identifiable, Equatable, Hashable {
     static func header(
         turnId: UUID,
         role: MessageRole,
-        personaName: String,
+        agentName: String,
         isFirstInGroup: Bool,
         position: BlockPosition
     ) -> ContentBlock {
         ContentBlock(
             id: "header-\(turnId.uuidString)",
             turnId: turnId,
-            kind: .header(role: role, personaName: personaName, isFirstInGroup: isFirstInGroup),
+            kind: .header(role: role, agentName: agentName, isFirstInGroup: isFirstInGroup),
             position: position
         )
     }
@@ -200,7 +200,7 @@ extension ContentBlock {
     static func generateBlocks(
         from turns: [ChatTurn],
         streamingTurnId: UUID?,
-        personaName: String,
+        agentName: String,
         previousTurn: ChatTurn? = nil
     ) -> [ContentBlock] {
         var blocks: [ContentBlock] = []
@@ -228,7 +228,7 @@ extension ContentBlock {
                     .header(
                         turnId: turn.id,
                         role: turn.role,
-                        personaName: turn.role == .assistant ? personaName : "You",
+                        agentName: turn.role == .assistant ? agentName : "You",
                         isFirstInGroup: true,
                         position: .first
                     )
@@ -239,7 +239,7 @@ extension ContentBlock {
                 turnBlocks.append(.image(turnId: turn.id, index: idx, imageData: imageData, position: .middle))
             }
 
-            // Add clarification block if pending (agent mode)
+            // Add clarification block if pending (work mode)
             if turn.role == .assistant, let clarification = turn.pendingClarification {
                 turnBlocks.append(
                     .clarification(

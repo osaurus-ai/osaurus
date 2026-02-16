@@ -157,7 +157,7 @@ final class ChatTurn: ObservableObject, Identifiable {
     var toolCallId: String? = nil
     /// Convenience map for UI to show tool results grouped under the assistant turn
     @Published var toolResults: [String: String] = [:]
-    /// Pending clarification request for agent mode (displayed as ClarificationCardView)
+    /// Pending clarification request for work mode (displayed as ClarificationCardView)
     var pendingClarification: ClarificationRequest? = nil
 
     // MARK: - Initializers

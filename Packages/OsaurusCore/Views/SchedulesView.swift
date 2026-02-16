@@ -116,7 +116,7 @@ struct SchedulesView: View {
                     scheduleManager.create(
                         name: schedule.name,
                         instructions: schedule.instructions,
-                        personaId: schedule.personaId,
+                        agentId: schedule.agentId,
                         mode: schedule.mode,
                         parameters: schedule.parameters,
                         folderPath: schedule.folderPath,
@@ -188,7 +188,7 @@ struct SchedulesView: View {
 
 private struct ScheduleCard: View {
     @Environment(\.theme) private var theme
-    @ObservedObject private var personaManager = PersonaManager.shared
+    @ObservedObject private var agentManager = AgentManager.shared
 
     let schedule: Schedule
     let isRunning: Bool
@@ -202,9 +202,9 @@ private struct ScheduleCard: View {
     @State private var isHovered = false
     @State private var showDeleteConfirm = false
 
-    private var persona: Persona? {
-        guard let personaId = schedule.personaId else { return nil }
-        return personaManager.persona(for: personaId)
+    private var agent: Agent? {
+        guard let agentId = schedule.agentId else { return nil }
+        return agentManager.agent(for: agentId)
     }
 
     /// Consistent color derived from the schedule name
@@ -407,8 +407,8 @@ private struct ScheduleCard: View {
     @ViewBuilder
     private var compactStats: some View {
         HStack(spacing: 0) {
-            if schedule.mode == .agent {
-                statItem(icon: "bolt.fill", text: "Agent")
+            if schedule.mode == .work {
+                statItem(icon: "bolt.fill", text: "Work")
                 statDot
             }
 
@@ -419,9 +419,9 @@ private struct ScheduleCard: View {
                 statItem(icon: "clock", text: nextRun)
             }
 
-            if let personaName = persona?.name, persona?.isBuiltIn == false {
+            if let agentName = agent?.name, agent?.isBuiltIn == false {
                 statDot
-                statItem(icon: "person.fill", text: personaName)
+                statItem(icon: "person.fill", text: agentName)
             }
 
             Spacer(minLength: 0)
@@ -1159,40 +1159,40 @@ private struct DayOfMonthPicker: View {
     }
 }
 
-// MARK: - Persona Picker
+// MARK: - Agent Picker
 
-private struct PersonaPicker: View {
+private struct AgentPicker: View {
     @Environment(\.theme) private var theme
-    @Binding var selectedPersonaId: UUID?
-    let personas: [Persona]
+    @Binding var selectedAgentId: UUID?
+    let agents: [Agent]
 
     @State private var isHovering = false
     @State private var showingPopover = false
 
-    private var selectedPersona: Persona? {
-        if let id = selectedPersonaId {
-            return personas.first(where: { $0.id == id })
+    private var selectedAgent: Agent? {
+        if let id = selectedAgentId {
+            return agents.first(where: { $0.id == id })
         }
         return nil
     }
 
-    private var selectedPersonaName: String {
-        selectedPersona?.name ?? "Default"
+    private var selectedAgentName: String {
+        selectedAgent?.name ?? "Default"
     }
 
-    private var selectedPersonaDescription: String? {
-        if selectedPersonaId == nil {
+    private var selectedAgentDescription: String? {
+        if selectedAgentId == nil {
             return "Uses the default system behavior"
         }
-        let desc = selectedPersona?.description ?? ""
+        let desc = selectedAgent?.description ?? ""
         return desc.isEmpty ? nil : desc
     }
 
     private var hasDescription: Bool {
-        selectedPersonaDescription != nil
+        selectedAgentDescription != nil
     }
 
-    private func personaColor(for name: String) -> Color {
+    private func agentColor(for name: String) -> Color {
         let hash = abs(name.hashValue)
         let hue = Double(hash % 360) / 360.0
         return Color(hue: hue, saturation: 0.6, brightness: 0.8)
@@ -1202,27 +1202,27 @@ private struct PersonaPicker: View {
         Button(action: { showingPopover.toggle() }) {
             HStack(spacing: 12) {
                 Circle()
-                    .fill(personaColor(for: selectedPersonaName).opacity(0.2))
+                    .fill(agentColor(for: selectedAgentName).opacity(0.2))
                     .frame(width: 32, height: 32)
                     .overlay(
                         Image(systemName: "person.fill")
                             .font(.system(size: 14, weight: .medium))
-                            .foregroundColor(personaColor(for: selectedPersonaName))
+                            .foregroundColor(agentColor(for: selectedAgentName))
                     )
 
                 if hasDescription {
                     VStack(alignment: .leading, spacing: 2) {
-                        Text(selectedPersonaName)
+                        Text(selectedAgentName)
                             .font(.system(size: 13, weight: .medium))
                             .foregroundColor(theme.primaryText)
 
-                        Text(selectedPersonaDescription!)
+                        Text(selectedAgentDescription!)
                             .font(.system(size: 11))
                             .foregroundColor(theme.tertiaryText)
                             .lineLimit(1)
                     }
                 } else {
-                    Text(selectedPersonaName)
+                    Text(selectedAgentName)
                         .font(.system(size: 13, weight: .medium))
                         .foregroundColor(theme.primaryText)
                 }
@@ -1259,27 +1259,27 @@ private struct PersonaPicker: View {
         }
         .popover(isPresented: $showingPopover, arrowEdge: .bottom) {
             VStack(alignment: .leading, spacing: 0) {
-                PersonaOptionRow(
+                AgentOptionRow(
                     name: "Default",
                     description: "Uses the default system behavior",
-                    isSelected: selectedPersonaId == nil,
+                    isSelected: selectedAgentId == nil,
                     action: {
-                        selectedPersonaId = nil
+                        selectedAgentId = nil
                         showingPopover = false
                     }
                 )
 
-                if !personas.isEmpty {
+                if !agents.isEmpty {
                     Divider()
                         .padding(.vertical, 4)
 
-                    ForEach(personas, id: \.id) { persona in
-                        PersonaOptionRow(
-                            name: persona.name,
-                            description: persona.description,
-                            isSelected: selectedPersonaId == persona.id,
+                    ForEach(agents, id: \.id) { agent in
+                        AgentOptionRow(
+                            name: agent.name,
+                            description: agent.description,
+                            isSelected: selectedAgentId == agent.id,
                             action: {
-                                selectedPersonaId = persona.id
+                                selectedAgentId = agent.id
                                 showingPopover = false
                             }
                         )
@@ -1293,9 +1293,9 @@ private struct PersonaPicker: View {
     }
 }
 
-// MARK: - Persona Option Row
+// MARK: - Agent Option Row
 
-private struct PersonaOptionRow: View {
+private struct AgentOptionRow: View {
     @Environment(\.theme) private var theme
 
     let name: String
@@ -1355,16 +1355,16 @@ struct ScheduleEditorSheet: View {
     }
 
     @Environment(\.theme) private var theme
-    @ObservedObject private var personaManager = PersonaManager.shared
+    @ObservedObject private var agentManager = AgentManager.shared
 
     let mode: Mode
     let onSave: (Schedule) -> Void
     let onCancel: () -> Void
-    var initialPersonaId: UUID? = nil
+    var initialAgentId: UUID? = nil
 
     @State private var name = ""
     @State private var instructions = ""
-    @State private var selectedPersonaId: UUID?
+    @State private var selectedAgentId: UUID?
     @State private var selectedMode: ChatMode = .chat
     @State private var frequencyType: ScheduleFrequencyType = .daily
     @State private var isEnabled = true
@@ -1414,14 +1414,14 @@ struct ScheduleEditorSheet: View {
                     scheduleInfoSection
                     modeSection
 
-                    if selectedMode == .agent {
+                    if selectedMode == .work {
                         folderContextSection
                             .transition(.opacity.combined(with: .move(edge: .top)))
                     }
 
                     instructionsSection
                     frequencySection
-                    personaSection
+                    agentSection
                 }
                 .padding(24)
                 .animation(.spring(response: 0.35, dampingFraction: 0.85), value: selectedMode)
@@ -1442,8 +1442,8 @@ struct ScheduleEditorSheet: View {
         .onAppear {
             if case .edit(let schedule) = mode {
                 loadSchedule(schedule)
-            } else if let initialPersonaId = initialPersonaId {
-                selectedPersonaId = initialPersonaId
+            } else if let initialAgentId = initialAgentId {
+                selectedAgentId = initialAgentId
             }
             withAnimation {
                 hasAppeared = true
@@ -1598,9 +1598,9 @@ struct ScheduleEditorSheet: View {
                 )
                 modeOption(
                     icon: "bolt.fill",
-                    label: "Agent",
+                    label: "Work",
                     description: "Autonomous task execution",
-                    mode: .agent
+                    mode: .work
                 )
             }
             .padding(4)
@@ -1726,7 +1726,7 @@ struct ScheduleEditorSheet: View {
                         )
                 )
 
-                Text("The agent will use this folder as its working directory.")
+                Text("The AI will use this folder as its working directory.")
                     .font(.system(size: 11))
                     .foregroundColor(theme.tertiaryText)
             }
@@ -2109,18 +2109,18 @@ struct ScheduleEditorSheet: View {
         )
     }
 
-    // MARK: - Persona Section
+    // MARK: - Agent Section
 
-    private var personaSection: some View {
-        ScheduleEditorSection(title: "Persona", icon: "person.circle.fill") {
+    private var agentSection: some View {
+        ScheduleEditorSection(title: "Agent", icon: "person.circle.fill") {
             VStack(alignment: .leading, spacing: 8) {
-                PersonaPicker(
-                    selectedPersonaId: $selectedPersonaId,
-                    personas: personaManager.personas.filter { !$0.isBuiltIn }
+                AgentPicker(
+                    selectedAgentId: $selectedAgentId,
+                    agents: agentManager.agents.filter { !$0.isBuiltIn }
                 )
                 .frame(maxWidth: .infinity)
 
-                Text("The persona determines the AI's behavior and available tools.")
+                Text("The agent determines the AI's behavior and available tools.")
                     .font(.system(size: 11))
                     .foregroundColor(theme.tertiaryText)
             }
@@ -2165,7 +2165,7 @@ struct ScheduleEditorSheet: View {
     private func loadSchedule(_ schedule: Schedule) {
         name = schedule.name
         instructions = schedule.instructions
-        selectedPersonaId = schedule.personaId
+        selectedAgentId = schedule.agentId
         selectedMode = schedule.mode
         isEnabled = schedule.isEnabled
         selectedFolderPath = schedule.folderPath
@@ -2218,10 +2218,10 @@ struct ScheduleEditorSheet: View {
             id: existingId ?? UUID(),
             name: trimmedName,
             instructions: trimmedInstructions,
-            personaId: selectedPersonaId,
+            agentId: selectedAgentId,
             mode: selectedMode,
-            folderPath: selectedMode == .agent ? selectedFolderPath : nil,
-            folderBookmark: selectedMode == .agent ? selectedFolderBookmark : nil,
+            folderPath: selectedMode == .work ? selectedFolderPath : nil,
+            folderBookmark: selectedMode == .work ? selectedFolderBookmark : nil,
             frequency: buildFrequency(),
             isEnabled: isEnabled,
             lastRunAt: existingLastRunAt,

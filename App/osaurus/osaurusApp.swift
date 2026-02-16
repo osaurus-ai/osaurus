@@ -49,11 +49,11 @@ private extension osaurusApp {
             }
             .keyboardShortcut("n", modifiers: .command)
 
-            Menu("New Window with Persona") {
-                ForEach(PersonaManager.shared.personas, id: \.id) { persona in
-                    Button(persona.name) {
+            Menu("New Window with Agent") {
+                ForEach(AgentManager.shared.agents, id: \.id) { agent in
+                    Button(agent.name) {
                         Task { @MainActor in
-                            ChatWindowManager.shared.createWindow(personaId: persona.id)
+                            ChatWindowManager.shared.createWindow(agentId: agent.id)
                         }
                     }
                 }
@@ -75,7 +75,7 @@ private extension osaurusApp {
 
             schedulesMenu
             watchersMenu
-            personasMenu
+            agentsMenu
         }
     }
 
@@ -234,20 +234,20 @@ private extension osaurusApp {
         }
     }
 
-    var personasMenu: some View {
-        Menu("Personas") {
-            ForEach(PersonaManager.shared.personas, id: \.id) { persona in
-                Button(persona.name) {
+    var agentsMenu: some View {
+        Menu("Agents") {
+            ForEach(AgentManager.shared.agents, id: \.id) { agent in
+                Button(agent.name) {
                     Task { @MainActor in
-                        ChatWindowManager.shared.createWindow(personaId: persona.id)
+                        ChatWindowManager.shared.createWindow(agentId: agent.id)
                     }
                 }
             }
 
             Divider()
 
-            Button("Manage Personas…") {
-                openManagementTab(.personas)
+            Button("Manage Agents…") {
+                openManagementTab(.agents)
             }
         }
     }

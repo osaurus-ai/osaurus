@@ -13,13 +13,13 @@ import SwiftUI
 /// Represents an active chat window with its associated session
 public struct ChatWindowInfo: Identifiable, Sendable {
     public let id: UUID
-    public let personaId: UUID
+    public let agentId: UUID
     public let sessionId: UUID?
     public let createdAt: Date
 
-    public init(id: UUID = UUID(), personaId: UUID, sessionId: UUID? = nil, createdAt: Date = Date()) {
+    public init(id: UUID = UUID(), agentId: UUID, sessionId: UUID? = nil, createdAt: Date = Date()) {
         self.id = id
-        self.personaId = personaId
+        self.agentId = agentId
         self.sessionId = sessionId
         self.createdAt = createdAt
     }
@@ -51,43 +51,43 @@ public final class ChatWindowManager: NSObject, ObservableObject {
 
     // MARK: - Public API
 
-    /// Create a new chat window with default persona
+    /// Create a new chat window with default agent
     /// - Parameters:
-    ///   - personaId: The persona for this window (defaults to active persona)
+    ///   - agentId: The agent for this window (defaults to active agent)
     ///   - showImmediately: Whether to show the window immediately (default: true)
     /// - Returns: The window identifier
     @discardableResult
-    public func createWindow(personaId: UUID? = nil, showImmediately: Bool = true) -> UUID {
-        return createWindowInternal(personaId: personaId, sessionData: nil, showImmediately: showImmediately)
+    public func createWindow(agentId: UUID? = nil, showImmediately: Bool = true) -> UUID {
+        return createWindowInternal(agentId: agentId, sessionData: nil, showImmediately: showImmediately)
     }
 
     /// Create a new chat window with existing session data
     /// - Parameters:
-    ///   - personaId: The persona for this window (defaults to active persona)
+    ///   - agentId: The agent for this window (defaults to active agent)
     ///   - sessionData: Optional existing session to load
     ///   - showImmediately: Whether to show the window immediately (default: true)
     /// - Returns: The window identifier
     @discardableResult
     func createWindow(
-        personaId: UUID? = nil,
+        agentId: UUID? = nil,
         sessionData: ChatSessionData?,
         showImmediately: Bool = true
     ) -> UUID {
-        return createWindowInternal(personaId: personaId, sessionData: sessionData, showImmediately: showImmediately)
+        return createWindowInternal(agentId: agentId, sessionData: sessionData, showImmediately: showImmediately)
     }
 
     /// Internal implementation for creating windows
     private func createWindowInternal(
-        personaId: UUID?,
+        agentId: UUID?,
         sessionData: ChatSessionData?,
         showImmediately: Bool
     ) -> UUID {
         let windowId = UUID()
-        let effectivePersonaId = personaId ?? PersonaManager.shared.activePersonaId
+        let effectiveAgentId = agentId ?? AgentManager.shared.activeAgentId
 
         let info = ChatWindowInfo(
             id: windowId,
-            personaId: effectivePersonaId,
+            agentId: effectiveAgentId,
             sessionId: sessionData?.id,
             createdAt: Date()
         )
@@ -97,7 +97,7 @@ public final class ChatWindowManager: NSObject, ObservableObject {
         // Create the actual NSWindow
         let window = createNSWindow(
             windowId: windowId,
-            personaId: effectivePersonaId,
+            agentId: effectiveAgentId,
             sessionData: sessionData
         )
 
@@ -109,13 +109,13 @@ public final class ChatWindowManager: NSObject, ObservableObject {
         }
 
         print(
-            "[ChatWindowManager] Created window \(windowId) for persona \(effectivePersonaId) (shown: \(showImmediately))"
+            "[ChatWindowManager] Created window \(windowId) for agent \(effectiveAgentId) (shown: \(showImmediately))"
         )
 
         return windowId
     }
 
-    /// Stop all active sessions (chat and agent) across all windows.
+    /// Stop all active sessions (chat and work) across all windows.
     /// Called during app termination to prevent crashes from in-flight inference.
     public func stopAllSessions() {
         for (_, state) in windowStates {
@@ -150,10 +150,10 @@ public final class ChatWindowManager: NSObject, ObservableObject {
             return true
         }
 
-        // Check if there's a running agent task
+        // Check if there's a running work task
         let isAgentExecuting =
-            windowState.agentSession?.isExecuting == true
-            || windowState.agentSession?.hasPendingClarification == true
+            windowState.workSession?.isExecuting == true
+            || windowState.workSession?.hasPendingClarification == true
 
         guard isAgentExecuting else {
             // No running task, allow close
@@ -161,8 +161,8 @@ public final class ChatWindowManager: NSObject, ObservableObject {
         }
 
         // Present in-app themed confirmation via SwiftUI overlay (ChatView observes this)
-        if windowState.agentCloseConfirmation == nil {
-            windowState.agentCloseConfirmation = AgentCloseConfirmation()
+        if windowState.workCloseConfirmation == nil {
+            windowState.workCloseConfirmation = WorkCloseConfirmation()
         }
         return false
     }
@@ -214,9 +214,9 @@ public final class ChatWindowManager: NSObject, ObservableObject {
         }
     }
 
-    /// Find windows by persona ID
-    public func findWindows(byPersonaId personaId: UUID) -> [ChatWindowInfo] {
-        windows.values.filter { $0.personaId == personaId }
+    /// Find windows by agent ID
+    public func findWindows(byAgentId agentId: UUID) -> [ChatWindowInfo] {
+        windows.values.filter { $0.agentId == agentId }
     }
 
     /// Find a window by session ID
@@ -249,7 +249,7 @@ public final class ChatWindowManager: NSObject, ObservableObject {
         windows[id]
     }
 
-    /// Get the window state for a specific window (for accessing session/persona)
+    /// Get the window state for a specific window (for accessing session/agent)
     func windowState(id: UUID) -> ChatWindowState? {
         windowStates[id]
     }
@@ -296,13 +296,13 @@ public final class ChatWindowManager: NSObject, ObservableObject {
     /// Create a window for viewing a background task
     /// - Parameters:
     ///   - backgroundId: The background task ID (original window ID)
-    ///   - session: The agent session from the background task
+    ///   - session: The work session from the background task
     ///   - windowState: The window state from the background task
     /// - Returns: The window ID (same as backgroundId)
     @discardableResult
     func createWindowForBackgroundTask(
         backgroundId: UUID,
-        session: AgentSession,
+        session: WorkSession,
         windowState: ChatWindowState
     ) -> UUID {
         // Reuse the original window ID - windowState.windowId already matches
@@ -310,7 +310,7 @@ public final class ChatWindowManager: NSObject, ObservableObject {
 
         let info = ChatWindowInfo(
             id: windowId,
-            personaId: windowState.personaId,
+            agentId: windowState.agentId,
             sessionId: nil,
             createdAt: Date()
         )
@@ -348,7 +348,7 @@ public final class ChatWindowManager: NSObject, ObservableObject {
 
         windows[windowId] = ChatWindowInfo(
             id: windowId,
-            personaId: context.personaId,
+            agentId: context.agentId,
             createdAt: Date()
         )
 
@@ -448,13 +448,13 @@ public final class ChatWindowManager: NSObject, ObservableObject {
 
     private func createNSWindow(
         windowId: UUID,
-        personaId: UUID,
+        agentId: UUID,
         sessionData: ChatSessionData?
     ) -> NSWindow {
         // Create per-window state container (isolates from shared singletons)
         let windowState = ChatWindowState(
             windowId: windowId,
-            personaId: personaId,
+            agentId: agentId,
             sessionData: sessionData
         )
         windowStates[windowId] = windowState
@@ -715,34 +715,34 @@ private struct ChatToolbarSidebarView: View {
     }
 }
 
-/// Mode toggle (Chat/Agent).
+/// Mode toggle (Chat/Work).
 private struct ChatToolbarModeToggleView: View {
     @ObservedObject var windowState: ChatWindowState
     @ObservedObject var session: ChatSession
 
-    private var isAgentMode: Bool { windowState.mode == .agent }
+    private var isWorkMode: Bool { windowState.mode == .work }
 
     var body: some View {
         ModeToggleButton(
-            currentMode: isAgentMode ? .agent : .chat,
-            isDisabled: !isAgentMode && !session.hasAnyModel,
-            action: { windowState.switchMode(to: isAgentMode ? .chat : .agent) }
+            currentMode: isWorkMode ? .work : .chat,
+            isDisabled: !isWorkMode && !session.hasAnyModel,
+            action: { windowState.switchMode(to: isWorkMode ? .chat : .work) }
         )
         .environment(\.theme, windowState.theme)
     }
 }
 
-/// Title view showing Agent Task or Model Badge
+/// Title view showing Work Task or Model Badge
 private struct ChatToolbarTitleView: View {
     @ObservedObject var windowState: ChatWindowState
     @ObservedObject var session: ChatSession
 
-    private var isAgentMode: Bool { windowState.mode == .agent }
+    private var isWorkMode: Bool { windowState.mode == .work }
 
     var body: some View {
         Group {
-            if isAgentMode, let agentSession = windowState.agentSession {
-                AgentTaskTitleView(session: agentSession)
+            if isWorkMode, let workSession = windowState.workSession {
+                WorkTaskTitleView(session: workSession)
                     .frame(maxWidth: 360, alignment: .leading)
             } else if let model = session.selectedModel, session.modelOptions.count <= 1 {
                 ModeIndicatorBadge(style: .model(name: displayModelName(model)))
@@ -759,16 +759,16 @@ private struct ChatToolbarTitleView: View {
     }
 }
 
-/// Contextual action button: settings (empty state / agent) or new-chat plus.
+/// Contextual action button: settings (empty state / work) or new-chat plus.
 private struct ChatToolbarActionView: View {
     @ObservedObject var windowState: ChatWindowState
     @ObservedObject var session: ChatSession
 
-    private var isAgentMode: Bool { windowState.mode == .agent }
+    private var isWorkMode: Bool { windowState.mode == .work }
 
     var body: some View {
         Group {
-            if isAgentMode || session.turns.isEmpty {
+            if isWorkMode || session.turns.isEmpty {
                 SettingsButton(action: {
                     AppDelegate.shared?.showManagementWindow(initialTab: .settings)
                 })
@@ -794,9 +794,9 @@ private struct ChatToolbarPinView: View {
     }
 }
 
-/// Agent task title shown next to the mode toggle in agent mode.
-private struct AgentTaskTitleView: View {
-    @ObservedObject var session: AgentSession
+/// Work task title shown next to the mode toggle in work mode.
+private struct WorkTaskTitleView: View {
+    @ObservedObject var session: WorkSession
 
     @Environment(\.theme) private var theme
 

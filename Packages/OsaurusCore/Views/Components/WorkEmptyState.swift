@@ -1,32 +1,32 @@
 //
-//  AgentEmptyState.swift
+//  WorkEmptyState.swift
 //  osaurus
 //
 
 import SwiftUI
 
-struct AgentEmptyState: View {
+struct WorkEmptyState: View {
     let hasModels: Bool
     let selectedModel: String?
-    let personas: [Persona]
-    let activePersonaId: UUID
+    let agents: [Agent]
+    let activeAgentId: UUID
     let onOpenModelManager: () -> Void
     let onUseFoundation: (() -> Void)?
     let onQuickAction: (String) -> Void
-    let onSelectPersona: (UUID) -> Void
+    let onSelectAgent: (UUID) -> Void
 
     @State private var hasAppeared = false
     @Environment(\.theme) private var theme
 
-    private var activePersona: Persona {
-        personas.first { $0.id == activePersonaId } ?? Persona.default
+    private var activeAgent: Agent {
+        agents.first { $0.id == activeAgentId } ?? Agent.default
     }
 
     private let quickActions = [
-        AgentQuickAction(icon: "globe", text: "Build a site", prompt: "Build a landing page for "),
-        AgentQuickAction(icon: "magnifyingglass", text: "Research a topic", prompt: "Research "),
-        AgentQuickAction(icon: "doc.text", text: "Write a blog post", prompt: "Write a blog post about "),
-        AgentQuickAction(icon: "folder", text: "Organize my files", prompt: "Help me organize "),
+        WorkQuickAction(icon: "globe", text: "Build a site", prompt: "Build a landing page for "),
+        WorkQuickAction(icon: "magnifyingglass", text: "Research a topic", prompt: "Research "),
+        WorkQuickAction(icon: "doc.text", text: "Write a blog post", prompt: "Write a blog post about "),
+        WorkQuickAction(icon: "folder", text: "Organize my files", prompt: "Help me organize "),
     ]
 
     var body: some View {
@@ -52,7 +52,7 @@ struct AgentEmptyState: View {
 
     private var readyState: some View {
         VStack(spacing: 14) {
-            AnimatedOrb(color: theme.accentColor, size: .medium, seed: activePersona.name)
+            AnimatedOrb(color: theme.accentColor, size: .medium, seed: activeAgent.name)
                 .frame(width: 88, height: 88)
                 .opacity(hasAppeared ? 1 : 0)
                 .scaleEffect(hasAppeared ? 1 : 0.85)
@@ -60,7 +60,7 @@ struct AgentEmptyState: View {
 
             VStack(spacing: 20) {
                 VStack(spacing: 8) {
-                    Text("Agent")
+                    Text("Work")
                         .font(theme.font(size: CGFloat(theme.titleSize) + 4, weight: .semibold))
                         .foregroundColor(theme.primaryText)
                         .opacity(hasAppeared ? 1 : 0)
@@ -75,7 +75,7 @@ struct AgentEmptyState: View {
                         .animation(theme.springAnimation().delay(0.17), value: hasAppeared)
                 }
 
-                PersonaPill(personas: personas, activePersonaId: activePersonaId, onSelectPersona: onSelectPersona)
+                AgentPill(agents: agents, activeAgentId: activeAgentId, onSelectAgent: onSelectAgent)
                     .opacity(hasAppeared ? 1 : 0)
                     .offset(y: hasAppeared ? 0 : 12)
                     .scaleEffect(hasAppeared ? 1 : 0.97)
@@ -105,14 +105,14 @@ struct AgentEmptyState: View {
 
     private var noModelsState: some View {
         VStack(spacing: 28) {
-            AnimatedOrb(color: theme.accentColor, size: .medium, seed: "agent")
+            AnimatedOrb(color: theme.accentColor, size: .medium, seed: "work")
                 .frame(width: 88, height: 88)
                 .opacity(hasAppeared ? 1 : 0)
                 .scaleEffect(hasAppeared ? 1 : 0.85)
                 .animation(theme.springAnimation(), value: hasAppeared)
 
             VStack(spacing: 12) {
-                Text("Agent")
+                Text("Work")
                     .font(theme.font(size: CGFloat(theme.titleSize) + 2, weight: .semibold))
                     .foregroundColor(theme.primaryText)
                     .opacity(hasAppeared ? 1 : 0)
@@ -169,7 +169,7 @@ struct AgentEmptyState: View {
 
 // MARK: - Supporting Types
 
-private struct AgentQuickAction: Identifiable {
+private struct WorkQuickAction: Identifiable {
     let id = UUID()
     let icon: String
     let text: String
@@ -177,7 +177,7 @@ private struct AgentQuickAction: Identifiable {
 }
 
 private struct QuickActionButton: View {
-    let action: AgentQuickAction
+    let action: WorkQuickAction
     let onTap: (String) -> Void
 
     @State private var isHovered = false

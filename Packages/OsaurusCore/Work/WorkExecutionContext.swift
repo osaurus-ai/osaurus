@@ -1,14 +1,14 @@
 //
-//  AgentExecutionContext.swift
+//  WorkExecutionContext.swift
 //  osaurus
 //
-//  TaskLocal context for tracking the current issue during agent tool execution.
+//  TaskLocal context for tracking the current issue during work tool execution.
 //
 
 import Foundation
 
-/// Execution context for agent operations using TaskLocal storage
-public enum AgentExecutionContext {
+/// Execution context for work operations using TaskLocal storage
+public enum WorkExecutionContext {
     /// The current issue ID being executed (available during tool calls)
     @TaskLocal public static var currentIssueId: String?
 

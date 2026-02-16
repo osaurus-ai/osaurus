@@ -609,7 +609,7 @@ private extension View {
 
                 ThemedAlertDialogContent(
                     title: "Cancel Background Task?",
-                    message: "The agent task is still running. Dismissing will cancel the task.",
+                    message: "The work task is still running. Dismissing will cancel the task.",
                     buttons: [
                         .destructive("Cancel Task") {},
                         .cancel("Keep Running"),

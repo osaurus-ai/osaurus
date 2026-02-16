@@ -1,8 +1,8 @@
 //
-//  AgentSession.swift
+//  WorkSession.swift
 //  osaurus
 //
-//  Observable state manager for agent mode execution.
+//  Observable state manager for work mode execution.
 //  Tracks current task, active issue, and execution progress.
 //
 
@@ -10,9 +10,9 @@ import Combine
 import Foundation
 import SwiftUI
 
-// MARK: - Agent Activity Events (for background toast mini-log)
+// MARK: - Work Activity Events (for background toast mini-log)
 
-public enum AgentActivityEvent: Equatable, Sendable {
+public enum WorkActivityEvent: Equatable, Sendable {
     case startedIssue(title: String)
     case willExecuteStep(index: Int, total: Int?, description: String)
     case completedStep(index: Int, total: Int?)
@@ -23,8 +23,8 @@ public enum AgentActivityEvent: Equatable, Sendable {
     case completedIssue(success: Bool)
 }
 
-/// Input state for agent mode - determines input behavior and placeholder text
-public enum AgentInputState: Equatable {
+/// Input state for work mode - determines input behavior and placeholder text
+public enum WorkInputState: Equatable {
     /// No active task - input creates new task
     case noTask
     /// Task is executing - input will be queued and sent as follow-up after completion
@@ -33,13 +33,13 @@ public enum AgentInputState: Equatable {
     case idle
 }
 
-/// Observable session state for agent mode
+/// Observable session state for work mode
 @MainActor
-public final class AgentSession: ObservableObject {
+public final class WorkSession: ObservableObject {
     // MARK: - Task State
 
     /// Current active task
-    @Published public var currentTask: AgentTask?
+    @Published public var currentTask: WorkTask?
 
     /// Tracks expand/collapse state for tool calls, thinking blocks, etc.
     let expandedBlocksStore = ExpandedBlocksStore()
@@ -76,13 +76,13 @@ public final class AgentSession: ObservableObject {
     /// Content blocks for the selected issue, with incremental streaming updates via BlockMemoizer.
     var issueBlocks: [ContentBlock] {
         let isStreamingThisIssue = isExecuting && activeIssue?.id == selectedIssueId
-        let displayName = windowState?.cachedPersonaDisplayName ?? "Agent"
+        let displayName = windowState?.cachedAgentDisplayName ?? "Work"
         let streamingTurnId = isStreamingThisIssue ? currentTurns.last?.id : nil
 
         return blockMemoizer.blocks(
             from: currentTurns,
             streamingTurnId: streamingTurnId,
-            personaName: displayName,
+            agentName: displayName,
             version: turnsVersion  // Ensures cache invalidation on issue switch
         )
     }
@@ -127,7 +127,7 @@ public final class AgentSession: ObservableObject {
         do {
             try IssueStore.saveConversationTurns(issueId: issueId, turns: turns)
         } catch {
-            print("[AgentSession] Failed to persist conversation turns: \(error)")
+            print("[WorkSession] Failed to persist conversation turns: \(error)")
         }
     }
 
@@ -303,7 +303,7 @@ public final class AgentSession: ObservableObject {
     }
 
     /// Current input state - determines input behavior
-    public var inputState: AgentInputState {
+    public var inputState: WorkInputState {
         if currentTask == nil {
             return .noTask
         } else if isExecuting {
@@ -315,8 +315,8 @@ public final class AgentSession: ObservableObject {
 
     // MARK: - Session Config
 
-    /// Persona ID for this session
-    let personaId: UUID
+    /// Agent ID for this session
+    let agentId: UUID
 
     /// Reference to window state (internal access for ExecutionContext back-reference)
     weak var windowState: ChatWindowState?
@@ -327,27 +327,27 @@ public final class AgentSession: ObservableObject {
     private var persistDebounceTask: Task<Void, Never>?
     nonisolated(unsafe) private var modelOptionsCancellable: AnyCancellable?
 
-    /// The agent engine instance for this session (each session owns its own engine)
-    private let engine: AgentEngine
+    /// The work engine instance for this session (each session owns its own engine)
+    private let engine: WorkEngine
 
     // MARK: - Activity Feed (for background task toasts)
 
-    private let activitySubject = PassthroughSubject<AgentActivityEvent, Never>()
+    private let activitySubject = PassthroughSubject<WorkActivityEvent, Never>()
 
-    public var activityPublisher: AnyPublisher<AgentActivityEvent, Never> {
+    public var activityPublisher: AnyPublisher<WorkActivityEvent, Never> {
         activitySubject.eraseToAnyPublisher()
     }
 
-    private func emitActivity(_ event: AgentActivityEvent) {
+    private func emitActivity(_ event: WorkActivityEvent) {
         activitySubject.send(event)
     }
 
     // MARK: - Initialization
 
-    init(personaId: UUID, windowState: ChatWindowState? = nil) {
-        self.personaId = personaId
+    init(agentId: UUID, windowState: ChatWindowState? = nil) {
+        self.agentId = agentId
         self.windowState = windowState
-        self.engine = AgentEngine()
+        self.engine = WorkEngine()
 
         // Initialize model options from ChatSession and subscribe to keep in sync
         // after provider changes (add/remove/enable/disable)
@@ -376,7 +376,7 @@ public final class AgentSession: ObservableObject {
     }
 
     deinit {
-        print("[AgentSession] deinit – personaId: \(personaId)")
+        print("[WorkSession] deinit – agentId: \(agentId)")
         modelOptionsCancellable?.cancel()
         executionTask?.cancel()
         persistDebounceTask?.cancel()
@@ -387,15 +387,15 @@ public final class AgentSession: ObservableObject {
     private func initialize() async {
         do {
             try await IssueManager.shared.initialize()
-            await IssueManager.shared.refreshTasks(personaId: personaId)
+            await IssueManager.shared.refreshTasks(agentId: agentId)
 
-            // Set self as delegate on AgentEngine to receive updates
+            // Set self as delegate on WorkEngine to receive updates
             engine.setDelegate(self)
 
             // Refresh window state's task list now that database is ready
-            windowState?.refreshAgentTasks()
+            windowState?.refreshWorkTasks()
         } catch {
-            errorMessage = "Failed to initialize agent: \(error.localizedDescription)"
+            errorMessage = "Failed to initialize work: \(error.localizedDescription)"
         }
     }
 
@@ -445,7 +445,7 @@ public final class AgentSession: ObservableObject {
 
     /// Creates and starts a new task
     private func startNewTask(query: String) async throws {
-        let task = try await IssueManager.shared.createTask(query: query, personaId: personaId)
+        let task = try await IssueManager.shared.createTask(query: query, agentId: agentId)
         currentTask = task
 
         // Clear artifacts for new task
@@ -458,14 +458,14 @@ public final class AgentSession: ObservableObject {
 
         // Refresh UI (windowState is nil for headless/background execution)
         await refreshIssues()
-        windowState?.refreshAgentTasks()
+        windowState?.refreshWorkTasks()
 
         // Start execution
         await executeNextIssue()
     }
 
     /// Adds a new issue to an existing task
-    private func addIssueToTask(query: String, task: AgentTask) async throws {
+    private func addIssueToTask(query: String, task: WorkTask) async throws {
         // Build context from completed issues in this task
         let context = buildContextFromCompletedIssues(taskId: task.id)
 
@@ -480,7 +480,7 @@ public final class AgentSession: ObservableObject {
                 type: .task
             )
         else {
-            throw AgentEngineError.noIssueCreated
+            throw WorkEngineError.noIssueCreated
         }
 
         // Refresh issues list
@@ -491,7 +491,7 @@ public final class AgentSession: ObservableObject {
     }
 
     /// Loads an existing task
-    public func loadTask(_ task: AgentTask) async {
+    public func loadTask(_ task: WorkTask) async {
         currentTask = task
         await IssueManager.shared.setActiveTask(task)
 
@@ -631,22 +631,22 @@ public final class AgentSession: ObservableObject {
     private func buildExecutionConfig() -> (model: String, systemPrompt: String, toolOverrides: [String: Bool]?) {
         let systemPrompt =
             windowState?.cachedSystemPrompt
-            ?? PersonaManager.shared.effectiveSystemPrompt(for: personaId)
+            ?? AgentManager.shared.effectiveSystemPrompt(for: agentId)
 
-        // Model priority: selectedModel > windowState model > persona default
+        // Model priority: selectedModel > windowState model > agent default
         let model =
             if let selected = selectedModel, !selected.isEmpty {
                 selected
             } else if let wsModel = windowState?.session.selectedModel, !wsModel.isEmpty {
                 wsModel
             } else {
-                PersonaManager.shared.persona(for: personaId)?.defaultModel ?? "default"
+                AgentManager.shared.agent(for: agentId)?.defaultModel ?? "default"
             }
 
-        var toolOverrides = PersonaManager.shared.effectiveToolOverrides(for: personaId)
+        var toolOverrides = AgentManager.shared.effectiveToolOverrides(for: agentId)
 
-        // Disable plugin tools that duplicate built-in agent folder/git tools
-        let conflicting = ToolRegistry.shared.agentConflictingToolNames
+        // Disable plugin tools that duplicate built-in work folder/git tools
+        let conflicting = ToolRegistry.shared.workConflictingToolNames
         if !conflicting.isEmpty {
             if toolOverrides == nil { toolOverrides = [:] }
             for name in conflicting {
@@ -687,7 +687,7 @@ public final class AgentSession: ObservableObject {
 
         Task { [weak self] in
             await self?.refreshIssues()
-            self?.windowState?.refreshAgentTasks()
+            self?.windowState?.refreshWorkTasks()
             if result.success {
                 await self?.executeNextIssue()
 
@@ -762,10 +762,10 @@ public final class AgentSession: ObservableObject {
 
     /// Checks if an error can be retried
     private func isRetriableError(_ error: Error) -> Bool {
-        if let agentError = error as? AgentEngineError {
+        if let agentError = error as? WorkEngineError {
             return agentError.isRetriable
         }
-        if let execError = error as? AgentExecutionError {
+        if let execError = error as? WorkExecutionError {
             return execError.isRetriable
         }
         return true  // Unknown errors might be retriable
@@ -919,7 +919,7 @@ public final class AgentSession: ObservableObject {
         } catch {
             selectedIssueTurns = []
             notifyTurnsChanged()
-            print("[AgentSession] Failed to load conversation turns: \(error)")
+            print("[WorkSession] Failed to load conversation turns: \(error)")
         }
     }
 
@@ -931,7 +931,7 @@ public final class AgentSession: ObservableObject {
         } catch {
             artifacts = []
             finalArtifact = nil
-            print("[AgentSession] Failed to load artifacts: \(error)")
+            print("[WorkSession] Failed to load artifacts: \(error)")
         }
     }
 
@@ -1007,15 +1007,15 @@ public final class AgentSession: ObservableObject {
     /// Builds the skill catalog for capability selection during planning
     private func buildSkillCatalog() -> [CapabilityEntry] {
         return SkillManager.shared.enabledCatalogEntries(
-            withOverrides: PersonaManager.shared.effectiveSkillOverrides(for: personaId)
+            withOverrides: AgentManager.shared.effectiveSkillOverrides(for: agentId)
         )
     }
 }
 
-// MARK: - AgentEngineDelegate Conformance
+// MARK: - WorkEngineDelegate Conformance
 
-extension AgentSession: AgentEngineDelegate {
-    public func agentEngine(_ engine: AgentEngine, didStartIssue issue: Issue) {
+extension WorkSession: WorkEngineDelegate {
+    public func workEngine(_ engine: WorkEngine, didStartIssue issue: Issue) {
         activeIssue = issue
         streamingContent = ""
         updateLocalIssueStatus(issue.id, to: .inProgress)
@@ -1073,12 +1073,12 @@ extension AgentSession: AgentEngineDelegate {
         return content
     }
 
-    public func agentEngine(_ engine: AgentEngine, didReceiveStreamingDelta delta: String, forStep stepIndex: Int) {
+    public func workEngine(_ engine: WorkEngine, didReceiveStreamingDelta delta: String, forStep stepIndex: Int) {
         streamingContent += delta
         deltaProcessor?.receiveDelta(delta)
     }
 
-    public func agentEngine(_ engine: AgentEngine, didGenerateArtifact artifact: Artifact, forIssue issue: Issue) {
+    public func workEngine(_ engine: WorkEngine, didGenerateArtifact artifact: Artifact, forIssue issue: Issue) {
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
             if !artifacts.contains(where: { $0.id == artifact.id }) {
@@ -1092,7 +1092,7 @@ extension AgentSession: AgentEngineDelegate {
         emitActivity(.generatedArtifact(filename: artifact.filename, isFinal: artifact.isFinalResult))
     }
 
-    public func agentEngine(_ engine: AgentEngine, didCompleteIssue issue: Issue, success: Bool) {
+    public func workEngine(_ engine: WorkEngine, didCompleteIssue issue: Issue, success: Bool) {
         // Flush any remaining buffered streaming deltas
         deltaProcessor?.finalize()
         deltaProcessor = nil
@@ -1104,8 +1104,7 @@ extension AgentSession: AgentEngineDelegate {
         Task { [weak self] in await self?.refreshIssues() }
     }
 
-    public func agentEngine(_ engine: AgentEngine, willRetryIssue issue: Issue, attempt: Int, afterDelay: TimeInterval)
-    {
+    public func workEngine(_ engine: WorkEngine, willRetryIssue issue: Issue, attempt: Int, afterDelay: TimeInterval) {
         retryAttempt = attempt
         isRetrying = true
         emitActivity(.retrying(attempt: attempt, waitSeconds: Int(afterDelay)))
@@ -1115,8 +1114,8 @@ extension AgentSession: AgentEngineDelegate {
         appendToAssistantTurn(content, forIssue: issue.id)
     }
 
-    public func agentEngine(
-        _ engine: AgentEngine,
+    public func workEngine(
+        _ engine: WorkEngine,
         needsClarification request: ClarificationRequest,
         forIssue issue: Issue
     ) {
@@ -1131,7 +1130,7 @@ extension AgentSession: AgentEngineDelegate {
         notifyIfSelected(issue.id)
     }
 
-    public func agentEngine(_ engine: AgentEngine, didConsumeTokens input: Int, output: Int, forIssue issue: Issue) {
+    public func workEngine(_ engine: WorkEngine, didConsumeTokens input: Int, output: Int, forIssue issue: Issue) {
         // Accumulate token usage for cost prediction
         cumulativeInputTokens += input
         cumulativeOutputTokens += output
@@ -1139,7 +1138,7 @@ extension AgentSession: AgentEngineDelegate {
 
     // MARK: - Reasoning Loop Delegate Methods
 
-    public func agentEngine(_ engine: AgentEngine, didStartIteration iteration: Int, forIssue issue: Issue) {
+    public func workEngine(_ engine: WorkEngine, didStartIteration iteration: Int, forIssue issue: Issue) {
         // Flush any buffered streaming deltas before starting a new iteration
         deltaProcessor?.flush()
 
@@ -1167,8 +1166,8 @@ extension AgentSession: AgentEngineDelegate {
         notifyIfSelected(issue.id)
     }
 
-    public func agentEngine(
-        _ engine: AgentEngine,
+    public func workEngine(
+        _ engine: WorkEngine,
         didCallTool toolName: String,
         withArguments args: String,
         result: String,
@@ -1221,7 +1220,7 @@ extension AgentSession: AgentEngineDelegate {
         schedulePersistence()
     }
 
-    public func agentEngine(_ engine: AgentEngine, didUpdateStatus status: String, forIssue issue: Issue) {
+    public func workEngine(_ engine: WorkEngine, didUpdateStatus status: String, forIssue issue: Issue) {
         // Update loop state with status message
         loopState?.statusMessage = status
         emitActivity(.willExecuteStep(index: currentStep, total: loopState?.maxIterations, description: status))

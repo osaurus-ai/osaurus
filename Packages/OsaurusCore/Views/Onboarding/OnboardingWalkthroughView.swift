@@ -26,7 +26,7 @@ private enum WalkthroughStepType: Int, CaseIterable {
         switch self {
         case .modes: return "Chat or let it run"
         case .skills: return "Your AI, connected to your Mac"
-        case .personalization: return "Personas, voice, and themes"
+        case .personalization: return "Agents, voice, and themes"
         case .privacy: return "Private by default"
         }
     }
@@ -35,13 +35,13 @@ private enum WalkthroughStepType: Int, CaseIterable {
         switch self {
         case .modes:
             return
-                "Chat Mode — Talk back and forth, like a conversation.\nAgent Mode — Give it a task and let it work in the background."
+                "Chat Mode — Talk back and forth, like a conversation.\nWork Mode — Give it a task and let it work in the background."
         case .skills:
             return
                 "Enable Skills to let your AI read your calendar, send messages, search files, and more — all with your permission."
         case .personalization:
             return
-                "Create different personas for different tasks. Talk hands-free with voice. Customize how everything looks."
+                "Create different agents for different tasks. Talk hands-free with voice. Customize how everything looks."
         case .privacy:
             return "Conversations stay on your Mac. Switch providers anytime — your history comes with you."
         }
@@ -306,7 +306,7 @@ struct OnboardingWalkthroughView: View {
     }
 }
 
-// MARK: - Modes Illustration (Chat vs Agent)
+// MARK: - Modes Illustration (Chat vs Work)
 
 private struct WalkthroughModesIllustration: View {
     @Environment(\.theme) private var theme
@@ -324,11 +324,11 @@ private struct WalkthroughModesIllustration: View {
                 delay: 0
             )
 
-            // Agent Mode Card
+            // Work Mode Card
             modeCard(
-                id: "agent",
+                id: "work",
                 icon: "bolt.fill",
-                label: "Agent",
+                label: "Work",
                 delay: 0.1
             )
         }
@@ -468,7 +468,7 @@ private struct WalkthroughSkillsIllustration: View {
     }
 }
 
-// MARK: - Personalization Illustration (Orbs + Mic + Theme)
+// MARK: - Agentlization Illustration (Orbs + Mic + Theme)
 
 private struct WalkthroughPersonalizationIllustration: View {
     @Environment(\.theme) private var theme
@@ -478,10 +478,10 @@ private struct WalkthroughPersonalizationIllustration: View {
 
     var body: some View {
         HStack(spacing: 20) {
-            // Personas - Three orbs in a row (overlapping slightly)
-            personasOrbs
+            // Agents - Three orbs in a row (overlapping slightly)
+            agentsOrbs
                 .onHover { hovering in
-                    hoveredItem = hovering ? "personas" : nil
+                    hoveredItem = hovering ? "agents" : nil
                 }
 
             // Voice
@@ -501,8 +501,8 @@ private struct WalkthroughPersonalizationIllustration: View {
         }
     }
 
-    private var personasOrbs: some View {
-        let isHovered = hoveredItem == "personas"
+    private var agentsOrbs: some View {
+        let isHovered = hoveredItem == "agents"
 
         return ZStack {
             // Glow

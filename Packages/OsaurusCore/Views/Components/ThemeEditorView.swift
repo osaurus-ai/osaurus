@@ -1113,10 +1113,10 @@ struct ThemeChatPreview: View {
         HStack(spacing: 10) {
             headerButton("sidebar.left")
 
-            // Chat / Agent mode toggle
+            // Chat / Work mode toggle
             HStack(spacing: 0) {
                 modeSegment("bubble.left.and.bubble.right", "Chat", isActive: true)
-                modeSegment("bolt.fill", "Agent", isActive: false)
+                modeSegment("bolt.fill", "Work", isActive: false)
             }
             .padding(3)
             .background(Capsule().fill(c(theme.colors.secondaryBackground).opacity(0.6)))

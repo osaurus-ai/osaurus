@@ -79,7 +79,7 @@ public final class WatcherManager: ObservableObject {
     public func create(
         name: String,
         instructions: String,
-        personaId: UUID? = nil,
+        agentId: UUID? = nil,
         parameters: [String: String] = [:],
         watchPath: String? = nil,
         watchBookmark: Data? = nil,
@@ -91,7 +91,7 @@ public final class WatcherManager: ObservableObject {
             id: UUID(),
             name: name,
             instructions: instructions,
-            personaId: personaId,
+            agentId: agentId,
             parameters: parameters,
             watchPath: watchPath,
             watchBookmark: watchBookmark,
@@ -401,7 +401,7 @@ public final class WatcherManager: ObservableObject {
     // MARK: - Core Convergence Loop
 
     /// Convergence loop. Repeatedly fingerprints the directory, stores the fingerprint
-    /// as lastKnown, dispatches the agent, settles, and loops back. Exits when two
+    /// as lastKnown, dispatches the work, settles, and loops back. Exits when two
     /// consecutive fingerprints match (the directory has stabilized). External changes
     /// during processing are caught on the next iteration because lastKnown represents
     /// the pre-dispatch state, not the post-settle state.
@@ -502,7 +502,7 @@ public final class WatcherManager: ObservableObject {
                 // against this, guaranteeing they get processed next iteration.
                 self.lastKnownFingerprints[watcherId] = fingerprint
 
-                // Dispatch the agent
+                // Dispatch the work
                 self.phases[watcherId] = .processing
 
                 print("[Osaurus] [\(watcher.name)] phase → processing (iteration \(iteration), \(changeCount) changes)")
@@ -510,9 +510,9 @@ public final class WatcherManager: ObservableObject {
                 let prompt = self.buildDispatchPrompt(for: watcher, iteration: iteration)
 
                 let request = DispatchRequest(
-                    mode: .agent,
+                    mode: .work,
                     prompt: prompt,
-                    personaId: watcher.personaId,
+                    agentId: watcher.agentId,
                     title: watcher.name,
                     parameters: watcher.parameters,
                     folderPath: watcher.watchPath,
@@ -527,7 +527,7 @@ public final class WatcherManager: ObservableObject {
                 self.runningTasks[watcherId] = WatcherRunInfo(
                     watcherId: watcher.id,
                     watcherName: watcher.name,
-                    personaId: watcher.personaId,
+                    agentId: watcher.agentId,
                     chatSessionId: UUID(),
                     changeCount: changeCount
                 )
@@ -579,7 +579,7 @@ public final class WatcherManager: ObservableObject {
                 userInfo: [
                     "watcherId": watcher.id,
                     "sessionId": chatSessionId,
-                    "personaId": watcher.personaId ?? Persona.defaultId,
+                    "agentId": watcher.agentId ?? Agent.defaultId,
                 ]
             )
             print("[Osaurus] Watcher completed: \(watcher.name)")
@@ -594,8 +594,8 @@ public final class WatcherManager: ObservableObject {
 
     // MARK: - Prompt Builder
 
-    /// Build the dispatch prompt. The agent gets the full directory tree via
-    /// AgentFolderContext when the folder is set, so we only need to provide
+    /// Build the dispatch prompt. The AI gets the full directory tree via
+    /// WorkFolderContext when the folder is set, so we only need to provide
     /// the user's instructions and the idempotency footer.
     private func buildDispatchPrompt(for watcher: Watcher, iteration: Int = 1) -> String {
         var prompt = watcher.instructions

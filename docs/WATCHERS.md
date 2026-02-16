@@ -30,7 +30,7 @@ Common use cases include:
    - **Name** — A descriptive name (e.g., "Downloads Organizer")
    - **Watched Folder** — Click **Browse** to select the folder to monitor
    - **Instructions** — Describe what the AI should do when changes are detected
-   - **Persona** (optional) — Select a persona to handle the task
+   - **Agent** (optional) — Select a agent to handle the task
 3. Configure monitoring options:
    - **Recursive** — Toggle on to monitor subdirectories
    - **Responsiveness** — Choose a debounce timing (see below)
@@ -124,7 +124,7 @@ Each watcher operates as a state machine:
 | **Name**          | Yes      | Display name for the watcher                        |
 | **Watched Folder**| Yes      | Directory to monitor (selected via folder picker)   |
 | **Instructions**  | Yes      | Prompt sent to the AI when changes are detected     |
-| **Persona**       | No       | Persona to use for the triggered task               |
+| **Agent**       | No       | Agent to use for the triggered task               |
 | **Recursive**     | No       | Monitor subdirectories (default: off)               |
 | **Responsiveness**| No       | Debounce timing: Fast, Balanced, or Patient         |
 
@@ -256,6 +256,6 @@ Each file contains the watcher configuration encoded as JSON with ISO 8601 dates
 ## Related Documentation
 
 - [Schedules](../README.md#schedules) — Time-based automation (complements Watchers)
-- [Agents Guide](AGENTS.md) — Autonomous task execution
+- [Agents Guide](WORK.md) — Autonomous task execution
 - [Skills Guide](SKILLS.md) — Reusable AI capabilities
 - [Features Overview](FEATURES.md) — Complete feature inventory

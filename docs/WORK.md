@@ -6,7 +6,7 @@ Osaurus Agents provide autonomous task execution with built-in issue tracking, p
 
 ## Overview
 
-Agents extend Osaurus beyond simple chat interactions. While Chat Mode is ideal for quick questions and single-turn interactions, Agent Mode excels at:
+Agents extend Osaurus beyond simple chat interactions. While Chat Mode is ideal for quick questions and single-turn interactions, Work Mode excels at:
 
 - **Multi-step tasks** — Building features, refactoring code, or writing documentation
 - **File operations** — Reading, writing, and editing files within a project
@@ -17,11 +17,11 @@ Agents extend Osaurus beyond simple chat interactions. While Chat Mode is ideal 
 
 ## Getting Started
 
-### Accessing Agent Mode
+### Accessing Work Mode
 
 1. Open the Chat window
 2. Click the **Agent** tab (or use the keyboard shortcut)
-3. You'll see the Agent Mode interface with the issue tracker sidebar
+3. You'll see the Work Mode interface with the issue tracker sidebar
 
 ### Setting a Working Directory
 
@@ -53,7 +53,7 @@ A **Task** represents a complete unit of work requested by the user. Each task:
 
 - Has a unique identifier
 - Contains one or more issues
-- Is associated with a persona
+- Is associated with a agent
 - Tracks cumulative token usage
 
 You can run **multiple tasks in parallel**, allowing you to work on different projects or features simultaneously.
@@ -235,13 +235,13 @@ Monitor resource consumption per task:
 
 ## Integration
 
-### Personas
+### Agents
 
-Each task is associated with a **persona**:
+Each task is associated with a **agent**:
 
-- The active persona when you start a task is used throughout
-- Persona's system prompt guides the agent's behavior
-- Tool permissions from the persona apply to the task
+- The active agent when you start a task is used throughout
+- Agent's system prompt guides the agent's behavior
+- Tool permissions from the agent apply to the task
 
 ### Skills
 

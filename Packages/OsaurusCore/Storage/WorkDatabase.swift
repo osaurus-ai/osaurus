@@ -1,5 +1,5 @@
 //
-//  AgentDatabase.swift
+//  WorkDatabase.swift
 //  osaurus
 //
 //  SQLite database management for Osaurus Agents.
@@ -10,7 +10,7 @@ import Foundation
 import SQLite3
 
 /// Errors that can occur during database operations
-public enum AgentDatabaseError: Error, LocalizedError {
+public enum WorkDatabaseError: Error, LocalizedError {
     case failedToOpen(String)
     case failedToExecute(String)
     case failedToPrepare(String)
@@ -29,10 +29,10 @@ public enum AgentDatabaseError: Error, LocalizedError {
 }
 
 /// SQLite database manager for Osaurus Agents
-/// Manages the agent.db database containing issues, dependencies, and events
-public final class AgentDatabase: @unchecked Sendable {
+/// Manages the work.db database containing issues, dependencies, and events
+public final class WorkDatabase: @unchecked Sendable {
     /// Shared singleton instance
-    public static let shared = AgentDatabase()
+    public static let shared = WorkDatabase()
 
     /// Current schema version
     private static let schemaVersion = 2
@@ -41,7 +41,7 @@ public final class AgentDatabase: @unchecked Sendable {
     private var db: OpaquePointer?
 
     /// Serial queue for database operations
-    private let queue = DispatchQueue(label: "ai.osaurus.agent.database")
+    private let queue = DispatchQueue(label: "ai.osaurus.work.database")
 
     /// Whether the database is currently open
     public var isOpen: Bool {
@@ -61,16 +61,16 @@ public final class AgentDatabase: @unchecked Sendable {
         try queue.sync {
             guard db == nil else { return }
 
-            OsaurusPaths.ensureExistsSilent(OsaurusPaths.agentData())
+            OsaurusPaths.ensureExistsSilent(OsaurusPaths.workData())
 
-            let path = OsaurusPaths.agentDatabaseFile().path
+            let path = OsaurusPaths.workDatabaseFile().path
             var dbPointer: OpaquePointer?
 
             let result = sqlite3_open(path, &dbPointer)
             guard result == SQLITE_OK, let connection = dbPointer else {
                 let message = String(cString: sqlite3_errmsg(dbPointer))
                 sqlite3_close(dbPointer)
-                throw AgentDatabaseError.failedToOpen(message)
+                throw WorkDatabaseError.failedToOpen(message)
             }
 
             db = connection
@@ -205,7 +205,7 @@ public final class AgentDatabase: @unchecked Sendable {
 
         // Create index for task listing
         try executeRaw("CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status)")
-        try executeRaw("CREATE INDEX IF NOT EXISTS idx_tasks_persona ON tasks(persona_id)")
+        try executeRaw("CREATE INDEX IF NOT EXISTS idx_tasks_persona ON tasks(agent_id)")
 
         // Create artifacts table for storing generated content
         try executeRaw(
@@ -262,7 +262,7 @@ public final class AgentDatabase: @unchecked Sendable {
     /// Executes a raw SQL statement without results
     private func executeRaw(_ sql: String) throws {
         guard let connection = db else {
-            throw AgentDatabaseError.notOpen
+            throw WorkDatabaseError.notOpen
         }
 
         var errorMessage: UnsafeMutablePointer<CChar>?
@@ -271,14 +271,14 @@ public final class AgentDatabase: @unchecked Sendable {
         if result != SQLITE_OK {
             let message = errorMessage.map { String(cString: $0) } ?? "Unknown error"
             sqlite3_free(errorMessage)
-            throw AgentDatabaseError.failedToExecute(message)
+            throw WorkDatabaseError.failedToExecute(message)
         }
     }
 
     /// Executes a raw SQL statement with a result handler
     private func executeRaw(_ sql: String, handler: (OpaquePointer) throws -> Void) throws {
         guard let connection = db else {
-            throw AgentDatabaseError.notOpen
+            throw WorkDatabaseError.notOpen
         }
 
         var stmt: OpaquePointer?
@@ -286,7 +286,7 @@ public final class AgentDatabase: @unchecked Sendable {
 
         guard prepareResult == SQLITE_OK, let statement = stmt else {
             let message = String(cString: sqlite3_errmsg(connection))
-            throw AgentDatabaseError.failedToPrepare(message)
+            throw WorkDatabaseError.failedToPrepare(message)
         }
 
         defer { sqlite3_finalize(statement) }
@@ -297,7 +297,7 @@ public final class AgentDatabase: @unchecked Sendable {
     public func execute<T>(_ operation: @escaping (OpaquePointer) throws -> T) throws -> T {
         try queue.sync {
             guard let connection = db else {
-                throw AgentDatabaseError.notOpen
+                throw WorkDatabaseError.notOpen
             }
             return try operation(connection)
         }
@@ -309,7 +309,7 @@ public final class AgentDatabase: @unchecked Sendable {
     {
         try queue.sync {
             guard let connection = db else {
-                throw AgentDatabaseError.notOpen
+                throw WorkDatabaseError.notOpen
             }
 
             var stmt: OpaquePointer?
@@ -317,7 +317,7 @@ public final class AgentDatabase: @unchecked Sendable {
 
             guard prepareResult == SQLITE_OK, let statement = stmt else {
                 let message = String(cString: sqlite3_errmsg(connection))
-                throw AgentDatabaseError.failedToPrepare(message)
+                throw WorkDatabaseError.failedToPrepare(message)
             }
 
             defer { sqlite3_finalize(statement) }
@@ -374,7 +374,7 @@ public final class AgentDatabase: @unchecked Sendable {
 
 // MARK: - SQLite Helpers
 
-extension AgentDatabase {
+extension WorkDatabase {
     /// Binds a string value to a statement parameter
     public static func bindText(_ stmt: OpaquePointer, index: Int32, value: String?) {
         if let value = value {

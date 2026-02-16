@@ -2,42 +2,42 @@
 //  ExecutionContext.swift
 //  osaurus
 //
-//  Window-free execution primitive that owns ChatSession + AgentSession.
+//  Window-free execution primitive that owns ChatSession + WorkSession.
 //  Runs tasks headlessly; windows are created lazily only when needed for UI.
 //
 //  Used by:
 //  - TaskDispatcher (chat mode, managed directly)
-//  - BackgroundTaskManager (agent mode, via dispatchAgent)
+//  - BackgroundTaskManager (work mode, via dispatchWork)
 //  - Future webhook handlers (headless, no UI)
 //
 
 import Foundation
 
-/// Lightweight execution context that runs Chat or Agent tasks without requiring a window.
+/// Lightweight execution context that runs Chat or Work tasks without requiring a window.
 @MainActor
 public final class ExecutionContext: ObservableObject {
 
     /// Unique identifier for this execution
     public let id: UUID
 
-    /// Whether running in Chat or Agent mode
+    /// Whether running in Chat or Work mode
     public let mode: ChatMode
 
-    /// Persona used for this execution
-    public let personaId: UUID
+    /// Agent used for this execution
+    public let agentId: UUID
 
     /// Display title for the execution
     public let title: String?
 
     let chatSession: ChatSession
     let folderBookmark: Data?
-    public private(set) var agentSession: AgentSession?
+    public private(set) var workSession: WorkSession?
 
     /// Whether execution is currently in progress
     public var isExecuting: Bool {
         switch mode {
         case .chat: chatSession.isStreaming
-        case .agent: agentSession?.isExecuting ?? false
+        case .work: workSession?.isExecuting ?? false
         }
     }
 
@@ -46,27 +46,27 @@ public final class ExecutionContext: ObservableObject {
     public init(
         id: UUID = UUID(),
         mode: ChatMode,
-        personaId: UUID,
+        agentId: UUID,
         title: String? = nil,
         folderBookmark: Data? = nil
     ) {
         self.id = id
         self.mode = mode
-        self.personaId = personaId
+        self.agentId = agentId
         self.title = title
         self.folderBookmark = folderBookmark
 
         // Configure chat session (no window required)
         let session = ChatSession()
-        session.personaId = personaId
+        session.agentId = agentId
         session.applyInitialModelSelection()
         if let title { session.title = title }
         self.chatSession = session
 
-        // Create agent session if needed
-        if mode == .agent {
-            AgentToolManager.shared.registerTools()
-            self.agentSession = AgentSession(personaId: personaId)
+        // Create work session if needed
+        if mode == .work {
+            WorkToolManager.shared.registerTools()
+            self.workSession = WorkSession(agentId: agentId)
         }
     }
 
@@ -76,9 +76,9 @@ public final class ExecutionContext: ObservableObject {
     public func prepare() async {
         await chatSession.refreshModelOptions()
 
-        if let agent = agentSession {
-            agent.modelOptions = chatSession.modelOptions
-            agent.selectedModel = chatSession.selectedModel
+        if let work = workSession {
+            work.modelOptions = chatSession.modelOptions
+            work.selectedModel = chatSession.selectedModel
         }
     }
 
@@ -87,17 +87,17 @@ public final class ExecutionContext: ObservableObject {
         switch mode {
         case .chat:
             chatSession.send(prompt)
-        case .agent:
+        case .work:
             await activateFolderContextIfNeeded()
             do {
-                try await agentSession?.dispatch(query: prompt)
+                try await workSession?.dispatch(query: prompt)
             } catch {
-                print("[ExecutionContext] Agent dispatch failed: \(error.localizedDescription)")
+                print("[ExecutionContext] Work dispatch failed: \(error.localizedDescription)")
             }
         }
     }
 
-    /// Resolve the stored bookmark and set the agent folder context before execution.
+    /// Resolve the stored bookmark and set the work folder context before execution.
     private func activateFolderContextIfNeeded() async {
         guard let bookmark = folderBookmark else { return }
         do {
@@ -112,14 +112,14 @@ public final class ExecutionContext: ObservableObject {
                 print("[ExecutionContext] Folder bookmark is stale, skipping")
                 return
             }
-            await AgentFolderContextService.shared.setFolder(url)
+            await WorkFolderContextService.shared.setFolder(url)
         } catch {
             print("[ExecutionContext] Failed to resolve folder bookmark: \(error)")
         }
     }
 
     /// Poll until execution completes or the task is cancelled.
-    /// Used for chat mode only; agent mode completion is observed by BackgroundTaskManager via Combine.
+    /// Used for chat mode only; work mode completion is observed by BackgroundTaskManager via Combine.
     public func awaitCompletion() async -> DispatchResult {
         try? await Task.sleep(nanoseconds: 100_000_000)  // 100ms startup grace
 
@@ -139,7 +139,7 @@ public final class ExecutionContext: ObservableObject {
     public func cancel() {
         switch mode {
         case .chat: chatSession.stop()
-        case .agent: agentSession?.stopExecution()
+        case .work: workSession?.stopExecution()
         }
     }
 }

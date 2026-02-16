@@ -233,7 +233,7 @@ struct SkillsView: View {
         // If skill has associated files, export as ZIP; otherwise just SKILL.md
         if skill.hasAssociatedFiles {
             panel.allowedContentTypes = [.zip]
-            panel.nameFieldStringValue = "\(skill.agentSkillsName).zip"
+            panel.nameFieldStringValue = "\(skill.xplaceholder_agentSkillsNamex).zip"
             panel.title = "Export Skill (Agent Skills Format)"
             panel.message = "Export as ZIP archive with all associated files"
         } else {

@@ -21,10 +21,10 @@ public final class CapabilityService {
     /// This is the simple integration path - all enabled skills are included.
     public func buildSystemPromptWithSkills(
         basePrompt: String,
-        personaId: UUID?
+        agentId: UUID?
     ) -> String {
-        let effectivePersonaId = personaId ?? Persona.defaultId
-        let effectivePrompt = PersonaManager.shared.effectiveSystemPrompt(for: effectivePersonaId)
+        let effectiveAgentId = agentId ?? Agent.defaultId
+        let effectivePrompt = AgentManager.shared.effectiveSystemPrompt(for: effectiveAgentId)
             .trimmingCharacters(in: .whitespacesAndNewlines)
 
         // Get enabled skills
@@ -67,17 +67,17 @@ public final class CapabilityService {
 
     /// Build system prompt with capability catalog for two-phase loading.
     /// The model will see metadata only and can call select_capabilities.
-    /// Uses persona-level overrides to filter available capabilities.
+    /// Uses agent-level overrides to filter available capabilities.
     public func buildSystemPromptWithCatalog(
         basePrompt: String,
-        personaId: UUID?
+        agentId: UUID?
     ) -> String {
-        let effectivePersonaId = personaId ?? Persona.defaultId
-        let effectivePrompt = PersonaManager.shared.effectiveSystemPrompt(for: effectivePersonaId)
+        let effectiveAgentId = agentId ?? Agent.defaultId
+        let effectivePrompt = AgentManager.shared.effectiveSystemPrompt(for: effectiveAgentId)
             .trimmingCharacters(in: .whitespacesAndNewlines)
 
-        // Build catalog with persona-level overrides
-        let catalog = CapabilityCatalogBuilder.build(for: effectivePersonaId)
+        // Build catalog with agent-level overrides
+        let catalog = CapabilityCatalogBuilder.build(for: effectiveAgentId)
 
         guard !catalog.isEmpty else {
             return effectivePrompt
@@ -151,8 +151,8 @@ public final class CapabilityService {
 
     /// Estimate tokens for skill catalog entries (name + description only).
     /// Used in two-phase loading for the selection phase.
-    public func estimateCatalogSkillTokens(for personaId: UUID?) -> Int {
-        let skills = enabledSkills(for: personaId)
+    public func estimateCatalogSkillTokens(for agentId: UUID?) -> Int {
+        let skills = enabledSkills(for: agentId)
         // Format: "- **name**: description\n" ≈ 6 chars overhead per skill
         let totalChars = skills.reduce(0) { sum, skill in
             sum + skill.name.count + skill.description.count + 6
@@ -170,19 +170,19 @@ public final class CapabilityService {
         SkillManager.shared.enabledCount
     }
 
-    // MARK: - Persona-Aware Skill Checking
+    // MARK: - Agent-Aware Skill Checking
 
-    /// Check if a skill is enabled for a given persona.
-    /// Takes into account persona-level overrides.
-    public func isSkillEnabled(_ skillName: String, for personaId: UUID?) -> Bool {
+    /// Check if a skill is enabled for a given agent.
+    /// Takes into account agent-level overrides.
+    public func isSkillEnabled(_ skillName: String, for agentId: UUID?) -> Bool {
         guard let skill = SkillManager.shared.skill(named: skillName) else {
             return false
         }
 
-        let effectivePersonaId = personaId ?? Persona.defaultId
+        let effectiveAgentId = agentId ?? Agent.defaultId
 
-        // Check persona override first
-        if let overrides = PersonaManager.shared.effectiveSkillOverrides(for: effectivePersonaId),
+        // Check agent override first
+        if let overrides = AgentManager.shared.effectiveSkillOverrides(for: effectiveAgentId),
             let override = overrides[skillName]
         {
             return override
@@ -192,18 +192,18 @@ public final class CapabilityService {
         return skill.enabled
     }
 
-    /// Get enabled skills for a given persona.
-    /// Takes into account persona-level overrides.
-    public func enabledSkills(for personaId: UUID?) -> [Skill] {
+    /// Get enabled skills for a given agent.
+    /// Takes into account agent-level overrides.
+    public func enabledSkills(for agentId: UUID?) -> [Skill] {
         SkillManager.shared.skills.filter { skill in
-            isSkillEnabled(skill.name, for: personaId)
+            isSkillEnabled(skill.name, for: agentId)
         }
     }
 
-    /// Check if any skills are enabled for a given persona.
-    public func hasEnabledSkills(for personaId: UUID?) -> Bool {
+    /// Check if any skills are enabled for a given agent.
+    public func hasEnabledSkills(for agentId: UUID?) -> Bool {
         SkillManager.shared.skills.contains { skill in
-            isSkillEnabled(skill.name, for: personaId)
+            isSkillEnabled(skill.name, for: agentId)
         }
     }
 

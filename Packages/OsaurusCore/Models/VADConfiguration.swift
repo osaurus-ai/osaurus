@@ -3,8 +3,8 @@
 //  osaurus
 //
 //  Configuration model for Voice Activity Detection (VAD) mode.
-//  VAD mode enables wake-word persona activation - users can speak
-//  a persona's name to automatically open chat with that persona.
+//  VAD mode enables wake-word agent activation - users can speak
+//  a agent's name to automatically open chat with that agent.
 //
 
 import Foundation
@@ -15,18 +15,19 @@ public struct VADConfiguration: Codable, Equatable, Sendable {
     /// Whether VAD mode is enabled globally
     public var vadModeEnabled: Bool
 
-    /// IDs of personas that respond to wake-word activation
-    public var enabledPersonaIds: [UUID]
+    /// IDs of agents that respond to wake-word activation
+    public var enabledAgentIds: [UUID]
 
-    /// Whether to automatically start voice input after persona activation
+    /// Whether to automatically start voice input after agent activation
     public var autoStartVoiceInput: Bool
 
-    /// Custom wake phrase (e.g., "Hey Osaurus"). Empty = use persona names only
+    /// Custom wake phrase (e.g., "Hey Osaurus"). Empty = use agent names only
     public var customWakePhrase: String
 
     private enum CodingKeys: String, CodingKey {
         case vadModeEnabled
-        case enabledPersonaIds
+        case enabledAgentIds
+        case enabledPersonaIds  // legacy key for migration
         case wakeWordSensitivity  // Kept for backward compatibility (ignored on decode)
         case autoStartVoiceInput
         case customWakePhrase
@@ -38,9 +39,10 @@ public struct VADConfiguration: Codable, Equatable, Sendable {
         self.vadModeEnabled =
             try container.decodeIfPresent(Bool.self, forKey: .vadModeEnabled)
             ?? defaults.vadModeEnabled
-        self.enabledPersonaIds =
-            try container.decodeIfPresent([UUID].self, forKey: .enabledPersonaIds)
-            ?? defaults.enabledPersonaIds
+        self.enabledAgentIds =
+            try container.decodeIfPresent([UUID].self, forKey: .enabledAgentIds)
+            ?? container.decodeIfPresent([UUID].self, forKey: .enabledPersonaIds)
+            ?? defaults.enabledAgentIds
         // wakeWordSensitivity is ignored - now uses shared sensitivity from WhisperConfiguration
         self.autoStartVoiceInput =
             try container.decodeIfPresent(Bool.self, forKey: .autoStartVoiceInput)
@@ -52,12 +54,12 @@ public struct VADConfiguration: Codable, Equatable, Sendable {
 
     public init(
         vadModeEnabled: Bool = false,
-        enabledPersonaIds: [UUID] = [],
+        enabledAgentIds: [UUID] = [],
         autoStartVoiceInput: Bool = true,
         customWakePhrase: String = ""
     ) {
         self.vadModeEnabled = vadModeEnabled
-        self.enabledPersonaIds = enabledPersonaIds
+        self.enabledAgentIds = enabledAgentIds
         self.autoStartVoiceInput = autoStartVoiceInput
         self.customWakePhrase = customWakePhrase
     }
@@ -66,7 +68,7 @@ public struct VADConfiguration: Codable, Equatable, Sendable {
     public static var `default`: VADConfiguration {
         VADConfiguration(
             vadModeEnabled: false,
-            enabledPersonaIds: [],
+            enabledAgentIds: [],
             autoStartVoiceInput: true,
             customWakePhrase: ""
         )
@@ -76,7 +78,7 @@ public struct VADConfiguration: Codable, Equatable, Sendable {
     public func encode(to encoder: Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
         try container.encode(vadModeEnabled, forKey: .vadModeEnabled)
-        try container.encode(enabledPersonaIds, forKey: .enabledPersonaIds)
+        try container.encode(enabledAgentIds, forKey: .enabledAgentIds)
         try container.encode(autoStartVoiceInput, forKey: .autoStartVoiceInput)
         try container.encode(customWakePhrase, forKey: .customWakePhrase)
     }

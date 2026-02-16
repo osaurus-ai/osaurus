@@ -16,10 +16,10 @@ Canonical reference for all Osaurus features, their status, and documentation.
 | MCP Server                       | Stable    | "MCP Server"       | (in README)                   | Networking/OsaurusServer.swift, Services/MCPServerManager.swift                       |
 | Tools & Plugins                  | Stable    | "Tools & Plugins"  | PLUGIN_AUTHORING.md           | Tools/, Managers/PluginManager.swift                                                  |
 | Skills                           | Stable    | "Skills"           | SKILLS.md                     | Managers/SkillManager.swift, Views/SkillsView.swift, Services/CapabilityService.swift |
-| Personas                         | Stable    | "Personas"         | (in README)                   | Managers/PersonaManager.swift, Models/Persona.swift, Views/PersonasView.swift         |
+| Agents                         | Stable    | "Agents"         | (in README)                   | Managers/AgentManager.swift, Models/Agent.swift, Views/AgentsView.swift         |
 | Schedules                        | Stable    | "Schedules"        | (in README)                   | Managers/ScheduleManager.swift, Models/Schedule.swift, Views/SchedulesView.swift      |
 | Watchers                         | Stable    | "Watchers"         | WATCHERS.md                   | Managers/WatcherManager.swift, Models/Watcher.swift, Views/WatchersView.swift         |
-| Agents                           | Stable    | "Agents"           | AGENTS.md                     | Agent/, Services/AgentEngine.swift, Views/AgentView.swift                             |
+| Agents                           | Stable    | "Agents"           | WORK.md                     | Agent/, Services/WorkEngine.swift, Views/WorkView.swift                             |
 | Developer Tools: Insights        | Stable    | "Developer Tools"  | DEVELOPER_TOOLS.md            | Views/InsightsView.swift, Services/InsightsService.swift                              |
 | Developer Tools: Server Explorer | Stable    | "Developer Tools"  | DEVELOPER_TOOLS.md            | Views/ServerView.swift                                                                |
 | Apple Foundation Models          | macOS 26+ | "What is Osaurus?" | (in README)                   | Services/FoundationModelService.swift                                                 |
@@ -48,12 +48,12 @@ Canonical reference for all Osaurus features, their status, and documentation.
 │  Views Layer                                                             │
 │  ├── ContentView (Menu Bar)                                              │
 │  ├── ChatOverlayView (Global Hotkey Chat)                                │
-│  ├── AgentView (Agent Mode)                                              │
+│  ├── WorkView (Work Mode)                                              │
 │  ├── ManagementView                                                      │
 │  │   ├── ModelDownloadView (Models)                                      │
 │  │   ├── RemoteProvidersView (Providers)                                 │
 │  │   ├── ToolsManagerView (Tools)                                        │
-│  │   ├── PersonasView (Personas)                                         │
+│  │   ├── AgentsView (Agents)                                         │
 │  │   ├── SkillsView (Skills)                                             │
 │  │   ├── SchedulesView (Schedules)                                       │
 │  │   ├── WatchersView (Watchers)                                         │
@@ -76,8 +76,8 @@ Canonical reference for all Osaurus features, their status, and documentation.
 │  │   ├── ToolRegistry                                                    │
 │  │   ├── PluginManager                                                   │
 │  │   └── MCPProviderTool (Wrapped remote MCP tools)                      │
-│  ├── Personas                                                            │
-│  │   └── PersonaManager (Persona lifecycle and active persona)           │
+│  ├── Agents                                                            │
+│  │   └── AgentManager (Agent lifecycle and active agent)           │
 │  ├── Skills                                                              │
 │  │   ├── SkillManager (Skill CRUD and loading)                           │
 │  │   ├── CapabilityService (Two-phase capability selection)              │
@@ -89,8 +89,8 @@ Canonical reference for all Osaurus features, their status, and documentation.
 │  │   ├── WatcherStore (Watcher persistence)                              │
 │  │   └── DirectoryFingerprint (Change detection via Merkle hashing)      │
 │  ├── Agents                                                              │
-│  │   ├── AgentEngine (Task execution coordinator)                        │
-│  │   ├── AgentExecutionEngine (Plan generation and execution)            │
+│  │   ├── WorkEngine (Task execution coordinator)                        │
+│  │   ├── WorkExecutionEngine (Plan generation and execution)            │
 │  │   └── IssueManager (Issue lifecycle management)                       │
 │  ├── Voice/Audio                                                         │
 │  │   ├── WhisperKitService (Speech-to-text transcription)                │
@@ -307,35 +307,35 @@ Canonical reference for all Osaurus features, their status, and documentation.
 
 ---
 
-### Personas
+### Agents
 
-**Purpose:** Create custom AI assistant personalities with unique behaviors, capabilities, and visual styles.
+**Purpose:** Create custom AI assistant agentlities with unique behaviors, capabilities, and visual styles.
 
 **Components:**
 
-- `Models/Persona.swift` — Persona data model with export/import support
-- `Models/PersonaStore.swift` — Persona persistence (JSON files)
-- `Managers/PersonaManager.swift` — Persona lifecycle and active persona management
-- `Views/PersonasView.swift` — Persona gallery and management UI
+- `Models/Agent.swift` — Agent data model with export/import support
+- `Models/AgentStore.swift` — Agent persistence (JSON files)
+- `Managers/AgentManager.swift` — Agent lifecycle and active agent management
+- `Views/AgentsView.swift` — Agent gallery and management UI
 
 **Features:**
 
-- **Custom System Prompts** — Define unique instructions for each persona
-- **Tool Configuration** — Enable or disable specific tools per persona
-- **Visual Themes** — Assign a custom theme that activates with the persona
+- **Custom System Prompts** — Define unique instructions for each agent
+- **Tool Configuration** — Enable or disable specific tools per agent
+- **Visual Themes** — Assign a custom theme that activates with the agent
 - **Generation Settings** — Configure default model, temperature, and max tokens
-- **Import/Export** — Share personas as JSON files for backup or sharing
-- **Live Switching** — Click to activate a persona, theme updates automatically
+- **Import/Export** — Share agents as JSON files for backup or sharing
+- **Live Switching** — Click to activate a agent, theme updates automatically
 
-**Persona Properties:**
+**Agent Properties:**
 | Property | Description |
 |----------|-------------|
 | `name` | Display name (required) |
-| `description` | Brief description of the persona |
+| `description` | Brief description of the agent |
 | `systemPrompt` | Instructions prepended to all chats |
 | `enabledTools` | Map of tool name → enabled/disabled |
 | `themeId` | Optional custom theme to apply |
-| `defaultModel` | Optional model ID for this persona |
+| `defaultModel` | Optional model ID for this agent |
 | `temperature` | Optional temperature override |
 | `maxTokens` | Optional max tokens override |
 
@@ -355,7 +355,7 @@ Canonical reference for all Osaurus features, their status, and documentation.
 **Features:**
 
 - **Frequency Options** — Once (specific date/time), Daily, Weekly, Monthly, Yearly
-- **Persona Integration** — Optionally assign a persona to handle the scheduled task
+- **Agent Integration** — Optionally assign a agent to handle the scheduled task
 - **Custom Instructions** — Define the prompt sent to the AI when the schedule runs
 - **Enable/Disable** — Toggle schedules on or off without deleting
 - **Manual Trigger** — "Run Now" option to execute a schedule immediately
@@ -369,7 +369,7 @@ Canonical reference for all Osaurus features, their status, and documentation.
 | ------------------- | -------------------------------------------- |
 | `name`              | Display name (required)                      |
 | `instructions`      | Prompt sent to the AI when the schedule runs |
-| `personaId`         | Optional persona to use for the chat         |
+| `agentId`         | Optional agent to use for the chat         |
 | `frequency`         | When and how often to run                    |
 | `isEnabled`         | Whether the schedule is active               |
 | `lastRunAt`         | When the schedule last ran                   |
@@ -404,7 +404,7 @@ Canonical reference for all Osaurus features, their status, and documentation.
 - **Folder Monitoring** — Watch any directory using FSEvents with a single shared stream
 - **Configurable Responsiveness** — Fast (~200ms), Balanced (~1s), or Patient (~3s) debounce
 - **Recursive Monitoring** — Optionally monitor subdirectories
-- **Persona Integration** — Assign a persona to handle triggered tasks
+- **Agent Integration** — Assign a agent to handle triggered tasks
 - **Enable/Disable** — Toggle watchers on or off without deleting
 - **Manual Trigger** — "Trigger Now" option to run a watcher immediately
 - **Convergence Loop** — Re-checks directory fingerprint after agent completes; loops until stable (max 5 iterations)
@@ -417,7 +417,7 @@ Canonical reference for all Osaurus features, their status, and documentation.
 | `name`           | Display name (required)                            |
 | `instructions`   | Prompt sent to the AI when changes are detected    |
 | `watchedFolder`  | Directory to monitor (security-scoped bookmark)    |
-| `personaId`      | Optional persona to use for the task               |
+| `agentId`      | Optional agent to use for the task               |
 | `isEnabled`      | Whether the watcher is active                      |
 | `recursive`      | Whether to monitor subdirectories (default: false) |
 | `responsiveness` | Debounce timing: fast, balanced, or patient        |
@@ -458,19 +458,19 @@ Canonical reference for all Osaurus features, their status, and documentation.
 
 **Components:**
 
-- `Agent/AgentFolderContext.swift` — Folder context models and project detection
-- `Agent/AgentFolderContextService.swift` — Folder selection and security-scoped bookmarks
+- `Agent/WorkFolderContext.swift` — Folder context models and project detection
+- `Agent/WorkFolderContextService.swift` — Folder selection and security-scoped bookmarks
 - `Agent/AgentFolderTools.swift` — File and shell operation tools
-- `Agent/AgentFileOperation.swift` — File operation models
-- `Agent/AgentFileOperationLog.swift` — Operation logging with undo support
-- `Models/AgentModels.swift` — Core data models (Issue, AgentTask, LoopState, etc.)
-- `Services/AgentEngine.swift` — Main task execution coordinator
-- `Services/AgentExecutionEngine.swift` — Reasoning loop execution engine
+- `Agent/WorkFileOperation.swift` — File operation models
+- `Agent/WorkFileOperationLog.swift` — Operation logging with undo support
+- `Models/WorkModels.swift` — Core data models (Issue, WorkTask, LoopState, etc.)
+- `Services/WorkEngine.swift` — Main task execution coordinator
+- `Services/WorkExecutionEngine.swift` — Reasoning loop execution engine
 - `Managers/IssueManager.swift` — Issue lifecycle and dependency management
-- `Storage/AgentDatabase.swift` — SQLite storage for issues, tasks, and conversation turns
-- `Tools/AgentTools.swift` — Agent-specific tools (complete_task, create_issue, generate_artifact, etc.)
-- `Views/AgentView.swift` — Main Agent Mode UI
-- `Views/AgentSession.swift` — Observable session state manager
+- `Storage/WorkDatabase.swift` — SQLite storage for issues, tasks, and conversation turns
+- `Tools/WorkTools.swift` — Agent-specific tools (complete_task, create_issue, generate_artifact, etc.)
+- `Views/WorkView.swift` — Main Work Mode UI
+- `Views/WorkSession.swift` — Observable session state manager
 
 **Features:**
 
@@ -593,7 +593,7 @@ Canonical reference for all Osaurus features, their status, and documentation.
 - **Reference Files** — Attach text files loaded into skill context
 - **Asset Files** — Support files for skills
 - **Categories** — Organize skills by type
-- **Persona Integration** — Per-persona skill enable/disable
+- **Agent Integration** — Per-agent skill enable/disable
 
 **Two-Phase Capability Selection:**
 
@@ -669,21 +669,21 @@ A context optimization system that reduces token usage by ~80%:
 
 ### VAD Mode (Voice Activity Detection)
 
-**Purpose:** Enable hands-free persona activation through wake-word detection.
+**Purpose:** Enable hands-free agent activation through wake-word detection.
 
 **Components:**
 
 - `Services/VADService.swift` — Always-on listening and wake-word detection
-- `Models/VADConfiguration.swift` — VAD settings and enabled personas
+- `Models/VADConfiguration.swift` — VAD settings and enabled agents
 - `Views/ContentView.swift` — VAD toggle button in popover
 - `AppDelegate.swift` — VAD status indicator in menu bar icon
-- `Models/PersonaNameDetector.swift` — Persona name matching logic
+- `Models/AgentNameDetector.swift` — Agent name matching logic
 
 **Features:**
 
-- **Wake-word activation** — Say a persona's name to open chat
+- **Wake-word activation** — Say a agent's name to open chat
 - **Custom wake phrase** — Set a phrase like "Hey Osaurus"
-- **Per-persona enablement** — Choose which personas respond to voice
+- **Per-agent enablement** — Choose which agents respond to voice
 - **Menu bar indicator** — Shows listening status with audio level
 - **Auto-start voice input** — Begin recording after activation
 - **Silence timeout** — Auto-close chat after inactivity
@@ -694,7 +694,7 @@ A context optimization system that reduces token usage by ~80%:
 | Setting                 | Description                                  |
 | ----------------------- | -------------------------------------------- |
 | `vadModeEnabled`        | Master toggle for VAD mode                   |
-| `enabledPersonaIds`     | UUIDs of personas that respond to wake-words |
+| `enabledAgentIds`     | UUIDs of agents that respond to wake-words |
 | `customWakePhrase`      | Optional phrase like "Hey Osaurus"           |
 | `wakeWordSensitivity`   | Detection sensitivity level                  |
 | `autoStartVoiceInput`   | Start recording after activation             |
@@ -703,8 +703,8 @@ A context optimization system that reduces token usage by ~80%:
 **Workflow:**
 
 1. VAD listens in background using WhisperKit
-2. Transcription is checked for persona names or wake phrase
-3. On match, chat opens with the detected persona
+2. Transcription is checked for agent names or wake phrase
+3. On match, chat opens with the detected agent
 4. Voice input starts automatically (if enabled)
 5. After chat closes, VAD resumes listening
 
@@ -764,7 +764,7 @@ A context optimization system that reduces token usage by ~80%:
 | [README.md](../README.md)                                      | Project overview, quick start, feature highlights |
 | [FEATURES.md](FEATURES.md)                                     | Feature inventory and architecture (this file)    |
 | [WATCHERS.md](WATCHERS.md)                                     | Watchers and folder monitoring guide              |
-| [AGENTS.md](AGENTS.md)                                         | Agents and autonomous task execution guide        |
+| [WORK.md](WORK.md)                                         | Agents and autonomous task execution guide        |
 | [REMOTE_PROVIDERS.md](REMOTE_PROVIDERS.md)                     | Remote provider setup and configuration           |
 | [REMOTE_MCP_PROVIDERS.md](REMOTE_MCP_PROVIDERS.md)             | Remote MCP provider setup                         |
 | [DEVELOPER_TOOLS.md](DEVELOPER_TOOLS.md)                       | Insights and Server Explorer guide                |

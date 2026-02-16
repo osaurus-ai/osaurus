@@ -323,62 +323,86 @@ extension CapabilitiesTableRepresentable {
 
             switch row {
             case .groupHeader(let id, let name, let icon, let enabledCount, let totalCount, let isExpanded):
-                cell.configure(id: row.id, content:
-                    GroupHeaderCell(
-                        name: name,
-                        icon: icon,
-                        enabledCount: enabledCount,
-                        totalCount: totalCount,
-                        isExpanded: isExpanded,
-                        isHovered: isHovered,
-                        onToggle: { [weak self] in self?.ctx.onToggleGroup?(id) },
-                        onEnableAll: { [weak self] in self?.ctx.onEnableAllInGroup?(id) },
-                        onDisableAll: { [weak self] in self?.ctx.onDisableAllInGroup?(id) }
-                    )
-                    .environment(\.theme, theme)
+                cell.configure(
+                    id: row.id,
+                    content:
+                        GroupHeaderCell(
+                            name: name,
+                            icon: icon,
+                            enabledCount: enabledCount,
+                            totalCount: totalCount,
+                            isExpanded: isExpanded,
+                            isHovered: isHovered,
+                            onToggle: { [weak self] in self?.ctx.onToggleGroup?(id) },
+                            onEnableAll: { [weak self] in self?.ctx.onEnableAllInGroup?(id) },
+                            onDisableAll: { [weak self] in self?.ctx.onDisableAllInGroup?(id) }
+                        )
+                        .environment(\.theme, theme)
                 )
 
-            case .tool(let id, let name, let description, let enabled, let isAgentRestricted, let catalogTokens, let estimatedTokens):
-                cell.configure(id: row.id, content:
-                    ToolRowCell(
-                        name: name,
-                        description: description,
-                        enabled: enabled,
-                        isAgentRestricted: isAgentRestricted,
-                        catalogTokens: catalogTokens,
-                        estimatedTokens: estimatedTokens,
-                        isHovered: isHovered,
-                        onToggle: { [weak self] in self?.ctx.onToggleTool?(id, enabled) }
-                    )
-                    .environment(\.theme, theme)
+            case .tool(
+                let id,
+                let name,
+                let description,
+                let enabled,
+                let isAgentRestricted,
+                let catalogTokens,
+                let estimatedTokens
+            ):
+                cell.configure(
+                    id: row.id,
+                    content:
+                        ToolRowCell(
+                            name: name,
+                            description: description,
+                            enabled: enabled,
+                            isAgentRestricted: isAgentRestricted,
+                            catalogTokens: catalogTokens,
+                            estimatedTokens: estimatedTokens,
+                            isHovered: isHovered,
+                            onToggle: { [weak self] in self?.ctx.onToggleTool?(id, enabled) }
+                        )
+                        .environment(\.theme, theme)
                 )
 
-            case .skill(let id, let name, let description, let enabled, let isBuiltIn, let isFromPlugin, let estimatedTokens):
-                cell.configure(id: row.id, content:
-                    SkillRowCell(
-                        name: name,
-                        description: description,
-                        enabled: enabled,
-                        isBuiltIn: isBuiltIn,
-                        isFromPlugin: isFromPlugin,
-                        estimatedTokens: estimatedTokens,
-                        isHovered: isHovered,
-                        onToggle: { [weak self] in self?.ctx.onToggleSkill?(id) }
-                    )
-                    .environment(\.theme, theme)
+            case .skill(
+                let id,
+                let name,
+                let description,
+                let enabled,
+                let isBuiltIn,
+                let isFromPlugin,
+                let estimatedTokens
+            ):
+                cell.configure(
+                    id: row.id,
+                    content:
+                        SkillRowCell(
+                            name: name,
+                            description: description,
+                            enabled: enabled,
+                            isBuiltIn: isBuiltIn,
+                            isFromPlugin: isFromPlugin,
+                            estimatedTokens: estimatedTokens,
+                            isHovered: isHovered,
+                            onToggle: { [weak self] in self?.ctx.onToggleSkill?(id) }
+                        )
+                        .environment(\.theme, theme)
                 )
 
             case .compoundPlugin(let id, let name, let toolCount, let skillCount, let isActive):
-                cell.configure(id: row.id, content:
-                    CompoundPluginRowCell(
-                        name: name,
-                        toolCount: toolCount,
-                        skillCount: skillCount,
-                        isActive: isActive,
-                        isHovered: isHovered,
-                        onToggle: { [weak self] in self?.ctx.onToggleCompoundPlugin?(id) }
-                    )
-                    .environment(\.theme, theme)
+                cell.configure(
+                    id: row.id,
+                    content:
+                        CompoundPluginRowCell(
+                            name: name,
+                            toolCount: toolCount,
+                            skillCount: skillCount,
+                            isActive: isActive,
+                            isHovered: isHovered,
+                            onToggle: { [weak self] in self?.ctx.onToggleCompoundPlugin?(id) }
+                        )
+                        .environment(\.theme, theme)
                 )
             }
         }
@@ -589,7 +613,7 @@ private struct ToolRowCell: View {
         .modifier(HoverRowStyle(isHovered: isHovered, showAccent: enabled && !isAgentRestricted))
         .help(
             isAgentRestricted
-                ? "Available in Chat Mode only. Agent Mode includes equivalent built-in tools."
+                ? "Available in Chat Mode only. Work Mode includes equivalent built-in tools."
                 : ""
         )
     }

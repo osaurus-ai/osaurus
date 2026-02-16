@@ -15,8 +15,8 @@ public struct ChatSessionData: Codable, Identifiable, Sendable {
     public var updatedAt: Date
     public var selectedModel: String?
     public var turns: [ChatTurnData]
-    /// The persona this session belongs to. nil = Default persona
-    public var personaId: UUID?
+    /// The agent this session belongs to. nil = Default agent
+    public var agentId: UUID?
 
     public init(
         id: UUID = UUID(),
@@ -25,7 +25,7 @@ public struct ChatSessionData: Codable, Identifiable, Sendable {
         updatedAt: Date = Date(),
         selectedModel: String? = nil,
         turns: [ChatTurnData] = [],
-        personaId: UUID? = nil
+        agentId: UUID? = nil
     ) {
         self.id = id
         self.title = title
@@ -33,7 +33,7 @@ public struct ChatSessionData: Codable, Identifiable, Sendable {
         self.updatedAt = updatedAt
         self.selectedModel = selectedModel
         self.turns = turns
-        self.personaId = personaId
+        self.agentId = agentId
     }
 
     // Custom decoder for backward compatibility with old sessions
@@ -45,7 +45,9 @@ public struct ChatSessionData: Codable, Identifiable, Sendable {
         updatedAt = try container.decode(Date.self, forKey: .updatedAt)
         selectedModel = try container.decodeIfPresent(String.self, forKey: .selectedModel)
         turns = try container.decode([ChatTurnData].self, forKey: .turns)
-        personaId = try container.decodeIfPresent(UUID.self, forKey: .personaId)
+        agentId =
+            try container.decodeIfPresent(UUID.self, forKey: .agentId)
+            ?? container.decodeIfPresent(UUID.self, forKey: .personaId)
         // Note: enabledToolOverrides was removed - old values are ignored for backward compatibility
         _ = try? container.decodeIfPresent([String: Bool].self, forKey: .enabledToolOverrides)
     }
@@ -59,11 +61,12 @@ public struct ChatSessionData: Codable, Identifiable, Sendable {
         try container.encode(updatedAt, forKey: .updatedAt)
         try container.encodeIfPresent(selectedModel, forKey: .selectedModel)
         try container.encode(turns, forKey: .turns)
-        try container.encodeIfPresent(personaId, forKey: .personaId)
+        try container.encodeIfPresent(agentId, forKey: .agentId)
     }
 
     private enum CodingKeys: String, CodingKey {
-        case id, title, createdAt, updatedAt, selectedModel, turns, enabledToolOverrides, personaId
+        case id, title, createdAt, updatedAt, selectedModel, turns, enabledToolOverrides, agentId
+        case personaId  // legacy key for migration
     }
 
     /// Generate a title from the first user message

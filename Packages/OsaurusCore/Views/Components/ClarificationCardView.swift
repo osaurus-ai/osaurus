@@ -2,7 +2,7 @@
 //  ClarificationCardView.swift
 //  osaurus
 //
-//  UI for displaying clarification questions from the agent.
+//  UI for displaying clarification questions from the AI.
 //  Allows users to select from options or provide custom responses.
 //
 

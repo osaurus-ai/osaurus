@@ -35,7 +35,7 @@ struct WatchersView: View {
                     SettingsEmptyState(
                         icon: "eye.fill",
                         title: "Create Your First Watcher",
-                        subtitle: "Monitor folders for changes and trigger agent tasks automatically.",
+                        subtitle: "Monitor folders for changes and trigger work tasks automatically.",
                         examples: [
                             .init(
                                 icon: "arrow.down.circle",
@@ -116,7 +116,7 @@ struct WatchersView: View {
                     watcherManager.create(
                         name: watcher.name,
                         instructions: watcher.instructions,
-                        personaId: watcher.personaId,
+                        agentId: watcher.agentId,
                         parameters: watcher.parameters,
                         watchPath: watcher.watchPath,
                         watchBookmark: watcher.watchBookmark,
@@ -158,7 +158,7 @@ struct WatchersView: View {
     private var headerView: some View {
         ManagerHeaderWithActions(
             title: "Watchers",
-            subtitle: "Monitor folders for changes and trigger agent tasks automatically",
+            subtitle: "Monitor folders for changes and trigger work tasks automatically",
             count: watcherManager.watchers.isEmpty ? nil : watcherManager.watchers.count
         ) {
             HeaderIconButton("arrow.clockwise", help: "Refresh watchers") {
@@ -188,7 +188,7 @@ struct WatchersView: View {
 
 private struct WatcherCard: View {
     @Environment(\.theme) private var theme
-    @ObservedObject private var personaManager = PersonaManager.shared
+    @ObservedObject private var agentManager = AgentManager.shared
 
     let watcher: Watcher
     let isRunning: Bool
@@ -202,9 +202,9 @@ private struct WatcherCard: View {
     @State private var isHovered = false
     @State private var showDeleteConfirm = false
 
-    private var persona: Persona? {
-        guard let personaId = watcher.personaId else { return nil }
-        return personaManager.persona(for: personaId)
+    private var agent: Agent? {
+        guard let agentId = watcher.agentId else { return nil }
+        return agentManager.agent(for: agentId)
     }
 
     private var watcherColor: Color {
@@ -407,7 +407,7 @@ private struct WatcherCard: View {
     @ViewBuilder
     private var compactStats: some View {
         HStack(spacing: 0) {
-            statItem(icon: "bolt.fill", text: "Agent")
+            statItem(icon: "bolt.fill", text: "Work")
             statDot
 
             statItem(
@@ -420,9 +420,9 @@ private struct WatcherCard: View {
                 statItem(icon: "clock", text: relativeTimeString(for: lastTriggered))
             }
 
-            if let personaName = persona?.name, persona?.isBuiltIn == false {
+            if let agentName = agent?.name, agent?.isBuiltIn == false {
                 statDot
-                statItem(icon: "person.fill", text: personaName)
+                statItem(icon: "person.fill", text: agentName)
             }
 
             Spacer(minLength: 0)
@@ -463,7 +463,7 @@ struct WatcherEditorSheet: View {
     }
 
     @Environment(\.theme) private var theme
-    @ObservedObject private var personaManager = PersonaManager.shared
+    @ObservedObject private var agentManager = AgentManager.shared
 
     let mode: Mode
     let onSave: (Watcher) -> Void
@@ -471,7 +471,7 @@ struct WatcherEditorSheet: View {
 
     @State private var name = ""
     @State private var instructions = ""
-    @State private var selectedPersonaId: UUID?
+    @State private var selectedAgentId: UUID?
     @State private var isEnabled = true
     @State private var recursive = false
     @State private var responsiveness: Responsiveness = .balanced
@@ -513,7 +513,7 @@ struct WatcherEditorSheet: View {
                     watcherNameField
                     watchedFolderSection
                     instructionsSection
-                    personaSection
+                    agentSection
                     monitoringSection
                 }
                 .padding(24)
@@ -579,7 +579,7 @@ struct WatcherEditorSheet: View {
 
                 Text(
                     isEditing
-                        ? "Modify your file system watcher" : "Set up a folder monitoring agent"
+                        ? "Modify your file system watcher" : "Set up a folder monitor"
                 )
                 .font(.system(size: 12))
                 .foregroundColor(theme.secondaryText)
@@ -720,7 +720,7 @@ struct WatcherEditorSheet: View {
                         )
                 )
 
-                Text("The agent will be triggered when files in this folder change.")
+                Text("The AI will be triggered when files in this folder change.")
                     .font(.system(size: 11))
                     .foregroundColor(theme.tertiaryText)
             }
@@ -761,7 +761,7 @@ struct WatcherEditorSheet: View {
                 ZStack(alignment: .topLeading) {
                     if instructions.isEmpty {
                         Text(
-                            "What should the agent do when changes are detected?"
+                            "What should the AI do when changes are detected?"
                         )
                         .font(.system(size: 13))
                         .foregroundColor(theme.placeholderText)
@@ -787,7 +787,7 @@ struct WatcherEditorSheet: View {
                 )
 
                 Text(
-                    "The agent will receive these instructions along with a list of changed files."
+                    "The AI will receive these instructions along with a list of changed files."
                 )
                 .font(.system(size: 11))
                 .foregroundColor(theme.tertiaryText)
@@ -847,18 +847,18 @@ struct WatcherEditorSheet: View {
         }
     }
 
-    // MARK: - Persona Section
+    // MARK: - Agent Section
 
-    private var personaSection: some View {
-        WatcherEditorSection(title: "Persona", icon: "person.circle.fill") {
+    private var agentSection: some View {
+        WatcherEditorSection(title: "Agent", icon: "person.circle.fill") {
             VStack(alignment: .leading, spacing: 8) {
-                WatcherPersonaPicker(
-                    selectedPersonaId: $selectedPersonaId,
-                    personas: personaManager.personas.filter { !$0.isBuiltIn }
+                WatcherAgentPicker(
+                    selectedAgentId: $selectedAgentId,
+                    agents: agentManager.agents.filter { !$0.isBuiltIn }
                 )
                 .frame(maxWidth: .infinity)
 
-                Text("The persona determines the agent's behavior and available tools.")
+                Text("The agent determines the AI's behavior and available tools.")
                     .font(.system(size: 11))
                     .foregroundColor(theme.tertiaryText)
             }
@@ -904,7 +904,7 @@ struct WatcherEditorSheet: View {
     private func loadWatcher(_ watcher: Watcher) {
         name = watcher.name
         instructions = watcher.instructions
-        selectedPersonaId = watcher.personaId
+        selectedAgentId = watcher.agentId
         isEnabled = watcher.isEnabled
         recursive = watcher.recursive
         responsiveness = watcher.responsiveness
@@ -923,7 +923,7 @@ struct WatcherEditorSheet: View {
             id: existingId ?? UUID(),
             name: trimmedName,
             instructions: trimmedInstructions,
-            personaId: selectedPersonaId,
+            agentId: selectedAgentId,
             watchPath: selectedWatchPath,
             watchBookmark: selectedWatchBookmark,
             isEnabled: isEnabled,
@@ -1037,22 +1037,22 @@ private struct WatcherTextField: View {
     }
 }
 
-// MARK: - Persona Capability Helpers
+// MARK: - Agent Capability Helpers
 
-/// Counts enabled tools for a persona (nil = default/global config)
+/// Counts enabled tools for an agent (nil = default/global config)
 @MainActor
-private func enabledToolCount(for persona: Persona?) -> Int {
-    let overrides = persona.map { PersonaManager.shared.effectiveToolOverrides(for: $0.id) } ?? nil
+private func enabledToolCount(for agent: Agent?) -> Int {
+    let overrides = agent.map { AgentManager.shared.effectiveToolOverrides(for: $0.id) } ?? nil
     return ToolRegistry.shared.listUserTools(withOverrides: overrides, excludeInternal: true)
         .filter { $0.enabled }.count
 }
 
-/// Counts enabled skills for a persona (nil = default/global config)
+/// Counts enabled skills for an agent (nil = default/global config)
 @MainActor
-private func enabledSkillCount(for persona: Persona?) -> Int {
+private func enabledSkillCount(for agent: Agent?) -> Int {
     let skills = SkillManager.shared.skills
-    guard let persona = persona,
-        let overrides = PersonaManager.shared.effectiveSkillOverrides(for: persona.id)
+    guard let agent = agent,
+        let overrides = AgentManager.shared.effectiveSkillOverrides(for: agent.id)
     else {
         return skills.filter { $0.enabled }.count
     }
@@ -1072,28 +1072,28 @@ private var totalSkillCount: Int {
     SkillManager.shared.skills.count
 }
 
-// MARK: - Persona Picker
+// MARK: - Agent Picker
 
-private struct WatcherPersonaPicker: View {
+private struct WatcherAgentPicker: View {
     @Environment(\.theme) private var theme
-    @Binding var selectedPersonaId: UUID?
-    let personas: [Persona]
+    @Binding var selectedAgentId: UUID?
+    let agents: [Agent]
 
     @State private var isHovering = false
     @State private var showingPopover = false
 
-    private var selectedPersona: Persona? {
-        if let id = selectedPersonaId {
-            return personas.first(where: { $0.id == id })
+    private var selectedAgent: Agent? {
+        if let id = selectedAgentId {
+            return agents.first(where: { $0.id == id })
         }
         return nil
     }
 
-    private var selectedPersonaName: String {
-        selectedPersona?.name ?? "Default"
+    private var selectedAgentName: String {
+        selectedAgent?.name ?? "Default"
     }
 
-    private func personaColor(for name: String) -> Color {
+    private func agentColor(for name: String) -> Color {
         let hash = abs(name.hashValue)
         let hue = Double(hash % 360) / 360.0
         return Color(hue: hue, saturation: 0.6, brightness: 0.8)
@@ -1103,16 +1103,16 @@ private struct WatcherPersonaPicker: View {
         Button(action: { showingPopover.toggle() }) {
             HStack(spacing: 12) {
                 Circle()
-                    .fill(personaColor(for: selectedPersonaName).opacity(0.2))
+                    .fill(agentColor(for: selectedAgentName).opacity(0.2))
                     .frame(width: 32, height: 32)
                     .overlay(
                         Image(systemName: "person.fill")
                             .font(.system(size: 14, weight: .medium))
-                            .foregroundColor(personaColor(for: selectedPersonaName))
+                            .foregroundColor(agentColor(for: selectedAgentName))
                     )
 
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(selectedPersonaName)
+                    Text(selectedAgentName)
                         .font(.system(size: 13, weight: .medium))
                         .foregroundColor(theme.primaryText)
 
@@ -1120,13 +1120,13 @@ private struct WatcherPersonaPicker: View {
                         HStack(spacing: 3) {
                             Image(systemName: "wrench.and.screwdriver")
                                 .font(.system(size: 9, weight: .medium))
-                            Text("\(enabledToolCount(for: selectedPersona)) tools")
+                            Text("\(enabledToolCount(for: selectedAgent)) tools")
                                 .font(.system(size: 10, weight: .medium))
                         }
                         HStack(spacing: 3) {
                             Image(systemName: "sparkles")
                                 .font(.system(size: 9, weight: .medium))
-                            Text("\(enabledSkillCount(for: selectedPersona)) skills")
+                            Text("\(enabledSkillCount(for: selectedAgent)) skills")
                                 .font(.system(size: 10, weight: .medium))
                         }
                     }
@@ -1165,25 +1165,25 @@ private struct WatcherPersonaPicker: View {
         }
         .popover(isPresented: $showingPopover, arrowEdge: .bottom) {
             VStack(alignment: .leading, spacing: 0) {
-                WatcherPersonaOptionRow(
-                    persona: nil,
-                    isSelected: selectedPersonaId == nil,
+                WatcherAgentOptionRow(
+                    agent: nil,
+                    isSelected: selectedAgentId == nil,
                     action: {
-                        selectedPersonaId = nil
+                        selectedAgentId = nil
                         showingPopover = false
                     }
                 )
 
-                if !personas.isEmpty {
+                if !agents.isEmpty {
                     Divider()
                         .padding(.vertical, 4)
 
-                    ForEach(personas, id: \.id) { persona in
-                        WatcherPersonaOptionRow(
-                            persona: persona,
-                            isSelected: selectedPersonaId == persona.id,
+                    ForEach(agents, id: \.id) { agent in
+                        WatcherAgentOptionRow(
+                            agent: agent,
+                            isSelected: selectedAgentId == agent.id,
                             action: {
-                                selectedPersonaId = persona.id
+                                selectedAgentId = agent.id
                                 showingPopover = false
                             }
                         )
@@ -1197,21 +1197,21 @@ private struct WatcherPersonaPicker: View {
     }
 }
 
-private struct WatcherPersonaOptionRow: View {
+private struct WatcherAgentOptionRow: View {
     @Environment(\.theme) private var theme
 
-    let persona: Persona?
+    let agent: Agent?
     let isSelected: Bool
     let action: () -> Void
 
     @State private var isHovering = false
 
     private var displayName: String {
-        persona?.name ?? "Default"
+        agent?.name ?? "Default"
     }
 
     private var displayDescription: String {
-        persona?.description ?? "Uses the default system behavior"
+        agent?.description ?? "Uses the default system behavior"
     }
 
     var body: some View {
@@ -1233,13 +1233,13 @@ private struct WatcherPersonaOptionRow: View {
                         HStack(spacing: 3) {
                             Image(systemName: "wrench.and.screwdriver")
                                 .font(.system(size: 9, weight: .medium))
-                            Text("\(enabledToolCount(for: persona))/\(totalToolCount)")
+                            Text("\(enabledToolCount(for: agent))/\(totalToolCount)")
                                 .font(.system(size: 10, weight: .medium))
                         }
                         HStack(spacing: 3) {
                             Image(systemName: "sparkles")
                                 .font(.system(size: 9, weight: .medium))
-                            Text("\(enabledSkillCount(for: persona))/\(totalSkillCount)")
+                            Text("\(enabledSkillCount(for: agent))/\(totalSkillCount)")
                                 .font(.system(size: 10, weight: .medium))
                         }
                     }

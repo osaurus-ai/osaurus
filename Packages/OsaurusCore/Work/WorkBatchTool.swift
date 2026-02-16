@@ -1,5 +1,5 @@
 //
-//  AgentBatchTool.swift
+//  WorkBatchTool.swift
 //  osaurus
 //
 //  A generic batch tool that executes multiple registered tool operations in sequence.
@@ -11,7 +11,7 @@ import Foundation
 // MARK: - Batch Tool
 
 /// Tool for executing multiple operations in a single call
-struct AgentBatchTool: OsaurusTool {
+struct WorkBatchTool: OsaurusTool {
     let name = "batch"
     let description = "Execute multiple tool operations in sequence (max 30). Continues on error and reports results."
 
@@ -93,28 +93,28 @@ struct AgentBatchTool: OsaurusTool {
     }
 
     private func parseOperations(_ argumentsJSON: String) throws -> [Operation] {
-        let args = try AgentFolderToolHelpers.parseArguments(argumentsJSON)
+        let args = try WorkFolderToolHelpers.parseArguments(argumentsJSON)
 
         guard let operationsArray = args["operations"] as? [[String: Any]] else {
-            throw AgentFolderToolError.invalidArguments("Missing required parameter: operations")
+            throw WorkFolderToolError.invalidArguments("Missing required parameter: operations")
         }
 
         guard !operationsArray.isEmpty else {
-            throw AgentFolderToolError.invalidArguments("Operations array cannot be empty")
+            throw WorkFolderToolError.invalidArguments("Operations array cannot be empty")
         }
 
         guard operationsArray.count <= Self.maxOperations else {
-            throw AgentFolderToolError.invalidArguments(
+            throw WorkFolderToolError.invalidArguments(
                 "Too many operations: \(operationsArray.count). Maximum is \(Self.maxOperations)."
             )
         }
 
         return try operationsArray.enumerated().map { index, op in
             guard let tool = op["tool"] as? String else {
-                throw AgentFolderToolError.invalidArguments("Operation \(index + 1): missing 'tool' field")
+                throw WorkFolderToolError.invalidArguments("Operation \(index + 1): missing 'tool' field")
             }
             guard let toolArgs = op["args"] else {
-                throw AgentFolderToolError.invalidArguments("Operation \(index + 1): missing 'args' field")
+                throw WorkFolderToolError.invalidArguments("Operation \(index + 1): missing 'args' field")
             }
 
             let argsData = try JSONSerialization.data(withJSONObject: toolArgs)
@@ -223,7 +223,7 @@ struct AgentBatchTool: OsaurusTool {
         // Execute the tool - always pass override to bypass config check for batch operations
         // This ensures folder tools work even if not explicitly enabled in persisted config
         do {
-            let output = try await AgentExecutionContext.$currentBatchId.withValue(batchId) {
+            let output = try await WorkExecutionContext.$currentBatchId.withValue(batchId) {
                 try await ToolRegistry.shared.execute(
                     name: op.tool,
                     argumentsJSON: op.argsJSON,
@@ -254,7 +254,7 @@ struct AgentBatchTool: OsaurusTool {
         let succeeded = results.filter(\.success).count
         let failed = results.count - succeeded
 
-        // Make failures more prominent so the agent recognizes the batch didn't work
+        // Make failures more prominent so the AI recognizes the batch didn't work
         var lines: [String]
         if failed > 0 && succeeded == 0 {
             lines = ["ERROR: Batch failed - all \(failed) operation(s) failed", ""]

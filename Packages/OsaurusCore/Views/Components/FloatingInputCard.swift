@@ -26,23 +26,23 @@ struct FloatingInputCard: View {
     let onStop: () -> Void
     /// Trigger to focus the input field (increment to focus)
     var focusTrigger: Int = 0
-    /// Current persona ID (used for persona-specific settings)
-    var personaId: UUID? = nil
+    /// Current agent ID (used for agent-specific settings)
+    var agentId: UUID? = nil
     /// Window ID for targeted VAD notifications
     var windowId: UUID? = nil
-    /// Agent input state (nil = chat mode, non-nil = agent mode)
-    var agentInputState: AgentInputState? = nil
-    /// Queued message waiting to be sent after execution (agent mode)
+    /// Work input state (nil = chat mode, non-nil = work mode)
+    var workInputState: WorkInputState? = nil
+    /// Queued message waiting to be sent after execution (work mode)
     var pendingQueuedMessage: String? = nil
-    /// Callback to clear/dismiss the queued message (agent mode)
+    /// Callback to clear/dismiss the queued message (work mode)
     var onClearQueued: (() -> Void)? = nil
-    /// Callback to end the current task (agent mode)
+    /// Callback to end the current task (work mode)
     var onEndTask: (() -> Void)? = nil
-    /// Callback to resume an in-progress issue (agent mode)
+    /// Callback to resume an in-progress issue (work mode)
     var onResume: (() -> Void)? = nil
-    /// Whether there's an issue that can be resumed (agent mode)
+    /// Whether there's an issue that can be resumed (work mode)
     var canResume: Bool = false
-    /// Cumulative token usage for agent mode
+    /// Cumulative token usage for work mode
     var cumulativeTokens: Int? = nil
     /// Hide context indicator in empty states
     var hideContextIndicator: Bool = false
@@ -50,8 +50,8 @@ struct FloatingInputCard: View {
     // Observe managers for reactive updates
     @ObservedObject private var toolRegistry = ToolRegistry.shared
     @ObservedObject private var skillManager = SkillManager.shared
-    @ObservedObject private var personaManager = PersonaManager.shared
-    @ObservedObject private var folderContextService = AgentFolderContextService.shared
+    @ObservedObject private var agentManager = AgentManager.shared
+    @ObservedObject private var folderContextService = WorkFolderContextService.shared
 
     // Local state for text input to prevent parent re-renders on every keystroke
     @State private var localText: String = ""
@@ -101,9 +101,9 @@ struct FloatingInputCard: View {
         let hasImages = !pendingImages.isEmpty
         let hasContent = hasText || hasImages
 
-        // In agent mode, allow sending during streaming (will queue for after completion)
+        // In work mode, allow sending during streaming (will queue for after completion)
         // but only if there isn't already a queued message
-        if agentInputState != nil && isStreaming {
+        if workInputState != nil && isStreaming {
             return hasContent && pendingQueuedMessage == nil
         }
 
@@ -605,9 +605,9 @@ struct FloatingInputCard: View {
                 capabilitiesSelectorChip
             }
 
-            // Folder context selector (agent mode only)
+            // Folder context selector (work mode only)
             // Show if: has folder selected, OR in empty mode (can select folder)
-            if agentInputState != nil && (folderContextService.hasActiveFolder || isAgentEmptyMode) {
+            if workInputState != nil && (folderContextService.hasActiveFolder || isAgentEmptyMode) {
                 folderContextChip
             }
 
@@ -627,9 +627,9 @@ struct FloatingInputCard: View {
 
     @ViewBuilder
     private var contextIndicatorChip: some View {
-        // In agent mode, show cumulative usage; in chat mode, show context estimate
-        if let cumulative = cumulativeTokens, agentInputState != nil {
-            // Agent mode: show cumulative tokens used
+        // In work mode, show cumulative usage; in chat mode, show context estimate
+        if let cumulative = cumulativeTokens, workInputState != nil {
+            // Work mode: show cumulative tokens used
             HStack(spacing: 4) {
                 Text("\(formatTokenCount(cumulative))")
                     .font(.system(size: CGFloat(theme.captionSize) - 1, weight: .medium, design: .monospaced))
@@ -737,7 +737,7 @@ struct FloatingInputCard: View {
             ModelPickerView(
                 options: cachedModelOptions,
                 selectedModel: $selectedModel,
-                personaId: personaId,
+                agentId: agentId,
                 onDismiss: dismissModelPicker
             )
         }
@@ -751,26 +751,26 @@ struct FloatingInputCard: View {
 
     // MARK: - Capabilities Selector (Tools + Skills)
 
-    private var effectivePersonaId: UUID {
-        personaId ?? Persona.defaultId
+    private var effectiveAgentId: UUID {
+        agentId ?? Agent.defaultId
     }
 
     private var toolOverrides: [String: Bool]? {
-        personaManager.effectiveToolOverrides(for: effectivePersonaId)
+        agentManager.effectiveToolOverrides(for: effectiveAgentId)
     }
 
     private var skillOverrides: [String: Bool]? {
-        personaManager.effectiveSkillOverrides(for: effectivePersonaId)
+        agentManager.effectiveSkillOverrides(for: effectiveAgentId)
     }
 
-    /// Count of enabled tools (with persona overrides applied, excluding agent tools)
+    /// Count of enabled tools (with agent overrides applied, excluding work tools)
     private var enabledToolCount: Int {
         toolRegistry.listUserTools(withOverrides: toolOverrides)
             .filter { $0.enabled }
             .count
     }
 
-    /// Count of enabled skills (with persona overrides applied)
+    /// Count of enabled skills (with agent overrides applied)
     private var enabledSkillCount: Int {
         skillManager.skills.filter { skill in
             if let overrides = skillOverrides, let value = overrides[skill.name] {
@@ -820,11 +820,11 @@ struct FloatingInputCard: View {
             }
         }
         .popover(isPresented: $showCapabilitiesPicker, arrowEdge: .top) {
-            CapabilitiesSelectorView(personaId: effectivePersonaId, isAgentMode: agentInputState != nil)
+            CapabilitiesSelectorView(agentId: effectiveAgentId, isWorkMode: workInputState != nil)
         }
     }
 
-    // MARK: - Folder Context Chip (Agent Mode)
+    // MARK: - Folder Context Chip (Work Mode)
 
     /// Empty mode = no active task, folder can be changed
     private var isAgentEmptyMode: Bool { hideContextIndicator }
@@ -947,7 +947,7 @@ struct FloatingInputCard: View {
 
     private var inputCard: some View {
         VStack(alignment: .leading, spacing: 0) {
-            // Queued message banner (agent mode, when message is queued)
+            // Queued message banner (work mode, when message is queued)
             if let queuedMessage = pendingQueuedMessage {
                 queuedMessageBanner(message: queuedMessage)
                     .padding(.horizontal, 12)
@@ -1049,8 +1049,8 @@ struct FloatingInputCard: View {
 
     /// Dynamic placeholder text based on input state
     private var placeholderText: String {
-        // Agent mode placeholders
-        if let state = agentInputState {
+        // Work mode placeholders
+        if let state = workInputState {
             switch state {
             case .noTask:
                 return "What do you want done?"
@@ -1128,7 +1128,7 @@ struct FloatingInputCard: View {
                 } else if canResume {
                     resumeButton
                     endTaskButton
-                } else if agentInputState == .idle {
+                } else if workInputState == .idle {
                     endTaskButton
                 }
                 sendButton

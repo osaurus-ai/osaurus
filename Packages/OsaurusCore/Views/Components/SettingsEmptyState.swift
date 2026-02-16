@@ -2,7 +2,7 @@
 //  SettingsEmptyState.swift
 //  osaurus
 //
-//  Unified empty state component for settings tabs (Watchers, Schedules, Skills, Personas).
+//  Unified empty state component for settings tabs (Watchers, Schedules, Skills, Agents).
 //  Displays a glowing icon, title, subtitle, example cards, and action buttons.
 //
 

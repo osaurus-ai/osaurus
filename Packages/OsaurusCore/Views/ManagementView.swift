@@ -19,7 +19,7 @@ public enum ManagementTab: String, CaseIterable, Identifiable {
     case plugins
     case tools
     case skills
-    case personas
+    case agents
     case schedules
     case watchers
     case voice
@@ -38,7 +38,7 @@ public enum ManagementTab: String, CaseIterable, Identifiable {
         case .plugins: "puzzlepiece.extension.fill"
         case .tools: "wrench.and.screwdriver.fill"
         case .skills: "sparkles"
-        case .personas: "person.2.fill"
+        case .agents: "person.2.fill"
         case .schedules: "calendar.badge.clock"
         case .watchers: "eye.fill"
         case .voice: "waveform"
@@ -57,7 +57,7 @@ public enum ManagementTab: String, CaseIterable, Identifiable {
         case .plugins: "Plugins"
         case .tools: "Tools"
         case .skills: "Skills"
-        case .personas: "Personas"
+        case .agents: "Agents"
         case .schedules: "Schedules"
         case .watchers: "Watchers"
         case .voice: "Voice"
@@ -90,7 +90,7 @@ struct ManagementView: View {
     @ObservedObject private var themeManager = ThemeManager.shared
     @ObservedObject private var repoService = PluginRepositoryService.shared
     @ObservedObject private var remoteProviderManager = RemoteProviderManager.shared
-    @ObservedObject private var personaManager = PersonaManager.shared
+    @ObservedObject private var agentManager = AgentManager.shared
     @ObservedObject private var skillManager = SkillManager.shared
     @ObservedObject private var scheduleManager = ScheduleManager.shared
     @ObservedObject private var watcherManager = WatcherManager.shared
@@ -194,8 +194,8 @@ private extension ManagementView {
             ToolsManagerView()
         case .skills:
             SkillsView()
-        case .personas:
-            PersonasView()
+        case .agents:
+            AgentsView()
         case .schedules:
             SchedulesView()
         case .watchers:
@@ -244,8 +244,8 @@ private extension ManagementView {
             count = ToolRegistry.shared.listTools().count
         case .skills:
             count = skillManager.skills.count
-        case .personas:
-            count = personaManager.personas.filter { !$0.isBuiltIn }.count
+        case .agents:
+            count = agentManager.agents.filter { !$0.isBuiltIn }.count
         case .schedules:
             count = scheduleManager.schedules.count
         case .watchers:

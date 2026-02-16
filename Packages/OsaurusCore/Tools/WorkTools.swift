@@ -1,15 +1,15 @@
 //
-//  AgentTools.swift
+//  WorkTools.swift
 //  osaurus
 //
-//  Agent-specific tools for task completion, issue creation, and artifact generation.
+//  Work-specific tools for task completion, issue creation, and artifact generation.
 //
 
 import Foundation
 
 // MARK: - Complete Task Tool
 
-/// Tool for the agent to mark the current task as complete
+/// Tool for work mode to mark the current task as complete
 public struct CompleteTaskTool: OsaurusTool {
     public let name = "complete_task"
     public let description =
@@ -51,7 +51,7 @@ public struct CompleteTaskTool: OsaurusTool {
             let rawArtifact = json["artifact"] as? String
         else {
             throw NSError(
-                domain: "AgentTools",
+                domain: "WorkTools",
                 code: 3,
                 userInfo: [
                     NSLocalizedDescriptionKey:
@@ -68,7 +68,7 @@ public struct CompleteTaskTool: OsaurusTool {
 
         let remainingWork = json["remaining_work"] as? String
 
-        // Build result with artifact content encoded for parsing by AgentEngine
+        // Build result with artifact content encoded for parsing by WorkEngine
         var result = """
             Task completion reported:
             - Status: \(success ? "SUCCESS" : "PARTIAL")
@@ -122,7 +122,7 @@ public struct GenerateArtifactTool: OsaurusTool {
             let rawContent = json["content"] as? String
         else {
             throw NSError(
-                domain: "AgentTools",
+                domain: "WorkTools",
                 code: 4,
                 userInfo: [
                     NSLocalizedDescriptionKey: "Invalid artifact format. Required: filename (string), content (string)"
@@ -140,7 +140,7 @@ public struct GenerateArtifactTool: OsaurusTool {
         let trimmedFilename = filename.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedFilename.isEmpty else {
             throw NSError(
-                domain: "AgentTools",
+                domain: "WorkTools",
                 code: 4,
                 userInfo: [NSLocalizedDescriptionKey: "Filename cannot be empty"]
             )
@@ -149,7 +149,7 @@ public struct GenerateArtifactTool: OsaurusTool {
         // Determine content type from extension
         let contentType = Artifact.contentType(from: trimmedFilename)
 
-        // Return structured result for extraction by AgentEngine
+        // Return structured result for extraction by WorkEngine
         return """
             Artifact generated:
             - Filename: \(trimmedFilename)
@@ -223,7 +223,7 @@ public struct CreateIssueTool: OsaurusTool {
             let description = json["description"] as? String
         else {
             throw NSError(
-                domain: "AgentTools",
+                domain: "WorkTools",
                 code: 5,
                 userInfo: [
                     NSLocalizedDescriptionKey: "Invalid issue format. Required: title (string), description (string)"
@@ -246,7 +246,7 @@ public struct CreateIssueTool: OsaurusTool {
         }
 
         // Get current issue context for linking
-        guard let currentIssueId = AgentExecutionContext.currentIssueId else {
+        guard let currentIssueId = WorkExecutionContext.currentIssueId else {
             return """
                 Issue creation recorded:
                 - Title: \(title)
@@ -332,7 +332,7 @@ public struct RequestClarificationTool: OsaurusTool {
             let question = json["question"] as? String
         else {
             throw NSError(
-                domain: "AgentTools",
+                domain: "WorkTools",
                 code: 6,
                 userInfo: [NSLocalizedDescriptionKey: "Invalid clarification format. Required: question (string)"]
             )
@@ -364,11 +364,11 @@ public struct RequestClarificationTool: OsaurusTool {
 
 // MARK: - Tool Registration
 
-/// Manager for agent-specific tool registration
-/// Uses reference counting to support multiple concurrent agent sessions
+/// Manager for work-specific tool registration
+/// Uses reference counting to support multiple concurrent work sessions
 @MainActor
-public final class AgentToolManager {
-    public static let shared = AgentToolManager()
+public final class WorkToolManager {
+    public static let shared = WorkToolManager()
 
     /// Cached tool instances (created once, reused)
     /// Note: SubmitPlanTool and ReportDiscoveryTool removed - no longer used with reasoning loop architecture
@@ -379,7 +379,7 @@ public final class AgentToolManager {
         RequestClarificationTool(),
     ]
 
-    /// Reference count for active agent sessions
+    /// Reference count for active work sessions
     /// Tools stay registered while count > 0
     private var referenceCount = 0
 
@@ -395,16 +395,16 @@ public final class AgentToolManager {
     private var _folderToolNames: [String] = []
 
     /// Current folder context (if any)
-    private var currentFolderContext: AgentFolderContext?
+    private var currentFolderContext: WorkFolderContext?
 
     private init() {}
 
-    /// Whether agent tools are currently registered
+    /// Whether work tools are currently registered
     public var isRegistered: Bool {
         referenceCount > 0
     }
 
-    /// Returns the names of all agent tools (excluding folder tools)
+    /// Returns the names of all work tools (excluding folder tools)
     public var toolNames: [String] {
         tools.map { $0.name }
     }
@@ -419,9 +419,9 @@ public final class AgentToolManager {
         currentFolderContext != nil
     }
 
-    /// Registers agent-specific tools with the tool registry and enables them
+    /// Registers work-specific tools with the tool registry and enables them
     /// Uses reference counting - safe to call multiple times from different sessions
-    /// Call this when entering Agent Mode
+    /// Call this when entering Work Mode
     public func registerTools() {
         referenceCount += 1
 
@@ -439,9 +439,9 @@ public final class AgentToolManager {
         }
     }
 
-    /// Unregisters agent-specific tools from the tool registry
+    /// Unregisters work-specific tools from the tool registry
     /// Uses reference counting - only unregisters when last session leaves
-    /// Call this when leaving Agent Mode
+    /// Call this when leaving Work Mode
     public func unregisterTools() {
         guard referenceCount > 0 else { return }
 
@@ -467,7 +467,7 @@ public final class AgentToolManager {
         unregisterFolderTools()
     }
 
-    /// Force unregisters all agent tools regardless of reference count
+    /// Force unregisters all work tools regardless of reference count
     /// Use for cleanup during app termination
     public func forceUnregisterAll() {
         guard referenceCount > 0 else { return }
@@ -489,24 +489,24 @@ public final class AgentToolManager {
     // MARK: - Folder Tool Registration
 
     /// Register folder-specific tools for the given context
-    /// Called by AgentFolderContextService when folder is selected
-    public func registerFolderTools(for context: AgentFolderContext) {
+    /// Called by WorkFolderContextService when folder is selected
+    public func registerFolderTools(for context: WorkFolderContext) {
         // Unregister any existing folder tools first
         unregisterFolderTools()
 
         currentFolderContext = context
 
         // Build core tools (always)
-        folderTools = AgentFolderToolFactory.buildCoreTools(rootPath: context.rootPath)
+        folderTools = WorkFolderToolFactory.buildCoreTools(rootPath: context.rootPath)
 
         // Add coding tools if known project type
         if context.projectType != .unknown {
-            folderTools += AgentFolderToolFactory.buildCodingTools(rootPath: context.rootPath)
+            folderTools += WorkFolderToolFactory.buildCodingTools(rootPath: context.rootPath)
         }
 
         // Add git tools if git repo
         if context.isGitRepo {
-            folderTools += AgentFolderToolFactory.buildGitTools(rootPath: context.rootPath)
+            folderTools += WorkFolderToolFactory.buildGitTools(rootPath: context.rootPath)
         }
 
         // Register and enable all folder tools
@@ -518,7 +518,7 @@ public final class AgentToolManager {
     }
 
     /// Unregister all folder tools
-    /// Called by AgentFolderContextService when folder is cleared
+    /// Called by WorkFolderContextService when folder is cleared
     public func unregisterFolderTools() {
         guard !_folderToolNames.isEmpty else { return }
         ToolRegistry.shared.unregister(names: _folderToolNames)

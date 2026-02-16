@@ -64,13 +64,13 @@ private struct CompoundPluginGroup: Identifiable {
 // MARK: - Capabilities Selector View
 
 struct CapabilitiesSelectorView: View {
-    let personaId: UUID
-    var isAgentMode: Bool = false
+    let agentId: UUID
+    var isWorkMode: Bool = false
     var isInline: Bool = false
 
     @ObservedObject private var toolRegistry = ToolRegistry.shared
     @ObservedObject private var skillManager = SkillManager.shared
-    @ObservedObject private var personaManager = PersonaManager.shared
+    @ObservedObject private var agentManager = AgentManager.shared
 
     @State private var selectedTab: CapabilityTab = .tools
     @State private var searchText = ""
@@ -81,15 +81,15 @@ struct CapabilitiesSelectorView: View {
 
     @Environment(\.theme) private var theme
 
-    /// Plugin tool names that conflict with built-in agent tools (empty when not in agent mode).
+    /// Plugin tool names that conflict with built-in work tools (empty when not in work mode).
     private var agentRestrictedTools: Set<String> {
-        isAgentMode ? toolRegistry.agentConflictingToolNames : []
+        isWorkMode ? toolRegistry.workConflictingToolNames : []
     }
 
     // MARK: - Data
 
     private func rebuildToolsCache() {
-        let overrides = personaManager.effectiveToolOverrides(for: personaId)
+        let overrides = agentManager.effectiveToolOverrides(for: agentId)
         let tools = toolRegistry.listUserTools(withOverrides: overrides, excludeInternal: true)
         cachedTools = tools
 
@@ -172,12 +172,12 @@ struct CapabilitiesSelectorView: View {
     private func toggleCompoundPlugin(_ group: CompoundPluginGroup) {
         let isActive = isCompoundPluginActive(group)
         if isActive {
-            personaManager.disableAllTools(for: personaId, tools: group.toolNames)
-            personaManager.disableAllSkills(for: personaId, skills: group.skillNames)
+            agentManager.disableAllTools(for: agentId, tools: group.toolNames)
+            agentManager.disableAllSkills(for: agentId, skills: group.skillNames)
         } else {
             let restricted = agentRestrictedTools
-            personaManager.enableAllTools(for: personaId, tools: group.toolNames.filter { !restricted.contains($0) })
-            personaManager.enableAllSkills(for: personaId, skills: group.skillNames)
+            agentManager.enableAllTools(for: agentId, tools: group.toolNames.filter { !restricted.contains($0) })
+            agentManager.enableAllSkills(for: agentId, skills: group.skillNames)
         }
     }
 
@@ -226,7 +226,7 @@ struct CapabilitiesSelectorView: View {
     }
 
     private func isSkillEnabled(_ name: String) -> Bool {
-        if let overrides = personaManager.effectiveSkillOverrides(for: personaId),
+        if let overrides = agentManager.effectiveSkillOverrides(for: agentId),
             let value = overrides[name]
         {
             return value
@@ -263,11 +263,11 @@ struct CapabilitiesSelectorView: View {
     // MARK: - Actions
 
     private func toggleTool(_ name: String, enabled: Bool) {
-        personaManager.setToolEnabled(!enabled, tool: name, for: personaId)
+        agentManager.setToolEnabled(!enabled, tool: name, for: agentId)
     }
 
     private func toggleSkill(_ name: String) {
-        personaManager.setSkillEnabled(!isSkillEnabled(name), skill: name, for: personaId)
+        agentManager.setSkillEnabled(!isSkillEnabled(name), skill: name, for: agentId)
     }
 
     private func enableAll() {
@@ -275,19 +275,19 @@ struct CapabilitiesSelectorView: View {
         switch selectedTab {
         case .plugins:
             for group in cachedCompoundPlugins {
-                personaManager.enableAllTools(
-                    for: personaId,
+                agentManager.enableAllTools(
+                    for: agentId,
                     tools: group.toolNames.filter { !restricted.contains($0) }
                 )
-                personaManager.enableAllSkills(for: personaId, skills: group.skillNames)
+                agentManager.enableAllSkills(for: agentId, skills: group.skillNames)
             }
         case .tools:
-            personaManager.enableAllTools(
-                for: personaId,
+            agentManager.enableAllTools(
+                for: agentId,
                 tools: cachedTools.map { $0.name }.filter { !restricted.contains($0) }
             )
         case .skills:
-            personaManager.enableAllSkills(for: personaId, skills: skills.map { $0.name })
+            agentManager.enableAllSkills(for: agentId, skills: skills.map { $0.name })
         }
     }
 
@@ -295,13 +295,13 @@ struct CapabilitiesSelectorView: View {
         switch selectedTab {
         case .plugins:
             for group in cachedCompoundPlugins {
-                personaManager.disableAllTools(for: personaId, tools: group.toolNames)
-                personaManager.disableAllSkills(for: personaId, skills: group.skillNames)
+                agentManager.disableAllTools(for: agentId, tools: group.toolNames)
+                agentManager.disableAllSkills(for: agentId, skills: group.skillNames)
             }
         case .tools:
-            personaManager.disableAllTools(for: personaId, tools: cachedTools.map { $0.name })
+            agentManager.disableAllTools(for: agentId, tools: cachedTools.map { $0.name })
         case .skills:
-            personaManager.disableAllSkills(for: personaId, skills: skills.map { $0.name })
+            agentManager.disableAllSkills(for: agentId, skills: skills.map { $0.name })
         }
     }
 
@@ -311,14 +311,14 @@ struct CapabilitiesSelectorView: View {
 
     private func enableAllInGroup(_ group: ToolGroup) {
         let restricted = agentRestrictedTools
-        personaManager.enableAllTools(
-            for: personaId,
+        agentManager.enableAllTools(
+            for: agentId,
             tools: group.tools.map { $0.name }.filter { !restricted.contains($0) }
         )
     }
 
     private func disableAllInGroup(_ group: ToolGroup) {
-        personaManager.disableAllTools(for: personaId, tools: group.tools.map { $0.name })
+        agentManager.disableAllTools(for: agentId, tools: group.tools.map { $0.name })
     }
 
     private func openManagement() {
@@ -331,31 +331,31 @@ struct CapabilitiesSelectorView: View {
     }
 
     private func resetToDefaults() {
-        guard var persona = personaManager.persona(for: personaId) else { return }
+        guard var agent = agentManager.agent(for: agentId) else { return }
         switch selectedTab {
         case .plugins:
             // Reset both tools and skills for compound plugins
-            persona.enabledTools = nil
-            persona.enabledSkills = nil
+            agent.enabledTools = nil
+            agent.enabledSkills = nil
         case .tools:
-            persona.enabledTools = nil
+            agent.enabledTools = nil
         case .skills:
-            persona.enabledSkills = nil
+            agent.enabledSkills = nil
         }
-        personaManager.update(persona)
+        agentManager.update(agent)
         NotificationCenter.default.post(name: .toolsListChanged, object: nil)
         NotificationCenter.default.post(name: .skillsListChanged, object: nil)
     }
 
     private var hasOverrides: Bool {
-        let persona = personaManager.persona(for: personaId)
+        let agent = agentManager.agent(for: agentId)
         switch selectedTab {
         case .plugins:
-            return (persona?.enabledTools?.isEmpty == false) || (persona?.enabledSkills?.isEmpty == false)
+            return (agent?.enabledTools?.isEmpty == false) || (agent?.enabledSkills?.isEmpty == false)
         case .tools:
-            return persona?.enabledTools?.isEmpty == false
+            return agent?.enabledTools?.isEmpty == false
         case .skills:
-            return persona?.enabledSkills?.isEmpty == false
+            return agent?.enabledSkills?.isEmpty == false
         }
     }
 
@@ -619,38 +619,44 @@ struct CapabilitiesSelectorView: View {
         switch selectedTab {
         case .plugins:
             for group in filteredCompoundPlugins {
-                rows.append(.compoundPlugin(
-                    id: group.pluginId,
-                    name: group.name,
-                    toolCount: group.toolNames.count,
-                    skillCount: group.skillNames.count,
-                    isActive: isCompoundPluginActive(group)
-                ))
+                rows.append(
+                    .compoundPlugin(
+                        id: group.pluginId,
+                        name: group.name,
+                        toolCount: group.toolNames.count,
+                        skillCount: group.skillNames.count,
+                        isActive: isCompoundPluginActive(group)
+                    )
+                )
             }
 
         case .tools:
             let restricted = agentRestrictedTools
             for group in filteredGroups {
                 let expanded = isGroupExpanded(group.id)
-                rows.append(.groupHeader(
-                    id: group.id,
-                    name: group.displayName,
-                    icon: group.icon,
-                    enabledCount: group.enabledCount,
-                    totalCount: group.tools.count,
-                    isExpanded: expanded
-                ))
+                rows.append(
+                    .groupHeader(
+                        id: group.id,
+                        name: group.displayName,
+                        icon: group.icon,
+                        enabledCount: group.enabledCount,
+                        totalCount: group.tools.count,
+                        isExpanded: expanded
+                    )
+                )
                 if expanded {
                     for tool in group.tools {
-                        rows.append(.tool(
-                            id: tool.name,
-                            name: tool.name,
-                            description: tool.description,
-                            enabled: tool.enabled,
-                            isAgentRestricted: restricted.contains(tool.name),
-                            catalogTokens: tool.catalogEntryTokens,
-                            estimatedTokens: tool.estimatedTokens
-                        ))
+                        rows.append(
+                            .tool(
+                                id: tool.name,
+                                name: tool.name,
+                                description: tool.description,
+                                enabled: tool.enabled,
+                                isAgentRestricted: restricted.contains(tool.name),
+                                catalogTokens: tool.catalogEntryTokens,
+                                estimatedTokens: tool.estimatedTokens
+                            )
+                        )
                     }
                 }
             }
@@ -658,15 +664,17 @@ struct CapabilitiesSelectorView: View {
         case .skills:
             for skill in filteredSkills {
                 let enabled = isSkillEnabled(skill.name)
-                rows.append(.skill(
-                    id: skill.name,
-                    name: skill.name,
-                    description: skill.description,
-                    enabled: enabled,
-                    isBuiltIn: skill.isBuiltIn,
-                    isFromPlugin: skill.isFromPlugin,
-                    estimatedTokens: max(5, (skill.name.count + skill.description.count + 6) / 4)
-                ))
+                rows.append(
+                    .skill(
+                        id: skill.name,
+                        name: skill.name,
+                        description: skill.description,
+                        enabled: enabled,
+                        isBuiltIn: skill.isBuiltIn,
+                        isFromPlugin: skill.isFromPlugin,
+                        estimatedTokens: max(5, (skill.name.count + skill.description.count + 6) / 4)
+                    )
+                )
             }
         }
         return rows
@@ -803,7 +811,7 @@ private struct CapabilityActionButton: View {
     struct CapabilitiesSelectorView_Previews: PreviewProvider {
         struct PreviewWrapper: View {
             var body: some View {
-                CapabilitiesSelectorView(personaId: Persona.defaultId, isAgentMode: false)
+                CapabilitiesSelectorView(agentId: Agent.defaultId, isWorkMode: false)
                     .padding()
                     .frame(width: 500, height: 600)
                     .background(Color.gray.opacity(0.2))

@@ -423,13 +423,13 @@ extension HeaderTabsRow {
         Divider()
 
         ManagerHeaderWithActions(
-            title: "Personas",
+            title: "Agents",
             subtitle: "Create custom assistant personalities",
             count: 4
         ) {
             HeaderIconButton("arrow.clockwise", help: "Refresh") {}
             HeaderSecondaryButton("Import", icon: "square.and.arrow.down") {}
-            HeaderPrimaryButton("Create Persona", icon: "plus") {}
+            HeaderPrimaryButton("Create Agent", icon: "plus") {}
         }
     }
     .frame(width: 700)

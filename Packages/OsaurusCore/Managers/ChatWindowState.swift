@@ -14,7 +14,7 @@ import SwiftUI
 // MARK: - Close Confirmation
 
 @MainActor
-struct AgentCloseConfirmation: Identifiable {
+struct WorkCloseConfirmation: Identifiable {
     let id = UUID()
 }
 
@@ -32,18 +32,18 @@ final class ChatWindowState: ObservableObject {
     @Published var mode: ChatMode = .chat
     @Published var showSidebar: Bool = false
 
-    /// When non-nil, ChatView should present a close confirmation for active agent execution.
-    @Published var agentCloseConfirmation: AgentCloseConfirmation?
+    /// When non-nil, ChatView should present a close confirmation for active work execution.
+    @Published var workCloseConfirmation: WorkCloseConfirmation?
+
+    // MARK: - Work State
+
+    @Published var workSession: WorkSession?
+    @Published private(set) var workTasks: [WorkTask] = []
 
     // MARK: - Agent State
 
-    @Published var agentSession: AgentSession?
-    @Published private(set) var agentTasks: [AgentTask] = []
-
-    // MARK: - Persona State
-
-    @Published var personaId: UUID
-    @Published private(set) var personas: [Persona] = []
+    @Published var agentId: UUID
+    @Published private(set) var agents: [Agent] = []
 
     // MARK: - Theme State
 
@@ -54,8 +54,8 @@ final class ChatWindowState: ObservableObject {
 
     @Published private(set) var filteredSessions: [ChatSessionData] = []
     @Published private(set) var cachedSystemPrompt: String = ""
-    @Published private(set) var cachedActivePersona: Persona = .default
-    @Published private(set) var cachedPersonaDisplayName: String = "Assistant"
+    @Published private(set) var cachedActiveAgent: Agent = .default
+    @Published private(set) var cachedAgentDisplayName: String = "Assistant"
 
     // MARK: - Private
 
@@ -64,25 +64,25 @@ final class ChatWindowState: ObservableObject {
 
     // MARK: - Initialization
 
-    init(windowId: UUID, personaId: UUID, sessionData: ChatSessionData? = nil) {
+    init(windowId: UUID, agentId: UUID, sessionData: ChatSessionData? = nil) {
         self.windowId = windowId
-        self.personaId = personaId
+        self.agentId = agentId
         self.session = ChatSession()
         self.foundationModelAvailable = AppConfiguration.shared.foundationModelAvailable
-        self.theme = Self.loadTheme(for: personaId)
+        self.theme = Self.loadTheme(for: agentId)
 
         // Load initial data
-        self.personas = PersonaManager.shared.personas
-        self.filteredSessions = ChatSessionsManager.shared.sessions(for: personaId)
+        self.agents = AgentManager.shared.agents
+        self.filteredSessions = ChatSessionsManager.shared.sessions(for: agentId)
 
         // Pre-compute view values
-        self.cachedSystemPrompt = PersonaManager.shared.effectiveSystemPrompt(for: personaId)
-        self.cachedActivePersona = personas.first { $0.id == personaId } ?? .default
-        self.cachedPersonaDisplayName = cachedActivePersona.isBuiltIn ? "Assistant" : cachedActivePersona.name
+        self.cachedSystemPrompt = AgentManager.shared.effectiveSystemPrompt(for: agentId)
+        self.cachedActiveAgent = agents.first { $0.id == agentId } ?? .default
+        self.cachedAgentDisplayName = cachedActiveAgent.isBuiltIn ? "Assistant" : cachedActiveAgent.name
         decodeBackgroundImageAsync(themeConfig: theme.customThemeConfig)
 
         // Configure session
-        self.session.personaId = personaId
+        self.session.agentId = agentId
         self.session.applyInitialModelSelection()
         if let data = sessionData {
             self.session.load(from: data)
@@ -98,27 +98,27 @@ final class ChatWindowState: ObservableObject {
     /// Used for lazy window creation when a user clicks "View" on a toast.
     init(windowId: UUID, executionContext context: ExecutionContext) {
         self.windowId = windowId
-        self.personaId = context.personaId
+        self.agentId = context.agentId
         self.session = context.chatSession
         self.foundationModelAvailable = AppConfiguration.shared.foundationModelAvailable
-        self.theme = Self.loadTheme(for: context.personaId)
+        self.theme = Self.loadTheme(for: context.agentId)
 
-        self.personas = PersonaManager.shared.personas
-        self.filteredSessions = ChatSessionsManager.shared.sessions(for: context.personaId)
-        self.cachedSystemPrompt = PersonaManager.shared.effectiveSystemPrompt(for: context.personaId)
-        self.cachedActivePersona = personas.first { $0.id == context.personaId } ?? .default
-        self.cachedPersonaDisplayName = cachedActivePersona.isBuiltIn ? "Assistant" : cachedActivePersona.name
+        self.agents = AgentManager.shared.agents
+        self.filteredSessions = ChatSessionsManager.shared.sessions(for: context.agentId)
+        self.cachedSystemPrompt = AgentManager.shared.effectiveSystemPrompt(for: context.agentId)
+        self.cachedActiveAgent = agents.first { $0.id == context.agentId } ?? .default
+        self.cachedAgentDisplayName = cachedActiveAgent.isBuiltIn ? "Assistant" : cachedActiveAgent.name
         decodeBackgroundImageAsync(themeConfig: theme.customThemeConfig)
 
         self.session.onSessionChanged = { [weak self] in
             self?.refreshSessionsDebounced()
         }
 
-        if let agentSession = context.agentSession {
-            self.mode = .agent
-            self.agentSession = agentSession
-            agentSession.windowState = self
-            refreshAgentTasks()
+        if let workSession = context.workSession {
+            self.mode = .work
+            self.workSession = workSession
+            workSession.windowState = self
+            refreshWorkTasks()
         }
 
         setupNotificationObservers()
@@ -131,33 +131,33 @@ final class ChatWindowState: ObservableObject {
 
     /// Stops any running execution and breaks reference chains — call when window is closing.
     func cleanup() {
-        agentSession?.stopExecution()
+        workSession?.stopExecution()
         session.stop()
-        agentSession = nil
+        workSession = nil
         session.onSessionChanged = nil
     }
 
     // MARK: - API
 
-    var activePersona: Persona { cachedActivePersona }
+    var activeAgent: Agent { cachedActiveAgent }
 
     var themeId: UUID? {
-        PersonaManager.shared.themeId(for: personaId)
+        AgentManager.shared.themeId(for: agentId)
     }
 
-    func switchPersona(to newPersonaId: UUID) {
+    func switchAgent(to newAgentId: UUID) {
         if !session.turns.isEmpty { session.save() }
-        personaId = newPersonaId
-        session.reset(for: newPersonaId)
+        agentId = newAgentId
+        session.reset(for: newAgentId)
         refreshTheme()
         refreshSessions()
-        refreshPersonaConfig()
-        PersonaManager.shared.setActivePersona(newPersonaId)
+        refreshAgentConfig()
+        AgentManager.shared.setActiveAgent(newAgentId)
     }
 
     func startNewChat() {
         if !session.turns.isEmpty { session.save() }
-        session.reset(for: personaId)
+        session.reset(for: agentId)
         refreshSessions()
     }
 
@@ -173,28 +173,28 @@ final class ChatWindowState: ObservableObject {
 
         mode = newMode
 
-        // Handle agent tool registration
-        if newMode == .agent {
-            // Register agent-specific tools
-            AgentToolManager.shared.registerTools()
+        // Handle work tool registration
+        if newMode == .work {
+            // Register work-specific tools
+            WorkToolManager.shared.registerTools()
 
-            // Initialize agent session if needed
-            if agentSession == nil {
-                agentSession = AgentSession(personaId: personaId, windowState: self)
+            // Initialize work session if needed
+            if workSession == nil {
+                workSession = WorkSession(agentId: agentId, windowState: self)
             }
-            refreshAgentTasks()
+            refreshWorkTasks()
         } else {
-            // Unregister agent-specific tools when leaving agent mode
-            AgentToolManager.shared.unregisterTools()
+            // Unregister work-specific tools when leaving work mode
+            WorkToolManager.shared.unregisterTools()
         }
     }
 
-    func refreshAgentTasks() {
+    func refreshWorkTasks() {
         do {
-            agentTasks = try IssueStore.listTasks(personaId: personaId)
+            workTasks = try IssueStore.listTasks(agentId: agentId)
         } catch {
-            print("[ChatWindowState] Failed to refresh agent tasks: \(error)")
-            agentTasks = []
+            print("[ChatWindowState] Failed to refresh work tasks: \(error)")
+            workTasks = []
         }
     }
 
@@ -208,24 +208,24 @@ final class ChatWindowState: ObservableObject {
             session.load(from: sessionData)
         }
 
-        // Update theme if session has different persona
-        let sessionPersonaId = sessionData.personaId ?? Persona.defaultId
-        if sessionPersonaId != personaId {
-            theme = Self.loadTheme(for: sessionPersonaId)
+        // Update theme if session has different agent
+        let sessionAgentId = sessionData.agentId ?? Agent.defaultId
+        if sessionAgentId != agentId {
+            theme = Self.loadTheme(for: sessionAgentId)
             decodeBackgroundImageAsync(themeConfig: theme.customThemeConfig)
         }
     }
 
     // MARK: - Refresh Methods
 
-    func refreshPersonas() {
-        personas = PersonaManager.shared.personas
-        cachedActivePersona = personas.first { $0.id == personaId } ?? .default
-        cachedPersonaDisplayName = cachedActivePersona.isBuiltIn ? "Assistant" : cachedActivePersona.name
+    func refreshAgents() {
+        agents = AgentManager.shared.agents
+        cachedActiveAgent = agents.first { $0.id == agentId } ?? .default
+        cachedAgentDisplayName = cachedActiveAgent.isBuiltIn ? "Assistant" : cachedActiveAgent.name
     }
 
     func refreshSessions() {
-        filteredSessions = ChatSessionsManager.shared.sessions(for: personaId)
+        filteredSessions = ChatSessionsManager.shared.sessions(for: agentId)
     }
 
     /// Coalesces rapid `refreshSessions()` calls (e.g. during streaming saves).
@@ -241,7 +241,7 @@ final class ChatWindowState: ObservableObject {
     }
 
     func refreshTheme() {
-        let newTheme = Self.loadTheme(for: personaId)
+        let newTheme = Self.loadTheme(for: agentId)
         // Skip if theme ID is the same (avoid unnecessary background image decoding)
         let oldThemeId = theme.customThemeConfig?.metadata.id
         let newThemeId = newTheme.customThemeConfig?.metadata.id
@@ -251,25 +251,25 @@ final class ChatWindowState: ObservableObject {
         decodeBackgroundImageAsync(themeConfig: theme.customThemeConfig)
     }
 
-    func refreshPersonaConfig() {
-        cachedSystemPrompt = PersonaManager.shared.effectiveSystemPrompt(for: personaId)
-        cachedActivePersona = personas.first { $0.id == personaId } ?? .default
-        cachedPersonaDisplayName = cachedActivePersona.isBuiltIn ? "Assistant" : cachedActivePersona.name
+    func refreshAgentConfig() {
+        cachedSystemPrompt = AgentManager.shared.effectiveSystemPrompt(for: agentId)
+        cachedActiveAgent = agents.first { $0.id == agentId } ?? .default
+        cachedAgentDisplayName = cachedActiveAgent.isBuiltIn ? "Assistant" : cachedActiveAgent.name
         session.invalidateTokenCache()
     }
 
     func refreshAll() async {
-        refreshPersonas()
+        refreshAgents()
         refreshSessions()
         refreshTheme()
-        refreshPersonaConfig()
+        refreshAgentConfig()
         await session.refreshModelOptions()
     }
 
     // MARK: - Private
 
-    private static func loadTheme(for personaId: UUID) -> ThemeProtocol {
-        if let themeId = PersonaManager.shared.themeId(for: personaId),
+    private static func loadTheme(for agentId: UUID) -> ThemeProtocol {
+        if let themeId = AgentManager.shared.themeId(for: agentId),
             let custom = ThemeManager.shared.installedThemes.first(where: { $0.metadata.id == themeId })
         {
             return CustomizableTheme(config: custom)
@@ -289,10 +289,10 @@ final class ChatWindowState: ObservableObject {
     private func setupNotificationObservers() {
         notificationObservers.append(
             NotificationCenter.default.addObserver(
-                forName: .activePersonaChanged,
+                forName: .activeAgentChanged,
                 object: nil,
                 queue: .main
-            ) { [weak self] _ in Task { @MainActor in self?.refreshPersonas() } }
+            ) { [weak self] _ in Task { @MainActor in self?.refreshAgents() } }
         )
         // Note: .chatOverlayActivated intentionally not observed here
         // State is loaded in init(), refreshAll() would cause excessive re-renders
@@ -301,9 +301,9 @@ final class ChatWindowState: ObservableObject {
                 forName: .appConfigurationChanged,
                 object: nil,
                 queue: .main
-            ) { [weak self] _ in Task { @MainActor in self?.refreshPersonaConfig() } }
+            ) { [weak self] _ in Task { @MainActor in self?.refreshAgentConfig() } }
         )
-        // Invalidate token cache when tools or skills change (including persona overrides)
+        // Invalidate token cache when tools or skills change (including agent overrides)
         notificationObservers.append(
             NotificationCenter.default.addObserver(
                 forName: .toolsListChanged,
@@ -318,7 +318,7 @@ final class ChatWindowState: ObservableObject {
                 queue: .main
             ) { [weak self] _ in Task { @MainActor in self?.session.invalidateTokenCache() } }
         )
-        // Refresh theme when global theme changes (only if persona uses global theme)
+        // Refresh theme when global theme changes (only if agent uses global theme)
         notificationObservers.append(
             NotificationCenter.default.addObserver(
                 forName: .globalThemeChanged,
@@ -330,16 +330,16 @@ final class ChatWindowState: ObservableObject {
                 }
             }
         )
-        // Refresh theme when current persona is updated
+        // Refresh theme when current agent is updated
         notificationObservers.append(
             NotificationCenter.default.addObserver(
-                forName: .personaUpdated,
+                forName: .agentUpdated,
                 object: nil,
                 queue: .main
             ) { [weak self] notification in
                 let updatedId = notification.object as? UUID
                 Task { @MainActor in
-                    if let self, updatedId == self.personaId { self.refreshTheme() }
+                    if let self, updatedId == self.agentId { self.refreshTheme() }
                 }
             }
         )

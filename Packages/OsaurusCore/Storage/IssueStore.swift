@@ -9,7 +9,7 @@
 import Foundation
 import SQLite3
 
-/// Storage layer for agent issues and related data
+/// Storage layer for work issues and related data
 public struct IssueStore {
     private init() {}
 
@@ -23,25 +23,25 @@ public struct IssueStore {
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """
 
-        try AgentDatabase.shared.prepareAndExecute(
+        try WorkDatabase.shared.prepareAndExecute(
             sql,
             bind: { stmt in
-                AgentDatabase.bindText(stmt, index: 1, value: issue.id)
-                AgentDatabase.bindText(stmt, index: 2, value: issue.taskId)
-                AgentDatabase.bindText(stmt, index: 3, value: issue.title)
-                AgentDatabase.bindText(stmt, index: 4, value: issue.description)
-                AgentDatabase.bindText(stmt, index: 5, value: issue.context)
-                AgentDatabase.bindText(stmt, index: 6, value: issue.status.rawValue)
-                AgentDatabase.bindInt(stmt, index: 7, value: issue.priority.rawValue)
-                AgentDatabase.bindText(stmt, index: 8, value: issue.type.rawValue)
-                AgentDatabase.bindText(stmt, index: 9, value: issue.result)
-                AgentDatabase.bindDate(stmt, index: 10, value: issue.createdAt)
-                AgentDatabase.bindDate(stmt, index: 11, value: issue.updatedAt)
+                WorkDatabase.bindText(stmt, index: 1, value: issue.id)
+                WorkDatabase.bindText(stmt, index: 2, value: issue.taskId)
+                WorkDatabase.bindText(stmt, index: 3, value: issue.title)
+                WorkDatabase.bindText(stmt, index: 4, value: issue.description)
+                WorkDatabase.bindText(stmt, index: 5, value: issue.context)
+                WorkDatabase.bindText(stmt, index: 6, value: issue.status.rawValue)
+                WorkDatabase.bindInt(stmt, index: 7, value: issue.priority.rawValue)
+                WorkDatabase.bindText(stmt, index: 8, value: issue.type.rawValue)
+                WorkDatabase.bindText(stmt, index: 9, value: issue.result)
+                WorkDatabase.bindDate(stmt, index: 10, value: issue.createdAt)
+                WorkDatabase.bindDate(stmt, index: 11, value: issue.updatedAt)
             }
         ) { stmt in
             let result = sqlite3_step(stmt)
             if result != SQLITE_DONE {
-                throw AgentDatabaseError.failedToExecute("Failed to insert issue")
+                throw WorkDatabaseError.failedToExecute("Failed to insert issue")
             }
         }
 
@@ -53,10 +53,10 @@ public struct IssueStore {
         let sql = "SELECT * FROM issues WHERE id = ?"
         var issue: Issue?
 
-        try AgentDatabase.shared.prepareAndExecute(
+        try WorkDatabase.shared.prepareAndExecute(
             sql,
             bind: { stmt in
-                AgentDatabase.bindText(stmt, index: 1, value: id)
+                WorkDatabase.bindText(stmt, index: 1, value: id)
             }
         ) { stmt in
             if sqlite3_step(stmt) == SQLITE_ROW {
@@ -75,23 +75,23 @@ public struct IssueStore {
                 WHERE id = ?
             """
 
-        try AgentDatabase.shared.prepareAndExecute(
+        try WorkDatabase.shared.prepareAndExecute(
             sql,
             bind: { stmt in
-                AgentDatabase.bindText(stmt, index: 1, value: issue.title)
-                AgentDatabase.bindText(stmt, index: 2, value: issue.description)
-                AgentDatabase.bindText(stmt, index: 3, value: issue.context)
-                AgentDatabase.bindText(stmt, index: 4, value: issue.status.rawValue)
-                AgentDatabase.bindInt(stmt, index: 5, value: issue.priority.rawValue)
-                AgentDatabase.bindText(stmt, index: 6, value: issue.type.rawValue)
-                AgentDatabase.bindText(stmt, index: 7, value: issue.result)
-                AgentDatabase.bindDate(stmt, index: 8, value: Date())
-                AgentDatabase.bindText(stmt, index: 9, value: issue.id)
+                WorkDatabase.bindText(stmt, index: 1, value: issue.title)
+                WorkDatabase.bindText(stmt, index: 2, value: issue.description)
+                WorkDatabase.bindText(stmt, index: 3, value: issue.context)
+                WorkDatabase.bindText(stmt, index: 4, value: issue.status.rawValue)
+                WorkDatabase.bindInt(stmt, index: 5, value: issue.priority.rawValue)
+                WorkDatabase.bindText(stmt, index: 6, value: issue.type.rawValue)
+                WorkDatabase.bindText(stmt, index: 7, value: issue.result)
+                WorkDatabase.bindDate(stmt, index: 8, value: Date())
+                WorkDatabase.bindText(stmt, index: 9, value: issue.id)
             }
         ) { stmt in
             let result = sqlite3_step(stmt)
             if result != SQLITE_DONE {
-                throw AgentDatabaseError.failedToExecute("Failed to update issue")
+                throw WorkDatabaseError.failedToExecute("Failed to update issue")
             }
         }
     }
@@ -100,15 +100,15 @@ public struct IssueStore {
     public static func deleteIssue(id: String) throws {
         let sql = "DELETE FROM issues WHERE id = ?"
 
-        try AgentDatabase.shared.prepareAndExecute(
+        try WorkDatabase.shared.prepareAndExecute(
             sql,
             bind: { stmt in
-                AgentDatabase.bindText(stmt, index: 1, value: id)
+                WorkDatabase.bindText(stmt, index: 1, value: id)
             }
         ) { stmt in
             let result = sqlite3_step(stmt)
             if result != SQLITE_DONE {
-                throw AgentDatabaseError.failedToExecute("Failed to delete issue")
+                throw WorkDatabaseError.failedToExecute("Failed to delete issue")
             }
         }
     }
@@ -124,11 +124,11 @@ public struct IssueStore {
 
         var issues: [Issue] = []
 
-        try AgentDatabase.shared.prepareAndExecute(
+        try WorkDatabase.shared.prepareAndExecute(
             sql,
             bind: { stmt in
                 if let status = status {
-                    AgentDatabase.bindText(stmt, index: 1, value: status.rawValue)
+                    WorkDatabase.bindText(stmt, index: 1, value: status.rawValue)
                 }
             }
         ) { stmt in
@@ -147,10 +147,10 @@ public struct IssueStore {
         let sql = "SELECT * FROM issues WHERE task_id = ? ORDER BY priority ASC, created_at ASC"
         var issues: [Issue] = []
 
-        try AgentDatabase.shared.prepareAndExecute(
+        try WorkDatabase.shared.prepareAndExecute(
             sql,
             bind: { stmt in
-                AgentDatabase.bindText(stmt, index: 1, value: taskId)
+                WorkDatabase.bindText(stmt, index: 1, value: taskId)
             }
         ) { stmt in
             while sqlite3_step(stmt) == SQLITE_ROW {
@@ -199,11 +199,11 @@ public struct IssueStore {
 
         var issues: [Issue] = []
 
-        try AgentDatabase.shared.prepareAndExecute(
+        try WorkDatabase.shared.prepareAndExecute(
             sql,
             bind: { stmt in
                 if let taskId = taskId {
-                    AgentDatabase.bindText(stmt, index: 1, value: taskId)
+                    WorkDatabase.bindText(stmt, index: 1, value: taskId)
                 }
             }
         ) { stmt in
@@ -243,11 +243,11 @@ public struct IssueStore {
 
         var issues: [Issue] = []
 
-        try AgentDatabase.shared.prepareAndExecute(
+        try WorkDatabase.shared.prepareAndExecute(
             sql,
             bind: { stmt in
                 if let taskId = taskId {
-                    AgentDatabase.bindText(stmt, index: 1, value: taskId)
+                    WorkDatabase.bindText(stmt, index: 1, value: taskId)
                 }
             }
         ) { stmt in
@@ -273,10 +273,10 @@ public struct IssueStore {
 
         var issues: [Issue] = []
 
-        try AgentDatabase.shared.prepareAndExecute(
+        try WorkDatabase.shared.prepareAndExecute(
             sql,
             bind: { stmt in
-                AgentDatabase.bindText(stmt, index: 1, value: issueId)
+                WorkDatabase.bindText(stmt, index: 1, value: issueId)
             }
         ) { stmt in
             while sqlite3_step(stmt) == SQLITE_ROW {
@@ -299,19 +299,19 @@ public struct IssueStore {
                 VALUES (?, ?, ?, ?, ?)
             """
 
-        try AgentDatabase.shared.prepareAndExecute(
+        try WorkDatabase.shared.prepareAndExecute(
             sql,
             bind: { stmt in
-                AgentDatabase.bindText(stmt, index: 1, value: dependency.id)
-                AgentDatabase.bindText(stmt, index: 2, value: dependency.fromIssueId)
-                AgentDatabase.bindText(stmt, index: 3, value: dependency.toIssueId)
-                AgentDatabase.bindText(stmt, index: 4, value: dependency.type.rawValue)
-                AgentDatabase.bindDate(stmt, index: 5, value: dependency.createdAt)
+                WorkDatabase.bindText(stmt, index: 1, value: dependency.id)
+                WorkDatabase.bindText(stmt, index: 2, value: dependency.fromIssueId)
+                WorkDatabase.bindText(stmt, index: 3, value: dependency.toIssueId)
+                WorkDatabase.bindText(stmt, index: 4, value: dependency.type.rawValue)
+                WorkDatabase.bindDate(stmt, index: 5, value: dependency.createdAt)
             }
         ) { stmt in
             let result = sqlite3_step(stmt)
             if result != SQLITE_DONE {
-                throw AgentDatabaseError.failedToExecute("Failed to insert dependency")
+                throw WorkDatabaseError.failedToExecute("Failed to insert dependency")
             }
         }
 
@@ -323,10 +323,10 @@ public struct IssueStore {
         let sql = "SELECT * FROM dependencies WHERE to_issue_id = ?"
         var deps: [IssueDependency] = []
 
-        try AgentDatabase.shared.prepareAndExecute(
+        try WorkDatabase.shared.prepareAndExecute(
             sql,
             bind: { stmt in
-                AgentDatabase.bindText(stmt, index: 1, value: toIssueId)
+                WorkDatabase.bindText(stmt, index: 1, value: toIssueId)
             }
         ) { stmt in
             while sqlite3_step(stmt) == SQLITE_ROW {
@@ -344,10 +344,10 @@ public struct IssueStore {
         let sql = "SELECT * FROM dependencies WHERE from_issue_id = ?"
         var deps: [IssueDependency] = []
 
-        try AgentDatabase.shared.prepareAndExecute(
+        try WorkDatabase.shared.prepareAndExecute(
             sql,
             bind: { stmt in
-                AgentDatabase.bindText(stmt, index: 1, value: fromIssueId)
+                WorkDatabase.bindText(stmt, index: 1, value: fromIssueId)
             }
         ) { stmt in
             while sqlite3_step(stmt) == SQLITE_ROW {
@@ -364,15 +364,15 @@ public struct IssueStore {
     public static func deleteDependency(id: String) throws {
         let sql = "DELETE FROM dependencies WHERE id = ?"
 
-        try AgentDatabase.shared.prepareAndExecute(
+        try WorkDatabase.shared.prepareAndExecute(
             sql,
             bind: { stmt in
-                AgentDatabase.bindText(stmt, index: 1, value: id)
+                WorkDatabase.bindText(stmt, index: 1, value: id)
             }
         ) { stmt in
             let result = sqlite3_step(stmt)
             if result != SQLITE_DONE {
-                throw AgentDatabaseError.failedToExecute("Failed to delete dependency")
+                throw WorkDatabaseError.failedToExecute("Failed to delete dependency")
             }
         }
     }
@@ -387,19 +387,19 @@ public struct IssueStore {
                 VALUES (?, ?, ?, ?, ?)
             """
 
-        try AgentDatabase.shared.prepareAndExecute(
+        try WorkDatabase.shared.prepareAndExecute(
             sql,
             bind: { stmt in
-                AgentDatabase.bindText(stmt, index: 1, value: event.id)
-                AgentDatabase.bindText(stmt, index: 2, value: event.issueId)
-                AgentDatabase.bindText(stmt, index: 3, value: event.eventType.rawValue)
-                AgentDatabase.bindText(stmt, index: 4, value: event.payload)
-                AgentDatabase.bindDate(stmt, index: 5, value: event.createdAt)
+                WorkDatabase.bindText(stmt, index: 1, value: event.id)
+                WorkDatabase.bindText(stmt, index: 2, value: event.issueId)
+                WorkDatabase.bindText(stmt, index: 3, value: event.eventType.rawValue)
+                WorkDatabase.bindText(stmt, index: 4, value: event.payload)
+                WorkDatabase.bindDate(stmt, index: 5, value: event.createdAt)
             }
         ) { stmt in
             let result = sqlite3_step(stmt)
             if result != SQLITE_DONE {
-                throw AgentDatabaseError.failedToExecute("Failed to insert event")
+                throw WorkDatabaseError.failedToExecute("Failed to insert event")
             }
         }
 
@@ -411,10 +411,10 @@ public struct IssueStore {
         let sql = "SELECT * FROM events WHERE issue_id = ? ORDER BY created_at ASC"
         var events: [IssueEvent] = []
 
-        try AgentDatabase.shared.prepareAndExecute(
+        try WorkDatabase.shared.prepareAndExecute(
             sql,
             bind: { stmt in
-                AgentDatabase.bindText(stmt, index: 1, value: issueId)
+                WorkDatabase.bindText(stmt, index: 1, value: issueId)
             }
         ) { stmt in
             while sqlite3_step(stmt) == SQLITE_ROW {
@@ -431,27 +431,27 @@ public struct IssueStore {
 
     /// Creates a new task
     @discardableResult
-    public static func createTask(_ task: AgentTask) throws -> AgentTask {
+    public static func createTask(_ task: WorkTask) throws -> WorkTask {
         let sql = """
                 INSERT INTO tasks (id, title, query, persona_id, status, created_at, updated_at)
                 VALUES (?, ?, ?, ?, ?, ?, ?)
             """
 
-        try AgentDatabase.shared.prepareAndExecute(
+        try WorkDatabase.shared.prepareAndExecute(
             sql,
             bind: { stmt in
-                AgentDatabase.bindText(stmt, index: 1, value: task.id)
-                AgentDatabase.bindText(stmt, index: 2, value: task.title)
-                AgentDatabase.bindText(stmt, index: 3, value: task.query)
-                AgentDatabase.bindText(stmt, index: 4, value: task.personaId?.uuidString)
-                AgentDatabase.bindText(stmt, index: 5, value: task.status.rawValue)
-                AgentDatabase.bindDate(stmt, index: 6, value: task.createdAt)
-                AgentDatabase.bindDate(stmt, index: 7, value: task.updatedAt)
+                WorkDatabase.bindText(stmt, index: 1, value: task.id)
+                WorkDatabase.bindText(stmt, index: 2, value: task.title)
+                WorkDatabase.bindText(stmt, index: 3, value: task.query)
+                WorkDatabase.bindText(stmt, index: 4, value: task.agentId?.uuidString)
+                WorkDatabase.bindText(stmt, index: 5, value: task.status.rawValue)
+                WorkDatabase.bindDate(stmt, index: 6, value: task.createdAt)
+                WorkDatabase.bindDate(stmt, index: 7, value: task.updatedAt)
             }
         ) { stmt in
             let result = sqlite3_step(stmt)
             if result != SQLITE_DONE {
-                throw AgentDatabaseError.failedToExecute("Failed to insert task")
+                throw WorkDatabaseError.failedToExecute("Failed to insert task")
             }
         }
 
@@ -459,14 +459,14 @@ public struct IssueStore {
     }
 
     /// Gets a task by ID
-    public static func getTask(id: String) throws -> AgentTask? {
+    public static func getTask(id: String) throws -> WorkTask? {
         let sql = "SELECT * FROM tasks WHERE id = ?"
-        var task: AgentTask?
+        var task: WorkTask?
 
-        try AgentDatabase.shared.prepareAndExecute(
+        try WorkDatabase.shared.prepareAndExecute(
             sql,
             bind: { stmt in
-                AgentDatabase.bindText(stmt, index: 1, value: id)
+                WorkDatabase.bindText(stmt, index: 1, value: id)
             }
         ) { stmt in
             if sqlite3_step(stmt) == SQLITE_ROW {
@@ -478,25 +478,25 @@ public struct IssueStore {
     }
 
     /// Updates a task
-    public static func updateTask(_ task: AgentTask) throws {
+    public static func updateTask(_ task: WorkTask) throws {
         let sql = """
                 UPDATE tasks
                 SET title = ?, status = ?, updated_at = ?
                 WHERE id = ?
             """
 
-        try AgentDatabase.shared.prepareAndExecute(
+        try WorkDatabase.shared.prepareAndExecute(
             sql,
             bind: { stmt in
-                AgentDatabase.bindText(stmt, index: 1, value: task.title)
-                AgentDatabase.bindText(stmt, index: 2, value: task.status.rawValue)
-                AgentDatabase.bindDate(stmt, index: 3, value: Date())
-                AgentDatabase.bindText(stmt, index: 4, value: task.id)
+                WorkDatabase.bindText(stmt, index: 1, value: task.title)
+                WorkDatabase.bindText(stmt, index: 2, value: task.status.rawValue)
+                WorkDatabase.bindDate(stmt, index: 3, value: Date())
+                WorkDatabase.bindText(stmt, index: 4, value: task.id)
             }
         ) { stmt in
             let result = sqlite3_step(stmt)
             if result != SQLITE_DONE {
-                throw AgentDatabaseError.failedToExecute("Failed to update task")
+                throw WorkDatabaseError.failedToExecute("Failed to update task")
             }
         }
     }
@@ -505,10 +505,10 @@ public struct IssueStore {
     public static func deleteTask(id: String) throws {
         // Delete all issues for this task first (cascades to deps and events)
         let deleteIssuesSql = "DELETE FROM issues WHERE task_id = ?"
-        try AgentDatabase.shared.prepareAndExecute(
+        try WorkDatabase.shared.prepareAndExecute(
             deleteIssuesSql,
             bind: { stmt in
-                AgentDatabase.bindText(stmt, index: 1, value: id)
+                WorkDatabase.bindText(stmt, index: 1, value: id)
             }
         ) { stmt in
             _ = sqlite3_step(stmt)
@@ -516,40 +516,40 @@ public struct IssueStore {
 
         // Delete the task
         let sql = "DELETE FROM tasks WHERE id = ?"
-        try AgentDatabase.shared.prepareAndExecute(
+        try WorkDatabase.shared.prepareAndExecute(
             sql,
             bind: { stmt in
-                AgentDatabase.bindText(stmt, index: 1, value: id)
+                WorkDatabase.bindText(stmt, index: 1, value: id)
             }
         ) { stmt in
             let result = sqlite3_step(stmt)
             if result != SQLITE_DONE {
-                throw AgentDatabaseError.failedToExecute("Failed to delete task")
+                throw WorkDatabaseError.failedToExecute("Failed to delete task")
             }
         }
     }
 
-    /// Lists all tasks, optionally filtered by persona
-    public static func listTasks(personaId: UUID? = nil, status: AgentTaskStatus? = nil) throws -> [AgentTask] {
+    /// Lists all tasks, optionally filtered by agent
+    public static func listTasks(agentId: UUID? = nil, status: WorkTaskStatus? = nil) throws -> [WorkTask] {
         var conditions: [String] = []
-        if personaId != nil { conditions.append("persona_id = ?") }
+        if agentId != nil { conditions.append("persona_id = ?") }
         if status != nil { conditions.append("status = ?") }
 
         let whereClause = conditions.isEmpty ? "" : "WHERE \(conditions.joined(separator: " AND "))"
         let sql = "SELECT * FROM tasks \(whereClause) ORDER BY updated_at DESC"
 
-        var tasks: [AgentTask] = []
+        var tasks: [WorkTask] = []
         var paramIndex: Int32 = 1
 
-        try AgentDatabase.shared.prepareAndExecute(
+        try WorkDatabase.shared.prepareAndExecute(
             sql,
             bind: { stmt in
-                if let personaId = personaId {
-                    AgentDatabase.bindText(stmt, index: paramIndex, value: personaId.uuidString)
+                if let agentId = agentId {
+                    WorkDatabase.bindText(stmt, index: paramIndex, value: agentId.uuidString)
                     paramIndex += 1
                 }
                 if let status = status {
-                    AgentDatabase.bindText(stmt, index: paramIndex, value: status.rawValue)
+                    WorkDatabase.bindText(stmt, index: paramIndex, value: status.rawValue)
                 }
             }
         ) { stmt in
@@ -566,21 +566,21 @@ public struct IssueStore {
     // MARK: - Row Parsing
 
     private static func parseIssueRow(_ stmt: OpaquePointer) -> Issue? {
-        guard let id = AgentDatabase.getText(stmt, column: 0),
-            let taskId = AgentDatabase.getText(stmt, column: 1),
-            let title = AgentDatabase.getText(stmt, column: 2),
-            let statusRaw = AgentDatabase.getText(stmt, column: 5),
+        guard let id = WorkDatabase.getText(stmt, column: 0),
+            let taskId = WorkDatabase.getText(stmt, column: 1),
+            let title = WorkDatabase.getText(stmt, column: 2),
+            let statusRaw = WorkDatabase.getText(stmt, column: 5),
             let status = IssueStatus(rawValue: statusRaw),
-            let typeRaw = AgentDatabase.getText(stmt, column: 7),
+            let typeRaw = WorkDatabase.getText(stmt, column: 7),
             let type = IssueType(rawValue: typeRaw),
-            let createdAt = AgentDatabase.getDate(stmt, column: 9),
-            let updatedAt = AgentDatabase.getDate(stmt, column: 10)
+            let createdAt = WorkDatabase.getDate(stmt, column: 9),
+            let updatedAt = WorkDatabase.getDate(stmt, column: 10)
         else { return nil }
 
-        let description = AgentDatabase.getText(stmt, column: 3)
-        let context = AgentDatabase.getText(stmt, column: 4)
-        let priority = IssuePriority(rawValue: AgentDatabase.getInt(stmt, column: 6)) ?? .p2
-        let result = AgentDatabase.getText(stmt, column: 8)
+        let description = WorkDatabase.getText(stmt, column: 3)
+        let context = WorkDatabase.getText(stmt, column: 4)
+        let priority = IssuePriority(rawValue: WorkDatabase.getInt(stmt, column: 6)) ?? .p2
+        let result = WorkDatabase.getText(stmt, column: 8)
 
         return Issue(
             id: id,
@@ -598,12 +598,12 @@ public struct IssueStore {
     }
 
     private static func parseDependencyRow(_ stmt: OpaquePointer) -> IssueDependency? {
-        guard let id = AgentDatabase.getText(stmt, column: 0),
-            let fromId = AgentDatabase.getText(stmt, column: 1),
-            let toId = AgentDatabase.getText(stmt, column: 2),
-            let typeRaw = AgentDatabase.getText(stmt, column: 3),
+        guard let id = WorkDatabase.getText(stmt, column: 0),
+            let fromId = WorkDatabase.getText(stmt, column: 1),
+            let toId = WorkDatabase.getText(stmt, column: 2),
+            let typeRaw = WorkDatabase.getText(stmt, column: 3),
             let type = DependencyType(rawValue: typeRaw),
-            let createdAt = AgentDatabase.getDate(stmt, column: 4)
+            let createdAt = WorkDatabase.getDate(stmt, column: 4)
         else { return nil }
 
         return IssueDependency(
@@ -616,14 +616,14 @@ public struct IssueStore {
     }
 
     private static func parseEventRow(_ stmt: OpaquePointer) -> IssueEvent? {
-        guard let id = AgentDatabase.getText(stmt, column: 0),
-            let issueId = AgentDatabase.getText(stmt, column: 1),
-            let eventTypeRaw = AgentDatabase.getText(stmt, column: 2),
+        guard let id = WorkDatabase.getText(stmt, column: 0),
+            let issueId = WorkDatabase.getText(stmt, column: 1),
+            let eventTypeRaw = WorkDatabase.getText(stmt, column: 2),
             let eventType = IssueEventType(rawValue: eventTypeRaw),
-            let createdAt = AgentDatabase.getDate(stmt, column: 4)
+            let createdAt = WorkDatabase.getDate(stmt, column: 4)
         else { return nil }
 
-        let payload = AgentDatabase.getText(stmt, column: 3)
+        let payload = WorkDatabase.getText(stmt, column: 3)
 
         return IssueEvent(
             id: id,
@@ -634,24 +634,24 @@ public struct IssueStore {
         )
     }
 
-    private static func parseTaskRow(_ stmt: OpaquePointer) -> AgentTask? {
-        guard let id = AgentDatabase.getText(stmt, column: 0),
-            let title = AgentDatabase.getText(stmt, column: 1),
-            let query = AgentDatabase.getText(stmt, column: 2),
-            let statusRaw = AgentDatabase.getText(stmt, column: 4),
-            let status = AgentTaskStatus(rawValue: statusRaw),
-            let createdAt = AgentDatabase.getDate(stmt, column: 5),
-            let updatedAt = AgentDatabase.getDate(stmt, column: 6)
+    private static func parseTaskRow(_ stmt: OpaquePointer) -> WorkTask? {
+        guard let id = WorkDatabase.getText(stmt, column: 0),
+            let title = WorkDatabase.getText(stmt, column: 1),
+            let query = WorkDatabase.getText(stmt, column: 2),
+            let statusRaw = WorkDatabase.getText(stmt, column: 4),
+            let status = WorkTaskStatus(rawValue: statusRaw),
+            let createdAt = WorkDatabase.getDate(stmt, column: 5),
+            let updatedAt = WorkDatabase.getDate(stmt, column: 6)
         else { return nil }
 
-        let personaIdString = AgentDatabase.getText(stmt, column: 3)
-        let personaId = personaIdString.flatMap { UUID(uuidString: $0) }
+        let agentIdString = WorkDatabase.getText(stmt, column: 3)
+        let agentId = agentIdString.flatMap { UUID(uuidString: $0) }
 
-        return AgentTask(
+        return WorkTask(
             id: id,
             title: title,
             query: query,
-            personaId: personaId,
+            agentId: agentId,
             status: status,
             createdAt: createdAt,
             updatedAt: updatedAt
@@ -668,21 +668,21 @@ public struct IssueStore {
                 VALUES (?, ?, ?, ?, ?, ?, ?)
             """
 
-        try AgentDatabase.shared.prepareAndExecute(
+        try WorkDatabase.shared.prepareAndExecute(
             sql,
             bind: { stmt in
-                AgentDatabase.bindText(stmt, index: 1, value: artifact.id)
-                AgentDatabase.bindText(stmt, index: 2, value: artifact.taskId)
-                AgentDatabase.bindText(stmt, index: 3, value: artifact.filename)
-                AgentDatabase.bindText(stmt, index: 4, value: artifact.content)
-                AgentDatabase.bindText(stmt, index: 5, value: artifact.contentType.rawValue)
-                AgentDatabase.bindInt(stmt, index: 6, value: artifact.isFinalResult ? 1 : 0)
-                AgentDatabase.bindDate(stmt, index: 7, value: artifact.createdAt)
+                WorkDatabase.bindText(stmt, index: 1, value: artifact.id)
+                WorkDatabase.bindText(stmt, index: 2, value: artifact.taskId)
+                WorkDatabase.bindText(stmt, index: 3, value: artifact.filename)
+                WorkDatabase.bindText(stmt, index: 4, value: artifact.content)
+                WorkDatabase.bindText(stmt, index: 5, value: artifact.contentType.rawValue)
+                WorkDatabase.bindInt(stmt, index: 6, value: artifact.isFinalResult ? 1 : 0)
+                WorkDatabase.bindDate(stmt, index: 7, value: artifact.createdAt)
             }
         ) { stmt in
             let result = sqlite3_step(stmt)
             if result != SQLITE_DONE {
-                throw AgentDatabaseError.failedToExecute("Failed to insert artifact")
+                throw WorkDatabaseError.failedToExecute("Failed to insert artifact")
             }
         }
 
@@ -694,10 +694,10 @@ public struct IssueStore {
         let sql = "SELECT * FROM artifacts WHERE id = ?"
         var artifact: Artifact?
 
-        try AgentDatabase.shared.prepareAndExecute(
+        try WorkDatabase.shared.prepareAndExecute(
             sql,
             bind: { stmt in
-                AgentDatabase.bindText(stmt, index: 1, value: id)
+                WorkDatabase.bindText(stmt, index: 1, value: id)
             }
         ) { stmt in
             if sqlite3_step(stmt) == SQLITE_ROW {
@@ -713,10 +713,10 @@ public struct IssueStore {
         let sql = "SELECT * FROM artifacts WHERE task_id = ? ORDER BY created_at ASC"
         var artifacts: [Artifact] = []
 
-        try AgentDatabase.shared.prepareAndExecute(
+        try WorkDatabase.shared.prepareAndExecute(
             sql,
             bind: { stmt in
-                AgentDatabase.bindText(stmt, index: 1, value: taskId)
+                WorkDatabase.bindText(stmt, index: 1, value: taskId)
             }
         ) { stmt in
             while sqlite3_step(stmt) == SQLITE_ROW {
@@ -734,10 +734,10 @@ public struct IssueStore {
         let sql = "SELECT * FROM artifacts WHERE task_id = ? AND is_final_result = 1 ORDER BY created_at DESC LIMIT 1"
         var artifact: Artifact?
 
-        try AgentDatabase.shared.prepareAndExecute(
+        try WorkDatabase.shared.prepareAndExecute(
             sql,
             bind: { stmt in
-                AgentDatabase.bindText(stmt, index: 1, value: taskId)
+                WorkDatabase.bindText(stmt, index: 1, value: taskId)
             }
         ) { stmt in
             if sqlite3_step(stmt) == SQLITE_ROW {
@@ -752,15 +752,15 @@ public struct IssueStore {
     public static func deleteArtifact(id: String) throws {
         let sql = "DELETE FROM artifacts WHERE id = ?"
 
-        try AgentDatabase.shared.prepareAndExecute(
+        try WorkDatabase.shared.prepareAndExecute(
             sql,
             bind: { stmt in
-                AgentDatabase.bindText(stmt, index: 1, value: id)
+                WorkDatabase.bindText(stmt, index: 1, value: id)
             }
         ) { stmt in
             let result = sqlite3_step(stmt)
             if result != SQLITE_DONE {
-                throw AgentDatabaseError.failedToExecute("Failed to delete artifact")
+                throw WorkDatabaseError.failedToExecute("Failed to delete artifact")
             }
         }
     }
@@ -769,30 +769,30 @@ public struct IssueStore {
     public static func deleteArtifacts(forTask taskId: String) throws {
         let sql = "DELETE FROM artifacts WHERE task_id = ?"
 
-        try AgentDatabase.shared.prepareAndExecute(
+        try WorkDatabase.shared.prepareAndExecute(
             sql,
             bind: { stmt in
-                AgentDatabase.bindText(stmt, index: 1, value: taskId)
+                WorkDatabase.bindText(stmt, index: 1, value: taskId)
             }
         ) { stmt in
             let result = sqlite3_step(stmt)
             if result != SQLITE_DONE {
-                throw AgentDatabaseError.failedToExecute("Failed to delete artifacts for task")
+                throw WorkDatabaseError.failedToExecute("Failed to delete artifacts for task")
             }
         }
     }
 
     private static func parseArtifactRow(_ stmt: OpaquePointer) -> Artifact? {
-        guard let id = AgentDatabase.getText(stmt, column: 0),
-            let taskId = AgentDatabase.getText(stmt, column: 1),
-            let filename = AgentDatabase.getText(stmt, column: 2),
-            let content = AgentDatabase.getText(stmt, column: 3),
-            let contentTypeRaw = AgentDatabase.getText(stmt, column: 4),
+        guard let id = WorkDatabase.getText(stmt, column: 0),
+            let taskId = WorkDatabase.getText(stmt, column: 1),
+            let filename = WorkDatabase.getText(stmt, column: 2),
+            let content = WorkDatabase.getText(stmt, column: 3),
+            let contentTypeRaw = WorkDatabase.getText(stmt, column: 4),
             let contentType = ArtifactContentType(rawValue: contentTypeRaw),
-            let createdAt = AgentDatabase.getDate(stmt, column: 6)
+            let createdAt = WorkDatabase.getDate(stmt, column: 6)
         else { return nil }
 
-        let isFinalResult = AgentDatabase.getInt(stmt, column: 5) == 1
+        let isFinalResult = WorkDatabase.getInt(stmt, column: 5) == 1
 
         return Artifact(
             id: id,
@@ -814,10 +814,10 @@ public struct IssueStore {
 
         // Delete existing turns for this issue first, then insert fresh
         let deleteSql = "DELETE FROM conversation_turns WHERE issue_id = ?"
-        try AgentDatabase.shared.prepareAndExecute(
+        try WorkDatabase.shared.prepareAndExecute(
             deleteSql,
             bind: { stmt in
-                AgentDatabase.bindText(stmt, index: 1, value: issueId)
+                WorkDatabase.bindText(stmt, index: 1, value: issueId)
             }
         ) { stmt in
             _ = sqlite3_step(stmt)
@@ -843,24 +843,24 @@ public struct IssueStore {
                 return String(data: data, encoding: .utf8)
             }()
 
-            try AgentDatabase.shared.prepareAndExecute(
+            try WorkDatabase.shared.prepareAndExecute(
                 insertSql,
                 bind: { stmt in
-                    AgentDatabase.bindText(stmt, index: 1, value: persisted.id)
-                    AgentDatabase.bindText(stmt, index: 2, value: issueId)
-                    AgentDatabase.bindInt(stmt, index: 3, value: index)
-                    AgentDatabase.bindText(stmt, index: 4, value: persisted.role)
-                    AgentDatabase.bindText(stmt, index: 5, value: persisted.content)
-                    AgentDatabase.bindText(stmt, index: 6, value: persisted.thinking)
-                    AgentDatabase.bindText(stmt, index: 7, value: toolCallsJson)
-                    AgentDatabase.bindText(stmt, index: 8, value: toolResultsJson)
-                    AgentDatabase.bindText(stmt, index: 9, value: persisted.toolCallId)
-                    AgentDatabase.bindDate(stmt, index: 10, value: Date())
+                    WorkDatabase.bindText(stmt, index: 1, value: persisted.id)
+                    WorkDatabase.bindText(stmt, index: 2, value: issueId)
+                    WorkDatabase.bindInt(stmt, index: 3, value: index)
+                    WorkDatabase.bindText(stmt, index: 4, value: persisted.role)
+                    WorkDatabase.bindText(stmt, index: 5, value: persisted.content)
+                    WorkDatabase.bindText(stmt, index: 6, value: persisted.thinking)
+                    WorkDatabase.bindText(stmt, index: 7, value: toolCallsJson)
+                    WorkDatabase.bindText(stmt, index: 8, value: toolResultsJson)
+                    WorkDatabase.bindText(stmt, index: 9, value: persisted.toolCallId)
+                    WorkDatabase.bindDate(stmt, index: 10, value: Date())
                 }
             ) { stmt in
                 let result = sqlite3_step(stmt)
                 if result != SQLITE_DONE {
-                    throw AgentDatabaseError.failedToExecute("Failed to insert conversation turn")
+                    throw WorkDatabaseError.failedToExecute("Failed to insert conversation turn")
                 }
             }
         }
@@ -879,20 +879,20 @@ public struct IssueStore {
         let decoder = JSONDecoder()
         var turns: [ChatTurn] = []
 
-        try AgentDatabase.shared.prepareAndExecute(
+        try WorkDatabase.shared.prepareAndExecute(
             sql,
             bind: { stmt in
-                AgentDatabase.bindText(stmt, index: 1, value: issueId)
+                WorkDatabase.bindText(stmt, index: 1, value: issueId)
             }
         ) { stmt in
             while sqlite3_step(stmt) == SQLITE_ROW {
-                let id = AgentDatabase.getText(stmt, column: 0) ?? UUID().uuidString
-                let roleStr = AgentDatabase.getText(stmt, column: 1) ?? "assistant"
-                let content = AgentDatabase.getText(stmt, column: 2)
-                let thinking = AgentDatabase.getText(stmt, column: 3)
-                let toolCallsJson = AgentDatabase.getText(stmt, column: 4)
-                let toolResultsJson = AgentDatabase.getText(stmt, column: 5)
-                let toolCallId = AgentDatabase.getText(stmt, column: 6)
+                let id = WorkDatabase.getText(stmt, column: 0) ?? UUID().uuidString
+                let roleStr = WorkDatabase.getText(stmt, column: 1) ?? "assistant"
+                let content = WorkDatabase.getText(stmt, column: 2)
+                let thinking = WorkDatabase.getText(stmt, column: 3)
+                let toolCallsJson = WorkDatabase.getText(stmt, column: 4)
+                let toolResultsJson = WorkDatabase.getText(stmt, column: 5)
+                let toolCallId = WorkDatabase.getText(stmt, column: 6)
 
                 var toolCalls: [ToolCall]? = nil
                 if let json = toolCallsJson, let data = json.data(using: .utf8) {
@@ -924,15 +924,15 @@ public struct IssueStore {
     /// Deletes all conversation turns for an issue.
     static func deleteConversationTurns(issueId: String) throws {
         let sql = "DELETE FROM conversation_turns WHERE issue_id = ?"
-        try AgentDatabase.shared.prepareAndExecute(
+        try WorkDatabase.shared.prepareAndExecute(
             sql,
             bind: { stmt in
-                AgentDatabase.bindText(stmt, index: 1, value: issueId)
+                WorkDatabase.bindText(stmt, index: 1, value: issueId)
             }
         ) { stmt in
             let result = sqlite3_step(stmt)
             if result != SQLITE_DONE {
-                throw AgentDatabaseError.failedToExecute("Failed to delete conversation turns")
+                throw WorkDatabaseError.failedToExecute("Failed to delete conversation turns")
             }
         }
     }

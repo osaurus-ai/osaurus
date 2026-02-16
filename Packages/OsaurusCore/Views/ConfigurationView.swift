@@ -25,7 +25,7 @@ struct ConfigurationView: View {
     @State private var tempChatTopP: String = ""
     @State private var tempChatMaxToolAttempts: String = ""
 
-    // Agent generation settings state
+    // Work generation settings state
     @State private var tempAgentTemperature: String = ""
     @State private var tempAgentMaxTokens: String = ""
     @State private var tempAgentTopP: String = ""
@@ -241,10 +241,10 @@ struct ConfigurationView: View {
                             }
                         }
 
-                        // MARK: - Agent Section
+                        // MARK: - Work Section
                         if matchesSearch(
-                            "Agent",
-                            "Agent Generation",
+                            "Work",
+                            "Work Generation",
                             "Temperature",
                             "Max Tokens",
                             "Top P",
@@ -260,10 +260,10 @@ struct ConfigurationView: View {
                             "Copy"
                         ) {
                             AgentSettingsSection(
-                                agentTemperature: $tempAgentTemperature,
-                                agentMaxTokens: $tempAgentMaxTokens,
+                                workTemperature: $tempAgentTemperature,
+                                workMaxTokens: $tempAgentMaxTokens,
                                 agentTopP: $tempAgentTopP,
-                                agentMaxIterations: $tempAgentMaxIterations
+                                workMaxIterations: $tempAgentMaxIterations
                             )
                         }
 
@@ -572,11 +572,11 @@ struct ConfigurationView: View {
         tempChatTopP = chat.topPOverride.map { String($0) } ?? ""
         tempChatMaxToolAttempts = chat.maxToolAttempts.map(String.init) ?? ""
 
-        // Agent generation settings
-        tempAgentTemperature = chat.agentTemperature.map { String($0) } ?? ""
-        tempAgentMaxTokens = chat.agentMaxTokens.map(String.init) ?? ""
-        tempAgentTopP = chat.agentTopPOverride.map { String($0) } ?? ""
-        tempAgentMaxIterations = chat.agentMaxIterations.map(String.init) ?? ""
+        // Work generation settings
+        tempAgentTemperature = chat.workTemperature.map { String($0) } ?? ""
+        tempAgentMaxTokens = chat.workMaxTokens.map(String.init) ?? ""
+        tempAgentTopP = chat.workTopPOverride.map { String($0) } ?? ""
+        tempAgentMaxIterations = chat.workMaxIterations.map(String.init) ?? ""
 
         let defaults = ServerConfiguration.default
         tempTopP = configuration.genTopP == defaults.genTopP ? "" : String(configuration.genTopP)
@@ -633,7 +633,7 @@ struct ConfigurationView: View {
         tempChatTopP = ""
         tempChatMaxToolAttempts = ""
 
-        // Agent generation settings - clear to use defaults
+        // Work generation settings - clear to use defaults
         tempAgentTemperature = ""
         tempAgentMaxTokens = ""
         tempAgentTopP = ""
@@ -762,7 +762,7 @@ struct ConfigurationView: View {
             return max(1, min(10, v))
         }()
 
-        // Parse agent generation settings
+        // Parse work generation settings
         let parsedAgentTemp: Float? = {
             let s = tempAgentTemperature.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !s.isEmpty, let v = Float(s) else { return nil }
@@ -798,10 +798,10 @@ struct ConfigurationView: View {
             topPOverride: parsedTopP,
             maxToolAttempts: parsedMaxToolAttempts,
             defaultModel: existingDefaultModel,
-            agentTemperature: parsedAgentTemp,
-            agentMaxTokens: parsedAgentMax,
-            agentTopPOverride: parsedAgentTopP,
-            agentMaxIterations: parsedAgentMaxIterations
+            workTemperature: parsedAgentTemp,
+            workMaxTokens: parsedAgentMax,
+            workTopPOverride: parsedAgentTopP,
+            workMaxIterations: parsedAgentMaxIterations
         )
         ChatConfigurationStore.save(chatCfg)
 
@@ -1016,7 +1016,7 @@ extension ConfigurationView {
             position: tempToastPosition,
             defaultTimeout: parsedTimeout,
             maxVisibleToasts: parsedMaxVisible,
-            groupByPersona: true,
+            groupByAgent: true,
             enabled: tempToastEnabled,
             maxConcurrentTasks: parsedMaxConcurrent
         )
@@ -1892,16 +1892,16 @@ private struct VoiceInputDevicePicker: View {
     }
 }
 
-// MARK: - Agent Settings Section
+// MARK: - Work Settings Section
 
 private struct AgentSettingsSection: View {
     @ObservedObject private var themeManager = ThemeManager.shared
     @State private var refreshId = UUID()
 
-    @Binding var agentTemperature: String
-    @Binding var agentMaxTokens: String
+    @Binding var workTemperature: String
+    @Binding var workMaxTokens: String
     @Binding var agentTopP: String
-    @Binding var agentMaxIterations: String
+    @Binding var workMaxIterations: String
 
     // (name, display, desc, destructive, defaultPolicy)
     private static let folderTools:
@@ -1918,19 +1918,19 @@ private struct AgentSettingsSection: View {
         ]
 
     var body: some View {
-        SettingsSection(title: "Agent", icon: "cpu") {
+        SettingsSection(title: "Work", icon: "cpu") {
             VStack(alignment: .leading, spacing: 16) {
                 // Generation Settings
                 SettingsSubsection(label: "Generation") {
                     VStack(alignment: .leading, spacing: 12) {
-                        Text("Controls how the agent reasons and calls tools. Lower temperature improves reliability.")
+                        Text("Controls how the AI reasons and calls tools. Lower temperature improves reliability.")
                             .font(.system(size: 12))
                             .foregroundColor(themeManager.currentTheme.secondaryText)
 
                         SettingsSliderField(
                             label: "Temperature",
                             help: "Lower = more reliable tool use",
-                            text: $agentTemperature,
+                            text: $workTemperature,
                             range: 0 ... 2,
                             step: 0.1,
                             defaultValue: 0.3,
@@ -1938,8 +1938,8 @@ private struct AgentSettingsSection: View {
                         )
                         SettingsStepperField(
                             label: "Max Tokens",
-                            help: "Tokens per agent iteration",
-                            text: $agentMaxTokens,
+                            help: "Tokens per work iteration",
+                            text: $workMaxTokens,
                             range: 1 ... 65536,
                             step: 512,
                             defaultValue: 4096
@@ -1956,7 +1956,7 @@ private struct AgentSettingsSection: View {
                         SettingsStepperField(
                             label: "Max Iterations",
                             help: "Max reasoning loop iterations",
-                            text: $agentMaxIterations,
+                            text: $workMaxIterations,
                             range: 1 ... 100,
                             step: 5,
                             defaultValue: 30
@@ -1969,7 +1969,7 @@ private struct AgentSettingsSection: View {
                 // Permissions
                 SettingsSubsection(label: "Permissions") {
                     VStack(alignment: .leading, spacing: 12) {
-                        Text("Control how agent folder tools execute when working with folders in Agent mode.")
+                        Text("Control how work folder tools execute when working with folders in Work mode.")
                             .font(.system(size: 12))
                             .foregroundColor(themeManager.currentTheme.secondaryText)
 
@@ -2006,7 +2006,7 @@ private struct AgentSettingsSection: View {
                                 }
                             }
                             .buttonStyle(SettingsButtonStyle())
-                            .help("Reset all agent tool permissions to default")
+                            .help("Reset all work tool permissions to default")
                         }
                     }
                 }
@@ -2022,7 +2022,7 @@ private struct AgentSettingsSection: View {
     }
 }
 
-// MARK: - Agent Tool Permission Row
+// MARK: - Work Tool Permission Row
 
 private struct AgentToolPermissionRow: View {
     @ObservedObject private var themeManager = ThemeManager.shared

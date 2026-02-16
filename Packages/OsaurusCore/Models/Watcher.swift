@@ -3,7 +3,7 @@
 //  osaurus
 //
 //  Defines a file system watcher that monitors a directory for changes
-//  and triggers agent tasks with change context.
+//  and triggers work tasks with change context.
 //
 
 import Foundation
@@ -61,16 +61,16 @@ public enum Responsiveness: String, Codable, Sendable, CaseIterable, Equatable {
 
 // MARK: - Watcher Model
 
-/// A file system watcher that monitors a directory for changes and triggers agent tasks
+/// A file system watcher that monitors a directory for changes and triggers work tasks
 public struct Watcher: Codable, Identifiable, Sendable, Equatable {
     /// Unique identifier for the watcher
     public let id: UUID
     /// Display name of the watcher
     public var name: String
-    /// Instructions to send to the agent when changes are detected
+    /// Instructions to send to the AI when changes are detected
     public var instructions: String
-    /// The persona to use for the agent (nil = default persona)
-    public var personaId: UUID?
+    /// The agent to use for work mode (nil = default agent)
+    public var agentId: UUID?
     /// Extra parameters for future extensibility
     public var parameters: [String: String]
     /// The directory to monitor (display path)
@@ -85,7 +85,7 @@ public struct Watcher: Codable, Identifiable, Sendable, Equatable {
     public var responsiveness: Responsiveness
     /// Seconds to wait after LLM completes before re-fingerprinting (FSEvents latency x2)
     public var settleSeconds: TimeInterval
-    /// When the watcher last triggered an agent task
+    /// When the watcher last triggered an work task
     public var lastTriggeredAt: Date?
     /// The chat session ID from the last run (for viewing results)
     public var lastChatSessionId: UUID?
@@ -98,7 +98,7 @@ public struct Watcher: Codable, Identifiable, Sendable, Equatable {
         id: UUID = UUID(),
         name: String,
         instructions: String,
-        personaId: UUID? = nil,
+        agentId: UUID? = nil,
         parameters: [String: String] = [:],
         watchPath: String? = nil,
         watchBookmark: Data? = nil,
@@ -114,7 +114,7 @@ public struct Watcher: Codable, Identifiable, Sendable, Equatable {
         self.id = id
         self.name = name
         self.instructions = instructions
-        self.personaId = personaId
+        self.agentId = agentId
         self.parameters = parameters
         self.watchPath = watchPath
         self.watchBookmark = watchBookmark
@@ -131,7 +131,8 @@ public struct Watcher: Codable, Identifiable, Sendable, Equatable {
     // MARK: - Backward-Compatible Decoding
 
     private enum CodingKeys: String, CodingKey {
-        case id, name, instructions, personaId, parameters
+        case id, name, instructions, agentId, parameters
+        case personaId  // legacy key for migration
         case watchPath, watchBookmark
         case isEnabled, recursive
         case responsiveness, settleSeconds
@@ -145,7 +146,9 @@ public struct Watcher: Codable, Identifiable, Sendable, Equatable {
         id = try container.decode(UUID.self, forKey: .id)
         name = try container.decode(String.self, forKey: .name)
         instructions = try container.decode(String.self, forKey: .instructions)
-        personaId = try container.decodeIfPresent(UUID.self, forKey: .personaId)
+        agentId =
+            try container.decodeIfPresent(UUID.self, forKey: .agentId)
+            ?? container.decodeIfPresent(UUID.self, forKey: .personaId)
         parameters = try container.decodeIfPresent([String: String].self, forKey: .parameters) ?? [:]
         watchPath = try container.decodeIfPresent(String.self, forKey: .watchPath)
         watchBookmark = try container.decodeIfPresent(Data.self, forKey: .watchBookmark)
@@ -173,7 +176,7 @@ public struct Watcher: Codable, Identifiable, Sendable, Equatable {
         try container.encode(id, forKey: .id)
         try container.encode(name, forKey: .name)
         try container.encode(instructions, forKey: .instructions)
-        try container.encodeIfPresent(personaId, forKey: .personaId)
+        try container.encodeIfPresent(agentId, forKey: .agentId)
         try container.encode(parameters, forKey: .parameters)
         try container.encodeIfPresent(watchPath, forKey: .watchPath)
         try container.encodeIfPresent(watchBookmark, forKey: .watchBookmark)
@@ -236,7 +239,7 @@ public struct WatcherRunInfo: Identifiable, Sendable {
     public let id: UUID
     public let watcherId: UUID
     public let watcherName: String
-    public let personaId: UUID?
+    public let agentId: UUID?
     public var chatSessionId: UUID
     public let startedAt: Date
     public let changeCount: Int
@@ -245,7 +248,7 @@ public struct WatcherRunInfo: Identifiable, Sendable {
         id: UUID = UUID(),
         watcherId: UUID,
         watcherName: String,
-        personaId: UUID?,
+        agentId: UUID?,
         chatSessionId: UUID,
         startedAt: Date = Date(),
         changeCount: Int = 0
@@ -253,7 +256,7 @@ public struct WatcherRunInfo: Identifiable, Sendable {
         self.id = id
         self.watcherId = watcherId
         self.watcherName = watcherName
-        self.personaId = personaId
+        self.agentId = agentId
         self.chatSessionId = chatSessionId
         self.startedAt = startedAt
         self.changeCount = changeCount

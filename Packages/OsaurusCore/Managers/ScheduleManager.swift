@@ -85,7 +85,7 @@ public final class ScheduleManager: ObservableObject {
     public func create(
         name: String,
         instructions: String,
-        personaId: UUID? = nil,
+        agentId: UUID? = nil,
         mode: ChatMode = .chat,
         parameters: [String: String] = [:],
         folderPath: String? = nil,
@@ -97,7 +97,7 @@ public final class ScheduleManager: ObservableObject {
             id: UUID(),
             name: name,
             instructions: instructions,
-            personaId: personaId,
+            agentId: agentId,
             mode: mode,
             parameters: parameters,
             folderPath: folderPath,
@@ -318,7 +318,7 @@ public final class ScheduleManager: ObservableObject {
         let request = DispatchRequest(
             mode: schedule.mode,
             prompt: schedule.instructions,
-            personaId: schedule.personaId,
+            agentId: schedule.agentId,
             title: schedule.name,
             parameters: schedule.parameters,
             folderPath: schedule.folderPath,
@@ -336,7 +336,7 @@ public final class ScheduleManager: ObservableObject {
             self.runningTasks[schedule.id] = ScheduleRunInfo(
                 scheduleId: schedule.id,
                 scheduleName: schedule.name,
-                personaId: schedule.personaId,
+                agentId: schedule.agentId,
                 chatSessionId: UUID()
             )
 
@@ -350,7 +350,7 @@ public final class ScheduleManager: ObservableObject {
     // MARK: - Result Handling
 
     /// Update schedule metadata after task completion.
-    /// Result UI is handled by the NotchView for both chat and agent modes.
+    /// Result UI is handled by the NotchView for both chat and work modes.
     private func handleResult(_ result: DispatchResult, schedule: Schedule, request: DispatchRequest) {
         defer {
             executionTasks.removeValue(forKey: schedule.id)
@@ -375,7 +375,7 @@ public final class ScheduleManager: ObservableObject {
                 userInfo: [
                     "scheduleId": schedule.id,
                     "sessionId": chatSessionId,
-                    "personaId": schedule.personaId ?? Persona.defaultId,
+                    "agentId": schedule.agentId ?? Agent.defaultId,
                 ]
             )
             print("[Osaurus] Schedule completed: \(schedule.name)")

@@ -1,16 +1,16 @@
 //
-//  AgentFolderTools.swift
+//  WorkFolderTools.swift
 //  osaurus
 //
-//  Agent folder tools for file operations, code editing, and git integration.
-//  These tools are internal to the agent and do NOT appear in CapabilitiesSelectorView.
+//  Work folder tools for file operations, code editing, and git integration.
+//  These tools are internal to work mode and do NOT appear in CapabilitiesSelectorView.
 //
 
 import Foundation
 
 // MARK: - Tool Errors
 
-enum AgentFolderToolError: LocalizedError {
+enum WorkFolderToolError: LocalizedError {
     case invalidArguments(String)
     case pathOutsideRoot(String)
     case fileNotFound(String)
@@ -31,7 +31,7 @@ enum AgentFolderToolError: LocalizedError {
 // MARK: - Tool Helpers
 
 /// Shared utilities for folder tools
-enum AgentFolderToolHelpers {
+enum WorkFolderToolHelpers {
     /// Resolve and validate a relative path, ensuring it's within rootPath
     static func resolvePath(_ relativePath: String, rootPath: URL) throws -> URL {
         let cleanPath = relativePath.hasPrefix("/") ? String(relativePath.dropFirst()) : relativePath
@@ -39,7 +39,7 @@ enum AgentFolderToolHelpers {
         let rootPathString = rootPath.standardized.path
 
         guard resolvedURL.path.hasPrefix(rootPathString) else {
-            throw AgentFolderToolError.pathOutsideRoot(relativePath)
+            throw WorkFolderToolError.pathOutsideRoot(relativePath)
         }
         return resolvedURL
     }
@@ -49,15 +49,15 @@ enum AgentFolderToolHelpers {
         guard let data = json.data(using: .utf8),
             let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
         else {
-            throw AgentFolderToolError.invalidArguments("Failed to parse JSON")
+            throw WorkFolderToolError.invalidArguments("Failed to parse JSON")
         }
         return dict
     }
 
     /// Detect project type from root path
-    static func detectProjectType(_ url: URL) -> AgentProjectType {
+    static func detectProjectType(_ url: URL) -> WorkProjectType {
         let fm = FileManager.default
-        for projectType in AgentProjectType.allCases where projectType != .unknown {
+        for projectType in WorkProjectType.allCases where projectType != .unknown {
             for manifestFile in projectType.manifestFiles {
                 if fm.fileExists(atPath: url.appendingPathComponent(manifestFile).path) {
                     return projectType
@@ -138,7 +138,7 @@ enum AgentFolderToolHelpers {
 
 // MARK: File Tree Tool
 
-struct AgentFileTreeTool: OsaurusTool {
+struct WorkFileTreeTool: OsaurusTool {
     let name = "file_tree"
     let description =
         "List the directory structure of the working directory or a subdirectory. Returns a tree view of files and folders. Skips hidden files and truncates at 300 files."
@@ -166,17 +166,17 @@ struct AgentFileTreeTool: OsaurusTool {
     }
 
     func execute(argumentsJSON: String) async throws -> String {
-        let args = try AgentFolderToolHelpers.parseArguments(argumentsJSON)
+        let args = try WorkFolderToolHelpers.parseArguments(argumentsJSON)
         let relativePath = args["path"] as? String ?? "."
         let maxDepth = args["max_depth"] as? Int ?? 3
 
-        let targetURL = try AgentFolderToolHelpers.resolvePath(relativePath, rootPath: rootPath)
+        let targetURL = try WorkFolderToolHelpers.resolvePath(relativePath, rootPath: rootPath)
 
         var isDirectory: ObjCBool = false
         guard FileManager.default.fileExists(atPath: targetURL.path, isDirectory: &isDirectory),
             isDirectory.boolValue
         else {
-            throw AgentFolderToolError.directoryNotFound(relativePath)
+            throw WorkFolderToolError.directoryNotFound(relativePath)
         }
 
         return buildTree(targetURL, maxDepth: maxDepth)
@@ -186,7 +186,7 @@ struct AgentFileTreeTool: OsaurusTool {
         var result = "./\n"
         var fileCount = 0
         let maxFiles = 300
-        let ignorePatterns = AgentFolderToolHelpers.detectProjectType(rootPath).ignorePatterns
+        let ignorePatterns = WorkFolderToolHelpers.detectProjectType(rootPath).ignorePatterns
 
         func traverse(_ currentURL: URL, depth: Int, prefix: String) {
             guard depth <= maxDepth, fileCount < maxFiles else { return }
@@ -214,7 +214,7 @@ struct AgentFileTreeTool: OsaurusTool {
                 }
 
                 let name = item.lastPathComponent
-                if AgentFolderToolHelpers.shouldIgnore(name, patterns: ignorePatterns) { continue }
+                if WorkFolderToolHelpers.shouldIgnore(name, patterns: ignorePatterns) { continue }
 
                 let isLast = index == sorted.count - 1
                 let connector = isLast ? "└── " : "├── "
@@ -240,7 +240,7 @@ struct AgentFileTreeTool: OsaurusTool {
 
 // MARK: File Read Tool
 
-struct AgentFileReadTool: OsaurusTool {
+struct WorkFileReadTool: OsaurusTool {
     let name = "file_read"
     let description =
         "Read the contents of a text file. Cannot read binary files (PDFs, images, etc.). Optionally specify start_line and end_line for partial reads. Line numbers are 1-indexed."
@@ -270,16 +270,16 @@ struct AgentFileReadTool: OsaurusTool {
     }
 
     func execute(argumentsJSON: String) async throws -> String {
-        let args = try AgentFolderToolHelpers.parseArguments(argumentsJSON)
+        let args = try WorkFolderToolHelpers.parseArguments(argumentsJSON)
 
         guard let relativePath = args["path"] as? String else {
-            throw AgentFolderToolError.invalidArguments("Missing required parameter: path")
+            throw WorkFolderToolError.invalidArguments("Missing required parameter: path")
         }
 
-        let fileURL = try AgentFolderToolHelpers.resolvePath(relativePath, rootPath: rootPath)
+        let fileURL = try WorkFolderToolHelpers.resolvePath(relativePath, rootPath: rootPath)
 
         guard FileManager.default.fileExists(atPath: fileURL.path) else {
-            throw AgentFolderToolError.fileNotFound(relativePath)
+            throw WorkFolderToolError.fileNotFound(relativePath)
         }
 
         let content = try String(contentsOf: fileURL, encoding: .utf8)
@@ -306,7 +306,7 @@ struct AgentFileReadTool: OsaurusTool {
 
 // MARK: File Write Tool
 
-struct AgentFileWriteTool: OsaurusTool, PermissionedTool {
+struct WorkFileWriteTool: OsaurusTool, PermissionedTool {
     let name = "file_write"
     let description =
         "Create a new file or overwrite an existing file with the provided content. Parent directories will be created if they don't exist."
@@ -335,30 +335,30 @@ struct AgentFileWriteTool: OsaurusTool, PermissionedTool {
     }
 
     func execute(argumentsJSON: String) async throws -> String {
-        let args = try AgentFolderToolHelpers.parseArguments(argumentsJSON)
+        let args = try WorkFolderToolHelpers.parseArguments(argumentsJSON)
 
         guard let relativePath = args["path"] as? String else {
-            throw AgentFolderToolError.invalidArguments("Missing required parameter: path")
+            throw WorkFolderToolError.invalidArguments("Missing required parameter: path")
         }
         guard let content = args["content"] as? String else {
-            throw AgentFolderToolError.invalidArguments("Missing required parameter: content")
+            throw WorkFolderToolError.invalidArguments("Missing required parameter: content")
         }
 
-        let fileURL = try AgentFolderToolHelpers.resolvePath(relativePath, rootPath: rootPath)
+        let fileURL = try WorkFolderToolHelpers.resolvePath(relativePath, rootPath: rootPath)
 
         // Capture previous state for undo
         let existed = FileManager.default.fileExists(atPath: fileURL.path)
         let previousContent = existed ? try? String(contentsOf: fileURL, encoding: .utf8) : nil
 
         // Log operation before executing
-        if let issueId = AgentExecutionContext.currentIssueId {
-            await AgentFileOperationLog.shared.log(
-                AgentFileOperation(
+        if let issueId = WorkExecutionContext.currentIssueId {
+            await WorkFileOperationLog.shared.log(
+                WorkFileOperation(
                     type: existed ? .write : .create,
                     path: relativePath,
                     previousContent: previousContent,
                     issueId: issueId,
-                    batchId: AgentExecutionContext.currentBatchId
+                    batchId: WorkExecutionContext.currentBatchId
                 )
             )
         }
@@ -382,7 +382,7 @@ struct AgentFileWriteTool: OsaurusTool, PermissionedTool {
 
 // MARK: File Move Tool
 
-struct AgentFileMoveTool: OsaurusTool, PermissionedTool {
+struct WorkFileMoveTool: OsaurusTool, PermissionedTool {
     let name = "file_move"
     let description = "Move or rename a file or directory."
     let parameters: JSONValue? = .object([
@@ -410,31 +410,31 @@ struct AgentFileMoveTool: OsaurusTool, PermissionedTool {
     }
 
     func execute(argumentsJSON: String) async throws -> String {
-        let args = try AgentFolderToolHelpers.parseArguments(argumentsJSON)
+        let args = try WorkFolderToolHelpers.parseArguments(argumentsJSON)
 
         guard let sourcePath = args["source"] as? String else {
-            throw AgentFolderToolError.invalidArguments("Missing required parameter: source")
+            throw WorkFolderToolError.invalidArguments("Missing required parameter: source")
         }
         guard let destPath = args["destination"] as? String else {
-            throw AgentFolderToolError.invalidArguments("Missing required parameter: destination")
+            throw WorkFolderToolError.invalidArguments("Missing required parameter: destination")
         }
 
-        let sourceURL = try AgentFolderToolHelpers.resolvePath(sourcePath, rootPath: rootPath)
-        let destURL = try AgentFolderToolHelpers.resolvePath(destPath, rootPath: rootPath)
+        let sourceURL = try WorkFolderToolHelpers.resolvePath(sourcePath, rootPath: rootPath)
+        let destURL = try WorkFolderToolHelpers.resolvePath(destPath, rootPath: rootPath)
 
         guard FileManager.default.fileExists(atPath: sourceURL.path) else {
-            throw AgentFolderToolError.fileNotFound(sourcePath)
+            throw WorkFolderToolError.fileNotFound(sourcePath)
         }
 
         // Log operation before executing
-        if let issueId = AgentExecutionContext.currentIssueId {
-            await AgentFileOperationLog.shared.log(
-                AgentFileOperation(
+        if let issueId = WorkExecutionContext.currentIssueId {
+            await WorkFileOperationLog.shared.log(
+                WorkFileOperation(
                     type: .move,
                     path: sourcePath,
                     destinationPath: destPath,
                     issueId: issueId,
-                    batchId: AgentExecutionContext.currentBatchId
+                    batchId: WorkExecutionContext.currentBatchId
                 )
             )
         }
@@ -455,7 +455,7 @@ struct AgentFileMoveTool: OsaurusTool, PermissionedTool {
 
 // MARK: File Copy Tool
 
-struct AgentFileCopyTool: OsaurusTool, PermissionedTool {
+struct WorkFileCopyTool: OsaurusTool, PermissionedTool {
     let name = "file_copy"
     let description = "Copy a file or directory to a new location."
     let parameters: JSONValue? = .object([
@@ -483,31 +483,31 @@ struct AgentFileCopyTool: OsaurusTool, PermissionedTool {
     }
 
     func execute(argumentsJSON: String) async throws -> String {
-        let args = try AgentFolderToolHelpers.parseArguments(argumentsJSON)
+        let args = try WorkFolderToolHelpers.parseArguments(argumentsJSON)
 
         guard let sourcePath = args["source"] as? String else {
-            throw AgentFolderToolError.invalidArguments("Missing required parameter: source")
+            throw WorkFolderToolError.invalidArguments("Missing required parameter: source")
         }
         guard let destPath = args["destination"] as? String else {
-            throw AgentFolderToolError.invalidArguments("Missing required parameter: destination")
+            throw WorkFolderToolError.invalidArguments("Missing required parameter: destination")
         }
 
-        let sourceURL = try AgentFolderToolHelpers.resolvePath(sourcePath, rootPath: rootPath)
-        let destURL = try AgentFolderToolHelpers.resolvePath(destPath, rootPath: rootPath)
+        let sourceURL = try WorkFolderToolHelpers.resolvePath(sourcePath, rootPath: rootPath)
+        let destURL = try WorkFolderToolHelpers.resolvePath(destPath, rootPath: rootPath)
 
         guard FileManager.default.fileExists(atPath: sourceURL.path) else {
-            throw AgentFolderToolError.fileNotFound(sourcePath)
+            throw WorkFolderToolError.fileNotFound(sourcePath)
         }
 
         // Log operation before executing
-        if let issueId = AgentExecutionContext.currentIssueId {
-            await AgentFileOperationLog.shared.log(
-                AgentFileOperation(
+        if let issueId = WorkExecutionContext.currentIssueId {
+            await WorkFileOperationLog.shared.log(
+                WorkFileOperation(
                     type: .copy,
                     path: sourcePath,
                     destinationPath: destPath,
                     issueId: issueId,
-                    batchId: AgentExecutionContext.currentBatchId
+                    batchId: WorkExecutionContext.currentBatchId
                 )
             )
         }
@@ -528,7 +528,7 @@ struct AgentFileCopyTool: OsaurusTool, PermissionedTool {
 
 // MARK: File Delete Tool
 
-struct AgentFileDeleteTool: OsaurusTool, PermissionedTool {
+struct WorkFileDeleteTool: OsaurusTool, PermissionedTool {
     let name = "file_delete"
     let description = "Delete a file or directory. This action requires approval."
     let parameters: JSONValue? = .object([
@@ -552,16 +552,16 @@ struct AgentFileDeleteTool: OsaurusTool, PermissionedTool {
     }
 
     func execute(argumentsJSON: String) async throws -> String {
-        let args = try AgentFolderToolHelpers.parseArguments(argumentsJSON)
+        let args = try WorkFolderToolHelpers.parseArguments(argumentsJSON)
 
         guard let relativePath = args["path"] as? String else {
-            throw AgentFolderToolError.invalidArguments("Missing required parameter: path")
+            throw WorkFolderToolError.invalidArguments("Missing required parameter: path")
         }
 
-        let fileURL = try AgentFolderToolHelpers.resolvePath(relativePath, rootPath: rootPath)
+        let fileURL = try WorkFolderToolHelpers.resolvePath(relativePath, rootPath: rootPath)
 
         guard FileManager.default.fileExists(atPath: fileURL.path) else {
-            throw AgentFolderToolError.fileNotFound(relativePath)
+            throw WorkFolderToolError.fileNotFound(relativePath)
         }
 
         var isDirectory: ObjCBool = false
@@ -574,14 +574,14 @@ struct AgentFileDeleteTool: OsaurusTool, PermissionedTool {
         }
 
         // Log operation before executing
-        if let issueId = AgentExecutionContext.currentIssueId {
-            await AgentFileOperationLog.shared.log(
-                AgentFileOperation(
+        if let issueId = WorkExecutionContext.currentIssueId {
+            await WorkFileOperationLog.shared.log(
+                WorkFileOperation(
                     type: .delete,
                     path: relativePath,
                     previousContent: previousContent,
                     issueId: issueId,
-                    batchId: AgentExecutionContext.currentBatchId
+                    batchId: WorkExecutionContext.currentBatchId
                 )
             )
         }
@@ -602,7 +602,7 @@ struct AgentFileDeleteTool: OsaurusTool, PermissionedTool {
 
 // MARK: Directory Create Tool
 
-struct AgentDirCreateTool: OsaurusTool, PermissionedTool {
+struct WorkDirCreateTool: OsaurusTool, PermissionedTool {
     let name = "dir_create"
     let description =
         "Create a new directory. Parent directories will be created if they don't exist."
@@ -627,26 +627,26 @@ struct AgentDirCreateTool: OsaurusTool, PermissionedTool {
     }
 
     func execute(argumentsJSON: String) async throws -> String {
-        let args = try AgentFolderToolHelpers.parseArguments(argumentsJSON)
+        let args = try WorkFolderToolHelpers.parseArguments(argumentsJSON)
 
         guard let relativePath = args["path"] as? String else {
-            throw AgentFolderToolError.invalidArguments("Missing required parameter: path")
+            throw WorkFolderToolError.invalidArguments("Missing required parameter: path")
         }
 
-        let dirURL = try AgentFolderToolHelpers.resolvePath(relativePath, rootPath: rootPath)
+        let dirURL = try WorkFolderToolHelpers.resolvePath(relativePath, rootPath: rootPath)
 
         if FileManager.default.fileExists(atPath: dirURL.path) {
             return "Directory already exists: \(relativePath)"
         }
 
         // Log operation before executing
-        if let issueId = AgentExecutionContext.currentIssueId {
-            await AgentFileOperationLog.shared.log(
-                AgentFileOperation(
+        if let issueId = WorkExecutionContext.currentIssueId {
+            await WorkFileOperationLog.shared.log(
+                WorkFileOperation(
                     type: .dirCreate,
                     path: relativePath,
                     issueId: issueId,
-                    batchId: AgentExecutionContext.currentBatchId
+                    batchId: WorkExecutionContext.currentBatchId
                 )
             )
         }
@@ -663,7 +663,7 @@ struct AgentDirCreateTool: OsaurusTool, PermissionedTool {
 
 // MARK: File Metadata Tool
 
-struct AgentFileMetadataTool: OsaurusTool {
+struct WorkFileMetadataTool: OsaurusTool {
     let name = "file_metadata"
     let description = "Get metadata about a file or directory (size, dates, type)."
     let parameters: JSONValue? = .object([
@@ -684,16 +684,16 @@ struct AgentFileMetadataTool: OsaurusTool {
     }
 
     func execute(argumentsJSON: String) async throws -> String {
-        let args = try AgentFolderToolHelpers.parseArguments(argumentsJSON)
+        let args = try WorkFolderToolHelpers.parseArguments(argumentsJSON)
 
         guard let relativePath = args["path"] as? String else {
-            throw AgentFolderToolError.invalidArguments("Missing required parameter: path")
+            throw WorkFolderToolError.invalidArguments("Missing required parameter: path")
         }
 
-        let fileURL = try AgentFolderToolHelpers.resolvePath(relativePath, rootPath: rootPath)
+        let fileURL = try WorkFolderToolHelpers.resolvePath(relativePath, rootPath: rootPath)
 
         guard FileManager.default.fileExists(atPath: fileURL.path) else {
-            throw AgentFolderToolError.fileNotFound(relativePath)
+            throw WorkFolderToolError.fileNotFound(relativePath)
         }
 
         let attributes = try FileManager.default.attributesOfItem(atPath: fileURL.path)
@@ -745,7 +745,7 @@ struct AgentFileMetadataTool: OsaurusTool {
 
 // MARK: File Edit Tool
 
-struct AgentFileEditTool: OsaurusTool, PermissionedTool {
+struct WorkFileEditTool: OsaurusTool, PermissionedTool {
     let name = "file_edit"
     let description =
         "Edit a file by replacing specific text. old_string must uniquely match exactly one location in the file — include surrounding context lines if needed to ensure uniqueness. The tool will fail if old_string is not found or matches multiple locations."
@@ -780,29 +780,29 @@ struct AgentFileEditTool: OsaurusTool, PermissionedTool {
     }
 
     func execute(argumentsJSON: String) async throws -> String {
-        let args = try AgentFolderToolHelpers.parseArguments(argumentsJSON)
+        let args = try WorkFolderToolHelpers.parseArguments(argumentsJSON)
 
         guard let relativePath = args["path"] as? String else {
-            throw AgentFolderToolError.invalidArguments("Missing required parameter: path")
+            throw WorkFolderToolError.invalidArguments("Missing required parameter: path")
         }
         guard let oldString = args["old_string"] as? String else {
-            throw AgentFolderToolError.invalidArguments("Missing required parameter: old_string")
+            throw WorkFolderToolError.invalidArguments("Missing required parameter: old_string")
         }
         guard let newString = args["new_string"] as? String else {
-            throw AgentFolderToolError.invalidArguments("Missing required parameter: new_string")
+            throw WorkFolderToolError.invalidArguments("Missing required parameter: new_string")
         }
 
-        let fileURL = try AgentFolderToolHelpers.resolvePath(relativePath, rootPath: rootPath)
+        let fileURL = try WorkFolderToolHelpers.resolvePath(relativePath, rootPath: rootPath)
 
         guard FileManager.default.fileExists(atPath: fileURL.path) else {
-            throw AgentFolderToolError.fileNotFound(relativePath)
+            throw WorkFolderToolError.fileNotFound(relativePath)
         }
 
         var content = try String(contentsOf: fileURL, encoding: .utf8)
 
         // Find the old string
         guard let range = content.range(of: oldString) else {
-            throw AgentFolderToolError.operationFailed(
+            throw WorkFolderToolError.operationFailed(
                 "Could not find the specified text in the file. Make sure old_string exactly matches the file content."
             )
         }
@@ -810,7 +810,7 @@ struct AgentFileEditTool: OsaurusTool, PermissionedTool {
         // Check for multiple matches
         let matches = content.ranges(of: oldString)
         if matches.count > 1 {
-            throw AgentFolderToolError.operationFailed(
+            throw WorkFolderToolError.operationFailed(
                 "Found \(matches.count) matches for old_string. Include more context to uniquely identify the location."
             )
         }
@@ -829,7 +829,7 @@ struct AgentFileEditTool: OsaurusTool, PermissionedTool {
 
 // MARK: File Search Tool
 
-struct AgentFileSearchTool: OsaurusTool {
+struct WorkFileSearchTool: OsaurusTool {
     let name = "file_search"
     let description =
         "Search for text in files using case-insensitive substring matching. Returns matching lines with file paths and line numbers."
@@ -865,17 +865,17 @@ struct AgentFileSearchTool: OsaurusTool {
     }
 
     func execute(argumentsJSON: String) async throws -> String {
-        let args = try AgentFolderToolHelpers.parseArguments(argumentsJSON)
+        let args = try WorkFolderToolHelpers.parseArguments(argumentsJSON)
 
         guard let pattern = args["pattern"] as? String else {
-            throw AgentFolderToolError.invalidArguments("Missing required parameter: pattern")
+            throw WorkFolderToolError.invalidArguments("Missing required parameter: pattern")
         }
 
         let searchPath = args["path"] as? String ?? "."
         let filePattern = args["file_pattern"] as? String
         let maxResults = args["max_results"] as? Int ?? 50
 
-        let searchURL = try AgentFolderToolHelpers.resolvePath(searchPath, rootPath: rootPath)
+        let searchURL = try WorkFolderToolHelpers.resolvePath(searchPath, rootPath: rootPath)
 
         var results: [String] = []
         var totalMatches = 0
@@ -884,7 +884,7 @@ struct AgentFileSearchTool: OsaurusTool {
         var isDirectory: ObjCBool = false
         guard FileManager.default.fileExists(atPath: searchURL.path, isDirectory: &isDirectory)
         else {
-            throw AgentFolderToolError.fileNotFound(searchPath)
+            throw WorkFolderToolError.fileNotFound(searchPath)
         }
 
         if isDirectory.boolValue {
@@ -969,7 +969,7 @@ struct AgentFileSearchTool: OsaurusTool {
 
 // MARK: Shell Run Tool
 
-struct AgentShellRunTool: OsaurusTool, PermissionedTool {
+struct WorkShellRunTool: OsaurusTool, PermissionedTool {
     let name = "shell_run"
     let description =
         "Run a shell command in the working directory. This action requires approval. Output is truncated to 10,000 characters. Use for builds, tests, or other commands."
@@ -998,10 +998,10 @@ struct AgentShellRunTool: OsaurusTool, PermissionedTool {
     }
 
     func execute(argumentsJSON: String) async throws -> String {
-        let args = try AgentFolderToolHelpers.parseArguments(argumentsJSON)
+        let args = try WorkFolderToolHelpers.parseArguments(argumentsJSON)
 
         guard let command = args["command"] as? String else {
-            throw AgentFolderToolError.invalidArguments("Missing required parameter: command")
+            throw WorkFolderToolError.invalidArguments("Missing required parameter: command")
         }
 
         let timeout = min(args["timeout"] as? Int ?? 30, 300)
@@ -1029,9 +1029,9 @@ struct AgentShellRunTool: OsaurusTool, PermissionedTool {
         }
 
         do {
-            try await AgentFolderToolHelpers.runProcessAsync(process)
+            try await WorkFolderToolHelpers.runProcessAsync(process)
         } catch {
-            throw AgentFolderToolError.operationFailed("Failed to execute command: \(error)")
+            throw WorkFolderToolError.operationFailed("Failed to execute command: \(error)")
         }
 
         let stdoutData = stdoutPipe.fileHandleForReading.readDataToEndOfFile()
@@ -1074,7 +1074,7 @@ struct AgentShellRunTool: OsaurusTool, PermissionedTool {
 
 // MARK: Git Status Tool
 
-struct AgentGitStatusTool: OsaurusTool {
+struct WorkGitStatusTool: OsaurusTool {
     let name = "git_status"
     let description = "Show the current git status including branch name and uncommitted changes."
     let parameters: JSONValue? = .object([
@@ -1090,13 +1090,13 @@ struct AgentGitStatusTool: OsaurusTool {
     }
 
     func execute(argumentsJSON: String) async throws -> String {
-        let (output, exitCode) = try await AgentFolderToolHelpers.runGitCommand(
+        let (output, exitCode) = try await WorkFolderToolHelpers.runGitCommand(
             arguments: ["status"],
             in: rootPath
         )
 
         if exitCode != 0 {
-            throw AgentFolderToolError.operationFailed("git status failed: \(output)")
+            throw WorkFolderToolError.operationFailed("git status failed: \(output)")
         }
 
         return output.isEmpty ? "No changes" : output
@@ -1105,7 +1105,7 @@ struct AgentGitStatusTool: OsaurusTool {
 
 // MARK: Git Diff Tool
 
-struct AgentGitDiffTool: OsaurusTool {
+struct WorkGitDiffTool: OsaurusTool {
     let name = "git_diff"
     let description =
         "Show git diff for files. Can show staged changes, unstaged changes, or diff between commits."
@@ -1135,7 +1135,7 @@ struct AgentGitDiffTool: OsaurusTool {
     }
 
     func execute(argumentsJSON: String) async throws -> String {
-        let args = try AgentFolderToolHelpers.parseArguments(argumentsJSON)
+        let args = try WorkFolderToolHelpers.parseArguments(argumentsJSON)
 
         let filePath = args["path"] as? String
         let staged = args["staged"] as? Bool ?? false
@@ -1146,13 +1146,13 @@ struct AgentGitDiffTool: OsaurusTool {
         if let commit = commit { arguments.append(commit) }
         if let filePath = filePath { arguments.append(contentsOf: ["--", filePath]) }
 
-        let (output, exitCode) = try await AgentFolderToolHelpers.runGitCommand(
+        let (output, exitCode) = try await WorkFolderToolHelpers.runGitCommand(
             arguments: arguments,
             in: rootPath
         )
 
         if exitCode != 0 {
-            throw AgentFolderToolError.operationFailed("git diff failed: \(output)")
+            throw WorkFolderToolError.operationFailed("git diff failed: \(output)")
         }
 
         // Truncate if too long
@@ -1166,7 +1166,7 @@ struct AgentGitDiffTool: OsaurusTool {
 
 // MARK: Git Commit Tool
 
-struct AgentGitCommitTool: OsaurusTool, PermissionedTool {
+struct WorkGitCommitTool: OsaurusTool, PermissionedTool {
     let name = "git_commit"
     let description =
         "Stage and commit changes to git. This action requires approval. Optionally specify files to stage, otherwise runs `git add -A` to stage all tracked and untracked changes."
@@ -1200,27 +1200,27 @@ struct AgentGitCommitTool: OsaurusTool, PermissionedTool {
     }
 
     func execute(argumentsJSON: String) async throws -> String {
-        let args = try AgentFolderToolHelpers.parseArguments(argumentsJSON)
+        let args = try WorkFolderToolHelpers.parseArguments(argumentsJSON)
 
         guard let message = args["message"] as? String else {
-            throw AgentFolderToolError.invalidArguments("Missing required parameter: message")
+            throw WorkFolderToolError.invalidArguments("Missing required parameter: message")
         }
 
         let files = args["files"] as? [String]
 
         // Stage files
         let stageArgs = (files != nil && !files!.isEmpty) ? ["add"] + files! : ["add", "-A"]
-        let (stageOutput, stageExitCode) = try await AgentFolderToolHelpers.runGitCommand(
+        let (stageOutput, stageExitCode) = try await WorkFolderToolHelpers.runGitCommand(
             arguments: stageArgs,
             in: rootPath
         )
 
         if stageExitCode != 0 {
-            throw AgentFolderToolError.operationFailed("git add failed: \(stageOutput)")
+            throw WorkFolderToolError.operationFailed("git add failed: \(stageOutput)")
         }
 
         // Commit
-        let (commitOutput, commitExitCode) = try await AgentFolderToolHelpers.runGitCommand(
+        let (commitOutput, commitExitCode) = try await WorkFolderToolHelpers.runGitCommand(
             arguments: ["commit", "-m", message],
             in: rootPath
         )
@@ -1229,7 +1229,7 @@ struct AgentGitCommitTool: OsaurusTool, PermissionedTool {
             if commitOutput.contains("nothing to commit") {
                 return "Nothing to commit"
             }
-            throw AgentFolderToolError.operationFailed("git commit failed: \(commitOutput)")
+            throw WorkFolderToolError.operationFailed("git commit failed: \(commitOutput)")
         }
 
         return "Committed successfully:\n\(commitOutput)"
@@ -1239,37 +1239,37 @@ struct AgentGitCommitTool: OsaurusTool, PermissionedTool {
 // MARK: - Tool Factory
 
 /// Factory for creating folder tool instances
-enum AgentFolderToolFactory {
+enum WorkFolderToolFactory {
     /// Build all core file tools
     static func buildCoreTools(rootPath: URL) -> [OsaurusTool] {
         return [
-            AgentFileTreeTool(rootPath: rootPath),
-            AgentFileReadTool(rootPath: rootPath),
-            AgentFileWriteTool(rootPath: rootPath),
-            AgentFileEditTool(rootPath: rootPath),
-            AgentFileSearchTool(rootPath: rootPath),
-            AgentFileMoveTool(rootPath: rootPath),
-            AgentFileCopyTool(rootPath: rootPath),
-            AgentFileDeleteTool(rootPath: rootPath),
-            AgentDirCreateTool(rootPath: rootPath),
-            AgentFileMetadataTool(rootPath: rootPath),
-            AgentBatchTool(rootPath: rootPath),
+            WorkFileTreeTool(rootPath: rootPath),
+            WorkFileReadTool(rootPath: rootPath),
+            WorkFileWriteTool(rootPath: rootPath),
+            WorkFileEditTool(rootPath: rootPath),
+            WorkFileSearchTool(rootPath: rootPath),
+            WorkFileMoveTool(rootPath: rootPath),
+            WorkFileCopyTool(rootPath: rootPath),
+            WorkFileDeleteTool(rootPath: rootPath),
+            WorkDirCreateTool(rootPath: rootPath),
+            WorkFileMetadataTool(rootPath: rootPath),
+            WorkBatchTool(rootPath: rootPath),
         ]
     }
 
     /// Build coding tools
     static func buildCodingTools(rootPath: URL) -> [OsaurusTool] {
         return [
-            AgentShellRunTool(rootPath: rootPath)
+            WorkShellRunTool(rootPath: rootPath)
         ]
     }
 
     /// Build git tools
     static func buildGitTools(rootPath: URL) -> [OsaurusTool] {
         return [
-            AgentGitStatusTool(rootPath: rootPath),
-            AgentGitDiffTool(rootPath: rootPath),
-            AgentGitCommitTool(rootPath: rootPath),
+            WorkGitStatusTool(rootPath: rootPath),
+            WorkGitDiffTool(rootPath: rootPath),
+            WorkGitCommitTool(rootPath: rootPath),
         ]
     }
 

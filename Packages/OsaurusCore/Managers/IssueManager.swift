@@ -18,10 +18,10 @@ public final class IssueManager: ObservableObject {
     @Published public private(set) var issues: [Issue] = []
 
     /// Published list of all tasks (for UI binding)
-    @Published public private(set) var tasks: [AgentTask] = []
+    @Published public private(set) var tasks: [WorkTask] = []
 
     /// Currently active task
-    @Published public private(set) var activeTask: AgentTask?
+    @Published public private(set) var activeTask: WorkTask?
 
     /// Whether the database is initialized
     @Published public private(set) var isInitialized = false
@@ -34,7 +34,7 @@ public final class IssueManager: ObservableObject {
     public func initialize() async throws {
         guard !isInitialized else { return }
 
-        try AgentDatabase.shared.open()
+        try WorkDatabase.shared.open()
         isInitialized = true
 
         // Load initial data
@@ -43,7 +43,7 @@ public final class IssueManager: ObservableObject {
 
     /// Shutdown the manager
     public func shutdown() {
-        AgentDatabase.shared.close()
+        WorkDatabase.shared.close()
         isInitialized = false
         issues = []
         tasks = []
@@ -53,11 +53,11 @@ public final class IssueManager: ObservableObject {
     // MARK: - Task Operations
 
     /// Creates a new task from a user query
-    public func createTask(query: String, personaId: UUID? = nil) async throws -> AgentTask {
-        let task = AgentTask(
-            title: AgentTask.generateTitle(from: query),
+    public func createTask(query: String, agentId: UUID? = nil) async throws -> WorkTask {
+        let task = WorkTask(
+            title: WorkTask.generateTitle(from: query),
             query: query,
-            personaId: personaId
+            agentId: agentId
         )
 
         try IssueStore.createTask(task)
@@ -86,7 +86,7 @@ public final class IssueManager: ObservableObject {
     }
 
     /// Sets the active task
-    public func setActiveTask(_ task: AgentTask?) async {
+    public func setActiveTask(_ task: WorkTask?) async {
         activeTask = task
         if let task = task {
             await loadIssues(forTask: task.id)
@@ -96,7 +96,7 @@ public final class IssueManager: ObservableObject {
     }
 
     /// Updates a task's status
-    public func updateTaskStatus(_ taskId: String, status: AgentTaskStatus) async throws {
+    public func updateTaskStatus(_ taskId: String, status: WorkTaskStatus) async throws {
         guard var task = try IssueStore.getTask(id: taskId) else {
             throw IssueManagerError.taskNotFound(taskId)
         }
@@ -124,9 +124,9 @@ public final class IssueManager: ObservableObject {
     }
 
     /// Refreshes the task list from the database
-    public func refreshTasks(personaId: UUID? = nil) async {
+    public func refreshTasks(agentId: UUID? = nil) async {
         do {
-            tasks = try IssueStore.listTasks(personaId: personaId)
+            tasks = try IssueStore.listTasks(agentId: agentId)
         } catch {
             print("[IssueManager] Failed to refresh tasks: \(error)")
             tasks = []
@@ -523,9 +523,9 @@ public final class IssueManager: ObservableObject {
     }
 
     /// Creates a task without throwing (returns nil on failure)
-    public func createTaskSafe(query: String, personaId: UUID? = nil) async -> AgentTask? {
+    public func createTaskSafe(query: String, agentId: UUID? = nil) async -> WorkTask? {
         await safe("createTask") {
-            try await createTask(query: query, personaId: personaId)
+            try await createTask(query: query, agentId: agentId)
         }
     }
 

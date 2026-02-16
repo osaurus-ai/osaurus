@@ -1,40 +1,40 @@
 //
-//  Persona.swift
+//  Agent.swift
 //  osaurus
 //
-//  Defines a Persona - a customizable assistant configuration with its own
+//  Defines an Agent - a customizable assistant configuration with its own
 //  system prompt, tools, theme, and generation settings.
 //
 
 import Foundation
 
-/// A customizable assistant persona for ChatView
-public struct Persona: Codable, Identifiable, Sendable, Equatable {
-    /// Unique identifier for the persona
+/// A customizable assistant agent for ChatView
+public struct Agent: Codable, Identifiable, Sendable, Equatable {
+    /// Unique identifier for the agent
     public let id: UUID
-    /// Display name of the persona
+    /// Display name of the agent
     public var name: String
-    /// Brief description of what this persona does
+    /// Brief description of what this agent does
     public var description: String
-    /// System prompt prepended to all chat sessions with this persona
+    /// System prompt prepended to all chat sessions with this agent
     public var systemPrompt: String
-    /// Per-persona tool overrides. nil = use global config, otherwise map of tool name -> enabled
+    /// Per-agent tool overrides. nil = use global config, otherwise map of tool name -> enabled
     public var enabledTools: [String: Bool]?
-    /// Per-persona skill overrides. nil = use global config, otherwise map of skill name -> enabled
+    /// Per-agent skill overrides. nil = use global config, otherwise map of skill name -> enabled
     public var enabledSkills: [String: Bool]?
-    /// Optional custom theme ID to apply when this persona is active
+    /// Optional custom theme ID to apply when this agent is active
     public var themeId: UUID?
-    /// Optional default model for this persona
+    /// Optional default model for this agent
     public var defaultModel: String?
     /// Optional temperature override
     public var temperature: Float?
     /// Optional max tokens override
     public var maxTokens: Int?
-    /// Whether this is a built-in persona (cannot be deleted)
+    /// Whether this is a built-in agent (cannot be deleted)
     public let isBuiltIn: Bool
-    /// When the persona was created
+    /// When the agent was created
     public let createdAt: Date
-    /// When the persona was last modified
+    /// When the agent was last modified
     public var updatedAt: Date
 
     public init(
@@ -67,14 +67,14 @@ public struct Persona: Codable, Identifiable, Sendable, Equatable {
         self.updatedAt = updatedAt
     }
 
-    // MARK: - Built-in Personas
+    // MARK: - Built-in Agents
 
-    /// Well-known UUID for the default Osaurus persona
+    /// Well-known UUID for the default Osaurus agent
     public static let defaultId = UUID(uuidString: "00000000-0000-0000-0000-000000000001")!
 
-    /// The default persona - uses global settings
-    public static var `default`: Persona {
-        Persona(
+    /// The default agent - uses global settings
+    public static var `default`: Agent {
+        Agent(
             id: defaultId,
             name: "Default",
             description: "Uses your global chat settings",
@@ -91,36 +91,41 @@ public struct Persona: Codable, Identifiable, Sendable, Equatable {
         )
     }
 
-    /// All built-in personas
-    public static var builtInPersonas: [Persona] {
+    /// All built-in agents
+    public static var builtInAgents: [Agent] {
         [.default]
     }
 }
 
 // MARK: - Export/Import Support
 
-extension Persona {
-    /// Export format for sharing personas
+extension Agent {
+    /// Export format for sharing agents
     public struct ExportData: Codable {
         public let version: Int
-        public let persona: Persona
+        public let agent: Agent
 
-        public init(persona: Persona) {
+        enum CodingKeys: String, CodingKey {
+            case version
+            case agent = "persona"
+        }
+
+        public init(agent: Agent) {
             self.version = 1
             // Create a copy without built-in flag for export
-            let exportedPersona = persona
+            let exportedAgent = agent
             // When exporting, we create a new instance that's not built-in
-            self.persona = Persona(
+            self.agent = Agent(
                 id: UUID(),  // Generate new ID on export
-                name: exportedPersona.name,
-                description: exportedPersona.description,
-                systemPrompt: exportedPersona.systemPrompt,
-                enabledTools: exportedPersona.enabledTools,
-                enabledSkills: exportedPersona.enabledSkills,
+                name: exportedAgent.name,
+                description: exportedAgent.description,
+                systemPrompt: exportedAgent.systemPrompt,
+                enabledTools: exportedAgent.enabledTools,
+                enabledSkills: exportedAgent.enabledSkills,
                 themeId: nil,  // Don't export theme (may not exist on target system)
-                defaultModel: exportedPersona.defaultModel,
-                temperature: exportedPersona.temperature,
-                maxTokens: exportedPersona.maxTokens,
+                defaultModel: exportedAgent.defaultModel,
+                temperature: exportedAgent.temperature,
+                maxTokens: exportedAgent.maxTokens,
                 isBuiltIn: false,
                 createdAt: Date(),
                 updatedAt: Date()
@@ -128,23 +133,23 @@ extension Persona {
         }
     }
 
-    /// Export this persona to JSON data
+    /// Export this agent to JSON data
     public func exportToJSON() throws -> Data {
-        let exportData = ExportData(persona: self)
+        let exportData = ExportData(agent: self)
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         encoder.dateEncodingStrategy = .iso8601
         return try encoder.encode(exportData)
     }
 
-    /// Import a persona from JSON data
+    /// Import an agent from JSON data
     /// Tools and skills that don't exist in the current system will be filtered out
     @MainActor
-    public static func importFromJSON(_ data: Data) throws -> Persona {
+    public static func importFromJSON(_ data: Data) throws -> Agent {
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
         let exportData = try decoder.decode(ExportData.self, from: data)
-        var imported = exportData.persona
+        var imported = exportData.agent
 
         // Filter out tools that don't exist in the current registry
         if let tools = imported.enabledTools {
