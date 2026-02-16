@@ -163,6 +163,8 @@ public actor WorkExecutionEngine {
     ///   - model: Model to use
     ///   - tools: All available tools (model picks which to use)
     ///   - toolOverrides: Tool permission overrides
+    ///   - contextLength: Model context window size in tokens (used for budget management)
+    ///   - toolTokenEstimate: Estimated tokens consumed by tool definitions
     ///   - maxIterations: Maximum loop iterations (not tool calls - iterations)
     ///   - onIterationStart: Callback at the start of each iteration
     ///   - onDelta: Callback for streaming text deltas
@@ -181,6 +183,8 @@ public actor WorkExecutionEngine {
         temperature: Float? = nil,
         maxTokens: Int? = nil,
         topPOverride: Float? = nil,
+        contextLength: Int? = nil,
+        toolTokenEstimate: Int = 0,
         maxIterations: Int = defaultMaxIterations,
         onIterationStart: @escaping IterationStartCallback,
         onDelta: @escaping IterationStreamingCallback,
@@ -195,6 +199,17 @@ public actor WorkExecutionEngine {
         var consecutiveTextOnly = 0
         var lastResponseContent = ""
 
+        // Set up context budget manager if context length is known
+        var budgetManager: ContextBudgetManager? = nil
+        if let ctxLen = contextLength {
+            var manager = ContextBudgetManager(contextLength: ctxLen)
+            manager.reserveByCharCount(.systemPrompt, characters: systemPrompt.count)
+            manager.reserve(.tools, tokens: toolTokenEstimate)
+            manager.reserve(.memory, tokens: 0)
+            manager.reserve(.response, tokens: maxTokens ?? 4096)
+            budgetManager = manager
+        }
+
         while iteration < maxIterations {
             iteration += 1
             try Task.checkCancellation()
@@ -203,8 +218,16 @@ public actor WorkExecutionEngine {
 
             await onStatusUpdate("Iteration \(iteration)")
 
+            // Trim messages to fit context budget (no-op if within budget or no limit known)
+            let effectiveMessages: [ChatMessage]
+            if let manager = budgetManager {
+                effectiveMessages = manager.trimMessages(messages)
+            } else {
+                effectiveMessages = messages
+            }
+
             // Build full messages with system prompt
-            let fullMessages = [ChatMessage(role: "system", content: systemPrompt)] + messages
+            let fullMessages = [ChatMessage(role: "system", content: systemPrompt)] + effectiveMessages
 
             // Create request with all available tools - model picks which to use
             let request = ChatCompletionRequest(

@@ -269,6 +269,10 @@ struct WorkFileReadTool: OsaurusTool {
         self.rootPath = rootPath
     }
 
+    /// Maximum characters for file_read output to prevent context window exhaustion.
+    /// Consistent with truncation limits on shell_run (10k) and git_diff (20k).
+    private static let maxOutputChars = 15_000
+
     func execute(argumentsJSON: String) async throws -> String {
         let args = try WorkFolderToolHelpers.parseArguments(argumentsJSON)
 
@@ -291,11 +295,23 @@ struct WorkFileReadTool: OsaurusTool {
         let validEnd = max(validStart, min(endLine, lines.count))
 
         var output = ""
+        var lastLineIncluded = validStart - 1
         for i in (validStart - 1) ..< validEnd {
-            output += String(format: "%6d| %@\n", i + 1, lines[i])
+            let line = String(format: "%6d| %@\n", i + 1, lines[i])
+            if output.count + line.count > Self.maxOutputChars {
+                break
+            }
+            output += line
+            lastLineIncluded = i + 1
         }
 
         if output.isEmpty { return "(empty file)" }
+
+        // If truncated, inform the model and suggest using line ranges
+        if lastLineIncluded < validEnd {
+            output +=
+                "\n... (truncated at \(lastLineIncluded) of \(lines.count) lines — use start_line/end_line for specific ranges)"
+        }
 
         if validStart > 1 || validEnd < lines.count {
             return "Lines \(validStart)-\(validEnd) of \(lines.count):\n" + output

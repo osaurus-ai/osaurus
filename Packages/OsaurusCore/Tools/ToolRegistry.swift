@@ -302,6 +302,14 @@ final class ToolRegistry: ObservableObject {
         return listTools().first(where: { $0.name == name })?.estimatedTokens ?? 0
     }
 
+    /// Total estimated tokens for all currently enabled tools (with optional overrides).
+    /// Use this to reserve context budget for tool definitions.
+    func totalEstimatedTokens(withOverrides overrides: [String: Bool]? = nil) -> Int {
+        return listTools(withOverrides: overrides)
+            .filter { $0.enabled }
+            .reduce(0) { $0 + $1.estimatedTokens }
+    }
+
     // MARK: - Policy / Grants
     func setPolicy(_ policy: ToolPermissionPolicy, for name: String) {
         configuration.setPolicy(policy, for: name)
