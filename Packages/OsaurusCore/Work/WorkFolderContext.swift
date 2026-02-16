@@ -1,8 +1,8 @@
 //
-//  AgentFolderContext.swift
+//  WorkFolderContext.swift
 //  osaurus
 //
-//  Models for agent folder context integration.
+//  Models for work folder context integration.
 //  Provides project detection, file tree options, and folder context data.
 //
 
@@ -10,13 +10,13 @@ import Foundation
 
 // MARK: - Folder Context
 
-/// Context information about a selected working folder for agent operations
-public struct AgentFolderContext: Sendable {
+/// Context information about a selected working folder for work operations
+public struct WorkFolderContext: Sendable {
     /// The root path of the selected folder
     public let rootPath: URL
 
     /// Detected project type based on manifest files
-    public let projectType: AgentProjectType
+    public let projectType: WorkProjectType
 
     /// File tree representation (may be summarized for large directories)
     public let tree: String
@@ -32,7 +32,7 @@ public struct AgentFolderContext: Sendable {
 
     public init(
         rootPath: URL,
-        projectType: AgentProjectType,
+        projectType: WorkProjectType,
         tree: String,
         manifest: String?,
         gitStatus: String?,
@@ -50,7 +50,7 @@ public struct AgentFolderContext: Sendable {
 // MARK: - Project Type
 
 /// Detected project type for a folder
-public enum AgentProjectType: String, Sendable, CaseIterable {
+public enum WorkProjectType: String, Sendable, CaseIterable {
     case swift
     case node
     case python
@@ -128,7 +128,7 @@ public enum AgentProjectType: String, Sendable, CaseIterable {
 // MARK: - File Tree Options
 
 /// Options for building file tree representation
-public struct AgentFileTreeOptions {
+public struct WorkFileTreeOptions {
     /// Maximum depth to traverse (default: 3)
     public var maxDepth: Int
 
@@ -154,7 +154,7 @@ public struct AgentFileTreeOptions {
     }
 
     /// Default options for building file tree
-    public static var `default`: AgentFileTreeOptions {
-        AgentFileTreeOptions()
+    public static var `default`: WorkFileTreeOptions {
+        WorkFileTreeOptions()
     }
 }

@@ -1,24 +1,24 @@
 //
-//  PersonaNameDetector.swift
+//  AgentNameDetector.swift
 //  osaurus
 //
-//  Detects persona names in transcribed text for VAD activation.
+//  Detects agent names in transcribed text for VAD activation.
 //  Supports fuzzy matching and custom wake phrases.
 //
 
 import Foundation
 
-/// Detects persona names in transcribed speech
+/// Detects agent names in transcribed speech
 @MainActor
-public final class PersonaNameDetector {
-    /// IDs of personas enabled for VAD detection
-    private let enabledPersonaIds: [UUID]
+public final class AgentNameDetector {
+    /// IDs of agents enabled for VAD detection
+    private let enabledAgentIds: [UUID]
 
     /// Custom wake phrase (e.g., "Hey Osaurus")
     private let customWakePhrase: String
 
-    /// Cached persona names for matching
-    private let personaNames: [(id: UUID, name: String, normalizedName: String)]
+    /// Cached agent names for matching
+    private let agentNames: [(id: UUID, name: String, normalizedName: String)]
 
     /// Common wake phrase variations
     private static let wakeVariations = [
@@ -30,15 +30,15 @@ public final class PersonaNameDetector {
         "yo",
     ]
 
-    public init(enabledPersonaIds: [UUID], customWakePhrase: String = "") {
-        self.enabledPersonaIds = enabledPersonaIds
+    public init(enabledAgentIds: [UUID], customWakePhrase: String = "") {
+        self.enabledAgentIds = enabledAgentIds
         self.customWakePhrase = customWakePhrase
 
-        // Load persona names synchronously from PersonaManager
-        let manager = PersonaManager.shared
-        self.personaNames = enabledPersonaIds.compactMap { id in
-            guard let persona = manager.persona(for: id) else { return nil }
-            return (id: id, name: persona.name, normalizedName: Self.normalizeText(persona.name))
+        // Load agent names synchronously from AgentManager
+        let manager = AgentManager.shared
+        self.agentNames = enabledAgentIds.compactMap { id in
+            guard let agent = manager.agent(for: id) else { return nil }
+            return (id: id, name: agent.name, normalizedName: Self.normalizeText(agent.name))
         }
     }
 
@@ -53,19 +53,19 @@ public final class PersonaNameDetector {
             .joined(separator: " ")
     }
 
-    /// Detect a persona name in the given transcription
+    /// Detect an agent name in the given transcription
     public func detect(in transcription: String) -> VADDetectionResult? {
         let normalized = Self.normalizeText(transcription)
 
         // First check custom wake phrase
         if !customWakePhrase.isEmpty {
             if checkWakePhrase(in: normalized) {
-                // Custom wake phrase detected, but no specific persona
-                // Return the first enabled persona or a default
-                if let first = personaNames.first {
+                // Custom wake phrase detected, but no specific agent
+                // Return the first enabled agent or a default
+                if let first = agentNames.first {
                     return VADDetectionResult(
-                        personaId: first.id,
-                        personaName: first.name,
+                        agentId: first.id,
+                        agentName: first.name,
                         confidence: 0.9,
                         transcription: transcription
                     )
@@ -73,26 +73,26 @@ public final class PersonaNameDetector {
             }
         }
 
-        // Check for persona names
-        for persona in personaNames {
-            if let match = findMatch(for: persona.normalizedName, in: normalized) {
+        // Check for agent names
+        for agent in agentNames {
+            if let match = findMatch(for: agent.normalizedName, in: normalized) {
                 return VADDetectionResult(
-                    personaId: persona.id,
-                    personaName: persona.name,
+                    agentId: agent.id,
+                    agentName: agent.name,
                     confidence: match.confidence,
                     transcription: transcription
                 )
             }
         }
 
-        // Check for variations like "Hey [Persona]"
-        for persona in personaNames {
+        // Check for variations like "Hey [Agent]"
+        for agent in agentNames {
             for wake in Self.wakeVariations {
-                let pattern = "\(wake) \(persona.normalizedName)"
+                let pattern = "\(wake) \(agent.normalizedName)"
                 if let match = findMatch(for: pattern, in: normalized) {
                     return VADDetectionResult(
-                        personaId: persona.id,
-                        personaName: persona.name,
+                        agentId: agent.id,
+                        agentName: agent.name,
                         confidence: match.confidence * 1.1,  // Boost for explicit wake word
                         transcription: transcription
                     )

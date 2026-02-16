@@ -1787,7 +1787,7 @@ public protocol VADDelegate: AnyObject {
 }
 
 /// Audio-level VAD settings for speech detection during transcription
-/// (Separate from VADConfiguration which handles persona wake-word activation)
+/// (Separate from VADConfiguration which handles agent wake-word activation)
 public struct VADAudioSettings {
     /// Minimum duration of silence to consider speech ended (seconds)
     public var silenceThreshold: Double = 0.5

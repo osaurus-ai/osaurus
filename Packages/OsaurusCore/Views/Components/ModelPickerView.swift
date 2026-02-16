@@ -10,7 +10,7 @@ import SwiftUI
 struct ModelPickerView: View {
     let options: [ModelOption]
     @Binding var selectedModel: String?
-    let personaId: UUID?
+    let agentId: UUID?
     let onDismiss: () -> Void
 
     @State private var searchText = ""
@@ -236,25 +236,29 @@ struct ModelPickerView: View {
         var rows: [ModelPickerRow] = []
         for group in filteredGroups {
             let expanded = isGroupExpanded(group.source)
-            rows.append(.groupHeader(
-                sourceKey: group.source.displayName,
-                displayName: group.source.displayName,
-                sourceType: group.source,
-                count: group.models.count,
-                isExpanded: expanded
-            ))
+            rows.append(
+                .groupHeader(
+                    sourceKey: group.source.displayName,
+                    displayName: group.source.displayName,
+                    sourceType: group.source,
+                    count: group.models.count,
+                    isExpanded: expanded
+                )
+            )
             if expanded {
                 for model in group.models {
-                    rows.append(.model(
-                        id: model.id,
-                        displayName: model.displayName,
-                        description: model.description,
-                        parameterCount: model.parameterCount,
-                        quantization: model.quantization,
-                        isVLM: model.isVLM,
-                        isSelected: selectedModel == model.id,
-                        isHighlighted: model.id == highlightedModelId
-                    ))
+                    rows.append(
+                        .model(
+                            id: model.id,
+                            displayName: model.displayName,
+                            description: model.description,
+                            parameterCount: model.parameterCount,
+                            quantization: model.quantization,
+                            isVLM: model.isVLM,
+                            isSelected: selectedModel == model.id,
+                            isHighlighted: model.id == highlightedModelId
+                        )
+                    )
                 }
             }
         }
@@ -320,7 +324,7 @@ struct ModelPickerView: View {
                         ),
                     ],
                     selectedModel: $selected,
-                    personaId: nil,
+                    agentId: nil,
                     onDismiss: {}
                 )
                 .padding()

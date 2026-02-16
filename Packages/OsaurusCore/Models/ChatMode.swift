@@ -11,20 +11,20 @@ import Foundation
 public enum ChatMode: String, Codable, Sendable {
     /// Standard chat mode - conversational interaction
     case chat
-    /// Agent mode - task execution with issue tracking
-    case agent
+    /// Work mode - task execution with issue tracking
+    case work = "agent"
 
     public var displayName: String {
         switch self {
         case .chat: return "Chat"
-        case .agent: return "Agent"
+        case .work: return "Work"
         }
     }
 
     public var icon: String {
         switch self {
         case .chat: return "bubble.left.and.bubble.right"
-        case .agent: return "bolt.circle"
+        case .work: return "bolt.circle"
         }
     }
 }

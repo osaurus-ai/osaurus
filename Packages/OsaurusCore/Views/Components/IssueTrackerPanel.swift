@@ -2,7 +2,7 @@
 //  IssueTrackerPanel.swift
 //  osaurus
 //
-//  Sidebar panel displaying issues for the current agent task with status indicators.
+//  Sidebar panel displaying issues for the current work task with status indicators.
 //
 
 import AppKit
@@ -19,7 +19,7 @@ struct IssueTrackerPanel: View {
     /// All generated artifacts
     let artifacts: [Artifact]
     /// File operations for undo tracking
-    let fileOperations: [AgentFileOperation]
+    let fileOperations: [WorkFileOperation]
     /// Binding to control collapse state
     @Binding var isCollapsed: Bool
     /// Called when user clicks to view an issue's details
@@ -278,7 +278,7 @@ struct IssueTrackerPanel: View {
 
     /// Group operations by path, showing the latest operation for each file
     private var groupedOperations: [FileOperationGroup] {
-        var groups: [String: [AgentFileOperation]] = [:]
+        var groups: [String: [WorkFileOperation]] = [:]
         for op in fileOperations {
             groups[op.path, default: []].append(op)
         }
@@ -717,9 +717,9 @@ private struct ArtifactRow: View {
 
 private struct FileOperationGroup {
     let path: String
-    let operations: [AgentFileOperation]
+    let operations: [WorkFileOperation]
 
-    var latestOperation: AgentFileOperation {
+    var latestOperation: WorkFileOperation {
         operations.last!
     }
 }
@@ -727,7 +727,7 @@ private struct FileOperationGroup {
 // MARK: - File Operation Row
 
 private struct FileOperationRow: View {
-    let operation: AgentFileOperation
+    let operation: WorkFileOperation
     let operationCount: Int
     let onUndo: () -> Void
 
@@ -740,7 +740,7 @@ private struct FileOperationRow: View {
     }
 
     private var fullURL: URL? {
-        AgentFolderContextService.shared.currentContext?.rootPath.appendingPathComponent(operation.path)
+        WorkFolderContextService.shared.currentContext?.rootPath.appendingPathComponent(operation.path)
     }
 
     private var fileExists: Bool {
@@ -916,7 +916,7 @@ private struct FileOperationRow: View {
 
     private func revealInFinder() {
         guard let url = fullURL,
-            let rootPath = AgentFolderContextService.shared.currentContext?.rootPath
+            let rootPath = WorkFolderContextService.shared.currentContext?.rootPath
         else { return }
         NSWorkspace.shared.selectFile(url.path, inFileViewerRootedAtPath: rootPath.path)
     }

@@ -197,7 +197,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
     private func initializeVADService() {
         // Auto-start VAD if enabled (with delay to wait for model loading)
         let vadConfig = VADConfigurationStore.load()
-        if vadConfig.vadModeEnabled && !vadConfig.enabledPersonaIds.isEmpty {
+        if vadConfig.vadModeEnabled && !vadConfig.enabledAgentIds.isEmpty {
             Task { @MainActor in
                 // Wait for WhisperKit model to be loaded (up to 30 seconds)
                 let whisperService = WhisperKitService.shared
@@ -230,11 +230,11 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
     }
 
     private func setupVADNotifications() {
-        // Listen for persona detection from VAD service
+        // Listen for agent detection from VAD service
         NotificationCenter.default.addObserver(
             self,
-            selector: #selector(handleVADPersonaDetected(_:)),
-            name: .vadPersonaDetected,
+            selector: #selector(handleVADAgentDetected(_:)),
+            name: .vadAgentDetected,
             object: nil
         )
 
@@ -294,25 +294,25 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
         }
     }
 
-    @objc private func handleVADPersonaDetected(_ notification: Notification) {
+    @objc private func handleVADAgentDetected(_ notification: Notification) {
         guard let detection = notification.object as? VADDetectionResult else { return }
 
         Task { @MainActor in
-            print("[AppDelegate] VAD detected persona: \(detection.personaName)")
+            print("[AppDelegate] VAD detected agent: \(detection.agentName)")
 
-            // Check if a window for this persona already exists
-            let existingWindows = ChatWindowManager.shared.findWindows(byPersonaId: detection.personaId)
+            // Check if a window for this agent already exists
+            let existingWindows = ChatWindowManager.shared.findWindows(byAgentId: detection.agentId)
 
             let targetWindowId: UUID
             if let existing = existingWindows.first {
-                // Focus existing window for this persona
-                print("[AppDelegate] Found existing window for persona, focusing...")
+                // Focus existing window for this agent
+                print("[AppDelegate] Found existing window for agent, focusing...")
                 ChatWindowManager.shared.showWindow(id: existing.id)
                 targetWindowId = existing.id
             } else {
-                // Create a new chat window for the detected persona
-                print("[AppDelegate] Creating new chat window for persona...")
-                targetWindowId = ChatWindowManager.shared.createWindow(personaId: detection.personaId)
+                // Create a new chat window for the detected agent
+                print("[AppDelegate] Creating new chat window for agent...")
+                targetWindowId = ChatWindowManager.shared.createWindow(agentId: detection.agentId)
             }
 
             print(
@@ -751,7 +751,7 @@ extension AppDelegate {
         ChatWindowManager.shared.toggleLastFocused()
 
         if ChatWindowManager.shared.hasVisibleWindows {
-            // Pause VAD when chat window is shown (like when VAD detects a persona)
+            // Pause VAD when chat window is shown (like when VAD detects a agent)
             // This allows voice input to work without competing for the microphone
             Task {
                 await VADService.shared.pause()
@@ -765,7 +765,7 @@ extension AppDelegate {
         print("[AppDelegate] Creating new chat window via ChatWindowManager...")
         ChatWindowManager.shared.createWindow()
 
-        // Pause VAD when chat window is shown (like when VAD detects a persona)
+        // Pause VAD when chat window is shown (like when VAD detects a agent)
         // This allows voice input to work without competing for the microphone
         Task {
             await VADService.shared.pause()
@@ -775,12 +775,12 @@ extension AppDelegate {
         NotificationCenter.default.post(name: .chatOverlayActivated, object: nil)
     }
 
-    /// Show a new chat window for a specific persona (used by VAD)
-    @MainActor func showChatOverlay(forPersonaId personaId: UUID) {
-        print("[AppDelegate] Creating new chat window for persona \(personaId) via ChatWindowManager...")
-        ChatWindowManager.shared.createWindow(personaId: personaId)
+    /// Show a new chat window for a specific agent (used by VAD)
+    @MainActor func showChatOverlay(forAgentId agentId: UUID) {
+        print("[AppDelegate] Creating new chat window for agent \(agentId) via ChatWindowManager...")
+        ChatWindowManager.shared.createWindow(agentId: agentId)
 
-        print("[AppDelegate] Chat window shown for persona, count: \(ChatWindowManager.shared.windowCount)")
+        print("[AppDelegate] Chat window shown for agent, count: \(ChatWindowManager.shared.windowCount)")
         NotificationCenter.default.post(name: .chatOverlayActivated, object: nil)
     }
 

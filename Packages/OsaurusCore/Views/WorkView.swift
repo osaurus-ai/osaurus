@@ -1,17 +1,17 @@
 //
-//  AgentView.swift
+//  WorkView.swift
 //  osaurus
 //
-//  Main view for agent mode - displays task execution with issue tracking.
+//  Main view for work mode - displays task execution with issue tracking.
 //
 
 import CoreText
 import SwiftUI
 import UniformTypeIdentifiers
 
-struct AgentView: View {
+struct WorkView: View {
     @ObservedObject var windowState: ChatWindowState
-    @ObservedObject var session: AgentSession
+    @ObservedObject var session: WorkSession
 
     @State private var isPinnedToBottom: Bool = true
     @State private var scrollToBottomTrigger: Int = 0
@@ -19,7 +19,7 @@ struct AgentView: View {
     @State private var progressSidebarWidth: CGFloat = 280
     @State private var isProgressSidebarCollapsed: Bool = false
     @State private var selectedArtifact: Artifact?
-    @State private var fileOperations: [AgentFileOperation] = []
+    @State private var fileOperations: [WorkFileOperation] = []
 
     private let minProgressSidebarWidth: CGFloat = 200
     private let maxProgressSidebarWidth: CGFloat = 400
@@ -33,14 +33,14 @@ struct AgentView: View {
 
             HStack(alignment: .top, spacing: 0) {
                 if windowState.showSidebar {
-                    AgentTaskSidebar(
-                        tasks: windowState.agentTasks,
+                    WorkTaskSidebar(
+                        tasks: windowState.workTasks,
                         currentTaskId: session.currentTask?.id,
                         onSelect: { task in Task { await session.loadTask(task) } },
                         onDelete: { taskId in
                             Task {
                                 try? await IssueManager.shared.deleteTask(taskId)
-                                windowState.refreshAgentTasks()
+                                windowState.refreshWorkTasks()
                                 if session.currentTask?.id == taskId {
                                     session.currentTask = nil
                                     session.issues = []
@@ -76,9 +76,9 @@ struct AgentView: View {
                             estimatedContextTokens: session.estimatedContextTokens,
                             onSend: { Task { await session.handleUserInput() } },
                             onStop: { session.stopExecution() },
-                            personaId: windowState.personaId,
+                            agentId: windowState.agentId,
                             windowId: windowState.windowId,
-                            agentInputState: session.inputState,
+                            workInputState: session.inputState,
                             pendingQueuedMessage: session.pendingQueuedMessage,
                             onClearQueued: { session.clearQueuedMessage() },
                             onEndTask: { session.endTask() },
@@ -112,7 +112,7 @@ struct AgentView: View {
         .onAppear {
             refreshFileOperations()
         }
-        .onReceive(NotificationCenter.default.publisher(for: .agentFileOperationsDidChange)) { _ in
+        .onReceive(NotificationCenter.default.publisher(for: .workFileOperationsDidChange)) { _ in
             refreshFileOperations()
         }
     }
@@ -135,7 +135,7 @@ struct AgentView: View {
             do {
                 try artifact.content.write(to: url, atomically: true, encoding: .utf8)
             } catch {
-                print("[AgentView] Failed to save artifact: \(error)")
+                print("[WorkView] Failed to save artifact: \(error)")
             }
         }
     }
@@ -150,9 +150,9 @@ struct AgentView: View {
 
         Task { @MainActor in
             // Collect operations from all issues in the current task
-            var allOperations: [AgentFileOperation] = []
+            var allOperations: [WorkFileOperation] = []
             for issue in session.issues {
-                let ops = await AgentFileOperationLog.shared.operations(for: issue.id)
+                let ops = await WorkFileOperationLog.shared.operations(for: issue.id)
                 allOperations.append(contentsOf: ops)
             }
             // Sort by timestamp (most recent first for display)
@@ -165,7 +165,7 @@ struct AgentView: View {
             // Find which issue this operation belongs to
             for issue in session.issues {
                 do {
-                    if let _ = try await AgentFileOperationLog.shared.undo(
+                    if let _ = try await WorkFileOperationLog.shared.undo(
                         issueId: issue.id,
                         operationId: operationId
                     ) {
@@ -182,7 +182,7 @@ struct AgentView: View {
     private func undoAllFileOperations() {
         Task {
             for issue in session.issues {
-                _ = try? await AgentFileOperationLog.shared.undoAll(issueId: issue.id)
+                _ = try? await WorkFileOperationLog.shared.undoAll(issueId: issue.id)
             }
         }
     }
@@ -287,11 +287,11 @@ struct AgentView: View {
     // MARK: - Empty State
 
     private var agentEmptyState: some View {
-        AgentEmptyState(
+        WorkEmptyState(
             hasModels: session.modelOptions.count > 0,
             selectedModel: session.selectedModel,
-            personas: windowState.personas,
-            activePersonaId: windowState.personaId,
+            agents: windowState.agents,
+            activeAgentId: windowState.agentId,
             onOpenModelManager: {
                 AppDelegate.shared?.showManagementWindow(initialTab: .models)
             },
@@ -302,8 +302,8 @@ struct AgentView: View {
             onQuickAction: { prompt in
                 session.input = prompt
             },
-            onSelectPersona: { newPersonaId in
-                windowState.switchPersona(to: newPersonaId)
+            onSelectAgent: { newAgentId in
+                windowState.switchAgent(to: newAgentId)
             }
         )
     }
@@ -474,9 +474,9 @@ private struct CollapsedSidebarButton: View {
     }
 }
 
-// MARK: - AgentView Issue Detail Extension
+// MARK: - WorkView Issue Detail Extension
 
-extension AgentView {
+extension WorkView {
     // MARK: - Constants
 
     private static let maxChatContentWidth: CGFloat = 700
@@ -485,7 +485,7 @@ extension AgentView {
     // MARK: - Issue Detail View
 
     private func issueDetailView(width: CGFloat) -> some View {
-        let personaName = windowState.cachedPersonaDisplayName
+        let agentName = windowState.cachedAgentDisplayName
         // Calculate content width: available width minus padding, capped at max
         let availableWidth = width - (Self.contentHorizontalPadding * 2)
         let contentWidth = min(availableWidth, Self.maxChatContentWidth)
@@ -498,7 +498,7 @@ extension AgentView {
                 blocks: blocks,
                 groupHeaderMap: groupHeaderMap,
                 width: contentWidth,
-                personaName: personaName,
+                agentName: agentName,
                 isStreaming: session.isExecuting && session.activeIssue?.id == session.selectedIssueId,
                 lastAssistantTurnId: blocks.last?.turnId,
                 autoScrollEnabled: false,
@@ -573,7 +573,7 @@ extension AgentView {
             Circle()
                 .fill(theme.accentColor)
                 .frame(width: 6, height: 6)
-                .modifier(AgentPulseModifier())
+                .modifier(WorkPulseModifier())
 
             Text("Working on it...")
                 .font(theme.font(size: CGFloat(theme.captionSize), weight: .medium))
@@ -710,7 +710,7 @@ extension AgentView {
 
     // MARK: - Helpers
 
-    private func statusIcon(for status: AgentTaskStatus) -> String {
+    private func statusIcon(for status: WorkTaskStatus) -> String {
         switch status {
         case .active: return "play.circle.fill"
         case .completed: return "checkmark.circle.fill"
@@ -718,7 +718,7 @@ extension AgentView {
         }
     }
 
-    private func statusColor(for status: AgentTaskStatus) -> Color {
+    private func statusColor(for status: WorkTaskStatus) -> Color {
         switch status {
         case .active: return .orange
         case .completed: return .green
@@ -1553,9 +1553,9 @@ struct ArtifactViewerSheet: View {
     }
 }
 
-// MARK: - Agent Pulse Modifier
+// MARK: - Work Pulse Modifier
 
-private struct AgentPulseModifier: ViewModifier {
+private struct WorkPulseModifier: ViewModifier {
     @State private var isPulsing = false
 
     func body(content: Content) -> some View {

@@ -1,17 +1,17 @@
 //
-//  AgentTaskSidebar.swift
+//  WorkTaskSidebar.swift
 //  osaurus
 //
-//  Sidebar displaying the list of agent tasks for the current persona.
+//  Sidebar displaying the list of work tasks for the current agent.
 //  Uses shared sidebar components for consistent styling.
 //
 
 import SwiftUI
 
-struct AgentTaskSidebar: View {
-    let tasks: [AgentTask]
+struct WorkTaskSidebar: View {
+    let tasks: [WorkTask]
     let currentTaskId: String?
-    let onSelect: (AgentTask) -> Void
+    let onSelect: (WorkTask) -> Void
     let onDelete: (String) -> Void
 
     @Environment(\.theme) private var theme: ThemeProtocol
@@ -123,7 +123,7 @@ struct AgentTaskSidebar: View {
 
     // MARK: - Filtered Tasks
 
-    private var filteredTasks: [AgentTask] {
+    private var filteredTasks: [WorkTask] {
         if searchQuery.isEmpty {
             return tasks
         }
@@ -137,7 +137,7 @@ struct AgentTaskSidebar: View {
 // MARK: - Task Row
 
 private struct TaskRow: View {
-    let task: AgentTask
+    let task: WorkTask
     let isSelected: Bool
     let isHovered: Bool
     let onSelect: () -> Void
@@ -223,16 +223,16 @@ private struct TaskRow: View {
 // MARK: - Preview
 
 #if DEBUG
-    struct AgentTaskSidebar_Previews: PreviewProvider {
+    struct WorkTaskSidebar_Previews: PreviewProvider {
         static var previews: some View {
-            AgentTaskSidebar(
+            WorkTaskSidebar(
                 tasks: [
-                    AgentTask(
+                    WorkTask(
                         title: "Implement user authentication",
                         query: "Add login and signup functionality",
                         status: .active
                     ),
-                    AgentTask(
+                    WorkTask(
                         title: "Fix navigation bug",
                         query: "The back button doesn't work on the settings page",
                         status: .completed

@@ -28,8 +28,8 @@ final class ChatSession: ObservableObject {
     @Published var voiceInputState: VoiceInputState = .idle
     /// Whether the voice input overlay is currently visible
     @Published var showVoiceOverlay: Bool = false
-    /// The persona this session belongs to
-    @Published var personaId: UUID?
+    /// The agent this session belongs to
+    @Published var agentId: UUID?
 
     // MARK: - Two-Phase Capability Selection (internal state, not @Published)
     var capabilitiesSelected: Bool = false
@@ -110,8 +110,8 @@ final class ChatSession: ObservableObject {
             .removeDuplicates()
             .sink { [weak self] newModel in
                 guard let self = self, !self.isLoadingModel, let model = newModel else { return }
-                let pid = self.personaId ?? Persona.defaultId
-                PersonaManager.shared.updateDefaultModel(for: pid, model: model)
+                let pid = self.agentId ?? Agent.defaultId
+                AgentManager.shared.updateDefaultModel(for: pid, model: model)
             }
 
         // Only load models if cache wasn't valid (first window or after invalidation)
@@ -134,11 +134,11 @@ final class ChatSession: ObservableObject {
         modelSelectionCancellable = nil
     }
 
-    /// Apply initial model selection after personaId is set (for cached model options)
+    /// Apply initial model selection after agentId is set (for cached model options)
     func applyInitialModelSelection() {
         guard selectedModel == nil, !modelOptions.isEmpty else { return }
         isLoadingModel = true
-        let effectiveModel = PersonaManager.shared.effectiveModel(for: personaId ?? Persona.defaultId)
+        let effectiveModel = AgentManager.shared.effectiveModel(for: agentId ?? Agent.defaultId)
         if let model = effectiveModel, modelOptions.contains(where: { $0.id == model }) {
             selectedModel = model
         } else {
@@ -239,9 +239,9 @@ final class ChatSession: ObservableObject {
 
         guard optionsChanged else { return }
 
-        // Options changed (e.g., remote models loaded) - re-check persona's preferred model.
+        // Options changed (e.g., remote models loaded) - re-check agent's preferred model.
         // This corrects the initial fallback to "foundation" when remote models weren't yet available.
-        let effectiveModel = PersonaManager.shared.effectiveModel(for: personaId ?? Persona.defaultId)
+        let effectiveModel = AgentManager.shared.effectiveModel(for: agentId ?? Agent.defaultId)
         let newSelected: String?
 
         if let model = effectiveModel, newOptionIds.contains(model) {
@@ -280,9 +280,9 @@ final class ChatSession: ObservableObject {
     /// PERFORMANCE: Uses BlockMemoizer for incremental updates during streaming.
     /// Only regenerates blocks for the last turn instead of all blocks (O(1) vs O(n)).
     var visibleBlocks: [ContentBlock] {
-        // Get persona name for assistant messages
-        let persona = PersonaManager.shared.persona(for: personaId ?? Persona.defaultId)
-        let displayName = persona?.isBuiltIn == true ? "Assistant" : (persona?.name ?? "Assistant")
+        // Get agent name for assistant messages
+        let agent = AgentManager.shared.agent(for: agentId ?? Agent.defaultId)
+        let displayName = agent?.isBuiltIn == true ? "Assistant" : (agent?.name ?? "Assistant")
 
         // Determine streaming turn ID
         let streamingTurnId = isStreaming ? turns.last?.id : nil
@@ -290,7 +290,7 @@ final class ChatSession: ObservableObject {
         return blockMemoizer.blocks(
             from: turns,
             streamingTurnId: streamingTurnId,
-            personaName: displayName
+            agentName: displayName
         )
     }
 
@@ -312,16 +312,16 @@ final class ChatSession: ObservableObject {
         }
 
         var total = 0
-        let effectiveId = personaId ?? Persona.defaultId
+        let effectiveId = agentId ?? Agent.defaultId
 
         // System prompt
-        let systemPrompt = PersonaManager.shared.effectiveSystemPrompt(for: effectiveId)
+        let systemPrompt = AgentManager.shared.effectiveSystemPrompt(for: effectiveId)
         if !systemPrompt.isEmpty {
             total += max(1, systemPrompt.count / 4)
         }
 
         // Tool and skill tokens depend on two-phase loading state
-        let toolOverrides = PersonaManager.shared.effectiveToolOverrides(for: effectiveId)
+        let toolOverrides = AgentManager.shared.effectiveToolOverrides(for: effectiveId)
         let allTools = ToolRegistry.shared.listTools(withOverrides: toolOverrides)
 
         // Check if there are any capabilities to select
@@ -438,15 +438,15 @@ final class ChatSession: ObservableObject {
         isDirty = false
         // Reset capability selection for new conversation
         resetCapabilitySelection()
-        // Keep current personaId - don't reset when creating new chat within same persona
+        // Keep current agentId - don't reset when creating new chat within same agent
 
         // Clear caches
         blockMemoizer.clear()
         _tokenCacheValid = false
 
-        // Apply model from persona or global config (don't auto-persist, it's already saved)
+        // Apply model from agent or global config (don't auto-persist, it's already saved)
         isLoadingModel = true
-        let effectiveModel = PersonaManager.shared.effectiveModel(for: personaId ?? Persona.defaultId)
+        let effectiveModel = AgentManager.shared.effectiveModel(for: agentId ?? Agent.defaultId)
         if let defaultModel = effectiveModel,
             modelOptions.contains(where: { $0.id == defaultModel })
         {
@@ -457,9 +457,9 @@ final class ChatSession: ObservableObject {
         isLoadingModel = false
     }
 
-    /// Reset for a specific persona
-    func reset(for newPersonaId: UUID?) {
-        personaId = newPersonaId
+    /// Reset for a specific agent
+    func reset(for newAgentId: UUID?) {
+        agentId = newAgentId
         reset()
     }
 
@@ -482,7 +482,7 @@ final class ChatSession: ObservableObject {
             updatedAt: updatedAt,
             selectedModel: selectedModel,
             turns: turnData,
-            personaId: personaId
+            agentId: agentId
         )
     }
 
@@ -522,7 +522,7 @@ final class ChatSession: ObservableObject {
         title = data.title
         createdAt = data.createdAt
         updatedAt = data.updatedAt
-        personaId = data.personaId
+        agentId = data.agentId
 
         // Restore saved model if available, otherwise use configured default
         // Don't auto-persist when loading - this is restoring existing state
@@ -532,8 +532,8 @@ final class ChatSession: ObservableObject {
         {
             selectedModel = savedModel
         } else {
-            // Fall back to persona's model, then global config, then first available
-            let effectiveModel = PersonaManager.shared.effectiveModel(for: data.personaId ?? Persona.defaultId)
+            // Fall back to agent's model, then global config, then first available
+            let effectiveModel = AgentManager.shared.effectiveModel(for: data.agentId ?? Agent.defaultId)
             if let defaultModel = effectiveModel,
                 modelOptions.contains(where: { $0.id == defaultModel })
             {
@@ -622,11 +622,11 @@ final class ChatSession: ObservableObject {
         var loadedSkillInstructions: [String] = []
         var errors: [String] = []
 
-        // Get persona-level overrides for validation
-        let effectivePersonaId = personaId ?? Persona.defaultId
-        let toolOverrides = PersonaManager.shared.effectiveToolOverrides(for: effectivePersonaId)
+        // Get agent-level overrides for validation
+        let effectiveAgentId = agentId ?? Agent.defaultId
+        let toolOverrides = AgentManager.shared.effectiveToolOverrides(for: effectiveAgentId)
 
-        // Validate and collect tools (respecting persona overrides)
+        // Validate and collect tools (respecting agent overrides)
         let enabledToolNames = Set(
             ToolRegistry.shared.listUserTools(withOverrides: toolOverrides)
                 .filter { tool in
@@ -644,10 +644,10 @@ final class ChatSession: ObservableObject {
             }
         }
 
-        // Validate and collect skills (respecting persona overrides)
-        // Filter requested skills to only those enabled for this persona
+        // Validate and collect skills (respecting agent overrides)
+        // Filter requested skills to only those enabled for this agent
         let enabledRequestedSkills = requestedSkills.filter { skillName in
-            CapabilityService.shared.isSkillEnabled(skillName, for: effectivePersonaId)
+            CapabilityService.shared.isSkillEnabled(skillName, for: effectiveAgentId)
         }
 
         // Load instructions for enabled skills (includes reference file contents)
@@ -704,12 +704,12 @@ final class ChatSession: ObservableObject {
     }
 
     /// Build system prompt based on capability selection state
-    private func buildSystemPrompt(base: String, personaId: UUID, needsSelection: Bool) -> String {
+    private func buildSystemPrompt(base: String, agentId: UUID, needsSelection: Bool) -> String {
         if needsSelection {
             // Phase 1: Include full capability catalog for selection
             return CapabilityService.shared.buildSystemPromptWithCatalog(
                 basePrompt: base,
-                personaId: personaId
+                agentId: agentId
             )
         } else if capabilitiesSelected {
             // Phase 2: Include selected skill instructions + available capabilities reminder
@@ -723,7 +723,7 @@ final class ChatSession: ObservableObject {
             }
 
             // Add compact reminder of other available capabilities
-            let catalog = CapabilityCatalogBuilder.build(for: personaId)
+            let catalog = CapabilityCatalogBuilder.build(for: agentId)
             let unselectedTools = catalog.tools.map { $0.name }.filter { !selectedToolNames.contains($0) }
             let unselectedSkills = catalog.skills.map { $0.name }.filter { !selectedSkillNames.contains($0) }
 
@@ -824,21 +824,21 @@ final class ChatSession: ObservableObject {
                 let chatCfg = ChatConfigurationStore.load()
 
                 // MARK: - Two-Phase Capability Selection
-                let effectivePersonaId = personaId ?? Persona.defaultId
-                let effectiveToolOverrides = PersonaManager.shared.effectiveToolOverrides(for: effectivePersonaId)
+                let effectiveAgentId = agentId ?? Agent.defaultId
+                let effectiveToolOverrides = AgentManager.shared.effectiveToolOverrides(for: effectiveAgentId)
 
                 // Check if there are any capabilities to select
-                let catalog = CapabilityCatalogBuilder.build(for: effectivePersonaId)
+                let catalog = CapabilityCatalogBuilder.build(for: effectiveAgentId)
                 let hasCapabilities = !catalog.isEmpty
                 let needsCapabilitySelection = !capabilitiesSelected && hasCapabilities
 
-                let baseSystemPrompt = PersonaManager.shared.effectiveSystemPrompt(for: effectivePersonaId)
+                let baseSystemPrompt = AgentManager.shared.effectiveSystemPrompt(for: effectiveAgentId)
                     .trimmingCharacters(in: .whitespacesAndNewlines)
 
                 // Build system prompt and tool specs based on capability selection state
                 var sys = buildSystemPrompt(
                     base: baseSystemPrompt,
-                    personaId: effectivePersonaId,
+                    agentId: effectiveAgentId,
                     needsSelection: needsCapabilitySelection
                 )
                 var toolSpecs = buildToolSpecs(
@@ -847,7 +847,7 @@ final class ChatSession: ObservableObject {
                     overrides: effectiveToolOverrides
                 )
 
-                let effectiveMaxTokensForPersona = PersonaManager.shared.effectiveMaxTokens(for: effectivePersonaId)
+                let effectiveMaxTokensForAgent = AgentManager.shared.effectiveMaxTokens(for: effectiveAgentId)
 
                 /// Convert a single turn to a ChatMessage (returns nil if should be skipped)
                 @MainActor
@@ -906,7 +906,7 @@ final class ChatSession: ObservableObject {
 
                 let maxAttempts = max(chatCfg.maxToolAttempts ?? 15, 1)
                 var attempts = 0
-                let effectiveTemp = PersonaManager.shared.effectiveTemperature(for: effectivePersonaId)
+                let effectiveTemp = AgentManager.shared.effectiveTemperature(for: effectiveAgentId)
 
                 outer: while attempts < maxAttempts {
                     attempts += 1
@@ -914,7 +914,7 @@ final class ChatSession: ObservableObject {
                         model: selectedModel ?? "default",
                         messages: buildMessages(),
                         temperature: effectiveTemp,
-                        max_tokens: effectiveMaxTokensForPersona ?? 16384,
+                        max_tokens: effectiveMaxTokensForAgent ?? 16384,
                         stream: true,
                         top_p: chatCfg.topPOverride,
                         frequency_penalty: nil,
@@ -989,7 +989,7 @@ final class ChatSession: ObservableObject {
                                 // Rebuild system prompt and tool specs using helper methods
                                 sys = buildSystemPrompt(
                                     base: baseSystemPrompt,
-                                    personaId: effectivePersonaId,
+                                    agentId: effectiveAgentId,
                                     needsSelection: false
                                 )
                                 toolSpecs = buildToolSpecs(
@@ -1094,13 +1094,13 @@ struct ChatView: View {
     /// Convenience initializer with window ID and optional initial state
     init(
         windowId: UUID,
-        initialPersonaId: UUID? = nil,
+        initialAgentId: UUID? = nil,
         initialSessionData: ChatSessionData? = nil
     ) {
-        let personaId = initialSessionData?.personaId ?? initialPersonaId ?? Persona.defaultId
+        let agentId = initialSessionData?.agentId ?? initialAgentId ?? Agent.defaultId
         let state = ChatWindowState(
             windowId: windowId,
-            personaId: personaId,
+            agentId: agentId,
             sessionData: initialSessionData
         )
         _windowState = ObservedObject(wrappedValue: state)
@@ -1109,21 +1109,21 @@ struct ChatView: View {
 
     var body: some View {
         Group {
-            // Switch between Chat and Agent modes
-            if windowState.mode == .agent, let agentSession = windowState.agentSession {
-                AgentView(windowState: windowState, session: agentSession)
+            // Switch between Chat and Work modes
+            if windowState.mode == .work, let workSession = windowState.workSession {
+                WorkView(windowState: windowState, session: workSession)
             } else {
                 chatModeContent
             }
         }
         .themedAlert(
-            "Agent Task Running",
-            isPresented: agentCloseConfirmationPresented,
+            "Work Task Running",
+            isPresented: workCloseConfirmationPresented,
             message:
-                "This agent task is still active. You can keep it running in the background (with a live toast), or stop it and close this window.",
+                "This work task is still active. You can keep it running in the background (with a live toast), or stop it and close this window.",
             buttons: [
                 .primary("Run in Background") {
-                    if let session = windowState.agentSession {
+                    if let session = windowState.workSession {
                         BackgroundTaskManager.shared.detachWindow(
                             windowState.windowId,
                             session: session,
@@ -1133,7 +1133,7 @@ struct ChatView: View {
                     ChatWindowManager.shared.closeWindow(id: windowState.windowId)
                 },
                 .destructive("Stop Task & Close") {
-                    windowState.agentSession?.stopExecution()
+                    windowState.workSession?.stopExecution()
                     ChatWindowManager.shared.closeWindow(id: windowState.windowId)
                 },
                 .cancel("Cancel"),
@@ -1143,12 +1143,12 @@ struct ChatView: View {
         .overlay(ThemedAlertHost(scope: .chat(windowState.windowId)))
     }
 
-    private var agentCloseConfirmationPresented: Binding<Bool> {
+    private var workCloseConfirmationPresented: Binding<Bool> {
         Binding(
-            get: { windowState.agentCloseConfirmation != nil },
+            get: { windowState.workCloseConfirmation != nil },
             set: { newValue in
                 if !newValue {
-                    windowState.agentCloseConfirmation = nil
+                    windowState.workCloseConfirmation = nil
                 }
             }
         )
@@ -1190,7 +1190,7 @@ struct ChatView: View {
                             onOpenInNewWindow: { sessionData in
                                 // Open session in a new window via ChatWindowManager
                                 ChatWindowManager.shared.createWindow(
-                                    personaId: sessionData.personaId,
+                                    agentId: sessionData.agentId,
                                     sessionData: sessionData
                                 )
                             }
@@ -1220,8 +1220,8 @@ struct ChatView: View {
                                 ChatEmptyState(
                                     hasModels: true,
                                     selectedModel: session.selectedModel,
-                                    personas: windowState.personas,
-                                    activePersonaId: windowState.personaId,
+                                    agents: windowState.agents,
+                                    activeAgentId: windowState.agentId,
                                     onOpenModelManager: {
                                         AppDelegate.shared?.showManagementWindow(initialTab: .models)
                                     },
@@ -1232,8 +1232,8 @@ struct ChatView: View {
                                     onQuickAction: { prompt in
                                         session.input = prompt
                                     },
-                                    onSelectPersona: { newPersonaId in
-                                        windowState.switchPersona(to: newPersonaId)
+                                    onSelectAgent: { newAgentId in
+                                        windowState.switchAgent(to: newAgentId)
                                     },
                                     onOpenOnboarding: nil
                                 )
@@ -1259,7 +1259,7 @@ struct ChatView: View {
                                 onSend: { observedSession.sendCurrent() },
                                 onStop: { observedSession.stop() },
                                 focusTrigger: focusTrigger,
-                                personaId: windowState.personaId,
+                                agentId: windowState.agentId,
                                 windowId: windowState.windowId
                             )
                         } else {
@@ -1267,8 +1267,8 @@ struct ChatView: View {
                             ChatEmptyState(
                                 hasModels: false,
                                 selectedModel: nil,
-                                personas: windowState.personas,
-                                activePersonaId: windowState.personaId,
+                                agents: windowState.agents,
+                                activeAgentId: windowState.agentId,
                                 onOpenModelManager: {
                                     AppDelegate.shared?.showManagementWindow(initialTab: .models)
                                 },
@@ -1277,8 +1277,8 @@ struct ChatView: View {
                                         session.selectedModel = session.modelOptions.first?.id ?? "foundation"
                                     } : nil,
                                 onQuickAction: { _ in },
-                                onSelectPersona: { newPersonaId in
-                                    windowState.switchPersona(to: newPersonaId)
+                                onSelectAgent: { newAgentId in
+                                    windowState.switchAgent(to: newAgentId)
                                 },
                                 onOpenOnboarding: {
                                     // If onboarding was already completed, just refresh models
@@ -1321,11 +1321,11 @@ struct ChatView: View {
             isPinnedToBottom = true
         }
         .onReceive(NotificationCenter.default.publisher(for: .vadStartNewSession)) { notification in
-            // VAD requested a new session for a specific persona
+            // VAD requested a new session for a specific agent
             // Only handle if this is the targeted window
-            if let personaId = notification.object as? UUID {
-                // Only switch if this window's persona matches the VAD request
-                if personaId == windowState.personaId {
+            if let agentId = notification.object as? UUID {
+                // Only switch if this window's agent matches the VAD request
+                if agentId == windowState.agentId {
                     windowState.startNewChat()
                 }
             }
@@ -1509,7 +1509,7 @@ struct ChatView: View {
     private func messageThread(_ width: CGFloat) -> some View {
         let blocks = session.visibleBlocks
         let groupHeaderMap = session.visibleBlocksGroupHeaderMap
-        let displayName = windowState.cachedPersonaDisplayName
+        let displayName = windowState.cachedAgentDisplayName
         let lastAssistantTurnId = session.turns.last { $0.role == .assistant }?.id
 
         return ZStack {
@@ -1517,7 +1517,7 @@ struct ChatView: View {
                 blocks: blocks,
                 groupHeaderMap: groupHeaderMap,
                 width: width,
-                personaName: displayName,
+                agentName: displayName,
                 isStreaming: session.isStreaming,
                 lastAssistantTurnId: lastAssistantTurnId,
                 expandedBlocksStore: session.expandedBlocksStore,

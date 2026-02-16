@@ -294,32 +294,45 @@ extension ModelPickerTableRepresentable {
 
             switch row {
             case .groupHeader(let sourceKey, let displayName, let sourceType, let count, let isExpanded):
-                cell.configure(id: row.id, content:
-                    ModelGroupHeaderCell(
-                        displayName: displayName,
-                        sourceType: sourceType,
-                        count: count,
-                        isExpanded: isExpanded,
-                        isHovered: isHovered,
-                        onToggle: { [weak self] in self?.ctx.onToggleGroup?(sourceKey) }
-                    )
-                    .environment(\.theme, theme)
+                cell.configure(
+                    id: row.id,
+                    content:
+                        ModelGroupHeaderCell(
+                            displayName: displayName,
+                            sourceType: sourceType,
+                            count: count,
+                            isExpanded: isExpanded,
+                            isHovered: isHovered,
+                            onToggle: { [weak self] in self?.ctx.onToggleGroup?(sourceKey) }
+                        )
+                        .environment(\.theme, theme)
                 )
 
-            case .model(let id, let displayName, let description, let parameterCount, let quantization, let isVLM, let isSelected, let isHighlighted):
-                cell.configure(id: row.id, content:
-                    ModelRowCell(
-                        displayName: displayName,
-                        description: description,
-                        parameterCount: parameterCount,
-                        quantization: quantization,
-                        isVLM: isVLM,
-                        isSelected: isSelected,
-                        isHighlighted: isHighlighted,
-                        isHovered: isHovered,
-                        onSelect: { [weak self] in self?.ctx.onSelectModel?(id) }
-                    )
-                    .environment(\.theme, theme)
+            case .model(
+                let id,
+                let displayName,
+                let description,
+                let parameterCount,
+                let quantization,
+                let isVLM,
+                let isSelected,
+                let isHighlighted
+            ):
+                cell.configure(
+                    id: row.id,
+                    content:
+                        ModelRowCell(
+                            displayName: displayName,
+                            description: description,
+                            parameterCount: parameterCount,
+                            quantization: quantization,
+                            isVLM: isVLM,
+                            isSelected: isSelected,
+                            isHighlighted: isHighlighted,
+                            isHovered: isHovered,
+                            onSelect: { [weak self] in self?.ctx.onSelectModel?(id) }
+                        )
+                        .environment(\.theme, theme)
                 )
             }
         }

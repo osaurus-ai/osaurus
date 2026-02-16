@@ -154,7 +154,7 @@ public struct CapabilityCatalog: Sendable {
 // MARK: - Catalog Builder
 
 /// Builds a capability catalog from ToolRegistry and SkillManager.
-/// Results are cached per persona and invalidated automatically on tool/skill changes.
+/// Results are cached per agent and invalidated automatically on tool/skill changes.
 @MainActor
 public struct CapabilityCatalogBuilder {
     // MARK: - Cache
@@ -195,18 +195,18 @@ public struct CapabilityCatalogBuilder {
         return catalog
     }
 
-    /// Build catalog for a specific persona, applying persona-level overrides.
-    public static func build(for personaId: UUID) -> CapabilityCatalog {
+    /// Build catalog for a specific agent, applying agent-level overrides.
+    public static func build(for agentId: UUID) -> CapabilityCatalog {
         installObserversIfNeeded()
-        if let cached = cache[personaId] { return cached }
+        if let cached = cache[agentId] { return cached }
 
-        let toolOverrides = PersonaManager.shared.effectiveToolOverrides(for: personaId)
-        let skillOverrides = PersonaManager.shared.effectiveSkillOverrides(for: personaId)
+        let toolOverrides = AgentManager.shared.effectiveToolOverrides(for: agentId)
+        let skillOverrides = AgentManager.shared.effectiveSkillOverrides(for: agentId)
         let toolEntries = ToolRegistry.shared.enabledCatalogEntries(withOverrides: toolOverrides)
         let skillEntries = SkillManager.shared.enabledCatalogEntries(withOverrides: skillOverrides)
 
         let catalog = CapabilityCatalog(tools: toolEntries, skills: skillEntries)
-        cache[personaId] = catalog
+        cache[agentId] = catalog
         return catalog
     }
 
@@ -250,7 +250,7 @@ extension ToolRegistry {
             }
     }
 
-    /// Get catalog entries with persona-level overrides applied
+    /// Get catalog entries with agent-level overrides applied
     public func enabledCatalogEntries(withOverrides overrides: [String: Bool]?) -> [CapabilityEntry] {
         listUserTools(withOverrides: overrides)
             .filter { tool in
@@ -273,7 +273,7 @@ extension ToolRegistry {
 // MARK: - SkillManager Extension
 
 extension SkillManager {
-    /// Get catalog entries with persona-level overrides applied
+    /// Get catalog entries with agent-level overrides applied
     public func enabledCatalogEntries(withOverrides overrides: [String: Bool]?) -> [CapabilityEntry] {
         skills
             .filter { skill in

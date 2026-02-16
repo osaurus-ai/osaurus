@@ -369,12 +369,12 @@ private struct VADToggleButton: View {
         whisperModelManager.selectedModel != nil && whisperModelManager.downloadedModelsCount > 0
     }
 
-    /// Whether VAD mode is configured (has enabled personas)
+    /// Whether VAD mode is configured (has enabled agents)
     /// Note: We ignore vadModeEnabled here because the button itself acts as the toggle for it.
     private var isVADConfigured: Bool {
         let config = VADConfigurationStore.load()
-        // If personas are configured, we can toggle VAD mode
-        return !config.enabledPersonaIds.isEmpty
+        // If agents are configured, we can toggle VAD mode
+        return !config.enabledAgentIds.isEmpty
     }
 
     private var isActive: Bool {
@@ -414,7 +414,7 @@ private struct VADToggleButton: View {
             return "Voice Detection: No model selected"
         }
         if !isVADConfigured {
-            return "Voice Detection: Not configured (Select personas in settings)"
+            return "Voice Detection: Not configured (Select agents in settings)"
         }
 
         if !isVADEnabledGlobally {

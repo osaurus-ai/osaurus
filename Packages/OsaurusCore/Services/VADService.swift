@@ -2,7 +2,7 @@
 //  VADService.swift
 //  osaurus
 //
-//  Always-on Voice Activity Detection service for wake-word persona activation.
+//  Always-on Voice Activity Detection service for wake-word agent activation.
 //  Uses WhisperKitService for transcription to avoid audio conflicts.
 //
 
@@ -11,9 +11,9 @@ import Combine
 import Foundation
 import os
 
-/// Notification posted when a persona wake-word is detected
+/// Notification posted when an agent wake-word is detected
 extension Notification.Name {
-    public static let vadPersonaDetected = Notification.Name("vadPersonaDetected")
+    public static let vadAgentDetected = Notification.Name("vadAgentDetected")
     public static let startVoiceInputInChat = Notification.Name("startVoiceInputInChat")
     public static let chatViewClosed = Notification.Name("chatViewClosed")
     public static let vadStartNewSession = Notification.Name("vadStartNewSession")
@@ -23,8 +23,8 @@ extension Notification.Name {
 
 /// Result of a VAD detection
 public struct VADDetectionResult: Sendable {
-    public let personaId: UUID
-    public let personaName: String
+    public let agentId: UUID
+    public let agentName: String
     public let confidence: Float
     public let transcription: String
 }
@@ -53,13 +53,13 @@ public final class VADService: ObservableObject {
 
     private var isEnabled: Bool = false
     private var configuration: VADConfiguration = .default
-    private var personaDetector: PersonaNameDetector?
+    private var agentDetector: AgentNameDetector?
     private var cancellables = Set<AnyCancellable>()
     private var whisperService: WhisperKitService { WhisperKitService.shared }
 
     // Debounce detection to avoid duplicate triggers
     private var lastDetectionTime: Date = .distantPast
-    private let detectionCooldown: TimeInterval = 3.0  // Seconds before detecting same persona again
+    private let detectionCooldown: TimeInterval = 3.0  // Seconds before detecting same agent again
 
     // Auto-restart management
     private var restartTask: Task<Void, Never>?
@@ -82,13 +82,13 @@ public final class VADService: ObservableObject {
     public func loadConfiguration() {
         configuration = VADConfigurationStore.load()
 
-        // Update persona detector with enabled personas
-        personaDetector = PersonaNameDetector(
-            enabledPersonaIds: configuration.enabledPersonaIds,
+        // Update agent detector with enabled agents
+        agentDetector = AgentNameDetector(
+            enabledAgentIds: configuration.enabledAgentIds,
             customWakePhrase: configuration.customWakePhrase
         )
 
-        print("[VADService] Loaded configuration with \(configuration.enabledPersonaIds.count) enabled personas")
+        print("[VADService] Loaded configuration with \(configuration.enabledAgentIds.count) enabled agents")
     }
 
     /// Start VAD listening
@@ -105,12 +105,12 @@ public final class VADService: ObservableObject {
             throw VADError.notEnabled
         }
 
-        guard !configuration.enabledPersonaIds.isEmpty || !configuration.customWakePhrase.isEmpty else {
-            print("[VADService] No personas enabled for VAD")
-            throw VADError.noPersonasEnabled
+        guard !configuration.enabledAgentIds.isEmpty || !configuration.customWakePhrase.isEmpty else {
+            print("[VADService] No agents enabled for VAD")
+            throw VADError.noAgentsEnabled
         }
 
-        print("[VADService] Starting with \(configuration.enabledPersonaIds.count) enabled personas")
+        print("[VADService] Starting with \(configuration.enabledAgentIds.count) enabled agents")
 
         state = .starting
 
@@ -292,12 +292,12 @@ public final class VADService: ObservableObject {
             accumulatedTranscription = fullText
         }
 
-        // Check for persona detection
-        checkForPersonaDetection(in: accumulatedTranscription)
+        // Check for agent detection
+        checkForAgentDetection(in: accumulatedTranscription)
     }
 
-    private func checkForPersonaDetection(in text: String) {
-        guard let detector = personaDetector else { return }
+    private func checkForAgentDetection(in text: String) {
+        guard let detector = agentDetector else { return }
 
         // Check cooldown
         let now = Date()
@@ -307,7 +307,7 @@ public final class VADService: ObservableObject {
             lastDetectionTime = now
 
             print(
-                "[VADService] ✅ Detected persona: \(detection.personaName) with confidence \(detection.confidence) in '\(text)'"
+                "[VADService] ✅ Detected agent: \(detection.agentName) with confidence \(detection.confidence) in '\(text)'"
             )
 
             // Pause VAD (will resume when ChatView closes)
@@ -320,7 +320,7 @@ public final class VADService: ObservableObject {
 
                 // Post notification to open chat with voice mode
                 NotificationCenter.default.post(
-                    name: .vadPersonaDetected,
+                    name: .vadAgentDetected,
                     object: detection
                 )
             }
@@ -368,7 +368,7 @@ public final class VADService: ObservableObject {
 
 public enum VADError: Error, LocalizedError {
     case notEnabled
-    case noPersonasEnabled
+    case noAgentsEnabled
     case noModelSelected
     case modelNotDownloaded
     case audioSetupFailed(String)
@@ -377,8 +377,8 @@ public enum VADError: Error, LocalizedError {
         switch self {
         case .notEnabled:
             return "VAD mode is not enabled"
-        case .noPersonasEnabled:
-            return "No personas are enabled for VAD activation"
+        case .noAgentsEnabled:
+            return "No agents are enabled for VAD activation"
         case .noModelSelected:
             return "No Whisper model selected"
         case .modelNotDownloaded:

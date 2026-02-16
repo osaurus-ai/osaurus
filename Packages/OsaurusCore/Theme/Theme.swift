@@ -576,7 +576,7 @@ public class ThemeManager: ObservableObject {
     /// Apply a custom theme (global - affects both management and chat views)
     /// - Parameters:
     ///   - theme: The theme to apply
-    ///   - persist: Whether to save the theme ID to disk (default: true). Set to false for temporary theme changes like persona themes.
+    ///   - persist: Whether to save the theme ID to disk (default: true). Set to false for temporary theme changes like agent themes.
     ///   - animated: Whether to animate the theme transition (default: true). Set to false for instant changes on initial load.
     public func applyCustomTheme(_ theme: CustomTheme, persist: Bool = true, animated: Bool = true) {
         activeCustomTheme = theme
@@ -726,10 +726,10 @@ public class ThemeManager: ObservableObject {
         NotificationCenter.default.post(name: .globalThemeChanged, object: nil)
     }
 
-    // MARK: - Chat Theme (Persona-specific)
+    // MARK: - Chat Theme (Agent-specific)
 
     /// Apply a theme only to the chat view (does not affect management views)
-    /// Used for persona-specific theming
+    /// Used for agent-specific theming
     /// - Parameters:
     ///   - theme: The theme to apply to chat
     ///   - animated: Whether to animate the theme transition
@@ -745,7 +745,7 @@ public class ThemeManager: ObservableObject {
     }
 
     /// Sync chat theme back to the current global theme
-    /// Called when leaving chat or when persona has no custom theme
+    /// Called when leaving chat or when agent has no custom theme
     /// - Parameter animated: Whether to animate the theme transition
     func syncChatTheme(animated: Bool = true) {
         if animated {

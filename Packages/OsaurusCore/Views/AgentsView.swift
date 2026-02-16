@@ -1,8 +1,8 @@
 //
-//  PersonasView.swift
+//  AgentsView.swift
 //  osaurus
 //
-//  Management view for creating, editing, and deleting Personas
+//  Management view for creating, editing, and deleting Agents
 //
 
 import SwiftUI
@@ -10,8 +10,8 @@ import UniformTypeIdentifiers
 
 // MARK: - Shared Helpers
 
-/// Generate a consistent color based on a persona name
-private func personaColorFor(_ name: String) -> Color {
+/// Generate a consistent color based on an agent name
+private func agentColorFor(_ name: String) -> Color {
     let hash = abs(name.hashValue)
     let hue = Double(hash % 360) / 360.0
     return Color(hue: hue, saturation: 0.6, brightness: 0.8)
@@ -25,15 +25,15 @@ private func formatModelName(_ model: String) -> String {
     return model
 }
 
-// MARK: - Personas View
+// MARK: - Agents View
 
-struct PersonasView: View {
+struct AgentsView: View {
     @ObservedObject private var themeManager = ThemeManager.shared
-    @ObservedObject private var personaManager = PersonaManager.shared
+    @ObservedObject private var agentManager = AgentManager.shared
 
     private var theme: ThemeProtocol { themeManager.currentTheme }
 
-    @State private var selectedPersona: Persona?
+    @State private var selectedAgent: Agent?
     @State private var isCreating = false
     @State private var hasAppeared = false
     @State private var successMessage: String?
@@ -43,37 +43,37 @@ struct PersonasView: View {
     @State private var importError: String?
     @State private var showExportSuccess = false
 
-    /// Custom personas only (excluding built-in)
-    private var customPersonas: [Persona] {
-        personaManager.personas.filter { !$0.isBuiltIn }
+    /// Custom agents only (excluding built-in)
+    private var customAgents: [Agent] {
+        agentManager.agents.filter { !$0.isBuiltIn }
     }
 
     var body: some View {
         ZStack {
             // Grid view
-            if selectedPersona == nil {
+            if selectedAgent == nil {
                 gridContent
                     .transition(.opacity.combined(with: .move(edge: .leading)))
             }
 
             // Detail view
-            if let persona = selectedPersona {
-                PersonaDetailView(
-                    persona: persona,
+            if let agent = selectedAgent {
+                AgentDetailView(
+                    agent: agent,
                     onBack: {
                         withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
-                            selectedPersona = nil
+                            selectedAgent = nil
                         }
                     },
                     onExport: { p in
-                        exportPersona(p)
+                        exportAgent(p)
                     },
                     onDelete: { p in
                         withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
-                            selectedPersona = nil
+                            selectedAgent = nil
                         }
                         DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                            personaManager.delete(id: p.id)
+                            agentManager.delete(id: p.id)
                             showSuccess("Deleted \"\(p.name)\"")
                         }
                     },
@@ -99,12 +99,12 @@ struct PersonasView: View {
         .background(theme.primaryBackground)
         .environment(\.theme, themeManager.currentTheme)
         .sheet(isPresented: $isCreating) {
-            PersonaEditorSheet(
-                onSave: { persona in
-                    PersonaStore.save(persona)
-                    personaManager.refresh()
+            AgentEditorSheet(
+                onSave: { agent in
+                    AgentStore.save(agent)
+                    agentManager.refresh()
                     isCreating = false
-                    showSuccess("Created \"\(persona.name)\"")
+                    showSuccess("Created \"\(agent.name)\"")
                 },
                 onCancel: {
                     isCreating = false
@@ -130,7 +130,7 @@ struct PersonasView: View {
             primaryButton: .primary("OK") { importError = nil }
         )
         .onAppear {
-            personaManager.refresh()
+            agentManager.refresh()
             withAnimation(.easeOut(duration: 0.25).delay(0.05)) {
                 hasAppeared = true
             }
@@ -148,17 +148,17 @@ struct PersonasView: View {
                 .animation(.spring(response: 0.4, dampingFraction: 0.8), value: hasAppeared)
 
             // Content
-            if customPersonas.isEmpty {
+            if customAgents.isEmpty {
                 SettingsEmptyState(
                     icon: "theatermasks.fill",
-                    title: "Create Your First Persona",
+                    title: "Create Your First Agent",
                     subtitle: "Custom AI assistants with unique prompts, tools, and styles.",
                     examples: [
                         .init(icon: "calendar", title: "Daily Planner", description: "Manage your schedule"),
                         .init(icon: "message.fill", title: "Message Assistant", description: "Draft and send texts"),
                         .init(icon: "map.fill", title: "Local Guide", description: "Find places nearby"),
                     ],
-                    primaryAction: .init(title: "Create Persona", icon: "plus", handler: { isCreating = true }),
+                    primaryAction: .init(title: "Create Agent", icon: "plus", handler: { isCreating = true }),
                     secondaryAction: .init(
                         title: "Import",
                         icon: "square.and.arrow.down",
@@ -175,26 +175,26 @@ struct PersonasView: View {
                         ],
                         spacing: 20
                     ) {
-                        ForEach(Array(customPersonas.enumerated()), id: \.element.id) { index, persona in
-                            PersonaCard(
-                                persona: persona,
-                                isActive: personaManager.activePersonaId == persona.id,
+                        ForEach(Array(customAgents.enumerated()), id: \.element.id) { index, agent in
+                            AgentCard(
+                                agent: agent,
+                                isActive: agentManager.activeAgentId == agent.id,
                                 animationDelay: Double(index) * 0.05,
                                 hasAppeared: hasAppeared,
                                 onSelect: {
                                     withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
-                                        selectedPersona = persona
+                                        selectedAgent = agent
                                     }
                                 },
                                 onDuplicate: {
-                                    duplicatePersona(persona)
+                                    duplicateAgent(agent)
                                 },
                                 onExport: {
-                                    exportPersona(persona)
+                                    exportAgent(agent)
                                 },
                                 onDelete: {
-                                    personaManager.delete(id: persona.id)
-                                    showSuccess("Deleted \"\(persona.name)\"")
+                                    agentManager.delete(id: agent.id)
+                                    showSuccess("Deleted \"\(agent.name)\"")
                                 }
                             )
                         }
@@ -210,17 +210,17 @@ struct PersonasView: View {
 
     private var headerView: some View {
         ManagerHeaderWithActions(
-            title: "Personas",
+            title: "Agents",
             subtitle: "Create custom assistant personalities with unique behaviors",
-            count: customPersonas.isEmpty ? nil : customPersonas.count
+            count: customAgents.isEmpty ? nil : customAgents.count
         ) {
-            HeaderIconButton("arrow.clockwise", help: "Refresh personas") {
-                personaManager.refresh()
+            HeaderIconButton("arrow.clockwise", help: "Refresh agents") {
+                agentManager.refresh()
             }
             HeaderSecondaryButton("Import", icon: "square.and.arrow.down") {
                 showImportPicker = true
             }
-            HeaderPrimaryButton("Create Persona", icon: "plus") {
+            HeaderPrimaryButton("Create Agent", icon: "plus") {
                 isCreating = true
             }
         }
@@ -241,41 +241,41 @@ struct PersonasView: View {
 
     // MARK: - Actions
 
-    private func duplicatePersona(_ persona: Persona) {
+    private func duplicateAgent(_ agent: Agent) {
         // Generate unique copy name
-        let baseName = "\(persona.name) Copy"
-        let existingNames = Set(customPersonas.map { $0.name })
+        let baseName = "\(agent.name) Copy"
+        let existingNames = Set(customAgents.map { $0.name })
         var newName = baseName
         var counter = 1
 
         while existingNames.contains(newName) {
             counter += 1
-            newName = "\(persona.name) Copy \(counter)"
+            newName = "\(agent.name) Copy \(counter)"
         }
 
-        let duplicated = Persona(
+        let duplicated = Agent(
             id: UUID(),
             name: newName,
-            description: persona.description,
-            systemPrompt: persona.systemPrompt,
-            enabledTools: persona.enabledTools,
-            themeId: persona.themeId,
-            defaultModel: persona.defaultModel,
-            temperature: persona.temperature,
-            maxTokens: persona.maxTokens,
+            description: agent.description,
+            systemPrompt: agent.systemPrompt,
+            enabledTools: agent.enabledTools,
+            themeId: agent.themeId,
+            defaultModel: agent.defaultModel,
+            temperature: agent.temperature,
+            maxTokens: agent.maxTokens,
             isBuiltIn: false,
             createdAt: Date(),
             updatedAt: Date()
         )
 
-        PersonaStore.save(duplicated)
-        personaManager.refresh()
+        AgentStore.save(duplicated)
+        agentManager.refresh()
         showSuccess("Duplicated as \"\(newName)\"")
 
-        // Open detail for the duplicated persona
+        // Open detail for the duplicated agent
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
             withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
-                selectedPersona = duplicated
+                selectedAgent = duplicated
             }
         }
     }
@@ -296,10 +296,10 @@ struct PersonasView: View {
 
             do {
                 let data = try Data(contentsOf: url)
-                try personaManager.importPersona(from: data)
-                showSuccess("Imported persona successfully")
+                try agentManager.importAgent(from: data)
+                showSuccess("Imported agent successfully")
             } catch {
-                importError = "Failed to import persona: \(error.localizedDescription)"
+                importError = "Failed to import agent: \(error.localizedDescription)"
             }
 
         case .failure(let error):
@@ -307,34 +307,34 @@ struct PersonasView: View {
         }
     }
 
-    private func exportPersona(_ persona: Persona) {
+    private func exportAgent(_ agent: Agent) {
         do {
-            let data = try personaManager.exportPersona(persona)
+            let data = try agentManager.exportAgent(agent)
 
             let panel = NSSavePanel()
             panel.allowedContentTypes = [.json]
-            panel.nameFieldStringValue = "\(persona.name).json"
-            panel.title = "Export Persona"
-            panel.message = "Choose where to save the persona file"
+            panel.nameFieldStringValue = "\(agent.name).json"
+            panel.title = "Export Agent"
+            panel.message = "Choose where to save the agent file"
 
             if panel.runModal() == .OK, let url = panel.url {
                 try data.write(to: url)
-                showSuccess("Exported \"\(persona.name)\"")
+                showSuccess("Exported \"\(agent.name)\"")
             }
         } catch {
-            print("[Osaurus] Failed to export persona: \(error)")
+            print("[Osaurus] Failed to export agent: \(error)")
         }
     }
 }
 
-// MARK: - Persona Card
+// MARK: - Agent Card
 
-private struct PersonaCard: View {
+private struct AgentCard: View {
     @Environment(\.theme) private var theme
-    @ObservedObject private var personaManager = PersonaManager.shared
+    @ObservedObject private var agentManager = AgentManager.shared
     @ObservedObject private var scheduleManager = ScheduleManager.shared
 
-    let persona: Persona
+    let agent: Agent
     let isActive: Bool
     let animationDelay: Double
     let hasAppeared: Bool
@@ -346,11 +346,11 @@ private struct PersonaCard: View {
     @State private var isHovered = false
     @State private var showDeleteConfirm = false
 
-    private var personaColor: Color { personaColorFor(persona.name) }
+    private var agentColor: Color { agentColorFor(agent.name) }
 
     /// Resolved enabled tool count
     private var enabledToolCount: Int {
-        let overrides = personaManager.effectiveToolOverrides(for: persona.id)
+        let overrides = agentManager.effectiveToolOverrides(for: agent.id)
         let tools = ToolRegistry.shared.listUserTools(withOverrides: overrides, excludeInternal: true)
         return tools.filter { $0.enabled }.count
     }
@@ -364,7 +364,7 @@ private struct PersonaCard: View {
     private var enabledSkillCount: Int {
         let skills = SkillManager.shared.skills
         return skills.filter { skill in
-            if let overrides = personaManager.effectiveSkillOverrides(for: persona.id),
+            if let overrides = agentManager.effectiveSkillOverrides(for: agent.id),
                 let value = overrides[skill.name]
             {
                 return value
@@ -378,9 +378,9 @@ private struct PersonaCard: View {
         SkillManager.shared.skills.count
     }
 
-    /// Schedule count for this persona
+    /// Schedule count for this agent
     private var scheduleCount: Int {
-        scheduleManager.schedules.filter { $0.personaId == persona.id }.count
+        scheduleManager.schedules.filter { $0.agentId == agent.id }.count
     }
 
     var body: some View {
@@ -393,24 +393,24 @@ private struct PersonaCard: View {
                         Circle()
                             .fill(
                                 LinearGradient(
-                                    colors: [personaColor.opacity(0.15), personaColor.opacity(0.05)],
+                                    colors: [agentColor.opacity(0.15), agentColor.opacity(0.05)],
                                     startPoint: .topLeading,
                                     endPoint: .bottomTrailing
                                 )
                             )
 
                         Circle()
-                            .strokeBorder(personaColor.opacity(0.4), lineWidth: 2)
+                            .strokeBorder(agentColor.opacity(0.4), lineWidth: 2)
 
-                        Text(persona.name.prefix(1).uppercased())
+                        Text(agent.name.prefix(1).uppercased())
                             .font(.system(size: 16, weight: .bold, design: .rounded))
-                            .foregroundColor(personaColor)
+                            .foregroundColor(agentColor)
                     }
                     .frame(width: 36, height: 36)
 
                     VStack(alignment: .leading, spacing: 2) {
                         HStack(spacing: 6) {
-                            Text(persona.name)
+                            Text(agent.name)
                                 .font(.system(size: 15, weight: .semibold))
                                 .foregroundColor(theme.primaryText)
                                 .lineLimit(1)
@@ -428,8 +428,8 @@ private struct PersonaCard: View {
                             }
                         }
 
-                        if !persona.description.isEmpty {
-                            Text(persona.description)
+                        if !agent.description.isEmpty {
+                            Text(agent.description)
                                 .font(.system(size: 11))
                                 .foregroundColor(theme.secondaryText)
                                 .lineLimit(1)
@@ -471,8 +471,8 @@ private struct PersonaCard: View {
                 }
 
                 // System prompt excerpt
-                if !persona.systemPrompt.isEmpty {
-                    Text(persona.systemPrompt)
+                if !agent.systemPrompt.isEmpty {
+                    Text(agent.systemPrompt)
                         .font(.system(size: 12))
                         .foregroundColor(theme.secondaryText)
                         .lineLimit(2)
@@ -506,9 +506,9 @@ private struct PersonaCard: View {
             withAnimation(.easeOut(duration: 0.15)) { isHovered = hovering }
         }
         .themedAlert(
-            "Delete Persona",
+            "Delete Agent",
             isPresented: $showDeleteConfirm,
-            message: "Are you sure you want to delete \"\(persona.name)\"? This action cannot be undone.",
+            message: "Are you sure you want to delete \"\(agent.name)\"? This action cannot be undone.",
             primaryButton: .destructive("Delete", action: onDelete),
             secondaryButton: .cancel("Cancel")
         )
@@ -525,8 +525,8 @@ private struct PersonaCard: View {
         RoundedRectangle(cornerRadius: 12)
             .strokeBorder(
                 isHovered
-                    ? personaColor.opacity(0.25)
-                    : (isActive ? personaColor.opacity(0.3) : theme.cardBorder),
+                    ? agentColor.opacity(0.25)
+                    : (isActive ? agentColor.opacity(0.3) : theme.cardBorder),
                 lineWidth: isActive || isHovered ? 1.5 : 1
             )
     }
@@ -536,7 +536,7 @@ private struct PersonaCard: View {
             .fill(
                 LinearGradient(
                     colors: [
-                        personaColor.opacity(isHovered ? 0.06 : 0),
+                        agentColor.opacity(isHovered ? 0.06 : 0),
                         Color.clear,
                     ],
                     startPoint: .topLeading,
@@ -561,7 +561,7 @@ private struct PersonaCard: View {
                 statItem(icon: "clock", text: "\(scheduleCount)")
             }
 
-            if let model = persona.defaultModel {
+            if let model = agent.defaultModel {
                 statDot
                 statItem(icon: "cube", text: formatModelName(model))
             }
@@ -589,19 +589,19 @@ private struct PersonaCard: View {
     }
 }
 
-// MARK: - Persona Detail View
+// MARK: - Agent Detail View
 
-private struct PersonaDetailView: View {
+private struct AgentDetailView: View {
     @ObservedObject private var themeManager = ThemeManager.shared
-    @ObservedObject private var personaManager = PersonaManager.shared
+    @ObservedObject private var agentManager = AgentManager.shared
     @ObservedObject private var scheduleManager = ScheduleManager.shared
 
     private var theme: ThemeProtocol { themeManager.currentTheme }
 
-    let persona: Persona
+    let agent: Agent
     let onBack: () -> Void
-    let onExport: (Persona) -> Void
-    let onDelete: (Persona) -> Void
+    let onExport: (Agent) -> Void
+    let onDelete: (Agent) -> Void
     let showSuccess: (String) -> Void
 
     // MARK: - Editable State
@@ -631,40 +631,40 @@ private struct PersonaDetailView: View {
     // Guard to prevent save on initial load
     @State private var isInitialLoadComplete = false
 
-    /// Current persona (refreshed from manager)
-    private var currentPersona: Persona {
-        personaManager.persona(for: persona.id) ?? persona
+    /// Current agent (refreshed from manager)
+    private var currentAgent: Agent {
+        agentManager.agent(for: agent.id) ?? agent
     }
 
-    /// Schedules linked to this persona
+    /// Schedules linked to this agent
     private var linkedSchedules: [Schedule] {
-        scheduleManager.schedules.filter { $0.personaId == persona.id }
+        scheduleManager.schedules.filter { $0.agentId == agent.id }
     }
 
-    /// Chat sessions for this persona
+    /// Chat sessions for this agent
     private var chatSessions: [ChatSessionData] {
-        ChatSessionsManager.shared.sessions(for: persona.id)
+        ChatSessionsManager.shared.sessions(for: agent.id)
     }
 
-    /// Tasks for this persona
-    private var agentTasks: [AgentTask] {
-        (try? IssueStore.listTasks(personaId: persona.id)) ?? []
+    /// Tasks for this agent
+    private var workTasks: [WorkTask] {
+        (try? IssueStore.listTasks(agentId: agent.id)) ?? []
     }
 
-    private var personaColor: Color { personaColorFor(name) }
+    private var agentColor: Color { agentColorFor(name) }
 
-    /// Resolved enabled tool count using PersonaManager's effective overrides
+    /// Resolved enabled tool count using AgentManager's effective overrides
     private var resolvedEnabledToolCount: Int {
-        let overrides = personaManager.effectiveToolOverrides(for: persona.id)
+        let overrides = agentManager.effectiveToolOverrides(for: agent.id)
         let tools = ToolRegistry.shared.listUserTools(withOverrides: overrides, excludeInternal: true)
         return tools.filter { $0.enabled }.count
     }
 
-    /// Resolved enabled skill count using PersonaManager's effective overrides
+    /// Resolved enabled skill count using AgentManager's effective overrides
     private var resolvedEnabledSkillCount: Int {
         let skills = SkillManager.shared.skills
         return skills.filter { skill in
-            if let overrides = personaManager.effectiveSkillOverrides(for: persona.id),
+            if let overrides = agentManager.effectiveSkillOverrides(for: agent.id),
                 let value = overrides[skill.name]
             {
                 return value
@@ -702,8 +702,8 @@ private struct PersonaDetailView: View {
         .opacity(hasAppeared ? 1 : 0)
         .animation(.easeOut(duration: 0.2), value: hasAppeared)
         .onAppear {
-            loadPersonaData()
-            selectedModel = currentPersona.defaultModel
+            loadAgentData()
+            selectedModel = currentAgent.defaultModel
             loadModelOptions()
             // Defer the flag so initial .onChange triggers are ignored
             DispatchQueue.main.async {
@@ -712,10 +712,10 @@ private struct PersonaDetailView: View {
             withAnimation { hasAppeared = true }
         }
         .themedAlert(
-            "Delete Persona",
+            "Delete Agent",
             isPresented: $showDeleteConfirm,
-            message: "Are you sure you want to delete \"\(currentPersona.name)\"? This action cannot be undone.",
-            primaryButton: .destructive("Delete") { onDelete(currentPersona) },
+            message: "Are you sure you want to delete \"\(currentAgent.name)\"? This action cannot be undone.",
+            primaryButton: .destructive("Delete") { onDelete(currentAgent) },
             secondaryButton: .cancel("Cancel")
         )
         .sheet(isPresented: $showCreateSchedule) {
@@ -725,7 +725,7 @@ private struct PersonaDetailView: View {
                     ScheduleManager.shared.create(
                         name: schedule.name,
                         instructions: schedule.instructions,
-                        personaId: schedule.personaId,
+                        agentId: schedule.agentId,
                         frequency: schedule.frequency,
                         isEnabled: schedule.isEnabled
                     )
@@ -733,7 +733,7 @@ private struct PersonaDetailView: View {
                     showSuccess("Created schedule \"\(schedule.name)\"")
                 },
                 onCancel: { showCreateSchedule = false },
-                initialPersonaId: persona.id
+                initialAgentId: agent.id
             )
             .environment(\.theme, themeManager.currentTheme)
         }
@@ -747,7 +747,7 @@ private struct PersonaDetailView: View {
                 HStack(spacing: 6) {
                     Image(systemName: "chevron.left")
                         .font(.system(size: 12, weight: .semibold))
-                    Text("Personas")
+                    Text("Agents")
                         .font(.system(size: 13, weight: .medium))
                 }
                 .foregroundColor(theme.accentColor)
@@ -769,7 +769,7 @@ private struct PersonaDetailView: View {
 
             HStack(spacing: 6) {
                 Button {
-                    onExport(currentPersona)
+                    onExport(currentAgent)
                 } label: {
                     Image(systemName: "square.and.arrow.up")
                         .font(.system(size: 11, weight: .medium))
@@ -814,22 +814,22 @@ private struct PersonaDetailView: View {
                 Circle()
                     .fill(
                         LinearGradient(
-                            colors: [personaColor.opacity(0.2), personaColor.opacity(0.05)],
+                            colors: [agentColor.opacity(0.2), agentColor.opacity(0.05)],
                             startPoint: .topLeading,
                             endPoint: .bottomTrailing
                         )
                     )
                 Circle()
-                    .strokeBorder(personaColor.opacity(0.5), lineWidth: 2.5)
+                    .strokeBorder(agentColor.opacity(0.5), lineWidth: 2.5)
                 Text(name.isEmpty ? "?" : name.prefix(1).uppercased())
                     .font(.system(size: 28, weight: .bold, design: .rounded))
-                    .foregroundColor(personaColor)
+                    .foregroundColor(agentColor)
             }
             .frame(width: 72, height: 72)
             .animation(.spring(response: 0.3), value: name)
 
             VStack(alignment: .leading, spacing: 6) {
-                Text(name.isEmpty ? "Untitled Persona" : name)
+                Text(name.isEmpty ? "Untitled Agent" : name)
                     .font(.system(size: 22, weight: .bold))
                     .foregroundColor(theme.primaryText)
 
@@ -858,7 +858,7 @@ private struct PersonaDetailView: View {
                     }
                     statBadge(
                         icon: "calendar",
-                        text: "Created \(persona.createdAt.formatted(date: .abbreviated, time: .omitted))",
+                        text: "Created \(agent.createdAt.formatted(date: .abbreviated, time: .omitted))",
                         color: theme.tertiaryText
                     )
                 }
@@ -883,23 +883,23 @@ private struct PersonaDetailView: View {
     // MARK: - Identity Section
 
     private var identitySection: some View {
-        PersonaDetailSection(title: "Identity", icon: "person.circle.fill") {
+        AgentDetailSection(title: "Identity", icon: "person.circle.fill") {
             VStack(spacing: 16) {
                 HStack(spacing: 16) {
                     ZStack {
                         Circle()
                             .fill(
                                 LinearGradient(
-                                    colors: [personaColor.opacity(0.2), personaColor.opacity(0.05)],
+                                    colors: [agentColor.opacity(0.2), agentColor.opacity(0.05)],
                                     startPoint: .topLeading,
                                     endPoint: .bottomTrailing
                                 )
                             )
                         Circle()
-                            .strokeBorder(personaColor.opacity(0.5), lineWidth: 2)
+                            .strokeBorder(agentColor.opacity(0.5), lineWidth: 2)
                         Text(name.isEmpty ? "?" : name.prefix(1).uppercased())
                             .font(.system(size: 20, weight: .bold, design: .rounded))
-                            .foregroundColor(personaColor)
+                            .foregroundColor(agentColor)
                     }
                     .frame(width: 52, height: 52)
                     .animation(.spring(response: 0.3), value: name)
@@ -927,11 +927,11 @@ private struct PersonaDetailView: View {
     // MARK: - System Prompt Section
 
     private var systemPromptSection: some View {
-        PersonaDetailSection(title: "System Prompt", icon: "brain") {
+        AgentDetailSection(title: "System Prompt", icon: "brain") {
             VStack(alignment: .leading, spacing: 8) {
                 ZStack(alignment: .topLeading) {
                     if systemPrompt.isEmpty {
-                        Text("Enter instructions for this persona...")
+                        Text("Enter instructions for this agent...")
                             .font(.system(size: 13, design: .monospaced))
                             .foregroundColor(theme.placeholderText)
                             .padding(.top, 12)
@@ -955,7 +955,7 @@ private struct PersonaDetailView: View {
                         )
                 )
 
-                Text("Instructions that define this persona's behavior. Leave empty to use global settings.")
+                Text("Instructions that define this agent's behavior. Leave empty to use global settings.")
                     .font(.system(size: 11))
                     .foregroundColor(theme.tertiaryText)
             }
@@ -966,7 +966,7 @@ private struct PersonaDetailView: View {
     // MARK: - Generation Section
 
     private var generationSection: some View {
-        PersonaDetailSection(title: "Generation", icon: "cpu") {
+        AgentDetailSection(title: "Generation", icon: "cpu") {
             VStack(spacing: 16) {
                 // Model selector
                 VStack(alignment: .leading, spacing: 6) {
@@ -1012,11 +1012,11 @@ private struct PersonaDetailView: View {
                                 get: { selectedModel },
                                 set: { newModel in
                                     selectedModel = newModel
-                                    personaManager.updateDefaultModel(for: persona.id, model: newModel)
+                                    agentManager.updateDefaultModel(for: agent.id, model: newModel)
                                     showSaveIndicator()
                                 }
                             ),
-                            personaId: persona.id,
+                            agentId: agent.id,
                             onDismiss: { showModelPicker = false }
                         )
                     }
@@ -1024,7 +1024,7 @@ private struct PersonaDetailView: View {
                     if selectedModel != nil {
                         Button {
                             selectedModel = nil
-                            personaManager.updateDefaultModel(for: persona.id, model: nil)
+                            agentManager.updateDefaultModel(for: agent.id, model: nil)
                             showSaveIndicator()
                         } label: {
                             HStack(spacing: 4) {
@@ -1069,12 +1069,12 @@ private struct PersonaDetailView: View {
     // MARK: - Abilities Section
 
     private var capabilitiesSection: some View {
-        PersonaDetailSection(
+        AgentDetailSection(
             title: "Abilities",
             icon: "wrench.and.screwdriver",
             subtitle: "\(resolvedEnabledToolCount + resolvedEnabledSkillCount) enabled"
         ) {
-            CapabilitiesSelectorView(personaId: persona.id, isInline: true)
+            CapabilitiesSelectorView(agentId: agent.id, isInline: true)
                 .background(
                     RoundedRectangle(cornerRadius: 10)
                         .fill(theme.inputBackground)
@@ -1090,11 +1090,11 @@ private struct PersonaDetailView: View {
     // MARK: - Theme Section
 
     private var themeSection: some View {
-        PersonaDetailSection(title: "Visual Theme", icon: "paintpalette.fill") {
+        AgentDetailSection(title: "Visual Theme", icon: "paintpalette.fill") {
             VStack(alignment: .leading, spacing: 12) {
                 themePickerGrid
 
-                Text("Optionally assign a visual theme to this persona.")
+                Text("Optionally assign a visual theme to this agent.")
                     .font(.system(size: 11))
                     .foregroundColor(theme.tertiaryText)
             }
@@ -1109,7 +1109,7 @@ private struct PersonaDetailView: View {
                 colors: [theme.accentColor, theme.primaryBackground, theme.successColor],
                 isSelected: selectedThemeId == nil,
                 onSelect: {
-                    selectedThemeId = nil; savePersona()
+                    selectedThemeId = nil; saveAgent()
                 }
             )
 
@@ -1123,7 +1123,7 @@ private struct PersonaDetailView: View {
                     ],
                     isSelected: selectedThemeId == customTheme.metadata.id,
                     onSelect: {
-                        selectedThemeId = customTheme.metadata.id; savePersona()
+                        selectedThemeId = customTheme.metadata.id; saveAgent()
                     }
                 )
             }
@@ -1133,7 +1133,7 @@ private struct PersonaDetailView: View {
     // MARK: - Schedules Section
 
     private var schedulesSection: some View {
-        PersonaDetailSection(
+        AgentDetailSection(
             title: "Schedules",
             icon: "clock.fill",
             subtitle: linkedSchedules.isEmpty ? "None" : "\(linkedSchedules.count)"
@@ -1144,7 +1144,7 @@ private struct PersonaDetailView: View {
                         Image(systemName: "clock.badge.questionmark")
                             .font(.system(size: 24))
                             .foregroundColor(theme.tertiaryText)
-                        Text("No schedules linked to this persona")
+                        Text("No schedules linked to this agent")
                             .font(.system(size: 12))
                             .foregroundColor(theme.secondaryText)
                     }
@@ -1220,11 +1220,11 @@ private struct PersonaDetailView: View {
     // MARK: - History Section
 
     private var historySection: some View {
-        PersonaDetailSection(
+        AgentDetailSection(
             title: "History",
             icon: "clock.arrow.circlepath",
             subtitle:
-                "\(chatSessions.count) chat\(chatSessions.count == 1 ? "" : "s"), \(agentTasks.count) task\(agentTasks.count == 1 ? "" : "s")"
+                "\(chatSessions.count) chat\(chatSessions.count == 1 ? "" : "s"), \(workTasks.count) task\(workTasks.count == 1 ? "" : "s")"
         ) {
             VStack(alignment: .leading, spacing: 16) {
                 // Chat sessions
@@ -1241,7 +1241,7 @@ private struct PersonaDetailView: View {
                         }
                         Spacer()
                         Button {
-                            ChatWindowManager.shared.createWindow(personaId: persona.id)
+                            ChatWindowManager.shared.createWindow(agentId: agent.id)
                         } label: {
                             HStack(spacing: 3) {
                                 Image(systemName: "plus")
@@ -1263,7 +1263,7 @@ private struct PersonaDetailView: View {
                         ForEach(chatSessions.prefix(5)) { session in
                             ClickableHistoryRow {
                                 ChatWindowManager.shared.createWindow(
-                                    personaId: persona.id,
+                                    agentId: agent.id,
                                     sessionData: session
                                 )
                             } content: {
@@ -1303,7 +1303,7 @@ private struct PersonaDetailView: View {
                     .fill(theme.primaryBorder)
                     .frame(height: 1)
 
-                // Agent tasks
+                // Work tasks
                 VStack(alignment: .leading, spacing: 8) {
                     HStack(spacing: 6) {
                         Image(systemName: "checklist")
@@ -1315,13 +1315,13 @@ private struct PersonaDetailView: View {
                             .tracking(0.3)
                     }
 
-                    if agentTasks.isEmpty {
-                        Text("No agent tasks yet")
+                    if workTasks.isEmpty {
+                        Text("No work tasks yet")
                             .font(.system(size: 12))
                             .foregroundColor(theme.tertiaryText)
                             .padding(.vertical, 8)
                     } else {
-                        ForEach(agentTasks.prefix(5)) { task in
+                        ForEach(workTasks.prefix(5)) { task in
                             HStack(spacing: 10) {
                                 Circle()
                                     .fill(taskStatusColor(task.status))
@@ -1349,8 +1349,8 @@ private struct PersonaDetailView: View {
                                     .fill(theme.inputBackground.opacity(0.5))
                             )
                         }
-                        if agentTasks.count > 5 {
-                            Text("and \(agentTasks.count - 5) more...")
+                        if workTasks.count > 5 {
+                            Text("and \(workTasks.count - 5) more...")
                                 .font(.system(size: 11))
                                 .foregroundColor(theme.tertiaryText)
                                 .padding(.leading, 4)
@@ -1361,7 +1361,7 @@ private struct PersonaDetailView: View {
         }
     }
 
-    private func taskStatusColor(_ status: AgentTaskStatus) -> Color {
+    private func taskStatusColor(_ status: WorkTaskStatus) -> Color {
         switch status {
         case .active: return theme.accentColor
         case .completed: return theme.successColor
@@ -1371,13 +1371,13 @@ private struct PersonaDetailView: View {
 
     // MARK: - Data Loading
 
-    private func loadPersonaData() {
-        name = persona.name
-        description = persona.description
-        systemPrompt = persona.systemPrompt
-        temperature = persona.temperature.map { String($0) } ?? ""
-        maxTokens = persona.maxTokens.map { String($0) } ?? ""
-        selectedThemeId = persona.themeId
+    private func loadAgentData() {
+        name = agent.name
+        description = agent.description
+        systemPrompt = agent.systemPrompt
+        temperature = agent.temperature.map { String($0) } ?? ""
+        maxTokens = agent.maxTokens.map { String($0) } ?? ""
+        selectedThemeId = agent.themeId
     }
 
     private func loadModelOptions() {
@@ -1424,19 +1424,19 @@ private struct PersonaDetailView: View {
         saveDebounceTask = Task {
             try? await Task.sleep(nanoseconds: 500_000_000)
             guard !Task.isCancelled else { return }
-            savePersona()
+            saveAgent()
         }
     }
 
-    private func savePersona() {
+    private func saveAgent() {
         let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedName.isEmpty else { return }
 
         // Preserve existing tool/skill overrides managed by CapabilitiesSelectorView
-        let current = currentPersona
+        let current = currentAgent
 
-        let updated = Persona(
-            id: persona.id,
+        let updated = Agent(
+            id: agent.id,
             name: trimmedName,
             description: description.trimmingCharacters(in: .whitespacesAndNewlines),
             systemPrompt: systemPrompt.trimmingCharacters(in: .whitespacesAndNewlines),
@@ -1447,11 +1447,11 @@ private struct PersonaDetailView: View {
             temperature: Float(temperature),
             maxTokens: Int(maxTokens),
             isBuiltIn: false,
-            createdAt: persona.createdAt,
+            createdAt: agent.createdAt,
             updatedAt: Date()
         )
 
-        personaManager.update(updated)
+        agentManager.update(updated)
         showSaveIndicator()
     }
 
@@ -1502,7 +1502,7 @@ private struct ClickableHistoryRow<Content: View>: View {
 
 // MARK: - Detail Section Component
 
-private struct PersonaDetailSection<Content: View>: View {
+private struct AgentDetailSection<Content: View>: View {
     @Environment(\.theme) private var theme
 
     let title: String
@@ -1551,14 +1551,14 @@ private struct PersonaDetailSection<Content: View>: View {
     }
 }
 
-// MARK: - Persona Editor Sheet
+// MARK: - Agent Editor Sheet
 
-private struct PersonaEditorSheet: View {
+private struct AgentEditorSheet: View {
     @ObservedObject private var themeManager = ThemeManager.shared
 
     private var theme: ThemeProtocol { themeManager.currentTheme }
 
-    let onSave: (Persona) -> Void
+    let onSave: (Agent) -> Void
     let onCancel: () -> Void
 
     @State private var name: String = ""
@@ -1569,7 +1569,7 @@ private struct PersonaEditorSheet: View {
     @State private var selectedThemeId: UUID?
     @State private var hasAppeared = false
 
-    private var personaColor: Color { personaColorFor(name) }
+    private var agentColor: Color { agentColorFor(name) }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -1587,16 +1587,16 @@ private struct PersonaEditorSheet: View {
                                     Circle()
                                         .fill(
                                             LinearGradient(
-                                                colors: [personaColor.opacity(0.2), personaColor.opacity(0.05)],
+                                                colors: [agentColor.opacity(0.2), agentColor.opacity(0.05)],
                                                 startPoint: .topLeading,
                                                 endPoint: .bottomTrailing
                                             )
                                         )
                                     Circle()
-                                        .strokeBorder(personaColor.opacity(0.5), lineWidth: 2)
+                                        .strokeBorder(agentColor.opacity(0.5), lineWidth: 2)
                                     Text(name.isEmpty ? "?" : name.prefix(1).uppercased())
                                         .font(.system(size: 20, weight: .bold, design: .rounded))
-                                        .foregroundColor(personaColor)
+                                        .foregroundColor(agentColor)
                                 }
                                 .frame(width: 52, height: 52)
                                 .animation(.spring(response: 0.3), value: name)
@@ -1623,7 +1623,7 @@ private struct PersonaEditorSheet: View {
                         VStack(alignment: .leading, spacing: 8) {
                             ZStack(alignment: .topLeading) {
                                 if systemPrompt.isEmpty {
-                                    Text("Enter instructions for this persona...")
+                                    Text("Enter instructions for this agent...")
                                         .font(.system(size: 13, design: .monospaced))
                                         .foregroundColor(theme.placeholderText)
                                         .padding(.top, 12)
@@ -1648,7 +1648,7 @@ private struct PersonaEditorSheet: View {
                             )
 
                             Text(
-                                "Instructions that define this persona's behavior. Leave empty to use global settings."
+                                "Instructions that define this agent's behavior. Leave empty to use global settings."
                             )
                             .font(.system(size: 11))
                             .foregroundColor(theme.tertiaryText)
@@ -1715,7 +1715,7 @@ private struct PersonaEditorSheet: View {
                                 }
                             }
 
-                            Text("Optionally assign a visual theme to this persona.")
+                            Text("Optionally assign a visual theme to this agent.")
                                 .font(.system(size: 11))
                                 .foregroundColor(theme.tertiaryText)
                         }
@@ -1767,7 +1767,7 @@ private struct PersonaEditorSheet: View {
             .frame(width: 40, height: 40)
 
             VStack(alignment: .leading, spacing: 2) {
-                Text("Create Persona")
+                Text("Create Agent")
                     .font(.system(size: 16, weight: .semibold))
                     .foregroundColor(theme.primaryText)
 
@@ -1825,8 +1825,8 @@ private struct PersonaEditorSheet: View {
             Button("Cancel", action: onCancel)
                 .buttonStyle(SecondaryButtonStyle())
 
-            Button("Create Persona") {
-                savePersona()
+            Button("Create Agent") {
+                saveAgent()
             }
             .buttonStyle(PrimaryButtonStyle())
             .disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
@@ -1845,11 +1845,11 @@ private struct PersonaEditorSheet: View {
         )
     }
 
-    private func savePersona() {
+    private func saveAgent() {
         let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedName.isEmpty else { return }
 
-        let persona = Persona(
+        let agent = Agent(
             id: UUID(),
             name: trimmedName,
             description: description.trimmingCharacters(in: .whitespacesAndNewlines),
@@ -1865,7 +1865,7 @@ private struct PersonaEditorSheet: View {
             updatedAt: Date()
         )
 
-        onSave(persona)
+        onSave(agent)
     }
 }
 
@@ -2060,5 +2060,5 @@ private struct SecondaryButtonStyle: ButtonStyle {
 }
 
 #Preview {
-    PersonasView()
+    AgentsView()
 }

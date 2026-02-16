@@ -245,7 +245,7 @@ public enum ScheduleFrequencyType: String, CaseIterable, Sendable {
 
 // MARK: - Schedule Model
 
-/// A scheduled task that runs AI chat or agent interactions at specified intervals
+/// A scheduled task that runs AI chat or work interactions at specified intervals
 public struct Schedule: Codable, Identifiable, Sendable, Equatable {
     /// Unique identifier for the schedule
     public let id: UUID
@@ -253,15 +253,15 @@ public struct Schedule: Codable, Identifiable, Sendable, Equatable {
     public var name: String
     /// Instructions to send to the AI when the schedule runs
     public var instructions: String
-    /// The persona to use for the chat (nil = default persona)
-    public var personaId: UUID?
-    /// Execution mode: chat (conversational) or agent (task execution)
+    /// The agent to use for the chat (nil = default agent)
+    public var agentId: UUID?
+    /// Execution mode: chat (conversational) or work (task execution)
     public var mode: ChatMode
     /// Extra parameters for future extensibility
     public var parameters: [String: String]
-    /// Agent working directory path (for display)
+    /// Work working directory path (for display)
     public var folderPath: String?
-    /// Security-scoped bookmark for the agent working directory
+    /// Security-scoped bookmark for the work mode working directory
     public var folderBookmark: Data?
     /// When and how often to run
     public var frequency: ScheduleFrequency
@@ -280,7 +280,7 @@ public struct Schedule: Codable, Identifiable, Sendable, Equatable {
         id: UUID = UUID(),
         name: String,
         instructions: String,
-        personaId: UUID? = nil,
+        agentId: UUID? = nil,
         mode: ChatMode = .chat,
         parameters: [String: String] = [:],
         folderPath: String? = nil,
@@ -295,7 +295,7 @@ public struct Schedule: Codable, Identifiable, Sendable, Equatable {
         self.id = id
         self.name = name
         self.instructions = instructions
-        self.personaId = personaId
+        self.agentId = agentId
         self.mode = mode
         self.parameters = parameters
         self.folderPath = folderPath
@@ -311,7 +311,8 @@ public struct Schedule: Codable, Identifiable, Sendable, Equatable {
     // MARK: - Backward-Compatible Decoding
 
     private enum CodingKeys: String, CodingKey {
-        case id, name, instructions, personaId, mode, parameters
+        case id, name, instructions, agentId, mode, parameters
+        case personaId  // legacy key for migration
         case folderPath, folderBookmark
         case frequency, isEnabled, lastRunAt, lastChatSessionId
         case createdAt, updatedAt
@@ -322,7 +323,9 @@ public struct Schedule: Codable, Identifiable, Sendable, Equatable {
         id = try container.decode(UUID.self, forKey: .id)
         name = try container.decode(String.self, forKey: .name)
         instructions = try container.decode(String.self, forKey: .instructions)
-        personaId = try container.decodeIfPresent(UUID.self, forKey: .personaId)
+        agentId =
+            try container.decodeIfPresent(UUID.self, forKey: .agentId)
+            ?? container.decodeIfPresent(UUID.self, forKey: .personaId)
         mode = try container.decodeIfPresent(ChatMode.self, forKey: .mode) ?? .chat
         parameters = try container.decodeIfPresent([String: String].self, forKey: .parameters) ?? [:]
         folderPath = try container.decodeIfPresent(String.self, forKey: .folderPath)
@@ -333,6 +336,24 @@ public struct Schedule: Codable, Identifiable, Sendable, Equatable {
         lastChatSessionId = try container.decodeIfPresent(UUID.self, forKey: .lastChatSessionId)
         createdAt = try container.decode(Date.self, forKey: .createdAt)
         updatedAt = try container.decode(Date.self, forKey: .updatedAt)
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(id, forKey: .id)
+        try container.encode(name, forKey: .name)
+        try container.encode(instructions, forKey: .instructions)
+        try container.encodeIfPresent(agentId, forKey: .agentId)
+        try container.encode(mode, forKey: .mode)
+        try container.encode(parameters, forKey: .parameters)
+        try container.encodeIfPresent(folderPath, forKey: .folderPath)
+        try container.encodeIfPresent(folderBookmark, forKey: .folderBookmark)
+        try container.encode(frequency, forKey: .frequency)
+        try container.encode(isEnabled, forKey: .isEnabled)
+        try container.encodeIfPresent(lastRunAt, forKey: .lastRunAt)
+        try container.encodeIfPresent(lastChatSessionId, forKey: .lastChatSessionId)
+        try container.encode(createdAt, forKey: .createdAt)
+        try container.encode(updatedAt, forKey: .updatedAt)
     }
 
     // MARK: - Computed Properties
@@ -405,7 +426,7 @@ public struct ScheduleRunInfo: Identifiable, Sendable {
     public let id: UUID
     public let scheduleId: UUID
     public let scheduleName: String
-    public let personaId: UUID?
+    public let agentId: UUID?
     public var chatSessionId: UUID
     public let startedAt: Date
 
@@ -413,14 +434,14 @@ public struct ScheduleRunInfo: Identifiable, Sendable {
         id: UUID = UUID(),
         scheduleId: UUID,
         scheduleName: String,
-        personaId: UUID?,
+        agentId: UUID?,
         chatSessionId: UUID,
         startedAt: Date = Date()
     ) {
         self.id = id
         self.scheduleId = scheduleId
         self.scheduleName = scheduleName
-        self.personaId = personaId
+        self.agentId = agentId
         self.chatSessionId = chatSessionId
         self.startedAt = startedAt
     }

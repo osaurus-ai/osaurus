@@ -3,14 +3,14 @@
 //  osaurus
 //
 //  Toast view for background tasks with support for running,
-//  clarification, and completed states. Supports both chat and agent modes.
+//  clarification, and completed states. Supports both chat and work modes.
 //
 
 import SwiftUI
 
 // MARK: - Background Task Toast View
 
-/// A toast notification for background tasks (chat and agent)
+/// A toast notification for background tasks (chat and work)
 struct BackgroundTaskToastView: View {
     @Environment(\.theme) private var theme
     @ObservedObject var taskState: BackgroundTaskState
@@ -120,14 +120,14 @@ struct BackgroundTaskToastView: View {
     @ViewBuilder
     private var runningContent: some View {
         switch taskState.mode {
-        case .agent:
+        case .work:
             agentRunningContent
         case .chat:
             chatRunningContent
         }
     }
 
-    /// Agent running: rich content with step counter, progress, and activity feed
+    /// Work running: rich content with step counter, progress, and activity feed
     private var agentRunningContent: some View {
         VStack(alignment: .leading, spacing: 10) {
             runningHeaderRow

@@ -29,7 +29,7 @@ final class BlockMemoizer {
     func blocks(
         from turns: [ChatTurn],
         streamingTurnId: UUID?,
-        personaName: String,
+        agentName: String,
         version: Int = 0
     ) -> [ContentBlock] {
         let count = turns.count
@@ -65,7 +65,7 @@ final class BlockMemoizer {
                 at: count - 1,
                 in: turns,
                 streamingTurnId: streamingTurnId,
-                personaName: personaName
+                agentName: agentName
             )
         } else if canAppend {
             // Regenerate from the previous last turn onwards — it may have been
@@ -74,14 +74,14 @@ final class BlockMemoizer {
                 at: lastCount - 1,
                 in: turns,
                 streamingTurnId: streamingTurnId,
-                personaName: personaName
+                agentName: agentName
             )
         } else {
             // Full rebuild (first load, reset, or structural change)
             blocks = ContentBlock.generateBlocks(
                 from: turns,
                 streamingTurnId: streamingTurnId,
-                personaName: personaName
+                agentName: agentName
             )
         }
 
@@ -107,7 +107,7 @@ final class BlockMemoizer {
         at turnIndex: Int,
         in turns: [ChatTurn],
         streamingTurnId: UUID?,
-        personaName: String
+        agentName: String
     ) -> [ContentBlock] {
         let turnId = turns[turnIndex].id
 
@@ -117,7 +117,7 @@ final class BlockMemoizer {
             return ContentBlock.generateBlocks(
                 from: turns,
                 streamingTurnId: streamingTurnId,
-                personaName: personaName
+                agentName: agentName
             )
         }
 
@@ -132,7 +132,7 @@ final class BlockMemoizer {
         let freshBlocks = ContentBlock.generateBlocks(
             from: turnsToGenerate,
             streamingTurnId: streamingTurnId,
-            personaName: personaName,
+            agentName: agentName,
             previousTurn: previousTurn
         )
 

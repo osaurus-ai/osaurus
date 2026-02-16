@@ -51,7 +51,7 @@ final class MessageCellView: NSTableCellView {
     func configure(
         block: ContentBlock,
         width: CGFloat,
-        personaName: String,
+        agentName: String,
         isTurnHovered: Bool,
         theme: ThemeProtocol,
         expandedBlocksStore: ExpandedBlocksStore,
@@ -69,7 +69,7 @@ final class MessageCellView: NSTableCellView {
         let contentView = ContentBlockView(
             block: block,
             width: width,
-            personaName: personaName,
+            agentName: agentName,
             isTurnHovered: isTurnHovered,
             onCopy: onCopy,
             onRegenerate: onRegenerate,

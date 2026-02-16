@@ -16,10 +16,10 @@ import SwiftUI
 public enum ManagementTab: String, CaseIterable, Identifiable {
     case models
     case providers
+    case agents
     case plugins
     case tools
     case skills
-    case personas
     case schedules
     case watchers
     case voice
@@ -35,10 +35,10 @@ public enum ManagementTab: String, CaseIterable, Identifiable {
         switch self {
         case .models: "cube.box.fill"
         case .providers: "cloud.fill"
+        case .agents: "person.2.fill"
         case .plugins: "puzzlepiece.extension.fill"
         case .tools: "wrench.and.screwdriver.fill"
         case .skills: "sparkles"
-        case .personas: "person.2.fill"
         case .schedules: "calendar.badge.clock"
         case .watchers: "eye.fill"
         case .voice: "waveform"
@@ -54,10 +54,10 @@ public enum ManagementTab: String, CaseIterable, Identifiable {
         switch self {
         case .models: "Models"
         case .providers: "Providers"
+        case .agents: "Agents"
         case .plugins: "Plugins"
         case .tools: "Tools"
         case .skills: "Skills"
-        case .personas: "Personas"
         case .schedules: "Schedules"
         case .watchers: "Watchers"
         case .voice: "Voice"
@@ -90,7 +90,7 @@ struct ManagementView: View {
     @ObservedObject private var themeManager = ThemeManager.shared
     @ObservedObject private var repoService = PluginRepositoryService.shared
     @ObservedObject private var remoteProviderManager = RemoteProviderManager.shared
-    @ObservedObject private var personaManager = PersonaManager.shared
+    @ObservedObject private var agentManager = AgentManager.shared
     @ObservedObject private var skillManager = SkillManager.shared
     @ObservedObject private var scheduleManager = ScheduleManager.shared
     @ObservedObject private var watcherManager = WatcherManager.shared
@@ -188,14 +188,14 @@ private extension ManagementView {
             )
         case .providers:
             RemoteProvidersView()
+        case .agents:
+            AgentsView()
         case .plugins:
             PluginsView()
         case .tools:
             ToolsManagerView()
         case .skills:
             SkillsView()
-        case .personas:
-            PersonasView()
         case .schedules:
             SchedulesView()
         case .watchers:
@@ -244,8 +244,8 @@ private extension ManagementView {
             count = ToolRegistry.shared.listTools().count
         case .skills:
             count = skillManager.skills.count
-        case .personas:
-            count = personaManager.personas.filter { !$0.isBuiltIn }.count
+        case .agents:
+            count = agentManager.agents.filter { !$0.isBuiltIn }.count
         case .schedules:
             count = scheduleManager.schedules.count
         case .watchers:

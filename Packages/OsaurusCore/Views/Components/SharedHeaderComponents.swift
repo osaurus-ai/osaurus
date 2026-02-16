@@ -2,7 +2,7 @@
 //  SharedHeaderComponents.swift
 //  osaurus
 //
-//  Shared header components used by both ChatView and AgentView.
+//  Shared header components used by both ChatView and WorkView.
 //  Ensures consistent styling and behavior across modes.
 //
 
@@ -41,9 +41,9 @@ struct HeaderActionButton: View {
 
 // MARK: - Mode Toggle Button
 
-/// Segmented toggle for switching between Chat and Agent modes with sliding indicator.
+/// Segmented toggle for switching between Chat and Work modes with sliding indicator.
 struct ModeToggleButton: View {
-    enum Mode { case chat, agent }
+    enum Mode { case chat, work }
 
     let currentMode: Mode
     var isDisabled: Bool = false
@@ -57,7 +57,7 @@ struct ModeToggleButton: View {
         Button(action: action) {
             HStack(spacing: 0) {
                 segment(icon: "bubble.left.and.bubble.right", label: "Chat", isSelected: currentMode == .chat)
-                segment(icon: "bolt.fill", label: "Agent", isSelected: currentMode == .agent)
+                segment(icon: "bolt.fill", label: "Work", isSelected: currentMode == .work)
             }
             .padding(.horizontal, 6)
             .padding(.vertical, 2)
@@ -68,8 +68,8 @@ struct ModeToggleButton: View {
         .disabled(isDisabled)
         .help(
             isDisabled
-                ? "Set up a model to use Agent mode"
-                : (currentMode == .chat ? "Switch to Agent mode" : "Switch to Chat mode")
+                ? "Set up a model to use Work mode"
+                : (currentMode == .chat ? "Switch to Work mode" : "Switch to Chat mode")
         )
     }
 
@@ -79,6 +79,7 @@ struct ModeToggleButton: View {
             Image(systemName: icon).font(.system(size: 10, weight: .semibold))
             Text(label).font(.system(size: 11, weight: .semibold))
         }
+        .fixedSize()
         .foregroundColor(isSelected ? theme.primaryText : theme.tertiaryText)
         .padding(.horizontal, 14)
         .padding(.vertical, 5)
@@ -96,11 +97,11 @@ struct ModeToggleButton: View {
 
 // MARK: - Mode Indicator Badge
 
-/// A badge showing the current mode (model name for chat, "Agent Mode" for agent).
+/// A badge showing the current mode (model name for chat, "Work Mode" for work).
 struct ModeIndicatorBadge: View {
     enum Style {
         case model(name: String)
-        case agent
+        case work
     }
 
     let style: Style
@@ -117,10 +118,10 @@ struct ModeIndicatorBadge: View {
                 Text(name)
                     .font(.system(size: 12, weight: .medium))
                     .foregroundColor(theme.secondaryText)
-            case .agent:
+            case .work:
                 Image(systemName: "bolt.circle.fill")
                     .foregroundColor(.orange)
-                Text("Agent Mode")
+                Text("Work Mode")
                     .font(.system(size: 12, weight: .medium))
                     .foregroundColor(theme.secondaryText)
             }
@@ -139,7 +140,7 @@ extension ModeIndicatorBadge.Style {
         switch self {
         case .model:
             return .green
-        case .agent:
+        case .work:
             return .orange
         }
     }
@@ -215,29 +216,29 @@ struct PinButton: View {
     }
 }
 
-// MARK: - Persona Pill
+// MARK: - Agent Pill
 
-/// A capsule-shaped persona selector pill used in empty states.
-/// Provides a dropdown menu to switch between personas.
-struct PersonaPill: View {
-    let personas: [Persona]
-    let activePersonaId: UUID
-    let onSelectPersona: (UUID) -> Void
+/// A capsule-shaped agent selector pill used in empty states.
+/// Provides a dropdown menu to switch between agents.
+struct AgentPill: View {
+    let agents: [Agent]
+    let activeAgentId: UUID
+    let onSelectAgent: (UUID) -> Void
 
     @State private var isHovered = false
     @Environment(\.theme) private var theme
 
-    private var activePersona: Persona {
-        personas.first { $0.id == activePersonaId } ?? Persona.default
+    private var activeAgent: Agent {
+        agents.first { $0.id == activeAgentId } ?? Agent.default
     }
 
     var body: some View {
         Menu {
-            ForEach(personas) { persona in
-                Button(action: { onSelectPersona(persona.id) }) {
+            ForEach(agents) { agent in
+                Button(action: { onSelectAgent(agent.id) }) {
                     HStack {
-                        Text(persona.name)
-                        if persona.id == activePersonaId {
+                        Text(agent.name)
+                        if agent.id == activeAgentId {
                             Spacer()
                             Image(systemName: "checkmark")
                                 .font(.system(size: 12, weight: .medium))
@@ -249,9 +250,9 @@ struct PersonaPill: View {
             Divider()
 
             Button(action: {
-                AppDelegate.shared?.showManagementWindow(initialTab: .personas)
+                AppDelegate.shared?.showManagementWindow(initialTab: .agents)
             }) {
-                Label("Manage Personas...", systemImage: "person.2.badge.gearshape")
+                Label("Manage Agents...", systemImage: "person.2.badge.gearshape")
             }
         } label: {
             HStack(spacing: 6) {
@@ -259,7 +260,7 @@ struct PersonaPill: View {
                     .font(.system(size: 12, weight: .medium))
                     .foregroundColor(isHovered ? theme.accentColor : theme.secondaryText)
 
-                Text(activePersona.name)
+                Text(activeAgent.name)
                     .font(theme.font(size: CGFloat(theme.bodySize), weight: .medium))
                     .foregroundColor(theme.primaryText)
 

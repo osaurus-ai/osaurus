@@ -38,7 +38,7 @@ enum ChatSessionStore {
                         updatedAt: metadata.updatedAt,
                         selectedModel: metadata.selectedModel,
                         turns: [],
-                        personaId: metadata.personaId
+                        agentId: metadata.agentId
                     )
                 } catch {
                     print("[Osaurus] Failed to load session from \(file.lastPathComponent): \(error)")
@@ -55,7 +55,7 @@ enum ChatSessionStore {
         let createdAt: Date
         let updatedAt: Date
         let selectedModel: String?
-        let personaId: UUID?
+        let agentId: UUID?
     }
 
     /// Load a specific session by ID

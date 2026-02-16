@@ -1,8 +1,8 @@
 //
-//  AgentFolderContextService.swift
+//  WorkFolderContextService.swift
 //  osaurus
 //
-//  Service for managing agent folder context with security-scoped bookmarks,
+//  Service for managing work folder context with security-scoped bookmarks,
 //  project type detection, file tree generation, and git status.
 //
 
@@ -15,12 +15,12 @@ import Foundation
 private let _folderRootPathLock = NSLock()
 private nonisolated(unsafe) var _folderCachedRootPath: URL?
 
-/// Service for managing agent folder context
+/// Service for managing work folder context
 @MainActor
-public final class AgentFolderContextService: ObservableObject {
-    public static let shared = AgentFolderContextService()
+public final class WorkFolderContextService: ObservableObject {
+    public static let shared = WorkFolderContextService()
 
-    @Published public private(set) var currentContext: AgentFolderContext? {
+    @Published public private(set) var currentContext: WorkFolderContext? {
         didSet {
             _folderRootPathLock.withLock {
                 _folderCachedRootPath = currentContext?.rootPath
@@ -35,7 +35,7 @@ public final class AgentFolderContextService: ObservableObject {
         _folderRootPathLock.withLock { _folderCachedRootPath }
     }
 
-    private let bookmarkKey = "AgentFolderContextBookmark"
+    private let bookmarkKey = "WorkFolderContextBookmark"
     private var securityScopedResource: URL?
 
     private init() {
@@ -46,14 +46,14 @@ public final class AgentFolderContextService: ObservableObject {
 
     /// Select a folder via NSOpenPanel, build context, and register tools
     @discardableResult
-    public func selectFolder() async -> AgentFolderContext? {
+    public func selectFolder() async -> WorkFolderContext? {
         let panel = NSOpenPanel()
         panel.canChooseFiles = false
         panel.canChooseDirectories = true
         panel.canCreateDirectories = false
         panel.allowsMultipleSelection = false
         panel.title = "Select Working Directory"
-        panel.message = "Choose a folder for the agent to work with"
+        panel.message = "Choose a folder for the AI to work with"
         panel.prompt = "Select"
 
         guard panel.runModal() == .OK, let url = panel.url else {
@@ -65,7 +65,7 @@ public final class AgentFolderContextService: ObservableObject {
 
     /// Set a folder programmatically and build context
     @discardableResult
-    public func setFolder(_ url: URL) async -> AgentFolderContext? {
+    public func setFolder(_ url: URL) async -> WorkFolderContext? {
         // Stop accessing previous resource
         clearFolderInternal(unregisterTools: true)
 
@@ -90,7 +90,7 @@ public final class AgentFolderContextService: ObservableObject {
             hasActiveFolder = true
 
             // Register folder tools
-            AgentToolManager.shared.registerFolderTools(for: context)
+            WorkToolManager.shared.registerFolderTools(for: context)
 
             return context
 
@@ -106,9 +106,9 @@ public final class AgentFolderContextService: ObservableObject {
     }
 
     /// Build context from a URL (assumes access is already granted)
-    public func buildContext(from url: URL) async -> AgentFolderContext {
+    public func buildContext(from url: URL) async -> WorkFolderContext {
         let projectType = detectProjectType(url)
-        let options = AgentFileTreeOptions(
+        let options = WorkFileTreeOptions(
             ignorePatterns: projectType.ignorePatterns
         )
         let tree = buildFileTree(url, options: options)
@@ -116,7 +116,7 @@ public final class AgentFolderContextService: ObservableObject {
         let isGitRepo = checkIsGitRepo(url)
         let gitStatus = isGitRepo ? await getGitStatus(url) : nil
 
-        return AgentFolderContext(
+        return WorkFolderContext(
             rootPath: url,
             projectType: projectType,
             tree: tree,
@@ -142,7 +142,7 @@ public final class AgentFolderContextService: ObservableObject {
         hasActiveFolder = false
 
         if unregisterTools {
-            AgentToolManager.shared.unregisterFolderTools()
+            WorkToolManager.shared.unregisterFolderTools()
         }
     }
 
@@ -176,7 +176,7 @@ public final class AgentFolderContextService: ObservableObject {
                 let context = await buildContext(from: url)
                 self.currentContext = context
                 self.hasActiveFolder = true
-                AgentToolManager.shared.registerFolderTools(for: context)
+                WorkToolManager.shared.registerFolderTools(for: context)
             }
 
         } catch {
@@ -186,11 +186,11 @@ public final class AgentFolderContextService: ObservableObject {
 
     // MARK: - Project Type Detection
 
-    private func detectProjectType(_ url: URL) -> AgentProjectType {
+    private func detectProjectType(_ url: URL) -> WorkProjectType {
         let fm = FileManager.default
 
         // Check for manifest files in order of specificity
-        for projectType in AgentProjectType.allCases where projectType != .unknown {
+        for projectType in WorkProjectType.allCases where projectType != .unknown {
             for manifestFile in projectType.manifestFiles {
                 let manifestPath = url.appendingPathComponent(manifestFile)
                 if fm.fileExists(atPath: manifestPath.path) {
@@ -220,7 +220,7 @@ public final class AgentFolderContextService: ObservableObject {
         return false
     }
 
-    private func buildFileTree(_ url: URL, options: AgentFileTreeOptions) -> String {
+    private func buildFileTree(_ url: URL, options: WorkFileTreeOptions) -> String {
         // Adaptive depth: inspect top-level item count to choose depth automatically.
         // This prevents bloated trees for broad directories like ~/Downloads (2000+ files)
         // while preserving full detail for well-structured projects (e.g., a Swift package).
@@ -356,7 +356,7 @@ public final class AgentFolderContextService: ObservableObject {
     /// Well-structured projects (<=50 top-level items): depth 3 (full detail)
     /// Medium directories (51-200): depth 2
     /// Broad flat directories (>200, e.g. Downloads): depth 1 + extension grouping
-    private func computeAdaptiveDepth(_ url: URL, options: AgentFileTreeOptions) -> Int {
+    private func computeAdaptiveDepth(_ url: URL, options: WorkFileTreeOptions) -> Int {
         let visibleCount = visibleChildCount(of: url, patterns: options.ignorePatterns)
 
         if visibleCount <= 50 {
@@ -419,7 +419,7 @@ public final class AgentFolderContextService: ObservableObject {
 
     // MARK: - Manifest Reading
 
-    private func readManifest(_ url: URL, projectType: AgentProjectType) -> String? {
+    private func readManifest(_ url: URL, projectType: WorkProjectType) -> String? {
         guard let manifestFile = projectType.primaryManifest else { return nil }
 
         let manifestURL = url.appendingPathComponent(manifestFile)
@@ -448,7 +448,7 @@ public final class AgentFolderContextService: ObservableObject {
 
     private func getGitStatus(_ url: URL) async -> String? {
         do {
-            let (output, _) = try await AgentFolderToolHelpers.runGitCommand(
+            let (output, _) = try await WorkFolderToolHelpers.runGitCommand(
                 arguments: ["status", "--short", "--branch"],
                 in: url
             )

@@ -47,9 +47,9 @@ public enum OsaurusPaths {
         appSupportRoot().appendingPathComponent("providers", isDirectory: true)
     }
 
-    /// Personas directory
-    public static func personas() -> URL {
-        appSupportRoot().appendingPathComponent("personas", isDirectory: true)
+    /// Agents directory
+    public static func agents() -> URL {
+        appSupportRoot().appendingPathComponent("agents", isDirectory: true)
     }
 
     /// Themes directory
@@ -102,9 +102,9 @@ public enum OsaurusPaths {
         appSupportRoot().appendingPathComponent("artifacts", isDirectory: true)
     }
 
-    /// Agent data directory
-    public static func agentData() -> URL {
-        appSupportRoot().appendingPathComponent("agent", isDirectory: true)
+    /// Work data directory
+    public static func workData() -> URL {
+        appSupportRoot().appendingPathComponent("work", isDirectory: true)
     }
 
     // MARK: - Legacy Paths
@@ -130,14 +130,14 @@ public enum OsaurusPaths {
     public static func transcriptionConfigFile() -> URL { voiceConfig().appendingPathComponent("transcription.json") }
     public static func remoteProviderConfigFile() -> URL { providers().appendingPathComponent("remote.json") }
     public static func mcpProviderConfigFile() -> URL { providers().appendingPathComponent("mcp.json") }
-    public static func activePersonaFile() -> URL { personas().appendingPathComponent("active.txt") }
+    public static func activeAgentFile() -> URL { agents().appendingPathComponent("active.txt") }
     public static func activeThemeFile() -> URL { themes().appendingPathComponent("active.json") }
-    public static func agentDatabaseFile() -> URL { agentData().appendingPathComponent("agent.db") }
+    public static func workDatabaseFile() -> URL { workData().appendingPathComponent("work.db") }
 
     // MARK: - File Path Helpers
 
-    public static func personaFile(for id: UUID) -> URL {
-        personas().appendingPathComponent("\(id.uuidString).json")
+    public static func agentFile(for id: UUID) -> URL {
+        agents().appendingPathComponent("\(id.uuidString).json")
     }
 
     public static func themeFile(for id: UUID) -> URL {
@@ -206,9 +206,9 @@ public enum OsaurusPaths {
     /// Ensures all standard directories exist
     public static func ensureAllDirectoriesExist() {
         [
-            config(), voiceConfig(), providers(), personas(), themes(),
+            config(), voiceConfig(), providers(), agents(), themes(),
             sessions(), schedules(), watchers(), plugins(), pluginSpecs(), runtime(),
-            legacyTools(), legacyPluginSpecs(), agentData(),
+            legacyTools(), legacyPluginSpecs(), workData(),
         ].forEach { ensureExistsSilent($0) }
     }
 
@@ -216,7 +216,8 @@ public enum OsaurusPaths {
 
     private static func getMigrations() -> [(legacy: String, new: URL)] {
         return [
-            ("Personas", personas()),
+            ("Personas", agents()),
+            ("personas", agents()),
             ("Themes", themes()),
             ("ChatSessions", sessions()),
             ("Schedules", schedules()),
@@ -230,8 +231,9 @@ public enum OsaurusPaths {
             ("TranscriptionConfiguration.json", transcriptionConfigFile()),
             ("RemoteProviderConfiguration.json", remoteProviderConfigFile()),
             ("MCPProviderConfiguration.json", mcpProviderConfigFile()),
-            ("ActivePersonaId.txt", activePersonaFile()),
+            ("ActivePersonaId.txt", activeAgentFile()),
             ("ActiveTheme.json", activeThemeFile()),
+            ("agent", workData()),
         ]
     }
 

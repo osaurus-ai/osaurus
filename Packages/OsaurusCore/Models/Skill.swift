@@ -646,7 +646,7 @@ extension Skill {
 
 extension Skill {
     /// Convert name to Agent Skills format (lowercase, hyphens)
-    public var agentSkillsName: String {
+    public var xplaceholder_agentSkillsNamex: String {
         name.lowercased()
             .replacingOccurrences(of: " ", with: "-")
             .replacingOccurrences(of: "_", with: "-")
@@ -669,7 +669,7 @@ extension Skill {
 
     private func toAgentSkillsFormatInternal(includeId: Bool) -> String {
         var yaml = "---\n"
-        yaml += "name: \(agentSkillsName)\n"
+        yaml += "name: \(xplaceholder_agentSkillsNamex)\n"
 
         // Description is required, truncate to 1024 chars per spec
         let truncatedDesc = String(description.prefix(1024))

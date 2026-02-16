@@ -13,7 +13,7 @@ import SwiftUI
 struct ContentBlockView: View, Equatable {
     let block: ContentBlock
     let width: CGFloat  // Content width (already adjusted by parent)
-    let personaName: String
+    let agentName: String
     var isTurnHovered: Bool = false
 
     // Action callbacks
@@ -30,7 +30,7 @@ struct ContentBlockView: View, Equatable {
 
     nonisolated static func == (lhs: ContentBlockView, rhs: ContentBlockView) -> Bool {
         lhs.block == rhs.block && lhs.width == rhs.width
-            && lhs.personaName == rhs.personaName && lhs.isTurnHovered == rhs.isTurnHovered
+            && lhs.agentName == rhs.agentName && lhs.isTurnHovered == rhs.isTurnHovered
             && lhs.editingTurnId == rhs.editingTurnId
     }
 

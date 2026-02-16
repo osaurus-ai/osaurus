@@ -112,10 +112,10 @@ final class ToolRegistry: ObservableObject {
             .map { $0.asOpenAITool() }
     }
 
-    /// Tool specs excluding agent-specific and folder tools.
-    /// Use this for chat mode where agent/folder tools should not be available.
+    /// Tool specs excluding work-specific and folder tools.
+    /// Use this for chat mode where work/folder tools should not be available.
     func userSpecs(withOverrides overrides: [String: Bool]?) -> [Tool] {
-        let excluded = Self.agentToolNames.union(Self.folderToolNames)
+        let excluded = Self.workToolNames.union(Self.folderToolNames)
         return specs(withOverrides: overrides)
             .filter { !excluded.contains($0.function.name) }
     }
@@ -378,43 +378,43 @@ final class ToolRegistry: ObservableObject {
         }
     }
 
-    // MARK: - Agent-Conflicting Plugin Tools
+    // MARK: - Work-Conflicting Plugin Tools
 
-    /// Plugins that duplicate built-in agent folder/git tools and bypass undo + sandboxing.
-    static let agentConflictingPluginIds: Set<String> = [
+    /// Plugins that duplicate built-in work folder/git tools and bypass undo + sandboxing.
+    static let workConflictingPluginIds: Set<String> = [
         "osaurus.filesystem",
         "osaurus.git",
     ]
 
-    /// Registered tool names from agent-conflicting plugins. Disabled in agent mode.
-    var agentConflictingToolNames: Set<String> {
+    /// Registered tool names from work-conflicting plugins. Disabled in work mode.
+    var workConflictingToolNames: Set<String> {
         Set(
             toolsByName.values
                 .compactMap { $0 as? ExternalTool }
-                .filter { Self.agentConflictingPluginIds.contains($0.pluginId) }
+                .filter { Self.workConflictingPluginIds.contains($0.pluginId) }
                 .map { $0.name }
         )
     }
 
     // MARK: - User-Facing Tool List
 
-    /// Agent tool names that should be excluded from user-facing tool lists.
-    /// These tools are always included by default in agent mode.
-    static var agentToolNames: Set<String> {
-        Set(AgentToolManager.shared.toolNames)
+    /// Work tool names that should be excluded from user-facing tool lists.
+    /// These tools are always included by default in work mode.
+    static var workToolNames: Set<String> {
+        Set(WorkToolManager.shared.toolNames)
     }
 
     /// Folder tool names that should be excluded from user-facing tool lists.
     /// These tools are automatically managed based on folder selection.
     static var folderToolNames: Set<String> {
-        Set(AgentToolManager.shared.folderToolNames)
+        Set(WorkToolManager.shared.folderToolNames)
     }
 
-    /// List tools excluding agent-specific and optionally internal tools.
+    /// List tools excluding work-specific and optionally internal tools.
     /// Use this for user-facing tool lists and counts.
     ///
     /// - Parameters:
-    ///   - overrides: Persona-specific tool overrides
+    ///   - overrides: Agent-specific tool overrides
     ///   - excludeInternal: If true, also excludes internal tools like `select_capabilities`
     /// - Returns: Filtered list of tool entries
     func listUserTools(
@@ -422,8 +422,8 @@ final class ToolRegistry: ObservableObject {
         excludeInternal: Bool = false
     ) -> [ToolEntry] {
         var tools = listTools(withOverrides: overrides)
-        // Always exclude agent tools from user-facing lists
-        tools = tools.filter { !Self.agentToolNames.contains($0.name) }
+        // Always exclude work tools from user-facing lists
+        tools = tools.filter { !Self.workToolNames.contains($0.name) }
         // Always exclude folder tools from user-facing lists (they're auto-managed)
         tools = tools.filter { !Self.folderToolNames.contains($0.name) }
         // Optionally exclude internal tools

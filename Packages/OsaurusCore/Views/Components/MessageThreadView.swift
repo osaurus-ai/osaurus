@@ -14,7 +14,7 @@ struct MessageThreadView: View {
     /// Optional precomputed group header map; falls back to local computation when nil.
     var groupHeaderMap: [UUID: UUID]? = nil
     let width: CGFloat
-    let personaName: String
+    let agentName: String
     let isStreaming: Bool
     let lastAssistantTurnId: UUID?
     var autoScrollEnabled: Bool = true
@@ -31,7 +31,7 @@ struct MessageThreadView: View {
     var onEdit: ((UUID) -> Void)? = nil
     var onClarificationSubmit: ((String) -> Void)? = nil
 
-    // Inline editing state (optional; unused in AgentView)
+    // Inline editing state (optional; unused in WorkView)
     var editingTurnId: UUID? = nil
     var editText: Binding<String>? = nil
     var onConfirmEdit: (() -> Void)? = nil
@@ -69,7 +69,7 @@ struct MessageThreadView: View {
             blocks: blocks,
             groupHeaderMap: resolvedGroupHeaderMap,
             width: width,
-            personaName: personaName,
+            agentName: agentName,
             isStreaming: isStreaming,
             lastAssistantTurnId: lastAssistantTurnId,
             autoScrollEnabled: autoScrollEnabled,

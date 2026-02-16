@@ -26,6 +26,17 @@ Created by Dinoki Labs ([dinoki.ai](https://dinoki.ai))
 
 ---
 
+> ⚠️ **Naming Changes in This Release** ⚠️
+>
+> We've renamed two core concepts to better reflect their purpose:
+>
+> - **Personas** are now called **Agents** — custom AI assistants with unique prompts, tools, and themes.
+> - **Agent Mode** is now called **Work Mode** — autonomous task execution with issue tracking and file operations.
+>
+> All existing data is automatically migrated. This notice will be removed in a future release.
+
+---
+
 ## Install
 
 ```bash
@@ -48,15 +59,15 @@ Osaurus is the AI edge runtime for macOS. It brings together:
 - **MCP Server** — Expose tools to AI agents via Model Context Protocol
 - **Remote MCP Providers** — Connect to external MCP servers and aggregate their tools
 - **Plugin System** — Extend functionality with community and custom tools
-- **Personas** — Create custom AI assistants with unique prompts, tools, and visual themes
+- **Agents** — Create custom AI assistants with unique prompts, tools, and visual themes
 - **Skills** — Import reusable AI capabilities from GitHub or files ([Agent Skills](https://agentskills.io/) compatible)
 - **Schedules** — Automate recurring AI tasks with timed execution
 - **Watchers** — Monitor folders for changes and trigger AI tasks automatically
-- **Agents** — Autonomous task execution with issue tracking, parallel tasks, and file operations
-- **Multi-Window Chat** — Multiple independent chat windows with per-window personas
+- **Work Mode** — Autonomous task execution with issue tracking, parallel tasks, and file operations
+- **Multi-Window Chat** — Multiple independent chat windows with per-window agents
 - **Developer Tools** — Built-in insights and server explorer for debugging
 - **Voice Input** — Speech-to-text using WhisperKit with real-time on-device transcription
-- **VAD Mode** — Always-on listening with wake-word activation for hands-free persona access
+- **VAD Mode** — Always-on listening with wake-word activation for hands-free agent access
 - **Transcription Mode** — Global hotkey to transcribe speech directly into any app
 - **Apple Foundation Models** — Use the system model on macOS 26+ (Tahoe)
 
@@ -73,16 +84,16 @@ Osaurus is the AI edge runtime for macOS. It brings together:
 | **Remote MCP Providers** | Aggregate tools from external MCP servers                              |
 | **Tools & Plugins**      | Browser automation, file system, git, web search, and more             |
 | **Skills**               | Import AI capabilities from GitHub or files, with smart context saving |
-| **Personas**             | Custom AI assistants with unique prompts, tools, and themes            |
+| **Agents**               | Custom AI assistants with unique prompts, tools, and themes            |
 | **Schedules**            | Automate AI tasks with daily, weekly, monthly, or yearly runs          |
 | **Watchers**             | Monitor folders and trigger AI tasks on file system changes            |
-| **Agents**               | Autonomous multi-step task execution with parallel task support        |
+| **Work Mode**            | Autonomous multi-step task execution with parallel task support        |
 | **Custom Themes**        | Create, import, and export themes with full color customization        |
 | **Developer Tools**      | Request insights, API explorer, and live endpoint testing              |
-| **Multi-Window Chat**    | Multiple independent chat windows with per-window personas             |
+| **Multi-Window Chat**    | Multiple independent chat windows with per-window agents               |
 | **Menu Bar Chat**        | Chat overlay with session history, context tracking (`⌘;`)             |
 | **Voice Input**          | Speech-to-text with WhisperKit, real-time transcription                |
-| **VAD Mode**             | Always-on listening with wake-word persona activation                  |
+| **VAD Mode**             | Always-on listening with wake-word agent activation                    |
 | **Transcription Mode**   | Global hotkey to dictate into any focused text field                   |
 | **Model Manager**        | Download and manage models from Hugging Face                           |
 
@@ -209,17 +220,17 @@ osaurus tools create MyPlugin --language swift
 
 See the [Plugin Authoring Guide](docs/PLUGIN_AUTHORING.md) for details.
 
-### Personas
+### Agents
 
-Create custom AI assistant personalities with unique behaviors, capabilities, and styles.
+Create custom AI assistants with unique behaviors, capabilities, and styles.
 
-Each persona can have:
+Each agent can have:
 
 - **Custom System Prompt** — Define unique instructions and personality
-- **Tool Configuration** — Enable or disable specific tools per persona
-- **Visual Theme** — Assign a custom theme that activates with the persona
+- **Tool Configuration** — Enable or disable specific tools per agent
+- **Visual Theme** — Assign a custom theme that activates with the agent
 - **Model & Generation Settings** — Set default model, temperature, and max tokens
-- **Import/Export** — Share personas as JSON files
+- **Import/Export** — Share agents as JSON files
 
 Use cases:
 
@@ -228,7 +239,7 @@ Use cases:
 - **Research Helper** — Web search and note-taking tools enabled
 - **Creative Writer** — Higher temperature, no tool access for pure generation
 
-Access via Management window (`⌘ Shift M`) → **Personas**.
+Access via Management window (`⌘ Shift M`) → **Agents**.
 
 ### Skills
 
@@ -261,7 +272,7 @@ Automate recurring AI tasks that run at specified intervals.
 **Features:**
 
 - **Flexible Frequency** — Once, daily, weekly, monthly, or yearly execution
-- **Persona Integration** — Assign a persona to handle scheduled tasks
+- **Agent Integration** — Assign a agent to handle scheduled tasks
 - **Custom Instructions** — Define prompts sent to the AI when the schedule runs
 - **Manual Trigger** — Run any schedule immediately with "Run Now"
 - **Results Tracking** — View the chat session from the last run
@@ -283,7 +294,7 @@ Monitor folders for file system changes and automatically trigger AI tasks when 
 - **Folder Monitoring** — Watch any directory for file system changes using FSEvents
 - **Configurable Responsiveness** — Fast (~200ms), Balanced (~1s), or Patient (~3s) debounce timing
 - **Recursive Monitoring** — Optionally monitor subdirectories
-- **Persona Integration** — Assign a persona to handle triggered tasks
+- **Agent Integration** — Assign a agent to handle triggered tasks
 - **Manual Trigger** — Run any watcher immediately with "Trigger Now"
 - **Convergence Loop** — Smart re-checking ensures the directory stabilizes before stopping
 - **Pause/Resume** — Temporarily disable watchers without deleting them
@@ -298,19 +309,19 @@ Access via Management window (`⌘ Shift M`) → **Watchers**.
 
 See [Watchers Guide](docs/WATCHERS.md) for details.
 
-### Agents
+### Work Mode
 
 Execute complex, multi-step tasks autonomously with built-in issue tracking and planning.
 
 **Features:**
 
 - **Issue Tracking** — Tasks broken into issues with status, priority, and dependencies
-- **Parallel Tasks** — Run multiple agent tasks simultaneously for increased productivity
+- **Parallel Tasks** — Run multiple work tasks simultaneously for increased productivity
 - **Reasoning Loop** — AI autonomously observes, thinks, acts, and checks in iterative cycles
 - **Working Directory** — Select a folder for file operations with project detection
 - **File Operations** — Read, write, edit, search files with undo support
-- **Follow-up Issues** — Agent creates child issues when it discovers additional work
-- **Clarification** — Agent pauses to ask when tasks are ambiguous
+- **Follow-up Issues** — AI creates child issues when it discovers additional work
+- **Clarification** — AI pauses to ask when tasks are ambiguous
 - **Background Execution** — Tasks continue running after closing the window
 
 **Use Cases:**
@@ -320,27 +331,27 @@ Execute complex, multi-step tasks autonomously with built-in issue tracking and 
 - Debug issues with systematic investigation
 - Research and documentation tasks
 
-Access via Chat window → **Agent Mode** tab.
+Access via Chat window → **Work Mode** tab.
 
-See [Agents Guide](docs/AGENTS.md) for details.
+See [Work Mode Guide](docs/WORK.md) for details.
 
 ### Multi-Window Chat
 
-Work with multiple independent chat windows, each with its own persona and session.
+Work with multiple independent chat windows, each with its own agent and session.
 
 **Features:**
 
-- **Independent Windows** — Each window maintains its own persona, theme, and session
+- **Independent Windows** — Each window maintains its own agent, theme, and session
 - **File → New Window** — Open additional chat windows (`⌘ N`)
-- **Persona per Window** — Different personas in different windows simultaneously
+- **Agent per Window** — Different agents in different windows simultaneously
 - **Open in New Window** — Right-click any session in history to open in a new window
 - **Pin to Top** — Keep specific windows floating above others
 - **Cascading Windows** — New windows are offset so they're always visible
 
 **Use Cases:**
 
-- Run multiple AI personas side-by-side (e.g., "Code Assistant" and "Creative Writer")
-- Compare responses from different personas
+- Run multiple AI agents side-by-side (e.g., "Code Assistant" and "Creative Writer")
+- Compare responses from different agents
 - Keep reference conversations open while starting new ones
 - Organize work by project with dedicated windows
 
@@ -380,9 +391,9 @@ Speech-to-text powered by [WhisperKit](https://github.com/argmaxinc/WhisperKit) 
 
 **VAD Mode (Voice Activity Detection):**
 
-Activate personas hands-free by saying their name or a custom wake phrase.
+Activate agents hands-free by saying their name or a custom wake phrase.
 
-- Say a persona's name (e.g., "Hey Code Assistant") to open chat
+- Say an agent's name (e.g., "Hey Code Assistant") to open chat
 - Automatic voice input starts after activation
 - **Status indicators:** Blue pulsing dot on menu bar icon when listening, toggle button in popover
 - Configurable silence timeout and auto-close

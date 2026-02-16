@@ -3,7 +3,7 @@
 //  osaurus
 //
 //  VAD (Voice Activity Detection) mode settings.
-//  Configure wake-word persona activation.
+//  Configure wake-word agent activation.
 //
 
 import SwiftUI
@@ -13,13 +13,13 @@ import SwiftUI
 struct VADModeSettingsTab: View {
     @Environment(\.theme) private var theme
     @ObservedObject private var vadService = VADService.shared
-    @ObservedObject private var personaManager = PersonaManager.shared
+    @ObservedObject private var agentManager = AgentManager.shared
     @ObservedObject private var whisperService = WhisperKitService.shared
     @ObservedObject private var modelManager = WhisperModelManager.shared
 
     // Configuration state
     @State private var vadEnabled: Bool = false
-    @State private var enabledPersonaIds: [UUID] = []
+    @State private var enabledAgentIds: [UUID] = []
     @State private var autoStartVoiceInput: Bool = true
     @State private var customWakePhrase: String = ""
     @State private var hasLoadedSettings = false
@@ -33,7 +33,7 @@ struct VADModeSettingsTab: View {
     private func loadSettings() {
         let config = VADConfigurationStore.load()
         vadEnabled = config.vadModeEnabled
-        enabledPersonaIds = config.enabledPersonaIds
+        enabledAgentIds = config.enabledAgentIds
         autoStartVoiceInput = config.autoStartVoiceInput
         customWakePhrase = config.customWakePhrase
     }
@@ -41,7 +41,7 @@ struct VADModeSettingsTab: View {
     private func saveSettings() {
         let config = VADConfiguration(
             vadModeEnabled: vadEnabled,
-            enabledPersonaIds: enabledPersonaIds,
+            enabledAgentIds: enabledAgentIds,
             autoStartVoiceInput: autoStartVoiceInput,
             customWakePhrase: customWakePhrase
         )
@@ -66,9 +66,9 @@ struct VADModeSettingsTab: View {
                     requirementsCard
                 }
 
-                // Persona Selection Card
+                // Agent Selection Card
                 if canEnableVAD {
-                    personaSelectionCard
+                    agentSelectionCard
                 }
 
                 // Wake Word Settings Card
@@ -154,7 +154,7 @@ struct VADModeSettingsTab: View {
                         .font(.system(size: 15, weight: .semibold))
                         .foregroundColor(theme.primaryText)
 
-                    Text(vadEnabled ? "Always listening for wake words" : "Voice-activated persona switching")
+                    Text(vadEnabled ? "Always listening for wake words" : "Voice-activated agent switching")
                         .font(.system(size: 12))
                         .foregroundColor(theme.secondaryText)
                 }
@@ -222,7 +222,7 @@ struct VADModeSettingsTab: View {
                     .foregroundColor(theme.accentColor)
 
                 Text(
-                    "When enabled, Osaurus will continuously listen for persona names. Say a persona's name to automatically open a chat with that persona."
+                    "When enabled, Osaurus will continuously listen for agent names. Say a agent's name to automatically open a chat with that agent."
                 )
                 .font(.system(size: 12))
                 .foregroundColor(theme.secondaryText)
@@ -299,19 +299,19 @@ struct VADModeSettingsTab: View {
         .modifier(SettingsCardStyle(accentColor: theme.warningColor))
     }
 
-    // MARK: - Persona Selection Card
+    // MARK: - Agent Selection Card
 
-    private var personaSelectionCard: some View {
+    private var agentSelectionCard: some View {
         VStack(alignment: .leading, spacing: 16) {
             HStack(spacing: 12) {
                 CardIconBox(icon: "person.2.fill", color: theme.accentColor)
 
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("Activated Personas")
+                    Text("Activated Agents")
                         .font(.system(size: 15, weight: .semibold))
                         .foregroundColor(theme.primaryText)
 
-                    Text("Select which personas can be activated by voice")
+                    Text("Select which agents can be activated by voice")
                         .font(.system(size: 12))
                         .foregroundColor(theme.secondaryText)
                 }
@@ -319,12 +319,12 @@ struct VADModeSettingsTab: View {
                 Spacer()
             }
 
-            if enabledPersonaIds.isEmpty {
+            if enabledAgentIds.isEmpty {
                 HStack(spacing: 8) {
                     Image(systemName: "info.circle")
                         .font(.system(size: 12))
                         .foregroundColor(theme.warningColor)
-                    Text("Select at least one persona to enable VAD")
+                    Text("Select at least one agent to enable VAD")
                         .font(.system(size: 12))
                         .foregroundColor(theme.warningColor)
                 }
@@ -339,19 +339,19 @@ struct VADModeSettingsTab: View {
                 )
             }
 
-            // Persona list
+            // Agent list
             VStack(spacing: 8) {
-                ForEach(personaManager.personas) { persona in
-                    PersonaToggleRow(
-                        persona: persona,
-                        isEnabled: enabledPersonaIds.contains(persona.id),
+                ForEach(agentManager.agents) { agent in
+                    AgentToggleRow(
+                        agent: agent,
+                        isEnabled: enabledAgentIds.contains(agent.id),
                         onToggle: { enabled in
                             if enabled {
-                                if !enabledPersonaIds.contains(persona.id) {
-                                    enabledPersonaIds.append(persona.id)
+                                if !enabledAgentIds.contains(agent.id) {
+                                    enabledAgentIds.append(agent.id)
                                 }
                             } else {
-                                enabledPersonaIds.removeAll { $0 == persona.id }
+                                enabledAgentIds.removeAll { $0 == agent.id }
                             }
                             saveSettings()
                         }
@@ -406,7 +406,7 @@ struct VADModeSettingsTab: View {
                         saveSettings()
                     }
 
-                Text("Leave empty to only use persona names as wake words")
+                Text("Leave empty to only use agent names as wake words")
                     .font(.system(size: 11))
                     .foregroundColor(theme.tertiaryText)
             }
@@ -457,7 +457,7 @@ struct VADModeSettingsTab: View {
             // Auto-start voice input
             ToggleSettingRow(
                 title: "Auto-Start Voice Input",
-                description: "Immediately start voice input after persona activation",
+                description: "Immediately start voice input after agent activation",
                 isOn: $autoStartVoiceInput,
                 onChange: { saveSettings() }
             )
@@ -499,7 +499,7 @@ struct VADModeSettingsTab: View {
                 }
             }
 
-            Text("Speak a persona name to test detection")
+            Text("Speak an agent name to test detection")
                 .font(.system(size: 12))
                 .foregroundColor(theme.secondaryText)
 
@@ -558,7 +558,7 @@ struct VADModeSettingsTab: View {
                         .foregroundColor(theme.successColor)
 
                     VStack(alignment: .leading, spacing: 2) {
-                        Text("Detected: \(detection.personaName)")
+                        Text("Detected: \(detection.agentName)")
                             .font(.system(size: 14, weight: .semibold))
                             .foregroundColor(theme.successColor)
                         Text("Confidence: \(Int(detection.confidence * 100))%")
@@ -682,8 +682,8 @@ struct VADModeSettingsTab: View {
     }
 
     private func checkForDetection(in text: String) {
-        let detector = PersonaNameDetector(
-            enabledPersonaIds: enabledPersonaIds,
+        let detector = AgentNameDetector(
+            enabledAgentIds: enabledAgentIds,
             customWakePhrase: customWakePhrase
         )
         if let detection = detector.detect(in: text) {
@@ -779,10 +779,10 @@ private struct RequirementRow: View {
     }
 }
 
-private struct PersonaToggleRow: View {
+private struct AgentToggleRow: View {
     @Environment(\.theme) private var theme
 
-    let persona: Persona
+    let agent: Agent
     let isEnabled: Bool
     let onToggle: (Bool) -> Void
 
@@ -790,7 +790,7 @@ private struct PersonaToggleRow: View {
 
     var body: some View {
         HStack(spacing: 12) {
-            // Persona icon
+            // Agent icon
             ZStack {
                 Circle()
                     .fill(isEnabled ? theme.accentColor.opacity(0.15) : theme.tertiaryBackground)
@@ -806,7 +806,7 @@ private struct PersonaToggleRow: View {
                         )
                 }
 
-                Text(String(persona.name.prefix(1)).uppercased())
+                Text(String(agent.name.prefix(1)).uppercased())
                     .font(.system(size: 14, weight: .semibold))
                     .foregroundColor(isEnabled ? theme.accentColor : theme.tertiaryText)
             }
@@ -820,12 +820,12 @@ private struct PersonaToggleRow: View {
             )
 
             VStack(alignment: .leading, spacing: 2) {
-                Text(persona.name)
+                Text(agent.name)
                     .font(.system(size: 14, weight: .medium))
                     .foregroundColor(theme.primaryText)
 
-                if !persona.description.isEmpty {
-                    Text(persona.description)
+                if !agent.description.isEmpty {
+                    Text(agent.description)
                         .font(.system(size: 11))
                         .foregroundColor(theme.tertiaryText)
                         .lineLimit(1)

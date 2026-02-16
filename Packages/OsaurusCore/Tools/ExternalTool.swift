@@ -83,7 +83,7 @@ final class ExternalTool: OsaurusTool, PermissionedTool, @unchecked Sendable {
     private func injectFolderContext(into payload: String) -> String {
         // Read from the thread-safe cache to avoid hopping to MainActor,
         // which can deadlock when the main thread is busy with SwiftUI layout.
-        guard let rootPath = AgentFolderContextService.cachedRootPath else { return payload }
+        guard let rootPath = WorkFolderContextService.cachedRootPath else { return payload }
 
         // Parse the original payload
         guard let payloadData = payload.data(using: .utf8),

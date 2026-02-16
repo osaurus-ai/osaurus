@@ -33,7 +33,7 @@ final class ChatSessionsManager: ObservableObject {
 
     /// Create a new session and return its ID
     @discardableResult
-    func createNew(selectedModel: String? = nil, personaId: UUID? = nil) -> UUID {
+    func createNew(selectedModel: String? = nil, agentId: UUID? = nil) -> UUID {
         let session = ChatSessionData(
             id: UUID(),
             title: "New Chat",
@@ -41,24 +41,24 @@ final class ChatSessionsManager: ObservableObject {
             updatedAt: Date(),
             selectedModel: selectedModel,
             turns: [],
-            personaId: personaId
+            agentId: agentId
         )
         ChatSessionStore.save(session)
         upsertInMemory(session)
         return session.id
     }
 
-    /// Get sessions filtered by persona
-    /// - Parameter personaId: The persona ID to filter by.
-    ///   When Default persona (or nil) is selected, returns ALL sessions from all personas.
-    ///   Otherwise returns only sessions belonging to the specified persona.
-    func sessions(for personaId: UUID?) -> [ChatSessionData] {
-        // When Default persona is selected, show ALL sessions
-        if personaId == nil || personaId == Persona.defaultId {
+    /// Get sessions filtered by agent
+    /// - Parameter agentId: The agent ID to filter by.
+    ///   When Default agent (or nil) is selected, returns ALL sessions from all agents.
+    ///   Otherwise returns only sessions belonging to the specified agent.
+    func sessions(for agentId: UUID?) -> [ChatSessionData] {
+        // When Default agent is selected, show ALL sessions
+        if agentId == nil || agentId == Agent.defaultId {
             return sessions
         }
-        // Otherwise filter by persona
-        return sessions.filter { $0.personaId == personaId }
+        // Otherwise filter by agent
+        return sessions.filter { $0.agentId == agentId }
     }
 
     /// Save a session (updates the in-memory list without full disk reload)

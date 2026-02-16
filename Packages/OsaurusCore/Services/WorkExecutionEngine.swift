@@ -1,5 +1,5 @@
 //
-//  AgentExecutionEngine.swift
+//  WorkExecutionEngine.swift
 //  osaurus
 //
 //  Execution engine for Osaurus Agents - reasoning loop based.
@@ -8,8 +8,8 @@
 
 import Foundation
 
-/// Execution engine for running agent tasks via reasoning loop
-public actor AgentExecutionEngine {
+/// Execution engine for running work tasks via reasoning loop
+public actor WorkExecutionEngine {
     /// The chat engine for LLM calls
     private let chatEngine: ChatEngineProtocol
 
@@ -56,7 +56,7 @@ public actor AgentExecutionEngine {
                 return result
             }
 
-            print("[AgentExecutionEngine] Tool '\(toolName)' timed out after \(timeout)s")
+            print("[WorkExecutionEngine] Tool '\(toolName)' timed out after \(timeout)s")
             return "[TIMEOUT] Tool '\(toolName)' did not complete within \(timeout) seconds."
         }
 
@@ -82,7 +82,7 @@ public actor AgentExecutionEngine {
     ) async -> String {
         do {
             // Wrap with execution context so folder tools can log operations
-            return try await AgentExecutionContext.$currentIssueId.withValue(issueId) {
+            return try await WorkExecutionContext.$currentIssueId.withValue(issueId) {
                 try await ToolRegistry.shared.execute(
                     name: name,
                     argumentsJSON: argumentsJSON,
@@ -90,7 +90,7 @@ public actor AgentExecutionEngine {
                 )
             }
         } catch {
-            print("[AgentExecutionEngine] Tool execution failed: \(error)")
+            print("[WorkExecutionEngine] Tool execution failed: \(error)")
             return "[REJECTED] \(error.localizedDescription)"
         }
     }
@@ -98,7 +98,7 @@ public actor AgentExecutionEngine {
     // MARK: - Folder Context
 
     /// Builds the folder context section for prompts when a folder is selected
-    private func buildFolderContextSection(from folderContext: AgentFolderContext?) -> String {
+    private func buildFolderContextSection(from folderContext: WorkFolderContext?) -> String {
         guard let folder = folderContext else {
             return ""
         }
@@ -159,7 +159,7 @@ public actor AgentExecutionEngine {
     /// - Parameters:
     ///   - issue: The issue being executed
     ///   - messages: Conversation messages (mutated with new messages)
-    ///   - systemPrompt: The full system prompt including agent instructions
+    ///   - systemPrompt: The full system prompt including work instructions
     ///   - model: Model to use
     ///   - tools: All available tools (model picks which to use)
     ///   - toolOverrides: Tool permission overrides
@@ -261,7 +261,7 @@ public actor AgentExecutionEngine {
                 consecutiveTextOnly += 1
                 if consecutiveTextOnly >= Self.maxConsecutiveTextOnlyResponses {
                     print(
-                        "[AgentExecutionEngine] \(consecutiveTextOnly) consecutive text-only responses"
+                        "[WorkExecutionEngine] \(consecutiveTextOnly) consecutive text-only responses"
                             + " — aborting to prevent infinite loop"
                     )
                     let summary = extractCompletionSummary(from: responseContent)
@@ -414,19 +414,19 @@ public actor AgentExecutionEngine {
         )
     }
 
-    /// Builds the agent system prompt for reasoning loop execution
+    /// Builds the work system prompt for reasoning loop execution
     /// - Parameters:
-    ///   - base: Base system prompt (persona instructions, etc.)
+    ///   - base: Base system prompt (agent instructions, etc.)
     ///   - issue: The issue being executed
     ///   - tools: Available tools
     ///   - folderContext: Optional folder context for file operations
     ///   - skillInstructions: Optional skill-specific instructions
-    /// - Returns: Complete system prompt for the agent
+    /// - Returns: Complete system prompt for work mode
     func buildAgentSystemPrompt(
         base: String,
         issue: Issue,
         tools: [Tool],
-        folderContext: AgentFolderContext? = nil,
+        folderContext: WorkFolderContext? = nil,
         skillInstructions: String? = nil
     ) -> String {
         var prompt = base
@@ -434,7 +434,7 @@ public actor AgentExecutionEngine {
         prompt += """
 
 
-            # Agent Mode
+            # Work Mode
 
             You are executing a task for the user. Your goal:
 
@@ -596,8 +596,8 @@ public struct ToolCallResult: Sendable {
 
 // MARK: - Errors
 
-/// Errors that can occur during agent execution
-public enum AgentExecutionError: Error, LocalizedError {
+/// Errors that can occur during work execution
+public enum WorkExecutionError: Error, LocalizedError {
     case executionCancelled
     case iterationLimitReached(Int)
     case networkError(String)
