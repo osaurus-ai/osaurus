@@ -119,6 +119,7 @@ struct CapabilitiesTableRepresentable: NSViewRepresentable {
         coordinator.tableView = tableView
         coordinator.setupDataSource(for: tableView)
         coordinator.setupHoverTracking(on: tableView)
+        coordinator.setupScrollObservation(for: scrollView)
 
         coordinator.applyRows(rows, context: renderingContext)
         return scrollView
@@ -210,6 +211,7 @@ extension CapabilitiesTableRepresentable {
         // MARK: Hover
 
         private var hoveredRowId: String?
+        private var isScrolling = false
 
         // MARK: - Setup
 
@@ -230,6 +232,30 @@ extension CapabilitiesTableRepresentable {
             tableView.onMouseExited = { [weak self] in
                 self?.setHoveredRow(nil)
             }
+        }
+
+        func setupScrollObservation(for scrollView: NSScrollView) {
+            NotificationCenter.default.addObserver(
+                self,
+                selector: #selector(onScrollStart),
+                name: NSScrollView.willStartLiveScrollNotification,
+                object: scrollView
+            )
+            NotificationCenter.default.addObserver(
+                self,
+                selector: #selector(onScrollEnd),
+                name: NSScrollView.didEndLiveScrollNotification,
+                object: scrollView
+            )
+        }
+
+        @objc private func onScrollStart() {
+            isScrolling = true
+            setHoveredRow(nil)
+        }
+
+        @objc private func onScrollEnd() {
+            isScrolling = false
         }
 
         // MARK: - Apply Rows (Main Entry Point)
@@ -300,20 +326,35 @@ extension CapabilitiesTableRepresentable {
         // MARK: - Cell Factory
 
         private func dequeueAndConfigure(tableView: NSTableView, row: Int, rowId: String) -> NSView {
+            guard let rowData = rowLookup[rowId] else { return NSView() }
+
+            // Use distinct reuse identifiers for each row type to ensure
+            // NSHostingView recycles the correct SwiftUI view hierarchy.
+            // This prevents expensive view rebuilding during scrolling.
+            let reuseIdentifier: NSUserInterfaceItemIdentifier
+            switch rowData {
+            case .groupHeader:
+                reuseIdentifier = NSUserInterfaceItemIdentifier("CapabilityGroupHeaderCell")
+            case .tool:
+                reuseIdentifier = NSUserInterfaceItemIdentifier("CapabilityToolRowCell")
+            case .skill:
+                reuseIdentifier = NSUserInterfaceItemIdentifier("CapabilitySkillRowCell")
+            case .compoundPlugin:
+                reuseIdentifier = NSUserInterfaceItemIdentifier("CapabilityCompoundPluginRowCell")
+            }
+
             let cell: TableHostingCellView
             if let reused = tableView.makeView(
-                withIdentifier: TableHostingCellView.reuseIdentifier,
+                withIdentifier: reuseIdentifier,
                 owner: nil
             ) as? TableHostingCellView {
                 cell = reused
             } else {
                 cell = TableHostingCellView(frame: .zero)
-                cell.identifier = TableHostingCellView.reuseIdentifier
+                cell.identifier = reuseIdentifier
             }
 
-            if let rowData = rowLookup[rowId] {
-                configureCell(cell, with: rowData)
-            }
+            configureCell(cell, with: rowData)
             return cell
         }
 
@@ -410,6 +451,7 @@ extension CapabilitiesTableRepresentable {
         // MARK: - Hover Tracking
 
         private func handleMouseMoved(with event: NSEvent) {
+            guard !isScrolling else { return }
             guard let tableView else { return setHoveredRow(nil) }
             let point = tableView.convert(event.locationInWindow, from: nil)
             let row = tableView.row(at: point)
