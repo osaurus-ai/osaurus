@@ -322,6 +322,10 @@ extension MessageTableRepresentable {
             let newLookup = Dictionary(uniqueKeysWithValues: blocks.map { ($0.id, $0) })
             let newStreamingBlockId = Self.detectStreamingBlockId(in: blocks, isStreaming: isStreaming)
 
+            // Detect streaming-ended transition before any state mutations.
+            let streamingJustEnded = streamingBlockId != nil && newStreamingBlockId == nil
+            let previousStreamingBlockId = streamingBlockId
+
             // Flush pending height update if the streaming block changed or ended.
             if streamingBlockId != nil, newStreamingBlockId != streamingBlockId {
                 flushPendingHeightUpdate()
@@ -352,7 +356,9 @@ extension MessageTableRepresentable {
                 newLookup: newLookup,
                 newStreamingBlockId: newStreamingBlockId,
                 lastAssistantTurnId: lastAssistantTurnId,
-                autoScrollEnabled: autoScrollEnabled
+                autoScrollEnabled: autoScrollEnabled,
+                streamingJustEnded: streamingJustEnded,
+                previousStreamingBlockId: previousStreamingBlockId
             )
         }
 
@@ -382,7 +388,9 @@ extension MessageTableRepresentable {
             newLookup: [String: ContentBlock],
             newStreamingBlockId: String?,
             lastAssistantTurnId: UUID?,
-            autoScrollEnabled: Bool
+            autoScrollEnabled: Bool,
+            streamingJustEnded: Bool = false,
+            previousStreamingBlockId: String? = nil
         ) {
             blockLookup = newLookup
             blockIds = newIds
@@ -400,6 +408,16 @@ extension MessageTableRepresentable {
                     lastAssistantTurnId: lastAssistantTurnId,
                     autoScrollEnabled: autoScrollEnabled
                 )
+
+                // When streaming ends, the last throttled height measurement
+                // may not reflect the final content. Reconfigure the cell and
+                // schedule a deferred re-measurement after the hosting view's
+                // layout has settled, then re-pin scroll position.
+                if streamingJustEnded, let streamId = previousStreamingBlockId,
+                    let row = self.blockIds.firstIndex(of: streamId)
+                {
+                    self.schedulePostStreamingHeightFix(streamId: streamId, row: row)
+                }
             }
         }
 
@@ -499,6 +517,44 @@ extension MessageTableRepresentable {
             NSAnimationContext.current.duration = 0
             tv.noteHeightOfRows(withIndexesChanged: IndexSet(integer: row))
             NSAnimationContext.endGrouping()
+        }
+
+        /// After streaming ends, reconfigure the previously streaming cell
+        /// with its final content and re-measure its height once the hosting
+        /// view has settled. Called from the snapshot-apply completion handler
+        /// so it runs *after* the diffable data source has finished updating.
+        private func schedulePostStreamingHeightFix(streamId: String, row: Int) {
+            guard let block = blockLookup[streamId] else { return }
+
+            // Reconfigure the cell with final content (isStreaming: false).
+            // Path 3's snapshot apply doesn't reconfigure cells whose IDs
+            // haven't changed, so the cell may still show stale state.
+            if let tv = tableView,
+                let cell = tv.view(atColumn: 0, row: row, makeIfNecessary: false) as? MessageCellView
+            {
+                configureCell(cell, with: block)
+            }
+
+            // Deferred re-measurement: give the hosting view time to lay out
+            // with the final content, then update the row height and re-pin
+            // scroll position.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { [weak self] in
+                guard let self, let tv = self.tableView, row < tv.numberOfRows else { return }
+
+                // Force layout to ensure intrinsic content size is up to date
+                if let cell = tv.view(atColumn: 0, row: row, makeIfNecessary: false) as? NSTableCellView {
+                    cell.layoutSubtreeIfNeeded()
+                }
+
+                NSAnimationContext.beginGrouping()
+                NSAnimationContext.current.duration = 0
+                tv.noteHeightOfRows(withIndexesChanged: IndexSet(integer: row))
+                NSAnimationContext.endGrouping()
+
+                if self.scrollAnchor.isPinnedToBottom {
+                    self.scrollAnchor.scrollToBottom()
+                }
+            }
         }
 
         // MARK: - Hover Tracking

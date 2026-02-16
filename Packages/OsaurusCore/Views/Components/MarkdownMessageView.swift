@@ -101,9 +101,19 @@ private struct MemoizedMarkdownView: View {
             }
         }
         .onChange(of: isStreaming) { _, newValue in
-            // When streaming ends, do immediate final parse
+            // When streaming ends, parse synchronously so the segments
+            // are up-to-date before the table re-measures row height.
+            // Background parsing would race with noteHeightOfRows.
             if !newValue && lastParsedText != text {
-                scheduleBackgroundParse(for: text, oldText: "", debounce: false)
+                currentParseTask?.cancel()
+                currentParseTask = nil
+                let blocks = parseBlocks(text)
+                let segments = groupBlocksIntoSegments(blocks)
+                cachedBlocks = blocks
+                cachedSegments = segments
+                lastParsedText = text
+                lastStableIndex = max(0, blocks.count - 1)
+                ThreadCache.shared.setMarkdown(blocks: blocks, segments: segments, for: text)
             }
         }
     }
