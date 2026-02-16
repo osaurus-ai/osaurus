@@ -56,6 +56,10 @@ public final class WorkDatabase: @unchecked Sendable {
 
     // MARK: - Lifecycle
 
+    private static let legacyDatabasePath: URL = OsaurusPaths.appSupportRoot()
+        .appendingPathComponent("agent", isDirectory: true)
+        .appendingPathComponent("agent.db")
+
     /// Opens the database connection and runs migrations
     public func open() throws {
         try queue.sync {
@@ -63,23 +67,9 @@ public final class WorkDatabase: @unchecked Sendable {
 
             OsaurusPaths.ensureExistsSilent(OsaurusPaths.workData())
 
-            let path = OsaurusPaths.workDatabaseFile().path
-            var dbPointer: OpaquePointer?
-
-            let result = sqlite3_open(path, &dbPointer)
-            guard result == SQLITE_OK, let connection = dbPointer else {
-                let message = String(cString: sqlite3_errmsg(dbPointer))
-                sqlite3_close(dbPointer)
-                throw WorkDatabaseError.failedToOpen(message)
-            }
-
-            db = connection
-
-            // Enable foreign keys
-            try executeRaw("PRAGMA foreign_keys = ON")
-
-            // Run migrations
+            try openConnection()
             try runMigrations()
+            try recoverLegacyDataIfNeeded()
         }
     }
 
@@ -90,6 +80,46 @@ public final class WorkDatabase: @unchecked Sendable {
             sqlite3_close(connection)
             db = nil
         }
+    }
+
+    // MARK: - Legacy Database Recovery
+
+    /// Replaces an empty work.db with agent.db if the user already launched
+    /// the broken version (schema exists but no data).
+    private func recoverLegacyDataIfNeeded() throws {
+        guard FileManager.default.fileExists(atPath: Self.legacyDatabasePath.path) else { return }
+
+        var hasData = false
+        try executeRaw("SELECT COUNT(*) FROM tasks") { stmt in
+            if sqlite3_step(stmt) == SQLITE_ROW {
+                hasData = sqlite3_column_int(stmt, 0) > 0
+            }
+        }
+        guard !hasData else { return }
+
+        if let connection = db { sqlite3_close(connection); db = nil }
+
+        let newPath = OsaurusPaths.workDatabaseFile()
+        try? FileManager.default.removeItem(at: newPath)
+        try FileManager.default.copyItem(at: Self.legacyDatabasePath, to: newPath)
+        print("[WorkDatabase] Recovered data from legacy agent.db")
+
+        try openConnection()
+        try runMigrations()
+    }
+
+    /// Opens the SQLite connection and enables foreign keys.
+    private func openConnection() throws {
+        let path = OsaurusPaths.workDatabaseFile().path
+        var dbPointer: OpaquePointer?
+        let result = sqlite3_open(path, &dbPointer)
+        guard result == SQLITE_OK, let connection = dbPointer else {
+            let message = String(cString: sqlite3_errmsg(dbPointer))
+            sqlite3_close(dbPointer)
+            throw WorkDatabaseError.failedToOpen(message)
+        }
+        db = connection
+        try executeRaw("PRAGMA foreign_keys = ON")
     }
 
     // MARK: - Schema & Migrations
@@ -205,7 +235,7 @@ public final class WorkDatabase: @unchecked Sendable {
 
         // Create index for task listing
         try executeRaw("CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status)")
-        try executeRaw("CREATE INDEX IF NOT EXISTS idx_tasks_persona ON tasks(agent_id)")
+        try executeRaw("CREATE INDEX IF NOT EXISTS idx_tasks_persona ON tasks(persona_id)")
 
         // Create artifacts table for storing generated content
         try executeRaw(

@@ -233,7 +233,7 @@ public enum OsaurusPaths {
             ("MCPProviderConfiguration.json", mcpProviderConfigFile()),
             ("ActivePersonaId.txt", activeAgentFile()),
             ("ActiveTheme.json", activeThemeFile()),
-            ("agent", workData()),
+            ("agent/agent.db", workDatabaseFile()),
         ]
     }
 
