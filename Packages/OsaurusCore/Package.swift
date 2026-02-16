@@ -13,7 +13,7 @@ let package = Package(
         .package(url: "https://github.com/orlandos-nl/IkigaJSON", from: "2.3.2"),
         .package(url: "https://github.com/sparkle-project/Sparkle", from: "2.7.0"),
         .package(url: "https://github.com/ml-explore/mlx-swift", from: "0.29.1"),
-        .package(url: "https://github.com/tpae/mlx-swift-lm", branch: "main"),
+        .package(url: "https://github.com/ml-explore/mlx-swift-lm", branch: "main"),
         .package(url: "https://github.com/huggingface/swift-transformers", from: "1.1.6"),
         .package(url: "https://github.com/argmaxinc/WhisperKit", from: "0.15.0"),
         .package(path: "../OsaurusRepository"),
