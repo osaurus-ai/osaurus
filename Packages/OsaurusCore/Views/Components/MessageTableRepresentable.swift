@@ -45,8 +45,6 @@ struct CellRenderingContext {
     let onCancelEdit: (() -> Void)?
 }
 
-// MARK: - Hover-Tracking Table View
-
 // MARK: - MessageTableRepresentable
 
 struct MessageTableRepresentable: NSViewRepresentable {
@@ -316,7 +314,16 @@ extension MessageTableRepresentable {
             autoScrollEnabled: Bool
         ) {
             let widthChanged = abs(ctx.width - context.width) > 1.0
+            let previousEditingTurnId = ctx.editingTurnId
             ctx = context
+
+            // Editing state lives in the context, not in the blocks themselves.
+            // Reconfigure affected cells immediately so the UI responds without
+            // waiting for a block-level change.
+            if context.editingTurnId != previousEditingTurnId {
+                reconfigureCellsForTurn(previousEditingTurnId)
+                reconfigureCellsForTurn(context.editingTurnId)
+            }
 
             let newIds = blocks.map(\.id)
             let newLookup = Dictionary(uniqueKeysWithValues: blocks.map { ($0.id, $0) })
@@ -484,6 +491,25 @@ extension MessageTableRepresentable {
                 onConfirmEdit: ctx.onConfirmEdit,
                 onCancelEdit: ctx.onCancelEdit
             )
+        }
+
+        // MARK: - Context-Driven Reconfiguration
+
+        private func reconfigureCellsForTurn(_ turnId: UUID?) {
+            guard let turnId, let tableView else { return }
+            var affectedRows = IndexSet()
+            for (index, blockId) in blockIds.enumerated() {
+                guard let block = blockLookup[blockId], block.turnId == turnId else { continue }
+                if let cell = tableView.view(atColumn: 0, row: index, makeIfNecessary: false) as? MessageCellView {
+                    configureCell(cell, with: block)
+                }
+                affectedRows.insert(index)
+            }
+            guard !affectedRows.isEmpty else { return }
+            NSAnimationContext.beginGrouping()
+            NSAnimationContext.current.duration = 0
+            tableView.noteHeightOfRows(withIndexesChanged: affectedRows)
+            NSAnimationContext.endGrouping()
         }
 
         // MARK: - Streaming Height Updates

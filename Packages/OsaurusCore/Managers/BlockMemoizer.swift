@@ -3,7 +3,7 @@
 //  osaurus
 //
 //  Memoizes content block generation with incremental updates during streaming.
-//  Supports three cache paths to minimize SwiftUI LazyVStack re-layout:
+//  Supports three cache paths to minimize NSTableView re-layout:
 //    1. Fast path   – nothing changed, return cached blocks
 //    2. Incremental – only last turn's content changed (streaming)
 //    3. Append      – one or more turns added at the end
