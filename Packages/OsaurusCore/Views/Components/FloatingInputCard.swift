@@ -5,9 +5,10 @@
 //  Premium floating input card with model chip and smooth animations
 //
 
+import AppKit
+import Combine
 import SwiftUI
 import UniformTypeIdentifiers
-import AppKit
 
 struct FloatingInputCard: View {
     @Binding var text: String
@@ -63,6 +64,9 @@ struct FloatingInputCard: View {
     @State private var showCapabilitiesPicker = false
     // Cache model options to prevent popover refresh during streaming
     @State private var cachedModelOptions: [ModelOption] = []
+    // Cache tool/skill availability to avoid calling singleton methods on every body evaluation
+    @State private var hasTools: Bool = false
+    @State private var hasSkills: Bool = false
 
     // MARK: - Voice Input State
     @ObservedObject private var whisperService = WhisperKitService.shared
@@ -81,8 +85,9 @@ struct FloatingInputCard: View {
     /// Threshold for considering audio as "speech" vs "silence"
     private let speechThreshold: Float = 0.05
 
-    /// Timer publisher for pause detection (fires every 100ms)
-    private let pauseDetectionPublisher = Timer.publish(every: 0.1, on: .main, in: .common).autoconnect()
+    /// Timer publisher for pause detection (fires every 100ms, connected only when voice overlay is active)
+    private let pauseDetectionPublisher = Timer.publish(every: 0.1, on: .main, in: .common)
+    @State private var timerConnection: Cancellable?
 
     // TextEditor should grow up to ~6 lines before scrolling
     private var inputFontSize: CGFloat { CGFloat(theme.bodySize) }
@@ -160,7 +165,7 @@ struct FloatingInputCard: View {
     var body: some View {
         VStack(spacing: 12) {
             // Model and tool selector chips (always visible)
-            if (modelOptions.count > 1 || !toolRegistry.listTools().isEmpty || !skillManager.skills.isEmpty
+            if (modelOptions.count > 1 || hasTools || hasSkills
                 || displayContextTokens > 0) && !showVoiceOverlay
             {
                 selectorRow
@@ -216,6 +221,10 @@ struct FloatingInputCard: View {
             // Focus immediately when view appears
             isFocused = true
 
+            // Initialize cached tool/skill availability
+            hasTools = !toolRegistry.listTools().isEmpty
+            hasSkills = !skillManager.skills.isEmpty
+
             // Load voice config (cached after first load)
             loadVoiceConfig()
 
@@ -230,6 +239,7 @@ struct FloatingInputCard: View {
                 if !showVoiceOverlay {
                     showVoiceOverlay = true
                 }
+                timerConnection = pauseDetectionPublisher.connect()
             }
         }
         .onReceive(NotificationCenter.default.publisher(for: .startVoiceInputInChat)) { notification in
@@ -271,6 +281,10 @@ struct FloatingInputCard: View {
             }
         }
         .onDisappear {
+            // Disconnect the pause detection timer
+            timerConnection?.cancel()
+            timerConnection = nil
+
             // Stop any active voice recording, but check if we should keep continuous mode
             if isVoiceActive {
                 print("[FloatingInputCard] onDisappear: Stopping active voice recording")
@@ -364,6 +378,12 @@ struct FloatingInputCard: View {
         }
         .onChange(of: showVoiceOverlay) { _, newValue in
             print("[FloatingInputCard] showVoiceOverlay changed to: \(newValue)")
+            if newValue {
+                timerConnection = pauseDetectionPublisher.connect()
+            } else {
+                timerConnection?.cancel()
+                timerConnection = nil
+            }
         }
         .onChange(of: isContinuousVoiceMode) { _, newValue in
             print("[FloatingInputCard] isContinuousVoiceMode changed to: \(newValue)")
@@ -371,6 +391,18 @@ struct FloatingInputCard: View {
         .onReceive(pauseDetectionPublisher) { _ in
             checkForPause()
             checkForSilenceTimeout()
+        }
+        .onReceive(toolRegistry.objectWillChange) { _ in
+            DispatchQueue.main.async {
+                let newValue = !toolRegistry.listTools().isEmpty
+                if newValue != hasTools { hasTools = newValue }
+            }
+        }
+        .onReceive(skillManager.objectWillChange) { _ in
+            DispatchQueue.main.async {
+                let newValue = !skillManager.skills.isEmpty
+                if newValue != hasSkills { hasSkills = newValue }
+            }
         }
     }
 
@@ -601,7 +633,7 @@ struct FloatingInputCard: View {
             }
 
             // Capabilities selector (tools + skills combined)
-            if !toolRegistry.listTools().isEmpty || !skillManager.skills.isEmpty {
+            if hasTools || hasSkills {
                 capabilitiesSelectorChip
             }
 

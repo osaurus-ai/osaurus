@@ -193,13 +193,11 @@ struct AnimatedOrb: View {
 
     private var innerRimGlows: some View {
         let gradient = LinearGradient(colors: [.white, .clear], startPoint: .bottom, endPoint: .top)
-        return ZStack {
-            Circle().stroke(gradient, lineWidth: 6).blur(radius: 20)
-            Circle().stroke(gradient, lineWidth: 3).blur(radius: 8)
-            Circle().stroke(gradient, lineWidth: 1).blur(radius: 3)
-        }
-        .blendMode(.plusLighter)
-        .padding(1)
+        return Circle()
+            .stroke(gradient, lineWidth: 3)
+            .blur(radius: 8)
+            .blendMode(.plusLighter)
+            .padding(1)
     }
 
     // MARK: - Animations
@@ -296,6 +294,7 @@ private struct OrbRotatingGlowView: View {
                     }
                     .compositingGroup()
                 }
+                .drawingGroup()
                 .rotationEffect(.degrees(rotation))
                 .onAppear {
                     withAnimation(.linear(duration: 360 / speed).repeatForever(autoreverses: false)) {
@@ -343,7 +342,7 @@ private struct OrbWavyBlobView: View {
     let config: OrbWavyBlobConfig
 
     var body: some View {
-        TimelineView(.animation) { timeline in
+        TimelineView(.periodic(from: .now, by: 1.0 / 15.0)) { timeline in
             Canvas { context, size in
                 let timeNow = timeline.date.timeIntervalSinceReferenceDate
                 let angle = (timeNow.remainder(dividingBy: config.loopDuration) / config.loopDuration) * 2 * Double.pi
@@ -411,9 +410,9 @@ private struct OrbParticleConfig {
     let twinklePower: Double
 
     init(seed: Double) {
-        orbitingCount = 10 + Int(seed * 5)
-        swirlingCount = 6 + Int(seed * 4)
-        sparkleCount = 12 + Int(seed * 5)
+        orbitingCount = 6 + Int(seed * 3)
+        swirlingCount = 4 + Int(seed * 2)
+        sparkleCount = 7 + Int(seed * 3)
         speedMult = 0.85 + seed * 0.3
         directionMult = seed > 0.5 ? 1.0 : -1.0
         seedMultiplier1 = 1.2 + seed * 0.3
@@ -440,7 +439,7 @@ private struct OrbParticlesView: View {
     private let particleColor: Color = .white
 
     var body: some View {
-        TimelineView(.animation) { timeline in
+        TimelineView(.periodic(from: .now, by: 1.0 / 15.0)) { timeline in
             Canvas { context, canvasSize in
                 let time = timeline.date.timeIntervalSinceReferenceDate
                 let center = CGPoint(x: canvasSize.width / 2, y: canvasSize.height / 2)
