@@ -37,6 +37,7 @@ enum ModelPickerRow: Equatable, Identifiable {
     )
     case model(
         id: String,
+        sourceKey: String,
         displayName: String,
         description: String?,
         parameterCount: String?,
@@ -49,7 +50,7 @@ enum ModelPickerRow: Equatable, Identifiable {
     var id: String {
         switch self {
         case .groupHeader(let sourceKey, _, _, _, _): return "gh-\(sourceKey)"
-        case .model(let id, _, _, _, _, _, _, _): return "model-\(id)"
+        case .model(let id, let sourceKey, _, _, _, _, _, _, _): return "model-\(sourceKey)-\(id)"
         }
     }
 }
@@ -101,8 +102,8 @@ struct ModelPickerTableRepresentable: NSViewRepresentable {
             scrollToModelId != coordinator.lastScrolledToModelId
         {
             coordinator.lastScrolledToModelId = modelId
-            let targetId = "model-\(modelId)"
-            if let rowIndex = coordinator.rowIds.firstIndex(of: targetId) {
+            let targetSuffix = "-\(modelId)"
+            if let rowIndex = coordinator.rowIds.firstIndex(where: { $0.hasSuffix(targetSuffix) }) {
                 coordinator.tableView?.scrollRowToVisible(rowIndex)
             }
         }
@@ -240,7 +241,10 @@ extension ModelPickerTableRepresentable {
             ctx = context
 
             let newIds = rows.map(\.id)
-            let newLookup = Dictionary(uniqueKeysWithValues: rows.map { ($0.id, $0) })
+            let newLookup = Dictionary(
+                rows.map { ($0.id, $0) },
+                uniquingKeysWith: { first, _ in first }
+            )
 
             // No-change early return
             if newIds == rowIds, !hasContentChanges(newLookup: newLookup) {
@@ -285,11 +289,15 @@ extension ModelPickerTableRepresentable {
             newLookup: [String: ModelPickerRow]
         ) {
             rowLookup = newLookup
-            rowIds = newIds
+
+            // Safety: strip any duplicate IDs to avoid NSDiffableDataSource crash
+            var seen = Set<String>()
+            let uniqueIds = newIds.filter { seen.insert($0).inserted }
+            rowIds = uniqueIds
 
             var snapshot = NSDiffableDataSourceSnapshot<ModelPickerSection, String>()
             snapshot.appendSections([.main])
-            snapshot.appendItems(newIds, toSection: .main)
+            snapshot.appendItems(uniqueIds, toSection: .main)
 
             dataSource?.apply(snapshot, animatingDifferences: false)
         }
@@ -347,6 +355,7 @@ extension ModelPickerTableRepresentable {
 
             case .model(
                 let id,
+                _,
                 let displayName,
                 let description,
                 let parameterCount,
@@ -424,7 +433,7 @@ extension ModelPickerTableRepresentable {
                 // 12pt padding top + ~16pt content + 12pt padding bottom
                 return 44
 
-            case .model(_, _, let description, let parameterCount, let quantization, _, _, _):
+            case .model(_, _, _, let description, let parameterCount, let quantization, _, _, _):
                 // 10pt padding top/bottom + ~16pt display name line
                 var height: CGFloat = 36
                 if let description, !description.isEmpty {

@@ -51,11 +51,11 @@ struct ModelPickerView: View {
     }
 
     private func isGroupExpanded(_ source: ModelOption.Source) -> Bool {
-        !searchText.isEmpty || !collapsedGroups.contains(source.displayName)
+        !searchText.isEmpty || !collapsedGroups.contains(source.uniqueKey)
     }
 
     private func toggleGroup(_ source: ModelOption.Source) {
-        let key = source.displayName
+        let key = source.uniqueKey
         if collapsedGroups.contains(key) {
             collapsedGroups.remove(key)
         } else {
@@ -236,9 +236,10 @@ struct ModelPickerView: View {
         var rows: [ModelPickerRow] = []
         for group in filteredGroups {
             let expanded = isGroupExpanded(group.source)
+            let sourceKey = group.source.uniqueKey
             rows.append(
                 .groupHeader(
-                    sourceKey: group.source.displayName,
+                    sourceKey: sourceKey,
                     displayName: group.source.displayName,
                     sourceType: group.source,
                     count: group.models.count,
@@ -250,6 +251,7 @@ struct ModelPickerView: View {
                     rows.append(
                         .model(
                             id: model.id,
+                            sourceKey: sourceKey,
                             displayName: model.displayName,
                             description: model.description,
                             parameterCount: model.parameterCount,
@@ -273,7 +275,7 @@ struct ModelPickerView: View {
             theme: theme,
             scrollToModelId: highlightedModelId,
             onToggleGroup: { sourceKey in
-                if let group = filteredGroups.first(where: { $0.source.displayName == sourceKey }) {
+                if let group = filteredGroups.first(where: { $0.source.uniqueKey == sourceKey }) {
                     toggleGroup(group.source)
                 }
             },

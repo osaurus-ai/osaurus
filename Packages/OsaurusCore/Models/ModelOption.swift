@@ -26,6 +26,15 @@ struct ModelOption: Identifiable, Hashable {
             }
         }
 
+        /// Stable identifier unique per source instance (safe for row IDs).
+        var uniqueKey: String {
+            switch self {
+            case .foundation: return "foundation"
+            case .local: return "local"
+            case .remote(_, let providerId): return "remote-\(providerId.uuidString)"
+            }
+        }
+
         var sortOrder: Int {
             switch self {
             case .foundation:
