@@ -3,7 +3,6 @@
 //  osaurus
 //
 //  Floating glass message bubble with depth and hover effects
-//  Updated to use theme colors for customization support
 //
 
 import SwiftUI
@@ -14,28 +13,32 @@ struct GlassMessageBubble: View {
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.theme) private var theme
 
+    private var cornerRadius: Double { theme.bubbleCornerRadius }
+
     var body: some View {
         ZStack {
             // Background glass layers
-            RoundedRectangle(cornerRadius: 20, style: .continuous)
+            RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
                 .fill(.ultraThinMaterial)
                 .overlay(
-                    RoundedRectangle(cornerRadius: 20, style: .continuous)
+                    RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
                         .fill(glassBackground)
                 )
                 .background(
-                    RoundedRectangle(cornerRadius: 20, style: .continuous)
+                    RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
                         .fill(Color.white.opacity(theme.isDark ? 0.1 : 0.2))
                         .blur(radius: 20)
                         .offset(x: 0, y: 2)
                 )
 
-            // Edge lighting - using theme glass edge light
-            RoundedRectangle(cornerRadius: 20, style: .continuous)
-                .strokeBorder(edgeColor, lineWidth: 0.5)
+            if theme.showEdgeLight {
+                // Edge lighting - using theme glass edge light
+                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                    .strokeBorder(edgeColor, lineWidth: theme.messageBorderWidth)
+            }
 
             // Subtle inner shadow for depth
-            RoundedRectangle(cornerRadius: 20, style: .continuous)
+            RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
                 .stroke(
                     LinearGradient(
                         colors: [
@@ -45,7 +48,7 @@ struct GlassMessageBubble: View {
                         startPoint: .top,
                         endPoint: .bottom
                     ),
-                    lineWidth: 0.5
+                    lineWidth: theme.messageBorderWidth
                 )
                 .blur(radius: 1)
                 .opacity(theme.isDark ? 0.5 : 0.8)
@@ -59,32 +62,20 @@ struct GlassMessageBubble: View {
     }
 
     private var glassBackground: some ShapeStyle {
-        if role == .user {
-            // Use theme accent color for user messages - opacity scales with theme glass settings
-            let baseOpacity = theme.isDark ? 0.18 : 0.15
-            let boost = theme.glassOpacityPrimary * 0.5
-            return LinearGradient(
-                colors: [
-                    theme.accentColor.opacity(baseOpacity + boost),
-                    theme.accentColor.opacity((baseOpacity + boost) * 0.6),
-                ],
-                startPoint: .topLeading,
-                endPoint: .bottomTrailing
-            )
-        } else {
-            // Use theme secondary background for assistant messages
-            // Ensures readable text while respecting theme customization
-            let baseOpacity = theme.isDark ? 0.7 : 0.8
-            let boost = theme.glassOpacityPrimary * 0.8
-            return LinearGradient(
-                colors: [
-                    theme.secondaryBackground.opacity(min(0.95, baseOpacity + boost)),
-                    theme.secondaryBackground.opacity(min(0.9, (baseOpacity + boost) * 0.85)),
-                ],
-                startPoint: .topLeading,
-                endPoint: .bottomTrailing
-            )
-        }
+        let bubbleColor =
+            role == .user
+            ? (theme.userBubbleColor ?? theme.accentColor)
+            : (theme.assistantBubbleColor ?? theme.secondaryBackground)
+        let opacity = role == .user ? theme.userBubbleOpacity : theme.assistantBubbleOpacity
+
+        return LinearGradient(
+            colors: [
+                bubbleColor.opacity(opacity),
+                bubbleColor.opacity(opacity * 0.7),
+            ],
+            startPoint: .topLeading,
+            endPoint: .bottomTrailing
+        )
     }
 
     private var edgeColor: some ShapeStyle {
@@ -100,7 +91,8 @@ struct GlassMessageBubble: View {
 
     private var shadowColor: Color {
         if role == .user {
-            return theme.accentColor.opacity(0.3)
+            let bubbleColor = theme.userBubbleColor ?? theme.accentColor
+            return bubbleColor.opacity(theme.shadowOpacity)
         } else {
             return theme.shadowColor.opacity(theme.shadowOpacity)
         }

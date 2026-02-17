@@ -41,12 +41,33 @@ struct ContentBlockView: View, Equatable {
 
     // MARK: - Body
 
+    private var userBubbleBackgroundColor: Color {
+        if let color = theme.userBubbleColor { return color }
+        return theme.accentColor
+    }
+
+    @ViewBuilder
+    private var messageBubbleBackground: some View {
+        if isUserMessage {
+            ZStack {
+                if theme.glassEnabled {
+                    UnevenRoundedRectangle(cornerRadii: cornerRadii, style: .continuous)
+                        .fill(.ultraThinMaterial)
+                }
+                UnevenRoundedRectangle(cornerRadii: cornerRadii, style: .continuous)
+                    .fill(userBubbleBackgroundColor.opacity(theme.userBubbleOpacity))
+            }
+        } else {
+            Color.clear
+        }
+    }
+
     var body: some View {
         if case .groupSpacer = block.kind {
             Color.clear.frame(height: 16)
         } else {
             contentContainer
-                .background(isUserMessage ? theme.secondaryBackground.opacity(0.5) : Color.clear)
+                .background(messageBubbleBackground)
                 .clipShape(UnevenRoundedRectangle(cornerRadii: cornerRadii, style: .continuous))
                 .overlay(userMessageBorder)
         }
@@ -134,12 +155,15 @@ struct ContentBlockView: View, Equatable {
                     .resizable()
                     .aspectRatio(contentMode: .fit)
                     .frame(maxWidth: 200, maxHeight: 150)
-                    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                    .clipShape(RoundedRectangle(cornerRadius: CGFloat(theme.inputCornerRadius), style: .continuous))
                     .overlay(
-                        RoundedRectangle(cornerRadius: 8, style: .continuous)
-                            .strokeBorder(theme.primaryBorder.opacity(0.2), lineWidth: 1)
+                        RoundedRectangle(cornerRadius: CGFloat(theme.inputCornerRadius), style: .continuous)
+                            .strokeBorder(
+                                theme.primaryBorder.opacity(theme.borderOpacity),
+                                lineWidth: CGFloat(theme.defaultBorderWidth)
+                            )
                     )
-                    .shadow(color: theme.shadowColor.opacity(0.1), radius: 4, x: 0, y: 2)
+                    .shadow(color: theme.shadowColor.opacity(theme.shadowOpacity * 0.3), radius: 4, x: 0, y: 2)
                     .padding(.top, 6)
                     .padding(.bottom, isLastInTurn ? 16 : 6)
             }
@@ -160,7 +184,7 @@ struct ContentBlockView: View, Equatable {
     private var cornerRadii: RectangleCornerRadii {
         guard isUserMessage else { return .init() }
 
-        let r: CGFloat = 8
+        let r: CGFloat = CGFloat(theme.bubbleCornerRadius)
         switch block.position {
         case .only: return .init(topLeading: r, bottomLeading: r, bottomTrailing: r, topTrailing: r)
         case .first: return .init(topLeading: r, bottomLeading: 0, bottomTrailing: 0, topTrailing: r)
@@ -172,11 +196,26 @@ struct ContentBlockView: View, Equatable {
     @ViewBuilder
     private var userMessageBorder: some View {
         if isUserMessage {
-            UserMessageBorderPath(
-                position: block.position,
-                radius: 8
-            )
-            .stroke(theme.primaryBorder.opacity(0.3), lineWidth: 1)
+            if theme.showEdgeLight {
+                UserMessageBorderPath(
+                    position: block.position,
+                    radius: CGFloat(theme.bubbleCornerRadius)
+                )
+                .stroke(
+                    LinearGradient(
+                        colors: [theme.glassEdgeLight, theme.glassEdgeLight.opacity(0.4)],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    ),
+                    lineWidth: CGFloat(theme.messageBorderWidth)
+                )
+            } else {
+                UserMessageBorderPath(
+                    position: block.position,
+                    radius: CGFloat(theme.bubbleCornerRadius)
+                )
+                .stroke(theme.primaryBorder.opacity(theme.borderOpacity), lineWidth: CGFloat(theme.messageBorderWidth))
+            }
         }
     }
 }
@@ -351,12 +390,15 @@ private struct InlineEditView: View {
         .padding(.horizontal, 8)
         .padding(.vertical, 6)
         .background(
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
+            RoundedRectangle(cornerRadius: CGFloat(theme.inputCornerRadius), style: .continuous)
                 .fill(theme.primaryBackground)
         )
         .overlay(
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .strokeBorder(theme.accentColor.opacity(0.5), lineWidth: 1)
+            RoundedRectangle(cornerRadius: CGFloat(theme.inputCornerRadius), style: .continuous)
+                .strokeBorder(
+                    theme.accentColor.opacity(theme.borderOpacity + 0.2),
+                    lineWidth: CGFloat(theme.defaultBorderWidth)
+                )
         )
     }
 
@@ -376,7 +418,10 @@ private struct InlineEditView: View {
                     )
                     .overlay(
                         RoundedRectangle(cornerRadius: 6, style: .continuous)
-                            .strokeBorder(theme.primaryBorder.opacity(0.3), lineWidth: 1)
+                            .strokeBorder(
+                                theme.primaryBorder.opacity(theme.borderOpacity),
+                                lineWidth: CGFloat(theme.defaultBorderWidth)
+                            )
                     )
             }
             .buttonStyle(.plain)

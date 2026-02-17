@@ -72,6 +72,7 @@ protocol ThemeProtocol {
     var glassMaterial: NSVisualEffectView.Material { get }
     var glassTintColor: Color? { get }
     var glassTintOpacity: Double { get }
+    var windowBackingOpacity: Double { get }
 
     // Card shadows (enhanced)
     var cardShadowRadius: Double { get }
@@ -108,6 +109,21 @@ protocol ThemeProtocol {
 
     // Custom theme reference (for editing)
     var customThemeConfig: CustomTheme? { get }
+
+    // Message bubble customization
+    var bubbleCornerRadius: Double { get }
+    var userBubbleOpacity: Double { get }
+    var assistantBubbleOpacity: Double { get }
+    var userBubbleColor: Color? { get }
+    var assistantBubbleColor: Color? { get }
+    var messageBorderWidth: Double { get }
+    var showEdgeLight: Bool { get }
+
+    // Border customization
+    var defaultBorderWidth: Double { get }
+    var cardCornerRadius: Double { get }
+    var inputCornerRadius: Double { get }
+    var borderOpacity: Double { get }
 }
 
 // MARK: - Default Protocol Extensions
@@ -118,6 +134,7 @@ extension ThemeProtocol {
     var glassMaterial: NSVisualEffectView.Material { .hudWindow }
     var glassTintColor: Color? { nil }
     var glassTintOpacity: Double { 0 }
+    var windowBackingOpacity: Double { 0.55 }
 
     var backgroundImage: NSImage? { nil }
     var backgroundImageOpacity: Double { 1.0 }
@@ -133,6 +150,21 @@ extension ThemeProtocol {
     var codeSize: Double { 13 }
 
     var customThemeConfig: CustomTheme? { nil }
+
+    // Message bubble defaults
+    var bubbleCornerRadius: Double { 20 }
+    var userBubbleOpacity: Double { 0.3 }
+    var assistantBubbleOpacity: Double { 0.85 }
+    var userBubbleColor: Color? { nil }
+    var assistantBubbleColor: Color? { nil }
+    var messageBorderWidth: Double { 0.5 }
+    var showEdgeLight: Bool { true }
+
+    // Border defaults
+    var defaultBorderWidth: Double { 1.0 }
+    var cardCornerRadius: Double { 12 }
+    var inputCornerRadius: Double { 8 }
+    var borderOpacity: Double { 0.3 }
 
     // MARK: - Font Helpers
 
@@ -420,6 +452,7 @@ struct CustomizableTheme: ThemeProtocol {
         return Color(themeHex: tint)
     }
     var glassTintOpacity: Double { config.glass.tintOpacity ?? 0 }
+    var windowBackingOpacity: Double { config.glass.windowBackingOpacity }
 
     // Card shadows
     var cardShadowRadius: Double { config.shadows.cardShadowRadius }
@@ -459,6 +492,27 @@ struct CustomizableTheme: ThemeProtocol {
 
     // Custom theme reference
     var customThemeConfig: CustomTheme? { config }
+
+    // Message bubble customization
+    var bubbleCornerRadius: Double { config.messages.bubbleCornerRadius }
+    var userBubbleOpacity: Double { config.messages.userBubbleOpacity }
+    var assistantBubbleOpacity: Double { config.messages.assistantBubbleOpacity }
+    var userBubbleColor: Color? {
+        guard let hex = config.messages.userBubbleColor else { return nil }
+        return Color(themeHex: hex)
+    }
+    var assistantBubbleColor: Color? {
+        guard let hex = config.messages.assistantBubbleColor else { return nil }
+        return Color(themeHex: hex)
+    }
+    var messageBorderWidth: Double { config.messages.borderWidth }
+    var showEdgeLight: Bool { config.messages.showEdgeLight }
+
+    // Border customization
+    var defaultBorderWidth: Double { config.borders.defaultWidth }
+    var cardCornerRadius: Double { config.borders.cardCornerRadius }
+    var inputCornerRadius: Double { config.borders.inputCornerRadius }
+    var borderOpacity: Double { config.borders.borderOpacity }
 }
 
 // MARK: - Theme Manager
@@ -820,17 +874,16 @@ struct ThemedCardModifier: ViewModifier {
     @ObservedObject private var themeManager = ThemeManager.shared
 
     func body(content: Content) -> some View {
+        let theme = themeManager.currentTheme
         content
-            .background(themeManager.currentTheme.cardBackground)
+            .background(theme.cardBackground)
             .overlay(
-                RoundedRectangle(cornerRadius: 12)
-                    .stroke(themeManager.currentTheme.cardBorder, lineWidth: 1)
+                RoundedRectangle(cornerRadius: theme.cardCornerRadius)
+                    .stroke(theme.cardBorder.opacity(theme.borderOpacity), lineWidth: theme.defaultBorderWidth)
             )
-            .clipShape(RoundedRectangle(cornerRadius: 12))
+            .clipShape(RoundedRectangle(cornerRadius: theme.cardCornerRadius))
             .shadow(
-                color: themeManager.currentTheme.shadowColor.opacity(
-                    themeManager.currentTheme.shadowOpacity
-                ),
+                color: theme.shadowColor.opacity(theme.shadowOpacity),
                 radius: 8,
                 x: 0,
                 y: 2

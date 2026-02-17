@@ -209,15 +209,14 @@ struct WorkView: View {
                 )
                 .allowsHitTesting(false)
 
-                // Combined solid backing + gradient overlay in a single layer for text contrast and depth
-                let baseBackingOpacity = theme.isDark ? 0.6 : 0.7
-                let themeBoost = theme.glassOpacityPrimary * 0.8
-                let backingOpacity = min(0.92, baseBackingOpacity + themeBoost)
+                // Solid backing scaled by glass opacity so low values produce real transparency
+                let baseBacking = theme.windowBackingOpacity
+                let backingOpacity = baseBacking * (0.4 + theme.glassOpacityPrimary * 0.6)
 
                 LinearGradient(
                     colors: [
-                        theme.primaryBackground.opacity(backingOpacity + theme.glassOpacityPrimary * 1.5),
-                        theme.primaryBackground.opacity(backingOpacity + theme.glassOpacitySecondary),
+                        theme.primaryBackground.opacity(backingOpacity + theme.glassOpacityPrimary * 0.3),
+                        theme.primaryBackground.opacity(backingOpacity + theme.glassOpacitySecondary * 0.2),
                     ],
                     startPoint: .top,
                     endPoint: .bottom
