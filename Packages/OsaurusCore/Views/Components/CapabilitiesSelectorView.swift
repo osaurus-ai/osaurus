@@ -415,7 +415,7 @@ struct CapabilitiesSelectorView: View {
         if isInline {
             content
                 .frame(maxWidth: .infinity)
-                .frame(maxHeight: 460)
+                .frame(height: min(CGFloat(totalCount * 48 + 200), 600))
         } else {
             content
                 .frame(width: 420, height: min(CGFloat(totalCount * 48 + 200), 540))

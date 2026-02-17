@@ -595,6 +595,7 @@ private struct AgentDetailView: View {
     @ObservedObject private var themeManager = ThemeManager.shared
     @ObservedObject private var agentManager = AgentManager.shared
     @ObservedObject private var scheduleManager = ScheduleManager.shared
+    @ObservedObject private var watcherManager = WatcherManager.shared
 
     private var theme: ThemeProtocol { themeManager.currentTheme }
 
@@ -625,8 +626,9 @@ private struct AgentDetailView: View {
     @State private var showModelPicker = false
     @State private var selectedModel: String?
 
-    // Schedule creation
+    // Schedule & Watcher creation
     @State private var showCreateSchedule = false
+    @State private var showCreateWatcher = false
 
     // Guard to prevent save on initial load
     @State private var isInitialLoadComplete = false
@@ -639,6 +641,11 @@ private struct AgentDetailView: View {
     /// Schedules linked to this agent
     private var linkedSchedules: [Schedule] {
         scheduleManager.schedules.filter { $0.agentId == agent.id }
+    }
+
+    /// Watchers linked to this agent
+    private var linkedWatchers: [Watcher] {
+        watcherManager.watchers.filter { $0.agentId == agent.id }
     }
 
     /// Chat sessions for this agent
@@ -692,6 +699,7 @@ private struct AgentDetailView: View {
                     capabilitiesSection
                     themeSection
                     schedulesSection
+                    watchersSection
                     historySection
                 }
                 .padding(24)
@@ -733,6 +741,28 @@ private struct AgentDetailView: View {
                     showSuccess("Created schedule \"\(schedule.name)\"")
                 },
                 onCancel: { showCreateSchedule = false },
+                initialAgentId: agent.id
+            )
+            .environment(\.theme, themeManager.currentTheme)
+        }
+        .sheet(isPresented: $showCreateWatcher) {
+            WatcherEditorSheet(
+                mode: .create,
+                onSave: { watcher in
+                    watcherManager.create(
+                        name: watcher.name,
+                        instructions: watcher.instructions,
+                        agentId: watcher.agentId,
+                        watchPath: watcher.watchPath,
+                        watchBookmark: watcher.watchBookmark,
+                        isEnabled: watcher.isEnabled,
+                        recursive: watcher.recursive,
+                        responsiveness: watcher.responsiveness
+                    )
+                    showCreateWatcher = false
+                    showSuccess("Created watcher \"\(watcher.name)\"")
+                },
+                onCancel: { showCreateWatcher = false },
                 initialAgentId: agent.id
             )
             .environment(\.theme, themeManager.currentTheme)
@@ -854,6 +884,13 @@ private struct AgentDetailView: View {
                             icon: "clock",
                             text: "\(linkedSchedules.count) schedule\(linkedSchedules.count == 1 ? "" : "s")",
                             color: .green
+                        )
+                    }
+                    if !linkedWatchers.isEmpty {
+                        statBadge(
+                            icon: "eye",
+                            text: "\(linkedWatchers.count) watcher\(linkedWatchers.count == 1 ? "" : "s")",
+                            color: .purple
                         )
                     }
                     statBadge(
@@ -1215,6 +1252,98 @@ private struct AgentDetailView: View {
                 .buttonStyle(PlainButtonStyle())
             }
         }
+    }
+
+    // MARK: - Watchers Section
+
+    private var watchersSection: some View {
+        AgentDetailSection(
+            title: "Watchers",
+            icon: "eye.fill",
+            subtitle: linkedWatchers.isEmpty ? "None" : "\(linkedWatchers.count)"
+        ) {
+            VStack(alignment: .leading, spacing: 12) {
+                if linkedWatchers.isEmpty {
+                    VStack(spacing: 8) {
+                        Image(systemName: "eye.slash")
+                            .font(.system(size: 24))
+                            .foregroundColor(theme.tertiaryText)
+                        Text("No watchers linked to this agent")
+                            .font(.system(size: 12))
+                            .foregroundColor(theme.secondaryText)
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 12)
+                } else {
+                    ForEach(linkedWatchers) { watcher in
+                        watcherRow(watcher)
+                    }
+                }
+
+                Button {
+                    showCreateWatcher = true
+                } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: "plus.circle")
+                            .font(.system(size: 11))
+                        Text("Create Watcher")
+                            .font(.system(size: 11, weight: .medium))
+                    }
+                    .foregroundColor(theme.accentColor)
+                }
+                .buttonStyle(PlainButtonStyle())
+            }
+        }
+    }
+
+    private func watcherRow(_ watcher: Watcher) -> some View {
+        HStack(spacing: 12) {
+            Circle()
+                .fill(watcher.isEnabled ? theme.successColor : theme.tertiaryText)
+                .frame(width: 8, height: 8)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(watcher.name)
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundColor(theme.primaryText)
+
+                HStack(spacing: 8) {
+                    if let path = watcher.watchPath {
+                        Text(path)
+                            .font(.system(size: 11))
+                            .foregroundColor(theme.secondaryText)
+                            .lineLimit(1)
+                    }
+
+                    if let lastTriggered = watcher.lastTriggeredAt {
+                        Text("Last: \(lastTriggered.formatted(date: .abbreviated, time: .shortened))")
+                            .font(.system(size: 10))
+                            .foregroundColor(theme.tertiaryText)
+                    }
+                }
+            }
+
+            Spacer()
+
+            Text(watcher.isEnabled ? "Active" : "Paused")
+                .font(.system(size: 10, weight: .medium))
+                .foregroundColor(watcher.isEnabled ? theme.successColor : theme.tertiaryText)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 3)
+                .background(
+                    Capsule()
+                        .fill((watcher.isEnabled ? theme.successColor : theme.tertiaryText).opacity(0.1))
+                )
+        }
+        .padding(10)
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(theme.inputBackground)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8)
+                        .stroke(theme.inputBorder, lineWidth: 1)
+                )
+        )
     }
 
     // MARK: - History Section
