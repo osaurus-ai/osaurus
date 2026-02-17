@@ -468,6 +468,7 @@ struct WatcherEditorSheet: View {
     let mode: Mode
     let onSave: (Watcher) -> Void
     let onCancel: () -> Void
+    var initialAgentId: UUID? = nil
 
     @State private var name = ""
     @State private var instructions = ""
@@ -534,6 +535,8 @@ struct WatcherEditorSheet: View {
         .onAppear {
             if case .edit(let watcher) = mode {
                 loadWatcher(watcher)
+            } else if let agentId = initialAgentId {
+                selectedAgentId = agentId
             }
             withAnimation {
                 hasAppeared = true
