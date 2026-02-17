@@ -22,67 +22,6 @@ struct ChatEmptyState: View {
 
     @State private var hasAppeared = false
     @Environment(\.theme) private var theme
-    @ObservedObject private var modelManager = ModelManager.shared
-
-    /// Active download info (model ID and progress) if any download is in progress
-    private var activeDownload: (modelId: String, progress: Double)? {
-        for (modelId, state) in modelManager.downloadStates {
-            if case .downloading(let progress) = state {
-                return (modelId, progress)
-            }
-        }
-        return nil
-    }
-
-    /// Whether a model is currently downloading
-    private var isDownloading: Bool { activeDownload != nil }
-
-    /// Current download progress (0-1) if downloading
-    private var downloadProgress: Double? { activeDownload?.progress }
-
-    /// Name of the model being downloaded
-    private var downloadingModelName: String? {
-        guard let modelId = activeDownload?.modelId else { return nil }
-        return modelManager.availableModels.first { $0.id == modelId }?.name
-            ?? modelManager.suggestedModels.first { $0.id == modelId }?.name
-    }
-
-    /// Formatted progress text (speed, ETA)
-    private var downloadProgressText: String? {
-        guard let modelId = activeDownload?.modelId,
-            let metrics = modelManager.downloadMetrics[modelId]
-        else { return nil }
-
-        var parts: [String] = []
-
-        if let received = metrics.bytesReceived, let total = metrics.totalBytes {
-            parts.append("\(formatBytes(received)) / \(formatBytes(total))")
-        }
-
-        if let speed = metrics.bytesPerSecond {
-            parts.append("\(formatBytes(Int64(speed)))/s")
-        }
-
-        if let eta = metrics.etaSeconds, eta > 0 && eta < 3600 {
-            let minutes = Int(eta) / 60
-            let seconds = Int(eta) % 60
-            if minutes > 0 {
-                parts.append("\(minutes)m \(seconds)s left")
-            } else {
-                parts.append("\(seconds)s left")
-            }
-        }
-
-        return parts.isEmpty ? nil : parts.joined(separator: " · ")
-    }
-
-    private func formatBytes(_ bytes: Int64) -> String {
-        let formatter = ByteCountFormatter()
-        formatter.countStyle = .file
-        formatter.allowedUnits = [.useGB, .useMB]
-        formatter.includesUnit = true
-        return formatter.string(fromByteCount: bytes)
-    }
 
     private var activeAgent: Agent {
         agents.first { $0.id == activeAgentId } ?? Agent.default
@@ -103,10 +42,11 @@ struct ChatEmptyState: View {
 
                     if hasModels {
                         readyState
-                    } else if isDownloading {
-                        downloadingState
                     } else {
-                        noModelsState
+                        ChatEmptyStateNoModels(
+                            hasAppeared: hasAppeared,
+                            onOpenOnboarding: onOpenOnboarding
+                        )
                     }
 
                     Spacer(minLength: 20)
@@ -191,18 +131,109 @@ struct ChatEmptyState: View {
         .frame(maxWidth: 440)
     }
 
-    // MARK: - No Models State
+    // MARK: - Agent Card (uses shared component)
+
+    private var agentCard: some View {
+        AgentPill(
+            agents: agents,
+            activeAgentId: activeAgentId,
+            onSelectAgent: onSelectAgent
+        )
+    }
+
+    // MARK: - Helpers
+
+    private var greeting: String {
+        let hour = Calendar.current.component(.hour, from: Date())
+        switch hour {
+        case 5 ..< 12: return "Good morning"
+        case 12 ..< 17: return "Good afternoon"
+        case 17 ..< 22: return "Good evening"
+        default: return "Hello"
+        }
+    }
+}
+
+// MARK: - No-Models / Downloading Wrapper (isolates ModelManager observation)
+
+private struct ChatEmptyStateNoModels: View {
+    let hasAppeared: Bool
+    let onOpenOnboarding: (() -> Void)?
+
+    @ObservedObject private var modelManager = ModelManager.shared
+    @Environment(\.theme) private var theme
+
+    /// Active download info (model ID and progress) if any download is in progress
+    private var activeDownload: (modelId: String, progress: Double)? {
+        for (modelId, state) in modelManager.downloadStates {
+            if case .downloading(let progress) = state {
+                return (modelId, progress)
+            }
+        }
+        return nil
+    }
+
+    private var isDownloading: Bool { activeDownload != nil }
+    private var downloadProgress: Double? { activeDownload?.progress }
+
+    private var downloadingModelName: String? {
+        guard let modelId = activeDownload?.modelId else { return nil }
+        return modelManager.availableModels.first { $0.id == modelId }?.name
+            ?? modelManager.suggestedModels.first { $0.id == modelId }?.name
+    }
+
+    private var downloadProgressText: String? {
+        guard let modelId = activeDownload?.modelId,
+            let metrics = modelManager.downloadMetrics[modelId]
+        else { return nil }
+
+        var parts: [String] = []
+
+        if let received = metrics.bytesReceived, let total = metrics.totalBytes {
+            parts.append("\(formatBytes(received)) / \(formatBytes(total))")
+        }
+
+        if let speed = metrics.bytesPerSecond {
+            parts.append("\(formatBytes(Int64(speed)))/s")
+        }
+
+        if let eta = metrics.etaSeconds, eta > 0 && eta < 3600 {
+            let minutes = Int(eta) / 60
+            let seconds = Int(eta) % 60
+            if minutes > 0 {
+                parts.append("\(minutes)m \(seconds)s left")
+            } else {
+                parts.append("\(seconds)s left")
+            }
+        }
+
+        return parts.isEmpty ? nil : parts.joined(separator: " · ")
+    }
+
+    private func formatBytes(_ bytes: Int64) -> String {
+        let formatter = ByteCountFormatter()
+        formatter.countStyle = .file
+        formatter.allowedUnits = [.useGB, .useMB]
+        formatter.includesUnit = true
+        return formatter.string(fromByteCount: bytes)
+    }
+
+    var body: some View {
+        if isDownloading {
+            downloadingState
+        } else {
+            noModelsState
+        }
+    }
 
     private var noModelsState: some View {
         VStack(spacing: 14) {
-            // Hero Orb - consistent with ready state
             AnimatedOrb(color: theme.accentColor, size: .medium, seed: "welcome")
                 .frame(width: 88, height: 88)
                 .opacity(hasAppeared ? 1 : 0)
                 .scaleEffect(hasAppeared ? 1 : 0.85)
                 .animation(theme.springAnimation().delay(0.0), value: hasAppeared)
 
-            // Welcome text - staggered entrance
             VStack(spacing: 8) {
                 Text("One more step")
                     .font(theme.font(size: CGFloat(theme.titleSize) + 4, weight: .semibold))
@@ -221,7 +252,6 @@ struct ChatEmptyState: View {
             }
             .frame(maxWidth: 340)
 
-            // Get Started button
             GetStartedButton {
                 onOpenOnboarding?()
             }
@@ -233,18 +263,14 @@ struct ChatEmptyState: View {
         .padding(.horizontal, 40)
     }
 
-    // MARK: - Downloading State (model download in progress)
-
     private var downloadingState: some View {
         VStack(spacing: 14) {
-            // Animated orb - consistent with other states
             AnimatedOrb(color: theme.accentColor, size: .medium, seed: "downloading")
                 .frame(width: 88, height: 88)
                 .opacity(hasAppeared ? 1 : 0)
                 .scaleEffect(hasAppeared ? 1 : 0.85)
                 .animation(theme.springAnimation().delay(0.0), value: hasAppeared)
 
-            // Headline and model name
             VStack(spacing: 8) {
                 Text("Almost ready...")
                     .font(theme.font(size: CGFloat(theme.titleSize) + 4, weight: .semibold))
@@ -265,7 +291,6 @@ struct ChatEmptyState: View {
             }
             .frame(maxWidth: 340)
 
-            // Progress section
             if let progress = downloadProgress {
                 VStack(spacing: 10) {
                     ProgressView(value: progress)
@@ -291,28 +316,6 @@ struct ChatEmptyState: View {
             }
         }
         .padding(.horizontal, 40)
-    }
-
-    // MARK: - Agent Card (uses shared component)
-
-    private var agentCard: some View {
-        AgentPill(
-            agents: agents,
-            activeAgentId: activeAgentId,
-            onSelectAgent: onSelectAgent
-        )
-    }
-
-    // MARK: - Helpers
-
-    private var greeting: String {
-        let hour = Calendar.current.component(.hour, from: Date())
-        switch hour {
-        case 5 ..< 12: return "Good morning"
-        case 12 ..< 17: return "Good afternoon"
-        case 17 ..< 22: return "Good evening"
-        default: return "Hello"
-        }
     }
 }
 
