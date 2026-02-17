@@ -350,6 +350,69 @@ private struct ImageTool {
 | ------------------- | ------ | ------------------------------------------- |
 | `working_directory` | string | Absolute path to the user's selected folder |
 
+### Plugin Skills (SKILL.md)
+
+Plugins can bundle a `SKILL.md` file that provides AI-specific guidance for using the plugin's tools. When a plugin includes a skill, Osaurus automatically loads it and makes it available to the AI during conversations. This is the recommended way to teach the AI how to use your plugin effectively.
+
+Skills follow the [Agent Skills](https://agentskills.io/specification) specification — a markdown file with YAML frontmatter.
+
+**Why include a SKILL.md?**
+
+Tool descriptions and parameter schemas tell the AI _what_ a tool does, but a skill tells the AI _how_ to use the tools well. For example, a presentation plugin's skill can describe the correct workflow order, coordinate system, layout recipes, and design best practices — context that doesn't fit in individual tool descriptions.
+
+**Format:**
+
+```markdown
+---
+name: my-plugin-name
+description: Short description of when this skill applies and what it helps with.
+metadata:
+  author: your-name
+  version: "1.0.0"
+---
+
+# My Plugin Name
+
+Detailed instructions for the AI...
+```
+
+**Frontmatter Fields:**
+
+| Field                | Type   | Required | Description                                                              |
+| -------------------- | ------ | -------- | ------------------------------------------------------------------------ |
+| `name`               | string | Yes      | Lowercase-hyphen identifier (e.g., `my-plugin`). Converted to title case for display. |
+| `description`        | string | Yes      | Tells the AI when this skill applies. Max 1024 characters.               |
+| `metadata.author`    | string | No       | Skill author name.                                                       |
+| `metadata.version`   | string | No       | Skill version (e.g., `"1.0.0"`).                                        |
+
+The body after the frontmatter contains the full instructions in markdown. This is what the AI sees when the skill is active.
+
+**Packaging:**
+
+Include `SKILL.md` in your plugin's zip archive alongside the `.dylib`. During installation, Osaurus searches the entire archive for files named `SKILL.md` (case-insensitive) and copies them into a `skills/` directory within the plugin's install location.
+
+You can place `SKILL.md` at the root of the archive or in a subdirectory — the installer will find it either way. If your plugin bundles multiple skills, place each in its own subdirectory; the parent directory name is used as a prefix for disambiguation.
+
+**Lifecycle:**
+
+1. When the plugin is installed, `SKILL.md` files are extracted to `<plugin-install-dir>/skills/`.
+2. When the plugin loads, Osaurus parses each skill and registers it with the skill manager.
+3. Plugin skills appear in the Skills UI with a "From: _plugin-name_" badge and are **read-only** — users cannot edit or delete them, but they can enable or disable them.
+4. When the plugin is uninstalled, its skills are automatically unregistered and removed.
+
+**Best Practices:**
+
+- **Describe the workflow.** If tools must be called in a specific order, spell it out step by step.
+- **Document the coordinate system.** If tools use coordinates, units, or dimensions, provide reference values and safe margins.
+- **Include layout recipes.** Provide ready-to-use parameter combinations for common use cases.
+- **List limitations.** If elements can't be modified after creation or slides can't be reordered, say so up front — this prevents the AI from attempting unsupported operations.
+- **Add tool-specific tips.** Note quirks like "hex colors must omit the `#` prefix" or "the `layout` parameter is metadata only and does not auto-generate content."
+- **Keep it focused.** The skill is loaded into the AI's context window. Be thorough but concise — avoid repeating what the tool schemas already convey.
+
+**Example:**
+
+The [osaurus-pptx](https://github.com/dinoki-ai/osaurus-pptx) plugin includes a SKILL.md that covers the required tool call sequence, slide coordinate system, layout recipes for common slide types, theme selection guidance, and design best practices.
+
 ### Invocation
 
 When Osaurus needs to execute a capability, it calls `invoke`:
@@ -428,7 +491,28 @@ Osaurus uses a single, git-backed central plugin index maintained by the Osaurus
 4. Sign the zip with Minisign (recommended).
 5. Submit a PR to the central index repo adding `plugins/<your.plugin.id>.json` with your metadata.
 
-The registry entry should include publishing metadata (`homepage`, `license`, `authors`) and artifact information.
+The registry entry should include publishing metadata (`homepage`, `license`, `authors`) and artifact information. You can also declare a `capabilities` summary listing your plugin's tools and skills:
+
+```json
+{
+  "plugin_id": "com.acme.pptx",
+  "name": "PPTX",
+  "description": "Create PowerPoint presentations",
+  "capabilities": {
+    "tools": [
+      { "name": "create_presentation", "description": "Create a new presentation" }
+    ],
+    "skills": [
+      { "name": "osaurus-pptx", "description": "Guides the AI through presentation creation workflows" }
+    ]
+  },
+  "versions": [ ... ]
+}
+```
+
+The `capabilities` block is **informational only** — it is used for the plugin listing in the registry UI. The actual skills are discovered automatically from `SKILL.md` files in the archive at install time (see [Plugin Skills](#plugin-skills-skillmd)).
+
+> **Note:** If you use the shared CI workflow (`dinoki-ai/osaurus-tools/.github/workflows/build-plugin.yml`), the `capabilities` block is generated automatically. Tools are extracted from the dylib manifest, and skills are detected from any `SKILL.md` file at the repository root. You do not need to write this JSON by hand.
 
 ## Artifact Signing (Minisign)
 
