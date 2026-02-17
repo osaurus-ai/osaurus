@@ -2,9 +2,8 @@
 //  ContentBlockView.swift
 //  osaurus
 //
-//  Renders a single content block in the flattened chat view.
-//  Equatable conformance enables efficient cell reuse in the
-//  NSTableView-backed message thread.
+//  Renders a single content block in the NSTableView-backed chat view.
+//  Equatable conformance enables efficient cell reuse.
 //
 
 import AppKit
@@ -46,15 +45,17 @@ struct ContentBlockView: View, Equatable {
         return theme.accentColor
     }
 
+    private var bubbleCornerRadius: CGFloat { CGFloat(theme.bubbleCornerRadius) }
+
     @ViewBuilder
     private var messageBubbleBackground: some View {
         if isUserMessage {
             ZStack {
                 if theme.glassEnabled {
-                    UnevenRoundedRectangle(cornerRadii: cornerRadii, style: .continuous)
+                    RoundedRectangle(cornerRadius: bubbleCornerRadius, style: .continuous)
                         .fill(.ultraThinMaterial)
                 }
-                UnevenRoundedRectangle(cornerRadii: cornerRadii, style: .continuous)
+                RoundedRectangle(cornerRadius: bubbleCornerRadius, style: .continuous)
                     .fill(userBubbleBackgroundColor.opacity(theme.userBubbleOpacity))
             }
         } else {
@@ -68,7 +69,7 @@ struct ContentBlockView: View, Equatable {
         } else {
             contentContainer
                 .background(messageBubbleBackground)
-                .clipShape(UnevenRoundedRectangle(cornerRadii: cornerRadii, style: .continuous))
+                .clipShape(RoundedRectangle(cornerRadius: isUserMessage ? bubbleCornerRadius : 0, style: .continuous))
                 .overlay(userMessageBorder)
         }
     }
@@ -104,24 +105,14 @@ struct ContentBlockView: View, Equatable {
             .padding(.bottom, isLastInTurn ? 8 : 2)
 
         case let .paragraph(_, text, isStreaming, _):
-            if isUserMessage, editingTurnId == block.turnId, let editText, let onConfirmEdit, let onCancelEdit {
-                InlineEditView(
-                    text: editText,
-                    onConfirm: onConfirmEdit,
-                    onCancel: onCancelEdit
-                )
-                .padding(.top, 4)
-                .padding(.bottom, isLastInTurn ? 16 : 4)
-            } else {
-                MarkdownMessageView(
-                    text: text,
-                    baseWidth: width,
-                    cacheKey: block.id,
-                    isStreaming: isStreaming
-                )
-                .padding(.top, 4)
-                .padding(.bottom, isLastInTurn ? 16 : 4)
-            }
+            MarkdownMessageView(
+                text: text,
+                baseWidth: width,
+                cacheKey: block.id,
+                isStreaming: isStreaming
+            )
+            .padding(.top, 4)
+            .padding(.bottom, isLastInTurn ? 16 : 4)
 
         case let .toolCallGroup(calls):
             GroupedToolCallsContainerView(calls: calls)
@@ -149,23 +140,44 @@ struct ContentBlockView: View, Equatable {
             .padding(.top, 6)
             .padding(.bottom, isLastInTurn ? 12 : 4)
 
-        case let .image(_, imageData):
-            if let nsImage = NSImage(data: imageData) {
-                Image(nsImage: nsImage)
-                    .resizable()
-                    .aspectRatio(contentMode: .fit)
-                    .frame(maxWidth: 200, maxHeight: 150)
-                    .clipShape(RoundedRectangle(cornerRadius: CGFloat(theme.inputCornerRadius), style: .continuous))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: CGFloat(theme.inputCornerRadius), style: .continuous)
-                            .strokeBorder(
-                                theme.primaryBorder.opacity(theme.borderOpacity),
-                                lineWidth: CGFloat(theme.defaultBorderWidth)
-                            )
-                    )
-                    .shadow(color: theme.shadowColor.opacity(theme.shadowOpacity * 0.3), radius: 4, x: 0, y: 2)
+        case let .userMessage(text, images):
+            HeaderBlockContent(
+                turnId: block.turnId,
+                role: .user,
+                name: "You",
+                isTurnHovered: isTurnHovered,
+                onCopy: onCopy,
+                onRegenerate: onRegenerate,
+                onEdit: onEdit,
+                isEditing: editingTurnId == block.turnId,
+                onCancelEdit: onCancelEdit
+            )
+            .padding(.top, 12)
+            .padding(.bottom, 2)
+
+            ForEach(Array(images.enumerated()), id: \.offset) { _, imageData in
+                ImageThumbnail(imageData: imageData)
                     .padding(.top, 6)
-                    .padding(.bottom, isLastInTurn ? 16 : 6)
+                    .padding(.bottom, text.isEmpty ? 16 : 6)
+            }
+
+            if editingTurnId == block.turnId, let editText, let onConfirmEdit, let onCancelEdit {
+                InlineEditView(
+                    text: editText,
+                    onConfirm: onConfirmEdit,
+                    onCancel: onCancelEdit
+                )
+                .padding(.top, 4)
+                .padding(.bottom, 16)
+            } else if !text.isEmpty {
+                MarkdownMessageView(
+                    text: text,
+                    baseWidth: width,
+                    cacheKey: block.id,
+                    isStreaming: false
+                )
+                .padding(.top, 4)
+                .padding(.bottom, 16)
             }
 
         case .typingIndicator:
@@ -181,109 +193,27 @@ struct ContentBlockView: View, Equatable {
 
     // MARK: - User Message Styling
 
-    private var cornerRadii: RectangleCornerRadii {
-        guard isUserMessage else { return .init() }
-
-        let r: CGFloat = CGFloat(theme.bubbleCornerRadius)
-        switch block.position {
-        case .only: return .init(topLeading: r, bottomLeading: r, bottomTrailing: r, topTrailing: r)
-        case .first: return .init(topLeading: r, bottomLeading: 0, bottomTrailing: 0, topTrailing: r)
-        case .middle: return .init()
-        case .last: return .init(topLeading: 0, bottomLeading: r, bottomTrailing: r, topTrailing: 0)
-        }
-    }
-
     @ViewBuilder
     private var userMessageBorder: some View {
         if isUserMessage {
             if theme.showEdgeLight {
-                UserMessageBorderPath(
-                    position: block.position,
-                    radius: CGFloat(theme.bubbleCornerRadius)
-                )
-                .stroke(
-                    LinearGradient(
-                        colors: [theme.glassEdgeLight, theme.glassEdgeLight.opacity(0.4)],
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
-                    ),
-                    lineWidth: CGFloat(theme.messageBorderWidth)
-                )
+                RoundedRectangle(cornerRadius: bubbleCornerRadius, style: .continuous)
+                    .strokeBorder(
+                        LinearGradient(
+                            colors: [theme.glassEdgeLight, theme.glassEdgeLight.opacity(0.4)],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        ),
+                        lineWidth: CGFloat(theme.messageBorderWidth)
+                    )
             } else {
-                UserMessageBorderPath(
-                    position: block.position,
-                    radius: CGFloat(theme.bubbleCornerRadius)
-                )
-                .stroke(theme.primaryBorder.opacity(theme.borderOpacity), lineWidth: CGFloat(theme.messageBorderWidth))
+                RoundedRectangle(cornerRadius: bubbleCornerRadius, style: .continuous)
+                    .strokeBorder(
+                        theme.primaryBorder.opacity(theme.borderOpacity),
+                        lineWidth: CGFloat(theme.messageBorderWidth)
+                    )
             }
         }
-    }
-}
-
-// MARK: - User Message Border Path
-
-/// Custom path that draws position-aware borders for user message blocks
-private struct UserMessageBorderPath: Shape {
-    let position: BlockPosition
-    let radius: CGFloat
-
-    private var showTop: Bool { position == .first || position == .only }
-    private var showBottom: Bool { position == .last || position == .only }
-
-    func path(in rect: CGRect) -> Path {
-        var path = Path()
-        let w = rect.width
-        let h = rect.height
-        let r = radius
-
-        // Left edge
-        path.move(to: CGPoint(x: 0, y: showTop ? r : 0))
-        path.addLine(to: CGPoint(x: 0, y: showBottom ? h - r : h))
-
-        // Bottom
-        if showBottom {
-            path.addArc(
-                center: CGPoint(x: r, y: h - r),
-                radius: r,
-                startAngle: .degrees(180),
-                endAngle: .degrees(90),
-                clockwise: true
-            )
-            path.addLine(to: CGPoint(x: w - r, y: h))
-            path.addArc(
-                center: CGPoint(x: w - r, y: h - r),
-                radius: r,
-                startAngle: .degrees(90),
-                endAngle: .degrees(0),
-                clockwise: true
-            )
-        } else {
-            path.move(to: CGPoint(x: w, y: h))
-        }
-
-        // Right edge
-        path.addLine(to: CGPoint(x: w, y: showTop ? r : 0))
-
-        // Top
-        if showTop {
-            path.addArc(
-                center: CGPoint(x: w - r, y: r),
-                radius: r,
-                startAngle: .degrees(0),
-                endAngle: .degrees(-90),
-                clockwise: true
-            )
-            path.addLine(to: CGPoint(x: r, y: 0))
-            path.addArc(
-                center: CGPoint(x: r, y: r),
-                radius: r,
-                startAngle: .degrees(-90),
-                endAngle: .degrees(180),
-                clockwise: true
-            )
-        }
-
-        return path
     }
 }
 
@@ -444,6 +374,32 @@ private struct InlineEditView: View {
             }
             .buttonStyle(.plain)
             .disabled(isEmpty)
+        }
+    }
+}
+
+// MARK: - Image Thumbnail
+
+private struct ImageThumbnail: View {
+    let imageData: Data
+
+    @Environment(\.theme) private var theme
+
+    var body: some View {
+        if let nsImage = NSImage(data: imageData) {
+            Image(nsImage: nsImage)
+                .resizable()
+                .aspectRatio(contentMode: .fit)
+                .frame(maxWidth: 200, maxHeight: 150)
+                .clipShape(RoundedRectangle(cornerRadius: CGFloat(theme.inputCornerRadius), style: .continuous))
+                .overlay(
+                    RoundedRectangle(cornerRadius: CGFloat(theme.inputCornerRadius), style: .continuous)
+                        .strokeBorder(
+                            theme.primaryBorder.opacity(theme.borderOpacity),
+                            lineWidth: CGFloat(theme.defaultBorderWidth)
+                        )
+                )
+                .shadow(color: theme.shadowColor.opacity(theme.shadowOpacity * 0.3), radius: 4, x: 0, y: 2)
         }
     }
 }

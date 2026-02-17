@@ -3,7 +3,7 @@
 //  osaurus
 //
 //  Unified content block model for flattened chat rendering.
-//  Uses stored `id` for efficient SwiftUI diffing in LazyVStack.
+//  Uses stored `id` for efficient diffing in NSDiffableDataSource.
 //
 
 import Foundation
@@ -32,7 +32,7 @@ enum ContentBlockKind: Equatable {
     case toolCallGroup(calls: [ToolCallItem])
     case thinking(index: Int, text: String, isStreaming: Bool)
     case clarification(request: ClarificationRequest)
-    case image(index: Int, imageData: Data)
+    case userMessage(text: String, images: [Data])
     case typingIndicator
     case groupSpacer
 
@@ -62,8 +62,10 @@ enum ContentBlockKind: Equatable {
         case let (.clarification(lRequest), .clarification(rRequest)):
             return lRequest == rRequest
 
-        case let (.image(lIdx, lData), .image(rIdx, rData)):
-            return lIdx == rIdx && lData == rData
+        case let (.userMessage(lText, lImages), .userMessage(rText, rImages)):
+            guard lText.count == rText.count else { return false }
+            guard lImages.count == rImages.count else { return false }
+            return lText == rText && lImages == rImages
 
         case (.typingIndicator, .typingIndicator):
             return true
@@ -92,7 +94,7 @@ struct ContentBlock: Identifiable, Equatable, Hashable {
         case let .paragraph(_, _, _, role): return role
         case .toolCallGroup, .thinking, .clarification, .typingIndicator, .groupSpacer:
             return .assistant
-        case .image: return .user
+        case .userMessage: return .user
         }
     }
 
@@ -175,11 +177,11 @@ struct ContentBlock: Identifiable, Equatable, Hashable {
         )
     }
 
-    static func image(turnId: UUID, index: Int, imageData: Data, position: BlockPosition) -> ContentBlock {
+    static func userMessage(turnId: UUID, text: String, images: [Data], position: BlockPosition) -> ContentBlock {
         ContentBlock(
-            id: "img-\(turnId.uuidString)-\(index)",
+            id: "usermsg-\(turnId.uuidString)",
             turnId: turnId,
-            kind: .image(index: index, imageData: imageData),
+            kind: .userMessage(text: text, images: images),
             position: position
         )
     }
@@ -211,14 +213,29 @@ extension ContentBlock {
 
         for turn in filteredTurns {
             let isStreaming = turn.id == streamingTurnId
-            // For user messages, always show header (each message is distinct input)
-            // For assistant messages, group consecutive turns (continuing responses)
+            // User messages always start a new group (each is distinct input).
+            // Assistant messages group consecutive turns (continuing responses).
             let isFirstInGroup = turn.role != previousRole || turn.role == .user
 
             if isFirstInGroup, let prevId = previousTurnId {
                 // Use the previous turn ID for the stable block ID (referencing the gap)
                 // BUT associate it with the current turn ID so it gets regenerated/included with the current turn during incremental updates
                 blocks.append(.groupSpacer(afterTurnId: prevId, associatedWithTurnId: turn.id))
+            }
+
+            // User messages are emitted as a single unified block
+            if turn.role == .user {
+                blocks.append(
+                    .userMessage(
+                        turnId: turn.id,
+                        text: turn.content,
+                        images: turn.attachedImages,
+                        position: .only
+                    )
+                )
+                previousRole = turn.role
+                previousTurnId = turn.id
+                continue
             }
 
             var turnBlocks: [ContentBlock] = []
@@ -228,19 +245,15 @@ extension ContentBlock {
                     .header(
                         turnId: turn.id,
                         role: turn.role,
-                        agentName: turn.role == .assistant ? agentName : "You",
+                        agentName: agentName,
                         isFirstInGroup: true,
                         position: .first
                     )
                 )
             }
 
-            for (idx, imageData) in turn.attachedImages.enumerated() {
-                turnBlocks.append(.image(turnId: turn.id, index: idx, imageData: imageData, position: .middle))
-            }
-
             // Add clarification block if pending (work mode)
-            if turn.role == .assistant, let clarification = turn.pendingClarification {
+            if let clarification = turn.pendingClarification {
                 turnBlocks.append(
                     .clarification(
                         turnId: turn.id,
@@ -250,7 +263,7 @@ extension ContentBlock {
                 )
             }
 
-            if turn.role == .assistant && turn.hasThinking {
+            if turn.hasThinking {
                 turnBlocks.append(
                     .thinking(
                         turnId: turn.id,
@@ -273,7 +286,7 @@ extension ContentBlock {
                         position: .middle
                     )
                 )
-            } else if isStreaming && turn.role == .assistant && !turn.hasThinking && (turn.toolCalls ?? []).isEmpty {
+            } else if isStreaming && !turn.hasThinking && (turn.toolCalls ?? []).isEmpty {
                 turnBlocks.append(.typingIndicator(turnId: turn.id, position: .middle))
             }
 
