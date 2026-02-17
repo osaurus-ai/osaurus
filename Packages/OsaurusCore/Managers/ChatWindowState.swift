@@ -242,13 +242,17 @@ final class ChatWindowState: ObservableObject {
 
     func refreshTheme() {
         let newTheme = Self.loadTheme(for: agentId)
-        // Skip if theme ID is the same (avoid unnecessary background image decoding)
-        let oldThemeId = theme.customThemeConfig?.metadata.id
-        let newThemeId = newTheme.customThemeConfig?.metadata.id
-        guard oldThemeId != newThemeId else { return }
+        let oldConfig = theme.customThemeConfig
+        let newConfig = newTheme.customThemeConfig
+        // Skip only if the full config is identical (not just the ID)
+        guard oldConfig != newConfig else { return }
 
         theme = newTheme
-        decodeBackgroundImageAsync(themeConfig: theme.customThemeConfig)
+
+        // Only re-decode background image when the theme itself changes (different ID)
+        if oldConfig?.metadata.id != newConfig?.metadata.id {
+            decodeBackgroundImageAsync(themeConfig: theme.customThemeConfig)
+        }
     }
 
     func refreshAgentConfig() {

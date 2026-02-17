@@ -308,6 +308,7 @@ public struct ThemeGlass: Codable, Equatable, Sendable {
     public var tintOpacity: Double?
     public var edgeLight: String
     public var edgeLightWidth: Double?
+    public var windowBackingOpacity: Double
 
     public init(
         enabled: Bool = true,
@@ -319,7 +320,8 @@ public struct ThemeGlass: Codable, Equatable, Sendable {
         tintColor: String? = nil,
         tintOpacity: Double? = nil,
         edgeLight: String = "#ffffff33",
-        edgeLightWidth: Double? = nil
+        edgeLightWidth: Double? = nil,
+        windowBackingOpacity: Double = 0.55
     ) {
         self.enabled = enabled
         self.material = material
@@ -331,6 +333,7 @@ public struct ThemeGlass: Codable, Equatable, Sendable {
         self.tintOpacity = tintOpacity
         self.edgeLight = edgeLight
         self.edgeLightWidth = edgeLightWidth
+        self.windowBackingOpacity = windowBackingOpacity
     }
 
     /// Dark theme glass defaults
@@ -345,8 +348,24 @@ public struct ThemeGlass: Codable, Equatable, Sendable {
             opacityPrimary: 0.15,
             opacitySecondary: 0.10,
             opacityTertiary: 0.05,
-            edgeLight: "#ffffff4d"
+            edgeLight: "#ffffff4d",
+            windowBackingOpacity: 0.65
         )
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        enabled = try container.decode(Bool.self, forKey: .enabled)
+        material = try container.decode(GlassMaterial.self, forKey: .material)
+        blurRadius = try container.decode(Double.self, forKey: .blurRadius)
+        opacityPrimary = try container.decode(Double.self, forKey: .opacityPrimary)
+        opacitySecondary = try container.decode(Double.self, forKey: .opacitySecondary)
+        opacityTertiary = try container.decode(Double.self, forKey: .opacityTertiary)
+        tintColor = try container.decodeIfPresent(String.self, forKey: .tintColor)
+        tintOpacity = try container.decodeIfPresent(Double.self, forKey: .tintOpacity)
+        edgeLight = try container.decode(String.self, forKey: .edgeLight)
+        edgeLightWidth = try container.decodeIfPresent(Double.self, forKey: .edgeLightWidth)
+        windowBackingOpacity = try container.decodeIfPresent(Double.self, forKey: .windowBackingOpacity) ?? 0.55
     }
 }
 
@@ -454,6 +473,74 @@ public struct ThemeShadows: Codable, Equatable, Sendable {
     }
 }
 
+// MARK: - Theme Messages
+
+/// Message bubble customization
+public struct ThemeMessages: Codable, Equatable, Sendable {
+    /// Corner radius for message bubbles
+    public var bubbleCornerRadius: Double
+    /// Opacity for user message bubble background
+    public var userBubbleOpacity: Double
+    /// Opacity for assistant message bubble background
+    public var assistantBubbleOpacity: Double
+    /// Override color for user bubbles (nil = use accentColor)
+    public var userBubbleColor: String?
+    /// Override color for assistant bubbles (nil = use secondaryBackground)
+    public var assistantBubbleColor: String?
+    /// Border width for message bubbles
+    public var borderWidth: Double
+    /// Whether to show edge light effect on bubbles
+    public var showEdgeLight: Bool
+
+    public init(
+        bubbleCornerRadius: Double = 20,
+        userBubbleOpacity: Double = 0.3,
+        assistantBubbleOpacity: Double = 0.85,
+        userBubbleColor: String? = nil,
+        assistantBubbleColor: String? = nil,
+        borderWidth: Double = 0.5,
+        showEdgeLight: Bool = true
+    ) {
+        self.bubbleCornerRadius = bubbleCornerRadius
+        self.userBubbleOpacity = userBubbleOpacity
+        self.assistantBubbleOpacity = assistantBubbleOpacity
+        self.userBubbleColor = userBubbleColor
+        self.assistantBubbleColor = assistantBubbleColor
+        self.borderWidth = borderWidth
+        self.showEdgeLight = showEdgeLight
+    }
+
+    public static var `default`: ThemeMessages { ThemeMessages() }
+}
+
+// MARK: - Theme Borders
+
+/// Border and corner radius customization
+public struct ThemeBorders: Codable, Equatable, Sendable {
+    /// Default border width for UI elements
+    public var defaultWidth: Double
+    /// Corner radius for card-style elements
+    public var cardCornerRadius: Double
+    /// Corner radius for input fields
+    public var inputCornerRadius: Double
+    /// Default border opacity applied to border colors
+    public var borderOpacity: Double
+
+    public init(
+        defaultWidth: Double = 1.0,
+        cardCornerRadius: Double = 12,
+        inputCornerRadius: Double = 8,
+        borderOpacity: Double = 0.3
+    ) {
+        self.defaultWidth = defaultWidth
+        self.cardCornerRadius = cardCornerRadius
+        self.inputCornerRadius = inputCornerRadius
+        self.borderOpacity = borderOpacity
+    }
+
+    public static var `default`: ThemeBorders { ThemeBorders() }
+}
+
 // MARK: - Custom Theme
 
 /// Complete custom theme configuration
@@ -465,6 +552,8 @@ public struct CustomTheme: Codable, Equatable, Sendable {
     public var typography: ThemeTypography
     public var animationConfig: ThemeAnimation
     public var shadows: ThemeShadows
+    public var messages: ThemeMessages
+    public var borders: ThemeBorders
 
     /// Whether this is a built-in theme (cannot be deleted)
     public var isBuiltIn: Bool
@@ -478,6 +567,8 @@ public struct CustomTheme: Codable, Equatable, Sendable {
         typography: ThemeTypography = ThemeTypography(),
         animationConfig: ThemeAnimation = ThemeAnimation(),
         shadows: ThemeShadows = ThemeShadows(),
+        messages: ThemeMessages = ThemeMessages(),
+        borders: ThemeBorders = ThemeBorders(),
         isBuiltIn: Bool = false,
         isDark: Bool = true
     ) {
@@ -488,8 +579,26 @@ public struct CustomTheme: Codable, Equatable, Sendable {
         self.typography = typography
         self.animationConfig = animationConfig
         self.shadows = shadows
+        self.messages = messages
+        self.borders = borders
         self.isBuiltIn = isBuiltIn
         self.isDark = isDark
+    }
+
+    /// Backward-compatible decoding: new fields fall back to defaults if missing
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        metadata = try container.decode(ThemeMetadata.self, forKey: .metadata)
+        colors = try container.decode(ThemeColors.self, forKey: .colors)
+        background = try container.decode(ThemeBackground.self, forKey: .background)
+        glass = try container.decode(ThemeGlass.self, forKey: .glass)
+        typography = try container.decode(ThemeTypography.self, forKey: .typography)
+        animationConfig = try container.decode(ThemeAnimation.self, forKey: .animationConfig)
+        shadows = try container.decode(ThemeShadows.self, forKey: .shadows)
+        messages = try container.decodeIfPresent(ThemeMessages.self, forKey: .messages) ?? ThemeMessages()
+        borders = try container.decodeIfPresent(ThemeBorders.self, forKey: .borders) ?? ThemeBorders()
+        isBuiltIn = try container.decode(Bool.self, forKey: .isBuiltIn)
+        isDark = try container.decode(Bool.self, forKey: .isDark)
     }
 
     /// Default dark theme
@@ -506,6 +615,8 @@ public struct CustomTheme: Codable, Equatable, Sendable {
             typography: .default,
             animationConfig: .default,
             shadows: .darkDefaults,
+            messages: .default,
+            borders: .default,
             isBuiltIn: true,
             isDark: true
         )
@@ -525,6 +636,13 @@ public struct CustomTheme: Codable, Equatable, Sendable {
             typography: .default,
             animationConfig: .default,
             shadows: .lightDefaults,
+            messages: ThemeMessages(
+                userBubbleOpacity: 0.25,
+                assistantBubbleOpacity: 0.9
+            ),
+            borders: ThemeBorders(
+                borderOpacity: 0.25
+            ),
             isBuiltIn: true,
             isDark: false
         )
@@ -594,6 +712,19 @@ public struct CustomTheme: Codable, Equatable, Sendable {
                 cardShadowY: 6,
                 cardShadowYHover: 10
             ),
+            messages: ThemeMessages(
+                bubbleCornerRadius: 24,
+                userBubbleOpacity: 0.4,
+                assistantBubbleOpacity: 0.8,
+                borderWidth: 0.5,
+                showEdgeLight: true
+            ),
+            borders: ThemeBorders(
+                defaultWidth: 1.0,
+                cardCornerRadius: 16,
+                inputCornerRadius: 10,
+                borderOpacity: 0.35
+            ),
             isBuiltIn: true,
             isDark: true
         )
@@ -657,6 +788,14 @@ public struct CustomTheme: Codable, Equatable, Sendable {
                 cardShadowY: 3,
                 cardShadowYHover: 7
             ),
+            messages: ThemeMessages(
+                bubbleCornerRadius: 18,
+                userBubbleOpacity: 0.3,
+                assistantBubbleOpacity: 0.85,
+                borderWidth: 0.5,
+                showEdgeLight: true
+            ),
+            borders: .default,
             isBuiltIn: true,
             isDark: true
         )
@@ -734,6 +873,19 @@ public struct CustomTheme: Codable, Equatable, Sendable {
                 cardShadowRadiusHover: 12,
                 cardShadowY: 2,
                 cardShadowYHover: 5
+            ),
+            messages: ThemeMessages(
+                bubbleCornerRadius: 16,
+                userBubbleOpacity: 0.2,
+                assistantBubbleOpacity: 0.9,
+                borderWidth: 0.5,
+                showEdgeLight: false
+            ),
+            borders: ThemeBorders(
+                defaultWidth: 1.0,
+                cardCornerRadius: 10,
+                inputCornerRadius: 6,
+                borderOpacity: 0.2
             ),
             isBuiltIn: true,
             isDark: false
@@ -813,6 +965,19 @@ public struct CustomTheme: Codable, Equatable, Sendable {
                 cardShadowRadiusHover: 20,
                 cardShadowY: 0,  // No vertical offset (glow, not drop shadow)
                 cardShadowYHover: 0
+            ),
+            messages: ThemeMessages(
+                bubbleCornerRadius: 4,
+                userBubbleOpacity: 0.25,
+                assistantBubbleOpacity: 0.7,
+                borderWidth: 1.0,
+                showEdgeLight: true
+            ),
+            borders: ThemeBorders(
+                defaultWidth: 1.0,
+                cardCornerRadius: 4,
+                inputCornerRadius: 4,
+                borderOpacity: 0.4
             ),
             isBuiltIn: true,
             isDark: true
