@@ -14,6 +14,22 @@ struct GenerationParameters: Sendable {
     let topPOverride: Float?
     /// Optional repetition penalty (applies when supported by backend)
     let repetitionPenalty: Float?
+    /// Model-specific options resolved from the active `ModelProfile` (e.g. aspect ratio).
+    let modelOptions: [String: ModelOptionValue]
+
+    init(
+        temperature: Float?,
+        maxTokens: Int,
+        topPOverride: Float? = nil,
+        repetitionPenalty: Float? = nil,
+        modelOptions: [String: ModelOptionValue] = [:]
+    ) {
+        self.temperature = temperature
+        self.maxTokens = maxTokens
+        self.topPOverride = topPOverride
+        self.repetitionPenalty = repetitionPenalty
+        self.modelOptions = modelOptions
+    }
 }
 
 struct ServiceToolInvocation: Error, Sendable {

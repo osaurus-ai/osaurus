@@ -71,6 +71,7 @@ struct WorkView: View {
                             voiceInputState: .constant(.idle),
                             showVoiceOverlay: .constant(false),
                             modelOptions: session.modelOptions,
+                            activeModelOptions: .constant([:]),
                             isStreaming: session.isExecuting,
                             supportsImages: false,
                             estimatedContextTokens: session.estimatedContextTokens,

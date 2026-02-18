@@ -19,6 +19,7 @@ struct FloatingInputCard: View {
     @Binding var voiceInputState: VoiceInputState
     @Binding var showVoiceOverlay: Bool
     let modelOptions: [ModelOption]
+    @Binding var activeModelOptions: [String: ModelOptionValue]
     let isStreaming: Bool
     let supportsImages: Bool
     /// Current estimated context token count for the session
@@ -625,11 +626,27 @@ struct FloatingInputCard: View {
 
     // MARK: - Selector Row (Model + Tools)
 
+    private var activeProfileOptions: [ModelOptionDefinition] {
+        guard let model = selectedModel else { return [] }
+        return ModelProfileRegistry.options(for: model)
+    }
+
     private var selectorRow: some View {
         HStack(spacing: 10) {
             // Model selector (when multiple models available)
             if modelOptions.count > 1 {
                 modelSelectorChip
+            }
+
+            // Model-specific option chips (appear dynamically per profile)
+            ForEach(activeProfileOptions) { option in
+                ModelOptionChip(
+                    definition: option,
+                    value: Binding(
+                        get: { activeModelOptions[option.id] },
+                        set: { activeModelOptions[option.id] = $0 }
+                    )
+                )
             }
 
             // Capabilities selector (tools + skills combined)
@@ -1538,6 +1555,112 @@ private struct SelectorChip<Content: View>: View {
     }
 }
 
+// MARK: - Model Option Chip
+
+/// Renders a single model-specific option as a selector chip in the toolbar row.
+private struct ModelOptionChip: View {
+    let definition: ModelOptionDefinition
+    @Binding var value: ModelOptionValue?
+
+    @State private var showPopover = false
+    @Environment(\.theme) private var theme
+
+    var body: some View {
+        switch definition.kind {
+        case .segmented(let segments):
+            segmentedChip(segments: segments)
+        case .toggle(let defaultValue):
+            toggleChip(defaultValue: defaultValue)
+        }
+    }
+
+    private func segmentedChip(segments: [ModelOptionSegment]) -> some View {
+        let currentId = value?.stringValue ?? segments.first?.id ?? ""
+        let currentLabel = segments.first(where: { $0.id == currentId })?.label ?? currentId
+
+        return SelectorChip(isActive: showPopover) {
+            showPopover.toggle()
+        } content: {
+            HStack(spacing: 5) {
+                if let icon = definition.icon {
+                    Image(systemName: icon)
+                        .font(theme.font(size: CGFloat(theme.captionSize) - 2, weight: .medium))
+                        .foregroundColor(theme.tertiaryText)
+                }
+
+                Text(currentLabel)
+                    .font(theme.font(size: CGFloat(theme.captionSize), weight: .medium))
+                    .foregroundColor(theme.secondaryText)
+
+                Image(systemName: "chevron.up.chevron.down")
+                    .font(theme.font(size: CGFloat(theme.captionSize) - 3, weight: .semibold))
+                    .foregroundColor(theme.tertiaryText)
+            }
+        }
+        .popover(isPresented: $showPopover, arrowEdge: .top) {
+            segmentedPopover(segments: segments, currentId: currentId)
+        }
+    }
+
+    private func segmentedPopover(segments: [ModelOptionSegment], currentId: String) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(definition.label)
+                .font(theme.font(size: CGFloat(theme.captionSize), weight: .semibold))
+                .foregroundColor(theme.secondaryText)
+                .padding(.horizontal, 12)
+                .padding(.top, 8)
+                .padding(.bottom, 4)
+
+            ForEach(segments) { segment in
+                Button {
+                    value = .string(segment.id)
+                    showPopover = false
+                } label: {
+                    HStack {
+                        Text(segment.label)
+                            .font(theme.font(size: CGFloat(theme.bodySize), weight: .regular))
+                            .foregroundColor(theme.primaryText)
+
+                        Spacer()
+
+                        if segment.id == currentId {
+                            Image(systemName: "checkmark")
+                                .font(theme.font(size: CGFloat(theme.captionSize) - 1, weight: .semibold))
+                                .foregroundColor(theme.accentColor)
+                        }
+                    }
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 6)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(.vertical, 4)
+        .frame(minWidth: 140)
+    }
+
+    private func toggleChip(defaultValue: Bool) -> some View {
+        let isOn = value?.boolValue ?? defaultValue
+
+        return SelectorChip(isActive: isOn) {
+            value = .bool(!isOn)
+        } content: {
+            HStack(spacing: 5) {
+                if let icon = definition.icon {
+                    Image(systemName: icon)
+                        .font(theme.font(size: CGFloat(theme.captionSize) - 2, weight: .medium))
+                        .foregroundColor(isOn ? theme.accentColor : theme.tertiaryText)
+                }
+
+                Text(definition.label)
+                    .font(theme.font(size: CGFloat(theme.captionSize), weight: .medium))
+                    .foregroundColor(isOn ? theme.accentColor : theme.secondaryText)
+            }
+        }
+    }
+}
+
 // MARK: - Input Action Button
 
 /// Polished circular action button for input card (media, voice, etc.)
@@ -1868,6 +1991,7 @@ private struct EndTaskButton: View {
             @State private var isContinuousVoiceMode: Bool = false
             @State private var voiceInputState: VoiceInputState = .idle
             @State private var showVoiceOverlay: Bool = false
+            @State private var activeModelOpts: [String: ModelOptionValue] = [:]
 
             var body: some View {
                 VStack {
@@ -1890,6 +2014,7 @@ private struct EndTaskButton: View {
                                 isVLM: false
                             ),
                         ],
+                        activeModelOptions: $activeModelOpts,
                         isStreaming: false,
                         supportsImages: true,
                         estimatedContextTokens: 2450,

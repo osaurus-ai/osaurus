@@ -20,6 +20,7 @@ final class ChatSession: ObservableObject {
     @Published var pendingImages: [Data] = []
     @Published var selectedModel: String? = nil
     @Published var modelOptions: [ModelOption] = []
+    @Published var activeModelOptions: [String: ModelOptionValue] = [:]
     @Published var hasAnyModel: Bool = false
     @Published var isDiscoveringModels: Bool = true
     /// When true, voice input auto-restarts after AI responds (continuous conversation mode)
@@ -112,6 +113,7 @@ final class ChatSession: ObservableObject {
                 guard let self = self, !self.isLoadingModel, let model = newModel else { return }
                 let pid = self.agentId ?? Agent.defaultId
                 AgentManager.shared.updateDefaultModel(for: pid, model: model)
+                self.activeModelOptions = ModelProfileRegistry.defaults(for: model)
             }
 
         // Only load models if cache wasn't valid (first window or after invalidation)
@@ -910,7 +912,7 @@ final class ChatSession: ObservableObject {
 
                 outer: while attempts < maxAttempts {
                     attempts += 1
-                    let req = ChatCompletionRequest(
+                    var req = ChatCompletionRequest(
                         model: selectedModel ?? "default",
                         messages: buildMessages(),
                         temperature: effectiveTemp,
@@ -925,6 +927,7 @@ final class ChatSession: ObservableObject {
                         tool_choice: toolSpecs.isEmpty ? nil : .auto,
                         session_id: nil
                     )
+                    req.modelOptions = activeModelOptions.isEmpty ? nil : activeModelOptions
                     do {
                         let streamStartTime = Date()
                         var uiDeltaCount = 0
@@ -1253,6 +1256,7 @@ struct ChatView: View {
                                 voiceInputState: $observedSession.voiceInputState,
                                 showVoiceOverlay: $observedSession.showVoiceOverlay,
                                 modelOptions: observedSession.modelOptions,
+                                activeModelOptions: $observedSession.activeModelOptions,
                                 isStreaming: observedSession.isStreaming,
                                 supportsImages: observedSession.selectedModelSupportsImages,
                                 estimatedContextTokens: observedSession.estimatedContextTokens,

@@ -68,8 +68,7 @@ public actor RemoteProviderService: ToolCapableService {
 
     /// Returns `true` when the model name indicates an image-generation-capable model.
     private static func isImageCapableModel(_ modelName: String) -> Bool {
-        let lower = modelName.lowercased()
-        return lower.contains("image") || lower.contains("nano-banana")
+        GeminiImageProfile.matches(modelId: modelName)
     }
 
     /// Inactivity timeout for streaming: if no bytes arrive within this interval,
@@ -1352,7 +1351,8 @@ public actor RemoteProviderService: ToolCapableService {
             presence_penalty: nil,
             stop: nil,
             tools: tools,
-            tool_choice: toolChoice
+            tool_choice: toolChoice,
+            modelOptions: parameters.modelOptions
         )
     }
 
@@ -1747,6 +1747,12 @@ private struct RemoteChatRequest: Encodable {
     var stop: [String]?
     let tools: [Tool]?
     let tool_choice: ToolChoiceOption?
+    let modelOptions: [String: ModelOptionValue]
+
+    private enum CodingKeys: String, CodingKey {
+        case model, messages, temperature, max_completion_tokens, stream
+        case top_p, frequency_penalty, presence_penalty, stop, tools, tool_choice
+    }
 
     /// Convert to Anthropic Messages API request format
     func toAnthropicRequest() -> AnthropicMessagesRequest {
@@ -2054,15 +2060,23 @@ private struct RemoteChatRequest: Encodable {
             )
         }
 
-        // Build generation config
-        let modelLower = model.lowercased()
-        let isImageCapable =
-            modelLower.contains("image") || modelLower.contains("nano-banana")
+        // Build generation config, using the model profile for image-capable models
+        let isImageCapable = GeminiImageProfile.matches(modelId: model)
         let responseModalities: [String]? = isImageCapable ? ["TEXT", "IMAGE"] : nil
+
+        let imageConfig: GeminiImageConfig? = {
+            guard isImageCapable else { return nil }
+            let ratio = modelOptions["aspectRatio"]?.stringValue
+            let size = modelOptions["imageSize"]?.stringValue
+            let effectiveRatio = (ratio == "auto") ? nil : ratio
+            let effectiveSize = (size == "auto") ? nil : size
+            guard effectiveRatio != nil || effectiveSize != nil else { return nil }
+            return GeminiImageConfig(aspectRatio: effectiveRatio, imageSize: effectiveSize)
+        }()
 
         var generationConfig: GeminiGenerationConfig? = nil
         if temperature != nil || max_completion_tokens != nil || top_p != nil || stop != nil
-            || responseModalities != nil
+            || responseModalities != nil || imageConfig != nil
         {
             generationConfig = GeminiGenerationConfig(
                 temperature: temperature.map { Double($0) },
@@ -2071,7 +2085,7 @@ private struct RemoteChatRequest: Encodable {
                 topK: nil,
                 stopSequences: stop,
                 responseModalities: responseModalities,
-                imageConfig: nil
+                imageConfig: imageConfig
             )
         }
 

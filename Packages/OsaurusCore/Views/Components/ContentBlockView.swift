@@ -412,11 +412,11 @@ private struct ImageThumbnail: View {
                 .overlay(imageClipShape.strokeBorder(theme.primaryBorder.opacity(0.3), lineWidth: 0.5))
                 .overlay(alignment: .topTrailing) {
                     if isHovered {
-                        imageHoverToolbar(for: nsImage)
+                        ImageHoverToolbar(image: nsImage)
                             .transition(.opacity)
                     }
                 }
-                .contextMenu { imageContextMenu(for: nsImage) }
+                .contextMenu { ImageContextMenuItems(image: nsImage) { showFullScreen = true } }
                 .shadow(
                     color: theme.shadowColor.opacity(isHovered ? 0.15 : 0.08),
                     radius: isHovered ? 12 : 6,
@@ -433,53 +433,6 @@ private struct ImageThumbnail: View {
         }
     }
 
-    @ViewBuilder
-    private func imageContextMenu(for image: NSImage) -> some View {
-        Button {
-            ImageActions.saveImageToFile(image)
-        } label: {
-            Label("Save Image\u{2026}", systemImage: "arrow.down.to.line")
-        }
-        Button {
-            ImageActions.copyImageToClipboard(image)
-        } label: {
-            Label("Copy Image", systemImage: "doc.on.doc")
-        }
-        Divider()
-        Button {
-            showFullScreen = true
-        } label: {
-            Label("Open Full Screen", systemImage: "arrow.up.left.and.arrow.down.right")
-        }
-    }
-
-    private func imageHoverToolbar(for image: NSImage) -> some View {
-        HStack(spacing: 2) {
-            toolbarButton("arrow.down.to.line", help: "Save Image") {
-                ImageActions.saveImageToFile(image)
-            }
-            toolbarButton("doc.on.doc", help: "Copy Image") {
-                ImageActions.copyImageToClipboard(image)
-            }
-        }
-        .foregroundColor(.white)
-        .background(
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .fill(.ultraThinMaterial)
-                .environment(\.colorScheme, .dark)
-        )
-        .padding(8)
-    }
-
-    private func toolbarButton(_ icon: String, help: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Image(systemName: icon)
-                .font(.system(size: 12, weight: .semibold))
-                .frame(width: 28, height: 28)
-        }
-        .buttonStyle(.plain)
-        .help(help)
-    }
 }
 
 // MARK: - Action Button
