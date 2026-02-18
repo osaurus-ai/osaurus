@@ -62,6 +62,7 @@ struct FloatingInputCard: View {
     @Environment(\.colorScheme) private var colorScheme
     @State private var isDragOver = false
     @State private var showModelPicker = false
+    @State private var showModelOptionsPicker = false
     @State private var showCapabilitiesPicker = false
     // Cache model options to prevent popover refresh during streaming
     @State private var cachedModelOptions: [ModelOption] = []
@@ -638,15 +639,9 @@ struct FloatingInputCard: View {
                 modelSelectorChip
             }
 
-            // Model-specific option chips (appear dynamically per profile)
-            ForEach(activeProfileOptions) { option in
-                ModelOptionChip(
-                    definition: option,
-                    value: Binding(
-                        get: { activeModelOptions[option.id] },
-                        set: { activeModelOptions[option.id] = $0 }
-                    )
-                )
+            // Model-specific options (single grouped entry point)
+            if !activeProfileOptions.isEmpty {
+                modelOptionsSelectorChip
             }
 
             // Capabilities selector (tools + skills combined)
@@ -849,6 +844,58 @@ struct FloatingInputCard: View {
             return "Abilities"
         }
     }
+
+    // MARK: - Model Options Chip
+
+    private var modelOptionsSummary: String {
+        guard let model = selectedModel,
+            let profile = ModelProfileRegistry.profile(for: model)
+        else { return "" }
+        let defaults = profile.defaults
+        let nonDefault = activeProfileOptions.compactMap { option -> String? in
+            guard let current = activeModelOptions[option.id],
+                current != defaults[option.id]
+            else { return nil }
+            if case .segmented(let segments) = option.kind {
+                return segments.first(where: { $0.id == current.stringValue })?.label
+            }
+            if case .bool(let v) = current { return v ? option.label : nil }
+            return nil
+        }
+        if nonDefault.isEmpty { return "Default" }
+        return nonDefault.joined(separator: ", ")
+    }
+
+    private var modelOptionsSelectorChip: some View {
+        SelectorChip(isActive: showModelOptionsPicker) {
+            showModelOptionsPicker.toggle()
+        } content: {
+            HStack(spacing: 5) {
+                Image(systemName: "slider.horizontal.3")
+                    .font(theme.font(size: CGFloat(theme.captionSize) - 2, weight: .medium))
+                    .foregroundColor(theme.tertiaryText)
+
+                Text(modelOptionsSummary)
+                    .font(theme.font(size: CGFloat(theme.captionSize), weight: .medium))
+                    .foregroundColor(theme.secondaryText)
+                    .lineLimit(1)
+
+                Image(systemName: "chevron.up.chevron.down")
+                    .font(theme.font(size: CGFloat(theme.captionSize) - 3, weight: .semibold))
+                    .foregroundColor(theme.tertiaryText)
+            }
+        }
+        .popover(isPresented: $showModelOptionsPicker, arrowEdge: .top) {
+            ModelOptionsSelectorView(
+                options: activeProfileOptions,
+                values: $activeModelOptions,
+                defaults: selectedModel.flatMap { ModelProfileRegistry.profile(for: $0)?.defaults } ?? [:],
+                profileName: selectedModel.flatMap { ModelProfileRegistry.profile(for: $0)?.displayName } ?? ""
+            )
+        }
+    }
+
+    // MARK: - Capabilities Chip
 
     private var capabilitiesSelectorChip: some View {
         SelectorChip(isActive: showCapabilitiesPicker) {
@@ -1555,109 +1602,284 @@ private struct SelectorChip<Content: View>: View {
     }
 }
 
-// MARK: - Model Option Chip
+// MARK: - Model Options Selector View
 
-/// Renders a single model-specific option as a selector chip in the toolbar row.
-private struct ModelOptionChip: View {
-    let definition: ModelOptionDefinition
-    @Binding var value: ModelOptionValue?
+/// Popover that groups all model-specific options into a single panel,
+/// matching the visual language of CapabilitiesSelectorView.
+private struct ModelOptionsSelectorView: View {
+    let options: [ModelOptionDefinition]
+    @Binding var values: [String: ModelOptionValue]
+    let defaults: [String: ModelOptionValue]
+    let profileName: String
 
-    @State private var showPopover = false
     @Environment(\.theme) private var theme
 
+    private var hasNonDefaults: Bool {
+        options.contains { option in
+            guard let current = values[option.id] else { return false }
+            return current != defaults[option.id]
+        }
+    }
+
     var body: some View {
-        switch definition.kind {
-        case .segmented(let segments):
-            segmentedChip(segments: segments)
-        case .toggle(let defaultValue):
-            toggleChip(defaultValue: defaultValue)
+        VStack(spacing: 0) {
+            header
+            Divider().background(theme.primaryBorder.opacity(0.3))
+            optionRows
         }
+        .frame(width: 300)
+        .background(popoverBackground)
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .overlay(popoverBorder)
+        .shadow(color: theme.shadowColor.opacity(0.25), radius: 20, x: 0, y: 10)
     }
 
-    private func segmentedChip(segments: [ModelOptionSegment]) -> some View {
-        let currentId = value?.stringValue ?? segments.first?.id ?? ""
-        let currentLabel = segments.first(where: { $0.id == currentId })?.label ?? currentId
+    // MARK: - Header
 
-        return SelectorChip(isActive: showPopover) {
-            showPopover.toggle()
-        } content: {
-            HStack(spacing: 5) {
-                if let icon = definition.icon {
-                    Image(systemName: icon)
-                        .font(theme.font(size: CGFloat(theme.captionSize) - 2, weight: .medium))
-                        .foregroundColor(theme.tertiaryText)
-                }
-
-                Text(currentLabel)
-                    .font(theme.font(size: CGFloat(theme.captionSize), weight: .medium))
-                    .foregroundColor(theme.secondaryText)
-
-                Image(systemName: "chevron.up.chevron.down")
-                    .font(theme.font(size: CGFloat(theme.captionSize) - 3, weight: .semibold))
-                    .foregroundColor(theme.tertiaryText)
-            }
-        }
-        .popover(isPresented: $showPopover, arrowEdge: .top) {
-            segmentedPopover(segments: segments, currentId: currentId)
-        }
-    }
-
-    private func segmentedPopover(segments: [ModelOptionSegment], currentId: String) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
-            Text(definition.label)
-                .font(theme.font(size: CGFloat(theme.captionSize), weight: .semibold))
+    private var header: some View {
+        HStack {
+            Image(systemName: "slider.horizontal.3")
+                .font(.system(size: 12, weight: .semibold))
                 .foregroundColor(theme.secondaryText)
-                .padding(.horizontal, 12)
-                .padding(.top, 8)
-                .padding(.bottom, 4)
 
-            ForEach(segments) { segment in
+            Text(profileName)
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundColor(theme.primaryText)
+
+            Spacer()
+
+            if hasNonDefaults {
                 Button {
-                    value = .string(segment.id)
-                    showPopover = false
-                } label: {
-                    HStack {
-                        Text(segment.label)
-                            .font(theme.font(size: CGFloat(theme.bodySize), weight: .regular))
-                            .foregroundColor(theme.primaryText)
-
-                        Spacer()
-
-                        if segment.id == currentId {
-                            Image(systemName: "checkmark")
-                                .font(theme.font(size: CGFloat(theme.captionSize) - 1, weight: .semibold))
-                                .foregroundColor(theme.accentColor)
-                        }
+                    withAnimation(.easeOut(duration: 0.15)) {
+                        values = defaults
                     }
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 6)
-                    .contentShape(Rectangle())
+                } label: {
+                    HStack(spacing: 3) {
+                        Image(systemName: "arrow.uturn.backward")
+                            .font(.system(size: 9))
+                        Text("Reset")
+                            .font(.system(size: 11, weight: .medium))
+                    }
+                    .foregroundColor(theme.secondaryText)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(
+                        RoundedRectangle(cornerRadius: 6, style: .continuous)
+                            .fill(theme.secondaryBackground.opacity(0.8))
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 6, style: .continuous)
+                            .strokeBorder(theme.primaryBorder.opacity(0.12), lineWidth: 1)
+                    )
                 }
                 .buttonStyle(.plain)
             }
         }
-        .padding(.vertical, 4)
-        .frame(minWidth: 140)
+        .padding(.horizontal, 14)
+        .padding(.vertical, 12)
     }
 
-    private func toggleChip(defaultValue: Bool) -> some View {
-        let isOn = value?.boolValue ?? defaultValue
+    // MARK: - Option Rows
 
-        return SelectorChip(isActive: isOn) {
-            value = .bool(!isOn)
-        } content: {
-            HStack(spacing: 5) {
-                if let icon = definition.icon {
-                    Image(systemName: icon)
-                        .font(theme.font(size: CGFloat(theme.captionSize) - 2, weight: .medium))
-                        .foregroundColor(isOn ? theme.accentColor : theme.tertiaryText)
+    private var optionRows: some View {
+        VStack(spacing: 0) {
+            ForEach(Array(options.enumerated()), id: \.element.id) { index, option in
+                if index > 0 {
+                    Divider().background(theme.primaryBorder.opacity(0.15)).padding(.horizontal, 14)
                 }
-
-                Text(definition.label)
-                    .font(theme.font(size: CGFloat(theme.captionSize), weight: .medium))
-                    .foregroundColor(isOn ? theme.accentColor : theme.secondaryText)
+                switch option.kind {
+                case .segmented(let segments):
+                    segmentedRow(option: option, segments: segments)
+                case .toggle(let defaultValue):
+                    toggleRow(option: option, defaultValue: defaultValue)
+                }
             }
         }
+        .padding(.vertical, 4)
+    }
+
+    private func segmentedRow(option: ModelOptionDefinition, segments: [ModelOptionSegment]) -> some View {
+        let currentId = values[option.id]?.stringValue ?? segments.first?.id ?? ""
+        let isNonDefault = values[option.id] != defaults[option.id]
+
+        return VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 6) {
+                if let icon = option.icon {
+                    Image(systemName: icon)
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundColor(isNonDefault ? theme.accentColor : theme.tertiaryText)
+                }
+                Text(option.label)
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundColor(theme.primaryText)
+            }
+
+            wrappedSegments(segments: segments, currentId: currentId, optionId: option.id)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
+    }
+
+    private func wrappedSegments(segments: [ModelOptionSegment], currentId: String, optionId: String) -> some View {
+        FlowLayout(spacing: 6) {
+            ForEach(segments) { segment in
+                let isSelected = segment.id == currentId
+                Button {
+                    withAnimation(.easeOut(duration: 0.15)) {
+                        values[optionId] = .string(segment.id)
+                    }
+                } label: {
+                    Text(segment.label)
+                        .font(.system(size: 11, weight: isSelected ? .semibold : .medium))
+                        .foregroundColor(isSelected ? theme.accentColor : theme.secondaryText)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 5)
+                        .background(
+                            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                                .fill(
+                                    isSelected
+                                        ? theme.accentColor.opacity(theme.isDark ? 0.15 : 0.1)
+                                        : theme.secondaryBackground.opacity(0.6)
+                                )
+                        )
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                                .strokeBorder(
+                                    isSelected
+                                        ? theme.accentColor.opacity(0.3)
+                                        : theme.primaryBorder.opacity(0.12),
+                                    lineWidth: 1
+                                )
+                        )
+                }
+                .buttonStyle(.plain)
+            }
+        }
+    }
+
+    private func toggleRow(option: ModelOptionDefinition, defaultValue: Bool) -> some View {
+        let isOn = values[option.id]?.boolValue ?? defaultValue
+        let isNonDefault = values[option.id] != defaults[option.id]
+
+        return HStack(spacing: 6) {
+            if let icon = option.icon {
+                Image(systemName: icon)
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundColor(isNonDefault ? theme.accentColor : theme.tertiaryText)
+            }
+            Text(option.label)
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundColor(theme.primaryText)
+
+            Spacer()
+
+            Toggle(
+                "",
+                isOn: Binding(
+                    get: { isOn },
+                    set: { values[option.id] = .bool($0) }
+                )
+            )
+            .toggleStyle(.switch)
+            .controlSize(.mini)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
+    }
+
+    // MARK: - Background & Border
+
+    private var popoverBackground: some View {
+        ZStack {
+            if theme.glassEnabled {
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .fill(.ultraThinMaterial)
+            }
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .fill(theme.primaryBackground.opacity(theme.isDark ? 0.85 : 0.92))
+            LinearGradient(
+                colors: [
+                    theme.accentColor.opacity(theme.isDark ? 0.06 : 0.04),
+                    Color.clear,
+                ],
+                startPoint: .top,
+                endPoint: .center
+            )
+            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        }
+    }
+
+    private var popoverBorder: some View {
+        RoundedRectangle(cornerRadius: 12, style: .continuous)
+            .strokeBorder(
+                LinearGradient(
+                    colors: [
+                        theme.glassEdgeLight.opacity(0.2),
+                        theme.primaryBorder.opacity(0.15),
+                    ],
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing
+                ),
+                lineWidth: 1
+            )
+    }
+}
+
+// MARK: - Flow Layout
+
+/// Simple wrapping layout for segment buttons.
+private struct FlowLayout: Layout {
+    var spacing: CGFloat = 6
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let rows = computeRows(proposal: proposal, subviews: subviews)
+        guard !rows.isEmpty else { return .zero }
+        let height = rows.reduce(CGFloat(0)) { $0 + $1.height } + CGFloat(rows.count - 1) * spacing
+        return CGSize(width: proposal.width ?? 0, height: height)
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        let rows = computeRows(proposal: proposal, subviews: subviews)
+        var y = bounds.minY
+        for row in rows {
+            var x = bounds.minX
+            for item in row.items {
+                subviews[item.index].place(
+                    at: CGPoint(x: x, y: y),
+                    proposal: ProposedViewSize(item.size)
+                )
+                x += item.size.width + spacing
+            }
+            y += row.height + spacing
+        }
+    }
+
+    private struct RowItem { let index: Int; let size: CGSize }
+    private struct Row { let items: [RowItem]; let height: CGFloat }
+
+    private func computeRows(proposal: ProposedViewSize, subviews: Subviews) -> [Row] {
+        let maxWidth = proposal.width ?? .infinity
+        var rows: [Row] = []
+        var currentItems: [RowItem] = []
+        var currentWidth: CGFloat = 0
+        var currentHeight: CGFloat = 0
+
+        for (i, subview) in subviews.enumerated() {
+            let size = subview.sizeThatFits(.unspecified)
+            if !currentItems.isEmpty && currentWidth + spacing + size.width > maxWidth {
+                rows.append(Row(items: currentItems, height: currentHeight))
+                currentItems = []
+                currentWidth = 0
+                currentHeight = 0
+            }
+            currentItems.append(RowItem(index: i, size: size))
+            currentWidth += (currentItems.count > 1 ? spacing : 0) + size.width
+            currentHeight = max(currentHeight, size.height)
+        }
+        if !currentItems.isEmpty {
+            rows.append(Row(items: currentItems, height: currentHeight))
+        }
+        return rows
     }
 }
 

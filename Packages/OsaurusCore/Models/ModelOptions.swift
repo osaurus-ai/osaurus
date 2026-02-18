@@ -67,7 +67,8 @@ protocol ModelProfile: Sendable {
 
 enum ModelProfileRegistry {
     static let profiles: [any ModelProfile.Type] = [
-        GeminiImageProfile.self
+        GeminiProImageProfile.self,
+        GeminiFlashImageProfile.self,
     ]
 
     static func profile(for modelId: String) -> (any ModelProfile.Type)? {
@@ -83,14 +84,36 @@ enum ModelProfileRegistry {
     }
 }
 
-// MARK: - Gemini Image Profile
+// MARK: - Shared Segments
 
-struct GeminiImageProfile: ModelProfile {
-    static let displayName = "Image Generation"
+private let geminiAspectRatioSegments: [ModelOptionSegment] = [
+    ModelOptionSegment(id: "auto", label: "Auto"),
+    ModelOptionSegment(id: "1:1", label: "1:1"),
+    ModelOptionSegment(id: "2:3", label: "2:3"),
+    ModelOptionSegment(id: "3:2", label: "3:2"),
+    ModelOptionSegment(id: "3:4", label: "3:4"),
+    ModelOptionSegment(id: "4:3", label: "4:3"),
+    ModelOptionSegment(id: "4:5", label: "4:5"),
+    ModelOptionSegment(id: "5:4", label: "5:4"),
+    ModelOptionSegment(id: "9:16", label: "9:16"),
+    ModelOptionSegment(id: "16:9", label: "16:9"),
+    ModelOptionSegment(id: "21:9", label: "21:9"),
+]
+
+private let geminiOutputTypeSegments: [ModelOptionSegment] = [
+    ModelOptionSegment(id: "textAndImage", label: "Text & Image"),
+    ModelOptionSegment(id: "imageOnly", label: "Image Only"),
+]
+
+// MARK: - Gemini 3 Pro Image Profile (Nano Banana Pro)
+
+/// Gemini 3 Pro Image Preview — supports aspect ratio, resolution (1K/2K/4K), and output type.
+struct GeminiProImageProfile: ModelProfile {
+    static let displayName = "Image Generation (Pro)"
 
     static func matches(modelId: String) -> Bool {
         let lower = modelId.lowercased()
-        return lower.contains("image") || lower.contains("nano-banana")
+        return lower.contains("nano-banana") || (lower.contains("gemini-3") && lower.contains("image"))
     }
 
     static let options: [ModelOptionDefinition] = [
@@ -98,18 +121,62 @@ struct GeminiImageProfile: ModelProfile {
             id: "aspectRatio",
             label: "Aspect Ratio",
             icon: "aspectratio",
+            kind: .segmented(geminiAspectRatioSegments)
+        ),
+        ModelOptionDefinition(
+            id: "imageSize",
+            label: "Resolution",
+            icon: "arrow.up.right.and.arrow.down.left",
             kind: .segmented([
                 ModelOptionSegment(id: "auto", label: "Auto"),
-                ModelOptionSegment(id: "1:1", label: "1:1"),
-                ModelOptionSegment(id: "3:4", label: "3:4"),
-                ModelOptionSegment(id: "4:3", label: "4:3"),
-                ModelOptionSegment(id: "9:16", label: "9:16"),
-                ModelOptionSegment(id: "16:9", label: "16:9"),
+                ModelOptionSegment(id: "1K", label: "1K"),
+                ModelOptionSegment(id: "2K", label: "2K"),
+                ModelOptionSegment(id: "4K", label: "4K"),
             ])
-        )
+        ),
+        ModelOptionDefinition(
+            id: "outputType",
+            label: "Output",
+            icon: "photo.on.rectangle",
+            kind: .segmented(geminiOutputTypeSegments)
+        ),
     ]
 
     static let defaults: [String: ModelOptionValue] = [
-        "aspectRatio": .string("auto")
+        "aspectRatio": .string("auto"),
+        "imageSize": .string("auto"),
+        "outputType": .string("textAndImage"),
+    ]
+}
+
+// MARK: - Gemini Flash Image Profile (Nano Banana)
+
+/// Gemini 2.5 Flash Image — supports aspect ratio and output type (no resolution control).
+struct GeminiFlashImageProfile: ModelProfile {
+    static let displayName = "Image Generation"
+
+    static func matches(modelId: String) -> Bool {
+        let lower = modelId.lowercased()
+        return lower.contains("flash") && lower.contains("image")
+    }
+
+    static let options: [ModelOptionDefinition] = [
+        ModelOptionDefinition(
+            id: "aspectRatio",
+            label: "Aspect Ratio",
+            icon: "aspectratio",
+            kind: .segmented(geminiAspectRatioSegments)
+        ),
+        ModelOptionDefinition(
+            id: "outputType",
+            label: "Output",
+            icon: "photo.on.rectangle",
+            kind: .segmented(geminiOutputTypeSegments)
+        ),
+    ]
+
+    static let defaults: [String: ModelOptionValue] = [
+        "aspectRatio": .string("auto"),
+        "outputType": .string("textAndImage"),
     ]
 }
