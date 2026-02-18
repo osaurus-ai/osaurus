@@ -67,8 +67,8 @@ public actor RemoteProviderService: ToolCapableService {
     private static let imageModelMinTimeout: TimeInterval = 300
 
     /// Returns `true` when the model name indicates an image-generation-capable model.
-    private static func isImageCapableModel(_ modelName: String) -> Bool {
-        GeminiImageProfile.matches(modelId: modelName)
+    fileprivate static func isImageCapableModel(_ modelName: String) -> Bool {
+        GeminiProImageProfile.matches(modelId: modelName) || GeminiFlashImageProfile.matches(modelId: modelName)
     }
 
     /// Inactivity timeout for streaming: if no bytes arrive within this interval,
@@ -2061,8 +2061,14 @@ private struct RemoteChatRequest: Encodable {
         }
 
         // Build generation config, using the model profile for image-capable models
-        let isImageCapable = GeminiImageProfile.matches(modelId: model)
-        let responseModalities: [String]? = isImageCapable ? ["TEXT", "IMAGE"] : nil
+        let isImageCapable = RemoteProviderService.isImageCapableModel(model)
+        let responseModalities: [String]? = {
+            guard isImageCapable else { return nil }
+            if modelOptions["outputType"]?.stringValue == "imageOnly" {
+                return ["IMAGE"]
+            }
+            return ["TEXT", "IMAGE"]
+        }()
 
         let imageConfig: GeminiImageConfig? = {
             guard isImageCapable else { return nil }
