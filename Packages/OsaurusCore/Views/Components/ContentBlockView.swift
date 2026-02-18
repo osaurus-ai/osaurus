@@ -156,7 +156,7 @@ struct ContentBlockView: View, Equatable {
             .padding(.bottom, 2)
 
             ForEach(Array(images.enumerated()), id: \.offset) { _, imageData in
-                ImageThumbnail(imageData: imageData)
+                ImageThumbnail(imageData: imageData, baseWidth: width)
                     .padding(.top, 6)
                     .padding(.bottom, text.isEmpty ? 16 : 6)
             }
@@ -382,25 +382,103 @@ private struct InlineEditView: View {
 
 private struct ImageThumbnail: View {
     let imageData: Data
+    let baseWidth: CGFloat
 
     @Environment(\.theme) private var theme
+    @State private var isHovered = false
+    @State private var showFullScreen = false
+
+    private var maxImageWidth: CGFloat {
+        min(baseWidth - 32, 560)
+    }
+
+    private func displaySize(for image: NSImage) -> CGSize {
+        let size = image.size
+        guard size.width > 0, size.height > 0 else {
+            return CGSize(width: maxImageWidth, height: maxImageWidth * 0.75)
+        }
+        let width = min(size.width, maxImageWidth)
+        return CGSize(width: width, height: width * size.height / size.width)
+    }
 
     var body: some View {
         if let nsImage = NSImage(data: imageData) {
+            let size = displaySize(for: nsImage)
             Image(nsImage: nsImage)
                 .resizable()
                 .aspectRatio(contentMode: .fit)
-                .frame(maxWidth: 200, maxHeight: 150)
-                .clipShape(RoundedRectangle(cornerRadius: CGFloat(theme.inputCornerRadius), style: .continuous))
-                .overlay(
-                    RoundedRectangle(cornerRadius: CGFloat(theme.inputCornerRadius), style: .continuous)
-                        .strokeBorder(
-                            theme.primaryBorder.opacity(theme.borderOpacity),
-                            lineWidth: CGFloat(theme.defaultBorderWidth)
-                        )
+                .frame(width: size.width, height: size.height)
+                .clipShape(imageClipShape)
+                .overlay(imageClipShape.strokeBorder(theme.primaryBorder.opacity(0.3), lineWidth: 0.5))
+                .overlay(alignment: .topTrailing) {
+                    if isHovered {
+                        imageHoverToolbar(for: nsImage)
+                            .transition(.opacity)
+                    }
+                }
+                .contextMenu { imageContextMenu(for: nsImage) }
+                .shadow(
+                    color: theme.shadowColor.opacity(isHovered ? 0.15 : 0.08),
+                    radius: isHovered ? 12 : 6,
+                    x: 0,
+                    y: isHovered ? 6 : 3
                 )
-                .shadow(color: theme.shadowColor.opacity(theme.shadowOpacity * 0.3), radius: 4, x: 0, y: 2)
+                .scaleEffect(isHovered ? 1.01 : 1.0)
+                .animation(.easeInOut(duration: 0.2), value: isHovered)
+                .onHover { isHovered = $0 }
+                .onTapGesture { showFullScreen = true }
+                .sheet(isPresented: $showFullScreen) {
+                    ImageFullScreenView(image: nsImage, altText: "")
+                }
         }
+    }
+
+    @ViewBuilder
+    private func imageContextMenu(for image: NSImage) -> some View {
+        Button {
+            ImageActions.saveImageToFile(image)
+        } label: {
+            Label("Save Image\u{2026}", systemImage: "arrow.down.to.line")
+        }
+        Button {
+            ImageActions.copyImageToClipboard(image)
+        } label: {
+            Label("Copy Image", systemImage: "doc.on.doc")
+        }
+        Divider()
+        Button {
+            showFullScreen = true
+        } label: {
+            Label("Open Full Screen", systemImage: "arrow.up.left.and.arrow.down.right")
+        }
+    }
+
+    private func imageHoverToolbar(for image: NSImage) -> some View {
+        HStack(spacing: 2) {
+            toolbarButton("arrow.down.to.line", help: "Save Image") {
+                ImageActions.saveImageToFile(image)
+            }
+            toolbarButton("doc.on.doc", help: "Copy Image") {
+                ImageActions.copyImageToClipboard(image)
+            }
+        }
+        .foregroundColor(.white)
+        .background(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(.ultraThinMaterial)
+                .environment(\.colorScheme, .dark)
+        )
+        .padding(8)
+    }
+
+    private func toolbarButton(_ icon: String, help: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: icon)
+                .font(.system(size: 12, weight: .semibold))
+                .frame(width: 28, height: 28)
+        }
+        .buttonStyle(.plain)
+        .help(help)
     }
 }
 

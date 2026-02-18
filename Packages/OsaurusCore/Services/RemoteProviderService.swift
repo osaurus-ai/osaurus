@@ -55,16 +55,25 @@ public actor RemoteProviderService: ToolCapableService {
             .replacingOccurrences(of: " ", with: "-")
             .replacingOccurrences(of: "/", with: "-")
 
-        // Configure URLSession with provider timeout
         let config = URLSessionConfiguration.default
         config.timeoutIntervalForRequest = provider.timeout
-        config.timeoutIntervalForResource = provider.timeout * 2
+        // Resource timeout must be generous because image generation (non-streaming)
+        // can take several minutes for thinking + rendering.
+        config.timeoutIntervalForResource = max(provider.timeout * 2, 600)
         self.session = URLSession(configuration: config)
+    }
+
+    /// Minimum timeout for image generation models (5 minutes).
+    private static let imageModelMinTimeout: TimeInterval = 300
+
+    /// Returns `true` when the model name indicates an image-generation-capable model.
+    private static func isImageCapableModel(_ modelName: String) -> Bool {
+        let lower = modelName.lowercased()
+        return lower.contains("image") || lower.contains("nano-banana")
     }
 
     /// Inactivity timeout for streaming: if no bytes arrive within this interval,
     /// assume the provider has stalled and end the stream.
-    /// Uses the provider's configured timeout so slow models (e.g. image generation) don't get killed.
     private var streamInactivityTimeout: TimeInterval { provider.timeout }
 
     /// Invalidate the URLSession to release its strong delegate reference.
@@ -170,6 +179,18 @@ public actor RemoteProviderService: ToolCapableService {
             throw RemoteProviderServiceError.noModelsAvailable
         }
 
+        // Gemini image models don't support streamGenerateContent; fall back to generateContent.
+        if provider.providerType == .gemini && Self.isImageCapableModel(modelName) {
+            return try geminiImageGenerateContent(
+                messages: messages,
+                parameters: parameters,
+                model: modelName,
+                stopSequences: stopSequences,
+                tools: nil,
+                toolChoice: nil
+            )
+        }
+
         var request = buildChatRequest(
             messages: messages,
             parameters: parameters,
@@ -187,6 +208,7 @@ public actor RemoteProviderService: ToolCapableService {
         let urlRequest = try buildURLRequest(for: request)
         let currentSession = self.session
         let providerType = self.provider.providerType
+        let inactivityTimeout = self.streamInactivityTimeout
 
         let (stream, continuation) = AsyncThrowingStream<String, Error>.makeStream()
 
@@ -232,7 +254,7 @@ public actor RemoteProviderService: ToolCapableService {
                     guard
                         let byte = try await Self.nextByte(
                             from: byteRef,
-                            timeout: streamInactivityTimeout
+                            timeout: inactivityTimeout
                         )
                     else {
                         break
@@ -283,14 +305,18 @@ public actor RemoteProviderService: ToolCapableService {
 
                                         if let parts = chunk.candidates?.first?.content?.parts {
                                             for part in parts {
-                                                switch part {
+                                                if part.thought == true { continue }
+
+                                                switch part.content {
                                                 case .text(let text):
                                                     if accumulatedToolCalls.isEmpty, !text.isEmpty {
-                                                        var output = text
+                                                        let output = Self.encodeTextWithSignature(
+                                                            text,
+                                                            signature: part.thoughtSignature
+                                                        )
                                                         for seq in stopSequences {
                                                             if let range = output.range(of: seq) {
-                                                                output = String(output[..<range.lowerBound])
-                                                                continuation.yield(output)
+                                                                continuation.yield(String(output[..<range.lowerBound]))
                                                                 continuation.finish()
                                                                 return
                                                             }
@@ -312,9 +338,12 @@ public actor RemoteProviderService: ToolCapableService {
                                                     )
                                                 case .inlineData(let imageData):
                                                     if accumulatedToolCalls.isEmpty {
-                                                        let markdown =
-                                                            "![image](data:\(imageData.mimeType);base64,\(imageData.data))"
-                                                        continuation.yield(markdown)
+                                                        continuation.yield(
+                                                            Self.imageMarkdown(
+                                                                imageData,
+                                                                thoughtSignature: part.thoughtSignature
+                                                            )
+                                                        )
                                                     }
                                                 case .functionResponse:
                                                     break
@@ -545,14 +574,18 @@ public actor RemoteProviderService: ToolCapableService {
 
                                     if let parts = chunk.candidates?.first?.content?.parts {
                                         for part in parts {
-                                            switch part {
+                                            if part.thought == true { continue }
+
+                                            switch part.content {
                                             case .text(let text):
                                                 if accumulatedToolCalls.isEmpty, !text.isEmpty {
-                                                    var output = text
+                                                    let output = Self.encodeTextWithSignature(
+                                                        text,
+                                                        signature: part.thoughtSignature
+                                                    )
                                                     for seq in stopSequences {
                                                         if let range = output.range(of: seq) {
-                                                            output = String(output[..<range.lowerBound])
-                                                            continuation.yield(output)
+                                                            continuation.yield(String(output[..<range.lowerBound]))
                                                             continuation.finish()
                                                             return
                                                         }
@@ -574,9 +607,12 @@ public actor RemoteProviderService: ToolCapableService {
                                                 )
                                             case .inlineData(let imageData):
                                                 if accumulatedToolCalls.isEmpty {
-                                                    let markdown =
-                                                        "![image](data:\(imageData.mimeType);base64,\(imageData.data))"
-                                                    continuation.yield(markdown)
+                                                    continuation.yield(
+                                                        Self.imageMarkdown(
+                                                            imageData,
+                                                            thoughtSignature: part.thoughtSignature
+                                                        )
+                                                    )
                                                 }
                                             case .functionResponse:
                                                 break
@@ -679,6 +715,18 @@ public actor RemoteProviderService: ToolCapableService {
             throw RemoteProviderServiceError.noModelsAvailable
         }
 
+        // Gemini image models don't support streamGenerateContent; fall back to generateContent.
+        if provider.providerType == .gemini && Self.isImageCapableModel(modelName) {
+            return try geminiImageGenerateContent(
+                messages: messages,
+                parameters: parameters,
+                model: modelName,
+                stopSequences: stopSequences,
+                tools: tools.isEmpty ? nil : tools,
+                toolChoice: toolChoice
+            )
+        }
+
         var request = buildChatRequest(
             messages: messages,
             parameters: parameters,
@@ -695,6 +743,7 @@ public actor RemoteProviderService: ToolCapableService {
         let urlRequest = try buildURLRequest(for: request)
         let currentSession = self.session
         let providerType = self.provider.providerType
+        let inactivityTimeout = self.streamInactivityTimeout
 
         let (stream, continuation) = AsyncThrowingStream<String, Error>.makeStream()
 
@@ -748,7 +797,7 @@ public actor RemoteProviderService: ToolCapableService {
                     guard
                         let byte = try await Self.nextByte(
                             from: byteRef,
-                            timeout: streamInactivityTimeout
+                            timeout: inactivityTimeout
                         )
                     else {
                         break
@@ -815,15 +864,20 @@ public actor RemoteProviderService: ToolCapableService {
 
                                         if let parts = chunk.candidates?.first?.content?.parts {
                                             for part in parts {
-                                                switch part {
+                                                if part.thought == true { continue }
+
+                                                switch part.content {
                                                 case .text(let text):
                                                     if accumulatedToolCalls.isEmpty, !text.isEmpty {
-                                                        var output = text
+                                                        let output = Self.encodeTextWithSignature(
+                                                            text,
+                                                            signature: part.thoughtSignature
+                                                        )
                                                         for seq in stopSequences {
                                                             if let range = output.range(of: seq) {
-                                                                output = String(output[..<range.lowerBound])
-                                                                accumulatedContent += output
-                                                                continuation.yield(output)
+                                                                let truncated = String(output[..<range.lowerBound])
+                                                                accumulatedContent += truncated
+                                                                continuation.yield(truncated)
                                                                 continuation.finish()
                                                                 return
                                                             }
@@ -849,9 +903,12 @@ public actor RemoteProviderService: ToolCapableService {
                                                     )
                                                 case .inlineData(let imageData):
                                                     if accumulatedToolCalls.isEmpty {
-                                                        let markdown =
-                                                            "![image](data:\(imageData.mimeType);base64,\(imageData.data))"
-                                                        continuation.yield(markdown)
+                                                        continuation.yield(
+                                                            Self.imageMarkdown(
+                                                                imageData,
+                                                                thoughtSignature: part.thoughtSignature
+                                                            )
+                                                        )
                                                     }
                                                 case .functionResponse:
                                                     break
@@ -1299,6 +1356,112 @@ public actor RemoteProviderService: ToolCapableService {
         )
     }
 
+    /// Non-streaming `generateContent` fallback for Gemini image models (Nano Banana).
+    /// Image models don't support `streamGenerateContent`, so this wraps the
+    /// single-shot response in an `AsyncThrowingStream` for the streaming callers.
+    private func geminiImageGenerateContent(
+        messages: [ChatMessage],
+        parameters: GenerationParameters,
+        model: String,
+        stopSequences: [String],
+        tools: [Tool]?,
+        toolChoice: ToolChoiceOption?
+    ) throws -> AsyncThrowingStream<String, Error> {
+        var request = buildChatRequest(
+            messages: messages,
+            parameters: parameters,
+            model: model,
+            stream: false,
+            tools: tools,
+            toolChoice: toolChoice
+        )
+
+        if !stopSequences.isEmpty {
+            request.stop = stopSequences
+        }
+
+        let urlRequest = try buildURLRequest(for: request)
+        let currentSession = self.session
+
+        let (stream, continuation) = AsyncThrowingStream<String, Error>.makeStream()
+
+        let producerTask = Task {
+            do {
+                let (data, response) = try await currentSession.data(for: urlRequest)
+
+                guard let httpResponse = response as? HTTPURLResponse else {
+                    continuation.finish(throwing: RemoteProviderServiceError.invalidResponse)
+                    return
+                }
+
+                if httpResponse.statusCode >= 400 {
+                    let errorMessage = String(data: data, encoding: .utf8) ?? "Unknown error"
+                    continuation.finish(
+                        throwing: RemoteProviderServiceError.requestFailed(
+                            "HTTP \(httpResponse.statusCode): \(errorMessage)"
+                        )
+                    )
+                    return
+                }
+
+                let geminiResponse = try JSONDecoder().decode(
+                    GeminiGenerateContentResponse.self,
+                    from: data
+                )
+
+                if let parts = geminiResponse.candidates?.first?.content?.parts {
+                    var pendingToolCall: ServiceToolInvocation? = nil
+
+                    for part in parts {
+                        if part.thought == true { continue }
+
+                        switch part.content {
+                        case .text(let text):
+                            if !text.isEmpty {
+                                continuation.yield(Self.encodeTextWithSignature(text, signature: part.thoughtSignature))
+                            }
+                        case .inlineData(let imageData):
+                            continuation.yield(Self.imageMarkdown(imageData, thoughtSignature: part.thoughtSignature))
+                        case .functionCall(let funcCall):
+                            let argsData = try? JSONSerialization.data(
+                                withJSONObject: (funcCall.args ?? [:]).mapValues { $0.value }
+                            )
+                            let argsString =
+                                argsData.flatMap { String(data: $0, encoding: .utf8) } ?? "{}"
+                            pendingToolCall = ServiceToolInvocation(
+                                toolName: funcCall.name,
+                                jsonArguments: argsString,
+                                toolCallId: "gemini-\(UUID().uuidString.prefix(8))",
+                                geminiThoughtSignature: funcCall.thoughtSignature
+                            )
+                        case .functionResponse:
+                            break
+                        }
+                    }
+
+                    if let invocation = pendingToolCall {
+                        continuation.finish(throwing: invocation)
+                        return
+                    }
+                }
+
+                continuation.finish()
+            } catch {
+                if Task.isCancelled {
+                    continuation.finish()
+                } else {
+                    continuation.finish(throwing: error)
+                }
+            }
+        }
+
+        continuation.onTermination = { @Sendable _ in
+            producerTask.cancel()
+        }
+
+        return stream
+    }
+
     /// Build a URLRequest for the chat completions endpoint
     private func buildURLRequest(for request: RemoteChatRequest) throws -> URLRequest {
         let url: URL
@@ -1334,6 +1497,10 @@ public actor RemoteProviderService: ToolCapableService {
         var urlRequest = URLRequest(url: url)
         urlRequest.httpMethod = "POST"
         urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
+
+        if Self.isImageCapableModel(request.model) {
+            urlRequest.timeoutInterval = max(provider.timeout, Self.imageModelMinTimeout)
+        }
 
         // Set Accept header based on streaming mode
         if request.stream {
@@ -1435,9 +1602,11 @@ public actor RemoteProviderService: ToolCapableService {
 
             if let parts = response.candidates?.first?.content?.parts {
                 for part in parts {
-                    switch part {
+                    if part.thought == true { continue }
+
+                    switch part.content {
                     case .text(let text):
-                        textContent += text
+                        textContent += Self.encodeTextWithSignature(text, signature: part.thoughtSignature)
                     case .functionCall(let funcCall):
                         let argsData = try? JSONSerialization.data(
                             withJSONObject: (funcCall.args ?? [:]).mapValues { $0.value }
@@ -1452,9 +1621,7 @@ public actor RemoteProviderService: ToolCapableService {
                             )
                         )
                     case .inlineData(let imageData):
-                        let markdown =
-                            "![image](data:\(imageData.mimeType);base64,\(imageData.data))"
-                        textContent += markdown
+                        textContent += Self.imageMarkdown(imageData, thoughtSignature: part.thoughtSignature)
                     case .functionResponse:
                         break  // Not expected in responses from model
                     }
@@ -1463,6 +1630,91 @@ public actor RemoteProviderService: ToolCapableService {
 
             return (textContent.isEmpty ? nil : textContent, toolCalls.isEmpty ? nil : toolCalls)
         }
+    }
+
+    // MARK: - Thought-Signature Round-Trip Helpers
+
+    /// Embed a thought-signature in text via invisible ZWS delimiters: `\u{200B}ts:SIG\u{200B}`.
+    static func encodeTextWithSignature(_ text: String, signature: String?) -> String {
+        guard let sig = signature else { return text }
+        return "\u{200B}ts:\(sig)\u{200B}" + text
+    }
+
+    /// Build markdown for an inline image, embedding the thought-signature in the alt text.
+    static func imageMarkdown(_ data: GeminiInlineData, thoughtSignature: String?) -> String {
+        let alt = thoughtSignature.map { "image|ts:\($0)" } ?? "image"
+        return "\n\n![\(alt)](data:\(data.mimeType);base64,\(data.data))\n\n"
+    }
+
+    /// Strip a ZWS-delimited thought-signature marker from the start of a text segment.
+    private static func stripTextSignature(_ text: String) -> (text: String, thoughtSignature: String?) {
+        let prefix = "\u{200B}ts:"
+        guard text.hasPrefix(prefix) else { return (text, nil) }
+        let rest = text.dropFirst(prefix.count)
+        guard let end = rest.firstIndex(of: "\u{200B}") else { return (text, nil) }
+        return (String(rest[rest.index(after: end)...]), String(rest[rest.startIndex ..< end]))
+    }
+
+    /// Split assistant text into `GeminiPart` array, converting data-URI images to
+    /// `inlineData` parts and recovering thought-signatures from both image alt-text
+    /// markers (`image|ts:SIG`) and text ZWS markers.
+    static func extractInlineImages(from text: String) -> [GeminiPart] {
+        let pattern = #"!\[([^\]]*)\]\(data:([^;]+);base64,([^)]+)\)"#
+        guard let regex = try? NSRegularExpression(pattern: pattern, options: []),
+            !regex.matches(in: text, range: NSRange(location: 0, length: (text as NSString).length)).isEmpty
+        else {
+            let (cleaned, sig) = stripTextSignature(text)
+            return [GeminiPart(content: .text(cleaned), thoughtSignature: sig)]
+        }
+
+        let nsText = text as NSString
+        let matches = regex.matches(in: text, range: NSRange(location: 0, length: nsText.length))
+        var parts: [GeminiPart] = []
+        var lastEnd = 0
+
+        for match in matches {
+            let matchRange = match.range
+
+            if matchRange.location > lastEnd {
+                let before = nsText.substring(with: NSRange(location: lastEnd, length: matchRange.location - lastEnd))
+                let (cleaned, sig) = stripTextSignature(before)
+                if !cleaned.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    parts.append(GeminiPart(content: .text(cleaned), thoughtSignature: sig))
+                }
+            }
+
+            if let altRange = Range(match.range(at: 1), in: text),
+                let mimeRange = Range(match.range(at: 2), in: text),
+                let dataRange = Range(match.range(at: 3), in: text)
+            {
+                let altText = String(text[altRange])
+                let sig: String? =
+                    altText.hasPrefix("image|ts:")
+                    ? String(altText.dropFirst("image|ts:".count)) : nil
+                parts.append(
+                    GeminiPart(
+                        content: .inlineData(
+                            GeminiInlineData(
+                                mimeType: String(text[mimeRange]),
+                                data: String(text[dataRange])
+                            )
+                        ),
+                        thoughtSignature: sig
+                    )
+                )
+            }
+
+            lastEnd = matchRange.location + matchRange.length
+        }
+
+        if lastEnd < nsText.length {
+            let after = nsText.substring(from: lastEnd)
+            if !after.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                parts.append(.text(after))
+            }
+        }
+
+        return parts.isEmpty ? [.text(text)] : parts
     }
 }
 
@@ -1710,7 +1962,10 @@ private struct RemoteChatRequest: Encodable {
                 var parts: [GeminiPart] = []
 
                 if let content = msg.content, !content.isEmpty {
-                    parts.append(.text(content))
+                    // Split text and embedded data-URI images into separate parts
+                    // so the Gemini API receives images as inlineData (not markdown text)
+                    let extracted = RemoteProviderService.extractInlineImages(from: content)
+                    parts.append(contentsOf: extracted)
                 }
 
                 if let toolCalls = msg.tool_calls {
@@ -1815,7 +2070,8 @@ private struct RemoteChatRequest: Encodable {
                 topP: top_p.map { Double($0) },
                 topK: nil,
                 stopSequences: stop,
-                responseModalities: responseModalities
+                responseModalities: responseModalities,
+                imageConfig: nil
             )
         }
 
