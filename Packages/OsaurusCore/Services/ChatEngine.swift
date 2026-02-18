@@ -68,7 +68,8 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
             temperature: temperature,
             maxTokens: maxTokens,
             topPOverride: request.top_p,
-            repetitionPenalty: repPenalty
+            repetitionPenalty: repPenalty,
+            modelOptions: request.modelOptions ?? [:]
         )
 
         // Candidate services and installed models (injected for testability)
@@ -263,7 +264,8 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
             temperature: temperature,
             maxTokens: maxTokens,
             topPOverride: request.top_p,
-            repetitionPenalty: repPenalty2
+            repetitionPenalty: repPenalty2,
+            modelOptions: request.modelOptions ?? [:]
         )
 
         let services = self.services

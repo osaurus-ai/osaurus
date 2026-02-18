@@ -96,11 +96,11 @@ struct MarkdownImageView: View {
             .overlay(imageClipShape.strokeBorder(theme.primaryBorder.opacity(0.3), lineWidth: 0.5))
             .overlay(alignment: .topTrailing) {
                 if isHovered {
-                    hoverToolbar(for: image)
+                    ImageHoverToolbar(image: image)
                         .transition(.opacity)
                 }
             }
-            .contextMenu { imageContextMenu(for: image) }
+            .contextMenu { ImageContextMenuItems(image: image) { showFullScreen = true } }
             .shadow(
                 color: theme.shadowColor.opacity(isHovered ? 0.15 : 0.08),
                 radius: isHovered ? 12 : 6,
@@ -111,54 +111,6 @@ struct MarkdownImageView: View {
             .animation(.easeInOut(duration: 0.2), value: isHovered)
             .onHover { isHovered = $0 }
             .transition(.opacity.combined(with: .scale(scale: 0.98)))
-    }
-
-    @ViewBuilder
-    private func imageContextMenu(for image: NSImage) -> some View {
-        Button {
-            ImageActions.saveImageToFile(image)
-        } label: {
-            Label("Save Image\u{2026}", systemImage: "arrow.down.to.line")
-        }
-        Button {
-            ImageActions.copyImageToClipboard(image)
-        } label: {
-            Label("Copy Image", systemImage: "doc.on.doc")
-        }
-        Divider()
-        Button {
-            showFullScreen = true
-        } label: {
-            Label("Open Full Screen", systemImage: "arrow.up.left.and.arrow.down.right")
-        }
-    }
-
-    private func hoverToolbar(for image: NSImage) -> some View {
-        HStack(spacing: 2) {
-            toolbarButton("arrow.down.to.line", help: "Save Image") {
-                ImageActions.saveImageToFile(image)
-            }
-            toolbarButton("doc.on.doc", help: "Copy Image") {
-                ImageActions.copyImageToClipboard(image)
-            }
-        }
-        .foregroundColor(.white)
-        .background(
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .fill(.ultraThinMaterial)
-                .environment(\.colorScheme, .dark)
-        )
-        .padding(8)
-    }
-
-    private func toolbarButton(_ icon: String, help: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Image(systemName: icon)
-                .font(.system(size: 12, weight: .semibold))
-                .frame(width: 28, height: 28)
-        }
-        .buttonStyle(.plain)
-        .help(help)
     }
 
     private var loadingView: some View {
@@ -281,6 +233,64 @@ struct MarkdownImageView: View {
             throw ImageLoadError.corruptedImage
         }
         return image
+    }
+}
+
+// MARK: - Shared Image Interaction Helpers
+
+struct ImageHoverToolbar: View {
+    let image: NSImage
+
+    var body: some View {
+        HStack(spacing: 2) {
+            imageToolbarButton("arrow.down.to.line", help: "Save Image") {
+                ImageActions.saveImageToFile(image)
+            }
+            imageToolbarButton("doc.on.doc", help: "Copy Image") {
+                ImageActions.copyImageToClipboard(image)
+            }
+        }
+        .foregroundColor(.white)
+        .background(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(.ultraThinMaterial)
+                .environment(\.colorScheme, .dark)
+        )
+        .padding(8)
+    }
+
+    private func imageToolbarButton(_ icon: String, help: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: icon)
+                .font(.system(size: 12, weight: .semibold))
+                .frame(width: 28, height: 28)
+        }
+        .buttonStyle(.plain)
+        .help(help)
+    }
+}
+
+struct ImageContextMenuItems: View {
+    let image: NSImage
+    let onFullScreen: () -> Void
+
+    var body: some View {
+        Button {
+            ImageActions.saveImageToFile(image)
+        } label: {
+            Label("Save Image\u{2026}", systemImage: "arrow.down.to.line")
+        }
+        Button {
+            ImageActions.copyImageToClipboard(image)
+        } label: {
+            Label("Copy Image", systemImage: "doc.on.doc")
+        }
+        Divider()
+        Button {
+            onFullScreen()
+        } label: {
+            Label("Open Full Screen", systemImage: "arrow.up.left.and.arrow.down.right")
+        }
     }
 }
 

@@ -351,6 +351,14 @@ struct ChatCompletionRequest: Codable, Sendable {
     let tool_choice: ToolChoiceOption?
     /// Optional session identifier for KV cache reuse across turns
     let session_id: String?
+    /// Model-specific options from the active ModelProfile (not serialized to JSON).
+    var modelOptions: [String: ModelOptionValue]? = nil
+
+    private enum CodingKeys: String, CodingKey {
+        case model, messages, temperature, max_tokens, stream, top_p
+        case frequency_penalty, presence_penalty, stop, n
+        case tools, tool_choice, session_id
+    }
 }
 
 /// Chat completion choice
