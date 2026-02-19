@@ -11,11 +11,7 @@ The xcode workspace has pre-existing build failures in external dependencies (`m
 Instead, compile only the OsaurusCore package sources (no linking) to verify your changes:
 
 ```bash
-cd /Users/tpae/dev/osaurus/Packages/OsaurusCore && swift build 2>&1 | grep -E "error:" | grep -v "ChatWindowState\|ModelRuntime\|MLX\|IkigaJSON"
+cd /Users/tpae/dev/osaurus/Packages/OsaurusCore && swift build 2>&1 | grep -E "error:" | grep -v "IkigaJSON"
 ```
-
-Known pre-existing errors to ignore (not caused by your changes):
-- `ChatWindowState.swift` — `NSObject?` to `NSImage?` cast
-- `ModelRuntime.swift` — `MLX.Memory` missing member
 
 If the filtered output is empty, your code compiles cleanly.
