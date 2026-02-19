@@ -26,8 +26,23 @@ struct MarkdownImageView: View {
     @State private var isHovered = false
     @State private var showFullScreen = false
     @State private var loadedImage: NSImage?
-    @State private var isLoading = true
+    @State private var isLoading: Bool
     @State private var loadError: Error?
+
+    init(urlString: String, altText: String, baseWidth: CGFloat) {
+        self.urlString = urlString
+        self.altText = altText
+        self.baseWidth = baseWidth
+
+        // Resolve from shared cache synchronously so the image appears
+        // instantly when reloading a session instead of flashing a spinner.
+        if let cached = ThreadCache.shared.image(for: urlString) {
+            _loadedImage = State(initialValue: cached)
+            _isLoading = State(initialValue: false)
+        } else {
+            _isLoading = State(initialValue: true)
+        }
+    }
 
     private var maxImageWidth: CGFloat {
         min(baseWidth - 32, 560)
@@ -61,7 +76,9 @@ struct MarkdownImageView: View {
         .sheet(isPresented: $showFullScreen) {
             ImageFullScreenView(image: loadedImage, altText: altText)
         }
-        .onAppear { loadImage() }
+        .onAppear {
+            if loadedImage == nil { loadImage() }
+        }
     }
 
     @ViewBuilder
@@ -164,9 +181,11 @@ struct MarkdownImageView: View {
         isLoading = true
         loadError = nil
 
-        Task {
+        let src = urlString
+        Task.detached(priority: .userInitiated) {
             do {
-                let image = try await loadImageFromSource()
+                let image = try await ImageLoader.load(from: src)
+                ThreadCache.shared.setImage(image, for: src)
                 await MainActor.run {
                     withAnimation(.easeOut(duration: 0.3)) {
                         self.loadedImage = image
@@ -183,18 +202,22 @@ struct MarkdownImageView: View {
             }
         }
     }
+}
 
-    private func loadImageFromSource() async throws -> NSImage {
+// MARK: - Image Loader (non-actor-isolated)
+
+private enum ImageLoader {
+    static func load(from urlString: String) async throws -> NSImage {
         if urlString.hasPrefix("data:image/") {
-            return try loadBase64Image()
+            return try loadBase64(urlString)
         }
         if urlString.hasPrefix("file://") || urlString.hasPrefix("/") {
-            return try loadLocalImage()
+            return try loadLocal(urlString)
         }
-        return try await loadRemoteImage()
+        return try await loadRemote(urlString)
     }
 
-    private func loadBase64Image() throws -> NSImage {
+    private static func loadBase64(_ urlString: String) throws -> NSImage {
         guard let commaIndex = urlString.firstIndex(of: ",") else {
             throw ImageLoadError.invalidDataURI
         }
@@ -208,7 +231,7 @@ struct MarkdownImageView: View {
         return image
     }
 
-    private func loadLocalImage() throws -> NSImage {
+    private static func loadLocal(_ urlString: String) throws -> NSImage {
         let path = urlString.hasPrefix("file://") ? String(urlString.dropFirst(7)) : urlString
         guard FileManager.default.fileExists(atPath: path) else {
             throw ImageLoadError.fileNotFound
@@ -219,7 +242,7 @@ struct MarkdownImageView: View {
         return image
     }
 
-    private func loadRemoteImage() async throws -> NSImage {
+    private static func loadRemote(_ urlString: String) async throws -> NSImage {
         guard let url = URL(string: urlString) else {
             throw ImageLoadError.invalidURL
         }

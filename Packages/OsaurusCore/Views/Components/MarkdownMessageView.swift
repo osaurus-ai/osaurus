@@ -74,11 +74,21 @@ private struct MemoizedMarkdownView: View {
         }
     }
 
+    /// Cheap fallback text that strips data-URI images to avoid SwiftUI laying out
+    /// multi-MB base64 strings while the background parse is in flight.
+    private var fallbackText: String {
+        guard text.contains("data:image/") else { return text }
+        return text.replacingOccurrences(
+            of: #"!\[[^\]]*\]\(data:image/[^)]+\)"#,
+            with: "![image]",
+            options: .regularExpression
+        )
+    }
+
     var body: some View {
         Group {
             if cachedSegments.isEmpty && !text.isEmpty {
-                // Fallback while waiting for first parse
-                Text(text)
+                Text(fallbackText)
                     .font(Typography.body(baseWidth, theme: theme))
                     .foregroundColor(theme.primaryText)
                     .textSelection(.enabled)
