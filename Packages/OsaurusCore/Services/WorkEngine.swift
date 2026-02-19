@@ -286,6 +286,7 @@ public actor WorkEngine {
         tools: [Tool],
         toolOverrides: [String: Bool]?,
         skillCatalog: [CapabilityEntry] = [],
+        images: [Data] = [],
         attemptResume: Bool = false
     ) async throws -> ExecutionResult {
         isExecuting = true
@@ -308,8 +309,13 @@ public actor WorkEngine {
             messages.append(ChatMessage(role: "user", content: "[Prior Context]:\n\(context)"))
         }
 
-        // Add the user's query
-        messages.append(ChatMessage(role: "user", content: issue.description ?? issue.title))
+        // Add the user's query (with images if provided)
+        let userQuery = issue.description ?? issue.title
+        if images.isEmpty {
+            messages.append(ChatMessage(role: "user", content: userQuery))
+        } else {
+            messages.append(ChatMessage(role: "user", text: userQuery, imageData: images))
+        }
 
         // Refresh folder context to ensure the file tree and git status are current
         await WorkFolderContextService.shared.refreshContext()
@@ -597,7 +603,8 @@ public actor WorkEngine {
         systemPrompt: String,
         tools: [Tool],
         toolOverrides: [String: Bool]? = nil,
-        skillCatalog: [CapabilityEntry] = []
+        skillCatalog: [CapabilityEntry] = [],
+        images: [Data] = []
     ) async throws -> ExecutionResult {
         guard let issue = try IssueStore.getIssue(id: issueId) else {
             throw WorkEngineError.issueNotFound(issueId)
@@ -626,7 +633,8 @@ public actor WorkEngine {
                     systemPrompt: systemPrompt,
                     tools: tools,
                     toolOverrides: toolOverrides,
-                    skillCatalog: skillCatalog
+                    skillCatalog: skillCatalog,
+                    images: images
                 )
 
                 // Success - clear any error state

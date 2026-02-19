@@ -275,14 +275,29 @@ public final class WorkSession: ObservableObject {
     /// User input for new tasks
     @Published public var input: String = ""
 
+    /// Pending images to attach with the next message
+    @Published public var pendingImages: [Data] = []
+
     /// Message queued to be sent as follow-up after execution completes
     @Published public var pendingQueuedMessage: String?
+
+    /// Images queued alongside the pending queued message
+    @Published public var pendingQueuedImages: [Data] = []
 
     /// Selected model
     @Published var selectedModel: String?
 
     /// Model options
     @Published var modelOptions: [ModelOption] = []
+
+    /// Whether the currently selected model supports image attachments
+    var selectedModelSupportsImages: Bool {
+        guard let model = selectedModel else { return false }
+        if model.lowercased() == "foundation" { return false }
+        guard let option = modelOptions.first(where: { $0.id == model }) else { return false }
+        if case .remote = option.source { return true }
+        return option.isVLM
+    }
 
     /// Estimated context tokens (synced from chat session for consistency)
     var estimatedContextTokens: Int {
@@ -413,7 +428,9 @@ public final class WorkSession: ObservableObject {
         let query = input.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !query.isEmpty else { return }
 
+        let images = pendingImages
         input = ""
+        pendingImages = []
         errorMessage = nil
 
         do {
@@ -421,17 +438,18 @@ public final class WorkSession: ObservableObject {
             case .noTask:
                 // Create new task
                 streamingContent = ""
-                try await startNewTask(query: query)
+                try await startNewTask(query: query, images: images)
 
             case .executing:
                 // Queue message to be sent as follow-up after execution finishes
                 pendingQueuedMessage = query
+                pendingQueuedImages = images
 
             case .idle:
                 // Create follow-up issue in existing task
                 guard let task = currentTask else { return }
                 streamingContent = ""
-                try await addIssueToTask(query: query, task: task)
+                try await addIssueToTask(query: query, images: images, task: task)
             }
         } catch {
             errorMessage = "Failed: \(error.localizedDescription)"
@@ -441,10 +459,11 @@ public final class WorkSession: ObservableObject {
     /// Clears the queued message (user dismissed it)
     public func clearQueuedMessage() {
         pendingQueuedMessage = nil
+        pendingQueuedImages = []
     }
 
     /// Creates and starts a new task
-    private func startNewTask(query: String) async throws {
+    private func startNewTask(query: String, images: [Data] = []) async throws {
         let task = try await IssueManager.shared.createTask(query: query, agentId: agentId)
         currentTask = task
 
@@ -461,11 +480,11 @@ public final class WorkSession: ObservableObject {
         windowState?.refreshWorkTasks()
 
         // Start execution
-        await executeNextIssue()
+        await executeNextIssue(images: images)
     }
 
     /// Adds a new issue to an existing task
-    private func addIssueToTask(query: String, task: WorkTask) async throws {
+    private func addIssueToTask(query: String, images: [Data] = [], task: WorkTask) async throws {
         // Build context from completed issues in this task
         let context = buildContextFromCompletedIssues(taskId: task.id)
 
@@ -487,7 +506,7 @@ public final class WorkSession: ObservableObject {
         await refreshIssues()
 
         // Execute the new issue
-        await executeIssue(issue)
+        await executeIssue(issue, images: images)
     }
 
     /// Loads an existing task
@@ -552,7 +571,7 @@ public final class WorkSession: ObservableObject {
     // MARK: - Execution
 
     /// Executes the next ready issue in the current task
-    public func executeNextIssue() async {
+    public func executeNextIssue(images: [Data] = []) async {
         guard let taskId = currentTask?.id else { return }
         guard !isExecuting else { return }
 
@@ -564,14 +583,14 @@ public final class WorkSession: ObservableObject {
                 return
             }
 
-            await executeIssue(issue)
+            await executeIssue(issue, images: images)
         } catch {
             errorMessage = "Failed to get next issue: \(error.localizedDescription)"
         }
     }
 
     /// Executes a specific issue
-    public func executeIssue(_ issue: Issue, withRetry: Bool = true) async {
+    public func executeIssue(_ issue: Issue, withRetry: Bool = true, images: [Data] = []) async {
         guard !isExecuting else { return }
 
         resetExecutionState(for: issue)
@@ -590,7 +609,8 @@ public final class WorkSession: ObservableObject {
                             systemPrompt: config.systemPrompt,
                             tools: tools,
                             toolOverrides: config.toolOverrides,
-                            skillCatalog: skillCatalog
+                            skillCatalog: skillCatalog,
+                            images: images
                         )
                     } else {
                         try await engine.resume(
@@ -693,10 +713,12 @@ public final class WorkSession: ObservableObject {
 
                 // After all issues are done, auto-send queued message as follow-up
                 if let self, !self.isExecuting, let queued = self.pendingQueuedMessage {
+                    let queuedImages = self.pendingQueuedImages
                     self.pendingQueuedMessage = nil
+                    self.pendingQueuedImages = []
                     guard let task = self.currentTask else { return }
                     self.streamingContent = ""
-                    try? await self.addIssueToTask(query: queued, task: task)
+                    try? await self.addIssueToTask(query: queued, images: queuedImages, task: task)
                 }
             }
         }
@@ -705,7 +727,7 @@ public final class WorkSession: ObservableObject {
     /// Handles execution errors
     private func handleExecutionError(_ error: Error, issue: Issue) {
         finishExecution()
-        pendingQueuedMessage = nil
+        clearQueuedMessage()
         errorMessage = error.localizedDescription
 
         if isRetriableError(error) {
@@ -721,7 +743,7 @@ public final class WorkSession: ObservableObject {
         executionTask = nil
         Task { [engine] in await engine.cancel() }
         finishExecution()
-        pendingQueuedMessage = nil
+        clearQueuedMessage()
     }
 
     /// Cleans up execution state after completion/error/stop
@@ -748,7 +770,7 @@ public final class WorkSession: ObservableObject {
         clearTurns()
         artifacts = []
         finalArtifact = nil
-        pendingQueuedMessage = nil
+        clearQueuedMessage()
         isExecuting = false
         loopState = nil
         errorMessage = nil
