@@ -407,6 +407,7 @@ extension MessageTableRepresentable {
             blockIds = newIds
             streamingBlockId = newStreamingBlockId
 
+            let wasPinnedToBottom = scrollAnchor.isPinnedToBottom
             scrollAnchor.saveAnchor()
 
             var snapshot = NSDiffableDataSourceSnapshot<MessageSection, String>()
@@ -417,7 +418,8 @@ extension MessageTableRepresentable {
                 guard let self else { return }
                 self.handlePostSnapshotScroll(
                     lastAssistantTurnId: lastAssistantTurnId,
-                    autoScrollEnabled: autoScrollEnabled
+                    autoScrollEnabled: autoScrollEnabled,
+                    wasPinnedToBottom: wasPinnedToBottom
                 )
 
                 // When streaming ends, the last throttled height measurement
@@ -432,14 +434,14 @@ extension MessageTableRepresentable {
             }
         }
 
-        /// Decide where to scroll after a snapshot is applied:
-        ///   1. New assistant turn → scroll to the header (once).
-        ///   2. Pinned to bottom → re-scroll to bottom (snapshot may shift position).
-        ///   3. Reading mid-thread → restore saved anchor.
-        /// Finally, re-check pinned state so the scroll-to-bottom button updates.
+        /// Post-snapshot scroll: new turn with header → scroll to header;
+        /// new continuation turn (no header) → bottom if pinned, else restore;
+        /// same turn → restore anchor. `wasPinnedToBottom` must be captured
+        /// before `apply()` since the snapshot may shift bounds first.
         private func handlePostSnapshotScroll(
             lastAssistantTurnId: UUID?,
-            autoScrollEnabled: Bool
+            autoScrollEnabled: Bool,
+            wasPinnedToBottom: Bool
         ) {
             if autoScrollEnabled,
                 let turnId = lastAssistantTurnId,
@@ -449,6 +451,10 @@ extension MessageTableRepresentable {
                 let headerId = "header-\(turnId.uuidString)"
                 if let row = blockIds.firstIndex(of: headerId) {
                     scrollAnchor.scrollToRow(row, animated: true)
+                } else if wasPinnedToBottom {
+                    scrollAnchor.scrollToBottom()
+                } else {
+                    scrollAnchor.restoreAnchor()
                 }
             } else {
                 scrollAnchor.restoreAnchor()
