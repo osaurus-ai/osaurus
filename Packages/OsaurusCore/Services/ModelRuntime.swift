@@ -76,7 +76,7 @@ actor ModelRuntime {
 
         // Synchronize GPU stream to ensure all operations complete, then release Metal buffer pool
         Stream.gpu.synchronize()
-        Memogiry.clearCache()
+        Memory.clearCache()
     }
 
     func clearAll() {
