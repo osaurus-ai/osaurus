@@ -719,6 +719,9 @@ private struct AgentDetailView: View {
             }
             withAnimation { hasAppeared = true }
         }
+        .onReceive(NotificationCenter.default.publisher(for: .localModelsChanged)) { _ in
+            loadModelOptions()
+        }
         .themedAlert(
             "Delete Agent",
             isPresented: $showDeleteConfirm,

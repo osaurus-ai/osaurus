@@ -71,7 +71,26 @@ final class ChatSession: ObservableObject {
     private static var cachedModelOptions: [ModelOption]?
     private static var cacheValid = false
 
+    private nonisolated(unsafe) static var staticObserversRegistered = false
+
+    /// Registers class-level observers that invalidate the static cache
+    /// even when no ChatSession instance is alive.
+    private static func registerStaticObservers() {
+        guard !staticObserversRegistered else { return }
+        staticObserversRegistered = true
+        for name: Notification.Name in [.localModelsChanged, .remoteProviderModelsChanged] {
+            NotificationCenter.default.addObserver(
+                forName: name,
+                object: nil,
+                queue: .main
+            ) { _ in
+                Task { @MainActor in invalidateModelCache() }
+            }
+        }
+    }
+
     init() {
+        Self.registerStaticObservers()
         if let cached = Self.cachedModelOptions, Self.cacheValid {
             modelOptions = cached
             hasAnyModel = !cached.isEmpty
@@ -81,28 +100,20 @@ final class ChatSession: ObservableObject {
             hasAnyModel = false
         }
 
-        // Listen for remote provider model changes
         remoteModelsObserver = NotificationCenter.default.addObserver(
             forName: .remoteProviderModelsChanged,
             object: nil,
             queue: .main
         ) { [weak self] _ in
-            Task { @MainActor in
-                Self.cacheValid = false
-                await self?.refreshModelOptions()
-            }
+            Task { @MainActor in await self?.refreshModelOptions() }
         }
 
-        // Listen for local model changes (download completed, deleted)
         localModelsObserver = NotificationCenter.default.addObserver(
             forName: .localModelsChanged,
             object: nil,
             queue: .main
         ) { [weak self] _ in
-            Task { @MainActor in
-                Self.cacheValid = false
-                await self?.refreshModelOptions()
-            }
+            Task { @MainActor in await self?.refreshModelOptions() }
         }
 
         // Auto-persist model selection changes
@@ -195,12 +206,14 @@ final class ChatSession: ObservableObject {
 
     /// Pre-warm the full model cache (local + remote) at app launch
     public static func prewarmModelCache() async {
+        registerStaticObservers()
         _ = await buildModelOptions()
     }
 
     /// Quick prewarm with just local models (no network wait)
     /// Call this early at launch so first window has something to show immediately
     public static func prewarmLocalModelsOnly() {
+        registerStaticObservers()
         Task {
             // Run discovery in background
             let localModels = await Task.detached(priority: .userInitiated) {
