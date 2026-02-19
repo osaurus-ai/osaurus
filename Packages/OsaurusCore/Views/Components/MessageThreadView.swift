@@ -29,6 +29,7 @@ struct MessageThreadView: View {
     let onCopy: (UUID) -> Void
     var onRegenerate: ((UUID) -> Void)? = nil
     var onEdit: ((UUID) -> Void)? = nil
+    var onDelete: ((UUID) -> Void)? = nil
     var onClarificationSubmit: ((String) -> Void)? = nil
 
     // Inline editing state (optional; unused in WorkView)
@@ -81,6 +82,7 @@ struct MessageThreadView: View {
             onCopy: onCopy,
             onRegenerate: onRegenerate,
             onEdit: onEdit,
+            onDelete: onDelete,
             onClarificationSubmit: onClarificationSubmit,
             editingTurnId: editingTurnId,
             editText: editText,

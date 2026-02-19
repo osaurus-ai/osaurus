@@ -1553,6 +1553,7 @@ struct ChatView: View {
                 onCopy: copyTurnContent,
                 onRegenerate: regenerateTurn,
                 onEdit: beginEditingTurn,
+                onDelete: deleteTurn,
                 editingTurnId: editingTurnId,
                 editText: $editText,
                 onConfirmEdit: confirmEditAndRegenerate,
@@ -1599,6 +1600,12 @@ struct ChatView: View {
     /// Stable callback for regenerate action - prevents closure recreation
     private func regenerateTurn(turnId: UUID) {
         session.regenerate(turnId: turnId)
+    }
+
+    /// Stop any active generation and remove the turn (plus all subsequent turns)
+    private func deleteTurn(turnId: UUID) {
+        if session.isStreaming { session.stop() }
+        session.deleteTurn(id: turnId)
     }
 
     // MARK: - Inline Editing
