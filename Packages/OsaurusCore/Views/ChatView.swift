@@ -968,7 +968,7 @@ final class ChatSession: ObservableObject {
                         let streamStartTime = Date()
                         var uiDeltaCount = 0
 
-                        let processor = StreamingDeltaProcessor(turn: assistantTurn) { [weak self] in
+                        let processor = StreamingDeltaProcessor(turn: assistantTurn, modelId: selectedModel ?? "default") { [weak self] in
                             self?.objectWillChange.send()
                         }
 

@@ -19,6 +19,10 @@ final class StreamingDeltaProcessor {
     private var turn: ChatTurn
     private let onSync: (() -> Void)?
 
+    /// Model-specific delta preprocessing (resolved once from modelId)
+    private let modelId: String
+    private var middleware: StreamingMiddleware?
+
     /// Delta buffering
     private var deltaBuffer = ""
 
@@ -47,9 +51,11 @@ final class StreamingDeltaProcessor {
 
     // MARK: - Init
 
-    init(turn: ChatTurn, onSync: (() -> Void)? = nil) {
+    init(turn: ChatTurn, modelId: String = "", onSync: (() -> Void)? = nil) {
         self.turn = turn
+        self.modelId = modelId
         self.onSync = onSync
+        self.middleware = StreamingMiddlewareResolver.resolve(for: modelId)
     }
 
     // MARK: - Public API
@@ -59,7 +65,9 @@ final class StreamingDeltaProcessor {
     func receiveDelta(_ delta: String) {
         guard !delta.isEmpty else { return }
 
-        deltaBuffer += delta
+        let processed = middleware?.process(delta) ?? delta
+        guard !processed.isEmpty else { return }
+        deltaBuffer += processed
 
         let now = Date()
         let timeSinceFlush = now.timeIntervalSince(lastFlushTime) * 1000
@@ -136,6 +144,7 @@ final class StreamingDeltaProcessor {
         lastSyncTime = Date()
         lastFlushTime = Date()
         syncCount = 0
+        middleware = StreamingMiddlewareResolver.resolve(for: modelId)
     }
 
     // MARK: - Private
