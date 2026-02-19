@@ -19,6 +19,7 @@ struct ContentBlockView: View, Equatable {
     var onCopy: ((UUID) -> Void)?
     var onRegenerate: ((UUID) -> Void)?
     var onEdit: ((UUID) -> Void)?
+    var onDelete: ((UUID) -> Void)?
     var onClarificationSubmit: ((String) -> Void)?
 
     // Inline editing state
@@ -98,6 +99,7 @@ struct ContentBlockView: View, Equatable {
                 onCopy: onCopy,
                 onRegenerate: onRegenerate,
                 onEdit: onEdit,
+                onDelete: onDelete,
                 isEditing: editingTurnId == block.turnId,
                 onCancelEdit: onCancelEdit
             )
@@ -149,6 +151,7 @@ struct ContentBlockView: View, Equatable {
                 onCopy: onCopy,
                 onRegenerate: onRegenerate,
                 onEdit: onEdit,
+                onDelete: onDelete,
                 isEditing: editingTurnId == block.turnId,
                 onCancelEdit: onCancelEdit
             )
@@ -235,10 +238,12 @@ private struct HeaderBlockContent: View {
     var onCopy: ((UUID) -> Void)?
     var onRegenerate: ((UUID) -> Void)?
     var onEdit: ((UUID) -> Void)?
+    var onDelete: ((UUID) -> Void)?
     var isEditing: Bool = false
     var onCancelEdit: (() -> Void)?
 
     @Environment(\.theme) private var theme
+    @State private var showDeleteConfirm = false
 
     var body: some View {
         HStack(spacing: 8) {
@@ -261,6 +266,14 @@ private struct HeaderBlockContent: View {
         .contentShape(Rectangle())
         .animation(theme.animationQuick(), value: isTurnHovered)
         .animation(theme.animationQuick(), value: isEditing)
+        .alert("Delete message?", isPresented: $showDeleteConfirm) {
+            Button("Delete", role: .destructive) {
+                onDelete?(turnId)
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("This will remove this message and all subsequent messages.")
+        }
     }
 
     @ViewBuilder
@@ -283,6 +296,11 @@ private struct HeaderBlockContent: View {
             if !isEditing, let onCopy {
                 ActionButton(icon: "doc.on.doc", help: "Copy") {
                     onCopy(turnId)
+                }
+            }
+            if !isEditing, onDelete != nil {
+                ActionButton(icon: "trash", help: "Delete") {
+                    showDeleteConfirm = true
                 }
             }
         }
