@@ -76,7 +76,7 @@ actor ModelRuntime {
 
         // Synchronize GPU stream to ensure all operations complete, then release Metal buffer pool
         Stream.gpu.synchronize()
-        GPU.clearCache()
+        Memogiry.clearCache()
     }
 
     func clearAll() {
@@ -90,7 +90,7 @@ actor ModelRuntime {
 
         // Synchronize GPU stream to ensure all operations complete, then release Metal buffer pool
         Stream.gpu.synchronize()
-        GPU.clearCache()
+        Memory.clearCache()
     }
 
     func warmUp(modelId: String, modelName: String, prefillChars: Int = 0, maxTokens: Int = 1) async {
@@ -179,7 +179,7 @@ actor ModelRuntime {
     /// then frees unused Metal buffers from the allocator cache.
     private nonisolated static func releaseGenerationMemory() {
         Stream.gpu.synchronize()
-        GPU.clearCache()
+        Memory.clearCache()
     }
 
     private func loadContainer(id: String, name: String) async throws -> SessionHolder {
