@@ -12,7 +12,7 @@ public struct ChatTurnData: Codable, Identifiable, Sendable {
     public let id: UUID
     public let role: MessageRole
     public var content: String
-    public var attachedImages: [Data]
+    public var attachments: [Attachment]
     public var toolCalls: [ToolCall]?
     public var toolCallId: String?
     public var toolResults: [String: String]
@@ -22,7 +22,7 @@ public struct ChatTurnData: Codable, Identifiable, Sendable {
         id: UUID = UUID(),
         role: MessageRole,
         content: String,
-        attachedImages: [Data] = [],
+        attachments: [Attachment] = [],
         toolCalls: [ToolCall]? = nil,
         toolCallId: String? = nil,
         toolResults: [String: String] = [:],
@@ -31,28 +31,48 @@ public struct ChatTurnData: Codable, Identifiable, Sendable {
         self.id = id
         self.role = role
         self.content = content
-        self.attachedImages = attachedImages
+        self.attachments = attachments
         self.toolCalls = toolCalls
         self.toolCallId = toolCallId
         self.toolResults = toolResults
         self.thinking = thinking
     }
 
-    // Custom decoder for backward compatibility with sessions saved before thinking was added
+    // Backward-compatible decoder: migrates old `attachedImages` into unified `attachments`
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         id = try container.decode(UUID.self, forKey: .id)
         role = try container.decode(MessageRole.self, forKey: .role)
         content = try container.decode(String.self, forKey: .content)
-        attachedImages = try container.decodeIfPresent([Data].self, forKey: .attachedImages) ?? []
         toolCalls = try container.decodeIfPresent([ToolCall].self, forKey: .toolCalls)
         toolCallId = try container.decodeIfPresent(String.self, forKey: .toolCallId)
         toolResults = try container.decodeIfPresent([String: String].self, forKey: .toolResults) ?? [:]
         thinking = try container.decodeIfPresent(String.self, forKey: .thinking) ?? ""
+
+        if let unified = try container.decodeIfPresent([Attachment].self, forKey: .attachments) {
+            attachments = unified
+        } else {
+            let legacyImages = try container.decodeIfPresent([Data].self, forKey: .attachedImages) ?? []
+            attachments = legacyImages.map { .image($0) }
+        }
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(id, forKey: .id)
+        try container.encode(role, forKey: .role)
+        try container.encode(content, forKey: .content)
+        try container.encode(attachments, forKey: .attachments)
+        try container.encodeIfPresent(toolCalls, forKey: .toolCalls)
+        try container.encodeIfPresent(toolCallId, forKey: .toolCallId)
+        try container.encode(toolResults, forKey: .toolResults)
+        try container.encode(thinking, forKey: .thinking)
     }
 
     private enum CodingKeys: String, CodingKey {
-        case id, role, content, attachedImages, toolCalls, toolCallId, toolResults, thinking
+        case id, role, content, attachments
+        case attachedImages  // legacy key for reading old sessions
+        case toolCalls, toolCallId, toolResults, thinking
     }
 }
 
@@ -65,7 +85,7 @@ extension ChatTurnData {
         self.id = turn.id
         self.role = turn.role
         self.content = turn.content
-        self.attachedImages = turn.attachedImages
+        self.attachments = turn.attachments
         self.toolCalls = turn.toolCalls
         self.toolCallId = turn.toolCallId
         self.toolResults = turn.toolResults
@@ -76,7 +96,7 @@ extension ChatTurnData {
 extension ChatTurn {
     /// Create a ChatTurn from persisted data (preserves original UUID for stable block IDs)
     convenience init(from data: ChatTurnData) {
-        self.init(role: data.role, content: data.content, images: data.attachedImages, id: data.id)
+        self.init(role: data.role, content: data.content, attachments: data.attachments, id: data.id)
         self.toolCalls = data.toolCalls
         self.toolCallId = data.toolCallId
         self.toolResults = data.toolResults

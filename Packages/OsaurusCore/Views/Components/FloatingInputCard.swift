@@ -13,7 +13,7 @@ import UniformTypeIdentifiers
 struct FloatingInputCard: View {
     @Binding var text: String
     @Binding var selectedModel: String?
-    @Binding var pendingImages: [Data]
+    @Binding var pendingAttachments: [Attachment]
     /// When true, voice input auto-restarts after AI responds (continuous conversation mode)
     @Binding var isContinuousVoiceMode: Bool
     @Binding var voiceInputState: VoiceInputState
@@ -105,8 +105,7 @@ struct FloatingInputCard: View {
 
     private var canSend: Bool {
         let hasText = !localText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        let hasImages = !pendingImages.isEmpty
-        let hasContent = hasText || hasImages
+        let hasContent = hasText || !pendingAttachments.isEmpty
 
         // In work mode, allow sending during streaming (will queue for after completion)
         // but only if there isn't already a queued message
@@ -118,7 +117,7 @@ struct FloatingInputCard: View {
     }
 
     private var showPlaceholder: Bool {
-        localText.isEmpty && pendingImages.isEmpty
+        localText.isEmpty && pendingAttachments.isEmpty
     }
 
     /// Context tokens including what's currently being typed (localText may differ from text binding)
@@ -205,8 +204,8 @@ struct FloatingInputCard: View {
                 inputCard
                     .padding(.horizontal, 20)
                     .padding(.bottom, 20)
-                    .onDrop(of: [UTType.image], isTargeted: $isDragOver) { providers in
-                        handleImageDrop(providers)
+                    .onDrop(of: [UTType.image, UTType.fileURL], isTargeted: $isDragOver) { providers in
+                        handleFileDrop(providers)
                     }
                     .transition(
                         .asymmetric(
@@ -604,21 +603,30 @@ struct FloatingInputCard: View {
         localText = ""
     }
 
-    // MARK: - Pending Images Preview (Inline)
+    // MARK: - Pending Attachments Preview (Inline)
 
-    private var inlinePendingImagesPreview: some View {
+    private var inlinePendingAttachmentsPreview: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 6) {
-                ForEach(Array(pendingImages.enumerated()), id: \.offset) { index, imageData in
-                    CachedImageThumbnail(
-                        imageData: imageData,
-                        size: 40,
-                        onRemove: {
+                ForEach(Array(pendingAttachments.enumerated()), id: \.element.id) { index, attachment in
+                    switch attachment.kind {
+                    case .image(let data):
+                        CachedImageThumbnail(
+                            imageData: data,
+                            size: 40,
+                            onRemove: {
+                                withAnimation(theme.springAnimation()) {
+                                    _ = pendingAttachments.remove(at: index)
+                                }
+                            }
+                        )
+                    case .document:
+                        DocumentChip(attachment: attachment) {
                             withAnimation(theme.springAnimation()) {
-                                _ = pendingImages.remove(at: index)
+                                _ = pendingAttachments.remove(at: index)
                             }
                         }
-                    )
+                    }
                 }
             }
         }
@@ -1050,9 +1058,9 @@ struct FloatingInputCard: View {
                     .padding(.top, 10)
             }
 
-            // Inline pending images (compact, inside the card)
-            if !pendingImages.isEmpty {
-                inlinePendingImagesPreview
+            // Inline pending attachments (compact, inside the card)
+            if !pendingAttachments.isEmpty {
+                inlinePendingAttachmentsPreview
                     .padding(.horizontal, 12)
                     .padding(.top, 10)
             }
@@ -1060,7 +1068,7 @@ struct FloatingInputCard: View {
             // Clean text input area (no overlapping buttons)
             textInputArea
                 .padding(.horizontal, 12)
-                .padding(.top, pendingImages.isEmpty ? 10 : 6)
+                .padding(.top, pendingAttachments.isEmpty ? 10 : 6)
                 .padding(.bottom, 6)
 
             // Bottom button bar with all action buttons
@@ -1097,23 +1105,31 @@ struct FloatingInputCard: View {
         .transition(.opacity.combined(with: .scale(scale: 0.96)))
     }
 
-    private func pickImage() {
+    private func pickAttachment() {
         let panel = NSOpenPanel()
-        panel.allowedContentTypes = [UTType.image]
+        var allowedTypes: [UTType] = [UTType.image]
+        allowedTypes.append(contentsOf: DocumentParser.supportedDocumentTypes)
+        panel.allowedContentTypes = allowedTypes
         panel.allowsMultipleSelection = true
         panel.canChooseDirectories = false
         panel.canChooseFiles = true
-        panel.message = "Select images to attach"
+        panel.message = "Select files to attach"
 
         if panel.runModal() == .OK {
             for url in panel.urls {
-                if let data = try? Data(contentsOf: url), data.count <= maxImageSize {
-                    // Convert to PNG for consistency
-                    if let nsImage = NSImage(data: data),
+                if DocumentParser.isImageFile(url: url) {
+                    if let data = try? Data(contentsOf: url), data.count <= maxImageSize,
+                        let nsImage = NSImage(data: data),
                         let pngData = nsImage.pngData()
                     {
                         withAnimation(theme.springAnimation()) {
-                            pendingImages.append(pngData)
+                            pendingAttachments.append(.image(pngData))
+                        }
+                    }
+                } else if DocumentParser.canParse(url: url) {
+                    if let attachment = try? DocumentParser.parse(url: url) {
+                        withAnimation(theme.springAnimation()) {
+                            pendingAttachments.append(attachment)
                         }
                     }
                 }
@@ -1121,11 +1137,12 @@ struct FloatingInputCard: View {
         }
     }
 
-    private func handleImageDrop(_ providers: [NSItemProvider]) -> Bool {
-        guard supportsImages else { return false }
+    private func handleFileDrop(_ providers: [NSItemProvider]) -> Bool {
+        var handled = false
 
         for provider in providers {
             if provider.hasItemConformingToTypeIdentifier(UTType.image.identifier) {
+                handled = true
                 provider.loadDataRepresentation(forTypeIdentifier: UTType.image.identifier) { data, error in
                     guard let data = data, error == nil, data.count <= maxImageSize else { return }
                     DispatchQueue.main.async {
@@ -1133,14 +1150,28 @@ struct FloatingInputCard: View {
                             let pngData = nsImage.pngData()
                         {
                             withAnimation(theme.springAnimation()) {
-                                pendingImages.append(pngData)
+                                pendingAttachments.append(.image(pngData))
                             }
+                        }
+                    }
+                }
+            } else if provider.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) {
+                handled = true
+                provider.loadItem(forTypeIdentifier: UTType.fileURL.identifier) { item, error in
+                    guard let data = item as? Data,
+                        let url = URL(dataRepresentation: data, relativeTo: nil),
+                        DocumentParser.canParse(url: url),
+                        let attachment = try? DocumentParser.parse(url: url)
+                    else { return }
+                    DispatchQueue.main.async {
+                        withAnimation(theme.springAnimation()) {
+                            pendingAttachments.append(attachment)
                         }
                     }
                 }
             }
         }
-        return true
+        return handled
     }
 
     /// Dynamic placeholder text based on input state
@@ -1159,7 +1190,7 @@ struct FloatingInputCard: View {
             }
         }
         // Chat mode placeholder
-        return supportsImages ? "Message or paste image..." : "Message..."
+        return "Message or attach files..."
     }
 
     private var textInputArea: some View {
@@ -1191,7 +1222,7 @@ struct FloatingInputCard: View {
                 supportsImages: supportsImages,
                 onImagePaste: { imageData in
                     withAnimation(theme.springAnimation()) {
-                        pendingImages.append(imageData)
+                        pendingAttachments.append(.image(imageData))
                     }
                 }
             )
@@ -1204,10 +1235,8 @@ struct FloatingInputCard: View {
         HStack(spacing: 8) {
             // Left side buttons
             HStack(spacing: 6) {
-                // Media attachment button (when model supports images)
-                if supportsImages {
-                    mediaButton
-                }
+                // Attachment button (images + documents)
+                mediaButton
 
                 // Voice input button (when available and not streaming)
                 if isVoiceAvailable && !isStreaming {
@@ -1277,9 +1306,9 @@ struct FloatingInputCard: View {
 
     private var mediaButton: some View {
         InputActionButton(
-            icon: "photo.badge.plus",
-            help: "Attach image (or paste/drag)",
-            action: pickImage
+            icon: "paperclip",
+            help: "Attach file (image, PDF, text, etc.)",
+            action: pickAttachment
         )
     }
 
@@ -1327,7 +1356,7 @@ struct FloatingInputCard: View {
     }
 
     private var effectiveBorderStyle: AnyShapeStyle {
-        if isDragOver && supportsImages {
+        if isDragOver {
             return AnyShapeStyle(theme.accentColor)
         }
         return borderGradient
@@ -1825,64 +1854,6 @@ private struct ModelOptionsSelectorView: View {
     }
 }
 
-// MARK: - Flow Layout
-
-/// Simple wrapping layout for segment buttons.
-private struct FlowLayout: Layout {
-    var spacing: CGFloat = 6
-
-    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
-        let rows = computeRows(proposal: proposal, subviews: subviews)
-        guard !rows.isEmpty else { return .zero }
-        let height = rows.reduce(CGFloat(0)) { $0 + $1.height } + CGFloat(rows.count - 1) * spacing
-        return CGSize(width: proposal.width ?? 0, height: height)
-    }
-
-    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
-        let rows = computeRows(proposal: proposal, subviews: subviews)
-        var y = bounds.minY
-        for row in rows {
-            var x = bounds.minX
-            for item in row.items {
-                subviews[item.index].place(
-                    at: CGPoint(x: x, y: y),
-                    proposal: ProposedViewSize(item.size)
-                )
-                x += item.size.width + spacing
-            }
-            y += row.height + spacing
-        }
-    }
-
-    private struct RowItem { let index: Int; let size: CGSize }
-    private struct Row { let items: [RowItem]; let height: CGFloat }
-
-    private func computeRows(proposal: ProposedViewSize, subviews: Subviews) -> [Row] {
-        let maxWidth = proposal.width ?? .infinity
-        var rows: [Row] = []
-        var currentItems: [RowItem] = []
-        var currentWidth: CGFloat = 0
-        var currentHeight: CGFloat = 0
-
-        for (i, subview) in subviews.enumerated() {
-            let size = subview.sizeThatFits(.unspecified)
-            if !currentItems.isEmpty && currentWidth + spacing + size.width > maxWidth {
-                rows.append(Row(items: currentItems, height: currentHeight))
-                currentItems = []
-                currentWidth = 0
-                currentHeight = 0
-            }
-            currentItems.append(RowItem(index: i, size: size))
-            currentWidth += (currentItems.count > 1 ? spacing : 0) + size.width
-            currentHeight = max(currentHeight, size.height)
-        }
-        if !currentItems.isEmpty {
-            rows.append(Row(items: currentItems, height: currentHeight))
-        }
-        return rows
-    }
-}
-
 // MARK: - Input Action Button
 
 /// Polished circular action button for input card (media, voice, etc.)
@@ -2209,7 +2180,7 @@ private struct EndTaskButton: View {
         struct PreviewWrapper: View {
             @State private var text = ""
             @State private var model: String? = "foundation"
-            @State private var images: [Data] = []
+            @State private var attachments: [Attachment] = []
             @State private var isContinuousVoiceMode: Bool = false
             @State private var voiceInputState: VoiceInputState = .idle
             @State private var showVoiceOverlay: Bool = false
@@ -2221,7 +2192,7 @@ private struct EndTaskButton: View {
                     FloatingInputCard(
                         text: $text,
                         selectedModel: $model,
-                        pendingImages: $images,
+                        pendingAttachments: $attachments,
                         isContinuousVoiceMode: $isContinuousVoiceMode,
                         voiceInputState: $voiceInputState,
                         showVoiceOverlay: $showVoiceOverlay,

@@ -66,7 +66,7 @@ struct WorkView: View {
                         FloatingInputCard(
                             text: $session.input,
                             selectedModel: $session.selectedModel,
-                            pendingImages: $session.pendingImages,
+                            pendingAttachments: $session.pendingAttachments,
                             isContinuousVoiceMode: .constant(false),
                             voiceInputState: .constant(.idle),
                             showVoiceOverlay: .constant(false),

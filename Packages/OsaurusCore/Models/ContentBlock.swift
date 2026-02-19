@@ -32,7 +32,7 @@ enum ContentBlockKind: Equatable {
     case toolCallGroup(calls: [ToolCallItem])
     case thinking(index: Int, text: String, isStreaming: Bool)
     case clarification(request: ClarificationRequest)
-    case userMessage(text: String, images: [Data])
+    case userMessage(text: String, attachments: [Attachment])
     case typingIndicator
     case groupSpacer
 
@@ -62,10 +62,10 @@ enum ContentBlockKind: Equatable {
         case let (.clarification(lRequest), .clarification(rRequest)):
             return lRequest == rRequest
 
-        case let (.userMessage(lText, lImages), .userMessage(rText, rImages)):
+        case let (.userMessage(lText, lAttach), .userMessage(rText, rAttach)):
             guard lText.count == rText.count else { return false }
-            guard lImages.count == rImages.count else { return false }
-            return lText == rText && lImages == rImages
+            guard lAttach.count == rAttach.count else { return false }
+            return lText == rText && lAttach == rAttach
 
         case (.typingIndicator, .typingIndicator):
             return true
@@ -177,11 +177,13 @@ struct ContentBlock: Identifiable, Equatable, Hashable {
         )
     }
 
-    static func userMessage(turnId: UUID, text: String, images: [Data], position: BlockPosition) -> ContentBlock {
+    static func userMessage(turnId: UUID, text: String, attachments: [Attachment], position: BlockPosition)
+        -> ContentBlock
+    {
         ContentBlock(
             id: "usermsg-\(turnId.uuidString)",
             turnId: turnId,
-            kind: .userMessage(text: text, images: images),
+            kind: .userMessage(text: text, attachments: attachments),
             position: position
         )
     }
@@ -229,7 +231,7 @@ extension ContentBlock {
                     .userMessage(
                         turnId: turn.id,
                         text: turn.content,
-                        images: turn.attachedImages,
+                        attachments: turn.attachments,
                         position: .only
                     )
                 )

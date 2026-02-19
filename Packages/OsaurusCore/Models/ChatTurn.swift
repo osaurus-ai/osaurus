@@ -149,8 +149,8 @@ final class ChatTurn: ObservableObject, Identifiable {
 
     // MARK: - Other Published Properties
 
-    /// Attached images for multimodal messages (stored as PNG data)
-    @Published var attachedImages: [Data] = []
+    /// File attachments (images and documents) for this turn
+    @Published var attachments: [Attachment] = []
     /// Assistant-issued tool calls attached to this turn (OpenAI compatible)
     @Published var toolCalls: [ToolCall]? = nil
     /// For role==.tool messages, associates this result with the originating call id
@@ -162,7 +162,7 @@ final class ChatTurn: ObservableObject, Identifiable {
 
     // MARK: - Initializers
 
-    init(role: MessageRole, content: String, id: UUID = UUID()) {
+    init(role: MessageRole, content: String, attachments: [Attachment] = [], id: UUID = UUID()) {
         self.id = id
         self.role = role
         if !content.isEmpty {
@@ -170,24 +170,14 @@ final class ChatTurn: ObservableObject, Identifiable {
             self._cachedContent = content
             self._contentLength = content.count
         }
-    }
-
-    init(role: MessageRole, content: String, images: [Data], id: UUID = UUID()) {
-        self.id = id
-        self.role = role
-        if !content.isEmpty {
-            self.contentChunks = [content]
-            self._cachedContent = content
-            self._contentLength = content.count
-        }
-        self.attachedImages = images
+        self.attachments = attachments
     }
 
     // MARK: - Computed Properties
 
-    /// Whether this turn has any attached images
-    var hasImages: Bool {
-        !attachedImages.isEmpty
+    /// Whether this turn has any attachments
+    var hasAttachments: Bool {
+        !attachments.isEmpty
     }
 
     /// Whether this turn has any thinking/reasoning content

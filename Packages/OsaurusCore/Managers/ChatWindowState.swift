@@ -283,7 +283,7 @@ final class ChatWindowState: ObservableObject {
 
     private func decodeBackgroundImageAsync(themeConfig: CustomTheme?) {
         Task { [weak self] in
-            let image = await Task.detached(priority: .utility) {
+            let image = await Task.detached(priority: .utility) { () -> NSImage? in
                 themeConfig?.background.decodedImage()
             }.value
             self?.cachedBackgroundImage = image
