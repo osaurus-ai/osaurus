@@ -275,14 +275,14 @@ public final class WorkSession: ObservableObject {
     /// User input for new tasks
     @Published public var input: String = ""
 
-    /// Pending images to attach with the next message
-    @Published public var pendingImages: [Data] = []
+    /// Pending attachments for the next message
+    @Published public var pendingAttachments: [Attachment] = []
 
     /// Message queued to be sent as follow-up after execution completes
     @Published public var pendingQueuedMessage: String?
 
-    /// Images queued alongside the pending queued message
-    @Published public var pendingQueuedImages: [Data] = []
+    /// Attachments queued alongside the pending queued message
+    @Published public var pendingQueuedAttachments: [Attachment] = []
 
     /// Selected model
     @Published var selectedModel: String?
@@ -425,28 +425,28 @@ public final class WorkSession: ObservableObject {
 
     /// Handles user input based on current input state
     public func handleUserInput() async {
-        let query = input.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !query.isEmpty else { return }
+        let rawQuery = input.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !rawQuery.isEmpty || !pendingAttachments.isEmpty else { return }
 
-        let images = pendingImages
+        let attachments = pendingAttachments
         input = ""
-        pendingImages = []
+        pendingAttachments = []
         errorMessage = nil
+
+        let query = ChatSession.buildUserMessageText(content: rawQuery, attachments: attachments)
+        let images = attachments.images
 
         do {
             switch inputState {
             case .noTask:
-                // Create new task
                 streamingContent = ""
                 try await startNewTask(query: query, images: images)
 
             case .executing:
-                // Queue message to be sent as follow-up after execution finishes
                 pendingQueuedMessage = query
-                pendingQueuedImages = images
+                pendingQueuedAttachments = attachments
 
             case .idle:
-                // Create follow-up issue in existing task
                 guard let task = currentTask else { return }
                 streamingContent = ""
                 try await addIssueToTask(query: query, images: images, task: task)
@@ -459,7 +459,7 @@ public final class WorkSession: ObservableObject {
     /// Clears the queued message (user dismissed it)
     public func clearQueuedMessage() {
         pendingQueuedMessage = nil
-        pendingQueuedImages = []
+        pendingQueuedAttachments = []
     }
 
     /// Creates and starts a new task
@@ -713,9 +713,9 @@ public final class WorkSession: ObservableObject {
 
                 // After all issues are done, auto-send queued message as follow-up
                 if let self, !self.isExecuting, let queued = self.pendingQueuedMessage {
-                    let queuedImages = self.pendingQueuedImages
+                    let queuedImages = self.pendingQueuedAttachments.images
                     self.pendingQueuedMessage = nil
-                    self.pendingQueuedImages = []
+                    self.pendingQueuedAttachments = []
                     guard let task = self.currentTask else { return }
                     self.streamingContent = ""
                     try? await self.addIssueToTask(query: queued, images: queuedImages, task: task)

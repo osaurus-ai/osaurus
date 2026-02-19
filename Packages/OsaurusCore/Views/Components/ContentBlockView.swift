@@ -140,7 +140,7 @@ struct ContentBlockView: View, Equatable {
             .padding(.top, 6)
             .padding(.bottom, isLastInTurn ? 12 : 4)
 
-        case let .userMessage(text, images):
+        case let .userMessage(text, attachments):
             HeaderBlockContent(
                 turnId: block.turnId,
                 role: .user,
@@ -155,8 +155,16 @@ struct ContentBlockView: View, Equatable {
             .padding(.top, 12)
             .padding(.bottom, 2)
 
-            ForEach(Array(images.enumerated()), id: \.offset) { _, imageData in
-                ImageThumbnail(imageData: imageData, baseWidth: width)
+            ForEach(attachments.filter(\.isImage)) { attachment in
+                if let data = attachment.imageData {
+                    ImageThumbnail(imageData: data, baseWidth: width)
+                        .padding(.top, 6)
+                        .padding(.bottom, (text.isEmpty && !attachments.hasDocuments) ? 16 : 6)
+                }
+            }
+
+            if attachments.hasDocuments {
+                DocumentAttachmentsRow(attachments: attachments.documents)
                     .padding(.top, 6)
                     .padding(.bottom, text.isEmpty ? 16 : 6)
             }
@@ -433,6 +441,20 @@ private struct ImageThumbnail: View {
         }
     }
 
+}
+
+// MARK: - Document Attachments Row
+
+private struct DocumentAttachmentsRow: View {
+    let attachments: [Attachment]
+
+    var body: some View {
+        FlowLayout(spacing: 6) {
+            ForEach(attachments) { attachment in
+                DocumentChip(attachment: attachment)
+            }
+        }
+    }
 }
 
 // MARK: - Action Button

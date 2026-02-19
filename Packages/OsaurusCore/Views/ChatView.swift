@@ -17,7 +17,7 @@ final class ChatSession: ObservableObject {
     /// Lives on the session so state survives NSTableView cell reuse.
     let expandedBlocksStore = ExpandedBlocksStore()
     @Published var input: String = ""
-    @Published var pendingImages: [Data] = []
+    @Published var pendingAttachments: [Attachment] = []
     @Published var selectedModel: String? = nil
     @Published var modelOptions: [ModelOption] = []
     @Published var activeModelOptions: [String: ModelOptionValue] = [:]
@@ -52,6 +52,7 @@ final class ChatSession: ObservableObject {
     private var _cachedEstimatedTokens: Int = 0
     private var _tokenCacheValid: Bool = false
     private var _lastTokenTurnsCount: Int = 0
+    private var _lastTokenAttachmentsCount: Int = 0
     private var _lastTokenComputeTime: Date = .distantPast
 
     /// Callback when session needs to be saved (called after streaming completes)
@@ -304,7 +305,9 @@ final class ChatSession: ObservableObject {
     /// Estimated token count for current session context (~4 chars per token).
     /// Throttled to at most once per 500ms during streaming.
     var estimatedContextTokens: Int {
-        if _tokenCacheValid && !isStreaming && turns.count == _lastTokenTurnsCount {
+        if _tokenCacheValid && !isStreaming && turns.count == _lastTokenTurnsCount
+            && pendingAttachments.count == _lastTokenAttachmentsCount
+        {
             return _cachedEstimatedTokens
         }
 
@@ -373,9 +376,8 @@ final class ChatSession: ObservableObject {
             if turn.hasThinking {
                 total += max(1, turn.thinkingLength / 4)
             }
-            // Images (base64 ~1.33x size, then /4 for tokens)
-            for img in turn.attachedImages {
-                total += max(1, (img.count * 4) / 3 / 4)
+            for attachment in turn.attachments {
+                total += attachment.estimatedTokens
             }
         }
 
@@ -384,18 +386,38 @@ final class ChatSession: ObservableObject {
             total += max(1, input.count / 4)
         }
 
-        // Pending images
-        for img in pendingImages {
-            total += max(1, (img.count * 4) / 3 / 4)
+        // Pending attachments
+        for attachment in pendingAttachments {
+            total += attachment.estimatedTokens
         }
 
         // Update cache
         _cachedEstimatedTokens = total
         _tokenCacheValid = true
         _lastTokenTurnsCount = turns.count
+        _lastTokenAttachmentsCount = pendingAttachments.count
         _lastTokenComputeTime = Date()
 
         return total
+    }
+
+    /// Builds the full user message text, prepending any attached document contents wrapped in XML tags.
+    static func buildUserMessageText(content: String, attachments: [Attachment]) -> String {
+        let docs = attachments.filter(\.isDocument)
+        guard !docs.isEmpty else { return content }
+
+        var parts: [String] = []
+        for doc in docs {
+            if let name = doc.filename, let text = doc.documentContent {
+                parts.append("<attached_document name=\"\(name)\">\n\(text)\n</attached_document>")
+            }
+        }
+
+        if !content.isEmpty {
+            parts.append(content)
+        }
+
+        return parts.joined(separator: "\n\n")
     }
 
     /// Format token count for display (e.g., "1.2K", "15K")
@@ -414,10 +436,10 @@ final class ChatSession: ObservableObject {
     func sendCurrent() {
         guard !isStreaming else { return }
         let text = input
-        let images = pendingImages
+        let attachments = pendingAttachments
         input = ""
-        pendingImages = []
-        send(text, images: images)
+        pendingAttachments = []
+        send(text, attachments: attachments)
     }
 
     func stop() {
@@ -429,7 +451,7 @@ final class ChatSession: ObservableObject {
         stop()
         turns.removeAll()
         input = ""
-        pendingImages = []
+        pendingAttachments = []
         voiceInputState = .idle
         showVoiceOverlay = false
         // Clear session identity for new chat
@@ -550,7 +572,7 @@ final class ChatSession: ObservableObject {
         voiceInputState = .idle
         showVoiceOverlay = false
         input = ""
-        pendingImages = []
+        pendingAttachments = []
         isDirty = false  // Fresh load, not dirty
         // Reset capability selection for loaded conversation
         // (capabilities will be re-selected on next message if skills are enabled)
@@ -770,15 +792,14 @@ final class ChatSession: ObservableObject {
         }
     }
 
-    func send(_ text: String, images: [Data] = []) {
+    func send(_ text: String, attachments: [Attachment] = []) {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        // Allow sending with just images, or regenerating from existing history
-        let isRegeneration = trimmed.isEmpty && images.isEmpty && !turns.isEmpty
-        guard !trimmed.isEmpty || !images.isEmpty || isRegeneration else { return }
+        let hasContent = !trimmed.isEmpty || !attachments.isEmpty
+        let isRegeneration = !hasContent && !turns.isEmpty
+        guard hasContent || isRegeneration else { return }
 
-        // Only append user turn if there's actual content
-        if !trimmed.isEmpty || !images.isEmpty {
-            turns.append(ChatTurn(role: .user, content: trimmed, images: images))
+        if hasContent {
+            turns.append(ChatTurn(role: .user, content: trimmed, attachments: attachments))
             isDirty = true
 
             // Immediately save new session so it appears in sidebar
@@ -881,10 +902,12 @@ final class ChatSession: ObservableObject {
                             tool_call_id: t.toolCallId
                         )
                     case .user:
-                        if t.hasImages {
-                            return ChatMessage(role: "user", text: t.content, imageData: t.attachedImages)
+                        let messageText = Self.buildUserMessageText(content: t.content, attachments: t.attachments)
+                        let imageData = t.attachments.images
+                        if !imageData.isEmpty {
+                            return ChatMessage(role: "user", text: messageText, imageData: imageData)
                         } else {
-                            return ChatMessage(role: t.role.rawValue, content: t.content)
+                            return ChatMessage(role: t.role.rawValue, content: messageText)
                         }
                     default:
                         return ChatMessage(role: t.role.rawValue, content: t.content)
@@ -1251,7 +1274,7 @@ struct ChatView: View {
                             FloatingInputCard(
                                 text: $observedSession.input,
                                 selectedModel: $observedSession.selectedModel,
-                                pendingImages: $observedSession.pendingImages,
+                                pendingAttachments: $observedSession.pendingAttachments,
                                 isContinuousVoiceMode: $observedSession.isContinuousVoiceMode,
                                 voiceInputState: $observedSession.voiceInputState,
                                 showVoiceOverlay: $observedSession.showVoiceOverlay,
