@@ -166,16 +166,20 @@ final class ToolRegistry: ObservableObject {
         if let permissioned = tool as? PermissionedTool {
             let requirements = permissioned.requirements
 
-            // First, check system permissions (automation, accessibility)
+            // Check system permissions and prompt the user for any that are missing
             let missingSystemPermissions = SystemPermissionService.shared.missingPermissions(from: requirements)
-            if !missingSystemPermissions.isEmpty {
-                let missingNames = missingSystemPermissions.map { $0.displayName }.joined(separator: ", ")
+            for permission in missingSystemPermissions {
+                _ = await SystemPermissionService.shared.requestPermissionAndWait(permission)
+            }
+            let stillMissing = SystemPermissionService.shared.missingPermissions(from: requirements)
+            if !stillMissing.isEmpty {
+                let missingNames = stillMissing.map { $0.displayName }.joined(separator: ", ")
                 throw NSError(
                     domain: "ToolRegistry",
                     code: 7,
                     userInfo: [
                         NSLocalizedDescriptionKey:
-                            "Missing system permissions for tool: \(name). Required: \(missingNames). Please grant these permissions in System Settings."
+                            "Missing system permissions for tool: \(name). Required: \(missingNames). Please grant these permissions in the Permissions tab or System Settings."
                     ]
                 )
             }
