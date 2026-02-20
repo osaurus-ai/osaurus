@@ -10,6 +10,7 @@ struct WorkEmptyState: View {
     let selectedModel: String?
     let agents: [Agent]
     let activeAgentId: UUID
+    let quickActions: [AgentQuickAction]
     let onOpenModelManager: () -> Void
     let onUseFoundation: (() -> Void)?
     let onQuickAction: (String) -> Void
@@ -21,13 +22,6 @@ struct WorkEmptyState: View {
     private var activeAgent: Agent {
         agents.first { $0.id == activeAgentId } ?? Agent.default
     }
-
-    private let quickActions = [
-        WorkQuickAction(icon: "globe", text: "Build a site", prompt: "Build a landing page for "),
-        WorkQuickAction(icon: "magnifyingglass", text: "Research a topic", prompt: "Research "),
-        WorkQuickAction(icon: "doc.text", text: "Write a blog post", prompt: "Write a blog post about "),
-        WorkQuickAction(icon: "folder", text: "Organize my files", prompt: "Help me organize "),
-    ]
 
     var body: some View {
         GeometryReader { geometry in
@@ -82,7 +76,9 @@ struct WorkEmptyState: View {
                     .animation(theme.springAnimation().delay(0.25), value: hasAppeared)
             }
 
-            quickActionsGrid
+            if !quickActions.isEmpty {
+                quickActionsGrid
+            }
         }
         .padding(.horizontal, 40)
     }
@@ -164,67 +160,5 @@ struct WorkEmptyState: View {
             }
         }
         .padding(.horizontal, 40)
-    }
-}
-
-// MARK: - Supporting Types
-
-private struct WorkQuickAction: Identifiable {
-    let id = UUID()
-    let icon: String
-    let text: String
-    let prompt: String
-}
-
-private struct QuickActionButton: View {
-    let action: WorkQuickAction
-    let onTap: (String) -> Void
-
-    @State private var isHovered = false
-    @Environment(\.theme) private var theme
-
-    var body: some View {
-        Button {
-            onTap(action.prompt)
-        } label: {
-            HStack(spacing: 10) {
-                Image(systemName: action.icon)
-                    .font(.system(size: 14, weight: .medium))
-                    .foregroundColor(isHovered ? theme.accentColor : theme.secondaryText)
-                    .frame(width: 20)
-
-                Text(action.text)
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundColor(theme.primaryText)
-                    .lineLimit(1)
-
-                Spacer()
-
-                Image(systemName: "arrow.right")
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundColor(theme.tertiaryText)
-                    .opacity(isHovered ? 1 : 0)
-                    .offset(x: isHovered ? 0 : -5)
-            }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 16)
-            .background(
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .fill(
-                        isHovered
-                            ? theme.secondaryBackground : theme.secondaryBackground.opacity(theme.isDark ? 0.5 : 0.8)
-                    )
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 12, style: .continuous)
-                            .strokeBorder(
-                                isHovered ? theme.primaryBorder : theme.primaryBorder.opacity(theme.isDark ? 0.3 : 0.5),
-                                lineWidth: 1
-                            )
-                    )
-            )
-        }
-        .buttonStyle(.plain)
-        .onHover { isHovered = $0 }
-        .animation(theme.animationQuick(), value: isHovered)
     }
 }
