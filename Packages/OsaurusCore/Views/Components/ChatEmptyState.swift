@@ -14,6 +14,7 @@ struct ChatEmptyState: View {
     let selectedModel: String?
     let agents: [Agent]
     let activeAgentId: UUID
+    let quickActions: [AgentQuickAction]
     let onOpenModelManager: () -> Void
     let onUseFoundation: (() -> Void)?
     let onQuickAction: (String) -> Void
@@ -26,13 +27,6 @@ struct ChatEmptyState: View {
     private var activeAgent: Agent {
         agents.first { $0.id == activeAgentId } ?? Agent.default
     }
-
-    private let quickActions = [
-        QuickAction(icon: "lightbulb", text: "Explain a concept", prompt: "Explain "),
-        QuickAction(icon: "doc.text", text: "Summarize text", prompt: "Summarize the following: "),
-        QuickAction(icon: "chevron.left.forwardslash.chevron.right", text: "Write code", prompt: "Write code that "),
-        QuickAction(icon: "pencil.line", text: "Help me write", prompt: "Help me write "),
-    ]
 
     var body: some View {
         GeometryReader { geometry in
@@ -104,8 +98,9 @@ struct ChatEmptyState: View {
                     .animation(theme.springAnimation().delay(0.25), value: hasAppeared)
             }
 
-            // Quick actions with staggered entrance
-            staggeredQuickActions
+            if !quickActions.isEmpty {
+                staggeredQuickActions
+            }
         }
         .padding(.horizontal, 40)
     }
@@ -319,26 +314,19 @@ private struct ChatEmptyStateNoModels: View {
     }
 }
 
-// MARK: - Quick Action Model
+// MARK: - Quick Action Button (shared by Chat & Work empty states)
 
-private struct QuickAction: Identifiable {
-    let id = UUID()
-    let icon: String
-    let text: String
-    let prompt: String
-}
-
-// MARK: - Quick Action Button
-
-private struct QuickActionButton: View {
-    let action: QuickAction
+struct QuickActionButton: View {
+    let action: AgentQuickAction
     let onTap: (String) -> Void
 
     @State private var isHovered = false
     @Environment(\.theme) private var theme
 
     var body: some View {
-        Button(action: { onTap(action.prompt) }) {
+        Button {
+            onTap(action.prompt)
+        } label: {
             HStack(spacing: 10) {
                 Image(systemName: action.icon)
                     .font(.system(size: 14, weight: .medium))
@@ -348,6 +336,7 @@ private struct QuickActionButton: View {
                 Text(action.text)
                     .font(.system(size: 13, weight: .medium))
                     .foregroundColor(theme.primaryText)
+                    .lineLimit(1)
 
                 Spacer()
 
@@ -449,6 +438,7 @@ private struct GetStartedButton: View {
                     selectedModel: "foundation",
                     agents: [.default],
                     activeAgentId: Agent.default.id,
+                    quickActions: AgentQuickAction.defaultChatQuickActions,
                     onOpenModelManager: {},
                     onUseFoundation: {},
                     onQuickAction: { _ in },
@@ -465,6 +455,7 @@ private struct GetStartedButton: View {
                     selectedModel: nil,
                     agents: [.default],
                     activeAgentId: Agent.default.id,
+                    quickActions: AgentQuickAction.defaultChatQuickActions,
                     onOpenModelManager: {},
                     onUseFoundation: {},
                     onQuickAction: { _ in },

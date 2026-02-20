@@ -292,6 +292,7 @@ struct WorkView: View {
             selectedModel: session.selectedModel,
             agents: windowState.agents,
             activeAgentId: windowState.agentId,
+            quickActions: windowState.activeAgent.workQuickActions ?? AgentQuickAction.defaultWorkQuickActions,
             onOpenModelManager: {
                 AppDelegate.shared?.showManagementWindow(initialTab: .models)
             },

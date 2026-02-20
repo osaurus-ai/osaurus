@@ -8,6 +8,39 @@
 
 import Foundation
 
+/// A quick action prompt template shown in the empty state
+public struct AgentQuickAction: Codable, Identifiable, Sendable, Equatable {
+    public let id: UUID
+    public var icon: String
+    public var text: String
+    public var prompt: String
+
+    public init(id: UUID = UUID(), icon: String, text: String, prompt: String) {
+        self.id = id
+        self.icon = icon
+        self.text = text
+        self.prompt = prompt
+    }
+
+    public static let defaultChatQuickActions: [AgentQuickAction] = [
+        AgentQuickAction(icon: "lightbulb", text: "Explain a concept", prompt: "Explain "),
+        AgentQuickAction(icon: "doc.text", text: "Summarize text", prompt: "Summarize the following: "),
+        AgentQuickAction(
+            icon: "chevron.left.forwardslash.chevron.right",
+            text: "Write code",
+            prompt: "Write code that "
+        ),
+        AgentQuickAction(icon: "pencil.line", text: "Help me write", prompt: "Help me write "),
+    ]
+
+    public static let defaultWorkQuickActions: [AgentQuickAction] = [
+        AgentQuickAction(icon: "globe", text: "Build a site", prompt: "Build a landing page for "),
+        AgentQuickAction(icon: "magnifyingglass", text: "Research a topic", prompt: "Research "),
+        AgentQuickAction(icon: "doc.text", text: "Write a blog post", prompt: "Write a blog post about "),
+        AgentQuickAction(icon: "folder", text: "Organize my files", prompt: "Help me organize "),
+    ]
+}
+
 /// A customizable assistant agent for ChatView
 public struct Agent: Codable, Identifiable, Sendable, Equatable {
     /// Unique identifier for the agent
@@ -30,6 +63,10 @@ public struct Agent: Codable, Identifiable, Sendable, Equatable {
     public var temperature: Float?
     /// Optional max tokens override
     public var maxTokens: Int?
+    /// Per-agent chat quick actions. nil = use defaults, empty = hidden, non-empty = custom list
+    public var chatQuickActions: [AgentQuickAction]?
+    /// Per-agent work quick actions. nil = use defaults, empty = hidden, non-empty = custom list
+    public var workQuickActions: [AgentQuickAction]?
     /// Whether this is a built-in agent (cannot be deleted)
     public let isBuiltIn: Bool
     /// When the agent was created
@@ -48,6 +85,8 @@ public struct Agent: Codable, Identifiable, Sendable, Equatable {
         defaultModel: String? = nil,
         temperature: Float? = nil,
         maxTokens: Int? = nil,
+        chatQuickActions: [AgentQuickAction]? = nil,
+        workQuickActions: [AgentQuickAction]? = nil,
         isBuiltIn: Bool = false,
         createdAt: Date = Date(),
         updatedAt: Date = Date()
@@ -62,6 +101,8 @@ public struct Agent: Codable, Identifiable, Sendable, Equatable {
         self.defaultModel = defaultModel
         self.temperature = temperature
         self.maxTokens = maxTokens
+        self.chatQuickActions = chatQuickActions
+        self.workQuickActions = workQuickActions
         self.isBuiltIn = isBuiltIn
         self.createdAt = createdAt
         self.updatedAt = updatedAt
@@ -126,6 +167,8 @@ extension Agent {
                 defaultModel: exportedAgent.defaultModel,
                 temperature: exportedAgent.temperature,
                 maxTokens: exportedAgent.maxTokens,
+                chatQuickActions: exportedAgent.chatQuickActions,
+                workQuickActions: exportedAgent.workQuickActions,
                 isBuiltIn: false,
                 createdAt: Date(),
                 updatedAt: Date()

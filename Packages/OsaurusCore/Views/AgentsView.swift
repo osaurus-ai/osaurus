@@ -263,6 +263,8 @@ struct AgentsView: View {
             defaultModel: agent.defaultModel,
             temperature: agent.temperature,
             maxTokens: agent.maxTokens,
+            chatQuickActions: agent.chatQuickActions,
+            workQuickActions: agent.workQuickActions,
             isBuiltIn: false,
             createdAt: Date(),
             updatedAt: Date()
@@ -613,6 +615,9 @@ private struct AgentDetailView: View {
     @State private var temperature: String = ""
     @State private var maxTokens: String = ""
     @State private var selectedThemeId: UUID?
+    @State private var chatQuickActions: [AgentQuickAction]?
+    @State private var workQuickActions: [AgentQuickAction]?
+    @State private var editingQuickActionId: UUID?
 
     // MARK: - UI State
 
@@ -697,6 +702,7 @@ private struct AgentDetailView: View {
                     systemPromptSection
                     generationSection
                     capabilitiesSection
+                    quickActionsSection
                     themeSection
                     schedulesSection
                     watchersSection
@@ -1127,6 +1133,303 @@ private struct AgentDetailView: View {
         }
     }
 
+    // MARK: - Quick Actions Section
+
+    private var quickActionsSection: some View {
+        AgentDetailSection(
+            title: "Quick Actions",
+            icon: "bolt.fill"
+        ) {
+            VStack(alignment: .leading, spacing: 16) {
+                Text("Prompt shortcuts shown in the empty state. Customize each mode independently.")
+                    .font(.system(size: 11))
+                    .foregroundColor(theme.tertiaryText)
+
+                quickActionsModeGroup(
+                    label: "Chat",
+                    icon: "bubble.left.fill",
+                    actions: $chatQuickActions,
+                    defaults: AgentQuickAction.defaultChatQuickActions
+                )
+
+                quickActionsModeGroup(
+                    label: "Work",
+                    icon: "hammer.fill",
+                    actions: $workQuickActions,
+                    defaults: AgentQuickAction.defaultWorkQuickActions
+                )
+            }
+        }
+    }
+
+    private func quickActionsModeGroup(
+        label: String,
+        icon: String,
+        actions: Binding<[AgentQuickAction]?>,
+        defaults: [AgentQuickAction]
+    ) -> some View {
+        let enabled = actions.wrappedValue == nil || !actions.wrappedValue!.isEmpty
+        let resolved = actions.wrappedValue ?? defaults
+        let isCustomized = actions.wrappedValue != nil
+
+        return VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Image(systemName: icon)
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundColor(theme.accentColor)
+                    .frame(width: 16)
+                Text(label)
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundColor(theme.primaryText)
+
+                Text(!enabled ? "Hidden" : isCustomized ? "\(resolved.count) custom" : "Default")
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundColor(theme.tertiaryText)
+
+                Spacer()
+
+                Toggle(
+                    "",
+                    isOn: Binding(
+                        get: { enabled },
+                        set: { newEnabled in
+                            if newEnabled {
+                                actions.wrappedValue = nil
+                            } else {
+                                actions.wrappedValue = []
+                            }
+                            editingQuickActionId = nil
+                            debouncedSave()
+                        }
+                    )
+                )
+                .toggleStyle(.switch)
+                .labelsHidden()
+                .controlSize(.small)
+            }
+
+            if enabled {
+                VStack(spacing: 0) {
+                    ForEach(Array(resolved.enumerated()), id: \.element.id) { index, action in
+                        if index > 0 {
+                            Divider().background(theme.primaryBorder)
+                        }
+                        quickActionRow(
+                            action: action,
+                            index: index,
+                            actions: actions,
+                            isCustomized: isCustomized
+                        )
+                    }
+                }
+                .background(
+                    RoundedRectangle(cornerRadius: 10)
+                        .fill(theme.inputBackground)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 10)
+                                .stroke(theme.inputBorder, lineWidth: 1)
+                        )
+                )
+                .clipShape(RoundedRectangle(cornerRadius: 10))
+
+                HStack(spacing: 12) {
+                    Button {
+                        if actions.wrappedValue == nil {
+                            actions.wrappedValue = defaults
+                        }
+                        let newAction = AgentQuickAction(icon: "star", text: "", prompt: "")
+                        actions.wrappedValue!.append(newAction)
+                        editingQuickActionId = newAction.id
+                        debouncedSave()
+                    } label: {
+                        HStack(spacing: 4) {
+                            Image(systemName: "plus")
+                                .font(.system(size: 10, weight: .semibold))
+                            Text("Add")
+                                .font(.system(size: 12, weight: .medium))
+                        }
+                        .foregroundColor(theme.accentColor)
+                    }
+                    .buttonStyle(PlainButtonStyle())
+
+                    if isCustomized {
+                        Button {
+                            actions.wrappedValue = nil
+                            editingQuickActionId = nil
+                            debouncedSave()
+                        } label: {
+                            HStack(spacing: 4) {
+                                Image(systemName: "arrow.uturn.backward")
+                                    .font(.system(size: 10))
+                                Text("Reset to Defaults")
+                                    .font(.system(size: 12, weight: .medium))
+                            }
+                            .foregroundColor(theme.secondaryText)
+                        }
+                        .buttonStyle(PlainButtonStyle())
+                    }
+
+                    Spacer()
+                }
+            }
+        }
+    }
+
+    private func quickActionRow(
+        action: AgentQuickAction,
+        index: Int,
+        actions: Binding<[AgentQuickAction]?>,
+        isCustomized: Bool
+    ) -> some View {
+        let isEditing = editingQuickActionId == action.id
+
+        return VStack(spacing: 0) {
+            HStack(spacing: 10) {
+                Image(systemName: action.icon)
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundColor(theme.accentColor)
+                    .frame(width: 20)
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(action.text.isEmpty ? "Untitled" : action.text)
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundColor(action.text.isEmpty ? theme.placeholderText : theme.primaryText)
+                        .lineLimit(1)
+                    Text(action.prompt.isEmpty ? "No prompt" : action.prompt)
+                        .font(.system(size: 11))
+                        .foregroundColor(theme.tertiaryText)
+                        .lineLimit(1)
+                }
+
+                Spacer()
+
+                if isCustomized {
+                    HStack(spacing: 4) {
+                        Button {
+                            editingQuickActionId = isEditing ? nil : action.id
+                        } label: {
+                            Image(systemName: "pencil")
+                                .font(.system(size: 11, weight: .medium))
+                                .foregroundColor(isEditing ? theme.accentColor : theme.tertiaryText)
+                                .frame(width: 24, height: 24)
+                        }
+                        .buttonStyle(PlainButtonStyle())
+
+                        if index > 0 {
+                            Button {
+                                moveQuickAction(in: actions, from: index, direction: -1)
+                            } label: {
+                                Image(systemName: "chevron.up")
+                                    .font(.system(size: 10, weight: .semibold))
+                                    .foregroundColor(theme.tertiaryText)
+                                    .frame(width: 24, height: 24)
+                            }
+                            .buttonStyle(PlainButtonStyle())
+                        }
+
+                        if index < (actions.wrappedValue?.count ?? 0) - 1 {
+                            Button {
+                                moveQuickAction(in: actions, from: index, direction: 1)
+                            } label: {
+                                Image(systemName: "chevron.down")
+                                    .font(.system(size: 10, weight: .semibold))
+                                    .foregroundColor(theme.tertiaryText)
+                                    .frame(width: 24, height: 24)
+                            }
+                            .buttonStyle(PlainButtonStyle())
+                        }
+
+                        Button {
+                            deleteQuickAction(in: actions, at: index)
+                        } label: {
+                            Image(systemName: "xmark")
+                                .font(.system(size: 10, weight: .semibold))
+                                .foregroundColor(theme.tertiaryText)
+                                .frame(width: 24, height: 24)
+                        }
+                        .buttonStyle(PlainButtonStyle())
+                    }
+                }
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 10)
+            .contentShape(Rectangle())
+            .onTapGesture {
+                if isCustomized {
+                    editingQuickActionId = isEditing ? nil : action.id
+                }
+            }
+
+            if isEditing, isCustomized {
+                VStack(spacing: 10) {
+                    Divider().background(theme.primaryBorder)
+
+                    HStack(spacing: 10) {
+                        StyledTextField(
+                            placeholder: "SF Symbol name",
+                            text: quickActionBinding(in: actions, for: action.id, keyPath: \.icon),
+                            icon: "star"
+                        )
+                        .frame(width: 160)
+
+                        StyledTextField(
+                            placeholder: "Display text",
+                            text: quickActionBinding(in: actions, for: action.id, keyPath: \.text),
+                            icon: "textformat"
+                        )
+                    }
+
+                    StyledTextField(
+                        placeholder: "Prompt prefix (e.g. 'Explain ')",
+                        text: quickActionBinding(in: actions, for: action.id, keyPath: \.prompt),
+                        icon: "text.cursor"
+                    )
+                }
+                .padding(.horizontal, 12)
+                .padding(.bottom, 10)
+                .transition(.opacity.combined(with: .move(edge: .top)))
+            }
+        }
+        .animation(.easeInOut(duration: 0.2), value: isEditing)
+    }
+
+    private func quickActionBinding(
+        in actions: Binding<[AgentQuickAction]?>,
+        for id: UUID,
+        keyPath: WritableKeyPath<AgentQuickAction, String>
+    ) -> Binding<String> {
+        Binding(
+            get: {
+                actions.wrappedValue?.first(where: { $0.id == id })?[keyPath: keyPath] ?? ""
+            },
+            set: { newValue in
+                if let idx = actions.wrappedValue?.firstIndex(where: { $0.id == id }) {
+                    actions.wrappedValue?[idx][keyPath: keyPath] = newValue
+                    debouncedSave()
+                }
+            }
+        )
+    }
+
+    private func moveQuickAction(in actions: Binding<[AgentQuickAction]?>, from index: Int, direction: Int) {
+        guard var list = actions.wrappedValue else { return }
+        let newIndex = index + direction
+        guard newIndex >= 0, newIndex < list.count else { return }
+        list.swapAt(index, newIndex)
+        actions.wrappedValue = list
+        debouncedSave()
+    }
+
+    private func deleteQuickAction(in actions: Binding<[AgentQuickAction]?>, at index: Int) {
+        guard actions.wrappedValue != nil else { return }
+        let deletedId = actions.wrappedValue![index].id
+        actions.wrappedValue!.remove(at: index)
+        if editingQuickActionId == deletedId {
+            editingQuickActionId = nil
+        }
+        debouncedSave()
+    }
+
     // MARK: - Theme Section
 
     private var themeSection: some View {
@@ -1510,6 +1813,8 @@ private struct AgentDetailView: View {
         temperature = agent.temperature.map { String($0) } ?? ""
         maxTokens = agent.maxTokens.map { String($0) } ?? ""
         selectedThemeId = agent.themeId
+        chatQuickActions = agent.chatQuickActions
+        workQuickActions = agent.workQuickActions
     }
 
     private func loadModelOptions() {
@@ -1578,6 +1883,8 @@ private struct AgentDetailView: View {
             defaultModel: selectedModel,
             temperature: Float(temperature),
             maxTokens: Int(maxTokens),
+            chatQuickActions: chatQuickActions,
+            workQuickActions: workQuickActions,
             isBuiltIn: false,
             createdAt: agent.createdAt,
             updatedAt: Date()

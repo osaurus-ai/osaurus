@@ -968,7 +968,10 @@ final class ChatSession: ObservableObject {
                         let streamStartTime = Date()
                         var uiDeltaCount = 0
 
-                        let processor = StreamingDeltaProcessor(turn: assistantTurn, modelId: selectedModel ?? "default") { [weak self] in
+                        let processor = StreamingDeltaProcessor(
+                            turn: assistantTurn,
+                            modelId: selectedModel ?? "default"
+                        ) { [weak self] in
                             self?.objectWillChange.send()
                         }
 
@@ -1261,6 +1264,8 @@ struct ChatView: View {
                                     selectedModel: session.selectedModel,
                                     agents: windowState.agents,
                                     activeAgentId: windowState.agentId,
+                                    quickActions: windowState.activeAgent.chatQuickActions
+                                        ?? AgentQuickAction.defaultChatQuickActions,
                                     onOpenModelManager: {
                                         AppDelegate.shared?.showManagementWindow(initialTab: .models)
                                     },
@@ -1309,6 +1314,8 @@ struct ChatView: View {
                                 selectedModel: nil,
                                 agents: windowState.agents,
                                 activeAgentId: windowState.agentId,
+                                quickActions: windowState.activeAgent.chatQuickActions
+                                    ?? AgentQuickAction.defaultChatQuickActions,
                                 onOpenModelManager: {
                                     AppDelegate.shared?.showManagementWindow(initialTab: .models)
                                 },
