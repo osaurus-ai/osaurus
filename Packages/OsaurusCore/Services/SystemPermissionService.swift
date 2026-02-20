@@ -211,6 +211,34 @@ final class SystemPermissionService: NSObject, ObservableObject, CLLocationManag
         }
     }
 
+    /// Trigger the macOS permission dialog and wait for the user's response.
+    /// Returns `true` if the permission was granted, `false` otherwise.
+    /// Permissions that require manual System Settings changes (disk, accessibility,
+    /// screen recording) return `false` immediately.
+    func requestPermissionAndWait(_ permission: SystemPermission) async -> Bool {
+        let granted: Bool
+        switch permission {
+        case .calendar:
+            granted = (try? await EKEventStore().requestFullAccessToEvents()) ?? false
+        case .reminders:
+            granted = (try? await EKEventStore().requestFullAccessToReminders()) ?? false
+        case .contacts:
+            granted = (try? await CNContactStore().requestAccess(for: .contacts)) ?? false
+        case .microphone:
+            granted = await AVCaptureDevice.requestAccess(for: .audio)
+        case .location:
+            requestLocationPermission()
+            return checkLocationPermission()
+        case .automation, .automationCalendar, .automationMail, .notes, .maps:
+            requestPermission(permission)
+            return permissionStates[permission] ?? false
+        case .accessibility, .disk, .screenRecording:
+            return false
+        }
+        setPermission(permission, isGranted: granted)
+        return granted
+    }
+
     /// Open System Settings to the relevant permission pane
     func openSystemSettings(for permission: SystemPermission) {
         guard let url = permission.systemSettingsURL else { return }
