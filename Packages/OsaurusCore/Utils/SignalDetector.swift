@@ -12,42 +12,60 @@ import Foundation
 public enum SignalDetector: Sendable {
 
     private static let patterns: [(SignalType, [String])] = [
-        (.explicitMemory, [
-            "remember this", "remember that", "remember me", "remember my",
-            "please remember", "don't forget", "do not forget",
-            "keep in mind", "make a note", "note that",
-        ]),
-        (.correction, [
-            "actually,", "actually ", "no i meant", "no, i meant",
-            "that's wrong", "that is wrong", "that's not right",
-            "i was wrong", "correction:", "to clarify,",
-        ]),
-        (.identity, [
-            "my name is", "i'm called", "i am called", "call me",
-            "i work at", "i work for", "my job is",
-            "i'm a ", "i am a ",
-            "i live in", "i'm from", "i am from",
-            "my email is", "my phone is",
-            "i am ", "i'm ",
-            "my birthday is", "my birthday's", "i was born", "my age is",
-        ]),
-        (.preference, [
-            "i prefer", "i always", "i never",
-            "i like to", "i like ", "i don't like", "i do not like",
-            "i hate when", "i love when", "i love ", "i hate ",
-            "my favorite", "my favourite",
-        ]),
-        (.decision, [
-            "let's go with", "let us go with",
-            "i decided", "i've decided", "i have decided",
-            "we'll use", "we will use", "the plan is",
-        ]),
-        (.commitment, [
-            "by friday", "by monday", "by tuesday", "by wednesday",
-            "by thursday", "by saturday", "by sunday",
-            "deadline is", "due date is", "due by",
-            "by end of", "by eod", "by eow",
-        ]),
+        (
+            .explicitMemory,
+            [
+                "remember this", "remember that", "remember me", "remember my",
+                "please remember", "don't forget", "do not forget",
+                "keep in mind", "make a note", "note that",
+            ]
+        ),
+        (
+            .correction,
+            [
+                "actually,", "actually ", "no i meant", "no, i meant",
+                "that's wrong", "that is wrong", "that's not right",
+                "i was wrong", "correction:", "to clarify,",
+            ]
+        ),
+        (
+            .identity,
+            [
+                "my name is", "i'm called", "i am called", "call me",
+                "i work at", "i work for", "my job is",
+                "i'm a ", "i am a ",
+                "i live in", "i'm from", "i am from",
+                "my email is", "my phone is",
+                "i am ", "i'm ",
+                "my birthday is", "my birthday's", "i was born", "my age is",
+            ]
+        ),
+        (
+            .preference,
+            [
+                "i prefer", "i always", "i never",
+                "i like to", "i like ", "i don't like", "i do not like",
+                "i hate when", "i love when", "i love ", "i hate ",
+                "my favorite", "my favourite",
+            ]
+        ),
+        (
+            .decision,
+            [
+                "let's go with", "let us go with",
+                "i decided", "i've decided", "i have decided",
+                "we'll use", "we will use", "the plan is",
+            ]
+        ),
+        (
+            .commitment,
+            [
+                "by friday", "by monday", "by tuesday", "by wednesday",
+                "by thursday", "by saturday", "by sunday",
+                "deadline is", "due date is", "due by",
+                "by end of", "by eod", "by eow",
+            ]
+        ),
     ]
 
     /// Scans a user message and returns all detected signal types.

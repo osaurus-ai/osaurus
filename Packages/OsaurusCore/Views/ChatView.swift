@@ -871,12 +871,36 @@ final class ChatSession: ObservableObject {
                     let db = MemoryDatabase.shared
                     try? db.upsertConversation(id: convId, agentId: aid, title: title)
                     let userChunkIndex = chunkIdx - 1
-                    try? db.insertChunk(conversationId: convId, chunkIndex: userChunkIndex, role: "user", content: userContent, tokenCount: max(1, userContent.count / 4))
-                    let userChunk = ConversationChunk(conversationId: convId, chunkIndex: userChunkIndex, role: "user", content: userContent, tokenCount: max(1, userContent.count / 4))
+                    try? db.insertChunk(
+                        conversationId: convId,
+                        chunkIndex: userChunkIndex,
+                        role: "user",
+                        content: userContent,
+                        tokenCount: max(1, userContent.count / 4)
+                    )
+                    let userChunk = ConversationChunk(
+                        conversationId: convId,
+                        chunkIndex: userChunkIndex,
+                        role: "user",
+                        content: userContent,
+                        tokenCount: max(1, userContent.count / 4)
+                    )
                     Task.detached { await MemorySearchService.shared.indexConversationChunk(userChunk) }
                     if let ac = assistantContent, !ac.isEmpty {
-                        try? db.insertChunk(conversationId: convId, chunkIndex: chunkIdx, role: "assistant", content: ac, tokenCount: max(1, ac.count / 4))
-                        let assistantChunk = ConversationChunk(conversationId: convId, chunkIndex: chunkIdx, role: "assistant", content: ac, tokenCount: max(1, ac.count / 4))
+                        try? db.insertChunk(
+                            conversationId: convId,
+                            chunkIndex: chunkIdx,
+                            role: "assistant",
+                            content: ac,
+                            tokenCount: max(1, ac.count / 4)
+                        )
+                        let assistantChunk = ConversationChunk(
+                            conversationId: convId,
+                            chunkIndex: chunkIdx,
+                            role: "assistant",
+                            content: ac,
+                            tokenCount: max(1, ac.count / 4)
+                        )
                         Task.detached { await MemorySearchService.shared.indexConversationChunk(assistantChunk) }
                     }
                 }
@@ -889,8 +913,10 @@ final class ChatSession: ObservableObject {
                     let convStr = memoryConversationId
                     Task.detached {
                         await MemoryService.shared.processImmediateSignals(
-                            signals: signals, userMessage: userMsg,
-                            assistantMessage: asstMsg, agentId: agentStr,
+                            signals: signals,
+                            userMessage: userMsg,
+                            assistantMessage: asstMsg,
+                            agentId: agentStr,
                             conversationId: convStr
                         )
                     }

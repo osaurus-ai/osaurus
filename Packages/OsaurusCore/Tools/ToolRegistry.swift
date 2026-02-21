@@ -91,6 +91,7 @@ final class ToolRegistry: ObservableObject {
         register(SearchWorkingMemoryTool())
         register(SearchConversationsTool())
         register(SearchSummariesTool())
+        register(SearchGraphTool())
     }
 
     func register(_ tool: OsaurusTool) {

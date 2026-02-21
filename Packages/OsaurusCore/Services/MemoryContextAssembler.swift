@@ -55,7 +55,9 @@ public enum MemoryContextAssembler: Sendable {
 
         // 4. Conversation Summaries (this agent, last N days)
         let sumBudgetChars = config.summaryBudgetTokens * charsPerToken
-        if let summaries = try? db.loadSummaries(agentId: agentId, days: config.summaryRetentionDays), !summaries.isEmpty {
+        if let summaries = try? db.loadSummaries(agentId: agentId, days: config.summaryRetentionDays),
+            !summaries.isEmpty
+        {
             var block = "# Recent Conversation Summaries\n"
             var usedChars = block.count
 

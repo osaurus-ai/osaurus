@@ -70,9 +70,12 @@ struct MemoryView: View {
             }
         }
         .sheet(isPresented: $showProfileEditor) {
-            ProfileEditSheet(profile: profile, onSave: { newContent in
-                saveProfileEdit(newContent)
-            })
+            ProfileEditSheet(
+                profile: profile,
+                onSave: { newContent in
+                    saveProfileEdit(newContent)
+                }
+            )
             .frame(minWidth: 500, minHeight: 400)
         }
         .sheet(isPresented: $showWorkingMemory) {
@@ -171,13 +174,15 @@ struct MemoryView: View {
                     .font(.caption2)
                     .foregroundColor(theme.tertiaryText)
             } else {
-                Text("No profile generated yet. Chat with Osaurus and the memory system will build your profile automatically.")
-                    .font(.callout)
-                    .foregroundColor(theme.tertiaryText)
-                    .padding(12)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(theme.secondaryBackground.opacity(0.3))
-                    .cornerRadius(8)
+                Text(
+                    "No profile generated yet. Chat with Osaurus and the memory system will build your profile automatically."
+                )
+                .font(.callout)
+                .foregroundColor(theme.tertiaryText)
+                .padding(12)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(theme.secondaryBackground.opacity(0.3))
+                .cornerRadius(8)
             }
         }
     }
@@ -347,14 +352,14 @@ struct MemoryView: View {
                     Text("Retention:")
                         .font(.caption)
                         .foregroundColor(theme.tertiaryText)
-                    Stepper("\(config.summaryRetentionDays) days", value: $config.summaryRetentionDays, in: 1...365)
+                    Stepper("\(config.summaryRetentionDays) days", value: $config.summaryRetentionDays, in: 1 ... 365)
                         .font(.caption)
                         .labelsHidden()
                     Text("\(config.summaryRetentionDays) days")
                         .font(.caption)
                         .foregroundColor(theme.secondaryText)
                 }
-                .onChange(of: config.summaryRetentionDays) { _ , _ in
+                .onChange(of: config.summaryRetentionDays) { _, _ in
                     MemoryConfigurationStore.save(config)
                 }
             }
@@ -395,20 +400,23 @@ struct MemoryView: View {
                     Text("Core Model")
                         .font(.caption)
                         .foregroundColor(theme.tertiaryText)
-                    Picker("", selection: Binding(
-                        get: { config.coreModelIdentifier },
-                        set: { newValue in
-                            let parts = newValue.split(separator: "/", maxSplits: 1)
-                            if parts.count == 2 {
-                                config.coreModelProvider = String(parts[0])
-                                config.coreModelName = String(parts[1])
-                            } else {
-                                config.coreModelProvider = ""
-                                config.coreModelName = newValue
+                    Picker(
+                        "",
+                        selection: Binding(
+                            get: { config.coreModelIdentifier },
+                            set: { newValue in
+                                let parts = newValue.split(separator: "/", maxSplits: 1)
+                                if parts.count == 2 {
+                                    config.coreModelProvider = String(parts[0])
+                                    config.coreModelName = String(parts[1])
+                                } else {
+                                    config.coreModelProvider = ""
+                                    config.coreModelName = newValue
+                                }
+                                MemoryConfigurationStore.save(config)
                             }
-                            MemoryConfigurationStore.save(config)
-                        }
-                    )) {
+                        )
+                    ) {
                         if !modelOptions.contains(where: { $0.id == config.coreModelIdentifier }) {
                             Text(config.coreModelIdentifier)
                                 .tag(config.coreModelIdentifier)
@@ -463,9 +471,11 @@ struct MemoryView: View {
                 .font(.headline)
                 .foregroundColor(theme.primaryText)
 
-            Text("Enter an explicit fact that should always be included in your profile. The memory system will never contradict this.")
-                .font(.callout)
-                .foregroundColor(theme.secondaryText)
+            Text(
+                "Enter an explicit fact that should always be included in your profile. The memory system will never contradict this."
+            )
+            .font(.callout)
+            .foregroundColor(theme.secondaryText)
 
             TextField("e.g., My name is Terence", text: $newOverrideText)
                 .textFieldStyle(.roundedBorder)
@@ -483,11 +493,13 @@ struct MemoryView: View {
                     let text = newOverrideText.trimmingCharacters(in: .whitespacesAndNewlines)
                     guard !text.isEmpty else { return }
                     try? MemoryDatabase.shared.insertUserEdit(text)
-                    try? MemoryDatabase.shared.insertProfileEvent(ProfileEvent(
-                        agentId: "user",
-                        eventType: "user_edit",
-                        content: text
-                    ))
+                    try? MemoryDatabase.shared.insertProfileEvent(
+                        ProfileEvent(
+                            agentId: "user",
+                            eventType: "user_edit",
+                            content: text
+                        )
+                    )
                     newOverrideText = ""
                     showAddOverride = false
                     loadData()
@@ -580,27 +592,32 @@ struct MemoryView: View {
 
     private func saveProfileEdit(_ content: String) {
         let tokenCount = max(1, content.count / 4)
-        var updated = profile ?? UserProfile(
-            content: content,
-            tokenCount: tokenCount,
-            model: "user",
-            generatedAt: ISO8601DateFormatter().string(from: Date())
-        )
+        var updated =
+            profile
+            ?? UserProfile(
+                content: content,
+                tokenCount: tokenCount,
+                model: "user",
+                generatedAt: ISO8601DateFormatter().string(from: Date())
+            )
         updated.content = content
         updated.tokenCount = tokenCount
 
         try? MemoryDatabase.shared.saveUserProfile(updated)
-        try? MemoryDatabase.shared.insertProfileEvent(ProfileEvent(
-            agentId: "user",
-            eventType: "user_edit",
-            content: "Profile manually edited"
-        ))
+        try? MemoryDatabase.shared.insertProfileEvent(
+            ProfileEvent(
+                agentId: "user",
+                eventType: "user_edit",
+                content: "Profile manually edited"
+            )
+        )
         loadData()
     }
 
     private func agentDisplayName(_ agentId: String) -> String {
         if let uuid = UUID(uuidString: agentId),
-           let agent = agentManager.agent(for: uuid) {
+            let agent = agentManager.agent(for: uuid)
+        {
             return agent.name
         }
         return agentId

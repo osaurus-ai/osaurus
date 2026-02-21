@@ -6,6 +6,7 @@
 //  WAL mode, serial queue, versioned migrations — follows WorkDatabase patterns.
 //
 
+import CryptoKit
 import Foundation
 import SQLite3
 
@@ -80,9 +81,7 @@ public final class MemoryDatabase: @unchecked Sendable {
 
     private func runMigrations() throws {
         let currentVersion = try getSchemaVersion()
-        if currentVersion < 1 {
-            try migrateToV1()
-        }
+        if currentVersion < 1 { try migrateToV1() }
     }
 
     private func getSchemaVersion() throws -> Int {
@@ -101,189 +100,261 @@ public final class MemoryDatabase: @unchecked Sendable {
 
     private func migrateToV1() throws {
         // Schema management
-        try executeRaw("""
-            CREATE TABLE IF NOT EXISTS schema_version (
-                version      INTEGER PRIMARY KEY,
-                applied_at   TEXT NOT NULL DEFAULT (datetime('now')),
-                description  TEXT
-            )
-        """)
+        try executeRaw(
+            """
+                CREATE TABLE IF NOT EXISTS schema_version (
+                    version      INTEGER PRIMARY KEY,
+                    applied_at   TEXT NOT NULL DEFAULT (datetime('now')),
+                    description  TEXT
+                )
+            """
+        )
 
-        try executeRaw("""
-            CREATE TABLE IF NOT EXISTS config (
-                key          TEXT PRIMARY KEY,
-                value        TEXT NOT NULL,
-                updated_at   TEXT NOT NULL DEFAULT (datetime('now'))
-            )
-        """)
+        try executeRaw(
+            """
+                CREATE TABLE IF NOT EXISTS config (
+                    key          TEXT PRIMARY KEY,
+                    value        TEXT NOT NULL,
+                    updated_at   TEXT NOT NULL DEFAULT (datetime('now'))
+                )
+            """
+        )
 
         // Layer 1: User Profile
-        try executeRaw("""
-            CREATE TABLE IF NOT EXISTS user_profile (
-                id               INTEGER PRIMARY KEY CHECK (id = 1),
-                content          TEXT NOT NULL,
-                token_count      INTEGER NOT NULL,
-                version          INTEGER NOT NULL DEFAULT 1,
-                model            TEXT NOT NULL,
-                generated_at     TEXT NOT NULL
-            )
-        """)
+        try executeRaw(
+            """
+                CREATE TABLE IF NOT EXISTS user_profile (
+                    id               INTEGER PRIMARY KEY CHECK (id = 1),
+                    content          TEXT NOT NULL,
+                    token_count      INTEGER NOT NULL,
+                    version          INTEGER NOT NULL DEFAULT 1,
+                    model            TEXT NOT NULL,
+                    generated_at     TEXT NOT NULL
+                )
+            """
+        )
 
-        try executeRaw("""
-            CREATE TABLE IF NOT EXISTS profile_events (
-                id               INTEGER PRIMARY KEY AUTOINCREMENT,
-                agent_id         TEXT NOT NULL,
-                conversation_id  TEXT,
-                event_type       TEXT NOT NULL,
-                content          TEXT NOT NULL,
-                model            TEXT,
-                status           TEXT NOT NULL DEFAULT 'active',
-                incorporated_in  INTEGER,
-                created_at       TEXT NOT NULL DEFAULT (datetime('now'))
-            )
-        """)
+        try executeRaw(
+            """
+                CREATE TABLE IF NOT EXISTS profile_events (
+                    id               INTEGER PRIMARY KEY AUTOINCREMENT,
+                    agent_id         TEXT NOT NULL,
+                    conversation_id  TEXT,
+                    event_type       TEXT NOT NULL,
+                    content          TEXT NOT NULL,
+                    model            TEXT,
+                    status           TEXT NOT NULL DEFAULT 'active',
+                    incorporated_in  INTEGER,
+                    created_at       TEXT NOT NULL DEFAULT (datetime('now'))
+                )
+            """
+        )
 
-        try executeRaw("""
-            CREATE TABLE IF NOT EXISTS user_edits (
-                id               INTEGER PRIMARY KEY AUTOINCREMENT,
-                content          TEXT NOT NULL,
-                created_at       TEXT NOT NULL DEFAULT (datetime('now')),
-                deleted_at       TEXT
-            )
-        """)
+        try executeRaw(
+            """
+                CREATE TABLE IF NOT EXISTS user_edits (
+                    id               INTEGER PRIMARY KEY AUTOINCREMENT,
+                    content          TEXT NOT NULL,
+                    created_at       TEXT NOT NULL DEFAULT (datetime('now')),
+                    deleted_at       TEXT
+                )
+            """
+        )
 
         // Layer 2: Working Memory
-        try executeRaw("""
-            CREATE TABLE IF NOT EXISTS memory_entries (
-                id               TEXT PRIMARY KEY,
-                agent_id         TEXT NOT NULL,
-                type             TEXT NOT NULL,
-                content          TEXT NOT NULL,
-                confidence       REAL NOT NULL DEFAULT 0.8,
-                model            TEXT NOT NULL,
-                source_conversation_id TEXT,
-                tags             TEXT,
-                status           TEXT NOT NULL DEFAULT 'active',
-                superseded_by    TEXT REFERENCES memory_entries(id),
-                created_at       TEXT NOT NULL DEFAULT (datetime('now')),
-                last_accessed    TEXT NOT NULL DEFAULT (datetime('now')),
-                access_count     INTEGER NOT NULL DEFAULT 0
-            )
-        """)
+        try executeRaw(
+            """
+                CREATE TABLE IF NOT EXISTS memory_entries (
+                    id               TEXT PRIMARY KEY,
+                    agent_id         TEXT NOT NULL,
+                    type             TEXT NOT NULL,
+                    content          TEXT NOT NULL,
+                    confidence       REAL NOT NULL DEFAULT 0.8,
+                    model            TEXT NOT NULL,
+                    source_conversation_id TEXT,
+                    tags             TEXT,
+                    status           TEXT NOT NULL DEFAULT 'active',
+                    superseded_by    TEXT REFERENCES memory_entries(id),
+                    created_at       TEXT NOT NULL DEFAULT (datetime('now')),
+                    last_accessed    TEXT NOT NULL DEFAULT (datetime('now')),
+                    access_count     INTEGER NOT NULL DEFAULT 0
+                )
+            """
+        )
 
         try executeRaw("CREATE INDEX IF NOT EXISTS idx_entries_agent ON memory_entries(agent_id, status)")
         try executeRaw("CREATE INDEX IF NOT EXISTS idx_entries_created ON memory_entries(created_at)")
 
-        try executeRaw("""
-            CREATE TABLE IF NOT EXISTS memory_events (
-                id               INTEGER PRIMARY KEY AUTOINCREMENT,
-                entry_id         TEXT NOT NULL REFERENCES memory_entries(id),
-                event_type       TEXT NOT NULL,
-                agent_id         TEXT,
-                model            TEXT,
-                reason           TEXT,
-                created_at       TEXT NOT NULL DEFAULT (datetime('now'))
-            )
-        """)
+        try executeRaw(
+            """
+                CREATE TABLE IF NOT EXISTS memory_events (
+                    id               INTEGER PRIMARY KEY AUTOINCREMENT,
+                    entry_id         TEXT NOT NULL REFERENCES memory_entries(id),
+                    event_type       TEXT NOT NULL,
+                    agent_id         TEXT,
+                    model            TEXT,
+                    reason           TEXT,
+                    created_at       TEXT NOT NULL DEFAULT (datetime('now'))
+                )
+            """
+        )
 
         // Layer 3: Conversation Summaries
-        try executeRaw("""
-            CREATE TABLE IF NOT EXISTS conversation_summaries (
-                id               INTEGER PRIMARY KEY AUTOINCREMENT,
-                agent_id         TEXT NOT NULL,
-                conversation_id  TEXT NOT NULL,
-                summary          TEXT NOT NULL,
-                token_count      INTEGER NOT NULL,
-                model            TEXT NOT NULL,
-                conversation_at  TEXT NOT NULL,
-                status           TEXT NOT NULL DEFAULT 'active',
-                created_at       TEXT NOT NULL DEFAULT (datetime('now'))
-            )
-        """)
+        try executeRaw(
+            """
+                CREATE TABLE IF NOT EXISTS conversation_summaries (
+                    id               INTEGER PRIMARY KEY AUTOINCREMENT,
+                    agent_id         TEXT NOT NULL,
+                    conversation_id  TEXT NOT NULL,
+                    summary          TEXT NOT NULL,
+                    token_count      INTEGER NOT NULL,
+                    model            TEXT NOT NULL,
+                    conversation_at  TEXT NOT NULL,
+                    status           TEXT NOT NULL DEFAULT 'active',
+                    created_at       TEXT NOT NULL DEFAULT (datetime('now'))
+                )
+            """
+        )
 
-        try executeRaw("CREATE INDEX IF NOT EXISTS idx_summaries_agent ON conversation_summaries(agent_id, conversation_at)")
+        try executeRaw(
+            "CREATE INDEX IF NOT EXISTS idx_summaries_agent ON conversation_summaries(agent_id, conversation_at)"
+        )
 
         // Layer 4: Conversations (for recall)
-        try executeRaw("""
-            CREATE TABLE IF NOT EXISTS conversations (
-                id               TEXT PRIMARY KEY,
-                agent_id         TEXT NOT NULL,
-                title            TEXT,
-                started_at       TEXT NOT NULL,
-                last_message_at  TEXT NOT NULL,
-                message_count    INTEGER NOT NULL DEFAULT 0,
-                status           TEXT NOT NULL DEFAULT 'active'
-            )
-        """)
+        try executeRaw(
+            """
+                CREATE TABLE IF NOT EXISTS conversations (
+                    id               TEXT PRIMARY KEY,
+                    agent_id         TEXT NOT NULL,
+                    title            TEXT,
+                    started_at       TEXT NOT NULL,
+                    last_message_at  TEXT NOT NULL,
+                    message_count    INTEGER NOT NULL DEFAULT 0,
+                    status           TEXT NOT NULL DEFAULT 'active'
+                )
+            """
+        )
 
-        try executeRaw("""
-            CREATE TABLE IF NOT EXISTS conversation_chunks (
-                id               INTEGER PRIMARY KEY AUTOINCREMENT,
-                conversation_id  TEXT NOT NULL REFERENCES conversations(id),
-                chunk_index      INTEGER NOT NULL,
-                role             TEXT NOT NULL,
-                content          TEXT NOT NULL,
-                token_count      INTEGER NOT NULL,
-                created_at       TEXT NOT NULL DEFAULT (datetime('now'))
-            )
-        """)
+        try executeRaw(
+            """
+                CREATE TABLE IF NOT EXISTS conversation_chunks (
+                    id               INTEGER PRIMARY KEY AUTOINCREMENT,
+                    conversation_id  TEXT NOT NULL REFERENCES conversations(id),
+                    chunk_index      INTEGER NOT NULL,
+                    role             TEXT NOT NULL,
+                    content          TEXT NOT NULL,
+                    token_count      INTEGER NOT NULL,
+                    created_at       TEXT NOT NULL DEFAULT (datetime('now'))
+                )
+            """
+        )
 
-        try executeRaw("CREATE INDEX IF NOT EXISTS idx_chunks_conversation ON conversation_chunks(conversation_id, chunk_index)")
+        try executeRaw(
+            "CREATE INDEX IF NOT EXISTS idx_chunks_conversation ON conversation_chunks(conversation_id, chunk_index)"
+        )
 
         // Embeddings
-        try executeRaw("""
-            CREATE TABLE IF NOT EXISTS embeddings (
-                id               INTEGER PRIMARY KEY AUTOINCREMENT,
-                source_type      TEXT NOT NULL,
-                source_id        TEXT NOT NULL,
-                embedding        BLOB NOT NULL,
-                model            TEXT NOT NULL,
-                created_at       TEXT NOT NULL DEFAULT (datetime('now'))
-            )
-        """)
+        try executeRaw(
+            """
+                CREATE TABLE IF NOT EXISTS embeddings (
+                    id               INTEGER PRIMARY KEY AUTOINCREMENT,
+                    source_type      TEXT NOT NULL,
+                    source_id        TEXT NOT NULL,
+                    embedding        BLOB NOT NULL,
+                    model            TEXT NOT NULL,
+                    created_at       TEXT NOT NULL DEFAULT (datetime('now'))
+                )
+            """
+        )
 
         try executeRaw("CREATE UNIQUE INDEX IF NOT EXISTS idx_embeddings_source ON embeddings(source_type, source_id)")
 
         // Background Processing
-        try executeRaw("""
-            CREATE TABLE IF NOT EXISTS agent_activity (
-                agent_id         TEXT PRIMARY KEY,
-                last_activity_at TEXT NOT NULL,
-                pending_signals  INTEGER NOT NULL DEFAULT 0,
-                processing_status TEXT NOT NULL DEFAULT 'idle',
-                last_processed_at TEXT
-            )
-        """)
+        try executeRaw(
+            """
+                CREATE TABLE IF NOT EXISTS agent_activity (
+                    agent_id         TEXT PRIMARY KEY,
+                    last_activity_at TEXT NOT NULL,
+                    pending_signals  INTEGER NOT NULL DEFAULT 0,
+                    processing_status TEXT NOT NULL DEFAULT 'idle',
+                    last_processed_at TEXT
+                )
+            """
+        )
 
-        try executeRaw("""
-            CREATE TABLE IF NOT EXISTS pending_signals (
-                id               INTEGER PRIMARY KEY AUTOINCREMENT,
-                agent_id         TEXT NOT NULL,
-                conversation_id  TEXT NOT NULL,
-                signal_type      TEXT NOT NULL,
-                user_message     TEXT NOT NULL,
-                assistant_message TEXT,
-                status           TEXT NOT NULL DEFAULT 'pending',
-                created_at       TEXT NOT NULL DEFAULT (datetime('now'))
-            )
-        """)
+        try executeRaw(
+            """
+                CREATE TABLE IF NOT EXISTS pending_signals (
+                    id               INTEGER PRIMARY KEY AUTOINCREMENT,
+                    agent_id         TEXT NOT NULL,
+                    conversation_id  TEXT NOT NULL,
+                    signal_type      TEXT NOT NULL,
+                    user_message     TEXT NOT NULL,
+                    assistant_message TEXT,
+                    status           TEXT NOT NULL DEFAULT 'pending',
+                    created_at       TEXT NOT NULL DEFAULT (datetime('now'))
+                )
+            """
+        )
 
-        try executeRaw("""
-            CREATE TABLE IF NOT EXISTS processing_log (
-                id               INTEGER PRIMARY KEY AUTOINCREMENT,
-                agent_id         TEXT NOT NULL,
-                task_type        TEXT NOT NULL,
-                model            TEXT,
-                status           TEXT NOT NULL,
-                details          TEXT,
-                input_tokens     INTEGER,
-                output_tokens    INTEGER,
-                duration_ms      INTEGER,
-                created_at       TEXT NOT NULL DEFAULT (datetime('now'))
-            )
-        """)
+        try executeRaw(
+            """
+                CREATE TABLE IF NOT EXISTS processing_log (
+                    id               INTEGER PRIMARY KEY AUTOINCREMENT,
+                    agent_id         TEXT NOT NULL,
+                    task_type        TEXT NOT NULL,
+                    model            TEXT,
+                    status           TEXT NOT NULL,
+                    details          TEXT,
+                    input_tokens     INTEGER,
+                    output_tokens    INTEGER,
+                    duration_ms      INTEGER,
+                    created_at       TEXT NOT NULL DEFAULT (datetime('now'))
+                )
+            """
+        )
 
-        try executeRaw("INSERT OR IGNORE INTO schema_version (version, description) VALUES (1, 'Initial memory schema')")
+        // Knowledge Graph
+        try executeRaw(
+            """
+                CREATE TABLE IF NOT EXISTS entities (
+                    id               TEXT PRIMARY KEY,
+                    name             TEXT NOT NULL,
+                    type             TEXT NOT NULL,
+                    metadata         TEXT,
+                    model            TEXT NOT NULL,
+                    created_at       TEXT NOT NULL DEFAULT (datetime('now')),
+                    updated_at       TEXT NOT NULL DEFAULT (datetime('now'))
+                )
+            """
+        )
+
+        try executeRaw("CREATE INDEX IF NOT EXISTS idx_entities_type ON entities(type)")
+        try executeRaw("CREATE INDEX IF NOT EXISTS idx_entities_name ON entities(name COLLATE NOCASE)")
+
+        try executeRaw(
+            """
+                CREATE TABLE IF NOT EXISTS relationships (
+                    id               TEXT PRIMARY KEY,
+                    source_id        TEXT NOT NULL REFERENCES entities(id),
+                    target_id        TEXT NOT NULL REFERENCES entities(id),
+                    relation         TEXT NOT NULL,
+                    confidence       REAL NOT NULL DEFAULT 0.8,
+                    model            TEXT NOT NULL,
+                    valid_from       TEXT NOT NULL DEFAULT (datetime('now')),
+                    valid_until      TEXT,
+                    created_at       TEXT NOT NULL DEFAULT (datetime('now'))
+                )
+            """
+        )
+
+        try executeRaw("CREATE INDEX IF NOT EXISTS idx_rel_source ON relationships(source_id, valid_until)")
+        try executeRaw("CREATE INDEX IF NOT EXISTS idx_rel_target ON relationships(target_id, valid_until)")
+        try executeRaw("CREATE INDEX IF NOT EXISTS idx_rel_relation ON relationships(relation)")
+
+        try executeRaw(
+            "INSERT OR IGNORE INTO schema_version (version, description) VALUES (1, 'Initial memory schema with knowledge graph')"
+        )
         try setSchemaVersion(1)
     }
 
@@ -418,12 +489,14 @@ public final class MemoryDatabase: @unchecked Sendable {
             bind: { _ in },
             process: { stmt in
                 while sqlite3_step(stmt) == SQLITE_ROW {
-                    edits.append(UserEdit(
-                        id: Int(sqlite3_column_int(stmt, 0)),
-                        content: String(cString: sqlite3_column_text(stmt, 1)),
-                        createdAt: String(cString: sqlite3_column_text(stmt, 2)),
-                        deletedAt: sqlite3_column_text(stmt, 3).map { String(cString: $0) }
-                    ))
+                    edits.append(
+                        UserEdit(
+                            id: Int(sqlite3_column_int(stmt, 0)),
+                            content: String(cString: sqlite3_column_text(stmt, 1)),
+                            createdAt: String(cString: sqlite3_column_text(stmt, 2)),
+                            deletedAt: sqlite3_column_text(stmt, 3).map { String(cString: $0) }
+                        )
+                    )
                 }
             }
         )
@@ -467,17 +540,7 @@ public final class MemoryDatabase: @unchecked Sendable {
             bind: { stmt in sqlite3_bind_int(stmt, 1, Int32(limit)) },
             process: { stmt in
                 while sqlite3_step(stmt) == SQLITE_ROW {
-                    events.append(ProfileEvent(
-                        id: Int(sqlite3_column_int(stmt, 0)),
-                        agentId: String(cString: sqlite3_column_text(stmt, 1)),
-                        conversationId: sqlite3_column_text(stmt, 2).map { String(cString: $0) },
-                        eventType: String(cString: sqlite3_column_text(stmt, 3)),
-                        content: String(cString: sqlite3_column_text(stmt, 4)),
-                        model: sqlite3_column_text(stmt, 5).map { String(cString: $0) },
-                        status: String(cString: sqlite3_column_text(stmt, 6)),
-                        incorporatedIn: sqlite3_column_type(stmt, 7) != SQLITE_NULL ? Int(sqlite3_column_int(stmt, 7)) : nil,
-                        createdAt: String(cString: sqlite3_column_text(stmt, 8))
-                    ))
+                    events.append(Self.readProfileEvent(stmt))
                 }
             }
         )
@@ -496,21 +559,25 @@ public final class MemoryDatabase: @unchecked Sendable {
             bind: { _ in },
             process: { stmt in
                 while sqlite3_step(stmt) == SQLITE_ROW {
-                    events.append(ProfileEvent(
-                        id: Int(sqlite3_column_int(stmt, 0)),
-                        agentId: String(cString: sqlite3_column_text(stmt, 1)),
-                        conversationId: sqlite3_column_text(stmt, 2).map { String(cString: $0) },
-                        eventType: String(cString: sqlite3_column_text(stmt, 3)),
-                        content: String(cString: sqlite3_column_text(stmt, 4)),
-                        model: sqlite3_column_text(stmt, 5).map { String(cString: $0) },
-                        status: String(cString: sqlite3_column_text(stmt, 6)),
-                        incorporatedIn: sqlite3_column_type(stmt, 7) != SQLITE_NULL ? Int(sqlite3_column_int(stmt, 7)) : nil,
-                        createdAt: String(cString: sqlite3_column_text(stmt, 8))
-                    ))
+                    events.append(Self.readProfileEvent(stmt))
                 }
             }
         )
         return events
+    }
+
+    private static func readProfileEvent(_ stmt: OpaquePointer) -> ProfileEvent {
+        ProfileEvent(
+            id: Int(sqlite3_column_int(stmt, 0)),
+            agentId: String(cString: sqlite3_column_text(stmt, 1)),
+            conversationId: sqlite3_column_text(stmt, 2).map { String(cString: $0) },
+            eventType: String(cString: sqlite3_column_text(stmt, 3)),
+            content: String(cString: sqlite3_column_text(stmt, 4)),
+            model: sqlite3_column_text(stmt, 5).map { String(cString: $0) },
+            status: String(cString: sqlite3_column_text(stmt, 6)),
+            incorporatedIn: sqlite3_column_type(stmt, 7) != SQLITE_NULL ? Int(sqlite3_column_int(stmt, 7)) : nil,
+            createdAt: String(cString: sqlite3_column_text(stmt, 8))
+        )
     }
 
     public func markContributionsIncorporated(version: Int) throws {
@@ -580,7 +647,13 @@ public final class MemoryDatabase: @unchecked Sendable {
             Self.bindText(stmt, index: 9, value: entry.status)
         }
 
-        try insertMemoryEvent(entryId: entry.id, eventType: "created", agentId: entry.agentId, model: entry.model, reason: nil)
+        try insertMemoryEvent(
+            entryId: entry.id,
+            eventType: "created",
+            agentId: entry.agentId,
+            model: entry.model,
+            reason: nil
+        )
     }
 
     public func loadActiveEntries(agentId: String) throws -> [MemoryEntry] {
@@ -676,17 +749,25 @@ public final class MemoryDatabase: @unchecked Sendable {
             bind: { _ in },
             process: { stmt in
                 while sqlite3_step(stmt) == SQLITE_ROW {
-                    results.append((
-                        String(cString: sqlite3_column_text(stmt, 0)),
-                        Int(sqlite3_column_int(stmt, 1))
-                    ))
+                    results.append(
+                        (
+                            String(cString: sqlite3_column_text(stmt, 0)),
+                            Int(sqlite3_column_int(stmt, 1))
+                        )
+                    )
                 }
             }
         )
         return results
     }
 
-    private func insertMemoryEvent(entryId: String, eventType: String, agentId: String?, model: String?, reason: String?) throws {
+    private func insertMemoryEvent(
+        entryId: String,
+        eventType: String,
+        agentId: String?,
+        model: String?,
+        reason: String?
+    ) throws {
         _ = try executeUpdate(
             "INSERT INTO memory_events (entry_id, event_type, agent_id, model, reason) VALUES (?1, ?2, ?3, ?4, ?5)"
         ) { stmt in
@@ -762,17 +843,17 @@ public final class MemoryDatabase: @unchecked Sendable {
         let sql: String
         if days != nil {
             sql = """
-                SELECT id, agent_id, conversation_id, summary, token_count, model, conversation_at, status, created_at
-                FROM conversation_summaries WHERE status = 'active'
-                AND conversation_at >= datetime('now', '-' || ?1 || ' days')
-                ORDER BY conversation_at DESC
-            """
+                    SELECT id, agent_id, conversation_id, summary, token_count, model, conversation_at, status, created_at
+                    FROM conversation_summaries WHERE status = 'active'
+                    AND conversation_at >= datetime('now', '-' || ?1 || ' days')
+                    ORDER BY conversation_at DESC
+                """
         } else {
             sql = """
-                SELECT id, agent_id, conversation_id, summary, token_count, model, conversation_at, status, created_at
-                FROM conversation_summaries WHERE status = 'active'
-                ORDER BY conversation_at DESC
-            """
+                    SELECT id, agent_id, conversation_id, summary, token_count, model, conversation_at, status, created_at
+                    FROM conversation_summaries WHERE status = 'active'
+                    ORDER BY conversation_at DESC
+                """
         }
         try prepareAndExecute(
             sql,
@@ -842,7 +923,9 @@ public final class MemoryDatabase: @unchecked Sendable {
         }
     }
 
-    public func insertChunk(conversationId: String, chunkIndex: Int, role: String, content: String, tokenCount: Int) throws {
+    public func insertChunk(conversationId: String, chunkIndex: Int, role: String, content: String, tokenCount: Int)
+        throws
+    {
         _ = try executeUpdate(
             """
             INSERT INTO conversation_chunks (conversation_id, chunk_index, role, content, token_count)
@@ -860,12 +943,12 @@ public final class MemoryDatabase: @unchecked Sendable {
     public func loadAllChunks(agentId: String? = nil, days: Int = 30) throws -> [ConversationChunk] {
         var chunks: [ConversationChunk] = []
         var sql = """
-            SELECT cc.id, cc.conversation_id, cc.chunk_index, cc.role, cc.content, cc.token_count, cc.created_at,
-                   c.agent_id, c.title
-            FROM conversation_chunks cc
-            JOIN conversations c ON c.id = cc.conversation_id
-            WHERE cc.created_at >= datetime('now', '-' || ?1 || ' days')
-        """
+                SELECT cc.id, cc.conversation_id, cc.chunk_index, cc.role, cc.content, cc.token_count, cc.created_at,
+                       c.agent_id, c.title
+                FROM conversation_chunks cc
+                JOIN conversations c ON c.id = cc.conversation_id
+                WHERE cc.created_at >= datetime('now', '-' || ?1 || ' days')
+            """
         if agentId != nil { sql += " AND c.agent_id = ?2" }
         sql += " ORDER BY cc.created_at DESC"
 
@@ -877,17 +960,7 @@ public final class MemoryDatabase: @unchecked Sendable {
             },
             process: { stmt in
                 while sqlite3_step(stmt) == SQLITE_ROW {
-                    chunks.append(ConversationChunk(
-                        id: Int(sqlite3_column_int(stmt, 0)),
-                        conversationId: String(cString: sqlite3_column_text(stmt, 1)),
-                        chunkIndex: Int(sqlite3_column_int(stmt, 2)),
-                        role: String(cString: sqlite3_column_text(stmt, 3)),
-                        content: String(cString: sqlite3_column_text(stmt, 4)),
-                        tokenCount: Int(sqlite3_column_int(stmt, 5)),
-                        createdAt: String(cString: sqlite3_column_text(stmt, 6)),
-                        agentId: String(cString: sqlite3_column_text(stmt, 7)),
-                        conversationTitle: sqlite3_column_text(stmt, 8).map { String(cString: $0) }
-                    ))
+                    chunks.append(Self.readChunk(stmt))
                 }
             }
         )
@@ -897,13 +970,13 @@ public final class MemoryDatabase: @unchecked Sendable {
     public func searchChunks(query: String, agentId: String? = nil, days: Int = 30) throws -> [ConversationChunk] {
         var chunks: [ConversationChunk] = []
         var sql = """
-            SELECT cc.id, cc.conversation_id, cc.chunk_index, cc.role, cc.content, cc.token_count, cc.created_at,
-                   c.agent_id, c.title
-            FROM conversation_chunks cc
-            JOIN conversations c ON c.id = cc.conversation_id
-            WHERE cc.content LIKE '%' || ?1 || '%'
-              AND cc.created_at >= datetime('now', '-' || ?2 || ' days')
-        """
+                SELECT cc.id, cc.conversation_id, cc.chunk_index, cc.role, cc.content, cc.token_count, cc.created_at,
+                       c.agent_id, c.title
+                FROM conversation_chunks cc
+                JOIN conversations c ON c.id = cc.conversation_id
+                WHERE cc.content LIKE '%' || ?1 || '%'
+                  AND cc.created_at >= datetime('now', '-' || ?2 || ' days')
+            """
         if agentId != nil { sql += " AND c.agent_id = ?3" }
         sql += " ORDER BY cc.created_at DESC LIMIT 20"
 
@@ -916,21 +989,25 @@ public final class MemoryDatabase: @unchecked Sendable {
             },
             process: { stmt in
                 while sqlite3_step(stmt) == SQLITE_ROW {
-                    chunks.append(ConversationChunk(
-                        id: Int(sqlite3_column_int(stmt, 0)),
-                        conversationId: String(cString: sqlite3_column_text(stmt, 1)),
-                        chunkIndex: Int(sqlite3_column_int(stmt, 2)),
-                        role: String(cString: sqlite3_column_text(stmt, 3)),
-                        content: String(cString: sqlite3_column_text(stmt, 4)),
-                        tokenCount: Int(sqlite3_column_int(stmt, 5)),
-                        createdAt: String(cString: sqlite3_column_text(stmt, 6)),
-                        agentId: String(cString: sqlite3_column_text(stmt, 7)),
-                        conversationTitle: sqlite3_column_text(stmt, 8).map { String(cString: $0) }
-                    ))
+                    chunks.append(Self.readChunk(stmt))
                 }
             }
         )
         return chunks
+    }
+
+    private static func readChunk(_ stmt: OpaquePointer) -> ConversationChunk {
+        ConversationChunk(
+            id: Int(sqlite3_column_int(stmt, 0)),
+            conversationId: String(cString: sqlite3_column_text(stmt, 1)),
+            chunkIndex: Int(sqlite3_column_int(stmt, 2)),
+            role: String(cString: sqlite3_column_text(stmt, 3)),
+            content: String(cString: sqlite3_column_text(stmt, 4)),
+            tokenCount: Int(sqlite3_column_int(stmt, 5)),
+            createdAt: String(cString: sqlite3_column_text(stmt, 6)),
+            agentId: String(cString: sqlite3_column_text(stmt, 7)),
+            conversationTitle: sqlite3_column_text(stmt, 8).map { String(cString: $0) }
+        )
     }
 
     // MARK: - Pending Signals
@@ -958,16 +1035,18 @@ public final class MemoryDatabase: @unchecked Sendable {
             bind: { stmt in Self.bindText(stmt, index: 1, value: agentId) },
             process: { stmt in
                 while sqlite3_step(stmt) == SQLITE_ROW {
-                    signals.append(PendingSignal(
-                        id: Int(sqlite3_column_int(stmt, 0)),
-                        agentId: String(cString: sqlite3_column_text(stmt, 1)),
-                        conversationId: String(cString: sqlite3_column_text(stmt, 2)),
-                        signalType: String(cString: sqlite3_column_text(stmt, 3)),
-                        userMessage: String(cString: sqlite3_column_text(stmt, 4)),
-                        assistantMessage: sqlite3_column_text(stmt, 5).map { String(cString: $0) },
-                        status: String(cString: sqlite3_column_text(stmt, 6)),
-                        createdAt: String(cString: sqlite3_column_text(stmt, 7))
-                    ))
+                    signals.append(
+                        PendingSignal(
+                            id: Int(sqlite3_column_int(stmt, 0)),
+                            agentId: String(cString: sqlite3_column_text(stmt, 1)),
+                            conversationId: String(cString: sqlite3_column_text(stmt, 2)),
+                            signalType: String(cString: sqlite3_column_text(stmt, 3)),
+                            userMessage: String(cString: sqlite3_column_text(stmt, 4)),
+                            assistantMessage: sqlite3_column_text(stmt, 5).map { String(cString: $0) },
+                            status: String(cString: sqlite3_column_text(stmt, 6)),
+                            createdAt: String(cString: sqlite3_column_text(stmt, 7))
+                        )
+                    )
                 }
             }
         )
@@ -1042,8 +1121,14 @@ public final class MemoryDatabase: @unchecked Sendable {
     // MARK: - Processing Log
 
     public func insertProcessingLog(
-        agentId: String, taskType: String, model: String?, status: String,
-        details: String? = nil, inputTokens: Int? = nil, outputTokens: Int? = nil, durationMs: Int? = nil
+        agentId: String,
+        taskType: String,
+        model: String?,
+        status: String,
+        details: String? = nil,
+        inputTokens: Int? = nil,
+        outputTokens: Int? = nil,
+        durationMs: Int? = nil
     ) throws {
         _ = try executeUpdate(
             """
@@ -1075,7 +1160,8 @@ public final class MemoryDatabase: @unchecked Sendable {
             process: { stmt in
                 if sqlite3_step(stmt) == SQLITE_ROW {
                     stats.totalCalls = Int(sqlite3_column_int(stmt, 0))
-                    stats.avgDurationMs = sqlite3_column_type(stmt, 1) != SQLITE_NULL ? Int(sqlite3_column_int(stmt, 1)) : 0
+                    stats.avgDurationMs =
+                        sqlite3_column_type(stmt, 1) != SQLITE_NULL ? Int(sqlite3_column_int(stmt, 1)) : 0
                     stats.successCount = Int(sqlite3_column_int(stmt, 2))
                     stats.errorCount = Int(sqlite3_column_int(stmt, 3))
                 }
@@ -1097,11 +1183,11 @@ public final class MemoryDatabase: @unchecked Sendable {
     public func searchMemoryEntries(query: String, agentId: String? = nil) throws -> [MemoryEntry] {
         var entries: [MemoryEntry] = []
         var sql = """
-            SELECT id, agent_id, type, content, confidence, model, source_conversation_id, tags, status,
-                   superseded_by, created_at, last_accessed, access_count
-            FROM memory_entries
-            WHERE status = 'active' AND content LIKE '%' || ?1 || '%'
-        """
+                SELECT id, agent_id, type, content, confidence, model, source_conversation_id, tags, status,
+                       superseded_by, created_at, last_accessed, access_count
+                FROM memory_entries
+                WHERE status = 'active' AND content LIKE '%' || ?1 || '%'
+            """
         if agentId != nil { sql += " AND agent_id = ?2" }
         sql += " ORDER BY last_accessed DESC LIMIT 20"
 
@@ -1123,11 +1209,11 @@ public final class MemoryDatabase: @unchecked Sendable {
     public func searchSummaries(query: String, agentId: String? = nil, days: Int = 30) throws -> [ConversationSummary] {
         var summaries: [ConversationSummary] = []
         var sql = """
-            SELECT id, agent_id, conversation_id, summary, token_count, model, conversation_at, status, created_at
-            FROM conversation_summaries
-            WHERE status = 'active' AND summary LIKE '%' || ?1 || '%'
-              AND conversation_at >= datetime('now', '-' || ?2 || ' days')
-        """
+                SELECT id, agent_id, conversation_id, summary, token_count, model, conversation_at, status, created_at
+                FROM conversation_summaries
+                WHERE status = 'active' AND summary LIKE '%' || ?1 || '%'
+                  AND conversation_at >= datetime('now', '-' || ?2 || ' days')
+            """
         if agentId != nil { sql += " AND agent_id = ?3" }
         sql += " ORDER BY conversation_at DESC LIMIT 20"
 
@@ -1145,6 +1231,205 @@ public final class MemoryDatabase: @unchecked Sendable {
             }
         )
         return summaries
+    }
+
+    // MARK: - Knowledge Graph
+
+    public func resolveEntity(name: String, type: String, model: String) throws -> GraphEntity {
+        if let existing = try findEntity(name: name, type: type) {
+            return existing
+        }
+        let id = deterministicId(name.lowercased(), type)
+        let entity = GraphEntity(id: id, name: name, type: type, model: model)
+        try insertEntity(entity)
+        return entity
+    }
+
+    func findEntity(name: String, type: String) throws -> GraphEntity? {
+        var entity: GraphEntity?
+        try prepareAndExecute(
+            "SELECT id, name, type, metadata, model, created_at, updated_at FROM entities WHERE name = ?1 COLLATE NOCASE AND type = ?2",
+            bind: { stmt in
+                Self.bindText(stmt, index: 1, value: name)
+                Self.bindText(stmt, index: 2, value: type)
+            },
+            process: { stmt in
+                if sqlite3_step(stmt) == SQLITE_ROW {
+                    entity = GraphEntity(
+                        id: String(cString: sqlite3_column_text(stmt, 0)),
+                        name: String(cString: sqlite3_column_text(stmt, 1)),
+                        type: String(cString: sqlite3_column_text(stmt, 2)),
+                        metadata: sqlite3_column_text(stmt, 3).map { String(cString: $0) },
+                        model: String(cString: sqlite3_column_text(stmt, 4)),
+                        createdAt: String(cString: sqlite3_column_text(stmt, 5)),
+                        updatedAt: String(cString: sqlite3_column_text(stmt, 6))
+                    )
+                }
+            }
+        )
+        return entity
+    }
+
+    func insertEntity(_ entity: GraphEntity) throws {
+        _ = try executeUpdate(
+            """
+            INSERT OR IGNORE INTO entities (id, name, type, metadata, model)
+            VALUES (?1, ?2, ?3, ?4, ?5)
+            """
+        ) { stmt in
+            Self.bindText(stmt, index: 1, value: entity.id)
+            Self.bindText(stmt, index: 2, value: entity.name)
+            Self.bindText(stmt, index: 3, value: entity.type)
+            Self.bindText(stmt, index: 4, value: entity.metadata)
+            Self.bindText(stmt, index: 5, value: entity.model)
+        }
+    }
+
+    public func insertRelationship(
+        sourceId: String,
+        targetId: String,
+        relation: String,
+        confidence: Double,
+        model: String
+    ) throws {
+        let existing = try findActiveRelationship(sourceId: sourceId, relation: relation)
+        if let existing, existing.targetId != targetId {
+            try invalidateRelationship(id: existing.id)
+        }
+
+        let id = deterministicId(sourceId, relation, targetId)
+        _ = try executeUpdate(
+            """
+            INSERT OR IGNORE INTO relationships (id, source_id, target_id, relation, confidence, model)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+            """
+        ) { stmt in
+            Self.bindText(stmt, index: 1, value: id)
+            Self.bindText(stmt, index: 2, value: sourceId)
+            Self.bindText(stmt, index: 3, value: targetId)
+            Self.bindText(stmt, index: 4, value: relation)
+            sqlite3_bind_double(stmt, 5, confidence)
+            Self.bindText(stmt, index: 6, value: model)
+        }
+    }
+
+    func findActiveRelationship(sourceId: String, relation: String) throws -> GraphRelationship? {
+        var rel: GraphRelationship?
+        try prepareAndExecute(
+            """
+            SELECT id, source_id, target_id, relation, confidence, model, valid_from, valid_until, created_at
+            FROM relationships
+            WHERE source_id = ?1 AND relation = ?2 AND valid_until IS NULL
+            LIMIT 1
+            """,
+            bind: { stmt in
+                Self.bindText(stmt, index: 1, value: sourceId)
+                Self.bindText(stmt, index: 2, value: relation)
+            },
+            process: { stmt in
+                if sqlite3_step(stmt) == SQLITE_ROW {
+                    rel = GraphRelationship(
+                        id: String(cString: sqlite3_column_text(stmt, 0)),
+                        sourceId: String(cString: sqlite3_column_text(stmt, 1)),
+                        targetId: String(cString: sqlite3_column_text(stmt, 2)),
+                        relation: String(cString: sqlite3_column_text(stmt, 3)),
+                        confidence: sqlite3_column_double(stmt, 4),
+                        model: String(cString: sqlite3_column_text(stmt, 5)),
+                        validFrom: String(cString: sqlite3_column_text(stmt, 6)),
+                        validUntil: sqlite3_column_text(stmt, 7).map { String(cString: $0) },
+                        createdAt: String(cString: sqlite3_column_text(stmt, 8))
+                    )
+                }
+            }
+        )
+        return rel
+    }
+
+    func invalidateRelationship(id: String) throws {
+        _ = try executeUpdate(
+            "UPDATE relationships SET valid_until = datetime('now') WHERE id = ?1"
+        ) { stmt in
+            Self.bindText(stmt, index: 1, value: id)
+        }
+    }
+
+    public func queryEntityGraph(name: String, depth: Int) throws -> [GraphResult] {
+        let maxDepth = min(depth, 4)
+        var results: [GraphResult] = []
+        try prepareAndExecute(
+            """
+            WITH RECURSIVE walk(entity_id, entity_name, entity_type, depth, path) AS (
+                SELECT id, name, type, 0, name
+                FROM entities WHERE name LIKE ?1 COLLATE NOCASE
+                UNION ALL
+                SELECT e.id, e.name, e.type, w.depth + 1,
+                       w.path || ' -> ' || r.relation || ' -> ' || e.name
+                FROM walk w
+                JOIN relationships r ON r.source_id = w.entity_id AND r.valid_until IS NULL
+                JOIN entities e ON e.id = r.target_id
+                WHERE w.depth < ?2
+            )
+            SELECT entity_name, entity_type, depth, path FROM walk WHERE depth > 0
+            """,
+            bind: { stmt in
+                Self.bindText(stmt, index: 1, value: name)
+                sqlite3_bind_int(stmt, 2, Int32(maxDepth))
+            },
+            process: { stmt in
+                while sqlite3_step(stmt) == SQLITE_ROW {
+                    results.append(
+                        GraphResult(
+                            entityName: String(cString: sqlite3_column_text(stmt, 0)),
+                            entityType: String(cString: sqlite3_column_text(stmt, 1)),
+                            depth: Int(sqlite3_column_int(stmt, 2)),
+                            path: String(cString: sqlite3_column_text(stmt, 3))
+                        )
+                    )
+                }
+            }
+        )
+        return results
+    }
+
+    public func queryRelationships(relation: String) throws -> [GraphResult] {
+        var results: [GraphResult] = []
+        try prepareAndExecute(
+            """
+            SELECT e_src.name, e_src.type, e_tgt.name, e_tgt.type, r.relation
+            FROM relationships r
+            JOIN entities e_src ON e_src.id = r.source_id
+            JOIN entities e_tgt ON e_tgt.id = r.target_id
+            WHERE r.relation = ?1 AND r.valid_until IS NULL
+            ORDER BY r.created_at DESC
+            LIMIT 50
+            """,
+            bind: { stmt in
+                Self.bindText(stmt, index: 1, value: relation)
+            },
+            process: { stmt in
+                while sqlite3_step(stmt) == SQLITE_ROW {
+                    let srcName = String(cString: sqlite3_column_text(stmt, 0))
+                    let srcType = String(cString: sqlite3_column_text(stmt, 1))
+                    let tgtName = String(cString: sqlite3_column_text(stmt, 2))
+                    let rel = String(cString: sqlite3_column_text(stmt, 4))
+                    results.append(
+                        GraphResult(
+                            entityName: srcName,
+                            entityType: srcType,
+                            depth: 1,
+                            path: "\(srcName) -> \(rel) -> \(tgtName)"
+                        )
+                    )
+                }
+            }
+        )
+        return results
+    }
+
+    private func deterministicId(_ components: String...) -> String {
+        let input = components.joined(separator: ":")
+        let hash = SHA256.hash(data: Data(input.utf8))
+        return Array(hash).prefix(16).map { String(format: "%02x", $0) }.joined()
     }
 }
 

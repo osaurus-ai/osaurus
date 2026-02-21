@@ -28,19 +28,23 @@ public actor MemoryService {
         guard config.enabled else { return }
 
         let signalNames = signals.map(\.rawValue).joined(separator: ", ")
-        print("[Memory] Immediate extraction starting — signals: [\(signalNames)], agent: \(agentId), model: \(config.coreModelIdentifier)")
+        print(
+            "[Memory] Immediate extraction starting — signals: [\(signalNames)], agent: \(agentId), model: \(config.coreModelIdentifier)"
+        )
 
         let startTime = Date()
 
         for signal in signals {
             do {
-                try db.insertPendingSignal(PendingSignal(
-                    agentId: agentId,
-                    conversationId: conversationId,
-                    signalType: signal.rawValue,
-                    userMessage: userMessage,
-                    assistantMessage: assistantMessage
-                ))
+                try db.insertPendingSignal(
+                    PendingSignal(
+                        agentId: agentId,
+                        conversationId: conversationId,
+                        signalType: signal.rawValue,
+                        userMessage: userMessage,
+                        assistantMessage: assistantMessage
+                    )
+                )
             } catch {
                 print("[Memory] Failed to insert pending signal: \(error)")
             }
@@ -60,65 +64,51 @@ public actor MemoryService {
             let response = try await callCoreModel(prompt: prompt, systemPrompt: extractionSystemPrompt, config: config)
             print("[Memory] Core model responded (\(response.count) chars)")
 
-            let entries = parseExtractionResponse(response, agentId: agentId, conversationId: conversationId, model: config.coreModelIdentifier)
-            var contradictions = 0
-            for entry in entries {
-                if let contradiction = findContradiction(entry: entry, existing: existingEntries) {
-                    do {
-                        try db.supersede(entryId: contradiction.id, by: entry.id, reason: "Contradicted by newer information")
-                        await MemorySearchService.shared.removeDocument(id: contradiction.id)
-                        contradictions += 1
-                    } catch {
-                        print("[Memory] Failed to supersede entry: \(error)")
-                    }
-                }
-                do {
-                    try db.insertMemoryEntry(entry)
-                    await MemorySearchService.shared.indexMemoryEntry(entry)
-                    print("[Memory] Stored entry: [\(entry.type.rawValue)] \"\(entry.content.prefix(80))\"")
-                } catch {
-                    print("[Memory] Failed to insert entry: \(error)")
-                }
-            }
+            let entries = parseExtractionResponse(
+                response,
+                agentId: agentId,
+                conversationId: conversationId,
+                model: config.coreModelIdentifier
+            )
+            let contradictions = await insertEntries(entries, existing: existingEntries)
 
             let profileFacts = parseProfileContributions(response)
-            for fact in profileFacts {
-                if isDuplicateContribution(fact) {
-                    print("[Memory] Skipping duplicate profile fact: \"\(fact.prefix(80))\"")
-                    continue
-                }
-                do {
-                    try db.insertProfileEvent(ProfileEvent(
-                        agentId: agentId,
-                        conversationId: conversationId,
-                        eventType: "contribution",
-                        content: fact,
-                        model: config.coreModelIdentifier
-                    ))
-                    print("[Memory] Stored profile fact: \"\(fact.prefix(80))\"")
-                } catch {
-                    print("[Memory] Failed to insert profile fact: \(error)")
-                }
-            }
+            insertProfileFacts(
+                profileFacts,
+                agentId: agentId,
+                conversationId: conversationId,
+                model: config.coreModelIdentifier
+            )
+
+            let graphData = parseGraphData(response)
+            insertGraphData(graphData, model: config.coreModelIdentifier)
 
             let durationMs = Int(Date().timeIntervalSince(startTime) * 1000)
             try? db.insertProcessingLog(
-                agentId: agentId, taskType: "immediate_extraction",
-                model: config.coreModelIdentifier, status: "success",
-                inputTokens: prompt.count / 4, outputTokens: response.count / 4,
+                agentId: agentId,
+                taskType: "immediate_extraction",
+                model: config.coreModelIdentifier,
+                status: "success",
+                inputTokens: prompt.count / 4,
+                outputTokens: response.count / 4,
                 durationMs: durationMs
             )
-            print("[Memory] Immediate extraction completed in \(durationMs)ms — \(entries.count) entries (\(contradictions) contradictions), \(profileFacts.count) profile facts")
+            print(
+                "[Memory] Immediate extraction completed in \(durationMs)ms — \(entries.count) entries (\(contradictions) contradictions), \(profileFacts.count) profile facts"
+            )
 
-            do { try db.markSignalsProcessed(agentId: agentId) }
-            catch { print("[Memory] Failed to mark signals processed: \(error)") }
+            do { try db.markSignalsProcessed(agentId: agentId) } catch {
+                print("[Memory] Failed to mark signals processed: \(error)")
+            }
 
             try? await checkProfileRegeneration(config: config)
         } catch {
             print("[Memory] Immediate extraction failed: \(error)")
             try? db.insertProcessingLog(
-                agentId: agentId, taskType: "immediate_extraction",
-                model: config.coreModelIdentifier, status: "error",
+                agentId: agentId,
+                taskType: "immediate_extraction",
+                model: config.coreModelIdentifier,
+                status: "error",
                 details: error.localizedDescription
             )
         }
@@ -138,7 +128,9 @@ public actor MemoryService {
 
             let pendingSignals = try db.loadPendingSignals(agentId: agentId)
             let existingEntries = try db.loadActiveEntries(agentId: agentId)
-            print("[Memory] Post-activity: \(pendingSignals.count) pending signals, \(existingEntries.count) existing entries")
+            print(
+                "[Memory] Post-activity: \(pendingSignals.count) pending signals, \(existingEntries.count) existing entries"
+            )
 
             guard !pendingSignals.isEmpty else {
                 print("[Memory] Post-activity: no pending signals, skipping")
@@ -155,46 +147,23 @@ public actor MemoryService {
             let response = try await callCoreModel(prompt: prompt, systemPrompt: extractionSystemPrompt, config: config)
             print("[Memory] Post-activity: core model responded (\(response.count) chars)")
 
-            let extracted = parseExtractionResponse(response, agentId: agentId, conversationId: pendingSignals.first?.conversationId ?? "", model: config.coreModelIdentifier)
-            var contradictions = 0
-            for entry in extracted {
-                if let contradiction = findContradiction(entry: entry, existing: existingEntries) {
-                    do {
-                        try db.supersede(entryId: contradiction.id, by: entry.id, reason: "Contradicted by newer information")
-                        await MemorySearchService.shared.removeDocument(id: contradiction.id)
-                        contradictions += 1
-                    } catch {
-                        print("[Memory] Failed to supersede entry: \(error)")
-                    }
-                }
-                do {
-                    try db.insertMemoryEntry(entry)
-                    await MemorySearchService.shared.indexMemoryEntry(entry)
-                } catch {
-                    print("[Memory] Failed to insert entry during post-activity: \(error)")
-                }
-            }
+            let extracted = parseExtractionResponse(
+                response,
+                agentId: agentId,
+                conversationId: pendingSignals.first?.conversationId ?? "",
+                model: config.coreModelIdentifier
+            )
+            let contradictions = await insertEntries(extracted, existing: existingEntries)
 
             let profileFacts = parseProfileContributions(response)
-            for fact in profileFacts {
-                if isDuplicateContribution(fact) {
-                    print("[Memory] Skipping duplicate profile fact: \"\(fact.prefix(80))\"")
-                    continue
-                }
-                do {
-                    try db.insertProfileEvent(ProfileEvent(
-                        agentId: agentId,
-                        eventType: "contribution",
-                        content: fact,
-                        model: config.coreModelIdentifier
-                    ))
-                } catch {
-                    print("[Memory] Failed to insert profile fact during post-activity: \(error)")
-                }
-            }
+            insertProfileFacts(profileFacts, agentId: agentId, model: config.coreModelIdentifier)
 
-            let hasSummary = parseSummary(response) != nil
-            if let summary = parseSummary(response) {
+            let graphData = parseGraphData(response)
+            insertGraphData(graphData, model: config.coreModelIdentifier)
+
+            let summary = parseSummary(response)
+            let hasSummary = summary != nil
+            if let summary {
                 let tokenCount = max(1, summary.count / 4)
                 let conversationId = pendingSignals.first?.conversationId ?? agentId
                 let summaryObj = ConversationSummary(
@@ -209,26 +178,34 @@ public actor MemoryService {
                 await MemorySearchService.shared.indexSummary(summaryObj)
             }
 
-            do { try db.markSignalsProcessed(agentId: agentId) }
-            catch { print("[Memory] Failed to mark signals processed: \(error)") }
+            do { try db.markSignalsProcessed(agentId: agentId) } catch {
+                print("[Memory] Failed to mark signals processed: \(error)")
+            }
             try? db.markAgentProcessing(agentId: agentId, status: "idle")
 
             let durationMs = Int(Date().timeIntervalSince(startTime) * 1000)
             try? db.insertProcessingLog(
-                agentId: agentId, taskType: "post_activity",
-                model: config.coreModelIdentifier, status: "success",
-                inputTokens: prompt.count / 4, outputTokens: response.count / 4,
+                agentId: agentId,
+                taskType: "post_activity",
+                model: config.coreModelIdentifier,
+                status: "success",
+                inputTokens: prompt.count / 4,
+                outputTokens: response.count / 4,
                 durationMs: durationMs
             )
-            print("[Memory] Post-activity completed in \(durationMs)ms — \(extracted.count) entries (\(contradictions) contradictions), \(profileFacts.count) profile facts, summary: \(hasSummary)")
+            print(
+                "[Memory] Post-activity completed in \(durationMs)ms — \(extracted.count) entries (\(contradictions) contradictions), \(profileFacts.count) profile facts, summary: \(hasSummary)"
+            )
 
             try? await checkProfileRegeneration(config: config)
         } catch {
             print("[Memory] Post-activity processing failed for \(agentId): \(error)")
             try? db.markAgentProcessing(agentId: agentId, status: "idle")
             try? db.insertProcessingLog(
-                agentId: agentId, taskType: "post_activity",
-                model: config.coreModelIdentifier, status: "error",
+                agentId: agentId,
+                taskType: "post_activity",
+                model: config.coreModelIdentifier,
+                status: "error",
                 details: error.localizedDescription
             )
         }
@@ -253,13 +230,14 @@ public actor MemoryService {
             let allContributions = try db.loadActiveContributions()
             let edits = try db.loadUserEdits()
             let contributions = allContributions.filter { $0.incorporatedIn == nil }
-            print("[Memory] Profile regen: \(contributions.count) new contributions (\(allContributions.count) total), \(edits.count) edits, current version: \(currentProfile?.version ?? 0)")
+            print(
+                "[Memory] Profile regen: \(contributions.count) new contributions (\(allContributions.count) total), \(edits.count) edits, current version: \(currentProfile?.version ?? 0)"
+            )
 
             let (systemPrompt, userPrompt) = buildProfileRegenerationPrompt(
                 currentProfile: currentProfile,
                 contributions: contributions,
-                userEdits: edits,
-                maxTokens: cfg.profileMaxTokens
+                userEdits: edits
             )
 
             let response = try await callCoreModel(prompt: userPrompt, systemPrompt: systemPrompt, config: cfg)
@@ -277,26 +255,33 @@ public actor MemoryService {
             try db.saveUserProfile(profile)
             try? db.markContributionsIncorporated(version: version)
 
-            try? db.insertProfileEvent(ProfileEvent(
-                agentId: "system",
-                eventType: "regeneration",
-                content: "Profile regenerated to v\(version)",
-                model: cfg.coreModelIdentifier
-            ))
+            try? db.insertProfileEvent(
+                ProfileEvent(
+                    agentId: "system",
+                    eventType: "regeneration",
+                    content: "Profile regenerated to v\(version)",
+                    model: cfg.coreModelIdentifier
+                )
+            )
 
             let durationMs = Int(Date().timeIntervalSince(startTime) * 1000)
             try? db.insertProcessingLog(
-                agentId: "system", taskType: "profile_regeneration",
-                model: cfg.coreModelIdentifier, status: "success",
-                inputTokens: userPrompt.count / 4, outputTokens: response.count / 4,
+                agentId: "system",
+                taskType: "profile_regeneration",
+                model: cfg.coreModelIdentifier,
+                status: "success",
+                inputTokens: userPrompt.count / 4,
+                outputTokens: response.count / 4,
                 durationMs: durationMs
             )
             print("[Memory] Profile regenerated to v\(version) in \(durationMs)ms (\(tokenCount) tokens)")
         } catch {
             print("[Memory] Profile regeneration failed: \(error)")
             try? db.insertProcessingLog(
-                agentId: "system", taskType: "profile_regeneration",
-                model: cfg.coreModelIdentifier, status: "error",
+                agentId: "system",
+                taskType: "profile_regeneration",
+                model: cfg.coreModelIdentifier,
+                status: "error",
                 details: error.localizedDescription
             )
         }
@@ -343,7 +328,9 @@ public actor MemoryService {
 
     private let localServices: [ModelService] = [FoundationModelService(), MLXService.shared]
 
-    private func callCoreModel(prompt: String, systemPrompt: String? = nil, config: MemoryConfiguration) async throws -> String {
+    private func callCoreModel(prompt: String, systemPrompt: String? = nil, config: MemoryConfiguration) async throws
+        -> String
+    {
         let model = config.coreModelIdentifier
         var messages: [ChatMessage] = []
         if let systemPrompt {
@@ -371,7 +358,9 @@ public actor MemoryService {
                 requestedModel: model
             )
         case .none:
-            print("[Memory] No service found for model '\(model)' — local: \(localServices.map(\.id)), remote: \(remoteServices.map(\.id))")
+            print(
+                "[Memory] No service found for model '\(model)' — local: \(localServices.map(\.id)), remote: \(remoteServices.map(\.id))"
+            )
             throw MemoryServiceError.coreModelUnavailable(model)
         }
     }
@@ -382,7 +371,9 @@ public actor MemoryService {
         You extract structured memories from conversations. \
         Respond ONLY with a valid JSON object. Never ask questions. Never refuse. \
         The JSON must have: "entries" (array of objects with "type", "content", "confidence", "tags"), \
-        "profile_facts" (array of strings), and "summary" (string or null).
+        "profile_facts" (array of strings), "summary" (string or null), \
+        "entities" (array of objects with "name" and "type"), \
+        "relationships" (array of objects with "source", "relation", "target", "confidence").
         """
 
     private func buildExtractionPrompt(
@@ -404,11 +395,11 @@ public actor MemoryService {
 
         let signalNames = signals.map(\.rawValue).joined(separator: ", ")
         prompt += """
-        Detected signals: \(signalNames)
+            Detected signals: \(signalNames)
 
-        User message:
-        \(userMessage)
-        """
+            User message:
+            \(userMessage)
+            """
 
         if let assistant = assistantMessage {
             prompt += "\n\nAssistant response:\n\(assistant)"
@@ -416,11 +407,13 @@ public actor MemoryService {
 
         prompt += """
 
-        Extract memories as JSON with:
-        - "entries": array, each with "type" (fact/preference/decision/correction/commitment/relationship/skill), "content" (concise statement), "confidence" (0.0-1.0), "tags" (keywords array)
-        - "profile_facts": array of strings — global facts about this user for their profile
-        - "summary": null
-        """
+            Extract memories as JSON with:
+            - "entries": array, each with "type" (fact/preference/decision/correction/commitment/relationship/skill), "content" (concise statement), "confidence" (0.0-1.0), "tags" (keywords array)
+            - "profile_facts": array of strings — global facts about this user for their profile
+            - "summary": null
+            - "entities": array, each with "name" (string), "type" (person/company/place/project/tool/concept/event)
+            - "relationships": array, each with "source" (entity name), "relation" (verb like works_on/lives_in/uses/knows/manages/created_by/part_of), "target" (entity name), "confidence" (0.0-1.0)
+            """
 
         return prompt
     }
@@ -447,11 +440,13 @@ public actor MemoryService {
 
         prompt += """
 
-        Extract memories as JSON with:
-        - "entries": array of new entries, each with "type", "content", "confidence", "tags"
-        - "profile_facts": array of strings — global facts about this user for their profile
-        - "summary": a 2-4 sentence summary of this conversation session
-        """
+            Extract memories as JSON with:
+            - "entries": array of new entries, each with "type", "content", "confidence", "tags"
+            - "profile_facts": array of strings — global facts about this user for their profile
+            - "summary": a 2-4 sentence summary of this conversation session
+            - "entities": array, each with "name" (string), "type" (person/company/place/project/tool/concept/event)
+            - "relationships": array, each with "source" (entity name), "relation" (verb like works_on/lives_in/uses/knows/manages/created_by/part_of), "target" (entity name), "confidence" (0.0-1.0)
+            """
 
         return prompt
     }
@@ -459,8 +454,7 @@ public actor MemoryService {
     private func buildProfileRegenerationPrompt(
         currentProfile: UserProfile?,
         contributions: [ProfileEvent],
-        userEdits: [UserEdit],
-        maxTokens: Int
+        userEdits: [UserEdit]
     ) -> (system: String, user: String) {
         let system = """
             You summarize known facts about a user into a short profile. \
@@ -499,26 +493,31 @@ public actor MemoryService {
         let trimmed = response.trimmingCharacters(in: .whitespacesAndNewlines)
 
         if let data = trimmed.data(using: .utf8),
-           (try? JSONSerialization.jsonObject(with: data)) != nil {
+            (try? JSONSerialization.jsonObject(with: data)) != nil
+        {
             return data
         }
 
         let fencePattern = #"```(?:json)?\s*\n?([\s\S]*?)```"#
         if let regex = try? NSRegularExpression(pattern: fencePattern),
-           let match = regex.firstMatch(in: trimmed, range: NSRange(trimmed.startIndex..., in: trimmed)),
-           let contentRange = Range(match.range(at: 1), in: trimmed) {
+            let match = regex.firstMatch(in: trimmed, range: NSRange(trimmed.startIndex..., in: trimmed)),
+            let contentRange = Range(match.range(at: 1), in: trimmed)
+        {
             let jsonStr = String(trimmed[contentRange]).trimmingCharacters(in: .whitespacesAndNewlines)
             if let data = jsonStr.data(using: .utf8),
-               (try? JSONSerialization.jsonObject(with: data)) != nil {
+                (try? JSONSerialization.jsonObject(with: data)) != nil
+            {
                 return data
             }
         }
 
         if let openIdx = trimmed.firstIndex(of: "{"),
-           let closeIdx = trimmed.lastIndex(of: "}"), closeIdx > openIdx {
-            let jsonStr = String(trimmed[openIdx...closeIdx])
+            let closeIdx = trimmed.lastIndex(of: "}"), closeIdx > openIdx
+        {
+            let jsonStr = String(trimmed[openIdx ... closeIdx])
             if let data = jsonStr.data(using: .utf8),
-               (try? JSONSerialization.jsonObject(with: data)) != nil {
+                (try? JSONSerialization.jsonObject(with: data)) != nil
+            {
                 return data
             }
         }
@@ -527,7 +526,9 @@ public actor MemoryService {
         return nil
     }
 
-    private func parseExtractionResponse(_ response: String, agentId: String, conversationId: String, model: String) -> [MemoryEntry] {
+    private func parseExtractionResponse(_ response: String, agentId: String, conversationId: String, model: String)
+        -> [MemoryEntry]
+    {
         guard let data = extractJSON(from: response) else {
             print("[Memory] parseExtractionResponse: no JSON found in response")
             return []
@@ -544,7 +545,9 @@ public actor MemoryService {
         }
 
         guard let result = try? JSONDecoder().decode(ExtractionResult.self, from: data) else {
-            print("[Memory] JSON decoded but doesn't match expected schema: \(String(data: data, encoding: .utf8)?.prefix(200) ?? "nil")")
+            print(
+                "[Memory] JSON decoded but doesn't match expected schema: \(String(data: data, encoding: .utf8)?.prefix(200) ?? "nil")"
+            )
             return []
         }
 
@@ -595,6 +598,24 @@ public actor MemoryService {
         return (try? JSONDecoder().decode(PartialResult.self, from: data))?.summary
     }
 
+    private func parseGraphData(_ response: String) -> GraphExtractionResult {
+        guard let data = extractJSON(from: response) else { return GraphExtractionResult() }
+
+        struct PartialResult: Decodable {
+            let entities: [GraphExtractionResult.EntityData]?
+            let relationships: [GraphExtractionResult.RelationshipData]?
+        }
+
+        guard let result = try? JSONDecoder().decode(PartialResult.self, from: data) else {
+            return GraphExtractionResult()
+        }
+
+        return GraphExtractionResult(
+            entities: result.entities ?? [],
+            relationships: result.relationships ?? []
+        )
+    }
+
     private func stripPreamble(_ response: String) -> String {
         var text = response.trimmingCharacters(in: .whitespacesAndNewlines)
 
@@ -615,14 +636,96 @@ public actor MemoryService {
         return text
     }
 
-    // MARK: - Contribution Deduplication
+    // MARK: - Entry & Contribution Helpers
+
+    /// Insert parsed entries, checking each for contradictions against existing entries.
+    /// Returns the number of contradictions resolved.
+    private func insertEntries(_ entries: [MemoryEntry], existing: [MemoryEntry]) async -> Int {
+        var contradictions = 0
+        for entry in entries {
+            if let contradiction = findContradiction(entry: entry, existing: existing) {
+                do {
+                    try db.supersede(
+                        entryId: contradiction.id,
+                        by: entry.id,
+                        reason: "Contradicted by newer information"
+                    )
+                    await MemorySearchService.shared.removeDocument(id: contradiction.id)
+                    contradictions += 1
+                } catch {
+                    print("[Memory] Failed to supersede entry: \(error)")
+                }
+            }
+            do {
+                try db.insertMemoryEntry(entry)
+                await MemorySearchService.shared.indexMemoryEntry(entry)
+                print("[Memory] Stored entry: [\(entry.type.rawValue)] \"\(entry.content.prefix(80))\"")
+            } catch {
+                print("[Memory] Failed to insert entry: \(error)")
+            }
+        }
+        return contradictions
+    }
+
+    /// Insert profile facts, skipping duplicates. Returns number of facts stored.
+    @discardableResult
+    private func insertProfileFacts(_ facts: [String], agentId: String, conversationId: String? = nil, model: String)
+        -> Int
+    {
+        var stored = 0
+        for fact in facts {
+            if isDuplicateContribution(fact) {
+                print("[Memory] Skipping duplicate profile fact: \"\(fact.prefix(80))\"")
+                continue
+            }
+            do {
+                try db.insertProfileEvent(
+                    ProfileEvent(
+                        agentId: agentId,
+                        conversationId: conversationId,
+                        eventType: "contribution",
+                        content: fact,
+                        model: model
+                    )
+                )
+                stored += 1
+                print("[Memory] Stored profile fact: \"\(fact.prefix(80))\"")
+            } catch {
+                print("[Memory] Failed to insert profile fact: \(error)")
+            }
+        }
+        return stored
+    }
+
+    private func insertGraphData(_ graphData: GraphExtractionResult, model: String) {
+        for entityData in graphData.entities {
+            do {
+                _ = try db.resolveEntity(name: entityData.name, type: entityData.type, model: model)
+            } catch {
+                print("[Memory] Failed to resolve entity '\(entityData.name)': \(error)")
+            }
+        }
+        for relData in graphData.relationships {
+            do {
+                let source = try db.resolveEntity(name: relData.source, type: "unknown", model: model)
+                let target = try db.resolveEntity(name: relData.target, type: "unknown", model: model)
+                try db.insertRelationship(
+                    sourceId: source.id,
+                    targetId: target.id,
+                    relation: relData.relation,
+                    confidence: relData.confidence ?? 0.8,
+                    model: model
+                )
+            } catch {
+                print("[Memory] Failed to insert relationship: \(error)")
+            }
+        }
+    }
 
     private func isDuplicateContribution(_ fact: String) -> Bool {
         let existing = (try? db.loadActiveContributions()) ?? []
         return existing.contains { jaccardSimilarity($0.content, fact) > 0.6 }
     }
-
-    // MARK: - Contradiction Detection
 
     private func findContradiction(entry: MemoryEntry, existing: [MemoryEntry]) -> MemoryEntry? {
         for e in existing {
@@ -652,7 +755,9 @@ public actor MemoryService {
         let threshold = hasProfile ? config.profileRegenerateThreshold : 1
 
         if count >= threshold {
-            print("[Memory] Profile regeneration triggered (\(count) contributions since last regen, threshold: \(threshold), existing profile: \(hasProfile))")
+            print(
+                "[Memory] Profile regeneration triggered (\(count) contributions since last regen, threshold: \(threshold), existing profile: \(hasProfile))"
+            )
             await regenerateProfile(config: config)
         }
     }

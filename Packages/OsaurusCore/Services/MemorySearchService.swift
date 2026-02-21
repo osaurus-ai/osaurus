@@ -80,7 +80,9 @@ public actor MemorySearchService {
     public func indexSummary(_ summary: ConversationSummary) async {
         guard let db = vectorDB else { return }
         do {
-            let id = deterministicUUID(from: "summary:\(summary.agentId):\(summary.conversationId):\(summary.conversationAt)")
+            let id = deterministicUUID(
+                from: "summary:\(summary.agentId):\(summary.conversationId):\(summary.conversationAt)"
+            )
             _ = try await db.addDocument(text: summary.summary, id: id)
         } catch {
             print("[Memory] Failed to index summary: \(error)")
@@ -98,6 +100,9 @@ public actor MemorySearchService {
     }
 
     // MARK: - Search
+    // NOTE: The vector search paths below load all rows from SQLite and filter in-memory.
+    // At scale (thousands of entries), switch to fetching matched IDs from VecturaKit
+    // then using a WHERE id IN (...) SQL query to avoid loading everything.
 
     /// Search memory entries using hybrid search (vector + BM25).
     /// Falls back to SQLite text search when VecturaKit is unavailable.
@@ -109,12 +114,12 @@ public actor MemorySearchService {
         if let db = vectorDB {
             do {
                 let results = try await db.search(query: .text(query), numResults: topK, threshold: 0.3)
-                let matchedIds = Set(results.map { $0.id.uuidString })
+                let matchedIds = Set(results.map { $0.id })
                 let allEntries = (try? MemoryDatabase.shared.loadAllActiveEntries()) ?? []
                 return allEntries.filter { entry in
-                    let idMatch = matchedIds.contains(entry.id)
+                    guard let entryUUID = UUID(uuidString: entry.id) else { return false }
                     let agentMatch = agentId == nil || entry.agentId == agentId
-                    return idMatch && agentMatch
+                    return matchedIds.contains(entryUUID) && agentMatch
                 }
             } catch {
                 print("[Memory] Vector search failed, falling back to text: \(error)")
@@ -162,7 +167,9 @@ public actor MemorySearchService {
                 let matchedIds = Set(results.map { $0.id })
                 let allSummaries = (try? MemoryDatabase.shared.loadAllSummaries(days: days)) ?? []
                 let matched = allSummaries.filter { summary in
-                    let summaryUUID = deterministicUUID(from: "summary:\(summary.agentId):\(summary.conversationId):\(summary.conversationAt)")
+                    let summaryUUID = deterministicUUID(
+                        from: "summary:\(summary.agentId):\(summary.conversationId):\(summary.conversationAt)"
+                    )
                     let agentMatch = agentId == nil || summary.agentId == agentId
                     return matchedIds.contains(summaryUUID) && agentMatch
                 }
@@ -173,6 +180,28 @@ public actor MemorySearchService {
         }
 
         return (try? MemoryDatabase.shared.searchSummaries(query: query, agentId: agentId, days: days)) ?? []
+    }
+
+    // MARK: - Graph Search
+
+    /// Search the knowledge graph by entity name or relation type.
+    /// Pure SQL — no VecturaKit needed for graph traversal.
+    public func searchGraph(
+        entityName: String? = nil,
+        relation: String? = nil,
+        depth: Int = 2
+    ) async -> [GraphResult] {
+        guard MemoryDatabase.shared.isOpen else { return [] }
+        if let entityName {
+            return
+                (try? MemoryDatabase.shared.queryEntityGraph(
+                    name: entityName,
+                    depth: min(depth, 4)
+                )) ?? []
+        } else if let relation {
+            return (try? MemoryDatabase.shared.queryRelationships(relation: relation)) ?? []
+        }
+        return []
     }
 
     // MARK: - Index Management
@@ -209,11 +238,13 @@ public actor MemorySearchService {
         var bytes = Array(hash.prefix(16))
         bytes[6] = (bytes[6] & 0x0F) | 0x50
         bytes[8] = (bytes[8] & 0x3F) | 0x80
-        return UUID(uuid: (
-            bytes[0], bytes[1], bytes[2], bytes[3],
-            bytes[4], bytes[5], bytes[6], bytes[7],
-            bytes[8], bytes[9], bytes[10], bytes[11],
-            bytes[12], bytes[13], bytes[14], bytes[15]
-        ))
+        return UUID(
+            uuid: (
+                bytes[0], bytes[1], bytes[2], bytes[3],
+                bytes[4], bytes[5], bytes[6], bytes[7],
+                bytes[8], bytes[9], bytes[10], bytes[11],
+                bytes[12], bytes[13], bytes[14], bytes[15]
+            )
+        )
     }
 }

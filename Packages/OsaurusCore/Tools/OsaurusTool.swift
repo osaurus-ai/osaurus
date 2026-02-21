@@ -31,7 +31,7 @@ extension OsaurusTool {
     /// Parse JSON arguments string into a dictionary.
     func parseArguments(_ json: String) -> [String: Any]? {
         guard let data = json.data(using: .utf8),
-              let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+            let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
         else { return nil }
         return dict
     }

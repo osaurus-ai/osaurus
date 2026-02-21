@@ -10,7 +10,8 @@ import Foundation
 
 final class SearchWorkingMemoryTool: OsaurusTool, @unchecked Sendable {
     let name = "search_working_memory"
-    let description = "Search structured memory entries (facts, preferences, decisions, corrections, commitments). Returns matching entries with type, content, and confidence."
+    let description =
+        "Search structured memory entries (facts, preferences, decisions, corrections, commitments). Returns matching entries with type, content, and confidence."
 
     let parameters: JSONValue? = .object([
         "type": .string("object"),
@@ -29,7 +30,7 @@ final class SearchWorkingMemoryTool: OsaurusTool, @unchecked Sendable {
 
     func execute(argumentsJSON: String) async throws -> String {
         guard let args = parseArguments(argumentsJSON),
-              let query = args["query"] as? String
+            let query = args["query"] as? String
         else {
             return "Error: 'query' parameter is required."
         }
@@ -41,7 +42,8 @@ final class SearchWorkingMemoryTool: OsaurusTool, @unchecked Sendable {
         }
 
         let entries = await MemorySearchService.shared.searchMemoryEntries(
-            query: query, agentId: agentId
+            query: query,
+            agentId: agentId
         )
 
         if entries.isEmpty {

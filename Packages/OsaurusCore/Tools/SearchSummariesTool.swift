@@ -33,7 +33,7 @@ final class SearchSummariesTool: OsaurusTool, @unchecked Sendable {
 
     func execute(argumentsJSON: String) async throws -> String {
         guard let args = parseArguments(argumentsJSON),
-              let query = args["query"] as? String
+            let query = args["query"] as? String
         else {
             return "Error: 'query' parameter is required."
         }
@@ -46,7 +46,9 @@ final class SearchSummariesTool: OsaurusTool, @unchecked Sendable {
         }
 
         let summaries = await MemorySearchService.shared.searchSummaries(
-            query: query, agentId: agentId, days: days
+            query: query,
+            agentId: agentId,
+            days: days
         )
 
         if summaries.isEmpty {

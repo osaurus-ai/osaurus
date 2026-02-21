@@ -37,9 +37,14 @@ public struct ProfileEvent: Codable, Sendable, Identifiable {
     public var createdAt: String
 
     public init(
-        id: Int = 0, agentId: String, conversationId: String? = nil,
-        eventType: String, content: String, model: String? = nil,
-        status: String = "active", incorporatedIn: Int? = nil,
+        id: Int = 0,
+        agentId: String,
+        conversationId: String? = nil,
+        eventType: String,
+        content: String,
+        model: String? = nil,
+        status: String = "active",
+        incorporatedIn: Int? = nil,
         createdAt: String = ""
     ) {
         self.id = id
@@ -109,17 +114,25 @@ public struct MemoryEntry: Codable, Sendable, Identifiable {
 
     public var tags: [String] {
         guard let json = tagsJSON, let data = json.data(using: .utf8),
-              let array = try? JSONDecoder().decode([String].self, from: data)
+            let array = try? JSONDecoder().decode([String].self, from: data)
         else { return [] }
         return array
     }
 
     public init(
-        id: String = UUID().uuidString, agentId: String, type: MemoryEntryType,
-        content: String, confidence: Double = 0.8, model: String,
-        sourceConversationId: String? = nil, tagsJSON: String? = nil,
-        status: String = "active", supersededBy: String? = nil,
-        createdAt: String = "", lastAccessed: String = "", accessCount: Int = 0
+        id: String = UUID().uuidString,
+        agentId: String,
+        type: MemoryEntryType,
+        content: String,
+        confidence: Double = 0.8,
+        model: String,
+        sourceConversationId: String? = nil,
+        tagsJSON: String? = nil,
+        status: String = "active",
+        supersededBy: String? = nil,
+        createdAt: String = "",
+        lastAccessed: String = "",
+        accessCount: Int = 0
     ) {
         self.id = id
         self.agentId = agentId
@@ -151,9 +164,15 @@ public struct ConversationSummary: Codable, Sendable, Identifiable {
     public var createdAt: String
 
     public init(
-        id: Int = 0, agentId: String, conversationId: String,
-        summary: String, tokenCount: Int, model: String,
-        conversationAt: String, status: String = "active", createdAt: String = ""
+        id: Int = 0,
+        agentId: String,
+        conversationId: String,
+        summary: String,
+        tokenCount: Int,
+        model: String,
+        conversationAt: String,
+        status: String = "active",
+        createdAt: String = ""
     ) {
         self.id = id
         self.agentId = agentId
@@ -181,9 +200,14 @@ public struct ConversationChunk: Codable, Sendable, Identifiable {
     public var conversationTitle: String?
 
     public init(
-        id: Int = 0, conversationId: String, chunkIndex: Int,
-        role: String, content: String, tokenCount: Int,
-        createdAt: String = "", agentId: String = "",
+        id: Int = 0,
+        conversationId: String,
+        chunkIndex: Int,
+        role: String,
+        content: String,
+        tokenCount: Int,
+        createdAt: String = "",
+        agentId: String = "",
         conversationTitle: String? = nil
     ) {
         self.id = id
@@ -211,9 +235,14 @@ public struct PendingSignal: Codable, Sendable {
     public var createdAt: String
 
     public init(
-        id: Int = 0, agentId: String, conversationId: String,
-        signalType: String, userMessage: String, assistantMessage: String? = nil,
-        status: String = "pending", createdAt: String = ""
+        id: Int = 0,
+        agentId: String,
+        conversationId: String,
+        signalType: String,
+        userMessage: String,
+        assistantMessage: String? = nil,
+        status: String = "pending",
+        createdAt: String = ""
     ) {
         self.id = id
         self.agentId = agentId
@@ -231,6 +260,99 @@ public struct ProcessingStats: Sendable {
     public var avgDurationMs: Int = 0
     public var successCount: Int = 0
     public var errorCount: Int = 0
+}
+
+// MARK: - Knowledge Graph
+
+public struct GraphEntity: Codable, Sendable, Identifiable {
+    public var id: String
+    public var name: String
+    public var type: String
+    public var metadata: String?
+    public var model: String
+    public var createdAt: String
+    public var updatedAt: String
+
+    public init(
+        id: String,
+        name: String,
+        type: String,
+        metadata: String? = nil,
+        model: String,
+        createdAt: String = "",
+        updatedAt: String = ""
+    ) {
+        self.id = id
+        self.name = name
+        self.type = type
+        self.metadata = metadata
+        self.model = model
+        self.createdAt = createdAt
+        self.updatedAt = updatedAt
+    }
+}
+
+public struct GraphRelationship: Codable, Sendable, Identifiable {
+    public var id: String
+    public var sourceId: String
+    public var targetId: String
+    public var relation: String
+    public var confidence: Double
+    public var model: String
+    public var validFrom: String
+    public var validUntil: String?
+    public var createdAt: String
+
+    public init(
+        id: String,
+        sourceId: String,
+        targetId: String,
+        relation: String,
+        confidence: Double = 0.8,
+        model: String,
+        validFrom: String = "",
+        validUntil: String? = nil,
+        createdAt: String = ""
+    ) {
+        self.id = id
+        self.sourceId = sourceId
+        self.targetId = targetId
+        self.relation = relation
+        self.confidence = confidence
+        self.model = model
+        self.validFrom = validFrom
+        self.validUntil = validUntil
+        self.createdAt = createdAt
+    }
+}
+
+public struct GraphResult: Codable, Sendable {
+    public var entityName: String
+    public var entityType: String
+    public var depth: Int
+    public var path: String
+
+    public init(entityName: String, entityType: String, depth: Int, path: String) {
+        self.entityName = entityName
+        self.entityType = entityType
+        self.depth = depth
+        self.path = path
+    }
+}
+
+struct GraphExtractionResult {
+    struct EntityData: Decodable {
+        let name: String
+        let type: String
+    }
+    struct RelationshipData: Decodable {
+        let source: String
+        let relation: String
+        let target: String
+        let confidence: Double?
+    }
+    var entities: [EntityData] = []
+    var relationships: [RelationshipData] = []
 }
 
 // MARK: - Signal Detection
