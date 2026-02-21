@@ -34,6 +34,9 @@ public struct MemoryConfiguration: Codable, Equatable, Sendable {
     /// Token budget for summaries in context
     public var summaryBudgetTokens: Int
 
+    /// Token budget for knowledge graph relationships in context
+    public var graphBudgetTokens: Int
+
     /// Top-K results for recall searches
     public var recallTopK: Int
     /// Half-life in days for temporal decay in search ranking
@@ -70,6 +73,7 @@ public struct MemoryConfiguration: Codable, Equatable, Sendable {
         workingMemoryBudgetTokens: Int = 500,
         summaryRetentionDays: Int = 7,
         summaryBudgetTokens: Int = 1000,
+        graphBudgetTokens: Int = 300,
         recallTopK: Int = 10,
         temporalDecayHalfLifeDays: Int = 30,
         mmrLambda: Double = 0.7,
@@ -89,6 +93,7 @@ public struct MemoryConfiguration: Codable, Equatable, Sendable {
         self.workingMemoryBudgetTokens = workingMemoryBudgetTokens
         self.summaryRetentionDays = summaryRetentionDays
         self.summaryBudgetTokens = summaryBudgetTokens
+        self.graphBudgetTokens = graphBudgetTokens
         self.recallTopK = recallTopK
         self.temporalDecayHalfLifeDays = temporalDecayHalfLifeDays
         self.mmrLambda = mmrLambda
@@ -117,6 +122,8 @@ public struct MemoryConfiguration: Codable, Equatable, Sendable {
             try c.decodeIfPresent(Int.self, forKey: .summaryRetentionDays) ?? defaults.summaryRetentionDays
         summaryBudgetTokens =
             try c.decodeIfPresent(Int.self, forKey: .summaryBudgetTokens) ?? defaults.summaryBudgetTokens
+        graphBudgetTokens =
+            try c.decodeIfPresent(Int.self, forKey: .graphBudgetTokens) ?? defaults.graphBudgetTokens
         recallTopK = try c.decodeIfPresent(Int.self, forKey: .recallTopK) ?? defaults.recallTopK
         temporalDecayHalfLifeDays =
             try c.decodeIfPresent(Int.self, forKey: .temporalDecayHalfLifeDays) ?? defaults.temporalDecayHalfLifeDays

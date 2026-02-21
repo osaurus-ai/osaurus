@@ -1510,6 +1510,41 @@ public final class MemoryDatabase: @unchecked Sendable {
         return results
     }
 
+    public func loadRecentRelationships(limit: Int) throws -> [GraphResult] {
+        var results: [GraphResult] = []
+        try prepareAndExecute(
+            """
+            SELECT e_src.name, e_src.type, e_tgt.name, r.relation
+            FROM relationships r
+            JOIN entities e_src ON e_src.id = r.source_id
+            JOIN entities e_tgt ON e_tgt.id = r.target_id
+            WHERE r.valid_until IS NULL
+            ORDER BY r.created_at DESC
+            LIMIT ?1
+            """,
+            bind: { stmt in
+                sqlite3_bind_int(stmt, 1, Int32(limit))
+            },
+            process: { stmt in
+                while sqlite3_step(stmt) == SQLITE_ROW {
+                    let srcName = String(cString: sqlite3_column_text(stmt, 0))
+                    let srcType = String(cString: sqlite3_column_text(stmt, 1))
+                    let tgtName = String(cString: sqlite3_column_text(stmt, 2))
+                    let rel = String(cString: sqlite3_column_text(stmt, 3))
+                    results.append(
+                        GraphResult(
+                            entityName: srcName,
+                            entityType: srcType,
+                            depth: 1,
+                            path: "\(srcName) -> \(rel) -> \(tgtName)"
+                        )
+                    )
+                }
+            }
+        )
+        return results
+    }
+
     private static func readGraphEntity(_ stmt: OpaquePointer) -> GraphEntity {
         GraphEntity(
             id: String(cString: sqlite3_column_text(stmt, 0)),

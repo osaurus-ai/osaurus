@@ -3,7 +3,8 @@
 //  osaurus
 //
 //  Builds the memory context block for injection into system prompts.
-//  Follows the spec's context assembly order: user edits, profile, working memory, summaries.
+//  Follows the spec's context assembly order: user edits, profile, working memory, summaries,
+//  key relationships.
 //
 
 import Foundation
@@ -12,8 +13,8 @@ public enum MemoryContextAssembler: Sendable {
     private static let charsPerToken = 4
 
     /// Assemble the full memory context string for injection before the system prompt.
-    /// User edits and profile are never trimmed. Working memory and summaries are trimmed
-    /// if they exceed the remaining budget.
+    /// User edits and profile are never trimmed. Working memory, summaries, and key
+    /// relationships are budget-trimmed.
     public static func assembleContext(agentId: String, config: MemoryConfiguration) -> String {
         guard config.enabled else { return "" }
 
@@ -37,39 +38,61 @@ public enum MemoryContextAssembler: Sendable {
         }
 
         // 3. Working Memory (this agent's active entries)
-        let wmBudgetChars = config.workingMemoryBudgetTokens * charsPerToken
         if let entries = try? db.loadActiveEntries(agentId: agentId), !entries.isEmpty {
-            var block = "# Working Memory\n"
-            var usedChars = block.count
+            let block = buildBudgetSection(
+                header: "# Working Memory",
+                budgetTokens: config.workingMemoryBudgetTokens,
+                items: entries
+            ) { "- [\($0.type.displayName)] \($0.content)" }
 
-            for entry in entries {
-                let line = "- [\(entry.type.displayName)] \(entry.content)\n"
-                if usedChars + line.count > wmBudgetChars { break }
-                block += line
-                usedChars += line.count
-
-                try? db.touchMemoryEntry(id: entry.id)
-            }
+            for entry in entries { try? db.touchMemoryEntry(id: entry.id) }
             sections.append(block)
         }
 
         // 4. Conversation Summaries (this agent, last N days)
-        let sumBudgetChars = config.summaryBudgetTokens * charsPerToken
         if let summaries = try? db.loadSummaries(agentId: agentId, days: config.summaryRetentionDays),
             !summaries.isEmpty
         {
-            var block = "# Recent Conversation Summaries\n"
-            var usedChars = block.count
+            sections.append(
+                buildBudgetSection(
+                    header: "# Recent Conversation Summaries",
+                    budgetTokens: config.summaryBudgetTokens,
+                    items: summaries
+                ) { "- \($0.conversationAt): \($0.summary)" }
+            )
+        }
 
-            for summary in summaries {
-                let line = "- \(summary.conversationAt): \(summary.summary)\n"
-                if usedChars + line.count > sumBudgetChars { break }
-                block += line
-                usedChars += line.count
-            }
-            sections.append(block)
+        // 5. Knowledge Graph (key relationships)
+        if let relationships = try? db.loadRecentRelationships(limit: 30), !relationships.isEmpty {
+            sections.append(
+                buildBudgetSection(
+                    header: "# Key Relationships",
+                    budgetTokens: config.graphBudgetTokens,
+                    items: relationships
+                ) { "- \($0.path)" }
+            )
         }
 
         return sections.joined(separator: "\n")
+    }
+
+    /// Build a markdown section from items, trimming to a token budget.
+    private static func buildBudgetSection<T>(
+        header: String,
+        budgetTokens: Int,
+        items: [T],
+        formatLine: (T) -> String
+    ) -> String {
+        let budgetChars = budgetTokens * charsPerToken
+        var block = "\(header)\n"
+        var usedChars = block.count
+
+        for item in items {
+            let line = "\(formatLine(item))\n"
+            if usedChars + line.count > budgetChars { break }
+            block += line
+            usedChars += line.count
+        }
+        return block
     }
 }
