@@ -33,6 +33,11 @@ public final class MemoryDatabase: @unchecked Sendable {
 
     private static let schemaVersion = 1
 
+    private static let memoryEntryColumns = """
+        id, agent_id, type, content, confidence, model, source_conversation_id, tags, status,
+        superseded_by, created_at, last_accessed, access_count, valid_from, valid_until
+        """
+
     private var db: OpaquePointer?
     private let queue = DispatchQueue(label: "ai.osaurus.memory.database")
 
@@ -177,13 +182,18 @@ public final class MemoryDatabase: @unchecked Sendable {
                     superseded_by    TEXT REFERENCES memory_entries(id),
                     created_at       TEXT NOT NULL DEFAULT (datetime('now')),
                     last_accessed    TEXT NOT NULL DEFAULT (datetime('now')),
-                    access_count     INTEGER NOT NULL DEFAULT 0
+                    access_count     INTEGER NOT NULL DEFAULT 0,
+                    valid_from       TEXT NOT NULL DEFAULT (datetime('now')),
+                    valid_until      TEXT
                 )
             """
         )
 
         try executeRaw("CREATE INDEX IF NOT EXISTS idx_entries_agent ON memory_entries(agent_id, status)")
         try executeRaw("CREATE INDEX IF NOT EXISTS idx_entries_created ON memory_entries(created_at)")
+        try executeRaw(
+            "CREATE INDEX IF NOT EXISTS idx_entries_temporal ON memory_entries(agent_id, valid_from, valid_until)"
+        )
 
         try executeRaw(
             """
@@ -630,10 +640,11 @@ public final class MemoryDatabase: @unchecked Sendable {
     // MARK: - Memory Entries
 
     public func insertMemoryEntry(_ entry: MemoryEntry) throws {
+        let validFrom = entry.validFrom.isEmpty ? Self.iso8601Now() : entry.validFrom
         _ = try executeUpdate(
             """
-            INSERT INTO memory_entries (id, agent_id, type, content, confidence, model, source_conversation_id, tags, status)
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
+            INSERT INTO memory_entries (id, agent_id, type, content, confidence, model, source_conversation_id, tags, status, valid_from)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
             """
         ) { stmt in
             Self.bindText(stmt, index: 1, value: entry.id)
@@ -645,6 +656,7 @@ public final class MemoryDatabase: @unchecked Sendable {
             Self.bindText(stmt, index: 7, value: entry.sourceConversationId)
             Self.bindText(stmt, index: 8, value: entry.tagsJSON)
             Self.bindText(stmt, index: 9, value: entry.status)
+            Self.bindText(stmt, index: 10, value: validFrom)
         }
 
         try insertMemoryEvent(
@@ -660,8 +672,7 @@ public final class MemoryDatabase: @unchecked Sendable {
         var entries: [MemoryEntry] = []
         try prepareAndExecute(
             """
-            SELECT id, agent_id, type, content, confidence, model, source_conversation_id, tags, status,
-                   superseded_by, created_at, last_accessed, access_count
+            SELECT \(Self.memoryEntryColumns)
             FROM memory_entries WHERE agent_id = ?1 AND status = 'active'
             ORDER BY last_accessed DESC
             """,
@@ -679,8 +690,7 @@ public final class MemoryDatabase: @unchecked Sendable {
         var entries: [MemoryEntry] = []
         try prepareAndExecute(
             """
-            SELECT id, agent_id, type, content, confidence, model, source_conversation_id, tags, status,
-                   superseded_by, created_at, last_accessed, access_count
+            SELECT \(Self.memoryEntryColumns)
             FROM memory_entries WHERE status = 'active'
             ORDER BY last_accessed DESC
             """,
@@ -695,11 +705,13 @@ public final class MemoryDatabase: @unchecked Sendable {
     }
 
     public func supersede(entryId: String, by newId: String, reason: String?) throws {
+        let now = Self.iso8601Now()
         _ = try executeUpdate(
-            "UPDATE memory_entries SET status = 'superseded', superseded_by = ?1 WHERE id = ?2"
+            "UPDATE memory_entries SET status = 'superseded', superseded_by = ?1, valid_until = ?3 WHERE id = ?2"
         ) { stmt in
             Self.bindText(stmt, index: 1, value: newId)
             Self.bindText(stmt, index: 2, value: entryId)
+            Self.bindText(stmt, index: 3, value: now)
         }
         try insertMemoryEvent(entryId: entryId, eventType: "superseded", agentId: nil, model: nil, reason: reason)
     }
@@ -779,6 +791,10 @@ public final class MemoryDatabase: @unchecked Sendable {
         }
     }
 
+    private static func iso8601Now() -> String {
+        ISO8601DateFormatter().string(from: Date())
+    }
+
     private static func readMemoryEntry(_ stmt: OpaquePointer) -> MemoryEntry {
         MemoryEntry(
             id: String(cString: sqlite3_column_text(stmt, 0)),
@@ -793,7 +809,9 @@ public final class MemoryDatabase: @unchecked Sendable {
             supersededBy: sqlite3_column_text(stmt, 9).map { String(cString: $0) },
             createdAt: String(cString: sqlite3_column_text(stmt, 10)),
             lastAccessed: String(cString: sqlite3_column_text(stmt, 11)),
-            accessCount: Int(sqlite3_column_int(stmt, 12))
+            accessCount: Int(sqlite3_column_int(stmt, 12)),
+            validFrom: String(cString: sqlite3_column_text(stmt, 13)),
+            validUntil: sqlite3_column_text(stmt, 14).map { String(cString: $0) }
         )
     }
 
@@ -1183,8 +1201,7 @@ public final class MemoryDatabase: @unchecked Sendable {
     public func searchMemoryEntries(query: String, agentId: String? = nil) throws -> [MemoryEntry] {
         var entries: [MemoryEntry] = []
         var sql = """
-                SELECT id, agent_id, type, content, confidence, model, source_conversation_id, tags, status,
-                       superseded_by, created_at, last_accessed, access_count
+                SELECT \(Self.memoryEntryColumns)
                 FROM memory_entries
                 WHERE status = 'active' AND content LIKE '%' || ?1 || '%'
             """
@@ -1196,6 +1213,62 @@ public final class MemoryDatabase: @unchecked Sendable {
             bind: { stmt in
                 Self.bindText(stmt, index: 1, value: query)
                 if let agentId { Self.bindText(stmt, index: 2, value: agentId) }
+            },
+            process: { stmt in
+                while sqlite3_step(stmt) == SQLITE_ROW {
+                    entries.append(Self.readMemoryEntry(stmt))
+                }
+            }
+        )
+        return entries
+    }
+
+    /// Returns entries that were active at a specific point in time.
+    public func loadEntriesAsOf(agentId: String, asOf: String) throws -> [MemoryEntry] {
+        var entries: [MemoryEntry] = []
+        try prepareAndExecute(
+            """
+            SELECT \(Self.memoryEntryColumns)
+            FROM memory_entries
+            WHERE agent_id = ?1
+              AND valid_from <= ?2
+              AND (valid_until IS NULL OR valid_until > ?2)
+            ORDER BY valid_from DESC
+            """,
+            bind: { stmt in
+                Self.bindText(stmt, index: 1, value: agentId)
+                Self.bindText(stmt, index: 2, value: asOf)
+            },
+            process: { stmt in
+                while sqlite3_step(stmt) == SQLITE_ROW {
+                    entries.append(Self.readMemoryEntry(stmt))
+                }
+            }
+        )
+        return entries
+    }
+
+    /// Returns the history of entries of a given type, optionally filtered by keyword.
+    public func loadEntryHistory(agentId: String, type: String, containing: String? = nil) throws -> [MemoryEntry] {
+        var entries: [MemoryEntry] = []
+        var sql = """
+                SELECT \(Self.memoryEntryColumns)
+                FROM memory_entries
+                WHERE agent_id = ?1 AND type = ?2
+            """
+        if containing != nil {
+            sql += " AND content LIKE '%' || ?3 || '%'"
+        }
+        sql += " ORDER BY valid_from ASC"
+
+        try prepareAndExecute(
+            sql,
+            bind: { stmt in
+                Self.bindText(stmt, index: 1, value: agentId)
+                Self.bindText(stmt, index: 2, value: type)
+                if let keyword = containing {
+                    Self.bindText(stmt, index: 3, value: keyword)
+                }
             },
             process: { stmt in
                 while sqlite3_step(stmt) == SQLITE_ROW {

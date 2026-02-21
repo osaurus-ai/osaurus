@@ -536,6 +536,7 @@ public actor MemoryService {
                 let content: String
                 let confidence: Double?
                 let tags: [String]?
+                let valid_from: String?
             }
             let entries: [EntryData]?
         }
@@ -562,7 +563,8 @@ public actor MemoryService {
                 confidence: entry.confidence ?? 0.8,
                 model: model,
                 sourceConversationId: conversationId,
-                tagsJSON: tagsJSON
+                tagsJSON: tagsJSON,
+                validFrom: entry.valid_from ?? ""
             )
         }
 

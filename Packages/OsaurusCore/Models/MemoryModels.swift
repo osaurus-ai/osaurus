@@ -111,6 +111,8 @@ public struct MemoryEntry: Codable, Sendable, Identifiable {
     public var createdAt: String
     public var lastAccessed: String
     public var accessCount: Int
+    public var validFrom: String
+    public var validUntil: String?
 
     public var tags: [String] {
         guard let json = tagsJSON, let data = json.data(using: .utf8),
@@ -132,7 +134,9 @@ public struct MemoryEntry: Codable, Sendable, Identifiable {
         supersededBy: String? = nil,
         createdAt: String = "",
         lastAccessed: String = "",
-        accessCount: Int = 0
+        accessCount: Int = 0,
+        validFrom: String = "",
+        validUntil: String? = nil
     ) {
         self.id = id
         self.agentId = agentId
@@ -147,6 +151,8 @@ public struct MemoryEntry: Codable, Sendable, Identifiable {
         self.createdAt = createdAt
         self.lastAccessed = lastAccessed
         self.accessCount = accessCount
+        self.validFrom = validFrom
+        self.validUntil = validUntil
     }
 }
 
