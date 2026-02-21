@@ -39,6 +39,11 @@ public struct MemoryConfiguration: Codable, Equatable, Sendable {
     /// Half-life in days for temporal decay in search ranking
     public var temporalDecayHalfLifeDays: Int
 
+    /// MMR relevance vs diversity tradeoff. 1.0 = pure relevance, 0.0 = pure diversity.
+    public var mmrLambda: Double
+    /// Over-fetch multiplier for MMR: fetch this many times topK from VecturaKit, then rerank down.
+    public var mmrFetchMultiplier: Double
+
     /// Whether the memory system is enabled
     public var enabled: Bool
 
@@ -60,6 +65,8 @@ public struct MemoryConfiguration: Codable, Equatable, Sendable {
         summaryBudgetTokens: Int = 1000,
         recallTopK: Int = 10,
         temporalDecayHalfLifeDays: Int = 30,
+        mmrLambda: Double = 0.7,
+        mmrFetchMultiplier: Double = 2.0,
         enabled: Bool = true
     ) {
         self.coreModelProvider = coreModelProvider
@@ -74,7 +81,36 @@ public struct MemoryConfiguration: Codable, Equatable, Sendable {
         self.summaryBudgetTokens = summaryBudgetTokens
         self.recallTopK = recallTopK
         self.temporalDecayHalfLifeDays = temporalDecayHalfLifeDays
+        self.mmrLambda = mmrLambda
+        self.mmrFetchMultiplier = mmrFetchMultiplier
         self.enabled = enabled
+    }
+
+    public init(from decoder: Decoder) throws {
+        let defaults = MemoryConfiguration()
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        coreModelProvider = try c.decodeIfPresent(String.self, forKey: .coreModelProvider) ?? defaults.coreModelProvider
+        coreModelName = try c.decodeIfPresent(String.self, forKey: .coreModelName) ?? defaults.coreModelName
+        embeddingBackend = try c.decodeIfPresent(String.self, forKey: .embeddingBackend) ?? defaults.embeddingBackend
+        embeddingModel = try c.decodeIfPresent(String.self, forKey: .embeddingModel) ?? defaults.embeddingModel
+        inactivityTimeoutSeconds =
+            try c.decodeIfPresent(Int.self, forKey: .inactivityTimeoutSeconds) ?? defaults.inactivityTimeoutSeconds
+        profileMaxTokens = try c.decodeIfPresent(Int.self, forKey: .profileMaxTokens) ?? defaults.profileMaxTokens
+        profileRegenerateThreshold =
+            try c.decodeIfPresent(Int.self, forKey: .profileRegenerateThreshold) ?? defaults.profileRegenerateThreshold
+        workingMemoryBudgetTokens =
+            try c.decodeIfPresent(Int.self, forKey: .workingMemoryBudgetTokens) ?? defaults.workingMemoryBudgetTokens
+        summaryRetentionDays =
+            try c.decodeIfPresent(Int.self, forKey: .summaryRetentionDays) ?? defaults.summaryRetentionDays
+        summaryBudgetTokens =
+            try c.decodeIfPresent(Int.self, forKey: .summaryBudgetTokens) ?? defaults.summaryBudgetTokens
+        recallTopK = try c.decodeIfPresent(Int.self, forKey: .recallTopK) ?? defaults.recallTopK
+        temporalDecayHalfLifeDays =
+            try c.decodeIfPresent(Int.self, forKey: .temporalDecayHalfLifeDays) ?? defaults.temporalDecayHalfLifeDays
+        mmrLambda = try c.decodeIfPresent(Double.self, forKey: .mmrLambda) ?? defaults.mmrLambda
+        mmrFetchMultiplier =
+            try c.decodeIfPresent(Double.self, forKey: .mmrFetchMultiplier) ?? defaults.mmrFetchMultiplier
+        enabled = try c.decodeIfPresent(Bool.self, forKey: .enabled) ?? defaults.enabled
     }
 
     public static var `default`: MemoryConfiguration { MemoryConfiguration() }

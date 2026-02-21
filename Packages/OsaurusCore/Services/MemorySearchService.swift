@@ -104,23 +104,36 @@ public actor MemorySearchService {
     // At scale (thousands of entries), switch to fetching matched IDs from VecturaKit
     // then using a WHERE id IN (...) SQL query to avoid loading everything.
 
-    /// Search memory entries using hybrid search (vector + BM25).
+    /// Search memory entries using hybrid search (vector + BM25) with MMR reranking.
     /// Falls back to SQLite text search when VecturaKit is unavailable.
     public func searchMemoryEntries(
         query: String,
         agentId: String? = nil,
-        topK: Int = 10
+        topK: Int = 10,
+        lambda: Double? = nil,
+        fetchMultiplier: Double? = nil
     ) async -> [MemoryEntry] {
         if let db = vectorDB {
             do {
-                let results = try await db.search(query: .text(query), numResults: topK, threshold: 0.3)
-                let matchedIds = Set(results.map { $0.id })
+                let mult = fetchMultiplier ?? 2.0
+                let fetchCount = Int(Double(topK) * mult)
+                let results = try await db.search(query: .text(query), numResults: fetchCount, threshold: 0.3)
+
+                let scoreMap = Dictionary(
+                    results.map { ($0.id, (score: Double($0.score), text: $0.text)) },
+                    uniquingKeysWith: { first, _ in first }
+                )
+
                 let allEntries = (try? MemoryDatabase.shared.loadAllActiveEntries()) ?? []
-                return allEntries.filter { entry in
-                    guard let entryUUID = UUID(uuidString: entry.id) else { return false }
-                    let agentMatch = agentId == nil || entry.agentId == agentId
-                    return matchedIds.contains(entryUUID) && agentMatch
+                let scored: [(item: MemoryEntry, score: Double, content: String)] = allEntries.compactMap { entry in
+                    guard let entryUUID = UUID(uuidString: entry.id),
+                        let match = scoreMap[entryUUID],
+                        agentId == nil || entry.agentId == agentId
+                    else { return nil }
+                    return (item: entry, score: match.score, content: entry.content)
                 }
+
+                return mmrRerank(results: scored, lambda: lambda ?? 0.7, topK: topK)
             } catch {
                 print("[Memory] Vector search failed, falling back to text: \(error)")
             }
@@ -129,23 +142,38 @@ public actor MemorySearchService {
         return (try? MemoryDatabase.shared.searchMemoryEntries(query: query, agentId: agentId)) ?? []
     }
 
-    /// Search conversation chunks using hybrid search (vector + BM25).
+    /// Search conversation chunks using hybrid search (vector + BM25) with MMR reranking.
     /// Falls back to SQLite text search when VecturaKit is unavailable.
     public func searchConversations(
         query: String,
         agentId: String? = nil,
-        days: Int = 30
+        days: Int = 30,
+        topK: Int = 10,
+        lambda: Double? = nil,
+        fetchMultiplier: Double? = nil
     ) async -> [ConversationChunk] {
         if let db = vectorDB {
             do {
-                let results = try await db.search(query: .text(query), numResults: 20, threshold: 0.3)
-                let matchedIds = Set(results.map { $0.id })
+                let mult = fetchMultiplier ?? 2.0
+                let fetchCount = Int(Double(topK) * mult)
+                let results = try await db.search(query: .text(query), numResults: fetchCount, threshold: 0.3)
+
+                let scoreMap = Dictionary(
+                    results.map { ($0.id, (score: Double($0.score), text: $0.text)) },
+                    uniquingKeysWith: { first, _ in first }
+                )
+
                 let allChunks = (try? MemoryDatabase.shared.loadAllChunks(agentId: agentId, days: days)) ?? []
-                let matched = allChunks.filter { chunk in
+                let scored: [(item: ConversationChunk, score: Double, content: String)] = allChunks.compactMap {
+                    chunk in
                     let chunkUUID = deterministicUUID(from: "chunk:\(chunk.conversationId):\(chunk.chunkIndex)")
-                    return matchedIds.contains(chunkUUID)
+                    guard let match = scoreMap[chunkUUID] else { return nil }
+                    return (item: chunk, score: match.score, content: chunk.content)
                 }
-                if !matched.isEmpty { return matched }
+
+                if !scored.isEmpty {
+                    return mmrRerank(results: scored, lambda: lambda ?? 0.7, topK: topK)
+                }
             } catch {
                 print("[Memory] Vector search for chunks failed, falling back to text: \(error)")
             }
@@ -154,26 +182,42 @@ public actor MemorySearchService {
         return (try? MemoryDatabase.shared.searchChunks(query: query, agentId: agentId, days: days)) ?? []
     }
 
-    /// Search conversation summaries using hybrid search (vector + BM25).
+    /// Search conversation summaries using hybrid search (vector + BM25) with MMR reranking.
     /// Falls back to SQLite text search when VecturaKit is unavailable.
     public func searchSummaries(
         query: String,
         agentId: String? = nil,
-        days: Int = 30
+        days: Int = 30,
+        topK: Int = 10,
+        lambda: Double? = nil,
+        fetchMultiplier: Double? = nil
     ) async -> [ConversationSummary] {
         if let db = vectorDB {
             do {
-                let results = try await db.search(query: .text(query), numResults: 20, threshold: 0.3)
-                let matchedIds = Set(results.map { $0.id })
+                let mult = fetchMultiplier ?? 2.0
+                let fetchCount = Int(Double(topK) * mult)
+                let results = try await db.search(query: .text(query), numResults: fetchCount, threshold: 0.3)
+
+                let scoreMap = Dictionary(
+                    results.map { ($0.id, (score: Double($0.score), text: $0.text)) },
+                    uniquingKeysWith: { first, _ in first }
+                )
+
                 let allSummaries = (try? MemoryDatabase.shared.loadAllSummaries(days: days)) ?? []
-                let matched = allSummaries.filter { summary in
+                let scored: [(item: ConversationSummary, score: Double, content: String)] = allSummaries.compactMap {
+                    summary in
                     let summaryUUID = deterministicUUID(
                         from: "summary:\(summary.agentId):\(summary.conversationId):\(summary.conversationAt)"
                     )
-                    let agentMatch = agentId == nil || summary.agentId == agentId
-                    return matchedIds.contains(summaryUUID) && agentMatch
+                    guard let match = scoreMap[summaryUUID],
+                        agentId == nil || summary.agentId == agentId
+                    else { return nil }
+                    return (item: summary, score: match.score, content: summary.summary)
                 }
-                if !matched.isEmpty { return matched }
+
+                if !scored.isEmpty {
+                    return mmrRerank(results: scored, lambda: lambda ?? 0.7, topK: topK)
+                }
             } catch {
                 print("[Memory] Vector search for summaries failed, falling back to text: \(error)")
             }
@@ -228,6 +272,61 @@ public actor MemorySearchService {
 
     public var isVecturaAvailable: Bool {
         vectorDB != nil
+    }
+
+    // MARK: - MMR Reranking
+
+    /// Reranks results using Maximal Marginal Relevance.
+    /// Balances relevance (from search score) with diversity (penalizes redundancy).
+    private nonisolated func mmrRerank<T>(
+        results: [(item: T, score: Double, content: String)],
+        lambda: Double,
+        topK: Int
+    ) -> [T] {
+        guard !results.isEmpty else { return [] }
+
+        let maxScore = results.map(\.score).max()!
+        let minScore = results.map(\.score).min()!
+        let scoreRange = maxScore - minScore
+        let normalized = results.map { r in
+            (item: r.item, score: scoreRange > 0 ? (r.score - minScore) / scoreRange : 1.0, content: r.content)
+        }
+
+        var selected: [(item: T, score: Double, content: String)] = []
+        var remaining = normalized
+
+        for _ in 0 ..< min(topK, normalized.count) {
+            var bestIdx = 0
+            var bestMMR = -Double.infinity
+
+            for (i, candidate) in remaining.enumerated() {
+                let maxSim =
+                    selected.isEmpty
+                    ? 0.0
+                    : selected.map { jaccardSimilarity(candidate.content, $0.content) }.max()!
+
+                let mmrScore = lambda * candidate.score - (1.0 - lambda) * maxSim
+
+                if mmrScore > bestMMR {
+                    bestMMR = mmrScore
+                    bestIdx = i
+                }
+            }
+
+            selected.append(remaining[bestIdx])
+            remaining.remove(at: bestIdx)
+        }
+
+        return selected.map(\.item)
+    }
+
+    private nonisolated func jaccardSimilarity(_ a: String, _ b: String) -> Double {
+        let wordsA = Set(a.lowercased().split(separator: " ").map(String.init))
+        let wordsB = Set(b.lowercased().split(separator: " ").map(String.init))
+        guard !wordsA.isEmpty || !wordsB.isEmpty else { return 0 }
+        let intersection = wordsA.intersection(wordsB).count
+        let union = wordsA.union(wordsB).count
+        return Double(intersection) / Double(union)
     }
 
     // MARK: - Helpers
