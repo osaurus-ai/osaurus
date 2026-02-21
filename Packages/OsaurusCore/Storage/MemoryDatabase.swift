@@ -1,0 +1,1161 @@
+//
+//  MemoryDatabase.swift
+//  osaurus
+//
+//  SQLite database for the 4-layer memory system.
+//  WAL mode, serial queue, versioned migrations — follows WorkDatabase patterns.
+//
+
+import Foundation
+import SQLite3
+
+public enum MemoryDatabaseError: Error, LocalizedError {
+    case failedToOpen(String)
+    case failedToExecute(String)
+    case failedToPrepare(String)
+    case migrationFailed(String)
+    case notOpen
+
+    public var errorDescription: String? {
+        switch self {
+        case .failedToOpen(let msg): return "Failed to open memory database: \(msg)"
+        case .failedToExecute(let msg): return "Failed to execute query: \(msg)"
+        case .failedToPrepare(let msg): return "Failed to prepare statement: \(msg)"
+        case .migrationFailed(let msg): return "Memory migration failed: \(msg)"
+        case .notOpen: return "Memory database is not open"
+        }
+    }
+}
+
+public final class MemoryDatabase: @unchecked Sendable {
+    public static let shared = MemoryDatabase()
+
+    private static let schemaVersion = 1
+
+    private var db: OpaquePointer?
+    private let queue = DispatchQueue(label: "ai.osaurus.memory.database")
+
+    public var isOpen: Bool {
+        queue.sync { db != nil }
+    }
+
+    private init() {}
+
+    deinit { close() }
+
+    // MARK: - Lifecycle
+
+    public func open() throws {
+        try queue.sync {
+            guard db == nil else { return }
+            OsaurusPaths.ensureExistsSilent(OsaurusPaths.memory())
+            try openConnection()
+            try runMigrations()
+        }
+    }
+
+    public func close() {
+        queue.sync {
+            guard let connection = db else { return }
+            sqlite3_close(connection)
+            db = nil
+        }
+    }
+
+    private func openConnection() throws {
+        let path = OsaurusPaths.memoryDatabaseFile().path
+        var dbPointer: OpaquePointer?
+        let result = sqlite3_open(path, &dbPointer)
+        guard result == SQLITE_OK, let connection = dbPointer else {
+            let message = String(cString: sqlite3_errmsg(dbPointer))
+            sqlite3_close(dbPointer)
+            throw MemoryDatabaseError.failedToOpen(message)
+        }
+        db = connection
+        try executeRaw("PRAGMA journal_mode = WAL")
+        try executeRaw("PRAGMA foreign_keys = ON")
+    }
+
+    // MARK: - Schema & Migrations
+
+    private func runMigrations() throws {
+        let currentVersion = try getSchemaVersion()
+        if currentVersion < 1 {
+            try migrateToV1()
+        }
+    }
+
+    private func getSchemaVersion() throws -> Int {
+        var version: Int = 0
+        try executeRaw("PRAGMA user_version") { stmt in
+            if sqlite3_step(stmt) == SQLITE_ROW {
+                version = Int(sqlite3_column_int(stmt, 0))
+            }
+        }
+        return version
+    }
+
+    private func setSchemaVersion(_ version: Int) throws {
+        try executeRaw("PRAGMA user_version = \(version)")
+    }
+
+    private func migrateToV1() throws {
+        // Schema management
+        try executeRaw("""
+            CREATE TABLE IF NOT EXISTS schema_version (
+                version      INTEGER PRIMARY KEY,
+                applied_at   TEXT NOT NULL DEFAULT (datetime('now')),
+                description  TEXT
+            )
+        """)
+
+        try executeRaw("""
+            CREATE TABLE IF NOT EXISTS config (
+                key          TEXT PRIMARY KEY,
+                value        TEXT NOT NULL,
+                updated_at   TEXT NOT NULL DEFAULT (datetime('now'))
+            )
+        """)
+
+        // Layer 1: User Profile
+        try executeRaw("""
+            CREATE TABLE IF NOT EXISTS user_profile (
+                id               INTEGER PRIMARY KEY CHECK (id = 1),
+                content          TEXT NOT NULL,
+                token_count      INTEGER NOT NULL,
+                version          INTEGER NOT NULL DEFAULT 1,
+                model            TEXT NOT NULL,
+                generated_at     TEXT NOT NULL
+            )
+        """)
+
+        try executeRaw("""
+            CREATE TABLE IF NOT EXISTS profile_events (
+                id               INTEGER PRIMARY KEY AUTOINCREMENT,
+                agent_id         TEXT NOT NULL,
+                conversation_id  TEXT,
+                event_type       TEXT NOT NULL,
+                content          TEXT NOT NULL,
+                model            TEXT,
+                status           TEXT NOT NULL DEFAULT 'active',
+                incorporated_in  INTEGER,
+                created_at       TEXT NOT NULL DEFAULT (datetime('now'))
+            )
+        """)
+
+        try executeRaw("""
+            CREATE TABLE IF NOT EXISTS user_edits (
+                id               INTEGER PRIMARY KEY AUTOINCREMENT,
+                content          TEXT NOT NULL,
+                created_at       TEXT NOT NULL DEFAULT (datetime('now')),
+                deleted_at       TEXT
+            )
+        """)
+
+        // Layer 2: Working Memory
+        try executeRaw("""
+            CREATE TABLE IF NOT EXISTS memory_entries (
+                id               TEXT PRIMARY KEY,
+                agent_id         TEXT NOT NULL,
+                type             TEXT NOT NULL,
+                content          TEXT NOT NULL,
+                confidence       REAL NOT NULL DEFAULT 0.8,
+                model            TEXT NOT NULL,
+                source_conversation_id TEXT,
+                tags             TEXT,
+                status           TEXT NOT NULL DEFAULT 'active',
+                superseded_by    TEXT REFERENCES memory_entries(id),
+                created_at       TEXT NOT NULL DEFAULT (datetime('now')),
+                last_accessed    TEXT NOT NULL DEFAULT (datetime('now')),
+                access_count     INTEGER NOT NULL DEFAULT 0
+            )
+        """)
+
+        try executeRaw("CREATE INDEX IF NOT EXISTS idx_entries_agent ON memory_entries(agent_id, status)")
+        try executeRaw("CREATE INDEX IF NOT EXISTS idx_entries_created ON memory_entries(created_at)")
+
+        try executeRaw("""
+            CREATE TABLE IF NOT EXISTS memory_events (
+                id               INTEGER PRIMARY KEY AUTOINCREMENT,
+                entry_id         TEXT NOT NULL REFERENCES memory_entries(id),
+                event_type       TEXT NOT NULL,
+                agent_id         TEXT,
+                model            TEXT,
+                reason           TEXT,
+                created_at       TEXT NOT NULL DEFAULT (datetime('now'))
+            )
+        """)
+
+        // Layer 3: Conversation Summaries
+        try executeRaw("""
+            CREATE TABLE IF NOT EXISTS conversation_summaries (
+                id               INTEGER PRIMARY KEY AUTOINCREMENT,
+                agent_id         TEXT NOT NULL,
+                conversation_id  TEXT NOT NULL,
+                summary          TEXT NOT NULL,
+                token_count      INTEGER NOT NULL,
+                model            TEXT NOT NULL,
+                conversation_at  TEXT NOT NULL,
+                status           TEXT NOT NULL DEFAULT 'active',
+                created_at       TEXT NOT NULL DEFAULT (datetime('now'))
+            )
+        """)
+
+        try executeRaw("CREATE INDEX IF NOT EXISTS idx_summaries_agent ON conversation_summaries(agent_id, conversation_at)")
+
+        // Layer 4: Conversations (for recall)
+        try executeRaw("""
+            CREATE TABLE IF NOT EXISTS conversations (
+                id               TEXT PRIMARY KEY,
+                agent_id         TEXT NOT NULL,
+                title            TEXT,
+                started_at       TEXT NOT NULL,
+                last_message_at  TEXT NOT NULL,
+                message_count    INTEGER NOT NULL DEFAULT 0,
+                status           TEXT NOT NULL DEFAULT 'active'
+            )
+        """)
+
+        try executeRaw("""
+            CREATE TABLE IF NOT EXISTS conversation_chunks (
+                id               INTEGER PRIMARY KEY AUTOINCREMENT,
+                conversation_id  TEXT NOT NULL REFERENCES conversations(id),
+                chunk_index      INTEGER NOT NULL,
+                role             TEXT NOT NULL,
+                content          TEXT NOT NULL,
+                token_count      INTEGER NOT NULL,
+                created_at       TEXT NOT NULL DEFAULT (datetime('now'))
+            )
+        """)
+
+        try executeRaw("CREATE INDEX IF NOT EXISTS idx_chunks_conversation ON conversation_chunks(conversation_id, chunk_index)")
+
+        // Embeddings
+        try executeRaw("""
+            CREATE TABLE IF NOT EXISTS embeddings (
+                id               INTEGER PRIMARY KEY AUTOINCREMENT,
+                source_type      TEXT NOT NULL,
+                source_id        TEXT NOT NULL,
+                embedding        BLOB NOT NULL,
+                model            TEXT NOT NULL,
+                created_at       TEXT NOT NULL DEFAULT (datetime('now'))
+            )
+        """)
+
+        try executeRaw("CREATE UNIQUE INDEX IF NOT EXISTS idx_embeddings_source ON embeddings(source_type, source_id)")
+
+        // Background Processing
+        try executeRaw("""
+            CREATE TABLE IF NOT EXISTS agent_activity (
+                agent_id         TEXT PRIMARY KEY,
+                last_activity_at TEXT NOT NULL,
+                pending_signals  INTEGER NOT NULL DEFAULT 0,
+                processing_status TEXT NOT NULL DEFAULT 'idle',
+                last_processed_at TEXT
+            )
+        """)
+
+        try executeRaw("""
+            CREATE TABLE IF NOT EXISTS pending_signals (
+                id               INTEGER PRIMARY KEY AUTOINCREMENT,
+                agent_id         TEXT NOT NULL,
+                conversation_id  TEXT NOT NULL,
+                signal_type      TEXT NOT NULL,
+                user_message     TEXT NOT NULL,
+                assistant_message TEXT,
+                status           TEXT NOT NULL DEFAULT 'pending',
+                created_at       TEXT NOT NULL DEFAULT (datetime('now'))
+            )
+        """)
+
+        try executeRaw("""
+            CREATE TABLE IF NOT EXISTS processing_log (
+                id               INTEGER PRIMARY KEY AUTOINCREMENT,
+                agent_id         TEXT NOT NULL,
+                task_type        TEXT NOT NULL,
+                model            TEXT,
+                status           TEXT NOT NULL,
+                details          TEXT,
+                input_tokens     INTEGER,
+                output_tokens    INTEGER,
+                duration_ms      INTEGER,
+                created_at       TEXT NOT NULL DEFAULT (datetime('now'))
+            )
+        """)
+
+        try executeRaw("INSERT OR IGNORE INTO schema_version (version, description) VALUES (1, 'Initial memory schema')")
+        try setSchemaVersion(1)
+    }
+
+    // MARK: - Query Execution
+
+    private func executeRaw(_ sql: String) throws {
+        guard let connection = db else {
+            throw MemoryDatabaseError.notOpen
+        }
+        var errorMessage: UnsafeMutablePointer<CChar>?
+        let result = sqlite3_exec(connection, sql, nil, nil, &errorMessage)
+        if result != SQLITE_OK {
+            let message = errorMessage.map { String(cString: $0) } ?? "Unknown error"
+            sqlite3_free(errorMessage)
+            throw MemoryDatabaseError.failedToExecute(message)
+        }
+    }
+
+    private func executeRaw(_ sql: String, handler: (OpaquePointer) throws -> Void) throws {
+        guard let connection = db else {
+            throw MemoryDatabaseError.notOpen
+        }
+        var stmt: OpaquePointer?
+        let prepareResult = sqlite3_prepare_v2(connection, sql, -1, &stmt, nil)
+        guard prepareResult == SQLITE_OK, let statement = stmt else {
+            let message = String(cString: sqlite3_errmsg(connection))
+            throw MemoryDatabaseError.failedToPrepare(message)
+        }
+        defer { sqlite3_finalize(statement) }
+        try handler(statement)
+    }
+
+    func execute<T>(_ operation: @escaping (OpaquePointer) throws -> T) throws -> T {
+        try queue.sync {
+            guard let connection = db else {
+                throw MemoryDatabaseError.notOpen
+            }
+            return try operation(connection)
+        }
+    }
+
+    func prepareAndExecute(
+        _ sql: String,
+        bind: (OpaquePointer) -> Void,
+        process: (OpaquePointer) throws -> Void
+    ) throws {
+        try queue.sync {
+            guard let connection = db else {
+                throw MemoryDatabaseError.notOpen
+            }
+            var stmt: OpaquePointer?
+            let prepareResult = sqlite3_prepare_v2(connection, sql, -1, &stmt, nil)
+            guard prepareResult == SQLITE_OK, let statement = stmt else {
+                let message = String(cString: sqlite3_errmsg(connection))
+                throw MemoryDatabaseError.failedToPrepare(message)
+            }
+            defer { sqlite3_finalize(statement) }
+            bind(statement)
+            try process(statement)
+        }
+    }
+
+    func executeUpdate(_ sql: String, bind: (OpaquePointer) -> Void) throws -> Bool {
+        var success = false
+        try prepareAndExecute(sql, bind: bind) { stmt in
+            success = sqlite3_step(stmt) == SQLITE_DONE
+        }
+        return success
+    }
+
+    func inTransaction<T>(_ operation: () throws -> T) throws -> T {
+        try queue.sync { try executeRaw("BEGIN TRANSACTION") }
+        do {
+            let result = try operation()
+            try queue.sync { try executeRaw("COMMIT") }
+            return result
+        } catch {
+            try? queue.sync { try executeRaw("ROLLBACK") }
+            throw error
+        }
+    }
+
+    // MARK: - User Profile
+
+    public func loadUserProfile() throws -> UserProfile? {
+        var profile: UserProfile?
+        try prepareAndExecute(
+            "SELECT content, token_count, version, model, generated_at FROM user_profile WHERE id = 1",
+            bind: { _ in },
+            process: { stmt in
+                if sqlite3_step(stmt) == SQLITE_ROW {
+                    profile = UserProfile(
+                        content: String(cString: sqlite3_column_text(stmt, 0)),
+                        tokenCount: Int(sqlite3_column_int(stmt, 1)),
+                        version: Int(sqlite3_column_int(stmt, 2)),
+                        model: String(cString: sqlite3_column_text(stmt, 3)),
+                        generatedAt: String(cString: sqlite3_column_text(stmt, 4))
+                    )
+                }
+            }
+        )
+        return profile
+    }
+
+    public func saveUserProfile(_ profile: UserProfile) throws {
+        _ = try executeUpdate(
+            """
+            INSERT INTO user_profile (id, content, token_count, version, model, generated_at)
+            VALUES (1, ?1, ?2, ?3, ?4, ?5)
+            ON CONFLICT(id) DO UPDATE SET
+                content = excluded.content,
+                token_count = excluded.token_count,
+                version = excluded.version,
+                model = excluded.model,
+                generated_at = excluded.generated_at
+            """
+        ) { stmt in
+            Self.bindText(stmt, index: 1, value: profile.content)
+            sqlite3_bind_int(stmt, 2, Int32(profile.tokenCount))
+            sqlite3_bind_int(stmt, 3, Int32(profile.version))
+            Self.bindText(stmt, index: 4, value: profile.model)
+            Self.bindText(stmt, index: 5, value: profile.generatedAt)
+        }
+    }
+
+    // MARK: - User Edits
+
+    public func loadUserEdits() throws -> [UserEdit] {
+        var edits: [UserEdit] = []
+        try prepareAndExecute(
+            "SELECT id, content, created_at, deleted_at FROM user_edits WHERE deleted_at IS NULL ORDER BY created_at",
+            bind: { _ in },
+            process: { stmt in
+                while sqlite3_step(stmt) == SQLITE_ROW {
+                    edits.append(UserEdit(
+                        id: Int(sqlite3_column_int(stmt, 0)),
+                        content: String(cString: sqlite3_column_text(stmt, 1)),
+                        createdAt: String(cString: sqlite3_column_text(stmt, 2)),
+                        deletedAt: sqlite3_column_text(stmt, 3).map { String(cString: $0) }
+                    ))
+                }
+            }
+        )
+        return edits
+    }
+
+    public func insertUserEdit(_ content: String) throws {
+        _ = try executeUpdate("INSERT INTO user_edits (content) VALUES (?1)") { stmt in
+            Self.bindText(stmt, index: 1, value: content)
+        }
+    }
+
+    public func deleteUserEdit(id: Int) throws {
+        _ = try executeUpdate("UPDATE user_edits SET deleted_at = datetime('now') WHERE id = ?1") { stmt in
+            sqlite3_bind_int(stmt, 1, Int32(id))
+        }
+    }
+
+    // MARK: - Profile Events
+
+    public func insertProfileEvent(_ event: ProfileEvent) throws {
+        _ = try executeUpdate(
+            """
+            INSERT INTO profile_events (agent_id, conversation_id, event_type, content, model, status)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+            """
+        ) { stmt in
+            Self.bindText(stmt, index: 1, value: event.agentId)
+            Self.bindText(stmt, index: 2, value: event.conversationId)
+            Self.bindText(stmt, index: 3, value: event.eventType)
+            Self.bindText(stmt, index: 4, value: event.content)
+            Self.bindText(stmt, index: 5, value: event.model)
+            Self.bindText(stmt, index: 6, value: event.status)
+        }
+    }
+
+    public func loadRecentProfileEvents(limit: Int = 20) throws -> [ProfileEvent] {
+        var events: [ProfileEvent] = []
+        try prepareAndExecute(
+            "SELECT id, agent_id, conversation_id, event_type, content, model, status, incorporated_in, created_at FROM profile_events ORDER BY created_at DESC LIMIT ?1",
+            bind: { stmt in sqlite3_bind_int(stmt, 1, Int32(limit)) },
+            process: { stmt in
+                while sqlite3_step(stmt) == SQLITE_ROW {
+                    events.append(ProfileEvent(
+                        id: Int(sqlite3_column_int(stmt, 0)),
+                        agentId: String(cString: sqlite3_column_text(stmt, 1)),
+                        conversationId: sqlite3_column_text(stmt, 2).map { String(cString: $0) },
+                        eventType: String(cString: sqlite3_column_text(stmt, 3)),
+                        content: String(cString: sqlite3_column_text(stmt, 4)),
+                        model: sqlite3_column_text(stmt, 5).map { String(cString: $0) },
+                        status: String(cString: sqlite3_column_text(stmt, 6)),
+                        incorporatedIn: sqlite3_column_type(stmt, 7) != SQLITE_NULL ? Int(sqlite3_column_int(stmt, 7)) : nil,
+                        createdAt: String(cString: sqlite3_column_text(stmt, 8))
+                    ))
+                }
+            }
+        )
+        return events
+    }
+
+    public func loadActiveContributions() throws -> [ProfileEvent] {
+        var events: [ProfileEvent] = []
+        try prepareAndExecute(
+            """
+            SELECT id, agent_id, conversation_id, event_type, content, model, status, incorporated_in, created_at
+            FROM profile_events
+            WHERE event_type = 'contribution' AND status = 'active'
+            ORDER BY created_at ASC
+            """,
+            bind: { _ in },
+            process: { stmt in
+                while sqlite3_step(stmt) == SQLITE_ROW {
+                    events.append(ProfileEvent(
+                        id: Int(sqlite3_column_int(stmt, 0)),
+                        agentId: String(cString: sqlite3_column_text(stmt, 1)),
+                        conversationId: sqlite3_column_text(stmt, 2).map { String(cString: $0) },
+                        eventType: String(cString: sqlite3_column_text(stmt, 3)),
+                        content: String(cString: sqlite3_column_text(stmt, 4)),
+                        model: sqlite3_column_text(stmt, 5).map { String(cString: $0) },
+                        status: String(cString: sqlite3_column_text(stmt, 6)),
+                        incorporatedIn: sqlite3_column_type(stmt, 7) != SQLITE_NULL ? Int(sqlite3_column_int(stmt, 7)) : nil,
+                        createdAt: String(cString: sqlite3_column_text(stmt, 8))
+                    ))
+                }
+            }
+        )
+        return events
+    }
+
+    public func markContributionsIncorporated(version: Int) throws {
+        _ = try executeUpdate(
+            """
+            UPDATE profile_events SET incorporated_in = ?1
+            WHERE event_type = 'contribution' AND status = 'active' AND incorporated_in IS NULL
+            """
+        ) { stmt in
+            sqlite3_bind_int(stmt, 1, Int32(version))
+        }
+    }
+
+    public func activeProfileContributionCount() throws -> Int {
+        var count = 0
+        try prepareAndExecute(
+            "SELECT COUNT(*) FROM profile_events WHERE event_type = 'contribution' AND status = 'active'",
+            bind: { _ in },
+            process: { stmt in
+                if sqlite3_step(stmt) == SQLITE_ROW {
+                    count = Int(sqlite3_column_int(stmt, 0))
+                }
+            }
+        )
+        return count
+    }
+
+    /// Count contributions created after the most recent profile regeneration.
+    public func contributionCountSinceLastRegeneration() throws -> Int {
+        var count = 0
+        try prepareAndExecute(
+            """
+            SELECT COUNT(*) FROM profile_events
+            WHERE event_type = 'contribution' AND status = 'active'
+              AND created_at > COALESCE(
+                (SELECT MAX(created_at) FROM profile_events WHERE event_type = 'regeneration'),
+                '1970-01-01'
+              )
+            """,
+            bind: { _ in },
+            process: { stmt in
+                if sqlite3_step(stmt) == SQLITE_ROW {
+                    count = Int(sqlite3_column_int(stmt, 0))
+                }
+            }
+        )
+        return count
+    }
+
+    // MARK: - Memory Entries
+
+    public func insertMemoryEntry(_ entry: MemoryEntry) throws {
+        _ = try executeUpdate(
+            """
+            INSERT INTO memory_entries (id, agent_id, type, content, confidence, model, source_conversation_id, tags, status)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
+            """
+        ) { stmt in
+            Self.bindText(stmt, index: 1, value: entry.id)
+            Self.bindText(stmt, index: 2, value: entry.agentId)
+            Self.bindText(stmt, index: 3, value: entry.type.rawValue)
+            Self.bindText(stmt, index: 4, value: entry.content)
+            sqlite3_bind_double(stmt, 5, entry.confidence)
+            Self.bindText(stmt, index: 6, value: entry.model)
+            Self.bindText(stmt, index: 7, value: entry.sourceConversationId)
+            Self.bindText(stmt, index: 8, value: entry.tagsJSON)
+            Self.bindText(stmt, index: 9, value: entry.status)
+        }
+
+        try insertMemoryEvent(entryId: entry.id, eventType: "created", agentId: entry.agentId, model: entry.model, reason: nil)
+    }
+
+    public func loadActiveEntries(agentId: String) throws -> [MemoryEntry] {
+        var entries: [MemoryEntry] = []
+        try prepareAndExecute(
+            """
+            SELECT id, agent_id, type, content, confidence, model, source_conversation_id, tags, status,
+                   superseded_by, created_at, last_accessed, access_count
+            FROM memory_entries WHERE agent_id = ?1 AND status = 'active'
+            ORDER BY last_accessed DESC
+            """,
+            bind: { stmt in Self.bindText(stmt, index: 1, value: agentId) },
+            process: { stmt in
+                while sqlite3_step(stmt) == SQLITE_ROW {
+                    entries.append(Self.readMemoryEntry(stmt))
+                }
+            }
+        )
+        return entries
+    }
+
+    public func loadAllActiveEntries() throws -> [MemoryEntry] {
+        var entries: [MemoryEntry] = []
+        try prepareAndExecute(
+            """
+            SELECT id, agent_id, type, content, confidence, model, source_conversation_id, tags, status,
+                   superseded_by, created_at, last_accessed, access_count
+            FROM memory_entries WHERE status = 'active'
+            ORDER BY last_accessed DESC
+            """,
+            bind: { _ in },
+            process: { stmt in
+                while sqlite3_step(stmt) == SQLITE_ROW {
+                    entries.append(Self.readMemoryEntry(stmt))
+                }
+            }
+        )
+        return entries
+    }
+
+    public func supersede(entryId: String, by newId: String, reason: String?) throws {
+        _ = try executeUpdate(
+            "UPDATE memory_entries SET status = 'superseded', superseded_by = ?1 WHERE id = ?2"
+        ) { stmt in
+            Self.bindText(stmt, index: 1, value: newId)
+            Self.bindText(stmt, index: 2, value: entryId)
+        }
+        try insertMemoryEvent(entryId: entryId, eventType: "superseded", agentId: nil, model: nil, reason: reason)
+    }
+
+    public func deleteMemoryEntry(id: String) throws {
+        _ = try executeUpdate("UPDATE memory_entries SET status = 'deleted' WHERE id = ?1") { stmt in
+            Self.bindText(stmt, index: 1, value: id)
+        }
+        try insertMemoryEvent(entryId: id, eventType: "deleted", agentId: nil, model: nil, reason: nil)
+    }
+
+    public func touchMemoryEntry(id: String) throws {
+        _ = try executeUpdate(
+            "UPDATE memory_entries SET last_accessed = datetime('now'), access_count = access_count + 1 WHERE id = ?1"
+        ) { stmt in
+            Self.bindText(stmt, index: 1, value: id)
+        }
+        try insertMemoryEvent(entryId: id, eventType: "accessed", agentId: nil, model: nil, reason: nil)
+    }
+
+    public func activeEntryCount(agentId: String? = nil) throws -> Int {
+        var count = 0
+        let sql: String
+        if agentId != nil {
+            sql = "SELECT COUNT(*) FROM memory_entries WHERE status = 'active' AND agent_id = ?1"
+        } else {
+            sql = "SELECT COUNT(*) FROM memory_entries WHERE status = 'active'"
+        }
+        try prepareAndExecute(
+            sql,
+            bind: { stmt in
+                if let agentId { Self.bindText(stmt, index: 1, value: agentId) }
+            },
+            process: { stmt in
+                if sqlite3_step(stmt) == SQLITE_ROW {
+                    count = Int(sqlite3_column_int(stmt, 0))
+                }
+            }
+        )
+        return count
+    }
+
+    public func agentIdsWithEntries() throws -> [(agentId: String, count: Int)] {
+        var results: [(String, Int)] = []
+        try prepareAndExecute(
+            "SELECT agent_id, COUNT(*) as cnt FROM memory_entries WHERE status = 'active' GROUP BY agent_id ORDER BY cnt DESC",
+            bind: { _ in },
+            process: { stmt in
+                while sqlite3_step(stmt) == SQLITE_ROW {
+                    results.append((
+                        String(cString: sqlite3_column_text(stmt, 0)),
+                        Int(sqlite3_column_int(stmt, 1))
+                    ))
+                }
+            }
+        )
+        return results
+    }
+
+    private func insertMemoryEvent(entryId: String, eventType: String, agentId: String?, model: String?, reason: String?) throws {
+        _ = try executeUpdate(
+            "INSERT INTO memory_events (entry_id, event_type, agent_id, model, reason) VALUES (?1, ?2, ?3, ?4, ?5)"
+        ) { stmt in
+            Self.bindText(stmt, index: 1, value: entryId)
+            Self.bindText(stmt, index: 2, value: eventType)
+            Self.bindText(stmt, index: 3, value: agentId)
+            Self.bindText(stmt, index: 4, value: model)
+            Self.bindText(stmt, index: 5, value: reason)
+        }
+    }
+
+    private static func readMemoryEntry(_ stmt: OpaquePointer) -> MemoryEntry {
+        MemoryEntry(
+            id: String(cString: sqlite3_column_text(stmt, 0)),
+            agentId: String(cString: sqlite3_column_text(stmt, 1)),
+            type: MemoryEntryType(rawValue: String(cString: sqlite3_column_text(stmt, 2))) ?? .fact,
+            content: String(cString: sqlite3_column_text(stmt, 3)),
+            confidence: sqlite3_column_double(stmt, 4),
+            model: String(cString: sqlite3_column_text(stmt, 5)),
+            sourceConversationId: sqlite3_column_text(stmt, 6).map { String(cString: $0) },
+            tagsJSON: sqlite3_column_text(stmt, 7).map { String(cString: $0) },
+            status: String(cString: sqlite3_column_text(stmt, 8)),
+            supersededBy: sqlite3_column_text(stmt, 9).map { String(cString: $0) },
+            createdAt: String(cString: sqlite3_column_text(stmt, 10)),
+            lastAccessed: String(cString: sqlite3_column_text(stmt, 11)),
+            accessCount: Int(sqlite3_column_int(stmt, 12))
+        )
+    }
+
+    // MARK: - Conversation Summaries
+
+    public func insertSummary(_ summary: ConversationSummary) throws {
+        _ = try executeUpdate(
+            """
+            INSERT INTO conversation_summaries (agent_id, conversation_id, summary, token_count, model, conversation_at)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+            """
+        ) { stmt in
+            Self.bindText(stmt, index: 1, value: summary.agentId)
+            Self.bindText(stmt, index: 2, value: summary.conversationId)
+            Self.bindText(stmt, index: 3, value: summary.summary)
+            sqlite3_bind_int(stmt, 4, Int32(summary.tokenCount))
+            Self.bindText(stmt, index: 5, value: summary.model)
+            Self.bindText(stmt, index: 6, value: summary.conversationAt)
+        }
+    }
+
+    public func loadSummaries(agentId: String, days: Int = 7) throws -> [ConversationSummary] {
+        var summaries: [ConversationSummary] = []
+        try prepareAndExecute(
+            """
+            SELECT id, agent_id, conversation_id, summary, token_count, model, conversation_at, status, created_at
+            FROM conversation_summaries
+            WHERE agent_id = ?1 AND status = 'active'
+              AND conversation_at >= datetime('now', '-' || ?2 || ' days')
+            ORDER BY conversation_at DESC
+            """,
+            bind: { stmt in
+                Self.bindText(stmt, index: 1, value: agentId)
+                sqlite3_bind_int(stmt, 2, Int32(days))
+            },
+            process: { stmt in
+                while sqlite3_step(stmt) == SQLITE_ROW {
+                    summaries.append(Self.readSummary(stmt))
+                }
+            }
+        )
+        return summaries
+    }
+
+    public func loadAllSummaries(days: Int? = nil) throws -> [ConversationSummary] {
+        var summaries: [ConversationSummary] = []
+        let sql: String
+        if days != nil {
+            sql = """
+                SELECT id, agent_id, conversation_id, summary, token_count, model, conversation_at, status, created_at
+                FROM conversation_summaries WHERE status = 'active'
+                AND conversation_at >= datetime('now', '-' || ?1 || ' days')
+                ORDER BY conversation_at DESC
+            """
+        } else {
+            sql = """
+                SELECT id, agent_id, conversation_id, summary, token_count, model, conversation_at, status, created_at
+                FROM conversation_summaries WHERE status = 'active'
+                ORDER BY conversation_at DESC
+            """
+        }
+        try prepareAndExecute(
+            sql,
+            bind: { stmt in
+                if let days { sqlite3_bind_int(stmt, 1, Int32(days)) }
+            },
+            process: { stmt in
+                while sqlite3_step(stmt) == SQLITE_ROW {
+                    summaries.append(Self.readSummary(stmt))
+                }
+            }
+        )
+        return summaries
+    }
+
+    public func summaryStats() throws -> (today: Int, thisWeek: Int, total: Int) {
+        var today = 0, week = 0, total = 0
+        try prepareAndExecute(
+            """
+            SELECT
+                (SELECT COUNT(*) FROM conversation_summaries WHERE status = 'active' AND conversation_at >= datetime('now', 'start of day')),
+                (SELECT COUNT(*) FROM conversation_summaries WHERE status = 'active' AND conversation_at >= datetime('now', '-7 days')),
+                (SELECT COUNT(*) FROM conversation_summaries WHERE status = 'active')
+            """,
+            bind: { _ in },
+            process: { stmt in
+                if sqlite3_step(stmt) == SQLITE_ROW {
+                    today = Int(sqlite3_column_int(stmt, 0))
+                    week = Int(sqlite3_column_int(stmt, 1))
+                    total = Int(sqlite3_column_int(stmt, 2))
+                }
+            }
+        )
+        return (today, week, total)
+    }
+
+    private static func readSummary(_ stmt: OpaquePointer) -> ConversationSummary {
+        ConversationSummary(
+            id: Int(sqlite3_column_int(stmt, 0)),
+            agentId: String(cString: sqlite3_column_text(stmt, 1)),
+            conversationId: String(cString: sqlite3_column_text(stmt, 2)),
+            summary: String(cString: sqlite3_column_text(stmt, 3)),
+            tokenCount: Int(sqlite3_column_int(stmt, 4)),
+            model: String(cString: sqlite3_column_text(stmt, 5)),
+            conversationAt: String(cString: sqlite3_column_text(stmt, 6)),
+            status: String(cString: sqlite3_column_text(stmt, 7)),
+            createdAt: String(cString: sqlite3_column_text(stmt, 8))
+        )
+    }
+
+    // MARK: - Conversations & Chunks
+
+    public func upsertConversation(id: String, agentId: String, title: String?) throws {
+        _ = try executeUpdate(
+            """
+            INSERT INTO conversations (id, agent_id, title, started_at, last_message_at, message_count)
+            VALUES (?1, ?2, ?3, datetime('now'), datetime('now'), 0)
+            ON CONFLICT(id) DO UPDATE SET
+                last_message_at = datetime('now'),
+                message_count = conversations.message_count + 1,
+                title = COALESCE(?3, conversations.title)
+            """
+        ) { stmt in
+            Self.bindText(stmt, index: 1, value: id)
+            Self.bindText(stmt, index: 2, value: agentId)
+            Self.bindText(stmt, index: 3, value: title)
+        }
+    }
+
+    public func insertChunk(conversationId: String, chunkIndex: Int, role: String, content: String, tokenCount: Int) throws {
+        _ = try executeUpdate(
+            """
+            INSERT INTO conversation_chunks (conversation_id, chunk_index, role, content, token_count)
+            VALUES (?1, ?2, ?3, ?4, ?5)
+            """
+        ) { stmt in
+            Self.bindText(stmt, index: 1, value: conversationId)
+            sqlite3_bind_int(stmt, 2, Int32(chunkIndex))
+            Self.bindText(stmt, index: 3, value: role)
+            Self.bindText(stmt, index: 4, value: content)
+            sqlite3_bind_int(stmt, 5, Int32(tokenCount))
+        }
+    }
+
+    public func loadAllChunks(agentId: String? = nil, days: Int = 30) throws -> [ConversationChunk] {
+        var chunks: [ConversationChunk] = []
+        var sql = """
+            SELECT cc.id, cc.conversation_id, cc.chunk_index, cc.role, cc.content, cc.token_count, cc.created_at,
+                   c.agent_id, c.title
+            FROM conversation_chunks cc
+            JOIN conversations c ON c.id = cc.conversation_id
+            WHERE cc.created_at >= datetime('now', '-' || ?1 || ' days')
+        """
+        if agentId != nil { sql += " AND c.agent_id = ?2" }
+        sql += " ORDER BY cc.created_at DESC"
+
+        try prepareAndExecute(
+            sql,
+            bind: { stmt in
+                sqlite3_bind_int(stmt, 1, Int32(days))
+                if let agentId { Self.bindText(stmt, index: 2, value: agentId) }
+            },
+            process: { stmt in
+                while sqlite3_step(stmt) == SQLITE_ROW {
+                    chunks.append(ConversationChunk(
+                        id: Int(sqlite3_column_int(stmt, 0)),
+                        conversationId: String(cString: sqlite3_column_text(stmt, 1)),
+                        chunkIndex: Int(sqlite3_column_int(stmt, 2)),
+                        role: String(cString: sqlite3_column_text(stmt, 3)),
+                        content: String(cString: sqlite3_column_text(stmt, 4)),
+                        tokenCount: Int(sqlite3_column_int(stmt, 5)),
+                        createdAt: String(cString: sqlite3_column_text(stmt, 6)),
+                        agentId: String(cString: sqlite3_column_text(stmt, 7)),
+                        conversationTitle: sqlite3_column_text(stmt, 8).map { String(cString: $0) }
+                    ))
+                }
+            }
+        )
+        return chunks
+    }
+
+    public func searchChunks(query: String, agentId: String? = nil, days: Int = 30) throws -> [ConversationChunk] {
+        var chunks: [ConversationChunk] = []
+        var sql = """
+            SELECT cc.id, cc.conversation_id, cc.chunk_index, cc.role, cc.content, cc.token_count, cc.created_at,
+                   c.agent_id, c.title
+            FROM conversation_chunks cc
+            JOIN conversations c ON c.id = cc.conversation_id
+            WHERE cc.content LIKE '%' || ?1 || '%'
+              AND cc.created_at >= datetime('now', '-' || ?2 || ' days')
+        """
+        if agentId != nil { sql += " AND c.agent_id = ?3" }
+        sql += " ORDER BY cc.created_at DESC LIMIT 20"
+
+        try prepareAndExecute(
+            sql,
+            bind: { stmt in
+                Self.bindText(stmt, index: 1, value: query)
+                sqlite3_bind_int(stmt, 2, Int32(days))
+                if let agentId { Self.bindText(stmt, index: 3, value: agentId) }
+            },
+            process: { stmt in
+                while sqlite3_step(stmt) == SQLITE_ROW {
+                    chunks.append(ConversationChunk(
+                        id: Int(sqlite3_column_int(stmt, 0)),
+                        conversationId: String(cString: sqlite3_column_text(stmt, 1)),
+                        chunkIndex: Int(sqlite3_column_int(stmt, 2)),
+                        role: String(cString: sqlite3_column_text(stmt, 3)),
+                        content: String(cString: sqlite3_column_text(stmt, 4)),
+                        tokenCount: Int(sqlite3_column_int(stmt, 5)),
+                        createdAt: String(cString: sqlite3_column_text(stmt, 6)),
+                        agentId: String(cString: sqlite3_column_text(stmt, 7)),
+                        conversationTitle: sqlite3_column_text(stmt, 8).map { String(cString: $0) }
+                    ))
+                }
+            }
+        )
+        return chunks
+    }
+
+    // MARK: - Pending Signals
+
+    public func insertPendingSignal(_ signal: PendingSignal) throws {
+        _ = try executeUpdate(
+            """
+            INSERT INTO pending_signals (agent_id, conversation_id, signal_type, user_message, assistant_message, status)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+            """
+        ) { stmt in
+            Self.bindText(stmt, index: 1, value: signal.agentId)
+            Self.bindText(stmt, index: 2, value: signal.conversationId)
+            Self.bindText(stmt, index: 3, value: signal.signalType)
+            Self.bindText(stmt, index: 4, value: signal.userMessage)
+            Self.bindText(stmt, index: 5, value: signal.assistantMessage)
+            Self.bindText(stmt, index: 6, value: signal.status)
+        }
+    }
+
+    public func loadPendingSignals(agentId: String) throws -> [PendingSignal] {
+        var signals: [PendingSignal] = []
+        try prepareAndExecute(
+            "SELECT id, agent_id, conversation_id, signal_type, user_message, assistant_message, status, created_at FROM pending_signals WHERE agent_id = ?1 AND status = 'pending' ORDER BY created_at",
+            bind: { stmt in Self.bindText(stmt, index: 1, value: agentId) },
+            process: { stmt in
+                while sqlite3_step(stmt) == SQLITE_ROW {
+                    signals.append(PendingSignal(
+                        id: Int(sqlite3_column_int(stmt, 0)),
+                        agentId: String(cString: sqlite3_column_text(stmt, 1)),
+                        conversationId: String(cString: sqlite3_column_text(stmt, 2)),
+                        signalType: String(cString: sqlite3_column_text(stmt, 3)),
+                        userMessage: String(cString: sqlite3_column_text(stmt, 4)),
+                        assistantMessage: sqlite3_column_text(stmt, 5).map { String(cString: $0) },
+                        status: String(cString: sqlite3_column_text(stmt, 6)),
+                        createdAt: String(cString: sqlite3_column_text(stmt, 7))
+                    ))
+                }
+            }
+        )
+        return signals
+    }
+
+    public func markSignalsProcessed(agentId: String) throws {
+        _ = try executeUpdate(
+            "UPDATE pending_signals SET status = 'processed' WHERE agent_id = ?1 AND status = 'pending'"
+        ) { stmt in
+            Self.bindText(stmt, index: 1, value: agentId)
+        }
+    }
+
+    // MARK: - Agent Activity
+
+    public func updateAgentActivity(agentId: String) throws {
+        _ = try executeUpdate(
+            """
+            INSERT INTO agent_activity (agent_id, last_activity_at, pending_signals, processing_status)
+            VALUES (?1, datetime('now'), 0, 'idle')
+            ON CONFLICT(agent_id) DO UPDATE SET last_activity_at = datetime('now')
+            """
+        ) { stmt in
+            Self.bindText(stmt, index: 1, value: agentId)
+        }
+    }
+
+    /// All agent IDs that have at least one pending signal (regardless of inactivity timer).
+    public func agentsWithPendingSignals() throws -> [String] {
+        var agentIds: [String] = []
+        try prepareAndExecute(
+            "SELECT DISTINCT agent_id FROM pending_signals WHERE status = 'pending'",
+            bind: { _ in },
+            process: { stmt in
+                while sqlite3_step(stmt) == SQLITE_ROW {
+                    agentIds.append(String(cString: sqlite3_column_text(stmt, 0)))
+                }
+            }
+        )
+        return agentIds
+    }
+
+    public func agentsNeedingProcessing(inactivitySeconds: Int) throws -> [String] {
+        var agentIds: [String] = []
+        try prepareAndExecute(
+            """
+            SELECT agent_id FROM agent_activity
+            WHERE processing_status = 'idle'
+              AND last_activity_at <= datetime('now', '-' || ?1 || ' seconds')
+              AND (last_processed_at IS NULL OR last_processed_at < last_activity_at)
+            """,
+            bind: { stmt in sqlite3_bind_int(stmt, 1, Int32(inactivitySeconds)) },
+            process: { stmt in
+                while sqlite3_step(stmt) == SQLITE_ROW {
+                    agentIds.append(String(cString: sqlite3_column_text(stmt, 0)))
+                }
+            }
+        )
+        return agentIds
+    }
+
+    public func markAgentProcessing(agentId: String, status: String) throws {
+        _ = try executeUpdate(
+            "UPDATE agent_activity SET processing_status = ?1, last_processed_at = CASE WHEN ?1 = 'idle' THEN datetime('now') ELSE last_processed_at END WHERE agent_id = ?2"
+        ) { stmt in
+            Self.bindText(stmt, index: 1, value: status)
+            Self.bindText(stmt, index: 2, value: agentId)
+        }
+    }
+
+    // MARK: - Processing Log
+
+    public func insertProcessingLog(
+        agentId: String, taskType: String, model: String?, status: String,
+        details: String? = nil, inputTokens: Int? = nil, outputTokens: Int? = nil, durationMs: Int? = nil
+    ) throws {
+        _ = try executeUpdate(
+            """
+            INSERT INTO processing_log (agent_id, task_type, model, status, details, input_tokens, output_tokens, duration_ms)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+            """
+        ) { stmt in
+            Self.bindText(stmt, index: 1, value: agentId)
+            Self.bindText(stmt, index: 2, value: taskType)
+            Self.bindText(stmt, index: 3, value: model)
+            Self.bindText(stmt, index: 4, value: status)
+            Self.bindText(stmt, index: 5, value: details)
+            if let t = inputTokens { sqlite3_bind_int(stmt, 6, Int32(t)) } else { sqlite3_bind_null(stmt, 6) }
+            if let t = outputTokens { sqlite3_bind_int(stmt, 7, Int32(t)) } else { sqlite3_bind_null(stmt, 7) }
+            if let t = durationMs { sqlite3_bind_int(stmt, 8, Int32(t)) } else { sqlite3_bind_null(stmt, 8) }
+        }
+    }
+
+    public func processingStats() throws -> ProcessingStats {
+        var stats = ProcessingStats()
+        try prepareAndExecute(
+            """
+            SELECT COUNT(*), AVG(duration_ms),
+                   SUM(CASE WHEN status = 'success' THEN 1 ELSE 0 END),
+                   SUM(CASE WHEN status = 'error' THEN 1 ELSE 0 END)
+            FROM processing_log
+            """,
+            bind: { _ in },
+            process: { stmt in
+                if sqlite3_step(stmt) == SQLITE_ROW {
+                    stats.totalCalls = Int(sqlite3_column_int(stmt, 0))
+                    stats.avgDurationMs = sqlite3_column_type(stmt, 1) != SQLITE_NULL ? Int(sqlite3_column_int(stmt, 1)) : 0
+                    stats.successCount = Int(sqlite3_column_int(stmt, 2))
+                    stats.errorCount = Int(sqlite3_column_int(stmt, 3))
+                }
+            }
+        )
+        return stats
+    }
+
+    // MARK: - Database Info
+
+    public func databaseSizeBytes() -> Int64 {
+        let path = OsaurusPaths.memoryDatabaseFile().path
+        let attrs = try? FileManager.default.attributesOfItem(atPath: path)
+        return (attrs?[.size] as? Int64) ?? 0
+    }
+
+    // MARK: - Text Search (BM25 fallback)
+
+    public func searchMemoryEntries(query: String, agentId: String? = nil) throws -> [MemoryEntry] {
+        var entries: [MemoryEntry] = []
+        var sql = """
+            SELECT id, agent_id, type, content, confidence, model, source_conversation_id, tags, status,
+                   superseded_by, created_at, last_accessed, access_count
+            FROM memory_entries
+            WHERE status = 'active' AND content LIKE '%' || ?1 || '%'
+        """
+        if agentId != nil { sql += " AND agent_id = ?2" }
+        sql += " ORDER BY last_accessed DESC LIMIT 20"
+
+        try prepareAndExecute(
+            sql,
+            bind: { stmt in
+                Self.bindText(stmt, index: 1, value: query)
+                if let agentId { Self.bindText(stmt, index: 2, value: agentId) }
+            },
+            process: { stmt in
+                while sqlite3_step(stmt) == SQLITE_ROW {
+                    entries.append(Self.readMemoryEntry(stmt))
+                }
+            }
+        )
+        return entries
+    }
+
+    public func searchSummaries(query: String, agentId: String? = nil, days: Int = 30) throws -> [ConversationSummary] {
+        var summaries: [ConversationSummary] = []
+        var sql = """
+            SELECT id, agent_id, conversation_id, summary, token_count, model, conversation_at, status, created_at
+            FROM conversation_summaries
+            WHERE status = 'active' AND summary LIKE '%' || ?1 || '%'
+              AND conversation_at >= datetime('now', '-' || ?2 || ' days')
+        """
+        if agentId != nil { sql += " AND agent_id = ?3" }
+        sql += " ORDER BY conversation_at DESC LIMIT 20"
+
+        try prepareAndExecute(
+            sql,
+            bind: { stmt in
+                Self.bindText(stmt, index: 1, value: query)
+                sqlite3_bind_int(stmt, 2, Int32(days))
+                if let agentId { Self.bindText(stmt, index: 3, value: agentId) }
+            },
+            process: { stmt in
+                while sqlite3_step(stmt) == SQLITE_ROW {
+                    summaries.append(Self.readSummary(stmt))
+                }
+            }
+        )
+        return summaries
+    }
+}
+
+// MARK: - SQLite Helpers
+
+extension MemoryDatabase {
+    static func bindText(_ stmt: OpaquePointer, index: Int32, value: String?) {
+        if let value = value {
+            sqlite3_bind_text(stmt, index, value, -1, unsafeBitCast(-1, to: sqlite3_destructor_type.self))
+        } else {
+            sqlite3_bind_null(stmt, index)
+        }
+    }
+}

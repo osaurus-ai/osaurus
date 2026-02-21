@@ -16,6 +16,7 @@ let package = Package(
         .package(url: "https://github.com/ml-explore/mlx-swift-lm", branch: "main"),
         .package(url: "https://github.com/huggingface/swift-transformers", from: "1.1.6"),
         .package(url: "https://github.com/argmaxinc/WhisperKit", from: "0.15.0"),
+        .package(url: "https://github.com/rryam/VecturaKit", from: "3.0.0"),
         .package(path: "../OsaurusRepository"),
     ],
     targets: [
@@ -34,6 +35,7 @@ let package = Package(
                 .product(name: "MLXLMCommon", package: "mlx-swift-lm"),
                 .product(name: "Hub", package: "swift-transformers"),
                 .product(name: "WhisperKit", package: "WhisperKit"),
+                .product(name: "VecturaKit", package: "VecturaKit"),
                 .product(name: "OsaurusRepository", package: "OsaurusRepository"),
             ],
             path: ".",

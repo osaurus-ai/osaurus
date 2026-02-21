@@ -830,6 +830,14 @@ final class ChatSession: ObservableObject {
             }
         }
 
+        // Signal detection (Path 1) — fire before streaming
+        let detectedSignals = hasContent ? SignalDetector.detect(in: trimmed) : []
+        let memoryAgentId = (agentId ?? Agent.defaultId).uuidString
+        let memoryConversationId = (sessionId ?? UUID()).uuidString
+        if hasContent {
+            ActivityTracker.shared.recordActivity(agentId: memoryAgentId)
+        }
+
         currentTask = Task { @MainActor [weak self] in
             guard let self else { return }
             isStreaming = true
@@ -851,6 +859,44 @@ final class ChatSession: ObservableObject {
                     turn.consolidateContent()
                 }
                 save()
+
+                // Memory: persist conversation chunk and trigger signal processing
+                let assistantContent = turns.last(where: { $0.role == .assistant })?.content
+                let userContent = trimmed
+
+                if hasContent, let sid = sessionId {
+                    let convId = sid.uuidString
+                    let aid = memoryAgentId
+                    let chunkIdx = turns.count
+                    let db = MemoryDatabase.shared
+                    try? db.upsertConversation(id: convId, agentId: aid, title: title)
+                    let userChunkIndex = chunkIdx - 1
+                    try? db.insertChunk(conversationId: convId, chunkIndex: userChunkIndex, role: "user", content: userContent, tokenCount: max(1, userContent.count / 4))
+                    let userChunk = ConversationChunk(conversationId: convId, chunkIndex: userChunkIndex, role: "user", content: userContent, tokenCount: max(1, userContent.count / 4))
+                    Task.detached { await MemorySearchService.shared.indexConversationChunk(userChunk) }
+                    if let ac = assistantContent, !ac.isEmpty {
+                        try? db.insertChunk(conversationId: convId, chunkIndex: chunkIdx, role: "assistant", content: ac, tokenCount: max(1, ac.count / 4))
+                        let assistantChunk = ConversationChunk(conversationId: convId, chunkIndex: chunkIdx, role: "assistant", content: ac, tokenCount: max(1, ac.count / 4))
+                        Task.detached { await MemorySearchService.shared.indexConversationChunk(assistantChunk) }
+                    }
+                }
+
+                if !detectedSignals.isEmpty {
+                    let signals = detectedSignals
+                    let userMsg = userContent
+                    let asstMsg = assistantContent
+                    let agentStr = memoryAgentId
+                    let convStr = memoryConversationId
+                    Task.detached {
+                        await MemoryService.shared.processImmediateSignals(
+                            signals: signals, userMessage: userMsg,
+                            assistantMessage: asstMsg, agentId: agentStr,
+                            conversationId: convStr
+                        )
+                    }
+                }
+
+                ActivityTracker.shared.recordActivity(agentId: memoryAgentId)
             }
 
             var assistantTurn = ChatTurn(role: .assistant, content: "")
@@ -871,12 +917,23 @@ final class ChatSession: ObservableObject {
                 let baseSystemPrompt = AgentManager.shared.effectiveSystemPrompt(for: effectiveAgentId)
                     .trimmingCharacters(in: .whitespacesAndNewlines)
 
+                // Inject memory context before the system prompt
+                let memoryConfig = MemoryConfigurationStore.load()
+                let memoryContext = MemoryContextAssembler.assembleContext(
+                    agentId: effectiveAgentId.uuidString,
+                    config: memoryConfig
+                )
+
                 // Build system prompt and tool specs based on capability selection state
                 var sys = buildSystemPrompt(
                     base: baseSystemPrompt,
                     agentId: effectiveAgentId,
                     needsSelection: needsCapabilitySelection
                 )
+
+                if !memoryContext.isEmpty {
+                    sys = memoryContext + "\n\n" + sys
+                }
                 var toolSpecs = buildToolSpecs(
                     needsSelection: needsCapabilitySelection,
                     hasCapabilities: hasCapabilities,

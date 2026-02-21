@@ -1,0 +1,119 @@
+//
+//  MemoryConfiguration.swift
+//  osaurus
+//
+//  User-configurable settings for the memory system.
+//
+
+import Foundation
+
+public struct MemoryConfiguration: Codable, Equatable, Sendable {
+    /// Core Model provider (e.g. "anthropic")
+    public var coreModelProvider: String
+    /// Core Model name (e.g. "claude-haiku-4-5")
+    public var coreModelName: String
+
+    /// Embedding backend ("mlx" or "none")
+    public var embeddingBackend: String
+    /// Embedding model name
+    public var embeddingModel: String
+
+    /// Seconds of inactivity before post-activity processing triggers
+    public var inactivityTimeoutSeconds: Int
+
+    /// Maximum token count for the user profile
+    public var profileMaxTokens: Int
+    /// Number of new contributions before profile regeneration
+    public var profileRegenerateThreshold: Int
+
+    /// Token budget for working memory in context
+    public var workingMemoryBudgetTokens: Int
+
+    /// Default retention in days for conversation summaries
+    public var summaryRetentionDays: Int
+    /// Token budget for summaries in context
+    public var summaryBudgetTokens: Int
+
+    /// Top-K results for recall searches
+    public var recallTopK: Int
+    /// Half-life in days for temporal decay in search ranking
+    public var temporalDecayHalfLifeDays: Int
+
+    /// Whether the memory system is enabled
+    public var enabled: Bool
+
+    /// Full model identifier for routing (e.g. "anthropic/claude-haiku-4-5" or "foundation")
+    public var coreModelIdentifier: String {
+        coreModelProvider.isEmpty ? coreModelName : "\(coreModelProvider)/\(coreModelName)"
+    }
+
+    public init(
+        coreModelProvider: String = "anthropic",
+        coreModelName: String = "claude-haiku-4-5",
+        embeddingBackend: String = "mlx",
+        embeddingModel: String = "nomic-embed-text-v1.5",
+        inactivityTimeoutSeconds: Int = 300,
+        profileMaxTokens: Int = 2000,
+        profileRegenerateThreshold: Int = 10,
+        workingMemoryBudgetTokens: Int = 500,
+        summaryRetentionDays: Int = 7,
+        summaryBudgetTokens: Int = 1000,
+        recallTopK: Int = 10,
+        temporalDecayHalfLifeDays: Int = 30,
+        enabled: Bool = true
+    ) {
+        self.coreModelProvider = coreModelProvider
+        self.coreModelName = coreModelName
+        self.embeddingBackend = embeddingBackend
+        self.embeddingModel = embeddingModel
+        self.inactivityTimeoutSeconds = inactivityTimeoutSeconds
+        self.profileMaxTokens = profileMaxTokens
+        self.profileRegenerateThreshold = profileRegenerateThreshold
+        self.workingMemoryBudgetTokens = workingMemoryBudgetTokens
+        self.summaryRetentionDays = summaryRetentionDays
+        self.summaryBudgetTokens = summaryBudgetTokens
+        self.recallTopK = recallTopK
+        self.temporalDecayHalfLifeDays = temporalDecayHalfLifeDays
+        self.enabled = enabled
+    }
+
+    public static var `default`: MemoryConfiguration { MemoryConfiguration() }
+}
+
+// MARK: - Store
+
+@MainActor
+public enum MemoryConfigurationStore {
+    private static let encoder: JSONEncoder = {
+        let e = JSONEncoder()
+        e.outputFormatting = [.prettyPrinted, .sortedKeys]
+        return e
+    }()
+
+    public static func load() -> MemoryConfiguration {
+        let url = OsaurusPaths.memoryConfigFile()
+        guard FileManager.default.fileExists(atPath: url.path) else {
+            let defaults = MemoryConfiguration.default
+            save(defaults)
+            return defaults
+        }
+        do {
+            let data = try Data(contentsOf: url)
+            return try JSONDecoder().decode(MemoryConfiguration.self, from: data)
+        } catch {
+            print("[Memory] Failed to load config: \(error)")
+            return .default
+        }
+    }
+
+    public static func save(_ config: MemoryConfiguration) {
+        let url = OsaurusPaths.memoryConfigFile()
+        OsaurusPaths.ensureExistsSilent(url.deletingLastPathComponent())
+        do {
+            let data = try encoder.encode(config)
+            try data.write(to: url, options: .atomic)
+        } catch {
+            print("[Memory] Failed to save config: \(error)")
+        }
+    }
+}

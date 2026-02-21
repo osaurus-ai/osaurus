@@ -151,6 +151,17 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
         // Start plugin repository background refresh for update checking
         PluginRepositoryService.shared.startBackgroundRefresh()
 
+        // Initialize memory system
+        Task { @MainActor in
+            do {
+                try MemoryDatabase.shared.open()
+                ActivityTracker.shared.start()
+                await MemorySearchService.shared.initialize()
+            } catch {
+                print("[Memory] Database failed to open: \(error)")
+            }
+        }
+
         // Auto-start server on app launch
         Task { @MainActor in
             await serverController.startServer()
