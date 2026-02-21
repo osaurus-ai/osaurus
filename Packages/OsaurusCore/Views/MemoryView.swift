@@ -2,15 +2,14 @@
 //  MemoryView.swift
 //  osaurus
 //
-//  Full memory management UI: user profile, overrides, working memory,
-//  conversation summaries, model stats, and core model configuration.
+//  Memory management UI: user profile, overrides, statistics,
+//  core model configuration, and danger zone.
 //
 
 import SwiftUI
 
 struct MemoryView: View {
     @ObservedObject private var themeManager = ThemeManager.shared
-    @ObservedObject private var agentManager = AgentManager.shared
 
     private var theme: ThemeProtocol { themeManager.currentTheme }
 
@@ -18,50 +17,57 @@ struct MemoryView: View {
     @State private var config = MemoryConfiguration.default
     @State private var profile: UserProfile?
     @State private var userEdits: [UserEdit] = []
-    @State private var recentEvents: [ProfileEvent] = []
-    @State private var agentEntries: [(agentId: String, count: Int)] = []
-    @State private var summaryStats: (today: Int, thisWeek: Int, total: Int) = (0, 0, 0)
     @State private var processingStats = ProcessingStats()
     @State private var dbSizeBytes: Int64 = 0
 
     @State private var showProfileEditor = false
     @State private var showAddOverride = false
     @State private var newOverrideText = ""
-    @State private var showWorkingMemory = false
-    @State private var selectedAgentId: String?
-    @State private var selectedAgentEntries: [MemoryEntry] = []
-    @State private var showAllEvents = false
-    @State private var modelOptions: [ModelOption] = []
     @State private var isSyncing = false
+    @State private var modelOptions: [ModelOption] = []
+
+    // Toast & alert
+    @State private var toastMessage: (text: String, isError: Bool)?
+    @State private var showClearConfirmation = false
 
     var body: some View {
-        VStack(spacing: 0) {
-            headerView
-                .opacity(hasAppeared ? 1 : 0)
-                .offset(y: hasAppeared ? 0 : -10)
-                .animation(.spring(response: 0.4, dampingFraction: 0.8), value: hasAppeared)
+        ZStack {
+            VStack(spacing: 0) {
+                headerView
+                    .opacity(hasAppeared ? 1 : 0)
+                    .offset(y: hasAppeared ? 0 : -10)
+                    .animation(.spring(response: 0.4, dampingFraction: 0.8), value: hasAppeared)
 
-            ScrollView {
-                VStack(alignment: .leading, spacing: 24) {
-                    if !config.enabled {
-                        disabledBanner
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 16) {
+                        if !config.enabled {
+                            disabledBanner
+                        }
+
+                        profileSection
+                        overridesSection
+                        statsSection
+                        configurationSection
+                        dangerZoneSection
                     }
-
-                    profileSection
-                    overridesSection
-                    recentEventsSection
-                    workingMemorySection
-                    summariesSection
-                    modelStatsSection
-                    footerSection
+                    .padding(24)
                 }
-                .padding(24)
+                .opacity(hasAppeared ? 1 : 0)
             }
-            .opacity(hasAppeared ? 1 : 0)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(theme.primaryBackground)
+            .environment(\.theme, themeManager.currentTheme)
+
+            if let toast = toastMessage {
+                VStack {
+                    Spacer()
+                    ThemedToastView(toast.text, type: toast.isError ? .error : .success)
+                        .transition(.move(edge: .bottom).combined(with: .opacity))
+                        .padding(.bottom, 20)
+                }
+                .zIndex(100)
+            }
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(theme.primaryBackground)
-        .environment(\.theme, themeManager.currentTheme)
         .onAppear {
             loadData()
             loadModelOptions()
@@ -74,22 +80,30 @@ struct MemoryView: View {
                 profile: profile,
                 onSave: { newContent in
                     saveProfileEdit(newContent)
+                    showToast("Profile saved")
                 }
             )
             .frame(minWidth: 500, minHeight: 400)
         }
-        .sheet(isPresented: $showWorkingMemory) {
-            WorkingMemoryListSheet(
-                agentId: selectedAgentId ?? "",
-                entries: selectedAgentEntries,
-                onDelete: { entryId in deleteEntry(entryId) }
-            )
-            .frame(minWidth: 600, minHeight: 500)
-        }
         .sheet(isPresented: $showAddOverride) {
-            addOverrideSheet
-                .frame(minWidth: 400, minHeight: 200)
+            AddOverrideSheet(
+                onAdd: { text in
+                    addOverride(text)
+                    showToast("Override added")
+                }
+            )
+            .frame(minWidth: 440, minHeight: 220)
         }
+        .themedAlert(
+            "Clear All Memory",
+            isPresented: $showClearConfirmation,
+            message:
+                "This will permanently delete your profile, all working memory entries, conversation summaries, and processing history. This cannot be undone.",
+            primaryButton: .destructive("Clear Everything") {
+                clearAllMemory()
+            },
+            secondaryButton: .cancel("Cancel")
+        )
     }
 
     // MARK: - Header
@@ -97,7 +111,7 @@ struct MemoryView: View {
     private var headerView: some View {
         ManagerHeaderWithActions(
             title: "Memory",
-            subtitle: "Manage your profile, working memory, and conversation history"
+            subtitle: "Manage your profile, overrides, and memory configuration"
         ) {
             HeaderSecondaryButton(isSyncing ? "Syncing..." : "Sync Now", icon: "arrow.triangle.2.circlepath") {
                 guard !isSyncing else { return }
@@ -107,12 +121,13 @@ struct MemoryView: View {
                     await MainActor.run {
                         isSyncing = false
                         loadData()
+                        showToast("Sync complete")
                     }
                 }
             }
             .disabled(isSyncing || !config.enabled)
 
-            HeaderSecondaryButton("Refresh", icon: "arrow.clockwise") {
+            HeaderIconButton("arrow.clockwise", help: "Refresh") {
                 loadData()
             }
         }
@@ -121,285 +136,175 @@ struct MemoryView: View {
     // MARK: - Disabled Banner
 
     private var disabledBanner: some View {
-        HStack {
+        HStack(spacing: 12) {
             Image(systemName: "exclamationmark.triangle.fill")
-                .foregroundColor(.orange)
+                .font(.system(size: 16, weight: .medium))
+                .foregroundColor(theme.warningColor)
+
             Text("Memory system is disabled. Enable it below to start building memory.")
-                .font(.callout)
+                .font(.system(size: 13))
                 .foregroundColor(theme.secondaryText)
+
             Spacer()
-            Button("Enable") {
+
+            Button {
                 config.enabled = true
                 MemoryConfigurationStore.save(config)
                 loadData()
+                showToast("Memory enabled")
+            } label: {
+                Text("Enable")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 7)
+                    .background(RoundedRectangle(cornerRadius: 8).fill(theme.accentColor))
             }
-            .buttonStyle(.borderedProminent)
-            .controlSize(.small)
+            .buttonStyle(PlainButtonStyle())
         }
-        .padding(12)
-        .background(theme.secondaryBackground.opacity(0.5))
-        .cornerRadius(8)
+        .padding(14)
+        .background(
+            RoundedRectangle(cornerRadius: 12)
+                .fill(theme.warningColor.opacity(0.08))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 12)
+                        .stroke(theme.warningColor.opacity(0.25), lineWidth: 1)
+                )
+        )
     }
 
     // MARK: - User Profile Section
 
     private var profileSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack {
-                Label("User Profile", systemImage: "person.text.rectangle")
-                    .font(.headline)
-                    .foregroundColor(theme.primaryText)
-                Spacer()
-                if let profile {
-                    Text("\(profile.tokenCount) tokens")
-                        .font(.caption)
-                        .foregroundColor(theme.tertiaryText)
-                }
-                Button("Edit") { showProfileEditor = true }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
+        MemorySection(title: "User Profile", icon: "person.text.rectangle") {
+            SectionActionButton("Edit", icon: "pencil") {
+                showProfileEditor = true
             }
-
+        } content: {
             if let profile {
-                Text(profile.content)
-                    .font(.body)
-                    .foregroundColor(theme.secondaryText)
-                    .lineLimit(6)
-                    .padding(12)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(theme.secondaryBackground.opacity(0.3))
-                    .cornerRadius(8)
+                VStack(alignment: .leading, spacing: 10) {
+                    Text(profile.content)
+                        .font(.system(size: 13))
+                        .foregroundColor(theme.secondaryText)
+                        .lineLimit(6)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(12)
+                        .background(
+                            RoundedRectangle(cornerRadius: 8)
+                                .fill(theme.inputBackground)
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 8)
+                                        .stroke(theme.inputBorder, lineWidth: 1)
+                                )
+                        )
 
-                Text("v\(profile.version) — Generated \(profile.generatedAt) by \(profile.model)")
-                    .font(.caption2)
-                    .foregroundColor(theme.tertiaryText)
+                    HStack(spacing: 12) {
+                        metadataTag("v\(profile.version)")
+                        metadataTag("\(profile.tokenCount) tokens")
+                        metadataTag(profile.model)
+
+                        Spacer()
+
+                        Text(profile.generatedAt)
+                            .font(.system(size: 11))
+                            .foregroundColor(theme.tertiaryText)
+                    }
+                }
             } else {
-                Text(
-                    "No profile generated yet. Chat with Osaurus and the memory system will build your profile automatically."
-                )
-                .font(.callout)
-                .foregroundColor(theme.tertiaryText)
+                HStack(spacing: 10) {
+                    Image(systemName: "info.circle")
+                        .font(.system(size: 13))
+                        .foregroundColor(theme.tertiaryText)
+                    Text(
+                        "No profile generated yet. Chat with Osaurus and the memory system will build your profile automatically."
+                    )
+                    .font(.system(size: 13))
+                    .foregroundColor(theme.tertiaryText)
+                }
                 .padding(12)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .background(theme.secondaryBackground.opacity(0.3))
-                .cornerRadius(8)
+                .background(
+                    RoundedRectangle(cornerRadius: 8)
+                        .fill(theme.inputBackground)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 8)
+                                .stroke(theme.inputBorder, lineWidth: 1)
+                        )
+                )
             }
         }
     }
 
-    // MARK: - User Overrides Section
+    // MARK: - Overrides Section
 
     private var overridesSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack {
-                Label("Your Overrides (\(userEdits.count))", systemImage: "pin.fill")
-                    .font(.headline)
-                    .foregroundColor(theme.primaryText)
-                Spacer()
-                Button {
-                    showAddOverride = true
-                } label: {
-                    Label("Add", systemImage: "plus")
-                }
-                .buttonStyle(.bordered)
-                .controlSize(.small)
+        MemorySection(title: "Your Overrides", icon: "pin.fill", count: userEdits.count) {
+            SectionActionButton("Add", icon: "plus") {
+                showAddOverride = true
             }
-
+        } content: {
             if userEdits.isEmpty {
-                Text("No overrides set. Add explicit facts that should always be in your profile.")
-                    .font(.callout)
-                    .foregroundColor(theme.tertiaryText)
+                HStack(spacing: 10) {
+                    Image(systemName: "info.circle")
+                        .font(.system(size: 13))
+                        .foregroundColor(theme.tertiaryText)
+                    Text("No overrides set. Add explicit facts that should always be in your profile.")
+                        .font(.system(size: 13))
+                        .foregroundColor(theme.tertiaryText)
+                }
             } else {
-                ForEach(userEdits) { edit in
-                    HStack {
-                        Image(systemName: "circle.fill")
-                            .font(.system(size: 6))
-                            .foregroundColor(theme.accentColor)
-                        Text(edit.content)
-                            .font(.body)
-                            .foregroundColor(theme.secondaryText)
-                        Spacer()
-                        Button {
-                            removeOverride(id: edit.id)
-                        } label: {
-                            Image(systemName: "xmark.circle.fill")
-                                .foregroundColor(theme.tertiaryText)
+                VStack(spacing: 0) {
+                    ForEach(Array(userEdits.enumerated()), id: \.element.id) { index, edit in
+                        if index > 0 {
+                            Divider().opacity(0.5)
                         }
-                        .buttonStyle(.plain)
-                    }
-                    .padding(.vertical, 4)
-                }
-            }
-        }
-    }
-
-    // MARK: - Recent Profile Events
-
-    private var recentEventsSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack {
-                Label("Recent Profile Updates", systemImage: "clock.arrow.circlepath")
-                    .font(.headline)
-                    .foregroundColor(theme.primaryText)
-                Spacer()
-                if recentEvents.count > 5 {
-                    Button(showAllEvents ? "Show Less" : "View All") {
-                        showAllEvents.toggle()
-                    }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
-                }
-            }
-
-            let eventsToShow = showAllEvents ? recentEvents : Array(recentEvents.prefix(5))
-
-            if eventsToShow.isEmpty {
-                Text("No profile updates yet.")
-                    .font(.callout)
-                    .foregroundColor(theme.tertiaryText)
-            } else {
-                ForEach(eventsToShow) { event in
-                    HStack(spacing: 8) {
-                        eventIcon(for: event.eventType)
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text("\(event.agentId) — \(event.content)")
-                                .font(.callout)
-                                .foregroundColor(theme.secondaryText)
-                                .lineLimit(2)
-                            Text(event.createdAt)
-                                .font(.caption2)
-                                .foregroundColor(theme.tertiaryText)
-                        }
-                        Spacer()
-                    }
-                    .padding(.vertical, 2)
-                }
-            }
-        }
-    }
-
-    @ViewBuilder
-    private func eventIcon(for type: String) -> some View {
-        switch type {
-        case "contribution":
-            Image(systemName: "plus.circle.fill")
-                .foregroundColor(.green)
-                .font(.caption)
-        case "user_edit":
-            Image(systemName: "pencil.circle.fill")
-                .foregroundColor(.blue)
-                .font(.caption)
-        case "regeneration":
-            Image(systemName: "arrow.triangle.2.circlepath.circle.fill")
-                .foregroundColor(.orange)
-                .font(.caption)
-        default:
-            Image(systemName: "circle.fill")
-                .foregroundColor(theme.tertiaryText)
-                .font(.caption)
-        }
-    }
-
-    // MARK: - Working Memory Section
-
-    private var workingMemorySection: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Label("Working Memory", systemImage: "brain")
-                .font(.headline)
-                .foregroundColor(theme.primaryText)
-
-            if agentEntries.isEmpty {
-                Text("No working memory entries yet. Memories are automatically extracted from conversations.")
-                    .font(.callout)
-                    .foregroundColor(theme.tertiaryText)
-            } else {
-                ForEach(agentEntries, id: \.agentId) { item in
-                    HStack {
-                        let agentName = agentDisplayName(item.agentId)
-                        Text(agentName)
-                            .font(.body)
-                            .foregroundColor(theme.primaryText)
-                        Spacer()
-                        Text("\(item.count) entries")
-                            .font(.callout)
-                            .foregroundColor(theme.tertiaryText)
-                        Button("View") {
-                            selectedAgentId = item.agentId
-                            if let entries = try? MemoryDatabase.shared.loadActiveEntries(agentId: item.agentId) {
-                                selectedAgentEntries = entries
+                        OverrideRow(
+                            edit: edit,
+                            onDelete: {
+                                removeOverride(id: edit.id)
+                                showToast("Override removed")
                             }
-                            showWorkingMemory = true
-                        }
-                        .buttonStyle(.bordered)
-                        .controlSize(.small)
+                        )
                     }
-                    .padding(.vertical, 4)
                 }
             }
         }
     }
 
-    // MARK: - Summaries Section
+    // MARK: - Statistics Section
 
-    private var summariesSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack {
-                Label("Conversation Summaries", systemImage: "doc.text")
-                    .font(.headline)
-                    .foregroundColor(theme.primaryText)
-                Spacer()
-                HStack(spacing: 4) {
-                    Text("Retention:")
-                        .font(.caption)
-                        .foregroundColor(theme.tertiaryText)
-                    Stepper("\(config.summaryRetentionDays) days", value: $config.summaryRetentionDays, in: 1 ... 365)
-                        .font(.caption)
-                        .labelsHidden()
-                    Text("\(config.summaryRetentionDays) days")
-                        .font(.caption)
-                        .foregroundColor(theme.secondaryText)
-                }
-                .onChange(of: config.summaryRetentionDays) { _, _ in
-                    MemoryConfigurationStore.save(config)
-                }
-            }
-
-            HStack(spacing: 24) {
-                statCell(label: "Today", value: "\(summaryStats.today)")
-                statCell(label: "This Week", value: "\(summaryStats.thisWeek)")
-                statCell(label: "Total", value: "\(summaryStats.total)")
+    private var statsSection: some View {
+        MemorySection(title: "Statistics", icon: "chart.bar") {
+            EmptyView()
+        } content: {
+            HStack(spacing: 0) {
+                statBlock(label: "Total Calls", value: "\(processingStats.totalCalls)")
+                Divider().frame(height: 36).opacity(0.5)
+                statBlock(label: "Avg Latency", value: "\(processingStats.avgDurationMs)ms")
+                Divider().frame(height: 36).opacity(0.5)
+                statBlock(label: "Success", value: "\(processingStats.successCount)")
+                Divider().frame(height: 36).opacity(0.5)
+                statBlock(label: "Errors", value: "\(processingStats.errorCount)")
+                Divider().frame(height: 36).opacity(0.5)
+                statBlock(label: "Database", value: formatBytes(dbSizeBytes))
             }
         }
     }
 
-    // MARK: - Model Stats Section
+    // MARK: - Configuration Section
 
-    private var modelStatsSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Label("Model Stats", systemImage: "chart.bar")
-                .font(.headline)
-                .foregroundColor(theme.primaryText)
-
-            HStack(spacing: 24) {
-                statCell(label: "Total Calls", value: "\(processingStats.totalCalls)")
-                statCell(label: "Avg Latency", value: "\(processingStats.avgDurationMs)ms")
-                statCell(label: "Success", value: "\(processingStats.successCount)")
-                statCell(label: "Errors", value: "\(processingStats.errorCount)")
-            }
-        }
-    }
-
-    // MARK: - Footer Section
-
-    private var footerSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Divider()
-
-            HStack(spacing: 24) {
-                VStack(alignment: .leading, spacing: 4) {
+    private var configurationSection: some View {
+        MemorySection(title: "Configuration", icon: "gearshape") {
+            EmptyView()
+        } content: {
+            VStack(alignment: .leading, spacing: 14) {
+                // Core Model picker
+                HStack(spacing: 12) {
                     Text("Core Model")
-                        .font(.caption)
-                        .foregroundColor(theme.tertiaryText)
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundColor(theme.secondaryText)
+                        .frame(width: 100, alignment: .leading)
+
                     Picker(
                         "",
                         selection: Binding(
@@ -426,105 +331,154 @@ struct MemoryView: View {
                                 .tag(option.id)
                         }
                     }
-                    .frame(maxWidth: 260)
+                    .frame(maxWidth: 280)
                 }
 
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Database")
-                        .font(.caption)
-                        .foregroundColor(theme.tertiaryText)
-                    Text(formatBytes(dbSizeBytes))
-                        .font(.callout)
+                Divider().opacity(0.5)
+
+                // Retention days
+                HStack(spacing: 12) {
+                    Text("Summary Retention")
+                        .font(.system(size: 12, weight: .medium))
                         .foregroundColor(theme.secondaryText)
+                        .frame(width: 100, alignment: .leading)
+
+                    HStack(spacing: 8) {
+                        Stepper("", value: $config.summaryRetentionDays, in: 1 ... 365)
+                            .labelsHidden()
+                        Text("\(config.summaryRetentionDays) days")
+                            .font(.system(size: 13))
+                            .foregroundColor(theme.primaryText)
+                    }
+                    .onChange(of: config.summaryRetentionDays) { _, _ in
+                        MemoryConfigurationStore.save(config)
+                    }
                 }
 
-                VStack(alignment: .leading, spacing: 4) {
+                Divider().opacity(0.5)
+
+                // Enable/Disable toggle
+                HStack(spacing: 12) {
                     Text("Status")
-                        .font(.caption)
-                        .foregroundColor(theme.tertiaryText)
-                    HStack(spacing: 4) {
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundColor(theme.secondaryText)
+                        .frame(width: 100, alignment: .leading)
+
+                    HStack(spacing: 8) {
                         Circle()
                             .fill(config.enabled ? Color.green : Color.red)
                             .frame(width: 8, height: 8)
                         Text(config.enabled ? "Active" : "Disabled")
-                            .font(.callout)
-                            .foregroundColor(theme.secondaryText)
+                            .font(.system(size: 13))
+                            .foregroundColor(theme.primaryText)
                     }
+
+                    Spacer()
+
+                    Toggle("", isOn: $config.enabled)
+                        .toggleStyle(.switch)
+                        .labelsHidden()
+                        .onChange(of: config.enabled) { _, _ in
+                            MemoryConfigurationStore.save(config)
+                        }
                 }
-
-                Spacer()
-
-                Toggle("Enabled", isOn: $config.enabled)
-                    .toggleStyle(.switch)
-                    .onChange(of: config.enabled) { _, _ in
-                        MemoryConfigurationStore.save(config)
-                    }
             }
         }
     }
 
-    // MARK: - Add Override Sheet
+    // MARK: - Danger Zone
 
-    private var addOverrideSheet: some View {
-        VStack(spacing: 16) {
-            Text("Add Override")
-                .font(.headline)
-                .foregroundColor(theme.primaryText)
+    private var dangerZoneSection: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 10) {
+                Image(systemName: "exclamationmark.triangle")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundColor(theme.errorColor)
+                    .frame(width: 20)
 
-            Text(
-                "Enter an explicit fact that should always be included in your profile. The memory system will never contradict this."
-            )
-            .font(.callout)
-            .foregroundColor(theme.secondaryText)
-
-            TextField("e.g., My name is Terence", text: $newOverrideText)
-                .textFieldStyle(.roundedBorder)
-
-            HStack {
-                Button("Cancel") {
-                    newOverrideText = ""
-                    showAddOverride = false
-                }
-                .buttonStyle(.bordered)
+                Text("DANGER ZONE")
+                    .font(.system(size: 11, weight: .bold))
+                    .foregroundColor(theme.errorColor)
+                    .tracking(0.5)
 
                 Spacer()
-
-                Button("Add") {
-                    let text = newOverrideText.trimmingCharacters(in: .whitespacesAndNewlines)
-                    guard !text.isEmpty else { return }
-                    try? MemoryDatabase.shared.insertUserEdit(text)
-                    try? MemoryDatabase.shared.insertProfileEvent(
-                        ProfileEvent(
-                            agentId: "user",
-                            eventType: "user_edit",
-                            content: text
-                        )
-                    )
-                    newOverrideText = ""
-                    showAddOverride = false
-                    loadData()
-                }
-                .buttonStyle(.borderedProminent)
-                .disabled(newOverrideText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 14)
+
+            VStack(alignment: .leading, spacing: 12) {
+                HStack {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Clear All Memory")
+                            .font(.system(size: 13, weight: .medium))
+                            .foregroundColor(theme.primaryText)
+                        Text("Permanently delete all memory data including profile, entries, and summaries.")
+                            .font(.system(size: 12))
+                            .foregroundColor(theme.tertiaryText)
+                    }
+
+                    Spacer()
+
+                    Button {
+                        showClearConfirmation = true
+                    } label: {
+                        Text("Clear All")
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundColor(theme.errorColor)
+                            .padding(.horizontal, 14)
+                            .padding(.vertical, 7)
+                            .background(
+                                RoundedRectangle(cornerRadius: 8)
+                                    .fill(theme.errorColor.opacity(0.1))
+                                    .overlay(
+                                        RoundedRectangle(cornerRadius: 8)
+                                            .stroke(theme.errorColor.opacity(0.3), lineWidth: 1)
+                                    )
+                            )
+                    }
+                    .buttonStyle(PlainButtonStyle())
+                }
+            }
+            .padding(.horizontal, 16)
+            .padding(.bottom, 16)
         }
-        .padding(24)
-        .background(theme.primaryBackground)
+        .background(
+            RoundedRectangle(cornerRadius: 12)
+                .fill(theme.cardBackground)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 12)
+                        .stroke(theme.errorColor.opacity(0.2), lineWidth: 1)
+                )
+        )
     }
 
     // MARK: - Helpers
 
-    private func statCell(label: String, value: String) -> some View {
-        VStack(spacing: 4) {
+    private func metadataTag(_ text: String) -> some View {
+        Text(text)
+            .font(.system(size: 11, weight: .medium))
+            .foregroundColor(theme.secondaryText)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 3)
+            .background(
+                Capsule()
+                    .fill(theme.tertiaryBackground)
+            )
+    }
+
+    private func statBlock(label: String, value: String) -> some View {
+        VStack(spacing: 2) {
             Text(value)
-                .font(.title2.bold())
+                .font(.system(size: 15, weight: .semibold, design: .rounded))
                 .foregroundColor(theme.primaryText)
             Text(label)
-                .font(.caption)
+                .font(.system(size: 11))
                 .foregroundColor(theme.tertiaryText)
         }
-        .frame(minWidth: 60)
+        .frame(maxWidth: .infinity)
     }
+
+    // MARK: - Data Loading
 
     private func loadData() {
         config = MemoryConfigurationStore.load()
@@ -534,9 +488,6 @@ struct MemoryView: View {
         }
         profile = try? db.loadUserProfile()
         userEdits = (try? db.loadUserEdits()) ?? []
-        recentEvents = (try? db.loadRecentProfileEvents(limit: 20)) ?? []
-        agentEntries = (try? db.agentIdsWithEntries()) ?? []
-        summaryStats = (try? db.summaryStats()) ?? (0, 0, 0)
         processingStats = (try? db.processingStats()) ?? ProcessingStats()
         dbSizeBytes = db.databaseSizeBytes()
     }
@@ -577,16 +528,22 @@ struct MemoryView: View {
         }
     }
 
+    // MARK: - Actions
+
     private func removeOverride(id: Int) {
         try? MemoryDatabase.shared.deleteUserEdit(id: id)
         loadData()
     }
 
-    private func deleteEntry(_ entryId: String) {
-        try? MemoryDatabase.shared.deleteMemoryEntry(id: entryId)
-        if let agentId = selectedAgentId {
-            selectedAgentEntries = (try? MemoryDatabase.shared.loadActiveEntries(agentId: agentId)) ?? []
-        }
+    private func addOverride(_ text: String) {
+        try? MemoryDatabase.shared.insertUserEdit(text)
+        try? MemoryDatabase.shared.insertProfileEvent(
+            ProfileEvent(
+                agentId: "user",
+                eventType: "user_edit",
+                content: text
+            )
+        )
         loadData()
     }
 
@@ -614,19 +571,193 @@ struct MemoryView: View {
         loadData()
     }
 
-    private func agentDisplayName(_ agentId: String) -> String {
-        if let uuid = UUID(uuidString: agentId),
-            let agent = agentManager.agent(for: uuid)
-        {
-            return agent.name
-        }
-        return agentId
+    private func clearAllMemory() {
+        let db = MemoryDatabase.shared
+        db.close()
+        let dbFile = OsaurusPaths.memoryDatabaseFile()
+        try? FileManager.default.removeItem(at: dbFile)
+        try? db.open()
+        loadData()
+        showToast("All memory cleared")
     }
 
     private func formatBytes(_ bytes: Int64) -> String {
         let formatter = ByteCountFormatter()
         formatter.countStyle = .file
         return formatter.string(fromByteCount: bytes)
+    }
+
+    private func showToast(_ message: String, isError: Bool = false) {
+        withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+            toastMessage = (message, isError)
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+            withAnimation(.easeOut(duration: 0.3)) {
+                toastMessage = nil
+            }
+        }
+    }
+}
+
+// MARK: - Memory Section Card
+
+private struct MemorySection<Trailing: View, Content: View>: View {
+    @Environment(\.theme) private var theme
+
+    let title: String
+    let icon: String
+    var count: Int? = nil
+    let trailing: Trailing
+    let content: Content
+
+    init(
+        title: String,
+        icon: String,
+        count: Int? = nil,
+        @ViewBuilder trailing: () -> Trailing,
+        @ViewBuilder content: () -> Content
+    ) {
+        self.title = title
+        self.icon = icon
+        self.count = count
+        self.trailing = trailing()
+        self.content = content()
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 10) {
+                Image(systemName: icon)
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundColor(theme.accentColor)
+                    .frame(width: 20)
+
+                Text(title.uppercased())
+                    .font(.system(size: 11, weight: .bold))
+                    .foregroundColor(theme.primaryText)
+                    .tracking(0.5)
+
+                if let count {
+                    Text("\(count)")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundColor(theme.secondaryText)
+                        .padding(.horizontal, 7)
+                        .padding(.vertical, 2)
+                        .background(
+                            Capsule().fill(theme.tertiaryBackground)
+                        )
+                }
+
+                Spacer()
+
+                trailing
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 14)
+
+            VStack(alignment: .leading, spacing: 12) {
+                content
+            }
+            .padding(.horizontal, 16)
+            .padding(.bottom, 16)
+        }
+        .background(
+            RoundedRectangle(cornerRadius: 12)
+                .fill(theme.cardBackground)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 12)
+                        .stroke(theme.cardBorder, lineWidth: 1)
+                )
+        )
+    }
+}
+
+// MARK: - Section Action Button
+
+private struct SectionActionButton: View {
+    @Environment(\.theme) private var theme
+
+    let title: String
+    let icon: String?
+    let action: () -> Void
+
+    @State private var isHovering = false
+
+    init(_ title: String, icon: String? = nil, action: @escaping () -> Void) {
+        self.title = title
+        self.icon = icon
+        self.action = action
+    }
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 5) {
+                if let icon {
+                    Image(systemName: icon)
+                        .font(.system(size: 10, weight: .semibold))
+                }
+                Text(title)
+                    .font(.system(size: 11, weight: .semibold))
+            }
+            .foregroundColor(isHovering ? theme.accentColor : theme.secondaryText)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 5)
+            .background(
+                RoundedRectangle(cornerRadius: 6)
+                    .fill(isHovering ? theme.accentColor.opacity(0.1) : Color.clear)
+            )
+        }
+        .buttonStyle(PlainButtonStyle())
+        .onHover { hovering in
+            withAnimation(.easeOut(duration: 0.15)) {
+                isHovering = hovering
+            }
+        }
+    }
+}
+
+// MARK: - Override Row
+
+private struct OverrideRow: View {
+    @Environment(\.theme) private var theme
+
+    let edit: UserEdit
+    let onDelete: () -> Void
+
+    @State private var isHovering = false
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Circle()
+                .fill(theme.accentColor)
+                .frame(width: 6, height: 6)
+
+            Text(edit.content)
+                .font(.system(size: 13))
+                .foregroundColor(theme.secondaryText)
+                .lineLimit(2)
+
+            Spacer()
+
+            if isHovering {
+                Button {
+                    onDelete()
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.system(size: 14))
+                        .foregroundColor(theme.tertiaryText)
+                }
+                .buttonStyle(PlainButtonStyle())
+                .transition(.opacity)
+            }
+        }
+        .padding(.vertical, 8)
+        .contentShape(Rectangle())
+        .onHover { hovering in
+            withAnimation(.easeOut(duration: 0.15)) {
+                isHovering = hovering
+            }
+        }
     }
 }
 
@@ -636,174 +767,220 @@ private struct ProfileEditSheet: View {
     let profile: UserProfile?
     let onSave: (String) -> Void
 
+    @ObservedObject private var themeManager = ThemeManager.shared
+    private var theme: ThemeProtocol { themeManager.currentTheme }
+
     @Environment(\.dismiss) private var dismiss
-    @Environment(\.theme) private var theme
     @State private var editText: String = ""
 
     var body: some View {
-        VStack(spacing: 16) {
+        VStack(spacing: 0) {
             HStack {
-                Text("Edit User Profile")
-                    .font(.headline)
-                    .foregroundColor(theme.primaryText)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Edit User Profile")
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundColor(theme.primaryText)
+                    Text("Manually edit your profile content")
+                        .font(.system(size: 12))
+                        .foregroundColor(theme.tertiaryText)
+                }
                 Spacer()
-                Button("Cancel") { dismiss() }
-                    .buttonStyle(.bordered)
+                Button {
+                    dismiss()
+                } label: {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundColor(theme.secondaryText)
+                        .frame(width: 28, height: 28)
+                        .background(
+                            RoundedRectangle(cornerRadius: 6)
+                                .fill(theme.tertiaryBackground)
+                        )
+                }
+                .buttonStyle(PlainButtonStyle())
             }
+            .padding(20)
+
+            Divider().opacity(0.5)
 
             TextEditor(text: $editText)
-                .font(.body)
-                .padding(8)
-                .background(theme.secondaryBackground.opacity(0.3))
-                .cornerRadius(8)
+                .font(.system(size: 13))
+                .padding(12)
+                .scrollContentBackground(.hidden)
+                .background(theme.inputBackground)
+                .padding(.horizontal, 20)
+                .padding(.vertical, 12)
+
+            Divider().opacity(0.5)
 
             HStack {
                 Text("\(max(1, editText.count / 4)) tokens")
-                    .font(.caption)
+                    .font(.system(size: 11))
                     .foregroundColor(theme.tertiaryText)
+
                 Spacer()
-                Button("Save") {
+
+                Button {
+                    dismiss()
+                } label: {
+                    Text("Cancel")
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundColor(theme.primaryText)
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 8)
+                        .background(
+                            RoundedRectangle(cornerRadius: 8)
+                                .fill(theme.tertiaryBackground)
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 8)
+                                        .stroke(theme.inputBorder, lineWidth: 1)
+                                )
+                        )
+                }
+                .buttonStyle(PlainButtonStyle())
+
+                Button {
                     onSave(editText)
                     dismiss()
+                } label: {
+                    Text("Save")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundColor(.white)
+                        .padding(.horizontal, 20)
+                        .padding(.vertical, 8)
+                        .background(
+                            RoundedRectangle(cornerRadius: 8)
+                                .fill(theme.accentColor)
+                        )
                 }
-                .buttonStyle(.borderedProminent)
+                .buttonStyle(PlainButtonStyle())
                 .disabled(editText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                .opacity(editText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? 0.5 : 1)
             }
+            .padding(20)
         }
-        .padding(24)
         .background(theme.primaryBackground)
+        .environment(\.theme, themeManager.currentTheme)
         .onAppear {
             editText = profile?.content ?? ""
         }
     }
 }
 
-// MARK: - Working Memory List Sheet
+// MARK: - Add Override Sheet
 
-private struct WorkingMemoryListSheet: View {
-    let agentId: String
-    let entries: [MemoryEntry]
-    let onDelete: (String) -> Void
+private struct AddOverrideSheet: View {
+    let onAdd: (String) -> Void
+
+    @ObservedObject private var themeManager = ThemeManager.shared
+    private var theme: ThemeProtocol { themeManager.currentTheme }
 
     @Environment(\.dismiss) private var dismiss
-    @Environment(\.theme) private var theme
-    @State private var searchText = ""
-    @State private var filterType: MemoryEntryType?
+    @State private var text = ""
+    @FocusState private var isFocused: Bool
 
-    private var filteredEntries: [MemoryEntry] {
-        entries.filter { entry in
-            if let filterType, entry.type != filterType { return false }
-            if !searchText.isEmpty {
-                return entry.content.localizedCaseInsensitiveContains(searchText)
-            }
-            return true
-        }
+    private var trimmedText: String {
+        text.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     var body: some View {
         VStack(spacing: 0) {
             HStack {
-                Text("Working Memory")
-                    .font(.headline)
-                    .foregroundColor(theme.primaryText)
-                Text("(\(entries.count) entries)")
-                    .font(.subheadline)
-                    .foregroundColor(theme.tertiaryText)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Add Override")
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundColor(theme.primaryText)
+                    Text("Enter an explicit fact that should always be in your profile")
+                        .font(.system(size: 12))
+                        .foregroundColor(theme.tertiaryText)
+                }
                 Spacer()
-                Button("Done") { dismiss() }
-                    .buttonStyle(.bordered)
-            }
-            .padding(16)
-
-            HStack(spacing: 8) {
-                TextField("Search entries...", text: $searchText)
-                    .textFieldStyle(.roundedBorder)
-
-                Picker("Type", selection: $filterType) {
-                    Text("All Types").tag(nil as MemoryEntryType?)
-                    ForEach(MemoryEntryType.allCases, id: \.self) { type in
-                        Text(type.displayName).tag(type as MemoryEntryType?)
-                    }
+                Button {
+                    dismiss()
+                } label: {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundColor(theme.secondaryText)
+                        .frame(width: 28, height: 28)
+                        .background(
+                            RoundedRectangle(cornerRadius: 6)
+                                .fill(theme.tertiaryBackground)
+                        )
                 }
-                .frame(maxWidth: 140)
+                .buttonStyle(PlainButtonStyle())
             }
-            .padding(.horizontal, 16)
-            .padding(.bottom, 8)
+            .padding(20)
 
-            Divider()
+            Divider().opacity(0.5)
 
-            if filteredEntries.isEmpty {
-                VStack(spacing: 8) {
-                    Image(systemName: "tray")
-                        .font(.largeTitle)
-                        .foregroundColor(theme.tertiaryText)
-                    Text("No entries found")
-                        .font(.callout)
-                        .foregroundColor(theme.tertiaryText)
+            TextField("e.g., My name is Terence", text: $text)
+                .textFieldStyle(.plain)
+                .font(.system(size: 13))
+                .focused($isFocused)
+                .padding(12)
+                .background(
+                    RoundedRectangle(cornerRadius: 8)
+                        .fill(theme.inputBackground)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 8)
+                                .stroke(
+                                    isFocused ? theme.accentColor.opacity(0.5) : theme.inputBorder,
+                                    lineWidth: isFocused ? 1.5 : 1
+                                )
+                        )
+                )
+                .padding(.horizontal, 20)
+                .padding(.vertical, 16)
+
+            Divider().opacity(0.5)
+
+            HStack {
+                Spacer()
+
+                Button {
+                    dismiss()
+                } label: {
+                    Text("Cancel")
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundColor(theme.primaryText)
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 8)
+                        .background(
+                            RoundedRectangle(cornerRadius: 8)
+                                .fill(theme.tertiaryBackground)
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 8)
+                                        .stroke(theme.inputBorder, lineWidth: 1)
+                                )
+                        )
                 }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else {
-                List {
-                    ForEach(filteredEntries) { entry in
-                        VStack(alignment: .leading, spacing: 6) {
-                            HStack {
-                                Text(entry.type.displayName)
-                                    .font(.caption.bold())
-                                    .padding(.horizontal, 6)
-                                    .padding(.vertical, 2)
-                                    .background(typeColor(entry.type).opacity(0.15))
-                                    .foregroundColor(typeColor(entry.type))
-                                    .cornerRadius(4)
+                .buttonStyle(PlainButtonStyle())
 
-                                Text(String(format: "%.0f%%", entry.confidence * 100))
-                                    .font(.caption)
-                                    .foregroundColor(theme.tertiaryText)
-
-                                Spacer()
-
-                                Button {
-                                    onDelete(entry.id)
-                                } label: {
-                                    Image(systemName: "trash")
-                                        .font(.caption)
-                                        .foregroundColor(.red.opacity(0.7))
-                                }
-                                .buttonStyle(.plain)
-                            }
-
-                            Text(entry.content)
-                                .font(.body)
-                                .foregroundColor(theme.secondaryText)
-
-                            HStack {
-                                if !entry.tags.isEmpty {
-                                    Text(entry.tags.joined(separator: ", "))
-                                        .font(.caption2)
-                                        .foregroundColor(theme.tertiaryText)
-                                }
-                                Spacer()
-                                Text(entry.createdAt)
-                                    .font(.caption2)
-                                    .foregroundColor(theme.tertiaryText)
-                            }
-                        }
-                        .padding(.vertical, 4)
-                    }
+                Button {
+                    guard !trimmedText.isEmpty else { return }
+                    onAdd(trimmedText)
+                    dismiss()
+                } label: {
+                    Text("Add")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundColor(.white)
+                        .padding(.horizontal, 20)
+                        .padding(.vertical, 8)
+                        .background(
+                            RoundedRectangle(cornerRadius: 8)
+                                .fill(theme.accentColor)
+                        )
                 }
+                .buttonStyle(PlainButtonStyle())
+                .disabled(trimmedText.isEmpty)
+                .opacity(trimmedText.isEmpty ? 0.5 : 1)
             }
+            .padding(20)
         }
         .background(theme.primaryBackground)
-    }
-
-    private func typeColor(_ type: MemoryEntryType) -> Color {
-        switch type {
-        case .fact: return .blue
-        case .preference: return .purple
-        case .decision: return .green
-        case .correction: return .orange
-        case .commitment: return .red
-        case .relationship: return .cyan
-        case .skill: return .indigo
+        .environment(\.theme, themeManager.currentTheme)
+        .onAppear {
+            isFocused = true
         }
     }
 }
