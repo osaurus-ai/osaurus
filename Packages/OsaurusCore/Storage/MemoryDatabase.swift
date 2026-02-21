@@ -1239,13 +1239,16 @@ public final class MemoryDatabase: @unchecked Sendable {
         if let existing = try findEntity(name: name, type: type) {
             return existing
         }
+        if type == "unknown", let existing = try findEntityByName(name: name) {
+            return existing
+        }
         let id = deterministicId(name.lowercased(), type)
         let entity = GraphEntity(id: id, name: name, type: type, model: model)
         try insertEntity(entity)
         return entity
     }
 
-    func findEntity(name: String, type: String) throws -> GraphEntity? {
+    private func findEntity(name: String, type: String) throws -> GraphEntity? {
         var entity: GraphEntity?
         try prepareAndExecute(
             "SELECT id, name, type, metadata, model, created_at, updated_at FROM entities WHERE name = ?1 COLLATE NOCASE AND type = ?2",
@@ -1255,22 +1258,30 @@ public final class MemoryDatabase: @unchecked Sendable {
             },
             process: { stmt in
                 if sqlite3_step(stmt) == SQLITE_ROW {
-                    entity = GraphEntity(
-                        id: String(cString: sqlite3_column_text(stmt, 0)),
-                        name: String(cString: sqlite3_column_text(stmt, 1)),
-                        type: String(cString: sqlite3_column_text(stmt, 2)),
-                        metadata: sqlite3_column_text(stmt, 3).map { String(cString: $0) },
-                        model: String(cString: sqlite3_column_text(stmt, 4)),
-                        createdAt: String(cString: sqlite3_column_text(stmt, 5)),
-                        updatedAt: String(cString: sqlite3_column_text(stmt, 6))
-                    )
+                    entity = Self.readGraphEntity(stmt)
                 }
             }
         )
         return entity
     }
 
-    func insertEntity(_ entity: GraphEntity) throws {
+    private func findEntityByName(name: String) throws -> GraphEntity? {
+        var entity: GraphEntity?
+        try prepareAndExecute(
+            "SELECT id, name, type, metadata, model, created_at, updated_at FROM entities WHERE name = ?1 COLLATE NOCASE LIMIT 1",
+            bind: { stmt in
+                Self.bindText(stmt, index: 1, value: name)
+            },
+            process: { stmt in
+                if sqlite3_step(stmt) == SQLITE_ROW {
+                    entity = Self.readGraphEntity(stmt)
+                }
+            }
+        )
+        return entity
+    }
+
+    private func insertEntity(_ entity: GraphEntity) throws {
         _ = try executeUpdate(
             """
             INSERT OR IGNORE INTO entities (id, name, type, metadata, model)
@@ -1313,7 +1324,7 @@ public final class MemoryDatabase: @unchecked Sendable {
         }
     }
 
-    func findActiveRelationship(sourceId: String, relation: String) throws -> GraphRelationship? {
+    private func findActiveRelationship(sourceId: String, relation: String) throws -> GraphRelationship? {
         var rel: GraphRelationship?
         try prepareAndExecute(
             """
@@ -1345,7 +1356,7 @@ public final class MemoryDatabase: @unchecked Sendable {
         return rel
     }
 
-    func invalidateRelationship(id: String) throws {
+    private func invalidateRelationship(id: String) throws {
         _ = try executeUpdate(
             "UPDATE relationships SET valid_until = datetime('now') WHERE id = ?1"
         ) { stmt in
@@ -1395,7 +1406,7 @@ public final class MemoryDatabase: @unchecked Sendable {
         var results: [GraphResult] = []
         try prepareAndExecute(
             """
-            SELECT e_src.name, e_src.type, e_tgt.name, e_tgt.type, r.relation
+            SELECT e_src.name, e_src.type, e_tgt.name, r.relation
             FROM relationships r
             JOIN entities e_src ON e_src.id = r.source_id
             JOIN entities e_tgt ON e_tgt.id = r.target_id
@@ -1411,7 +1422,7 @@ public final class MemoryDatabase: @unchecked Sendable {
                     let srcName = String(cString: sqlite3_column_text(stmt, 0))
                     let srcType = String(cString: sqlite3_column_text(stmt, 1))
                     let tgtName = String(cString: sqlite3_column_text(stmt, 2))
-                    let rel = String(cString: sqlite3_column_text(stmt, 4))
+                    let rel = String(cString: sqlite3_column_text(stmt, 3))
                     results.append(
                         GraphResult(
                             entityName: srcName,
@@ -1424,6 +1435,18 @@ public final class MemoryDatabase: @unchecked Sendable {
             }
         )
         return results
+    }
+
+    private static func readGraphEntity(_ stmt: OpaquePointer) -> GraphEntity {
+        GraphEntity(
+            id: String(cString: sqlite3_column_text(stmt, 0)),
+            name: String(cString: sqlite3_column_text(stmt, 1)),
+            type: String(cString: sqlite3_column_text(stmt, 2)),
+            metadata: sqlite3_column_text(stmt, 3).map { String(cString: $0) },
+            model: String(cString: sqlite3_column_text(stmt, 4)),
+            createdAt: String(cString: sqlite3_column_text(stmt, 5)),
+            updatedAt: String(cString: sqlite3_column_text(stmt, 6))
+        )
     }
 
     private func deterministicId(_ components: String...) -> String {

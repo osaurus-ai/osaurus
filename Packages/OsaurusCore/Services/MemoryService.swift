@@ -97,10 +97,6 @@ public actor MemoryService {
                 "[Memory] Immediate extraction completed in \(durationMs)ms — \(entries.count) entries (\(contradictions) contradictions), \(profileFacts.count) profile facts"
             )
 
-            do { try db.markSignalsProcessed(agentId: agentId) } catch {
-                print("[Memory] Failed to mark signals processed: \(error)")
-            }
-
             try? await checkProfileRegeneration(config: config)
         } catch {
             print("[Memory] Immediate extraction failed: \(error)")
@@ -698,17 +694,25 @@ public actor MemoryService {
     }
 
     private func insertGraphData(_ graphData: GraphExtractionResult, model: String) {
+        var resolved: [String: GraphEntity] = [:]
+
         for entityData in graphData.entities {
             do {
-                _ = try db.resolveEntity(name: entityData.name, type: entityData.type, model: model)
+                let entity = try db.resolveEntity(name: entityData.name, type: entityData.type, model: model)
+                resolved[entityData.name.lowercased()] = entity
             } catch {
                 print("[Memory] Failed to resolve entity '\(entityData.name)': \(error)")
             }
         }
+
         for relData in graphData.relationships {
             do {
-                let source = try db.resolveEntity(name: relData.source, type: "unknown", model: model)
-                let target = try db.resolveEntity(name: relData.target, type: "unknown", model: model)
+                let source =
+                    try resolved[relData.source.lowercased()]
+                    ?? db.resolveEntity(name: relData.source, type: "unknown", model: model)
+                let target =
+                    try resolved[relData.target.lowercased()]
+                    ?? db.resolveEntity(name: relData.target, type: "unknown", model: model)
                 try db.insertRelationship(
                     sourceId: source.id,
                     targetId: target.id,

@@ -287,6 +287,14 @@ public final class WorkSession: ObservableObject {
     /// Selected model
     @Published var selectedModel: String?
 
+    // MARK: - Memory State
+
+    /// Signals detected from the most recent user input (for post-execution processing)
+    private var pendingSignals: [SignalType] = []
+
+    /// Raw user message stored for memory extraction after execution completes
+    private var pendingUserMessage: String?
+
     /// Model options
     @Published var modelOptions: [ModelOption] = []
 
@@ -432,6 +440,12 @@ public final class WorkSession: ObservableObject {
         input = ""
         pendingAttachments = []
         errorMessage = nil
+
+        if !rawQuery.isEmpty {
+            pendingSignals = SignalDetector.detect(in: rawQuery)
+            pendingUserMessage = rawQuery
+            ActivityTracker.shared.recordActivity(agentId: agentId.uuidString)
+        }
 
         let query = ChatSession.buildUserMessageText(content: rawQuery, attachments: attachments)
         let images = attachments.images
@@ -649,9 +663,19 @@ public final class WorkSession: ObservableObject {
 
     /// Builds execution configuration from current state
     private func buildExecutionConfig() -> (model: String, systemPrompt: String, toolOverrides: [String: Bool]?) {
-        let systemPrompt =
+        let baseSystemPrompt =
             windowState?.cachedSystemPrompt
             ?? AgentManager.shared.effectiveSystemPrompt(for: agentId)
+
+        let memoryConfig = MemoryConfigurationStore.load()
+        let memoryContext = MemoryContextAssembler.assembleContext(
+            agentId: agentId.uuidString,
+            config: memoryConfig
+        )
+        let systemPrompt =
+            memoryContext.isEmpty
+            ? baseSystemPrompt
+            : memoryContext + "\n\n" + baseSystemPrompt
 
         // Model priority: selectedModel > windowState model > agent default
         let model =
@@ -1124,6 +1148,31 @@ extension WorkSession: WorkEngineDelegate {
         emitActivity(.completedIssue(success: success))
         notifyIfSelected(issue.id)
         Task { [weak self] in await self?.refreshIssues() }
+
+        // Memory processing: persist signals and record activity
+        let agentStr = agentId.uuidString
+        let userMessage = pendingUserMessage ?? ""
+        let assistantContent =
+            liveExecutionTurns
+            .last(where: { $0.role == .assistant })?.content
+
+        if !pendingSignals.isEmpty {
+            let signals = pendingSignals
+            let convId = issue.id
+            Task.detached {
+                await MemoryService.shared.processImmediateSignals(
+                    signals: signals,
+                    userMessage: userMessage,
+                    assistantMessage: assistantContent,
+                    agentId: agentStr,
+                    conversationId: convId
+                )
+            }
+        }
+
+        pendingSignals = []
+        pendingUserMessage = nil
+        ActivityTracker.shared.recordActivity(agentId: agentStr)
     }
 
     public func workEngine(_ engine: WorkEngine, willRetryIssue issue: Issue, attempt: Int, afterDelay: TimeInterval) {
