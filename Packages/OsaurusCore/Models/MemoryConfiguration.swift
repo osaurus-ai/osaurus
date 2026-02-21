@@ -47,6 +47,13 @@ public struct MemoryConfiguration: Codable, Equatable, Sendable {
     /// Whether the memory system is enabled
     public var enabled: Bool
 
+    /// Whether entry verification pipeline is enabled
+    public var verificationEnabled: Bool
+    /// VecturaKit similarity score threshold — below this, candidates auto-KEEP without model call
+    public var verificationSimilarityThreshold: Double
+    /// Jaccard threshold for Layer 1 near-duplicate detection (above this = auto-SKIP)
+    public var verificationJaccardDedupThreshold: Double
+
     /// Full model identifier for routing (e.g. "anthropic/claude-haiku-4-5" or "foundation")
     public var coreModelIdentifier: String {
         coreModelProvider.isEmpty ? coreModelName : "\(coreModelProvider)/\(coreModelName)"
@@ -67,7 +74,10 @@ public struct MemoryConfiguration: Codable, Equatable, Sendable {
         temporalDecayHalfLifeDays: Int = 30,
         mmrLambda: Double = 0.7,
         mmrFetchMultiplier: Double = 2.0,
-        enabled: Bool = true
+        enabled: Bool = true,
+        verificationEnabled: Bool = true,
+        verificationSimilarityThreshold: Double = 0.4,
+        verificationJaccardDedupThreshold: Double = 0.6
     ) {
         self.coreModelProvider = coreModelProvider
         self.coreModelName = coreModelName
@@ -84,6 +94,9 @@ public struct MemoryConfiguration: Codable, Equatable, Sendable {
         self.mmrLambda = mmrLambda
         self.mmrFetchMultiplier = mmrFetchMultiplier
         self.enabled = enabled
+        self.verificationEnabled = verificationEnabled
+        self.verificationSimilarityThreshold = verificationSimilarityThreshold
+        self.verificationJaccardDedupThreshold = verificationJaccardDedupThreshold
     }
 
     public init(from decoder: Decoder) throws {
@@ -111,6 +124,14 @@ public struct MemoryConfiguration: Codable, Equatable, Sendable {
         mmrFetchMultiplier =
             try c.decodeIfPresent(Double.self, forKey: .mmrFetchMultiplier) ?? defaults.mmrFetchMultiplier
         enabled = try c.decodeIfPresent(Bool.self, forKey: .enabled) ?? defaults.enabled
+        verificationEnabled =
+            try c.decodeIfPresent(Bool.self, forKey: .verificationEnabled) ?? defaults.verificationEnabled
+        verificationSimilarityThreshold =
+            try c.decodeIfPresent(Double.self, forKey: .verificationSimilarityThreshold)
+            ?? defaults.verificationSimilarityThreshold
+        verificationJaccardDedupThreshold =
+            try c.decodeIfPresent(Double.self, forKey: .verificationJaccardDedupThreshold)
+            ?? defaults.verificationJaccardDedupThreshold
     }
 
     public static var `default`: MemoryConfiguration { MemoryConfiguration() }

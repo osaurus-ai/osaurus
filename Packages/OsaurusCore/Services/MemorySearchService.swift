@@ -142,6 +142,38 @@ public actor MemorySearchService {
         return (try? MemoryDatabase.shared.searchMemoryEntries(query: query, agentId: agentId)) ?? []
     }
 
+    /// Search memory entries returning raw similarity scores (no MMR reranking).
+    /// Used by the verification pipeline to gate model calls on similarity.
+    public func searchMemoryEntriesWithScores(
+        query: String,
+        agentId: String? = nil,
+        topK: Int = 1
+    ) async -> [(entry: MemoryEntry, score: Double)] {
+        guard let db = vectorDB else { return [] }
+        do {
+            let results = try await db.search(query: .text(query), numResults: topK, threshold: 0.3)
+
+            let scoreMap = Dictionary(
+                results.map { ($0.id, Double($0.score)) },
+                uniquingKeysWith: { first, _ in first }
+            )
+
+            let allEntries = (try? MemoryDatabase.shared.loadAllActiveEntries()) ?? []
+            let matched: [(entry: MemoryEntry, score: Double)] = allEntries.compactMap { entry in
+                guard let entryUUID = UUID(uuidString: entry.id),
+                    let score = scoreMap[entryUUID],
+                    agentId == nil || entry.agentId == agentId
+                else { return nil }
+                return (entry: entry, score: score)
+            }
+
+            return matched.sorted { $0.score > $1.score }.prefix(topK).map { $0 }
+        } catch {
+            print("[Memory] Vector search (with scores) failed: \(error)")
+            return []
+        }
+    }
+
     /// Search conversation chunks using hybrid search (vector + BM25) with MMR reranking.
     /// Falls back to SQLite text search when VecturaKit is unavailable.
     public func searchConversations(

@@ -773,7 +773,7 @@ public final class MemoryDatabase: @unchecked Sendable {
         return results
     }
 
-    private func insertMemoryEvent(
+    func insertMemoryEvent(
         entryId: String,
         eventType: String,
         agentId: String?,

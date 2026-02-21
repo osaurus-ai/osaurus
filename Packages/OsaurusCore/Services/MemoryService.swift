@@ -70,7 +70,12 @@ public actor MemoryService {
                 conversationId: conversationId,
                 model: config.coreModelIdentifier
             )
-            let contradictions = await insertEntries(entries, existing: existingEntries)
+            let verifyResult = await verifyAndInsertEntries(
+                entries,
+                agentId: agentId,
+                existingEntries: existingEntries,
+                config: config
+            )
 
             let profileFacts = parseProfileContributions(response)
             insertProfileFacts(
@@ -94,7 +99,7 @@ public actor MemoryService {
                 durationMs: durationMs
             )
             print(
-                "[Memory] Immediate extraction completed in \(durationMs)ms — \(entries.count) entries (\(contradictions) contradictions), \(profileFacts.count) profile facts"
+                "[Memory] Immediate extraction completed in \(durationMs)ms — \(entries.count) entries (kept: \(verifyResult.kept), skipped: \(verifyResult.skipped), superseded: \(verifyResult.superseded)), \(profileFacts.count) profile facts"
             )
 
             try? await checkProfileRegeneration(config: config)
@@ -149,7 +154,12 @@ public actor MemoryService {
                 conversationId: pendingSignals.first?.conversationId ?? "",
                 model: config.coreModelIdentifier
             )
-            let contradictions = await insertEntries(extracted, existing: existingEntries)
+            let verifyResult = await verifyAndInsertEntries(
+                extracted,
+                agentId: agentId,
+                existingEntries: existingEntries,
+                config: config
+            )
 
             let profileFacts = parseProfileContributions(response)
             insertProfileFacts(profileFacts, agentId: agentId, model: config.coreModelIdentifier)
@@ -190,7 +200,7 @@ public actor MemoryService {
                 durationMs: durationMs
             )
             print(
-                "[Memory] Post-activity completed in \(durationMs)ms — \(extracted.count) entries (\(contradictions) contradictions), \(profileFacts.count) profile facts, summary: \(hasSummary)"
+                "[Memory] Post-activity completed in \(durationMs)ms — \(extracted.count) entries (kept: \(verifyResult.kept), skipped: \(verifyResult.skipped), superseded: \(verifyResult.superseded)), \(profileFacts.count) profile facts, summary: \(hasSummary)"
             )
 
             try? await checkProfileRegeneration(config: config)
@@ -751,6 +761,216 @@ public actor MemoryService {
         let intersection = wordsA.intersection(wordsB).count
         let union = wordsA.union(wordsB).count
         return Double(intersection) / Double(union)
+    }
+
+    // MARK: - Entry Verification Pipeline
+
+    private let verificationSystemPrompt = """
+        You check if a new memory is already covered by an existing memory.
+        KEEP = new information worth saving. SKIP = already known or redundant.
+
+        Example:
+        New: User likes hiking on weekends
+        Existing: User enjoys outdoor activities on Saturdays
+        Answer: SKIP
+
+        New: User is allergic to shellfish
+        Existing: User prefers Italian restaurants
+        Answer: KEEP
+        """
+
+    /// Three-layer verification pipeline.
+    /// Layer 1: Jaccard dedup (> threshold -> SKIP)
+    /// Layer 2: Jaccard supersede (0.3–threshold, same type -> SUPERSEDE)
+    /// Layer 3: Model verification (ambiguous cases -> KEEP/SKIP)
+    ///
+    /// Falls back to insertEntries (Layer 2 only) if verification is disabled.
+    private func verifyAndInsertEntries(
+        _ candidates: [MemoryEntry],
+        agentId: String,
+        existingEntries: [MemoryEntry],
+        config: MemoryConfiguration
+    ) async -> (kept: Int, skipped: Int, superseded: Int) {
+        guard config.verificationEnabled else {
+            let contradictions = await insertEntries(candidates, existing: existingEntries)
+            return (kept: candidates.count, skipped: 0, superseded: contradictions)
+        }
+
+        let dedupThreshold = config.verificationJaccardDedupThreshold
+        let similarityThreshold = config.verificationSimilarityThreshold
+
+        var kept = 0
+        var skipped = 0
+        var superseded = 0
+        var layer3Candidates: [(entry: MemoryEntry, similarContent: String)] = []
+
+        for candidate in candidates {
+            // Layer 1: Near-duplicate dedup
+            let isDuplicate = existingEntries.contains {
+                $0.type == candidate.type
+                    && jaccardSimilarity($0.content, candidate.content) > dedupThreshold
+            }
+            if isDuplicate {
+                logVerification(candidate, decision: "skip_duplicate", layer: 1, agentId: agentId)
+                skipped += 1
+                continue
+            }
+
+            // Layer 2: Contradiction supersede (existing behavior)
+            if let contradiction = findContradiction(entry: candidate, existing: existingEntries) {
+                do {
+                    try db.supersede(
+                        entryId: contradiction.id,
+                        by: candidate.id,
+                        reason: "Contradicted by newer information"
+                    )
+                    await MemorySearchService.shared.removeDocument(id: contradiction.id)
+                } catch {
+                    print("[Memory] Failed to supersede entry: \(error)")
+                }
+                await persistEntry(candidate, tag: "supersede")
+                logVerification(candidate, decision: "supersede", layer: 2, agentId: agentId)
+                superseded += 1
+                continue
+            }
+
+            // Survived Layers 1-2: check if Layer 3 is needed
+            let similar = await MemorySearchService.shared.searchMemoryEntriesWithScores(
+                query: candidate.content,
+                agentId: agentId,
+                topK: 1
+            )
+
+            if let topMatch = similar.first, topMatch.score >= similarityThreshold {
+                layer3Candidates.append((entry: candidate, similarContent: topMatch.entry.content))
+            } else {
+                await persistEntry(candidate, tag: "novel")
+                logVerification(candidate, decision: "keep_novel", layer: 0, agentId: agentId)
+                kept += 1
+            }
+        }
+
+        // Layer 3: Model verification (batch)
+        guard !layer3Candidates.isEmpty else {
+            return (kept: kept, skipped: skipped, superseded: superseded)
+        }
+
+        let decisions: [Bool]
+        do {
+            decisions = try await modelVerify(layer3Candidates, config: config)
+        } catch {
+            print("[Memory] Verification model failed, keeping all: \(error)")
+            decisions = Array(repeating: true, count: layer3Candidates.count)
+        }
+
+        for (i, (entry, _)) in layer3Candidates.enumerated() {
+            if decisions[i] {
+                await persistEntry(entry, tag: "verified")
+                logVerification(entry, decision: "keep_verified", layer: 3, agentId: agentId)
+                kept += 1
+            } else {
+                logVerification(entry, decision: "skip_verified", layer: 3, agentId: agentId)
+                skipped += 1
+            }
+        }
+
+        return (kept: kept, skipped: skipped, superseded: superseded)
+    }
+
+    private func persistEntry(_ entry: MemoryEntry, tag: String) async {
+        do {
+            try db.insertMemoryEntry(entry)
+            await MemorySearchService.shared.indexMemoryEntry(entry)
+            print("[Memory] Stored entry (\(tag)): [\(entry.type.rawValue)] \"\(entry.content.prefix(80))\"")
+        } catch {
+            print("[Memory] Failed to insert entry: \(error)")
+        }
+    }
+
+    /// Sends ambiguous candidates to the Core Model for binary KEEP/SKIP verification.
+    private func modelVerify(
+        _ candidates: [(entry: MemoryEntry, similarContent: String)],
+        config: MemoryConfiguration
+    ) async throws -> [Bool] {
+        let pairs = candidates.enumerated().map { (i, pair) in
+            (index: i + 1, candidate: pair.entry.content, similar: pair.similarContent)
+        }
+
+        let prompt = buildVerificationPrompt(pairs)
+        let startTime = CFAbsoluteTimeGetCurrent()
+
+        let response = try await callCoreModel(
+            prompt: prompt,
+            systemPrompt: verificationSystemPrompt,
+            config: config
+        )
+
+        let durationMs = Int((CFAbsoluteTimeGetCurrent() - startTime) * 1000)
+        try? db.insertProcessingLog(
+            agentId: candidates.first?.entry.agentId ?? "system",
+            taskType: "entry_verification",
+            model: config.coreModelIdentifier,
+            status: "success",
+            inputTokens: (verificationSystemPrompt.count + prompt.count) / 4,
+            outputTokens: response.count / 4,
+            durationMs: durationMs
+        )
+
+        return parseVerificationResponse(response, candidateCount: candidates.count)
+    }
+
+    private func buildVerificationPrompt(
+        _ pairs: [(index: Int, candidate: String, similar: String)]
+    ) -> String {
+        var lines: [String] = []
+        for pair in pairs {
+            lines.append(
+                """
+                \(pair.index).
+                New: \(pair.candidate)
+                Existing: \(pair.similar)
+                """
+            )
+        }
+        lines.append("")
+        lines.append("For each number, answer KEEP or SKIP:")
+        return lines.joined(separator: "\n")
+    }
+
+    /// Fault-tolerant parser for verification model output.
+    /// Defaults to KEEP for unparseable entries (safer to save than lose).
+    private func parseVerificationResponse(
+        _ response: String,
+        candidateCount: Int
+    ) -> [Bool] {
+        var decisions = Array(repeating: true, count: candidateCount)
+
+        for line in response.uppercased().split(separator: "\n") {
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            if let match = trimmed.firstMatch(of: /(\d+)\s*[:.]\s*(KEEP|SKIP)/) {
+                let index = Int(match.1)! - 1
+                if index >= 0 && index < candidateCount {
+                    decisions[index] = (String(match.2) == "KEEP")
+                }
+            }
+        }
+
+        return decisions
+    }
+
+    private func logVerification(
+        _ entry: MemoryEntry,
+        decision: String,
+        layer: Int,
+        agentId: String
+    ) {
+        try? db.insertMemoryEvent(
+            entryId: entry.id,
+            eventType: "verification",
+            agentId: agentId,
+            model: nil,
+            reason: "layer_\(layer):\(decision)"
+        )
     }
 
     // MARK: - Profile Threshold Check
