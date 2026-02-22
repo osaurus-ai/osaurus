@@ -2,11 +2,15 @@
 //  MemoryView.swift
 //  osaurus
 //
-//  Memory management UI: user profile, overrides, working memory,
+//  Memory management UI: user profile, overrides, agents,
 //  statistics, core model configuration, and danger zone.
 //
 
 import SwiftUI
+
+private func pluralized(_ count: Int, _ singular: String, _ plural: String? = nil) -> String {
+    count == 1 ? "1 \(singular)" : "\(count) \(plural ?? "\(singular)s")"
+}
 
 struct MemoryView: View {
     @ObservedObject private var themeManager = ThemeManager.shared
@@ -24,7 +28,6 @@ struct MemoryView: View {
     @State private var processingStats = ProcessingStats()
     @State private var dbSizeBytes: Int64 = 0
     @State private var agentMemoryCounts: [(agent: Agent, count: Int)] = []
-    @State private var totalActiveEntries: Int = 0
     @State private var modelOptions: [ModelOption] = []
 
     // MARK: UI State
@@ -32,11 +35,11 @@ struct MemoryView: View {
     @State private var selectedAgent: Agent?
     @State private var hasAppeared = false
     @State private var isLoading = true
+    @State private var isRefreshing = false
     @State private var isSyncing = false
     @State private var showProfileEditor = false
     @State private var showAddOverride = false
-    @State private var showContextPreview = false
-    @State private var contextPreviewText = ""
+    @State private var contextPreviewItem: ContextPreviewItem?
     @State private var showClearConfirmation = false
     @State private var toastMessage: (text: String, isError: Bool)?
 
@@ -104,7 +107,7 @@ struct MemoryView: View {
 
                                 profileSection
                                 overridesSection
-                                workingMemorySection
+                                agentsSection
                                 statsSection
                                 configurationSection
                                 dangerZoneSection
@@ -153,8 +156,8 @@ struct MemoryView: View {
             )
             .frame(minWidth: 440, minHeight: 220)
         }
-        .sheet(isPresented: $showContextPreview) {
-            ContextPreviewSheet(context: contextPreviewText)
+        .sheet(item: $contextPreviewItem) { item in
+            ContextPreviewSheet(context: item.text)
                 .frame(minWidth: 560, minHeight: 420)
         }
         .themedAlert(
@@ -176,38 +179,8 @@ struct MemoryView: View {
             title: "Memory",
             subtitle: "Manage your profile, overrides, and memory configuration"
         ) {
-            HeaderSecondaryButton(isSyncing ? "Syncing..." : "Sync Now", icon: "arrow.triangle.2.circlepath") {
-                guard !isSyncing else { return }
-                isSyncing = true
-                Task.detached {
-                    await MemoryService.shared.syncNow()
-                    await MainActor.run {
-                        isSyncing = false
-                        loadData()
-                        showToast("Sync complete")
-                    }
-                }
-            }
-            .disabled(isSyncing || !config.enabled)
-            .accessibilityLabel(isSyncing ? "Syncing memory" : "Sync memory now")
-            .accessibilityHint("Processes pending conversations and regenerates profile if needed")
-
-            HeaderSecondaryButton("Preview Context", icon: "eye") {
-                Task {
-                    let config = MemoryConfigurationStore.load()
-                    let activeId = agentManager.activeAgentId.uuidString
-                    let ctx = await MemoryContextAssembler.assembleContext(agentId: activeId, config: config)
-                    contextPreviewText =
-                        ctx.isEmpty ? "(No memory context assembled — memory may be empty or disabled)" : ctx
-                    showContextPreview = true
-                }
-            }
-            .disabled(!config.enabled)
-            .accessibilityLabel("Preview memory context")
-            .accessibilityHint("Shows the memory context that will be injected into conversations")
-
-            HeaderIconButton("arrow.clockwise", help: "Refresh") {
-                loadData()
+            HeaderIconButton("arrow.clockwise", isLoading: isRefreshing, help: "Refresh") {
+                refreshData()
             }
             .accessibilityLabel("Refresh memory data")
         }
@@ -257,6 +230,20 @@ struct MemoryView: View {
 
     private var profileSection: some View {
         MemorySection(title: "User Profile", icon: "person.text.rectangle") {
+            SectionActionButton(isSyncing ? "Syncing..." : "Sync", icon: "arrow.triangle.2.circlepath") {
+                guard !isSyncing else { return }
+                isSyncing = true
+                Task.detached {
+                    await MemoryService.shared.syncNow()
+                    await MainActor.run {
+                        isSyncing = false
+                        loadData()
+                        showToast("Sync complete")
+                    }
+                }
+            }
+            .disabled(isSyncing || !config.enabled)
+
             SectionActionButton("Edit", icon: "pencil") {
                 showProfileEditor = true
             }
@@ -280,7 +267,7 @@ struct MemoryView: View {
 
                     HStack(spacing: 12) {
                         metadataTag("v\(profile.version)")
-                        metadataTag("\(profile.tokenCount) tokens")
+                        metadataTag(pluralized(profile.tokenCount, "token"))
                         metadataTag(profile.model)
 
                         Spacer()
@@ -318,7 +305,7 @@ struct MemoryView: View {
     // MARK: - Overrides Section
 
     private var overridesSection: some View {
-        MemorySection(title: "Your Overrides", icon: "pin.fill", count: userEdits.count) {
+        MemorySection(title: "Your Overrides", icon: "pin.fill", count: userEdits.isEmpty ? nil : userEdits.count) {
             SectionActionButton("Add", icon: "plus") {
                 showAddOverride = true
             }
@@ -351,22 +338,16 @@ struct MemoryView: View {
         }
     }
 
-    // MARK: - Working Memory Section
+    // MARK: - Agents Section
 
-    private var workingMemorySection: some View {
-        MemorySection(
-            title: "Working Memory",
-            icon: "brain",
-            count: totalActiveEntries > 0 ? totalActiveEntries : nil
-        ) {
-            EmptyView()
-        } content: {
+    private var agentsSection: some View {
+        MemorySection(title: "Agents", icon: "person.2") {
             if agentMemoryCounts.isEmpty {
                 HStack(spacing: 10) {
                     Image(systemName: "info.circle")
                         .font(.system(size: 13))
                         .foregroundColor(theme.tertiaryText)
-                    Text("No working memories yet. Memories are extracted automatically from your conversations.")
+                    Text("No agents with memories yet. Memories are extracted automatically from your conversations.")
                         .font(.system(size: 13))
                         .foregroundColor(theme.tertiaryText)
                 }
@@ -383,6 +364,21 @@ struct MemoryView: View {
                                 withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
                                     selectedAgent = pair.agent
                                 }
+                            },
+                            onPreviewContext: {
+                                Task {
+                                    let cfg = MemoryConfigurationStore.load()
+                                    let ctx = await MemoryContextAssembler.assembleContext(
+                                        agentId: pair.agent.id.uuidString,
+                                        config: cfg
+                                    )
+                                    let trimmed = ctx.trimmingCharacters(in: .whitespacesAndNewlines)
+                                    let text =
+                                        trimmed.isEmpty
+                                        ? "(No memory context assembled — memory may be empty or disabled)"
+                                        : trimmed
+                                    contextPreviewItem = ContextPreviewItem(text: text)
+                                }
                             }
                         )
                     }
@@ -395,8 +391,6 @@ struct MemoryView: View {
 
     private var statsSection: some View {
         MemorySection(title: "Statistics", icon: "chart.bar") {
-            EmptyView()
-        } content: {
             HStack(spacing: 0) {
                 statBlock(label: "Total Calls", value: "\(processingStats.totalCalls)")
                 Divider().frame(height: 36).opacity(0.5)
@@ -415,8 +409,6 @@ struct MemoryView: View {
 
     private var configurationSection: some View {
         MemorySection(title: "Configuration", icon: "gearshape") {
-            EmptyView()
-        } content: {
             VStack(alignment: .leading, spacing: 14) {
                 // Core Model picker
                 HStack(spacing: 12) {
@@ -466,7 +458,7 @@ struct MemoryView: View {
                     HStack(spacing: 8) {
                         Stepper("", value: $config.summaryRetentionDays, in: 1 ... 365)
                             .labelsHidden()
-                        Text("\(config.summaryRetentionDays) days")
+                        Text(pluralized(config.summaryRetentionDays, "day"))
                             .font(.system(size: 13))
                             .foregroundColor(theme.primaryText)
                     }
@@ -602,7 +594,15 @@ struct MemoryView: View {
 
     // MARK: - Data Loading
 
-    private func loadData() {
+    private func refreshData() {
+        guard !isRefreshing else { return }
+        isRefreshing = true
+        loadData {
+            isRefreshing = false
+        }
+    }
+
+    private func loadData(onComplete: (@Sendable @MainActor () -> Void)? = nil) {
         config = MemoryConfigurationStore.load()
         Task.detached(priority: .userInitiated) {
             let db = MemoryDatabase.shared
@@ -611,6 +611,7 @@ struct MemoryView: View {
                     MemoryLogger.database.error("Failed to open database from MemoryView: \(error)")
                     await MainActor.run {
                         isLoading = false
+                        onComplete?()
                         showToast("Failed to open memory database", isError: true)
                     }
                     return
@@ -643,7 +644,6 @@ struct MemoryView: View {
             }
             loadedSize = db.databaseSizeBytes()
 
-            let loadedTotalEntries = (try? db.activeEntryCount()) ?? 0
             let agentEntries = (try? db.agentIdsWithEntries()) ?? []
 
             let agents = await MainActor.run { agentManager.agents }
@@ -660,9 +660,9 @@ struct MemoryView: View {
                 userEdits = loadedEdits
                 processingStats = loadedStats
                 dbSizeBytes = loadedSize
-                totalActiveEntries = loadedTotalEntries
                 agentMemoryCounts = resolvedCounts
                 isLoading = false
+                onComplete?()
                 if let loadError {
                     showToast(loadError, isError: true)
                 }
@@ -865,6 +865,21 @@ private struct MemorySection<Trailing: View, Content: View>: View {
     }
 }
 
+extension MemorySection where Trailing == EmptyView {
+    init(
+        title: String,
+        icon: String,
+        count: Int? = nil,
+        @ViewBuilder content: () -> Content
+    ) {
+        self.title = title
+        self.icon = icon
+        self.count = count
+        self.trailing = EmptyView()
+        self.content = content()
+    }
+}
+
 // MARK: - Section Action Button
 
 private struct SectionActionButton: View {
@@ -962,48 +977,68 @@ private struct AgentMemoryRow: View {
     let agent: Agent
     let count: Int
     let onSelect: () -> Void
+    let onPreviewContext: () -> Void
 
     @State private var isHovering = false
 
     var body: some View {
-        Button(action: onSelect) {
-            HStack(spacing: 10) {
-                Circle()
-                    .fill(agentColorFor(agent.name))
-                    .frame(width: 8, height: 8)
+        HStack(spacing: 10) {
+            Button(action: onSelect) {
+                HStack(spacing: 10) {
+                    Circle()
+                        .fill(agentColorFor(agent.name))
+                        .frame(width: 8, height: 8)
 
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(agent.name)
-                        .font(.system(size: 13, weight: .medium))
-                        .foregroundColor(theme.primaryText)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(agent.name)
+                            .font(.system(size: 13, weight: .medium))
+                            .foregroundColor(theme.primaryText)
 
-                    if !agent.description.isEmpty {
-                        Text(agent.description)
-                            .font(.system(size: 11))
-                            .foregroundColor(theme.tertiaryText)
-                            .lineLimit(1)
+                        if !agent.description.isEmpty {
+                            Text(agent.description)
+                                .font(.system(size: 11))
+                                .foregroundColor(theme.tertiaryText)
+                                .lineLimit(1)
+                        }
                     }
+
+                    Spacer()
+
+                    Text(pluralized(count, "memory", "memories"))
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundColor(theme.secondaryText)
+                        .padding(.horizontal, 7)
+                        .padding(.vertical, 2)
+                        .background(
+                            Capsule().fill(theme.tertiaryBackground)
+                        )
                 }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(PlainButtonStyle())
 
-                Spacer()
-
-                Text("\(count)")
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundColor(theme.secondaryText)
-                    .padding(.horizontal, 7)
-                    .padding(.vertical, 2)
+            Button(action: onPreviewContext) {
+                Image(systemName: "eye")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundColor(theme.tertiaryText)
+                    .frame(width: 26, height: 26)
                     .background(
-                        Capsule().fill(theme.tertiaryBackground)
+                        RoundedRectangle(cornerRadius: 6)
+                            .fill(theme.tertiaryBackground)
                     )
+            }
+            .buttonStyle(PlainButtonStyle())
+            .help("Preview context for this agent")
 
+            Button(action: onSelect) {
                 Image(systemName: "chevron.right")
                     .font(.system(size: 10, weight: .semibold))
                     .foregroundColor(theme.tertiaryText)
             }
-            .padding(.vertical, 8)
-            .contentShape(Rectangle())
+            .buttonStyle(PlainButtonStyle())
         }
-        .buttonStyle(PlainButtonStyle())
+        .padding(.vertical, 10)
+        .padding(.horizontal, 4)
         .background(
             RoundedRectangle(cornerRadius: 6)
                 .fill(isHovering ? theme.accentColor.opacity(0.06) : Color.clear)
@@ -1069,7 +1104,7 @@ private struct ProfileEditSheet: View {
             Divider().opacity(0.5)
 
             HStack {
-                Text("\(max(1, editText.count / MemoryConfiguration.charsPerToken)) tokens")
+                Text(pluralized(max(1, editText.count / MemoryConfiguration.charsPerToken), "token"))
                     .font(.system(size: 11))
                     .foregroundColor(theme.tertiaryText)
 
@@ -1240,6 +1275,13 @@ private struct AddOverrideSheet: View {
     }
 }
 
+// MARK: - Context Preview Item
+
+private struct ContextPreviewItem: Identifiable {
+    let id = UUID()
+    let text: String
+}
+
 // MARK: - Context Preview Sheet
 
 private struct ContextPreviewSheet: View {
@@ -1263,8 +1305,7 @@ private struct ContextPreviewSheet: View {
                 }
                 Spacer()
 
-                let tokenEstimate = max(1, context.count / MemoryConfiguration.charsPerToken)
-                Text("~\(tokenEstimate) tokens")
+                Text("~\(pluralized(max(1, context.count / MemoryConfiguration.charsPerToken), "token"))")
                     .font(.system(size: 11, weight: .medium))
                     .foregroundColor(theme.secondaryText)
                     .padding(.horizontal, 8)

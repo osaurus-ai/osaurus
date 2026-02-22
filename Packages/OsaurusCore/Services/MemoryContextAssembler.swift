@@ -133,7 +133,7 @@ public actor MemoryContextAssembler {
             }
         }
 
-        return sections.joined(separator: "\n")
+        return sections.joined(separator: "\n\n")
     }
 
     /// Build a markdown section from items, trimming to a token budget.
