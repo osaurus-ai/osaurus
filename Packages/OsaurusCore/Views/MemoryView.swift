@@ -195,7 +195,8 @@ struct MemoryView: View {
             HeaderSecondaryButton("Preview Context", icon: "eye") {
                 Task {
                     let config = MemoryConfigurationStore.load()
-                    let ctx = await MemoryContextAssembler.assembleContext(agentId: "preview", config: config)
+                    let activeId = agentManager.activeAgentId.uuidString
+                    let ctx = await MemoryContextAssembler.assembleContext(agentId: activeId, config: config)
                     contextPreviewText =
                         ctx.isEmpty ? "(No memory context assembled — memory may be empty or disabled)" : ctx
                     showContextPreview = true

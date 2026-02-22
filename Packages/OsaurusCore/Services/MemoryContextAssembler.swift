@@ -53,6 +53,7 @@ public actor MemoryContextAssembler {
         let db = MemoryDatabase.shared
         guard db.isOpen else { return "" }
 
+        let isDefault = Agent.isDefaultAgentId(agentId)
         var sections: [String] = []
 
         // 1. User Edits (explicit overrides — never trimmed)
@@ -78,55 +79,58 @@ public actor MemoryContextAssembler {
             MemoryLogger.service.warning("Context assembly: failed to load user profile: \(error)")
         }
 
-        // 3. Working Memory (this agent's active entries)
-        do {
-            let entries = try db.loadActiveEntries(agentId: agentId)
-            if !entries.isEmpty {
-                let block = buildBudgetSection(
-                    header: "# Working Memory",
-                    budgetTokens: config.workingMemoryBudgetTokens,
-                    items: entries
-                ) { "- [\($0.type.displayName)] \($0.content)" }
+        // Default agent gets global profile + overrides only (read-only mode)
+        if !isDefault {
+            // 3. Working Memory (this agent's active entries)
+            do {
+                let entries = try db.loadActiveEntries(agentId: agentId)
+                if !entries.isEmpty {
+                    let block = buildBudgetSection(
+                        header: "# Working Memory",
+                        budgetTokens: config.workingMemoryBudgetTokens,
+                        items: entries
+                    ) { "- [\($0.type.displayName)] \($0.content)" }
 
-                do { try db.touchMemoryEntries(ids: entries.map(\.id)) } catch {
-                    MemoryLogger.service.warning("Context assembly: failed to touch entries: \(error)")
+                    do { try db.touchMemoryEntries(ids: entries.map(\.id)) } catch {
+                        MemoryLogger.service.warning("Context assembly: failed to touch entries: \(error)")
+                    }
+                    sections.append(block)
                 }
-                sections.append(block)
+            } catch {
+                MemoryLogger.service.warning("Context assembly: failed to load working memory: \(error)")
             }
-        } catch {
-            MemoryLogger.service.warning("Context assembly: failed to load working memory: \(error)")
-        }
 
-        // 4. Conversation Summaries (this agent, last N days)
-        do {
-            let summaries = try db.loadSummaries(agentId: agentId, days: config.summaryRetentionDays)
-            if !summaries.isEmpty {
-                sections.append(
-                    buildBudgetSection(
-                        header: "# Recent Conversation Summaries",
-                        budgetTokens: config.summaryBudgetTokens,
-                        items: summaries
-                    ) { "- \($0.conversationAt): \($0.summary)" }
-                )
+            // 4. Conversation Summaries (this agent, last N days)
+            do {
+                let summaries = try db.loadSummaries(agentId: agentId, days: config.summaryRetentionDays)
+                if !summaries.isEmpty {
+                    sections.append(
+                        buildBudgetSection(
+                            header: "# Recent Conversation Summaries",
+                            budgetTokens: config.summaryBudgetTokens,
+                            items: summaries
+                        ) { "- \($0.conversationAt): \($0.summary)" }
+                    )
+                }
+            } catch {
+                MemoryLogger.service.warning("Context assembly: failed to load summaries: \(error)")
             }
-        } catch {
-            MemoryLogger.service.warning("Context assembly: failed to load summaries: \(error)")
-        }
 
-        // 5. Knowledge Graph (key relationships)
-        do {
-            let relationships = try db.loadRecentRelationships(limit: 30)
-            if !relationships.isEmpty {
-                sections.append(
-                    buildBudgetSection(
-                        header: "# Key Relationships",
-                        budgetTokens: config.graphBudgetTokens,
-                        items: relationships
-                    ) { "- \($0.path)" }
-                )
+            // 5. Knowledge Graph (key relationships)
+            do {
+                let relationships = try db.loadRecentRelationships(limit: 30)
+                if !relationships.isEmpty {
+                    sections.append(
+                        buildBudgetSection(
+                            header: "# Key Relationships",
+                            budgetTokens: config.graphBudgetTokens,
+                            items: relationships
+                        ) { "- \($0.path)" }
+                    )
+                }
+            } catch {
+                MemoryLogger.service.warning("Context assembly: failed to load relationships: \(error)")
             }
-        } catch {
-            MemoryLogger.service.warning("Context assembly: failed to load relationships: \(error)")
         }
 
         return sections.joined(separator: "\n")
