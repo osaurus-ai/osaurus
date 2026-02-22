@@ -19,13 +19,16 @@ public actor MemoryService {
         return f
     }()
 
+    private var summaryTasks: [String: Task<Void, Never>] = [:]
+    private var activeConversation: [String: String] = [:]
+
     private init() {}
 
     // MARK: - Record Conversation Turn
 
     /// Stores a conversation turn and immediately extracts memories, profile facts, and graph data.
-    /// The turn is also persisted as a pending signal so post-activity processing can generate
-    /// a conversation summary once the user goes idle.
+    /// The turn is also persisted as a pending signal for session-based summary generation.
+    /// Summaries are generated via debounce or when the user navigates away from the session.
     public func recordConversationTurn(
         userMessage: String,
         assistantMessage: String?,
@@ -118,123 +121,24 @@ public actor MemoryService {
                 details: error.localizedDescription
             )
         }
-    }
 
-    // MARK: - Path 2: Post-Activity Processing
+        // Session-change detection and summary debounce
+        let previousConversation = activeConversation[agentId]
+        activeConversation[agentId] = conversationId
 
-    public func processPostActivity(agentId: String) async {
-        let config = await MainActor.run { MemoryConfigurationStore.load() }
-        guard config.enabled else { return }
+        if let prev = previousConversation, prev != conversationId {
+            summaryTasks[prev]?.cancel()
+            summaryTasks[prev] = nil
+            let prevAgent = agentId
+            Task { await self.generateConversationSummary(agentId: prevAgent, conversationId: prev) }
+        }
 
-        MemoryLogger.service.debug(
-            "Post-activity processing starting for agent: \(agentId), model: \(config.coreModelIdentifier)"
-        )
-        let startTime = Date()
-
-        do {
-            try db.markAgentProcessing(agentId: agentId, status: "processing")
-
-            let pendingSignals = try db.loadPendingSignals(agentId: agentId)
-            let existingEntries = try db.loadActiveEntries(agentId: agentId)
-            MemoryLogger.service.info(
-                "Post-activity: \(pendingSignals.count) pending signals, \(existingEntries.count) existing entries"
-            )
-
-            guard !pendingSignals.isEmpty else {
-                MemoryLogger.service.debug("Post-activity: no pending signals, skipping")
-                do { try db.markAgentProcessing(agentId: agentId, status: "idle") } catch {
-                    MemoryLogger.service.warning("Failed to mark agent idle: \(error)")
-                }
-                return
-            }
-
-            let prompt = buildPostActivityPrompt(
-                pendingSignals: pendingSignals,
-                existingEntries: existingEntries,
-                agentId: agentId
-            )
-
-            let response = try await callCoreModel(prompt: prompt, systemPrompt: extractionSystemPrompt, config: config)
-            MemoryLogger.service.info("Post-activity: core model responded (\(response.count) chars)")
-
-            let parsed = parseResponse(response)
-            let extracted = buildMemoryEntries(
-                from: parsed.entries,
-                agentId: agentId,
-                conversationId: pendingSignals.first?.conversationId ?? "",
-                model: config.coreModelIdentifier
-            )
-            let verifyResult = await verifyAndInsertEntries(
-                extracted,
-                agentId: agentId,
-                existingEntries: existingEntries,
-                config: config
-            )
-
-            insertProfileFacts(
-                parsed.profileFacts,
-                agentId: agentId,
-                conversationId: pendingSignals.first?.conversationId,
-                model: config.coreModelIdentifier
-            )
-            insertGraphData(parsed.graph, model: config.coreModelIdentifier)
-
-            let hasSummary = parsed.summary != nil
-            if let summary = parsed.summary {
-                let tokenCount = max(1, summary.count / MemoryConfiguration.charsPerToken)
-                let conversationId = pendingSignals.first?.conversationId ?? agentId
-                let summaryObj = ConversationSummary(
-                    agentId: agentId,
-                    conversationId: conversationId,
-                    summary: summary,
-                    tokenCount: tokenCount,
-                    model: config.coreModelIdentifier,
-                    conversationAt: Self.iso8601Formatter.string(from: Date())
-                )
-                do { try db.insertSummary(summaryObj) } catch {
-                    MemoryLogger.service.error("Failed to insert summary: \(error)")
-                }
-                await MemorySearchService.shared.indexSummary(summaryObj)
-            }
-
-            do { try db.markSignalsProcessed(agentId: agentId) } catch {
-                MemoryLogger.service.error("Failed to mark signals processed: \(error)")
-            }
-            do { try db.markAgentProcessing(agentId: agentId, status: "idle") } catch {
-                MemoryLogger.service.warning("Failed to mark agent idle: \(error)")
-            }
-
-            let durationMs = Int(Date().timeIntervalSince(startTime) * 1000)
-            logProcessing(
-                agentId: agentId,
-                taskType: "post_activity",
-                model: config.coreModelIdentifier,
-                status: "success",
-                inputTokens: prompt.count / MemoryConfiguration.charsPerToken,
-                outputTokens: response.count / MemoryConfiguration.charsPerToken,
-                durationMs: durationMs
-            )
-            MemoryLogger.service.debug(
-                "Post-activity completed in \(durationMs)ms — \(extracted.count) entries (kept: \(verifyResult.kept), skipped: \(verifyResult.skipped), superseded: \(verifyResult.superseded)), \(parsed.profileFacts.count) profile facts, summary: \(hasSummary)"
-            )
-
-            do {
-                try await checkProfileRegeneration(config: config)
-            } catch {
-                MemoryLogger.service.warning("Profile regeneration check failed: \(error)")
-            }
-        } catch {
-            MemoryLogger.service.error("Post-activity processing failed for \(agentId): \(error)")
-            do { try db.markAgentProcessing(agentId: agentId, status: "idle") } catch {
-                MemoryLogger.service.warning("Failed to mark agent idle after error: \(error)")
-            }
-            logProcessing(
-                agentId: agentId,
-                taskType: "post_activity",
-                model: config.coreModelIdentifier,
-                status: "error",
-                details: error.localizedDescription
-            )
+        summaryTasks[conversationId]?.cancel()
+        let debounceSeconds = config.summaryDebounceSeconds
+        summaryTasks[conversationId] = Task {
+            try? await Task.sleep(for: .seconds(debounceSeconds))
+            guard !Task.isCancelled else { return }
+            await self.generateConversationSummary(agentId: agentId, conversationId: conversationId)
         }
     }
 
@@ -331,18 +235,18 @@ public actor MemoryService {
 
         MemoryLogger.service.debug("Manual sync starting...")
 
-        let agentIds: [String]
+        let conversations: [(agentId: String, conversationId: String)]
         do {
-            agentIds = try db.agentsWithPendingSignals()
+            conversations = try db.pendingConversations()
         } catch {
-            MemoryLogger.service.error("Sync failed to load pending agents: \(error)")
+            MemoryLogger.service.error("Sync failed to load pending conversations: \(error)")
             return
         }
 
-        if !agentIds.isEmpty {
-            MemoryLogger.service.info("Sync: processing \(agentIds.count) agent(s): \(agentIds)")
-            for agentId in agentIds {
-                await processPostActivity(agentId: agentId)
+        if !conversations.isEmpty {
+            MemoryLogger.service.info("Sync: generating summaries for \(conversations.count) conversation(s)")
+            for conv in conversations {
+                await generateConversationSummary(agentId: conv.agentId, conversationId: conv.conversationId)
             }
         } else {
             MemoryLogger.service.debug("Sync: no pending signals to process")
@@ -361,6 +265,107 @@ public actor MemoryService {
         }
 
         MemoryLogger.service.info("Manual sync completed")
+    }
+
+    // MARK: - Conversation Summary Generation
+
+    /// Flush a session's summary immediately. Called from the UI when the user navigates away.
+    public func flushSession(agentId: String, conversationId: String) {
+        summaryTasks[conversationId]?.cancel()
+        summaryTasks[conversationId] = nil
+        Task { await self.generateConversationSummary(agentId: agentId, conversationId: conversationId) }
+    }
+
+    private let summarySystemPrompt = """
+        You summarize conversations concisely. \
+        Output a 2-4 sentence summary capturing the key topics, decisions, and outcomes. \
+        Do NOT add preamble like "Here is" or "Certainly". Output the summary directly.
+        """
+
+    private func generateConversationSummary(agentId: String, conversationId: String) async {
+        let config = await MainActor.run { MemoryConfigurationStore.load() }
+        guard config.enabled else { return }
+
+        let startTime = Date()
+        let signals: [PendingSignal]
+        do {
+            signals = try db.loadPendingSignals(conversationId: conversationId)
+        } catch {
+            MemoryLogger.service.error("Failed to load signals for conversation \(conversationId): \(error)")
+            return
+        }
+
+        guard !signals.isEmpty else {
+            MemoryLogger.service.debug("No pending signals for conversation \(conversationId), skipping summary")
+            return
+        }
+
+        var prompt = "Conversation turns:\n"
+        for signal in signals {
+            prompt += "\nUser: \(signal.userMessage)"
+            if let assistant = signal.assistantMessage {
+                prompt += "\nAssistant: \(assistant)"
+            }
+        }
+        prompt += "\n\nSummarize this conversation in 2-4 sentences."
+
+        do {
+            let response = try await callCoreModel(
+                prompt: prompt,
+                systemPrompt: summarySystemPrompt,
+                config: config
+            )
+            let summaryText = stripPreamble(response)
+            guard !summaryText.isEmpty else {
+                MemoryLogger.service.warning("Empty summary for conversation \(conversationId)")
+                return
+            }
+
+            let tokenCount = max(1, summaryText.count / MemoryConfiguration.charsPerToken)
+            let summaryObj = ConversationSummary(
+                agentId: agentId,
+                conversationId: conversationId,
+                summary: summaryText,
+                tokenCount: tokenCount,
+                model: config.coreModelIdentifier,
+                conversationAt: Self.iso8601Formatter.string(from: Date())
+            )
+            do { try db.insertSummary(summaryObj) } catch {
+                MemoryLogger.service.error("Failed to insert summary: \(error)")
+            }
+            await MemorySearchService.shared.indexSummary(summaryObj)
+
+            do { try db.markSignalsProcessed(conversationId: conversationId) } catch {
+                MemoryLogger.service.error(
+                    "Failed to mark signals processed for conversation \(conversationId): \(error)"
+                )
+            }
+
+            let durationMs = Int(Date().timeIntervalSince(startTime) * 1000)
+            logProcessing(
+                agentId: agentId,
+                taskType: "conversation_summary",
+                model: config.coreModelIdentifier,
+                status: "success",
+                inputTokens: prompt.count / MemoryConfiguration.charsPerToken,
+                outputTokens: response.count / MemoryConfiguration.charsPerToken,
+                durationMs: durationMs
+            )
+            MemoryLogger.service.info(
+                "Conversation summary generated for \(conversationId) in \(durationMs)ms (\(tokenCount) tokens)"
+            )
+        } catch {
+            MemoryLogger.service.error("Conversation summary generation failed for \(conversationId): \(error)")
+            logProcessing(
+                agentId: agentId,
+                taskType: "conversation_summary",
+                model: config.coreModelIdentifier,
+                status: "error",
+                details: error.localizedDescription
+            )
+        }
+
+        summaryTasks[conversationId] = nil
     }
 
     // MARK: - Core Model Routing
@@ -415,7 +420,7 @@ public actor MemoryService {
             circuitOpenUntil = Date().addingTimeInterval(Self.circuitBreakerCooldown)
             let cooldown = Int(Self.circuitBreakerCooldown)
             MemoryLogger.service.error(
-                "Circuit breaker opened after \(consecutiveFailures) consecutive failures — cooling down for \(cooldown)s"
+                "Circuit breaker opened after \(self.consecutiveFailures) consecutive failures — cooling down for \(cooldown)s"
             )
         }
 
@@ -462,7 +467,7 @@ public actor MemoryService {
         You extract structured memories from conversations. \
         Respond ONLY with a valid JSON object. Never ask questions. Never refuse. \
         The JSON must have: "entries" (array of objects with "type", "content", "confidence", "tags"), \
-        "profile_facts" (array of strings), "summary" (string or null), \
+        "profile_facts" (array of strings), \
         "entities" (array of objects with "name" and "type"), \
         "relationships" (array of objects with "source", "relation", "target", "confidence").
         """
@@ -476,7 +481,7 @@ public actor MemoryService {
 
         if !existingEntries.isEmpty {
             prompt += "Existing memories (avoid duplicates, note contradictions):\n"
-            for entry in existingEntries.prefix(MemoryConfiguration.postActivityPromptEntryLimit) {
+            for entry in existingEntries.prefix(MemoryConfiguration.extractionPromptEntryLimit) {
                 prompt += "- [\(entry.type.rawValue)] \(entry.content)\n"
             }
             prompt += "\n"
@@ -493,40 +498,6 @@ public actor MemoryService {
             Extract memories as JSON with:
             - "entries": array, each with "type" (fact/preference/decision/correction/commitment/relationship/skill), "content" (concise statement), "confidence" (0.0-1.0), "tags" (keywords array)
             - "profile_facts": array of strings — global facts about this user for their profile
-            - "summary": null
-            - "entities": array, each with "name" (string), "type" (person/company/place/project/tool/concept/event)
-            - "relationships": array, each with "source" (entity name), "relation" (verb like works_on/lives_in/uses/knows/manages/created_by/part_of), "target" (entity name), "confidence" (0.0-1.0)
-            """
-
-        return prompt
-    }
-
-    private func buildPostActivityPrompt(
-        pendingSignals: [PendingSignal],
-        existingEntries: [MemoryEntry],
-        agentId: String
-    ) -> String {
-        var prompt = "Existing memories (check for contradictions):"
-
-        for entry in existingEntries.prefix(MemoryConfiguration.postActivityPromptEntryLimit) {
-            prompt += "\n- [\(entry.type.rawValue)] \(entry.content) (confidence: \(entry.confidence))"
-        }
-
-        prompt += "\n\nConversation turns to process:"
-
-        for signal in pendingSignals {
-            prompt += "\n---\nUser: \(signal.userMessage)"
-            if let assistant = signal.assistantMessage {
-                prompt += "\nAssistant: \(assistant)"
-            }
-        }
-
-        prompt += """
-
-            Extract memories as JSON with:
-            - "entries": array of new entries, each with "type", "content", "confidence", "tags"
-            - "profile_facts": array of strings — global facts about this user for their profile
-            - "summary": a 2-4 sentence summary of this conversation session
             - "entities": array, each with "name" (string), "type" (person/company/place/project/tool/concept/event)
             - "relationships": array, each with "source" (entity name), "relation" (verb like works_on/lives_in/uses/knows/manages/created_by/part_of), "target" (entity name), "confidence" (0.0-1.0)
             """
@@ -583,14 +554,12 @@ public actor MemoryService {
 
         var entries: [EntryData] = []
         var profileFacts: [String] = []
-        var summary: String?
         var graph: GraphExtractionResult = GraphExtractionResult()
     }
 
     private struct RawExtractionJSON: Decodable {
         let entries: [ExtractionParseResult.EntryData]?
         let profile_facts: [String]?
-        let summary: String?
         let entities: [GraphExtractionResult.EntityData]?
         let relationships: [GraphExtractionResult.RelationshipData]?
     }
@@ -648,7 +617,6 @@ public actor MemoryService {
         return ExtractionParseResult(
             entries: raw.entries ?? [],
             profileFacts: raw.profile_facts ?? [],
-            summary: raw.summary,
             graph: GraphExtractionResult(
                 entities: raw.entities ?? [],
                 relationships: raw.relationships ?? []
@@ -812,9 +780,14 @@ public actor MemoryService {
         }
     }
 
+    private static let contradictableTypes: Set<MemoryEntryType> = [.fact, .correction, .commitment]
+
     private func findContradiction(entry: MemoryEntry, existing: [MemoryEntry]) -> MemoryEntry? {
         for e in existing {
-            guard e.type == entry.type else { continue }
+            let typesCompatible =
+                (e.type == entry.type)
+                || (Self.contradictableTypes.contains(e.type) && Self.contradictableTypes.contains(entry.type))
+            guard typesCompatible else { continue }
             let sim = TextSimilarity.jaccard(entry.content, e.content)
             if sim > MemoryConfiguration.contradictionJaccardThreshold && entry.content != e.content {
                 return e
@@ -827,8 +800,11 @@ public actor MemoryService {
 
     /// Three-layer verification pipeline (all deterministic, no LLM calls).
     /// Layer 1: Jaccard > dedupThreshold, same type -> SKIP (word-overlap duplicates)
-    /// Layer 2: Jaccard 0.3–dedupThreshold, same type -> SUPERSEDE (contradictions)
-    /// Layer 3: Vector similarity > semanticDedupThreshold -> SKIP (semantic duplicates Jaccard misses)
+    /// Layer 2: Jaccard 0.3–dedupThreshold, compatible types -> SUPERSEDE (contradictions)
+    /// Layer 3: Vector similarity > semanticDedupThreshold:
+    ///   - High Jaccard with match -> SKIP (semantic duplicate)
+    ///   - Low Jaccard + contradictable types -> SUPERSEDE (semantic contradiction)
+    ///   - Otherwise -> KEEP
     /// Everything else -> KEEP
     ///
     /// Falls back to insertEntries (Layer 2 only) if verification is disabled.
@@ -880,7 +856,7 @@ public actor MemoryService {
                 continue
             }
 
-            // Layer 3: Semantic dedup (vector similarity threshold, no LLM call)
+            // Layer 3: Semantic similarity — distinguish duplicates from contradictions
             let similar = await MemorySearchService.shared.searchMemoryEntriesWithScores(
                 query: candidate.content,
                 agentId: agentId,
@@ -888,8 +864,33 @@ public actor MemoryService {
             )
 
             if let topMatch = similar.first, topMatch.score >= semanticDedupThreshold {
-                logVerification(candidate, decision: "skip_semantic_dup", layer: 3, agentId: agentId)
-                skipped += 1
+                let jaccardWithMatch = TextSimilarity.jaccard(candidate.content, topMatch.entry.content)
+                let isContradictable =
+                    Self.contradictableTypes.contains(candidate.type)
+                    && Self.contradictableTypes.contains(topMatch.entry.type)
+
+                if jaccardWithMatch >= dedupThreshold {
+                    logVerification(candidate, decision: "skip_semantic_dup", layer: 3, agentId: agentId)
+                    skipped += 1
+                } else if isContradictable && candidate.content != topMatch.entry.content {
+                    do {
+                        try db.supersede(
+                            entryId: topMatch.entry.id,
+                            by: candidate.id,
+                            reason: "Semantically contradicted by newer information"
+                        )
+                        await MemorySearchService.shared.removeDocument(id: topMatch.entry.id)
+                    } catch {
+                        MemoryLogger.service.error("Failed to supersede entry: \(error)")
+                    }
+                    await persistEntry(candidate, tag: "semantic_supersede")
+                    logVerification(candidate, decision: "supersede_semantic", layer: 3, agentId: agentId)
+                    superseded += 1
+                } else {
+                    await persistEntry(candidate, tag: "novel")
+                    logVerification(candidate, decision: "keep_novel", layer: 0, agentId: agentId)
+                    kept += 1
+                }
             } else {
                 await persistEntry(candidate, tag: "novel")
                 logVerification(candidate, decision: "keep_novel", layer: 0, agentId: agentId)
@@ -958,10 +959,10 @@ public actor MemoryService {
                 taskType: taskType,
                 model: model,
                 status: status,
+                details: details,
                 inputTokens: inputTokens,
                 outputTokens: outputTokens,
-                durationMs: durationMs,
-                details: details
+                durationMs: durationMs
             )
         } catch {
             MemoryLogger.service.warning("Failed to write processing log (\(taskType)/\(status)): \(error)")

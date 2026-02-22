@@ -2,8 +2,8 @@
 //  ActivityTracker.swift
 //  osaurus
 //
-//  Tracks per-agent activity timestamps and triggers post-activity
-//  memory processing after the configured inactivity timeout.
+//  Periodic cleanup utility for the memory system.
+//  Summary generation is handled by MemoryService's per-conversation debounce.
 //
 
 import Foundation
@@ -16,7 +16,6 @@ public final class ActivityTracker: ObservableObject {
     private static let pollInterval: TimeInterval = 30
     private var lastPurge: Date = .distantPast
     private static let purgeInterval: TimeInterval = 24 * 60 * 60
-    private var processingAgentIds: Set<String> = []
 
     private init() {}
 
@@ -25,7 +24,7 @@ public final class ActivityTracker: ObservableObject {
         guard timer == nil else { return }
         timer = Timer.scheduledTimer(withTimeInterval: Self.pollInterval, repeats: true) { [weak self] _ in
             Task { @MainActor in
-                self?.checkAgents()
+                self?.periodicCleanup()
             }
         }
     }
@@ -45,34 +44,9 @@ public final class ActivityTracker: ObservableObject {
         }
     }
 
-    /// Check all agents for inactivity and trigger processing.
-    private func checkAgents() {
+    private func periodicCleanup() {
         let config = MemoryConfigurationStore.load()
         guard config.enabled else { return }
-
-        do { try MemoryDatabase.shared.resetStuckAgents(staleSeconds: 300) } catch {
-            MemoryLogger.service.warning("Failed to reset stuck agents: \(error)")
-        }
-
-        let timeout = config.inactivityTimeoutSeconds
-
-        let agentIds: [String]
-        do {
-            agentIds = try MemoryDatabase.shared.agentsNeedingProcessing(inactivitySeconds: timeout)
-        } catch {
-            MemoryLogger.service.error("Failed to query agents needing processing: \(error)")
-            return
-        }
-
-        for agentId in agentIds {
-            guard !processingAgentIds.contains(agentId) else { continue }
-            processingAgentIds.insert(agentId)
-            Task { @MainActor [weak self] in
-                await MemoryService.shared.processPostActivity(agentId: agentId)
-                self?.processingAgentIds.remove(agentId)
-            }
-        }
-
         purgeIfNeeded()
     }
 

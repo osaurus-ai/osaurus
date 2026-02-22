@@ -43,6 +43,26 @@ struct TextSimilarityTests {
         let score = TextSimilarity.jaccard("hello", "")
         #expect(score == 0.0)
     }
+
+    @Test func contradictionWithDifferentPhrasing() {
+        let score = TextSimilarity.jaccard("Terence moved to Irvine", "Terence lives in Los Angeles")
+        // Intersection: {terence} = 1, Union: {terence, moved, to, irvine, lives, in, los, angeles} = 8
+        #expect(abs(score - 1.0 / 8.0) < 0.001)
+        #expect(
+            score < MemoryConfiguration.contradictionJaccardThreshold,
+            "Differently-phrased contradictions fall below Jaccard contradiction threshold"
+        )
+    }
+
+    @Test func contradictionWithSimilarPhrasing() {
+        let score = TextSimilarity.jaccard("Terence lives in Irvine", "Terence lives in Los Angeles")
+        // Intersection: {terence, lives, in} = 3, Union: {terence, lives, in, irvine, los, angeles} = 6
+        #expect(abs(score - 3.0 / 6.0) < 0.001)
+        #expect(
+            score > MemoryConfiguration.contradictionJaccardThreshold,
+            "Similarly-phrased contradictions exceed Jaccard contradiction threshold"
+        )
+    }
 }
 
 struct MemoryEntryTagsTests {
@@ -124,14 +144,14 @@ struct MemoryConfigurationTests {
 
     @Test func validationClampsNegativeValues() {
         var config = MemoryConfiguration()
-        config.inactivityTimeoutSeconds = -5
+        config.summaryDebounceSeconds = -5
         config.profileMaxTokens = -100
         config.recallTopK = 0
         config.mmrLambda = -0.5
         config.mmrFetchMultiplier = 0.1
         config.maxEntriesPerAgent = -1
         let validated = config.validated()
-        #expect(validated.inactivityTimeoutSeconds == 10)
+        #expect(validated.summaryDebounceSeconds == 10)
         #expect(validated.profileMaxTokens == 100)
         #expect(validated.recallTopK == 1)
         #expect(validated.mmrLambda == 0.0)
@@ -141,13 +161,13 @@ struct MemoryConfigurationTests {
 
     @Test func validationClampsExcessiveValues() {
         var config = MemoryConfiguration()
-        config.inactivityTimeoutSeconds = 999_999
+        config.summaryDebounceSeconds = 999_999
         config.profileMaxTokens = 999_999
         config.recallTopK = 999
         config.mmrLambda = 5.0
         config.summaryRetentionDays = 9999
         let validated = config.validated()
-        #expect(validated.inactivityTimeoutSeconds == 3600)
+        #expect(validated.summaryDebounceSeconds == 3600)
         #expect(validated.profileMaxTokens == 50_000)
         #expect(validated.recallTopK == 100)
         #expect(validated.mmrLambda == 1.0)
@@ -157,7 +177,7 @@ struct MemoryConfigurationTests {
     @Test func validationPreservesValidValues() {
         let config = MemoryConfiguration()
         let validated = config.validated()
-        #expect(validated.inactivityTimeoutSeconds == config.inactivityTimeoutSeconds)
+        #expect(validated.summaryDebounceSeconds == config.summaryDebounceSeconds)
         #expect(validated.mmrLambda == config.mmrLambda)
         #expect(validated.maxEntriesPerAgent == config.maxEntriesPerAgent)
     }
@@ -254,6 +274,20 @@ struct MemoryDatabaseTests {
         let active = try db.loadActiveEntries(agentId: "a")
         #expect(active.count == 1)
         #expect(active[0].id == new.id)
+    }
+
+    @Test func crossTypeSupersede() throws {
+        let db = try makeTempDB()
+        let fact = MemoryEntry(agentId: "a", type: .fact, content: "Terence lives in Los Angeles", model: "m")
+        let correction = MemoryEntry(agentId: "a", type: .correction, content: "Terence moved to Irvine", model: "m")
+        try db.insertMemoryEntry(fact)
+        try db.insertMemoryEntry(correction)
+        try db.supersede(entryId: fact.id, by: correction.id, reason: "Semantically contradicted by newer information")
+
+        let active = try db.loadActiveEntries(agentId: "a")
+        #expect(active.count == 1)
+        #expect(active[0].id == correction.id)
+        #expect(active[0].type == .correction)
     }
 
     @Test func touchMemoryEntryUpdatesAccess() throws {
@@ -377,7 +411,7 @@ struct MemoryDatabaseTests {
         #expect(loaded[0].assistantMessage == "Hi there")
     }
 
-    @Test func markSignalsProcessed() throws {
+    @Test func markSignalsProcessedByConversation() throws {
         let db = try makeTempDB()
         try db.insertPendingSignal(
             PendingSignal(
@@ -387,20 +421,21 @@ struct MemoryDatabaseTests {
                 userMessage: "test"
             )
         )
-        #expect(try db.loadPendingSignals(agentId: "a").count == 1)
-        try db.markSignalsProcessed(agentId: "a")
-        #expect(try db.loadPendingSignals(agentId: "a").count == 0)
+        #expect(try db.loadPendingSignals(conversationId: "c").count == 1)
+        try db.markSignalsProcessed(conversationId: "c")
+        #expect(try db.loadPendingSignals(conversationId: "c").count == 0)
     }
 
     @Test func summaryRoundTrip() throws {
         let db = try makeTempDB()
+        let now = ISO8601DateFormatter().string(from: Date())
         let summary = ConversationSummary(
             agentId: "a",
             conversationId: "c1",
             summary: "Test summary",
             tokenCount: 10,
             model: "test",
-            conversationAt: "2025-01-01T00:00:00Z"
+            conversationAt: now
         )
         try db.insertSummary(summary)
         let loaded = try db.loadSummaries(agentId: "a", days: 365)

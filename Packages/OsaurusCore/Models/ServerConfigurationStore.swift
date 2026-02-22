@@ -9,6 +9,9 @@ import Foundation
 
 @MainActor
 enum ServerConfigurationStore {
+    /// When set, configuration reads/writes use this directory instead of the default path.
+    static var overrideDirectory: URL?
+
     static func load() -> ServerConfiguration? {
         let url = configurationFileURL()
         guard FileManager.default.fileExists(atPath: url.path) else { return nil }
@@ -33,6 +36,9 @@ enum ServerConfigurationStore {
     }
 
     private static func configurationFileURL() -> URL {
-        OsaurusPaths.resolveFile(new: OsaurusPaths.serverConfigFile(), legacy: "ServerConfiguration.json")
+        if let dir = overrideDirectory {
+            return dir.appendingPathComponent("server.json")
+        }
+        return OsaurusPaths.resolveFile(new: OsaurusPaths.serverConfigFile(), legacy: "ServerConfiguration.json")
     }
 }

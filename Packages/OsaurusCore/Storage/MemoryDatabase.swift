@@ -1257,11 +1257,36 @@ public final class MemoryDatabase: @unchecked Sendable {
         return signals
     }
 
-    public func markSignalsProcessed(agentId: String) throws {
+    public func loadPendingSignals(conversationId: String) throws -> [PendingSignal] {
+        var signals: [PendingSignal] = []
+        try prepareAndExecute(
+            "SELECT id, agent_id, conversation_id, signal_type, user_message, assistant_message, status, created_at FROM pending_signals WHERE conversation_id = ?1 AND status = 'pending' ORDER BY created_at",
+            bind: { stmt in Self.bindText(stmt, index: 1, value: conversationId) },
+            process: { stmt in
+                while sqlite3_step(stmt) == SQLITE_ROW {
+                    signals.append(
+                        PendingSignal(
+                            id: Int(sqlite3_column_int(stmt, 0)),
+                            agentId: String(cString: sqlite3_column_text(stmt, 1)),
+                            conversationId: String(cString: sqlite3_column_text(stmt, 2)),
+                            signalType: String(cString: sqlite3_column_text(stmt, 3)),
+                            userMessage: String(cString: sqlite3_column_text(stmt, 4)),
+                            assistantMessage: sqlite3_column_text(stmt, 5).map { String(cString: $0) },
+                            status: String(cString: sqlite3_column_text(stmt, 6)),
+                            createdAt: String(cString: sqlite3_column_text(stmt, 7))
+                        )
+                    )
+                }
+            }
+        )
+        return signals
+    }
+
+    public func markSignalsProcessed(conversationId: String) throws {
         _ = try executeUpdate(
-            "UPDATE pending_signals SET status = 'processed' WHERE agent_id = ?1 AND status = 'pending'"
+            "UPDATE pending_signals SET status = 'processed' WHERE conversation_id = ?1 AND status = 'pending'"
         ) { stmt in
-            Self.bindText(stmt, index: 1, value: agentId)
+            Self.bindText(stmt, index: 1, value: conversationId)
         }
     }
 
@@ -1279,60 +1304,24 @@ public final class MemoryDatabase: @unchecked Sendable {
         }
     }
 
-    /// All agent IDs that have at least one pending signal (regardless of inactivity timer).
-    public func agentsWithPendingSignals() throws -> [String] {
-        var agentIds: [String] = []
+    /// Distinct (agentId, conversationId) pairs that have at least one pending signal.
+    public func pendingConversations() throws -> [(agentId: String, conversationId: String)] {
+        var results: [(agentId: String, conversationId: String)] = []
         try prepareAndExecute(
-            "SELECT DISTINCT agent_id FROM pending_signals WHERE status = 'pending'",
+            "SELECT DISTINCT agent_id, conversation_id FROM pending_signals WHERE status = 'pending'",
             bind: { _ in },
             process: { stmt in
                 while sqlite3_step(stmt) == SQLITE_ROW {
-                    agentIds.append(String(cString: sqlite3_column_text(stmt, 0)))
+                    results.append(
+                        (
+                            agentId: String(cString: sqlite3_column_text(stmt, 0)),
+                            conversationId: String(cString: sqlite3_column_text(stmt, 1))
+                        )
+                    )
                 }
             }
         )
-        return agentIds
-    }
-
-    public func agentsNeedingProcessing(inactivitySeconds: Int) throws -> [String] {
-        var agentIds: [String] = []
-        try prepareAndExecute(
-            """
-            SELECT agent_id FROM agent_activity
-            WHERE processing_status = 'idle'
-              AND last_activity_at <= datetime('now', '-' || ?1 || ' seconds')
-              AND (last_processed_at IS NULL OR last_processed_at < last_activity_at)
-            """,
-            bind: { stmt in sqlite3_bind_int(stmt, 1, Int32(inactivitySeconds)) },
-            process: { stmt in
-                while sqlite3_step(stmt) == SQLITE_ROW {
-                    agentIds.append(String(cString: sqlite3_column_text(stmt, 0)))
-                }
-            }
-        )
-        return agentIds
-    }
-
-    public func markAgentProcessing(agentId: String, status: String) throws {
-        _ = try executeUpdate(
-            "UPDATE agent_activity SET processing_status = ?1, last_processed_at = CASE WHEN ?1 = 'idle' THEN datetime('now') ELSE last_processed_at END WHERE agent_id = ?2"
-        ) { stmt in
-            Self.bindText(stmt, index: 1, value: status)
-            Self.bindText(stmt, index: 2, value: agentId)
-        }
-    }
-
-    /// Reset agents stuck in 'processing' for longer than the given threshold back to 'idle'.
-    public func resetStuckAgents(staleSeconds: Int) throws {
-        _ = try executeUpdate(
-            """
-            UPDATE agent_activity SET processing_status = 'idle'
-            WHERE processing_status = 'processing'
-              AND last_activity_at <= datetime('now', '-' || ?1 || ' seconds')
-            """
-        ) { stmt in
-            sqlite3_bind_int(stmt, 1, Int32(staleSeconds))
-        }
+        return results
     }
 
     // MARK: - Processing Log

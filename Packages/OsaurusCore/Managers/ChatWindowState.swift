@@ -157,6 +157,7 @@ final class ChatWindowState: ObservableObject {
 
     func startNewChat() {
         if !session.turns.isEmpty { session.save() }
+        flushCurrentSession()
         session.reset(for: agentId)
         refreshSessions()
     }
@@ -201,6 +202,7 @@ final class ChatWindowState: ObservableObject {
     func loadSession(_ sessionData: ChatSessionData) {
         guard sessionData.id != session.sessionId else { return }
         if !session.turns.isEmpty { session.save() }
+        flushCurrentSession()
 
         if let freshData = ChatSessionStore.load(id: sessionData.id) {
             session.load(from: freshData)
@@ -213,6 +215,15 @@ final class ChatWindowState: ObservableObject {
         if sessionAgentId != agentId {
             theme = Self.loadTheme(for: sessionAgentId)
             decodeBackgroundImageAsync(themeConfig: theme.customThemeConfig)
+        }
+    }
+
+    private func flushCurrentSession() {
+        guard let sid = session.sessionId else { return }
+        let agentStr = (session.agentId ?? Agent.defaultId).uuidString
+        let convStr = sid.uuidString
+        Task {
+            await MemoryService.shared.flushSession(agentId: agentStr, conversationId: convStr)
         }
     }
 
@@ -283,10 +294,8 @@ final class ChatWindowState: ObservableObject {
 
     private func decodeBackgroundImageAsync(themeConfig: CustomTheme?) {
         Task { [weak self] in
-            let image = await Task.detached(priority: .utility) { () -> NSImage? in
-                themeConfig?.background.decodedImage()
-            }.value
-            self?.cachedBackgroundImage = image
+            let decoded = themeConfig?.background.decodedImage()
+            self?.cachedBackgroundImage = decoded
         }
     }
 

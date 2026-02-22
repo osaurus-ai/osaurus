@@ -19,8 +19,8 @@ public struct MemoryConfiguration: Codable, Equatable, Sendable {
     /// Embedding model name
     public var embeddingModel: String
 
-    /// Seconds of inactivity before post-activity processing triggers
-    public var inactivityTimeoutSeconds: Int
+    /// Seconds of inactivity before session summary generation triggers (debounce)
+    public var summaryDebounceSeconds: Int
 
     /// Maximum token count for the user profile
     public var profileMaxTokens: Int
@@ -71,7 +71,7 @@ public struct MemoryConfiguration: Codable, Equatable, Sendable {
     /// Approximate characters per token for budget calculations.
     public static let charsPerToken = 4
     /// Max existing entries included in the extraction prompt.
-    public static let postActivityPromptEntryLimit = 30
+    public static let extractionPromptEntryLimit = 30
     /// Default LIMIT for fallback text search queries.
     public static let fallbackSearchLimit = 20
     /// Jaccard threshold for profile fact deduplication.
@@ -87,7 +87,7 @@ public struct MemoryConfiguration: Codable, Equatable, Sendable {
         coreModelName: String = "claude-haiku-4-5",
         embeddingBackend: String = "mlx",
         embeddingModel: String = "nomic-embed-text-v1.5",
-        inactivityTimeoutSeconds: Int = 60,
+        summaryDebounceSeconds: Int = 60,
         profileMaxTokens: Int = 2000,
         profileRegenerateThreshold: Int = 10,
         workingMemoryBudgetTokens: Int = 500,
@@ -108,7 +108,7 @@ public struct MemoryConfiguration: Codable, Equatable, Sendable {
         self.coreModelName = coreModelName
         self.embeddingBackend = embeddingBackend
         self.embeddingModel = embeddingModel
-        self.inactivityTimeoutSeconds = inactivityTimeoutSeconds
+        self.summaryDebounceSeconds = summaryDebounceSeconds
         self.profileMaxTokens = profileMaxTokens
         self.profileRegenerateThreshold = profileRegenerateThreshold
         self.workingMemoryBudgetTokens = workingMemoryBudgetTokens
@@ -129,7 +129,7 @@ public struct MemoryConfiguration: Codable, Equatable, Sendable {
     /// Returns a copy with all values clamped to valid ranges.
     public func validated() -> MemoryConfiguration {
         var c = self
-        c.inactivityTimeoutSeconds = max(10, min(c.inactivityTimeoutSeconds, 3600))
+        c.summaryDebounceSeconds = max(10, min(c.summaryDebounceSeconds, 3600))
         c.profileMaxTokens = max(100, min(c.profileMaxTokens, 50_000))
         c.profileRegenerateThreshold = max(1, min(c.profileRegenerateThreshold, 100))
         c.workingMemoryBudgetTokens = max(50, min(c.workingMemoryBudgetTokens, 10_000))
@@ -153,8 +153,9 @@ public struct MemoryConfiguration: Codable, Equatable, Sendable {
         coreModelName = try c.decodeIfPresent(String.self, forKey: .coreModelName) ?? defaults.coreModelName
         embeddingBackend = try c.decodeIfPresent(String.self, forKey: .embeddingBackend) ?? defaults.embeddingBackend
         embeddingModel = try c.decodeIfPresent(String.self, forKey: .embeddingModel) ?? defaults.embeddingModel
-        inactivityTimeoutSeconds =
-            try c.decodeIfPresent(Int.self, forKey: .inactivityTimeoutSeconds) ?? defaults.inactivityTimeoutSeconds
+        summaryDebounceSeconds =
+            try c.decodeIfPresent(Int.self, forKey: .summaryDebounceSeconds)
+            ?? defaults.summaryDebounceSeconds
         profileMaxTokens = try c.decodeIfPresent(Int.self, forKey: .profileMaxTokens) ?? defaults.profileMaxTokens
         profileRegenerateThreshold =
             try c.decodeIfPresent(Int.self, forKey: .profileRegenerateThreshold) ?? defaults.profileRegenerateThreshold
